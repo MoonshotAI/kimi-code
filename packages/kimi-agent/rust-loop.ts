@@ -52,6 +52,18 @@ interface LlmChatResponse {
   usage: { input_tokens: number; output_tokens: number; total_tokens: number };
 }
 
+interface ToolExecuteRequest {
+  turn_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  arguments: unknown;
+}
+
+interface ToolExecuteResponse {
+  content: string;
+  is_error: boolean;
+}
+
 // ── Agent process manager ──────────────────────────────────────────────────
 
 class AgentProcess {
@@ -64,8 +76,15 @@ class AgentProcess {
   /** Callback for handling host/llm_chat requests from the Rust side. */
   private llmChatHandler: ((req: LlmChatRequest) => Promise<LlmChatResponse>) | null = null;
 
+  /** Callback for handling host/execute_tool requests from the Rust side. */
+  private toolExecuteHandler: ((req: ToolExecuteRequest) => Promise<ToolExecuteResponse>) | null = null;
+
   setLlmChatHandler(handler: (req: LlmChatRequest) => Promise<LlmChatResponse>) {
     this.llmChatHandler = handler;
+  }
+
+  setToolExecuteHandler(handler: (req: ToolExecuteRequest) => Promise<ToolExecuteResponse>) {
+    this.toolExecuteHandler = handler;
   }
 
   private static findBinary(): string | null {
@@ -162,31 +181,9 @@ class AgentProcess {
 
   private async handleHostRequest(msg: RpcMessage) {
     if (msg.method === 'host/llm_chat') {
-      if (this.llmChatHandler) {
-        try {
-          const result = await this.llmChatHandler(msg.params as LlmChatRequest);
-          const response = JSON.stringify({
-            jsonrpc: '2.0',
-            id: msg.id,
-            result,
-          });
-          this.process!.stdin!.write(response + '\n');
-        } catch (err) {
-          const response = JSON.stringify({
-            jsonrpc: '2.0',
-            id: msg.id,
-            error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
-          });
-          this.process!.stdin!.write(response + '\n');
-        }
-      } else {
-        const response = JSON.stringify({
-          jsonrpc: '2.0',
-          id: msg.id,
-          error: { code: -32000, message: 'No LLM chat handler registered' },
-        });
-        this.process!.stdin!.write(response + '\n');
-      }
+      await this.handleHostLlmChat(msg);
+    } else if (msg.method === 'host/execute_tool') {
+      await this.handleHostExecuteTool(msg);
     } else {
       const response = JSON.stringify({
         jsonrpc: '2.0',
@@ -195,6 +192,42 @@ class AgentProcess {
       });
       this.process!.stdin!.write(response + '\n');
     }
+  }
+
+  private async handleHostLlmChat(msg: RpcMessage) {
+    if (!this.llmChatHandler) {
+      this.writeHostError(msg.id, 'No LLM chat handler registered');
+      return;
+    }
+    try {
+      const result = await this.llmChatHandler(msg.params as LlmChatRequest);
+      this.writeHostResult(msg.id, result);
+    } catch (err) {
+      this.writeHostError(msg.id, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  private async handleHostExecuteTool(msg: RpcMessage) {
+    if (!this.toolExecuteHandler) {
+      this.writeHostError(msg.id, 'No tool execute handler registered');
+      return;
+    }
+    try {
+      const result = await this.toolExecuteHandler(msg.params as ToolExecuteRequest);
+      this.writeHostResult(msg.id, result);
+    } catch (err) {
+      this.writeHostError(msg.id, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  private writeHostResult(id: unknown, result: unknown) {
+    this.process!.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+  }
+
+  private writeHostError(id: unknown, message: string) {
+    this.process!.stdin!.write(
+      JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message } }) + '\n',
+    );
   }
 
   async request(method: string, params: unknown): Promise<unknown> {
@@ -240,13 +273,19 @@ function getAgent(): AgentProcess | null {
 
 export async function runTurnRust(
   params: RunTurnParams,
-  llmChatHandler?: (req: LlmChatRequest) => Promise<LlmChatResponse>,
+  handlers?: {
+    llmChat?: (req: LlmChatRequest) => Promise<LlmChatResponse>;
+    toolExecute?: (req: ToolExecuteRequest) => Promise<ToolExecuteResponse>;
+  },
 ): Promise<RunTurnResult | null> {
   const agent = getAgent();
   if (!agent) return null;
 
-  if (llmChatHandler) {
-    agent.setLlmChatHandler(llmChatHandler);
+  if (handlers?.llmChat) {
+    agent.setLlmChatHandler(handlers.llmChat);
+  }
+  if (handlers?.toolExecute) {
+    agent.setToolExecuteHandler(handlers.toolExecute);
   }
 
   try {

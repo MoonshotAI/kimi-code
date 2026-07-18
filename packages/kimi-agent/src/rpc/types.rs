@@ -74,6 +74,9 @@ pub mod methods {
 
     /// LLM chat request (Rust → JS host proxy).
     pub const HOST_LLM_CHAT: &str = "host/llm_chat";
+
+    /// Execute a tool call (Rust → JS host proxy).
+    pub const HOST_EXECUTE_TOOL: &str = "host/execute_tool";
 }
 
 // ── RunTurn request/response types ─────────────────────────────────────────
@@ -145,6 +148,24 @@ pub struct LlmToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+}
+
+// ── Tool execution proxy types (Rust → JS host) ────────────────────────────
+
+/// Parameters for the host/execute_tool RPC call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecuteRequest {
+    pub turn_id: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Response from the host/execute_tool RPC call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolExecuteResponse {
+    pub content: String,
+    pub is_error: bool,
 }
 
 /// Token usage tracking.
