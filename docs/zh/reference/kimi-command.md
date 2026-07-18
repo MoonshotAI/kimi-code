@@ -174,9 +174,9 @@ kimi web --port 58628    # 指定绑定端口
 `--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后运行 `kimi web kill` 停止服务。
 :::
 
-#### `kimi web kill [server-id]`
+#### `kimi web kill [server-id|all]`
 
-停止运行中的服务实例：先请求 `POST /api/v1/shutdown` 优雅退出，再对实例 pid 发 SIGTERM、必要时升级为 SIGKILL。多实例并存时用 `[server-id]` 指定目标；缺省停止存活最久的实例；id 不存在时报错并列出所有存活实例 id。
+停止运行中的服务实例：先请求 `POST /api/v1/shutdown` 优雅退出，再对实例 pid 发 SIGTERM、必要时升级为 SIGKILL。多实例并存时用 `[server-id]` 指定目标；缺省停止存活最久的实例；传入特殊关键字 `all` 停止全部实例；id 不存在时报错并列出所有存活实例 id。
 
 #### `kimi web ps`
 

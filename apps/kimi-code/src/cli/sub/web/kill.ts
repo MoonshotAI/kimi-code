@@ -1,5 +1,5 @@
 /**
- * `kimi web kill [serverId]` — terminate a running server.
+ * `kimi web kill [serverId|all]` — terminate running servers.
  *
  * Combines two independent mechanisms so the server dies even if one path
  * fails:
@@ -10,10 +10,12 @@
  *                  wait → SIGKILL). SIGKILL / TerminateProcess is the hard
  *                  guarantee: it cannot be caught or ignored.
  *
- * With multiple servers sharing the home directory, the optional `serverId`
- * picks one instance; without it the longest-running live instance is the
- * target. The only honest failure mode is insufficient permissions (a process
- * owned by another user), which surfaces as an error rather than a silent miss.
+ * With multiple servers sharing the home directory, the optional argument
+ * picks the target: a `serverId` kills that one instance, the reserved
+ * keyword `all` kills every live instance (a ULID can never collide with
+ * it), and no argument kills the longest-running live instance. The only
+ * honest failure mode is insufficient permissions (a process owned by
+ * another user), which surfaces as an error rather than a silent miss.
  */
 
 import type { Command } from 'commander';
@@ -33,6 +35,12 @@ const KILL_GRACE_MS = 2000;
 /** Poll cadence while waiting for the pid to exit. */
 const POLL_INTERVAL_MS = 100;
 
+/**
+ * Reserved positional that targets every live instance. Server ids are ULIDs
+ * (26-char Crockford base32), so the keyword can never shadow a real id.
+ */
+export const KILL_ALL_KEYWORD = 'all';
+
 export interface KillCommandDeps {
   getLiveInstances(): Promise<readonly ServerInstanceInfo[]>;
   requestShutdown(origin: string, token: string | undefined): Promise<void>;
@@ -51,7 +59,7 @@ export function registerKillCommand(server: Command): void {
     .description('Stop a running Kimi server (graceful API + forced PID kill).')
     .argument(
       '[serverId]',
-      'Stop only the instance with this server id (default: the longest-running one).',
+      'Stop only the instance with this server id, or `all` for every instance (default: the longest-running one).',
     )
     .action(async (serverId?: string) => {
       try {
@@ -76,6 +84,26 @@ export async function handleKillCommand(
     return;
   }
 
+  if (serverId === KILL_ALL_KEYWORD) {
+    const failures: string[] = [];
+    for (const instance of instances) {
+      try {
+        const outcome = await killInstance(instance, deps);
+        deps.stdout.write(
+          `Kimi server ${instance.serverId} (pid ${String(instance.pid)}) ${outcome}.\n`,
+        );
+      } catch (error) {
+        failures.push(
+          `server ${instance.serverId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(failures.join('\n'));
+    }
+    return;
+  }
+
   let instance = longestRunning;
   if (serverId !== undefined) {
     const found = instances.find((i) => i.serverId === serverId);
@@ -86,6 +114,19 @@ export async function handleKillCommand(
     instance = found;
   }
 
+  const outcome = await killInstance(instance, deps);
+  deps.stdout.write(`Kimi server (pid ${String(instance.pid)}) ${outcome}.\n`);
+}
+
+/**
+ * Kill one instance via the API path (best-effort graceful shutdown) followed
+ * by the PID path (SIGTERM → wait → SIGKILL). Resolves with how the process
+ * went down; throws when the pid survives SIGKILL.
+ */
+async function killInstance(
+  instance: ServerInstanceInfo,
+  deps: KillCommandDeps,
+): Promise<'stopped' | 'killed'> {
   const { pid } = instance;
   const origin = serverOrigin(instanceConnectHost(instance), instance.port);
 
@@ -101,15 +142,13 @@ export async function handleKillCommand(
   deps.signalPid(pid, 'SIGTERM');
 
   if (await waitForExit(pid, TERM_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) stopped.\n`);
-    return;
+    return 'stopped';
   }
 
   deps.signalPid(pid, 'SIGKILL');
 
   if (await waitForExit(pid, KILL_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) killed.\n`);
-    return;
+    return 'killed';
   }
 
   throw new Error(

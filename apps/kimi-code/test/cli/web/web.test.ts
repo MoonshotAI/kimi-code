@@ -690,6 +690,48 @@ describe('`kimi web kill`', () => {
     );
     expect(signals).toEqual([]);
   });
+
+  it('kills every live instance when given the `all` keyword', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/web/kill');
+    const other = { ...liveInstance, serverId: 'srv-2', pid: 5678, port: 58628 };
+    const { deps, writes, signals, state } = makeKillDeps({
+      getLiveInstances: async () => [liveInstance, other],
+      pidAlive: () => false,
+    });
+
+    await handleKillCommand(deps, 'all');
+
+    expect(state.shutdownCalls).toBe(2);
+    expect(signals).toEqual([
+      { pid: 1234, signal: 'SIGTERM' },
+      { pid: 5678, signal: 'SIGTERM' },
+    ]);
+    const out = writes.join('');
+    expect(out).toContain('server srv-1 (pid 1234) stopped.');
+    expect(out).toContain('server srv-2 (pid 5678) stopped.');
+  });
+
+  it('continues past a failed instance and reports the failure at the end', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/web/kill');
+    const wedged = { ...liveInstance, serverId: 'srv-2', pid: 9999, port: 58628 };
+    const { deps, writes, signals } = makeKillDeps({
+      getLiveInstances: async () => [liveInstance, wedged],
+      // srv-1 dies on SIGTERM; srv-2 survives everything.
+      pidAlive: (pid) => pid === 9999,
+    });
+
+    await expect(handleKillCommand(deps, 'all')).rejects.toThrow(
+      /server srv-2: Failed to stop Kimi server \(pid 9999\); insufficient permissions\?/,
+    );
+
+    // The healthy instance was still stopped before the error surfaced.
+    expect(signals).toEqual([
+      { pid: 1234, signal: 'SIGTERM' },
+      { pid: 9999, signal: 'SIGTERM' },
+      { pid: 9999, signal: 'SIGKILL' },
+    ]);
+    expect(writes.join('')).toContain('server srv-1 (pid 1234) stopped.');
+  });
 });
 
 describe('resolveServerToken', () => {

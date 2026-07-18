@@ -174,9 +174,9 @@ The `kimi server` command tree is deprecated: any `kimi server …` invocation (
 `--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and run `kimi web kill` to stop the server when you are done.
 :::
 
-#### `kimi web kill [server-id]`
+#### `kimi web kill [server-id|all]`
 
-Stop a running server instance: first tries `POST /api/v1/shutdown` for a graceful exit, then signals the instance pid with SIGTERM, escalating to SIGKILL when needed. With multiple instances sharing the home directory, `[server-id]` picks the target; without it the longest-running instance is stopped, and an unknown id errors with the live instance ids listed.
+Stop a running server instance: first tries `POST /api/v1/shutdown` for a graceful exit, then signals the instance pid with SIGTERM, escalating to SIGKILL when needed. With multiple instances sharing the home directory, `[server-id]` picks the target; without it the longest-running instance is stopped; the special keyword `all` stops every live instance; an unknown id errors with the live instance ids listed.
 
 #### `kimi web ps`
 
