@@ -133,6 +133,11 @@ class MemoryHostFs implements IHostFileSystem {
     this.files.delete(path);
     this.dirs.delete(path);
   }
+
+  async realpath(path: string): Promise<string> {
+    if (this.files.has(path) || this.dirs.has(path)) return path;
+    throw enoent(path);
+  }
 }
 
 function enoent(path: string): NodeJS.ErrnoException {

@@ -1,5 +1,11 @@
 # @moonshot-ai/agent-core
 
+## 0.15.5
+
+### Patch Changes
+
+- [#1769](https://github.com/MoonshotAI/kimi-code/pull/1769) [`d1ca65e`](https://github.com/MoonshotAI/kimi-code/commit/d1ca65e1de189617e9edbc54010e62d472a1de3d) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Support in-process editor hosts with session lifecycle, context, MCP configuration, and cross-platform session storage APIs.
+
 ## 0.15.4
 
 ### Patch Changes

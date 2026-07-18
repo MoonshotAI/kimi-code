@@ -1,3 +1,8 @@
+// Scenario: workspace/session actions exposed by useWorkspaceState.
+// Responsibilities: observable state and error reporting across load, paging, and user actions.
+// Wiring: the composable is real; daemon requests and unrelated facade collaborators are stubbed.
+// Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/workspace-state.test.ts
+
 import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
@@ -5,7 +10,7 @@ import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
-import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
+import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 import { clearTrace, traceKeyEvent } from '../src/debug/trace';
 
@@ -41,7 +46,7 @@ function createSession(): AppSession {
     title: 'Session',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    status: 'running',
+    busy: true,
     archived: false,
     currentPromptId: 'prompt_live',
     cwd: '/workspace',
@@ -82,13 +87,18 @@ function createState(): ExtendedState {
     queuedBySession: {},
     gitStatusBySession: {},
     promptIdBySession: { sess_1: 'prompt_stale' },
-    sendingBySession: {},
+    inFlightBySession: {},
     unreadBySession: {},
     authReady: true,
     defaultModel: null,
     managedProviderStatus: null,
     workspaces: [],
     activeWorkspaceId: null,
+    sessionsHasMoreByWorkspace: {},
+    sessionsLoadingMoreByWorkspace: {},
+    sessionsCursorByWorkspace: {},
+    sessionsInitialCountByWorkspace: {},
+    sessionsFullyLoaded: false,
     fsHome: null,
     recentRoots: [],
     hiddenWorkspaceRoots: [],
@@ -107,10 +117,9 @@ function createDeps(): UseWorkspaceStateDeps {
   return {
     taskPoller: {},
     sideChat: {},
-    modelProvider: {},
+    modelProvider: { thinkingLevelForModelId: () => undefined },
     pushOperationFailure: vi.fn(),
     activity: computed(() => 'running'),
-    inFlightPromptSessions: new Set(),
     sessionsKnownEmpty: new Set(),
     setSessions: vi.fn(),
     updateSession: vi.fn(),
@@ -126,7 +135,7 @@ function createDeps(): UseWorkspaceStateDeps {
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
     refreshSessionGoal: vi.fn(),
-    persistSessionProfile: vi.fn(),
+    persistSessionProfile: vi.fn().mockResolvedValue(true),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
     status: computed(() => ({})),
@@ -181,7 +190,7 @@ function installStorage(storage: Storage): void {
 }
 
 function workspace(id: string, root: string, name: string) {
-  return { id, root, name, isGitRepo: false, sessionCount: 0 };
+  return { id, root, name, sessionCount: 0 };
 }
 
 function questionRequest(questionId: string): AppQuestionRequest {
@@ -407,14 +416,12 @@ describe('mergeWorkspaces', () => {
       workspaces: [
         // Server orders by last_opened_at desc, so the most recently opened
         // (typically the canonical re-add) comes first.
-        { id: 'wd_current', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
-        { id: 'wd_legacy', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
+        { id: 'wd_current', root: '/agent/GEO', name: 'GEO', sessionCount: 0 },
+        { id: 'wd_legacy', root: '/agent/GEO', name: 'GEO', sessionCount: 0 },
       ],
       // A session whose daemon workspace_id points at the dropped (legacy) entry.
       sessions: [{ id: 's1', cwd: '/agent/GEO', workspaceId: 'wd_legacy' }],
       hiddenWorkspaceRoots: [],
-      activeRoot: undefined,
-      activeBranch: null,
       sessionsHasMoreByWorkspace: { wd_current: false },
     });
 
@@ -429,15 +436,13 @@ describe('mergeWorkspaces', () => {
   it('keeps distinct roots separate and appends derived cwds after real ones', () => {
     const result = mergeWorkspaces({
       workspaces: [
-        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+        { id: 'wd_a', root: '/agent/A', name: 'A', sessionCount: 1 },
       ],
       sessions: [
         { id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' },
         { id: 's2', cwd: '/agent/B', workspaceId: 'wd_b' },
       ],
       hiddenWorkspaceRoots: [],
-      activeRoot: undefined,
-      activeBranch: null,
       sessionsHasMoreByWorkspace: {},
     });
 
@@ -448,12 +453,10 @@ describe('mergeWorkspaces', () => {
   it('hides workspaces whose root the user removed', () => {
     const result = mergeWorkspaces({
       workspaces: [
-        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+        { id: 'wd_a', root: '/agent/A', name: 'A', sessionCount: 1 },
       ],
       sessions: [{ id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' }],
       hiddenWorkspaceRoots: ['/agent/A'],
-      activeRoot: undefined,
-      activeBranch: null,
       sessionsHasMoreByWorkspace: {},
     });
 
@@ -542,7 +545,6 @@ describe('useWorkspaceState — addWorkspaceByPath', () => {
       id: 'wd_abc',
       root: '/abs/path',
       name: 'path',
-      isGitRepo: false,
       sessionCount: 0,
     };
     apiMock.addWorkspace.mockResolvedValue(registered);
@@ -722,7 +724,7 @@ describe('useWorkspaceState — cancelTask', () => {
 });
 
 describe('useWorkspaceState — startSessionAndActivateSkill', () => {
-  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', sessionCount: 0 };
   const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
 
   beforeEach(() => {
@@ -741,6 +743,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
         activateSkill,
+        thinkingLevelForModelId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -772,12 +775,12 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
   it('awaits the profile POST before activating, so draft controls apply first', async () => {
     // Skill activation only carries `args`, so the daemon never sees the per-
-    // prompt controls (plan/swarm plus permission and thinking) the user set on
-    // the draft. We persist them to the new session's profile and must WAIT for
-    // it; otherwise :activate can race ahead of applyAgentState and the first
+    // prompt controls (plan/swarm plus permission) the user set on the draft.
+    // We persist them to the new session's profile and must WAIT for it;
+    // otherwise :activate can race ahead of applyAgentState and the first
     // skill turn runs at daemon defaults while the UI shows otherwise.
-    let resolveProfile!: () => void;
-    const profileGate = new Promise<void>((r) => {
+    let resolveProfile!: (persisted: boolean) => void;
+    const profileGate = new Promise<boolean>((r) => {
       resolveProfile = r;
     });
     const activateSkill = vi.fn().mockResolvedValue(undefined);
@@ -798,23 +801,24 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // Activation must NOT have started while /profile is still pending.
     await new Promise((r) => setTimeout(r, 0));
     expect(persistSessionProfile).toHaveBeenCalledWith(
-      { model: undefined, planMode: true, swarmMode: true, permissionMode: 'auto', thinking: 'high' },
+      { model: undefined, planMode: true, swarmMode: true, permissionMode: 'auto' },
       'sess_new',
     );
     expect(activateSkill).not.toHaveBeenCalled();
 
-    resolveProfile();
+    resolveProfile(true);
     await pending;
 
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
-  it('persists the stored thinking level verbatim, even when the new session model does not declare it', async () => {
-    // Thinking levels are never coerced onto the session model (same as the
-    // first-prompt path and the TUI): a carried-over effort like 'max' is
-    // persisted and sent as-is.
+  it('does not write thinking in the draft profile patch — activateSkill persists it once', async () => {
+    // activateSkill resolves and persists the level itself (gated) right
+    // before activating. Duplicating the write in THIS patch would be a
+    // redundant profile update whose transient failure could veto an
+    // otherwise-ready activation, so the draft patch must not carry it.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
-    const persistSessionProfile2 = vi.fn().mockResolvedValue(undefined);
+    const persistSessionProfile2 = vi.fn().mockResolvedValue(true);
     const state2 = createState();
     state2.thinking = 'max';
     const deps2: UseWorkspaceStateDeps = {
@@ -827,26 +831,14 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
     };
-    // 'kimi-code' declares efforts ['low','medium','high'] — 'max' isn't in the
-    // list, and must still be persisted verbatim.
-    (deps2.modelProvider as unknown as { models: unknown }).models = ref([
-      {
-        id: 'kimi-code',
-        model: 'kimi-code',
-        provider: 'kimi',
-        displayName: 'kimi-code',
-        capabilities: ['thinking'],
-        supportEfforts: ['low', 'medium', 'high'],
-      },
-    ]);
     const ws2 = useWorkspaceState(state2, deps2);
 
     await ws2.startSessionAndActivateSkill('wd_1', 'pre-changelog');
 
-    expect(persistSessionProfile2).toHaveBeenCalledWith(
-      expect.objectContaining({ thinking: 'max' }),
-      'sess_new',
-    );
+    expect(persistSessionProfile2).toHaveBeenCalledOnce();
+    const patch = persistSessionProfile2.mock.calls[0]![0] as Record<string, unknown>;
+    expect(patch).toMatchObject({ model: 'kimi-code', planMode: true, swarmMode: false });
+    expect('thinking' in patch).toBe(false);
     expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
@@ -864,7 +856,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 });
 
 describe('useWorkspaceState — createGoal from an empty composer', () => {
-  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', sessionCount: 0 };
   const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
 
   beforeEach(() => {
@@ -895,6 +887,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
+        thinkingLevelForModelId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       // Something the goal can land in + what's visible in the sidebar.
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
@@ -957,7 +950,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     // 'running'), sendPrompt queues rather than posting immediately.
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(state.queuedBySession['sess_1']).toEqual([
-      { text: 'improve test coverage', attachments: undefined },
+      expect.objectContaining({ text: 'improve test coverage', attachments: undefined }),
     ]);
   });
 
@@ -1038,7 +1031,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
 });
 
 describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
-  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', sessionCount: 0 };
   const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
 
   beforeEach(() => {
@@ -1057,6 +1050,7 @@ describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
+        thinkingLevelForModelId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -1211,6 +1205,281 @@ describe('useWorkspaceState — first-load auth gate', () => {
   );
 });
 
+describe('useWorkspaceState — session list loading', () => {
+  beforeEach(() => {
+    apiMock.getAuth.mockReset().mockResolvedValue({
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: null,
+    });
+    apiMock.getHealth.mockReset().mockResolvedValue({ ok: true });
+    apiMock.getMeta.mockReset().mockResolvedValue({
+      serverVersion: '0.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      backend: 'v1',
+    });
+    apiMock.getConfig.mockReset().mockResolvedValue({});
+    apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
+    apiMock.getFsHome.mockReset().mockResolvedValue({ home: '', recentRoots: [] });
+    apiMock.listSessions.mockReset();
+  });
+
+  function createSessionLoadRig(sessions: AppSession[]) {
+    const state = createState();
+    state.sessions = sessions;
+    state.activeSessionId = sessions[0]?.id ?? null;
+    const deps = {
+      ...createDeps(),
+      modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
+      initialized: ref(false),
+      connectIssue: ref<string | null>(null),
+      setSessions: vi.fn((next: AppSession[]) => {
+        state.sessions = next;
+      }),
+      workspaceIdForSession: vi.fn(
+        (session: { workspaceId?: string; cwd: string }) =>
+          state.workspaces.find((item) => item.root === session.cwd)?.id ??
+          session.workspaceId ??
+          session.cwd,
+      ),
+    } as unknown as UseWorkspaceStateDeps;
+    return { state, deps, workspaceState: useWorkspaceState(state, deps) };
+  }
+
+  it('reports one load failure when the no-workspace session fallback rejects', async () => {
+    const error = new Error('session index unavailable');
+    apiMock.listSessions.mockRejectedValue(error);
+    const { deps, workspaceState } = createSessionLoadRig([]);
+
+    await workspaceState.load();
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('keeps failed workspace sessions while replacing a successful shared-root workspace', async () => {
+    const error = new Error('legacy workspace unavailable');
+    const cached = {
+      ...createSession(),
+      id: 'sess_cached',
+      title: 'Cached legacy',
+      workspaceId: 'wd_legacy',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const fresh = {
+      ...createSession(),
+      id: 'sess_fresh',
+      title: 'Fresh current',
+      workspaceId: 'wd_current',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    const staleCurrent = {
+      ...createSession(),
+      id: 'sess_stale',
+      title: 'Stale current',
+      workspaceId: 'wd_current',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_current', '/workspace', 'Workspace'),
+      workspace('wd_legacy', '/workspace', 'Workspace'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_current') return { items: [fresh], hasMore: false };
+        throw error;
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cached, staleCurrent]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('keeps root-matched sessions when their stored workspace id is no longer registered', async () => {
+    const error = new Error('current workspace unavailable');
+    const cached = {
+      ...createSession(),
+      id: 'sess_cached',
+      title: 'Cached old workspace id',
+      workspaceId: 'wd_removed',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const fresh = {
+      ...createSession(),
+      id: 'sess_fresh',
+      title: 'Fresh other workspace',
+      cwd: '/other-workspace',
+      workspaceId: 'wd_other',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_current', '/workspace', 'Workspace'),
+      workspace('wd_other', '/other-workspace', 'Other'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_current') throw error;
+        return { items: [fresh], hasMore: false };
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('loads the next page when a retry follows an automatic continuation failure', async () => {
+    const error = new Error('automatic continuation unavailable');
+    const cached = {
+      ...createSession(),
+      title: 'Cached first page',
+      workspaceId: 'wd_1',
+      updatedAt: '2099-01-01T00:00:00.000Z',
+    };
+    const fresh = { ...cached, title: 'Fresh first page' };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      workspaceId: 'wd_1',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual(['Fresh first page']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.loadMoreSessions('wd_1');
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+
+  it('recovers the global session list when a retry follows a second-page failure', async () => {
+    const error = new Error('global continuation unavailable');
+    const cached = { ...createSession(), title: 'Cached first page' };
+    const fresh = {
+      ...cached,
+      title: 'Fresh first page',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    const cachedOlder = { ...older, title: 'Cached older page' };
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [fresh, older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached, cachedOlder]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual([
+      'Fresh first page',
+      'Cached older page',
+    ]);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+  });
+
+  it('preserves cached sessions when every workspace initial page rejects', async () => {
+    const firstError = new Error('workspace A unavailable');
+    const cachedA = {
+      ...createSession(),
+      id: 'sess_a',
+      cwd: '/workspace-a',
+      workspaceId: 'wd_a',
+    };
+    const cachedB = {
+      ...createSession(),
+      id: 'sess_b',
+      cwd: '/workspace-b',
+      workspaceId: 'wd_b',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_a', '/workspace-a', 'A'),
+      workspace('wd_b', '/workspace-b', 'B'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_a') throw firstError;
+        throw new Error('workspace B unavailable');
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cachedA, cachedB]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_a', 'sess_b']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', firstError);
+  });
+
+  it('loads workspace sessions when a retry follows an initial failure', async () => {
+    const cached = {
+      ...createSession(),
+      title: 'Cached',
+      workspaceId: 'wd_1',
+    };
+    const recovered = { ...cached, title: 'Recovered' };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    apiMock.listSessions
+      .mockRejectedValueOnce(new Error('session index unavailable'))
+      .mockResolvedValue({ items: [recovered], hasMore: false });
+    const { state, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual(['Recovered']);
+  });
+
+  it('loads the next workspace page when a retry follows a rejection', async () => {
+    const loaded = { ...createSession(), workspaceId: 'wd_1' };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      workspaceId: 'wd_1',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    const { state, deps, workspaceState } = createSessionLoadRig([loaded]);
+    state.workspaces = [workspace('wd_1', '/workspace', 'Workspace')];
+    state.sessionsHasMoreByWorkspace = { wd_1: true };
+    state.sessionsCursorByWorkspace = { wd_1: 'sess_1' };
+    state.sessionsLoadingMoreByWorkspace = { wd_1: false };
+    apiMock.listSessions
+      .mockRejectedValueOnce(new Error('next page unavailable'))
+      .mockResolvedValue({ items: [older], hasMore: false });
+
+    await workspaceState.loadMoreSessions('wd_1');
+    await workspaceState.loadMoreSessions('wd_1');
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+});
+
 // /meta re-read on every WS (re)connect — keeps version / backend truthful
 // across backend restarts and dev-proxy backend switches.
 describe('useWorkspaceState — refreshServerMeta', () => {
@@ -1254,7 +1523,10 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   function promptDeps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
     return {
       ...createDeps(),
-      modelProvider: { models: ref([]) } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      modelProvider: {
+        models: ref([]),
+        thinkingLevelForModelId: () => undefined,
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
       ...overrides,
     };
   }
@@ -1262,21 +1534,21 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   beforeEach(() => {
     apiMock.submitPrompt.mockReset();
     apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_new' });
+    // Module-level flush failure budget must not leak between tests.
+    forgetLocalTurnState('sess_1');
   });
 
   it('clears a finished prompt from a terminal snapshot so the next send is immediate', async () => {
     const state = createState();
-    const inFlight = new Set(['sess_1']);
-    state.sendingBySession = { sess_1: true };
+    state.inFlightBySession = { sess_1: true };
     const ws = useWorkspaceState(
       state,
-      promptDeps({ inFlightPromptSessions: inFlight, activity: computed(() => 'idle') }),
+      promptDeps({ activity: computed(() => 'idle') }),
     );
 
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, status: 'idle' });
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
 
-    expect(inFlight.has('sess_1')).toBe(false);
-    expect(state.sendingBySession.sess_1).toBe(false);
+    expect(state.inFlightBySession.sess_1).toBe(false);
     expect(state.promptIdBySession.sess_1).toBeUndefined();
 
     await ws.sendPrompt('next');
@@ -1286,33 +1558,248 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
   it('keeps a genuinely running prompt in flight and queues the next send', async () => {
     const state = createState();
-    const inFlight = new Set(['sess_1']);
-    state.sendingBySession = { sess_1: true };
-    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    state.inFlightBySession = { sess_1: true };
+    const ws = useWorkspaceState(state, promptDeps());
 
     ws.handleSessionSnapshot('sess_1', {
       inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
-      status: 'running',
+      busy: true,
     });
     await ws.sendPrompt('next');
 
-    expect(inFlight.has('sess_1')).toBe(true);
-    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(state.inFlightBySession.sess_1).toBe(true);
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
+    expect(state.queuedBySession.sess_1).toEqual([
+      expect.objectContaining({ text: 'next', attachments: undefined }),
+    ]);
+  });
+
+  it('drains one queued prompt when only background work remains', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.promptIdBySession = { sess_1: 'prompt_old' };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: true });
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  // Regression: re-opening a session after a failed drain must NOT fire the
+  // stuck queued prompts (with their stale attachments) out of nowhere.
+  it('does not drain the queue on a bare session-open snapshot with no locally witnessed prompt', () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [{ text: 'stuck queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'stuck queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
+    );
+  });
+
+  it('drains one queued prompt when the finished turn was locally witnessed', () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  it('flushes the stuck queue head before the new prompt when sending while idle', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'stuck queued', attachments: undefined }] };
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    await ws.sendPrompt('next');
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'stuck queued' }] }),
+    );
+    expect(state.queuedBySession.sess_1).toEqual([
+      expect.objectContaining({ text: 'next', attachments: undefined }),
+    ]);
+  });
+
+  it('re-queues a failed flush at the head and drops it after repeated failures', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'first queued', attachments: undefined }] };
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'turn.agent_busy', requestId: 'r' }),
+    );
+    const ws = useWorkspaceState(state, promptDeps());
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // Failures 1-2 (e.g. racing a still-busy daemon after an abort): the
+    // entry goes back at the head and waits for the next flush driver.
+    for (let i = 0; i < 2; i += 1) {
+      state.inFlightBySession = { sess_1: true };
+      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      await settle();
+      expect(state.queuedBySession.sess_1).toEqual([{ text: 'first queued', attachments: undefined }]);
+    }
+
+    // Failure 3: a permanently rejected head is dropped rather than blocking
+    // every later prompt behind it forever.
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await settle();
+    expect(state.queuedBySession.sess_1).toEqual([]);
+    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
+  });
+
+  it('restores the merged queue entries when a steer submit is definitively rejected', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [{ text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
+    };
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
+    );
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerPrompt('live text', [{ fileId: 'f_live', kind: 'image' }]);
+
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
+    );
+  });
+
+  it('does NOT restore merged queue entries when a steer failure is network-ambiguous', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [{ text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
+    };
+    // Response lost mid-flight: the merged prompt may already be queued
+    // server-side, so restoring would duplicate it on a later drain.
+    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerPrompt('live text', [{ fileId: 'f_live', kind: 'image' }]);
+
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('restores the queue when an idle steer falls back to a normal send that fails', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
+    );
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    await ws.steerPrompt('live text');
+
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'queued', attachments: undefined }]);
+  });
+
+  // A background session's drained prompt must not inherit the thinking level
+  // of whichever session is active when the drain happens — the level is
+  // resolved from the prompt's OWN model, never the active-view global.
+  it('drains a queued prompt with the level of its own session model, not the active view', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), id: 'sess_a', model: 'provider/model-a' }];
+    state.activeSessionId = 'sess_b'; // the user has switched to another session
+    state.thinking = 'max'; // the global now tracks that session's max-only model
+    state.inFlightBySession = { sess_a: true };
+    state.queuedBySession = { sess_a: [{ text: 'follow up', attachments: undefined }] };
+    const thinkingLevelForModelId = vi.fn((id: string | undefined) =>
+      id === 'provider/model-a' ? 'low' : undefined,
+    );
+    const ws = useWorkspaceState(
+      state,
+      promptDeps({
+        modelProvider: {
+          models: ref([]),
+          thinkingLevelForModelId,
+        } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      }),
+    );
+
+    ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
+
+    expect(thinkingLevelForModelId).toHaveBeenCalledWith('provider/model-a');
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_a',
+      expect.objectContaining({ model: 'provider/model-a', thinking: 'low' }),
+    );
+  });
+
+  it('falls back to the active level for a drained prompt whose model left the catalog', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), id: 'sess_a', model: 'provider/gone-model' }];
+    state.thinking = 'max';
+    state.inFlightBySession = { sess_a: true };
+    state.queuedBySession = { sess_a: [{ text: 'follow up', attachments: undefined }] };
+    const ws = useWorkspaceState(
+      state,
+      promptDeps({
+        modelProvider: {
+          models: ref([]),
+          thinkingLevelForModelId: () => undefined,
+        } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      }),
+    );
+
+    ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_a',
+      expect.objectContaining({ model: 'provider/gone-model', thinking: 'max' }),
+    );
+  });
+
+  it('clears local prompt state when busy disproves a stale snapshot turn', () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.promptIdBySession = { sess_1: 'prompt_old' };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', {
+      inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
+      busy: false,
+    });
+
+    expect(state.inFlightBySession.sess_1).toBe(false);
+    expect(state.promptIdBySession.sess_1).toBeUndefined();
   });
 
   it('rejects a snapshot when a new local prompt started during the request', async () => {
     const state = createState();
-    const inFlight = new Set<string>();
-    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    const ws = useWorkspaceState(state, promptDeps());
     const atRequest = ws.localTurnStartState('sess_1');
 
     await ws.submitPromptInternal('sess_1', 'fresh prompt');
 
     expect(ws.isLocalTurnSnapshotCurrent('sess_1', atRequest)).toBe(false);
-    expect(inFlight.has('sess_1')).toBe(true);
-    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(state.inFlightBySession.sess_1).toBe(true);
   });
 
   it('rejects a snapshot requested while the local submit is still pending', async () => {
@@ -1337,6 +1824,154 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await pendingSubmit;
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
     expect(retrySnapshot).toHaveBeenCalledOnce();
+  });
+
+  it('maps attachments to the matching content parts on submit (file parts included)', async () => {
+    const ws = useWorkspaceState(createState(), promptDeps());
+
+    await ws.submitPromptInternal('sess_1', 'look at these', [
+      { fileId: 'f_img', kind: 'image' },
+      { fileId: 'f_vid', kind: 'video' },
+      { fileId: 'f_pdf', kind: 'file', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'look at these' },
+          { type: 'image', source: { kind: 'file', fileId: 'f_img' } },
+          { type: 'video', source: { kind: 'file', fileId: 'f_vid' } },
+          { type: 'file', fileId: 'f_pdf', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
+        ],
+      }),
+    );
+  });
+
+  it('normalizes an empty attachment MIME to application/octet-stream on submit', async () => {
+    const ws = useWorkspaceState(createState(), promptDeps());
+
+    await ws.submitPromptInternal('sess_1', 'look at this', [
+      { fileId: 'f_mk', kind: 'file', name: 'Makefile', mediaType: '', size: 10 },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'file', fileId: 'f_mk', name: 'Makefile', mediaType: 'application/octet-stream', size: 10 },
+        ],
+      }),
+    );
+  });
+
+  it('advances to the next queued entry after dropping an exhausted head', async () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'poisoned head', attachments: undefined, id: 'id-bad' },
+        { text: 'good next', attachments: undefined, id: 'id-good' },
+      ],
+    };
+    apiMock.submitPrompt
+      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
+      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
+      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
+      .mockResolvedValueOnce({ promptId: 'prompt_good' });
+    const ws = useWorkspaceState(state, promptDeps());
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    for (let i = 0; i < 3; i += 1) {
+      state.inFlightBySession = { sess_1: true };
+      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      await settle();
+    }
+
+    // The exhausted head is gone AND the next entry was submitted right
+    // away — entries behind a dropped head must not wait for another send.
+    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(4);
+    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'good next' }] }),
+    );
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('drops (never duplicates) a flush whose failure was network-ambiguous', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'maybe sent', attachments: undefined, id: 'id-x' }] };
+    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
+    const ws = useWorkspaceState(state, promptDeps());
+
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // The response was lost mid-flight — the daemon may already hold the
+    // prompt. Re-queueing could submit it twice, so the entry is dropped
+    // instead (the failure was surfaced via pushOperationFailure).
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('resets the flush failure budget when the queue head changes', async () => {
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'turn.agent_busy', requestId: 'r' }),
+    );
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first', attachments: undefined, id: 'id-first' },
+        { text: 'second', attachments: undefined, id: 'id-second' },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const flushOnce = async () => {
+      state.inFlightBySession = { sess_1: true };
+      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      await settle();
+    };
+
+    // 'first' fails once, then the user discards it.
+    await flushOnce();
+    ws.unqueue(0);
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
+
+    // 'second' gets its OWN budget: two failures leave it queued...
+    await flushOnce();
+    await flushOnce();
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
+    // ...and only the third consecutive failure drops it.
+    await flushOnce();
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('does not resurrect the queue when a submit fails after the session was forgotten', async () => {
+    let rejectSubmit!: (err: Error) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string }>((_resolve, reject) => {
+          rejectSubmit = reject;
+        }),
+    );
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [{ text: 'doomed', attachments: undefined, id: 'id-doomed' }],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+
+    // Facade forget path (e.g. archive) while the submit is pending. The
+    // daemon definitively rejects afterwards — even then, no resurrection.
+    state.sessions = [];
+    delete state.queuedBySession.sess_1;
+    rejectSubmit(new DaemonApiError({ code: 50000, msg: 'network down', requestId: 'r' }));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(state.queuedBySession.sess_1).toBeUndefined();
   });
 });
 
@@ -1388,5 +2023,39 @@ describe('useWorkspaceState — loadAllSessions usage preservation', () => {
 
     const next = setSessions.mock.calls[0][0];
     expect(next[0].usage.contextTokens).toBe(0);
+  });
+});
+
+describe('useWorkspaceState — upsertWorkspacePreserveOrder hidden roots', () => {
+  beforeEach(() => {
+    installStorage(createMemoryStorage());
+  });
+
+  afterEach(() => {
+    installStorage(createMemoryStorage());
+  });
+
+  it('clears a folded hidden entry when the same directory is re-added with a different spelling', () => {
+    // mergeWorkspaces hides by folded key, so hiding `C:\Foo` then re-adding
+    // `c:\foo` must un-hide too — otherwise the add succeeds but the group
+    // never reappears.
+    const state = createState();
+    state.hiddenWorkspaceRoots = ['C:\\Users\\Foo\\Proj'];
+    const ws = useWorkspaceState(state, createDeps());
+
+    ws.upsertWorkspacePreserveOrder(workspace('wd_x', 'c:\\users\\foo\\proj', 'proj'));
+
+    expect(state.hiddenWorkspaceRoots).toEqual([]);
+    expect(state.workspaces[0]?.root).toBe('c:\\users\\foo\\proj');
+  });
+
+  it('keeps hidden entries for case-distinct POSIX roots', () => {
+    const state = createState();
+    state.hiddenWorkspaceRoots = ['/home/Foo'];
+    const ws = useWorkspaceState(state, createDeps());
+
+    ws.upsertWorkspacePreserveOrder(workspace('wd_y', '/home/foo', 'foo'));
+
+    expect(state.hiddenWorkspaceRoots).toEqual(['/home/Foo']);
   });
 });

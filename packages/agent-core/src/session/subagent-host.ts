@@ -37,18 +37,18 @@ const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
 
 /**
  * Resolve the effective subagent per-task timeout. Precedence:
- * `KIMI_SUBAGENT_TIMEOUT_MS` (positive integer ms) → `configMs` →
- * `DEFAULT_SUBAGENT_TIMEOUT_MS` (2 hours). Set a large value to effectively
- * disable the cap. The value feeds the background-task manager's per-task
- * timeout, so it governs foreground and background subagents (and AgentSwarm).
+ * `KIMI_SUBAGENT_TIMEOUT_MS` (integer ms) → `configMs` →
+ * `DEFAULT_SUBAGENT_TIMEOUT_MS` (2 hours). `0` means no timeout: the value
+ * feeds the background-task manager's per-task timeout (where `0` arms no
+ * timer), so it governs foreground and background subagents (and AgentSwarm).
  */
 export function resolveSubagentTimeoutMs(configMs?: number): number {
   const raw = process.env[SUBAGENT_TIMEOUT_ENV];
   if (raw !== undefined && raw.trim().length > 0) {
     const parsed = Number(raw);
-    if (Number.isInteger(parsed) && parsed >= 1) return parsed;
+    if (Number.isInteger(parsed) && parsed >= 0) return parsed;
   }
-  if (configMs !== undefined && Number.isInteger(configMs) && configMs >= 1) {
+  if (configMs !== undefined && Number.isInteger(configMs) && configMs >= 0) {
     return configMs;
   }
   return DEFAULT_SUBAGENT_TIMEOUT_MS;
@@ -369,6 +369,7 @@ export class SessionSubagentHost {
     options: RunSubagentOptions,
   ): Promise<SubagentCompletion> {
     await runChildTurnToCompletion(child, options.signal);
+    await this.drainChildBackgroundTasks(child, options.signal);
 
     // A subagent that returns an overly terse summary leaves the parent
     // agent under-informed. Give it a bounded number of chances to expand
@@ -414,6 +415,49 @@ export class SessionSubagentHost {
     );
     child.useProfile(profile, context, this.session.options.kimiHomeDir);
     child.tools.inheritUserTools(parent.tools);
+  }
+
+  /**
+   * Hold the run open until the child agent's background tasks (background
+   * Bash, nested background agents) settle — the print-mode (`kimi -p`)
+   * drain semantics applied to subagent completion. Drained tasks get their
+   * terminal notifications suppressed: without that, a task outliving the
+   * child's final turn steers a fresh turn on the finished subagent
+   * (`steer` degrades to `launch`), which runs unobserved and whose output
+   * never reaches the parent. Bounded by the run's signal — the Agent
+   * tool's per-run timeout / user-cancel envelope covers the drain too.
+   */
+  private async drainChildBackgroundTasks(child: Agent, signal: AbortSignal): Promise<void> {
+    for (;;) {
+      signal.throwIfAborted();
+      await this.suppressChildTaskNotifications(child);
+      await child.background.waitForActiveTasks(() => true, { signal });
+      // Suppress again after the wait: notification delivery re-checks
+      // suppression after its async output snapshot, so this pass still
+      // blocks notifications for tasks that settled during the wait.
+      await this.suppressChildTaskNotifications(child);
+      // A terminal effect that slipped past the suppression race may have
+      // steered a follow-up turn onto the child; let it finish (it can fan
+      // out new tasks) before declaring the child drained.
+      if (child.turn.hasActiveTurn) {
+        await runChildTurnToCompletion(child, signal);
+        continue;
+      }
+      if (child.background.list(true).length === 0) return;
+    }
+  }
+
+  /**
+   * Suppress terminal notifications for every child background task —
+   * including already-settled ones whose notification may still be in
+   * flight. `list(false)` is required: the active-only list drops a task
+   * the moment it terminates, which is exactly when an unsuppressed
+   * notification can still steer an orphan turn onto the finished child.
+   */
+  private async suppressChildTaskNotifications(child: Agent): Promise<void> {
+    for (const task of child.background.list(false)) {
+      await child.background.suppressTerminalNotification(task.taskId);
+    }
   }
 
   private async triggerSubagentStart(

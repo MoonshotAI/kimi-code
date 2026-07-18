@@ -128,6 +128,7 @@ export interface AgentLoopStatus {
   readonly activeTurnId?: number;
   readonly pendingTurnIds: readonly number[];
   readonly hasPendingRequests: boolean;
+  readonly activeTraceId?: string;
 }
 
 export interface StepEnqueueOptions {
@@ -144,6 +145,10 @@ export interface IAgentLoopService {
   status(): AgentLoopStatus;
 
   cancel(turnId?: number, reason?: unknown): boolean;
+
+  /** Resolves once no turn is active and none are queued — the disposal drain
+   *  awaited by `agentLifecycle.remove`. */
+  settled(): Promise<void>;
 
   hasPendingRequests(): boolean;
 

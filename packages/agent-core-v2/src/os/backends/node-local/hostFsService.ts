@@ -5,7 +5,18 @@
  * Bound at App scope.
  */
 
-import { appendFile, lstat, open, readFile, readdir, mkdir, rm, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  lstat,
+  open,
+  readFile,
+  readdir,
+  mkdir,
+  realpath as nodeRealpath,
+  rm,
+  stat as nodeStat,
+  writeFile,
+} from 'node:fs/promises';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -177,9 +188,9 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async stat(path: string): Promise<HostFileStat> {
+  async stat(path: string, options?: { followSymlinks?: boolean }): Promise<HostFileStat> {
     try {
-      const s = await lstat(path);
+      const s = options?.followSymlinks === true ? await nodeStat(path) : await lstat(path);
       return {
         isFile: s.isFile(),
         isDirectory: s.isDirectory(),
@@ -220,6 +231,14 @@ export class HostFileSystem implements IHostFileSystem {
       await rm(path, { recursive: true, force: true });
     } catch (error) {
       throw toHostFsError(error, { path, op: 'remove' });
+    }
+  }
+
+  async realpath(path: string): Promise<string> {
+    try {
+      return await nodeRealpath(path);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'realpath' });
     }
   }
 }

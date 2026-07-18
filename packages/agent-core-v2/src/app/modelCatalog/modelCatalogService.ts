@@ -23,7 +23,7 @@ import type {
   ProviderCatalogItem,
   RefreshProviderModelsResponse,
   SetDefaultModelResponse,
-} from '@moonshot-ai/protocol';
+} from './modelCatalog';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -37,6 +37,7 @@ import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
+  type ProviderType,
   PROVIDERS_SECTION,
 } from '#/app/provider/provider';
 
@@ -67,7 +68,9 @@ export class ModelCatalogService implements IModelCatalogService {
 
   async listModels(): Promise<readonly ModelCatalogItem[]> {
     const models = this.modelService.list();
-    return Object.entries(models).map(([modelId, alias]) => toProtocolModel(modelId, alias));
+    return Object.entries(models).map(([modelId, alias]) =>
+      toProtocolModel(modelId, alias, this.providerTypeOf(alias)),
+    );
   }
 
   async listProviders(): Promise<readonly ProviderCatalogItem[]> {
@@ -100,8 +103,14 @@ export class ModelCatalogService implements IModelCatalogService {
     const updatedAlias = this.modelService.get(modelId) ?? alias;
     return {
       default_model: modelId,
-      model: toProtocolModel(modelId, updatedAlias),
+      model: toProtocolModel(modelId, updatedAlias, this.providerTypeOf(updatedAlias)),
     };
+  }
+
+  private providerTypeOf(alias: ModelAlias): ProviderType | undefined {
+    const providerId =
+      alias.providerId ?? alias.provider ?? this.config.get<string>('defaultProvider');
+    return this.providerService.get(providerId ?? '')?.type ?? alias.protocol;
   }
 
   refreshProviderModels(
@@ -192,11 +201,18 @@ export class ModelCatalogService implements IModelCatalogService {
     if (patch.models !== undefined) {
       await this.config.replace(MODELS_SECTION, patch.models);
     }
-    if (patch.defaultModel !== undefined) {
-      await this.config.set(DEFAULT_MODEL_SECTION, patch.defaultModel);
+    // The refresh orchestrator always sends all four keys, so key presence is
+    // the write intent and an explicit `undefined` means CLEAR, not "leave
+    // alone". `set()` cannot express that — its deepMerge resolves an
+    // undefined patch back to the base value — so these go through `replace`,
+    // which deletes the section on undefined. Otherwise a default model (and
+    // its thinking setting) whose alias the upstream dropped would dangle in
+    // the user config forever.
+    if ('defaultModel' in patch) {
+      await this.config.replace(DEFAULT_MODEL_SECTION, patch.defaultModel);
     }
-    if (patch.thinking !== undefined) {
-      await this.config.set(THINKING_SECTION, patch.thinking);
+    if ('thinking' in patch) {
+      await this.config.replace(THINKING_SECTION, patch.thinking);
     }
     return this.readUserConfigShape();
   }

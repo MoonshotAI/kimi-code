@@ -4,7 +4,7 @@ import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { Model } from '#/app/model/modelInstance';
 
 import { createDecorator } from "#/_base/di/instantiation";
-import type { ErrorCode } from '#/_base/errors/codes';
+import type { ErrorCode } from '#/errors';
 import { Error2 } from '#/_base/errors/errors';
 import type { ToolSource } from '#/tool/toolContract';
 

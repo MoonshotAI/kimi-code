@@ -32,12 +32,19 @@ import {
   type ExecutableToolResult,
 } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import {
-  MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
-  type McpOAuthAuthorizationUrlUpdateData,
-} from '@moonshot-ai/protocol';
 import { AlreadyAuthorizedError, type McpOAuthService } from '#/agent/mcp/oauth/service';
 import { qualifyMcpToolName } from '#/agent/mcp/tool-naming';
+
+/**
+ * `ToolUpdate.customKind` emitted by the MCP auth tool when the OAuth
+ * authorization URL is ready; clients render it as an actionable login link.
+ */
+export const MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE = 'mcp.oauth.authorization_url';
+
+export interface McpOAuthAuthorizationUrlUpdateData {
+  readonly serverName: string;
+  readonly authorizationUrl: string;
+}
 
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 

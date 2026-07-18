@@ -259,6 +259,7 @@ describe('AskUserQuestionTool', () => {
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
+      trace_id: undefined,
     });
   });
 
@@ -314,6 +315,25 @@ describe('AskUserQuestionTool', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
       method: 'number_key',
+      trace_id: undefined,
+    });
+  });
+
+  it('merges the request trace id into question telemetry', async () => {
+    const { tool, telemetryTrack } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_question',
+      args: input(),
+      signal,
+      trace: { traceId: 'trace-q-1' },
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
+      answered: 1,
+      trace_id: 'trace-q-1',
     });
   });
 
@@ -332,7 +352,7 @@ describe('AskUserQuestionTool', () => {
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toContain('dismissed');
     expect(result.output).toContain('answers');
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed');
+    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
   });
 
   it('resolves question service error responses as dismissed answers', async () => {
@@ -442,7 +462,6 @@ describe('AskUserQuestionTool', () => {
       expect(result.output).toContain('task_id: q_test_task_id');
       expect(result.output).toContain('automatic_notification: true');
       expect(result.output).toContain('/tasks');
-      expect(result.message).toBe('Started q_test_task_id');
       expect(registerTask).toHaveBeenCalledOnce();
       expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
       expect(getTask).toHaveBeenCalledWith('q_test_task_id');

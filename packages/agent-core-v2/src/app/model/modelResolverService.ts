@@ -84,9 +84,14 @@ export class ModelResolverService extends Disposable implements IModelResolver {
         `Model "${id}" is not configured in config.toml.`,
       );
     }
-    const model = effectiveModelConfig(configuredModel);
-
-    const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } = this.resolveProviderContext(id, model);
+    const routingModel = effectiveModelConfig(configuredModel);
+    const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } =
+      this.resolveProviderContext(id, routingModel);
+    const protocol = this.resolveProtocol(id, routingModel, providerConfig);
+    const model = effectiveModelConfig(
+      configuredModel,
+      providerConfig?.type ?? configuredModel.protocol,
+    );
     const auth = resolveModelAuthMaterial({
       modelId: id,
       model,
@@ -96,7 +101,6 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     });
     const authProvider = this.buildAuthProvider(providerName, auth);
 
-    const protocol = this.resolveProtocol(id, model, providerConfig);
     const providerType = providerConfig?.type ?? protocol;
     const resolvedBaseUrl =
       model.protocol === 'anthropic' && rawBaseUrl !== undefined
@@ -160,14 +164,16 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     const effort = this.resolveDefaultThinking(
       model,
       alwaysThinking,
+      protocol === 'kimi',
       providerType === 'kimi',
     );
-    return effort === 'off' ? impl : impl.withThinking(effort);
+    return effort === 'off' && protocol !== 'anthropic' ? impl : impl.withThinking(effort);
   }
 
   private resolveDefaultThinking(
     model: ModelConfig,
     alwaysThinking: boolean,
+    kimiProtocol: boolean,
     kimiProvider: boolean,
   ): ThinkingEffort {
     const thinking = this.config.get<ThinkingSection | undefined>('thinking');
@@ -178,7 +184,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
         effort: thinking?.effort,
       },
       { ...model, alwaysThinking },
-      kimiProvider,
+      kimiProtocol,
     );
     return (
       resolveKimiThinkingEffortOverride(thinking?.forcedEffort, effort, kimiProvider) ?? effort
@@ -336,6 +342,7 @@ function buildProtocolProviderOptions(
   switch (protocol) {
     case 'anthropic':
       if (model.maxOutputSize !== undefined) options.defaultMaxTokens = model.maxOutputSize;
+      if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
       if (provider?.type === 'kimi') options.kimiThinking = true;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;

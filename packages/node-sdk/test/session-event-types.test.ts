@@ -70,6 +70,7 @@ describe('Event public types', () => {
         case 'session.meta.updated':
         case 'event.session.created':
         case 'event.session.status_changed':
+        case 'event.session.work_changed':
         case 'event.workspace.created':
         case 'event.workspace.updated':
         case 'event.workspace.deleted':

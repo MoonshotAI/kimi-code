@@ -596,6 +596,7 @@ export class StreamingUIController {
       turnId: this._currentTurnId,
       renderMode: 'markdown' as const,
       content: '',
+      modelText: true,
     };
     const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
@@ -622,7 +623,11 @@ export class StreamingUIController {
   }
 
   onThinkingUpdate(fullText: string): void {
-    if (fullText.length === 0 && this._activeThinkingComponent === undefined) return;
+    // Skip thinking that carries nothing visible — empty (e.g. encrypted
+    // reasoning) or whitespace-only (a model occasionally streams a single
+    // space as thinking). Session replay funnels through here as well, so a
+    // stored whitespace-only think part never becomes a bare bullet line.
+    if (fullText.trim().length === 0 && this._activeThinkingComponent === undefined) return;
     const { state } = this.host;
     if (this._activeThinkingComponent === undefined) {
       this._pendingAgentGroup = null;

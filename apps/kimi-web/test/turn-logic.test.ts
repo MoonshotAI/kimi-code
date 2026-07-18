@@ -212,9 +212,175 @@ describe('messagesToTurns', () => {
 
     expect(turns).toHaveLength(1);
     expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
-    expect(turns[0]?.images).toEqual([
-      { url: `/api/v1/files/${fileId}`, kind: 'video', alt: fileId, fileId },
+    expect(turns[0]?.attachments).toEqual([
+      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
     ]);
+  });
+
+  it('renders a non-media file part as a file attachment with name and size', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'check these' },
+          { type: 'file', fileId: 'f_yaml', name: 'api-spec.yaml', mediaType: 'application/yaml', size: 18432 },
+          { type: 'file', fileId: 'f_pdf', name: '设计文档.pdf', mediaType: 'application/pdf', size: 2516582 },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.attachments).toEqual([
+      {
+        kind: 'file',
+        url: '/api/v1/files/f_yaml',
+        fileId: 'f_yaml',
+        name: 'api-spec.yaml',
+        mediaType: 'application/yaml',
+        size: 18432,
+      },
+      {
+        kind: 'file',
+        url: '/api/v1/files/f_pdf',
+        fileId: 'f_pdf',
+        name: '设计文档.pdf',
+        mediaType: 'application/pdf',
+        size: 2516582,
+      },
+    ]);
+  });
+
+  it('renders an extensionless file part with no mediaType as a file attachment', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'file', fileId: 'f_make', name: 'Makefile', mediaType: '', size: 512 },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { kind: 'file', url: '/api/v1/files/f_make', fileId: 'f_make', name: 'Makefile', mediaType: undefined, size: 512 },
+    ]);
+  });
+
+  it('recovers a file attachment from the server’s "Attached file" notice, not raw text', () => {
+    // After a resync the file part is gone from history — the kap-server prompt
+    // route replaced it with this notice. The chip must be rebuilt from the
+    // notice (fileId lives in the materialized basename) instead of dumping the
+    // absolute server path into the bubble.
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const notice =
+      `Attached file "report.pdf" (application/pdf, 24 bytes): ` +
+      `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-report.pdf — open it with the Read tool`;
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'summarize this' },
+          { type: 'text', text: notice },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ role: 'user', text: 'summarize this' });
+    expect(turns[0]?.attachments).toEqual([
+      {
+        kind: 'file',
+        url: `/api/v1/files/${fileId}`,
+        fileId,
+        name: 'report.pdf',
+        mediaType: 'application/pdf',
+        size: 24,
+      },
+    ]);
+  });
+
+  it('recovers a non-clickable chip from an inline-base64 attachment notice (no fileId)', () => {
+    // Inline base64 uploads are materialized under a content hash, not a file
+    // id — the chip keeps name/size but has no bytes to open.
+    const notice =
+      'Attached file "image.avif" (image/avif, 100 bytes): ' +
+      '/home/u/.kimi-code/sessions/s_1/attachments/9f86d081884c7d659a2feaa0c55ad015-image.avif — open it with the Read tool';
+    const turns = messagesToTurns(
+      [message('u1', 'user', [{ type: 'text', text: notice }])],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.text).toBe('');
+    expect(turns[0]?.attachments).toEqual([
+      { kind: 'file', url: '', fileId: undefined, name: 'image.avif', mediaType: 'image/avif', size: 100 },
+    ]);
+  });
+
+  it('recovers the full UUID file id from a v2 "Attached file" notice', () => {
+    // v2 file ids are `f_`<randomUUID> and contain hyphens themselves — a naive
+    // first-hyphen split would truncate the id and lose the clickable URL.
+    const fileId = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const notice =
+      `Attached file "api-spec-v2.yaml" (application/yaml, 18 bytes): ` +
+      `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-api-spec-v2.yaml — open it with the Read tool`;
+    const turns = messagesToTurns(
+      [message('u1', 'user', [{ type: 'text', text: notice }])],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      {
+        kind: 'file',
+        url: `/api/v1/files/${fileId}`,
+        fileId,
+        name: 'api-spec-v2.yaml',
+        mediaType: 'application/yaml',
+        size: 18,
+      },
+    ]);
+  });
+
+  it('renders a `<video path>` tag with a v2 UUID file id as a video attachment', () => {
+    const fileId = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          {
+            type: 'text',
+            text: `<video path="/Users/me/.kimi-code/cache/${fileId}.mp4"></video>`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
+    ]);
+  });
+
+  it('keeps lookalike text that is not an attachment notice as text', () => {
+    const text = 'Attached file "a.pdf" (application/pdf, 3 bytes): /tmp/x - open it with the Read tool';
+    const turns = messagesToTurns(
+      [message('u1', 'user', [{ type: 'text', text }])],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]).toMatchObject({ role: 'user', text });
+    expect(turns[0]?.attachments).toBeUndefined();
   });
 
   it('keeps the video tag as text when no file resolver is provided', () => {
@@ -228,7 +394,7 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]).toMatchObject({ role: 'user', text: tag });
-    expect(turns[0]?.images).toBeUndefined();
+    expect(turns[0]?.attachments).toBeUndefined();
   });
 
   it('leaves non-file-store media paths as text instead of fabricating a url', () => {
@@ -244,7 +410,7 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]).toMatchObject({ role: 'user', text: tag });
-    expect(turns[0]?.images).toBeUndefined();
+    expect(turns[0]?.attachments).toBeUndefined();
   });
 
   it('strips the hidden image-compression caption from a user bubble', () => {

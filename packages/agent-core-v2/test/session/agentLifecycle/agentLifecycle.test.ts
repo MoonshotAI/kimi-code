@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
@@ -26,13 +26,12 @@ import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
-import '#/activity/agentActivityService';
 import '#/agent/mcp/mcpService';
 import '#/wire/wireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/agent/toolDedupe/toolDedupeService';
-import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
+import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import '#/app/event/eventBusService';
@@ -47,14 +46,13 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { _clearToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-
-import { stubSessionActivityKernel } from '../../activity/stubs';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -144,6 +142,10 @@ describe('AgentLifecycleService', () => {
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
+  let loopActiveTurnId: number | undefined;
+  let loopPendingTurnIds: number[];
+  let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
+  let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let beforeExecuteHookIds: string[];
   let didExecuteHookIds: string[];
 
@@ -152,7 +154,6 @@ describe('AgentLifecycleService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAppendLogStore, recordingAppendLog().store);
-    ix.stub(ISessionActivityKernel, stubSessionActivityKernel());
     stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();
@@ -242,6 +243,21 @@ describe('AgentLifecycleService', () => {
         },
       },
     } as unknown as IAgentToolExecutorService);
+    loopActiveTurnId = undefined;
+    loopPendingTurnIds = [];
+    loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
+      if (turnId === undefined) {
+        loopActiveTurnId = undefined;
+      } else {
+        loopPendingTurnIds = loopPendingTurnIds.filter((id) => id !== turnId);
+      }
+      return true;
+    });
+    loopSettled = vi.fn<IAgentLoopService['settled']>(async () => {
+      if (loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0) {
+        throw new Error('Agent loop did not settle');
+      }
+    });
     ix.stub(IAgentLoopService, {
       _serviceBrand: undefined,
       hooks: {
@@ -249,6 +265,14 @@ describe('AgentLifecycleService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
+      status: () => ({
+        state: loopActiveTurnId === undefined ? 'idle' : 'running',
+        activeTurnId: loopActiveTurnId,
+        pendingTurnIds: loopPendingTurnIds,
+        hasPendingRequests: loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0,
+      }),
+      cancel: loopCancel,
+      settled: loopSettled,
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -267,6 +291,10 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       stopAllOnExit,
     } as unknown as IAgentTaskService);
+    ix.stub(IAgentFullCompactionService, {
+      _serviceBrand: undefined,
+      compacting: null,
+    } as unknown as IAgentFullCompactionService);
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
@@ -291,6 +319,58 @@ describe('AgentLifecycleService', () => {
     await svc.remove('main');
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
+  });
+
+  it('remove cancels queued turns before waiting for the active turn to settle', async () => {
+    loopActiveTurnId = 1;
+    loopPendingTurnIds = [2, 3];
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    await svc.remove('main');
+
+    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([2, 3, undefined]);
+    expect(loopSettled).toHaveBeenCalledOnce();
+  });
+
+  it('remove waits for an active full compaction to reject after aborting it', async () => {
+    const abortController = new AbortController();
+    let rejectCompaction!: (reason: unknown) => void;
+    const promise = new Promise<never>((_resolve, reject) => {
+      rejectCompaction = reject;
+    });
+    const aborted = new Promise<void>((resolve) => {
+      abortController.signal.addEventListener(
+        'abort',
+        () => {
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    ix.stub(IAgentFullCompactionService, {
+      _serviceBrand: undefined,
+      compacting: {
+        abortController,
+        promise,
+        trigger: 'manual',
+        tokenCount: 100,
+      },
+    } as unknown as IAgentFullCompactionService);
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    let removed = false;
+    const removal = svc.remove('main').then(() => {
+      removed = true;
+    });
+    await aborted;
+    await Promise.resolve();
+    expect(removed).toBe(false);
+
+    rejectCompaction(abortController.signal.reason);
+    await removal;
+    expect(removed).toBe(true);
   });
 
   it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {
@@ -499,7 +579,7 @@ describe('AgentLifecycleService', () => {
     expect(connectAll).toHaveBeenCalledTimes(1);
   });
 
-  it('exposes the in-flight handle and yields it idle after bootstrap', async () => {
+  it('exposes the in-flight handle and joins it after bootstrap', async () => {
     let releaseRegister!: () => void;
     let registerStarted!: () => void;
     const registerCalled = new Promise<void>((resolve) => {
@@ -516,7 +596,6 @@ describe('AgentLifecycleService', () => {
 
     const early = svc.get('main');
     expect(early).toBeDefined();
-    expect(early!.accessor.get(IAgentActivityService).isIdle()).toBe(false);
 
     const joined = svc.create({ agentId: 'main' });
     // doCreate awaits the wire-log seal before registerAgent, so the mock is
@@ -526,7 +605,6 @@ describe('AgentLifecycleService', () => {
     const handle = await joined;
     await create;
     expect(handle).toBe(early);
-    expect(handle!.accessor.get(IAgentActivityService).isIdle()).toBe(true);
   });
 
   it('ensureMainAgent returns one handle when calls start concurrently', async () => {

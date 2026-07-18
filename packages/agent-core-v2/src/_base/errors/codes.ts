@@ -6,12 +6,11 @@
  * codes, the registry (`registerErrorDomain` / `errorInfo` / `isErrorCode`) the
  * serializer reads, and the domain-independent core codes (`internal`,
  * `not_implemented`). Domain-owned codes live next to their owning domain and
- * are aggregated into the public `ErrorCodes` const by `#/errors`.
+ * are aggregated into the public `ErrorCodes` const by `#/errors`, which also
+ * derives the `ErrorCode` union type from that aggregate — so each domain's
+ * `errors.ts` is the single source of truth and there is no central
+ * hand-maintained list to keep in sync.
  */
-
-import type { KimiErrorCode } from '@moonshot-ai/protocol';
-
-export type ErrorCode = KimiErrorCode;
 
 export interface ErrorInfo {
   readonly title: string;
@@ -21,18 +20,25 @@ export interface ErrorInfo {
 }
 
 export interface ErrorDomain {
-  readonly codes: { readonly [name: string]: ErrorCode };
-  readonly retryable?: ReadonlyArray<ErrorCode>;
+  readonly codes: { readonly [name: string]: string };
+  readonly retryable?: ReadonlyArray<string>;
   readonly info?: { readonly [code: string]: ErrorInfo };
 }
 
-const registeredCodes = new Set<ErrorCode>();
-const retryableCodes = new Set<ErrorCode>();
+// Maps each registered code to the `codes` object that contributed it: a
+// domain re-registering itself stays idempotent, while two different domains
+// claiming the same code fail loudly at registration time.
+const registeredCodes = new Map<string, object>();
+const retryableCodes = new Set<string>();
 const infoOverrides: { [code: string]: ErrorInfo } = {};
 
 export function registerErrorDomain(domain: ErrorDomain): void {
   for (const code of Object.values(domain.codes)) {
-    registeredCodes.add(code);
+    const owner = registeredCodes.get(code);
+    if (owner !== undefined && owner !== domain.codes) {
+      throw new Error(`error code '${code}' is registered by two different domains`);
+    }
+    registeredCodes.set(code, domain.codes);
   }
   for (const code of domain.retryable ?? []) {
     retryableCodes.add(code);
@@ -42,11 +48,11 @@ export function registerErrorDomain(domain: ErrorDomain): void {
   }
 }
 
-export function isErrorCode(code: unknown): code is ErrorCode {
-  return typeof code === 'string' && registeredCodes.has(code as ErrorCode);
+export function isErrorCode(code: unknown): code is string {
+  return typeof code === 'string' && registeredCodes.has(code);
 }
 
-export function errorInfo(code: ErrorCode): ErrorInfo {
+export function errorInfo(code: string): ErrorInfo {
   const override = infoOverrides[code];
   if (override !== undefined) return override;
   return {
@@ -60,6 +66,7 @@ export const CoreErrors = {
   codes: {
     INTERNAL: 'internal',
     NOT_IMPLEMENTED: 'not_implemented',
+    VALIDATION_FAILED: 'validation.failed',
   },
   info: {
     internal: {

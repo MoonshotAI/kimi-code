@@ -69,6 +69,7 @@ type ExportTraceEvent = (typeof EXPORT_TRACE_EVENTS)[number];
 export interface ExportTraceMetadata {
   sessionId?: string;
   status?: string;
+  busy?: boolean;
   /** Client operation name (e.g. 'archiveSession') for operation:failed. */
   operation?: string;
   seq?: number;

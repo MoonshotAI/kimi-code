@@ -16,6 +16,7 @@ interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];
   readonly finishReason?: FinishReason | null | undefined;
   readonly rawFinishReason?: string | null | undefined;
+  readonly traceId?: string | null | undefined;
 }
 
 export function createScriptedGenerate() {
@@ -31,11 +32,13 @@ export function createScriptedGenerate() {
     readonly parts?: readonly StreamedMessagePart[] | undefined;
     readonly finishReason?: FinishReason | null | undefined;
     readonly rawFinishReason?: string | null | undefined;
+    readonly traceId?: string | null | undefined;
   }) {
     responses.push({
       parts: structuredClone(input.parts ?? []),
       ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
       ...(input.rawFinishReason !== undefined ? { rawFinishReason: input.rawFinishReason } : {}),
+      ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
     });
   }
 
@@ -47,6 +50,7 @@ export function createScriptedGenerate() {
     if (response === undefined) {
       throw new Error(`Unexpected generate call #${String(calls.length + 1)}`);
     }
+    options?.onTraceId?.(response.traceId ?? null);
 
     const input = normalizeGenerateInput({
       systemPrompt,
@@ -86,6 +90,7 @@ export function createScriptedGenerate() {
       },
       finishReason,
       rawFinishReason: response.rawFinishReason ?? defaultRawFinishReason(finishReason),
+      traceId: response.traceId ?? null,
     };
   };
 

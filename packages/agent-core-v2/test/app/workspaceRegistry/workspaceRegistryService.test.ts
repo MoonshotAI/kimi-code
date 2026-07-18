@@ -11,7 +11,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
+import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -59,12 +59,12 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(): IWorkspaceRegistry {
+  function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceRegistry {
     const fileStorage = new FileStorageService(homeDir);
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
-      stubPair(IHostFileSystem, new HostFileSystem()),
+      stubPair(IHostFileSystem, hostFs),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceRegistry);
@@ -74,6 +74,17 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     currentHost?.dispose();
     currentHost = undefined;
     return build();
+  }
+
+  /**
+   * hostFs stub that stats every path as an existing directory, so tests can
+   * exercise Windows-shaped roots on Linux CI — real-fs stat of `C:\...` is
+   * ENOENT there, and real fs case behavior must never be relied on.
+   */
+  function allDirsHostFs(): IHostFileSystem {
+    return {
+      stat: () => Promise.resolve({ isFile: false, isDirectory: true, size: 0 }),
+    } as unknown as IHostFileSystem;
   }
 
   async function seedSessionIndex(entries: SessionIndexLine[]): Promise<void> {
@@ -382,6 +393,16 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     expect(await build().list()).toEqual([]);
   });
 
+  it('accepts createOrTouch when the root is given through a symlink', async () => {
+    const real = join(homeDir, 'real-root');
+    await fsp.mkdir(real, { recursive: true });
+    const link = join(homeDir, 'link-root');
+    await fsp.symlink(real, link, 'dir');
+    const ws = await build().createOrTouch(link);
+    expect(ws.root).toBe(link);
+    expect(ws.id).toBe(encodeWorkDirKey(link));
+  });
+
   it('rejects createOrTouch when a parent of the root is not a directory', async () => {
     const file = join(homeDir, 'a-file.txt');
     await fsp.writeFile(file, 'hi', 'utf8');
@@ -409,5 +430,236 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     const matches = list.filter((w) => w.root === root);
     expect(matches).toHaveLength(1);
     expect(matches[0]?.id).toBe(canonicalId);
+  });
+
+  it('folds Windows casing/slash variants onto the first-registered entry', async () => {
+    const registry = build(allDirsHostFs());
+
+    const first = await registry.createOrTouch('C:\\Users\\Foo\\Proj');
+    const cased = await registry.createOrTouch('c:\\Users\\Foo\\Proj');
+    const slashed = await registry.createOrTouch('C:/Users/Foo/Proj/');
+
+    expect(cased.id).toBe(first.id);
+    expect(slashed.id).toBe(first.id);
+    // Folding never rewrites the stored root/name — the first spelling stays;
+    // only lastOpenedAt advances.
+    expect(cased.root).toBe('C:\\Users\\Foo\\Proj');
+    expect(cased.name).toBe(first.name);
+    expect(cased.lastOpenedAt).toBeGreaterThanOrEqual(first.lastOpenedAt);
+    expect(await registry.list()).toHaveLength(1);
+
+    // ...and the fold persists: a fresh instance over the same homeDir still
+    // lists one entry under the first-seen spelling.
+    const reloaded = await restart().list();
+    expect(reloaded).toHaveLength(1);
+    expect(reloaded[0]?.root).toBe('C:\\Users\\Foo\\Proj');
+  });
+
+  it('merges legacy entries whose roots differ only by casing, preferring the canonical id', async () => {
+    const lowerRoot = 'c:\\users\\foo\\proj';
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const legacyId = 'wd_proj_deadbeef0002';
+    const canonicalId = encodeWorkDirKey(lowerRoot);
+    const entry = (root: string): PersistedWorkspaceEntry => ({
+      root,
+      name: 'proj',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    await writeWorkspacesJson({
+      // Legacy first so the canonical entry must actively replace it.
+      [legacyId]: entry(typedRoot),
+      [canonicalId]: entry(lowerRoot),
+    });
+
+    const list = await build().list();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe(canonicalId);
+    expect(list[0]?.root).toBe(lowerRoot);
+  });
+
+  it('rebuild folds session-index workDir variants into one workspace', async () => {
+    // UNC paths are Windows-shaped (so they case-fold) yet still `isAbsolute`
+    // on POSIX hosts, so this exercises case folding on Linux CI.
+    const firstSeen = '//Host/Share/Proj';
+    await seedSessionIndex([
+      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: firstSeen },
+      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: '//host/share/Proj/' },
+      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: '//HOST/SHARE/PROJ' },
+    ]);
+
+    const list = await build().list();
+    // First seen wins: the id is minted from the first-seen workDir string.
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe(encodeWorkDirKey(firstSeen));
+    expect(list[0]?.root).toBe(firstSeen);
+  });
+
+  it('keeps POSIX roots case-sensitive', async () => {
+    const registry = build(allDirsHostFs());
+
+    const upper = await registry.createOrTouch('/tmp/Foo');
+    const lower = await registry.createOrTouch('/tmp/foo');
+
+    expect(lower.id).not.toBe(upper.id);
+    expect((await registry.list()).map((w) => w.root).toSorted()).toEqual(['/tmp/Foo', '/tmp/foo']);
+  });
+
+  it('resolveAliasIds returns every registered id for one physical directory', async () => {
+    // A legacy catalog holds two entries whose roots differ only by casing —
+    // one physical folder, two bucket ids (this is what `dedupeByRoot` merges
+    // for listing; the alias set exposes both for multi-bucket reads).
+    const lowerRoot = 'c:\\users\\foo\\proj';
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const legacyId = 'wd_proj_deadbeef0002';
+    const canonicalId = encodeWorkDirKey(lowerRoot);
+    const entry = (root: string): PersistedWorkspaceEntry => ({
+      root,
+      name: 'proj',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    await writeWorkspacesJson({
+      [legacyId]: entry(typedRoot),
+      [canonicalId]: entry(lowerRoot),
+    });
+
+    const registry = build();
+    for (const id of [legacyId, canonicalId]) {
+      expect((await registry.resolveAliasIds(id)).toSorted()).toEqual(
+        [legacyId, canonicalId].toSorted(),
+      );
+    }
+  });
+
+  it('resolveAliasIds folds in session-index-only spellings of the same root', async () => {
+    // The sibling bucket's spelling was never registered: only the legacy
+    // session index remembers it. Malformed index lines are skipped, never
+    // thrown.
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
+    await writeWorkspacesJson({
+      [typedId]: {
+        root: typedRoot,
+        name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    await seedSessionIndex([
+      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
+      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: 'c:\\Users\\Foo\\Proj' },
+      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
+    ]);
+    await fsp.appendFile(join(homeDir, 'session_index.jsonl'), 'not-json\n{}\n', 'utf8');
+
+    const registry = build();
+    expect((await registry.resolveAliasIds(typedId)).toSorted()).toEqual(
+      [typedId, indexOnlyId].toSorted(),
+    );
+  });
+
+  it('resolveAliasIds keeps unknown ids and POSIX roots singleton', async () => {
+    const root = join(homeDir, 'posix');
+    const id = encodeWorkDirKey(root);
+    await writeWorkspacesJson({
+      [id]: {
+        root,
+        name: 'posix',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+
+    const registry = build();
+    // Unknown id: callers keep their existing not-found semantics.
+    expect(await registry.resolveAliasIds('wd_missing_000000000000')).toEqual([
+      'wd_missing_000000000000',
+    ]);
+    // POSIX roots never fold, so the alias set is just the id itself.
+    expect(await registry.resolveAliasIds(id)).toEqual([id]);
+  });
+
+  it('delete tombstones every folded alias so a legacy split cannot resurface', async () => {
+    // Split legacy state: two registered spellings of one Windows root, plus a
+    // third spelling remembered only by the session index.
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const aliasRoot = 'c:\\Users\\Foo\\Proj';
+    const aliasId = encodeWorkDirKey(aliasRoot);
+    const indexOnlyRoot = 'C:/users/foo/proj';
+    const indexOnlyId = encodeWorkDirKey(indexOnlyRoot);
+    await writeWorkspacesJson({
+      [typedId]: {
+        root: typedRoot,
+        name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+      [aliasId]: {
+        root: aliasRoot,
+        name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    await seedSessionIndex([
+      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
+      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: indexOnlyRoot },
+      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
+    ]);
+
+    const registry = build();
+    await registry.delete(typedId);
+
+    // The directory itself is gone (unrelated entries survive); nothing
+    // identity-matching the deleted root remains, and every id that could
+    // carry it is tombstoned so the merge cannot resurrect it.
+    const stillListed = (await registry.list()).filter(
+      (w) => workspaceRootKey(w.root) === workspaceRootKey(typedRoot),
+    );
+    expect(stillListed).toEqual([]);
+    const unrelatedId = encodeWorkDirKey(join(homeDir, 'unrelated'));
+    const saved = await readWorkspacesJson();
+    expect(Object.keys(saved.workspaces)).toEqual([unrelatedId]);
+    expect([...(saved.deleted_workspace_ids as string[])].toSorted()).toEqual(
+      [typedId, aliasId, indexOnlyId].toSorted(),
+    );
+
+    // A fresh process (merge re-runs against the session index) does not
+    // bring the directory back either.
+    const reopened = restart();
+    const relisted = (await reopened.list()).filter(
+      (w) => workspaceRootKey(w.root) === workspaceRootKey(typedRoot),
+    );
+    expect(relisted).toEqual([]);
+    const afterMerge = await readWorkspacesJson();
+    expect(Object.keys(afterMerge.workspaces)).toEqual([unrelatedId]);
+  });
+});
+
+describe('workspaceRootKey', () => {
+  it('folds drive-letter casing and slash direction', () => {
+    expect(workspaceRootKey('C:\\Users\\Foo\\Proj')).toBe('c:/users/foo/proj');
+    expect(workspaceRootKey('c:/Users/Foo/Proj/')).toBe('c:/users/foo/proj');
+    expect(workspaceRootKey('C:\\Users\\Foo\\Proj')).toBe(workspaceRootKey('c:/users/foo/proj'));
+  });
+
+  it('folds drive roots before separator stripping can mask the shape', () => {
+    // `C:\` would strip to `C:` and stop reading as Windows-shaped.
+    expect(workspaceRootKey('C:\\')).toBe('c:');
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:\\'));
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:/'));
+  });
+
+  it('folds UNC hosts and shares', () => {
+    expect(workspaceRootKey('\\\\HOST\\Share\\Dir')).toBe('//host/share/dir');
+    expect(workspaceRootKey('//HOST/Share/Dir/')).toBe('//host/share/dir');
+  });
+
+  it('strips trailing separators but never case-folds POSIX paths', () => {
+    expect(workspaceRootKey('/tmp/Foo/')).toBe('/tmp/Foo');
+    expect(workspaceRootKey('/tmp/Foo')).not.toBe(workspaceRootKey('/tmp/foo'));
   });
 });

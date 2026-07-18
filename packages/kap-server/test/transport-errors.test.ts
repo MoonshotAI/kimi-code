@@ -5,7 +5,7 @@
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/transport-errors.test.ts`.
  */
 import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode } from '@moonshot-ai/protocol';
+import { ErrorCode } from '../src/protocol/error-codes';
 import { describe, expect, it } from 'vitest';
 
 import { mapError } from '../src/transport/errors';

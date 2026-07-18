@@ -33,6 +33,7 @@ export type Protocol = z.infer<typeof ProtocolSchema>;
 export interface ProtocolProviderOptions {
   readonly reasoningKey?: string;
   readonly defaultMaxTokens?: number;
+  readonly supportEfforts?: readonly string[];
   readonly adaptiveThinking?: boolean;
   readonly kimiThinking?: boolean;
   readonly betaApi?: boolean;

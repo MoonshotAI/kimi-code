@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
-import type { FileMeta } from '@moonshot-ai/protocol';
+import type { FileMeta } from './fileService';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';

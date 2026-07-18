@@ -20,7 +20,7 @@ test('openOrRebuild opens a healthy db normally', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('openOrRebuild discards a corrupt db and starts fresh', async () => {
+test('openOrRebuild preserves data when only a sidecar definition file is corrupt', async () => {
   const dir = await tmpDir();
   let db = await MiniDb.open({ dir, valueCodec: 'json' });
   await db.createIndex('byX', { field: 'x' });
@@ -36,8 +36,13 @@ test('openOrRebuild discards a corrupt db and starts fresh', async () => {
     { onRebuild: (e) => (rebuilt = e) },
   );
   assert.ok(rebuilt instanceof Error, 'onRebuild called with the original error');
-  assert.equal(db.size, 0, 'fresh empty db after rebuild');
-  // data is gone (rebuild semantics) and the db is usable again
+  // the sidecar (pure derived state) is dropped, the data is NOT wiped
+  assert.equal(db.size, 1);
+  assert.deepEqual(db.get('important'), { x: 1 });
+  assert.deepEqual(db.listIndexes(), []);
+  // indexes can be recreated and the db is usable again
+  await db.createIndex('byX', { field: 'x' });
+  assert.equal(db.findEq('byX', 1).length, 1);
   await db.set('fresh', { v: 1 });
   assert.deepEqual(db.get('fresh'), { v: 1 });
   await db.close();

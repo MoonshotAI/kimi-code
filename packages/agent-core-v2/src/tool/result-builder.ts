@@ -21,11 +21,10 @@ export interface ToolResultBuilderOptions {
 }
 
 export type ExecutableToolResultBuilderResult = (
-  | ExecutableToolSuccessResult
   | ExecutableToolErrorResult
+  | ExecutableToolSuccessResult
 ) & {
   readonly output: string;
-  readonly message: string;
   readonly truncated: boolean;
   readonly brief?: string;
 };
@@ -126,7 +125,6 @@ export class ToolResultBuilder {
             ? `${output}${finalMessage}`
             : `${output}\n${finalMessage}`
         : output,
-      message: finalMessage,
       truncated: this.truncationHappened,
       brief: options.brief,
     };
@@ -152,7 +150,6 @@ export class ToolResultBuilder {
             : output.endsWith('\n')
               ? `${output}${finalMessage}`
               : `${output}\n${finalMessage}`,
-      message: finalMessage,
       truncated: this.truncationHappened,
       brief: options.brief,
     };

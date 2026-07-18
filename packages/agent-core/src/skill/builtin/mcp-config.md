@@ -108,7 +108,7 @@ For changes, the flow is:
    currently in it, and the entry you're about to write or delete. This
    is for transparency, not a confirmation gate — the Edit/Write
    permission prompt is the real gate, and your message is what gives
-   the user context when that prompt appears. In yolo / afk modes there
+   the user context when that prompt appears. In yolo / auto modes there
    is no prompt, which is those modes' explicit contract.
 3. **Write and tell them how to reload MCP servers.** Preserve unrelated
    entries and the `mcpServers` wrapper. MCP servers load at session

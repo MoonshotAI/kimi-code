@@ -67,4 +67,12 @@ describe('Session goal methods', () => {
     expect((session as unknown as { clearGoal?: unknown }).clearGoal).toBeUndefined();
     expect((session as unknown as { updateGoal?: unknown }).updateGoal).toBeUndefined();
   });
+
+  it('keeps the goal metadata key reserved for lifecycle methods', async () => {
+    const { session } = makeSession();
+
+    await expect(
+      session.updateMetadata({ goal: { status: 'complete' } }),
+    ).rejects.toMatchObject({ code: 'goal.metadata_reserved' });
+  });
 });

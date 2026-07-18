@@ -56,6 +56,7 @@ export interface TurnInterruptedEvent {
   interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
   provider_type?: string;
   protocol?: string;
+  trace_id?: string;
 }
 
 export interface TurnEndedEvent {
@@ -65,6 +66,7 @@ export interface TurnEndedEvent {
   mode: 'agent' | 'plan';
   provider_type?: string;
   protocol?: string;
+  trace_id?: string;
 }
 
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
@@ -77,6 +79,7 @@ export interface ToolCallEvent {
   duration_ms: number;
   dup_type: 'normal' | 'same_step' | 'cross_step';
   error_type?: 'cancelled' | 'error';
+  trace_id?: string;
 }
 
 export interface ApiErrorEvent {
@@ -89,6 +92,9 @@ export interface ApiErrorEvent {
   provider_type?: string;
   protocol?: string;
   input_tokens?: number;
+  turn_id?: number;
+  step_no?: number;
+  trace_id?: string;
 }
 
 export interface SkillInvokedEvent {
@@ -106,6 +112,7 @@ export interface InputSteerEvent {
 
 export interface CancelEvent {
   from: 'streaming' | 'compacting';
+  trace_id?: string;
 }
 
 export interface ConversationUndoEvent {
@@ -139,6 +146,7 @@ export interface PermissionApprovalResultEvent {
   duration_ms: number;
   session_cache_written: boolean;
   has_feedback: boolean;
+  trace_id?: string;
 }
 
 export interface PlanSubmittedEvent {
@@ -175,6 +183,7 @@ export interface CompactionFinishedEvent {
   output_tokens?: number;
   input_cache_read?: number;
   input_cache_creation?: number;
+  trace_id?: string;
 }
 
 export interface CompactionFailedEvent {
@@ -185,6 +194,7 @@ export interface CompactionFailedEvent {
   retry_count: number;
   thinking_effort: string;
   error_type: string;
+  trace_id?: string;
 }
 
 export interface ContextProjectionRepairedEvent {
@@ -218,11 +228,14 @@ export interface ThinkingToggleEvent {
   from: string;
 }
 
-export interface QuestionDismissedEvent {}
+export interface QuestionDismissedEvent {
+  trace_id?: string;
+}
 
 export interface QuestionAnsweredEvent {
   answered: number;
   method?: 'enter' | 'space' | 'number_key';
+  trace_id?: string;
 }
 
 export type TelemetryGoalActor = 'user' | 'model' | 'runtime' | 'system';
@@ -265,12 +278,14 @@ export interface ToolCallDedupDetectedEvent {
   tool_name: string;
   dup_type: 'same_step' | 'cross_step';
   args_hash: string;
+  trace_id?: string;
 }
 
 export interface ToolCallRepeatEvent {
   tool_name: string;
   repeat_count: number;
   action: 'none' | 'r1' | 'r2' | 'r3' | 'stop';
+  trace_id?: string;
 }
 
 export interface GrepToolRgFallbackEvent {
@@ -407,6 +422,8 @@ export const telemetryEventDefinitions = {
       interrupt_reason: 'Why the turn was interrupted',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
+      trace_id:
+        'Trace id of the most recent LLM request in this turn (the failed request when the turn errored); absent for non-Kimi protocols',
     },
   }),
   turn_ended: defineTelemetryEvent<TurnEndedEvent>({
@@ -419,6 +436,8 @@ export const telemetryEventDefinitions = {
       mode: 'Agent mode the turn ran in',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
+      trace_id:
+        'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
     },
   }),
   tool_call: defineTelemetryEvent<ToolCallEvent>({
@@ -432,6 +451,8 @@ export const telemetryEventDefinitions = {
       duration_ms: 'Wall-clock execution time in milliseconds',
       dup_type: 'Whether the call was a duplicate within the same step or across steps',
       error_type: 'Error category when the call failed',
+      trace_id:
+        'Trace id of the LLM request that produced this tool call; absent for non-Kimi protocols',
     },
   }),
   api_error: defineTelemetryEvent<ApiErrorEvent>({
@@ -447,6 +468,10 @@ export const telemetryEventDefinitions = {
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       input_tokens: "Current turn's accumulated total input tokens",
+      turn_id: 'Turn index within the session, when the request belongs to a turn',
+      step_no: 'Step index within the turn, when the request belongs to a turn step',
+      trace_id:
+        'Trace id of the failed request, from its response headers or its error response; absent when the failure happened before any response headers arrived (network errors, local aborts), and for non-Kimi protocols',
     },
   }),
   skill_invoked: defineTelemetryEvent<SkillInvokedEvent>({
@@ -470,7 +495,11 @@ export const telemetryEventDefinitions = {
   cancel: defineTelemetryEvent<CancelEvent>({
     owner: 'kimi-code',
     comment: 'The user cancels ongoing work.',
-    properties: { from: 'What was running when cancelled' },
+    properties: {
+      from: 'What was running when cancelled',
+      trace_id:
+        'Trace id of the in-flight request, or of the most recent request between steps; absent for non-Kimi protocols',
+    },
   }),
   conversation_undo: defineTelemetryEvent<ConversationUndoEvent>({
     owner: 'kimi-code',
@@ -509,6 +538,8 @@ export const telemetryEventDefinitions = {
       duration_ms: 'Time the approval took in milliseconds',
       session_cache_written: 'Whether a session approval rule was cached',
       has_feedback: 'Whether the user attached feedback',
+      trace_id:
+        'Trace id of the LLM request that produced the gated tool call; absent for non-Kimi protocols',
     },
   }),
   plan_submitted: defineTelemetryEvent<PlanSubmittedEvent>({
@@ -547,6 +578,8 @@ export const telemetryEventDefinitions = {
       output_tokens: 'Output tokens',
       input_cache_read: 'Cache-read input tokens',
       input_cache_creation: 'Cache-creation input tokens',
+      trace_id:
+        'Trace id of the final compaction request round; absent for non-Kimi protocols',
     },
   }),
   compaction_failed: defineTelemetryEvent<CompactionFailedEvent>({
@@ -560,6 +593,8 @@ export const telemetryEventDefinitions = {
       retry_count: 'Number of retries attempted',
       thinking_effort: 'Thinking effort level in effect',
       error_type: 'Error class name',
+      trace_id:
+        'Trace id of the failed compaction request, from its response headers or its error response; absent when the failure happened before any request or before response headers arrived (network errors), and for non-Kimi protocols',
     },
   }),
   context_projection_repaired: defineTelemetryEvent<ContextProjectionRepairedEvent>({
@@ -607,7 +642,10 @@ export const telemetryEventDefinitions = {
   question_dismissed: defineTelemetryEvent<QuestionDismissedEvent>({
     owner: 'kimi-code',
     comment: 'A user question prompt is dismissed.',
-    properties: {},
+    properties: {
+      trace_id:
+        'Trace id of the LLM request that produced the questioning tool call; absent for non-Kimi protocols',
+    },
   }),
   question_answered: defineTelemetryEvent<QuestionAnsweredEvent>({
     owner: 'kimi-code',
@@ -615,6 +653,8 @@ export const telemetryEventDefinitions = {
     properties: {
       answered: 'Number of questions answered',
       method: 'Input method used to answer',
+      trace_id:
+        'Trace id of the LLM request that produced the questioning tool call; absent for non-Kimi protocols',
     },
   }),
   goal_created: defineTelemetryEvent<GoalCreatedEvent>({
@@ -669,6 +709,8 @@ export const telemetryEventDefinitions = {
       tool_name: 'Registered tool name',
       dup_type: 'Whether the duplicate is within the same step or across steps',
       args_hash: 'Hash of the tool call arguments',
+      trace_id:
+        'Trace id of the LLM request that produced the duplicate tool call; absent for non-Kimi protocols',
     },
   }),
   tool_call_repeat: defineTelemetryEvent<ToolCallRepeatEvent>({
@@ -678,6 +720,8 @@ export const telemetryEventDefinitions = {
       tool_name: 'Registered tool name',
       repeat_count: 'Length of the repeat streak',
       action: 'Intervention action taken',
+      trace_id:
+        'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
     },
   }),
   grep_tool_rg_fallback: defineTelemetryEvent<GrepToolRgFallbackEvent>({

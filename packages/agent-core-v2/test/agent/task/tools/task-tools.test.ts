@@ -220,6 +220,10 @@ class FakeTaskService implements IAgentTaskService {
     return entry.info;
   }
 
+  async stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
+    return this.stop(taskId, 'Aborted by the user');
+  }
+
   async stopAll(reason?: string): Promise<readonly AgentTaskInfo[]> {
     const stopped = await Promise.all(
       Array.from(this.entries.keys()).map((taskId) => this.stop(taskId, reason)),
@@ -441,7 +445,7 @@ describe('TaskOutputTool', () => {
     );
     const output = outputString(result);
 
-    expect(result).toMatchObject({ isError: false, message: 'Task snapshot retrieved.' });
+    expect(result).toMatchObject({ isError: false });
     expect(output).toContain('retrieval_status: success');
     expect(output).toContain('status: completed');
     expect(output).toContain('[output]\nDETACHED-PAYLOAD-LINE');

@@ -8,7 +8,7 @@
  * `services/fs/fsGit.ts`).
  */
 
-import type { FsGitStatus, FsGitStatusResponse, FsPullRequest } from '@moonshot-ai/protocol';
+import type { FsGitStatus, FsGitStatusResponse, FsPullRequest } from './git';
 
 export function parsePorcelain(
   stdout: string,

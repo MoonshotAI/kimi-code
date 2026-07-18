@@ -211,6 +211,25 @@ summary {
   color-scheme: light dark;
 }
 
+/* Safe-area insets + chat-dock metrics ---------------------------------------
+   Centralised so mobile layout reads one consistent source instead of each
+   component calling env(safe-area-inset-*) with its own fallback. Falls back to
+   0px where the UA doesn't expose insets (most desktops, older Android);
+   pair with max(min, var(--safe-bottom)) so gestures / home indicators keep a
+   minimum gutter even when the inset reports 0. The mobile footer (composer),
+   bottom sheets and the toast layer all consume these. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Border-box height of the chat dock, written by ChatDock via ResizeObserver.
+     Used to anchor fixed overlays (toasts, floating hints) just above the
+     composer — dynamic so multi-line input growth keeps them clear. Left
+     undeclared on purpose: consumers use a fallback (e.g. the assumed
+     single-line dock height) on pages where ChatDock is not mounted. */
+}
+
 /* -- icon primitive (design-system §02) -------------------------------------
    Applied to every design-system icon: the <Icon> component output
    (components/ui/Icon.vue) and the iconSvg() v-html strings (lib/icons.ts).

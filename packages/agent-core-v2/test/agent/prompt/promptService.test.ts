@@ -121,7 +121,7 @@ describe('AgentPromptService', () => {
   it('settles the prompt as failed when the loop throws on launch', async () => {
     const { prompt, loop } = harness();
     vi.spyOn(loop, 'enqueue').mockImplementation(() => {
-      throw new Error2(ErrorCodes.ACTIVITY_INITIALIZING, 'Agent is still restoring');
+      throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'Cannot launch a new turn while another turn is active');
     });
     const handle = await prompt.enqueue({ id: 'prompt-x', message: message('hello') });
     expect(handle.state).toBe('failed');

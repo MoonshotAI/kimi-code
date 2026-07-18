@@ -14,7 +14,7 @@
  *
  * Routes (registered exactly as v1 declares them):
  *
- *   GET /fs::browse?path=<abs-path>   list sub-directories (+ git metadata)
+ *   GET /fs::browse?path=<abs-path>   list sub-directories
  *   GET /fs::home                     $HOME + recent workspace roots
  *
  * **Wire path vs source path.** The source path strings carry a double colon
@@ -36,14 +36,14 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  ErrorCode,
   fsBrowseQuerySchema,
   fsBrowseResponseSchema,
   fsHomeResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
 
 interface WorkspaceFsRouteHost {
   get(

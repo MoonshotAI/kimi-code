@@ -163,4 +163,88 @@ describe('SessionMetadata', () => {
       'agent-1',
     ]);
   });
+
+  it('treats re-registering an unchanged agent as a no-op', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      parentAgentId: undefined,
+      forkedFrom: undefined,
+      labels: undefined,
+    });
+
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+
+    // A resumed session re-registers its materialized agents; with identical
+    // metadata that must not write, bump updatedAt, or fire an event.
+    let fired = 0;
+    const sub = meta.onDidChangeMetadata(() => {
+      fired++;
+    });
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      parentAgentId: undefined,
+      forkedFrom: undefined,
+      labels: undefined,
+    });
+
+    expect(fired).toBe(0);
+    expect((await meta.read()).updatedAt).toBe(before);
+    sub.dispose();
+  });
+
+  it('stays a no-op when re-registering against a persisted document', async () => {
+    // The document as it lands on disk: keys with undefined values are gone,
+    // and a legacy writer stored parentAgentId: null. A server restart then
+    // re-registers `main` with explicit undefineds — still no update.
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      agents: {
+        main: {
+          homedir: '/tmp/sessions/wd_test/s1/agents/main',
+          type: 'main',
+          parentAgentId: null,
+        },
+      },
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      parentAgentId: undefined,
+      forkedFrom: undefined,
+      labels: undefined,
+    });
+
+    expect((await meta.read()).updatedAt).toBe(1700000000000);
+  });
+
+  it('updates when re-registering with changed fields', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+    });
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      labels: { swarmItem: 'src/a.ts' },
+    });
+
+    const next = await meta.read();
+    expect(next.agents?.['main']?.labels).toEqual({ swarmItem: 'src/a.ts' });
+    expect(next.updatedAt).toBeGreaterThan(before);
+  });
 });

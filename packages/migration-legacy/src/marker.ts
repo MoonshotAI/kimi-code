@@ -1,5 +1,7 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { migratedMarker } from './paths.js';
+import { resolve, win32 } from 'node:path';
+import { migratedMarker, skipMarker } from './paths.js';
 
 export interface MarkerRun {
   readonly startedAt: string;
@@ -14,7 +16,41 @@ export interface MarkerData {
   readonly last_migrated_at: string;
   readonly migrator_version: string;
   readonly target_path: string;
+  /** All target homes covered by this marker. Absent in legacy markers. */
+  readonly target_paths?: readonly string[];
   readonly runs: readonly MarkerRun[];
+}
+
+export interface MigrationSuppressionInput {
+  readonly sourceHome: string;
+  readonly targetHome: string;
+}
+
+/**
+ * Decide whether a migration prompt should be suppressed for one target home.
+ *
+ * A completed marker covers every target recorded in `target_paths`; the
+ * legacy `target_path` field remains authoritative when that list is absent.
+ * Unreadable markers are treated conservatively as completed so upgrading does
+ * not start prompting users who had already dismissed the migration.
+ */
+export function shouldSuppressMigration(input: MigrationSuppressionInput): boolean {
+  if (existsSync(skipMarker(input.targetHome))) return true;
+
+  const markerPath = migratedMarker(input.sourceHome);
+  if (!existsSync(markerPath)) return false;
+
+  try {
+    const parsed = JSON.parse(readFileSync(markerPath, 'utf-8')) as {
+      readonly target_path?: unknown;
+      readonly target_paths?: unknown;
+    };
+    const targetPaths = markerTargetPaths(parsed);
+    if (targetPaths.length === 0) return true;
+    return targetPaths.some((targetPath) => sameTargetPath(targetPath, input.targetHome));
+  } catch {
+    return true;
+  }
 }
 
 export async function readMarker(sourceHome: string): Promise<MarkerData | undefined> {
@@ -42,6 +78,7 @@ export async function writeMarker(
     last_migrated_at: run.completedAt,
     migrator_version: run.migratorVersion,
     target_path: run.targetPath,
+    target_paths: [run.targetPath],
     runs: [
       {
         startedAt: run.startedAt,
@@ -68,6 +105,7 @@ export async function appendMarkerRun(
     // updates the marker — otherwise `detectPendingMigration` keeps prompting
     // for the new target even though it was just migrated.
     target_path: run.targetPath,
+    target_paths: appendTargetPath(markerTargetPaths(existing), run.targetPath),
     runs: [
       ...existing.runs,
       {
@@ -79,4 +117,39 @@ export async function appendMarkerRun(
     ],
   };
   await writeFile(migratedMarker(sourceHome), JSON.stringify(updated, null, 2), 'utf-8');
+}
+
+function markerTargetPaths(marker: {
+  readonly target_path?: unknown;
+  readonly target_paths?: unknown;
+}): string[] {
+  const targetPaths = Array.isArray(marker.target_paths)
+    ? marker.target_paths.filter((targetPath): targetPath is string => typeof targetPath === 'string')
+    : [];
+  if (typeof marker.target_path === 'string') {
+    return appendTargetPath(targetPaths, marker.target_path);
+  }
+  return targetPaths;
+}
+
+function appendTargetPath(targetPaths: readonly string[], targetPath: string): string[] {
+  if (targetPaths.some((existing) => sameTargetPath(existing, targetPath))) {
+    return [...targetPaths];
+  }
+  return [...targetPaths, targetPath];
+}
+
+function sameTargetPath(left: string, right: string): boolean {
+  if (process.platform === 'win32') {
+    return win32.resolve(left).toLowerCase() === win32.resolve(right).toLowerCase();
+  }
+
+  const leftIsWindowsAbsolute = win32.isAbsolute(left);
+  const rightIsWindowsAbsolute = win32.isAbsolute(right);
+  if (leftIsWindowsAbsolute || rightIsWindowsAbsolute) {
+    if (!leftIsWindowsAbsolute || !rightIsWindowsAbsolute) return false;
+    return win32.resolve(left).toLowerCase() === win32.resolve(right).toLowerCase();
+  }
+
+  return resolve(left) === resolve(right);
 }

@@ -502,7 +502,7 @@ describe('AgentTaskService — notification delivery', () => {
     const { agent, ctx, manager } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'long shell task');
 
-    await manager.stop(taskId);
+    await manager.stopByUser(taskId);
 
     await vi.waitFor(() => {
       expect(notifiedCount(ctx)).toBe(1);
@@ -516,9 +516,7 @@ describe('AgentTaskService — notification delivery', () => {
       status: 'killed',
       notificationId: `task:${taskId}:killed`,
     });
-    expect(message.content[0]!.text).toContain(
-      'Background process killed',
-    );
+    expect(message.content[0]!.text).toContain('long shell task was stopped by user.');
   });
 
   it('TaskStopTool suppresses the real terminal notification for model-requested stops', async () => {

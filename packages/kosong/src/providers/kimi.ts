@@ -1,4 +1,5 @@
 import { normalizeKimiToolSchema } from './kimi-schema';
+import { parseTraceId } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import type {
   ChatProvider,
@@ -255,6 +256,7 @@ class KimiStreamedMessage implements StreamedMessage {
   constructor(
     response: OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
     isStream: boolean,
+    private readonly _traceId: string | null,
   ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(
@@ -279,6 +281,10 @@ class KimiStreamedMessage implements StreamedMessage {
 
   get rawFinishReason(): string | null {
     return this._rawFinishReason;
+  }
+
+  get traceId(): string | null {
+    return this._traceId;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
@@ -537,11 +543,22 @@ export class KimiChatProvider implements ChatProvider {
       // Use type assertion via unknown because we pass the Moonshot-proprietary
       // `thinking` field (via extra_body) that doesn't exist in the OpenAI type definitions.
       options?.onRequestSent?.();
-      const response = (await client.chat.completions.create(
-        createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-        options?.signal ? { signal: options.signal } : undefined,
-      )) as unknown as OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
-      return new KimiStreamedMessage(response, this._stream);
+      // `withResponse()` resolves as soon as the response headers arrive
+      // (before the stream body), so the KFC `x-trace-id` header is available
+      // even for a stream the caller later cancels mid-flight.
+      const { data, response } = await client.chat.completions
+        .create(
+          createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+          options?.signal ? { signal: options.signal } : undefined,
+        )
+        .withResponse();
+      return new KimiStreamedMessage(
+        data as unknown as
+          | OpenAI.Chat.ChatCompletion
+          | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
+        this._stream,
+        parseTraceId(response.headers),
+      );
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }

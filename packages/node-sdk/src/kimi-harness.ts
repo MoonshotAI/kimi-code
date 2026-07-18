@@ -11,6 +11,7 @@ import { Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
+  AuthenticateMcpServerOptions,
   ConfigDiagnostics,
   CreateSessionOptions,
   ExportSessionInput,
@@ -21,13 +22,17 @@ import type {
   KimiConfigPatch,
   KimiHostIdentity,
   ListSessionsOptions,
+  McpServerConfig,
+  McpTestResult,
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
   SessionSummary,
+  SkillSummary,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
+  TestMcpServerOptions,
 } from '#/types';
 
 export interface KimiHarnessRuntimeOptions {
@@ -194,6 +199,7 @@ export class KimiHarness {
       forkId: input.forkId,
       title: input.title,
       metadata: input.metadata,
+      turnIndex: input.turnIndex,
     });
     const session = new Session({
       id: summary.id,
@@ -218,6 +224,12 @@ export class KimiHarness {
     await this.activeSessions.get(id)?.close();
   }
 
+  async deleteSession(id: string): Promise<void> {
+    const sessionId = normalizeSessionId(id);
+    await this.activeSessions.get(sessionId)?.close();
+    await this.rpc.deleteSession({ sessionId });
+  }
+
   async renameSession(input: RenameSessionInput): Promise<void> {
     await this.rpc.renameSession(input);
     this.activeSessions.get(input.id)?.emitMetaUpdated({ title: input.title });
@@ -234,6 +246,11 @@ export class KimiHarness {
 
   async listSessions(options: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     return this.rpc.listSessions(options);
+  }
+
+  /** Skills visible to a new session in `workDir`, without creating that session. */
+  async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
+    return this.rpc.listWorkspaceSkills(workDir);
   }
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {
@@ -259,6 +276,55 @@ export class KimiHarness {
 
   async removeProvider(providerId: string): Promise<KimiConfig> {
     return this.rpc.removeProvider(providerId);
+  }
+
+  /** User-global MCP entries from `<KIMI_CODE_HOME>/mcp.json` only. */
+  async listMcpServers(): Promise<readonly McpServerConfig[]> {
+    return this.rpc.listGlobalMcpServers();
+  }
+
+  async addMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+    return this.rpc.addGlobalMcpServer(server);
+  }
+
+  async updateMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+    return this.rpc.updateGlobalMcpServer(server);
+  }
+
+  async removeMcpServer(name: string): Promise<readonly McpServerConfig[]> {
+    return this.rpc.removeGlobalMcpServer(name);
+  }
+
+  async authenticateMcpServer(
+    name: string,
+    options: AuthenticateMcpServerOptions,
+  ): Promise<void> {
+    const started = await this.rpc.beginGlobalMcpServerAuth(name);
+    if (started.status === 'already-authorized') return;
+    try {
+      const opened = await options.onAuthorizationUrl(started.authorizationUrl);
+      if (opened === false) {
+        throw new KimiError(ErrorCodes.REQUEST_INVALID, 'MCP OAuth authorization was cancelled');
+      }
+      await this.rpc.completeGlobalMcpServerAuth(
+        { flowId: started.flowId, timeoutMs: options.timeoutMs },
+        options.signal,
+      );
+    } catch (error) {
+      await this.rpc.cancelGlobalMcpServerAuth(started.flowId).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async resetMcpServerAuth(name: string): Promise<void> {
+    return this.rpc.resetGlobalMcpServerAuth(name);
+  }
+
+  async testMcpServer(
+    name: string,
+    options: TestMcpServerOptions = {},
+  ): Promise<McpTestResult> {
+    return this.rpc.testGlobalMcpServer(name, options);
   }
 
   async close(): Promise<void> {

@@ -753,10 +753,10 @@ describe('GoogleGenAIChatProvider', () => {
     // When a tool message arrives without a preceding assistant message
     // carrying the tool_call (e.g. after history compaction), the provider
     // falls back to parsing the name out of the tool_call_id. Google IDs
-    // produced by this provider have the shape "{tool_name}_{id_suffix}"
-    // where the suffix is a single non-underscored token, so stripping the
-    // first underscore truncates multi-word tool names such as
-    // `fetch_image_<id>` down to `fetch`.
+    // produced by this provider have the shape "{tool_name}_{upstream_id}_{entropy}"
+    // where `entropy` is a fixed 8-hex-char suffix and the upstream id is a
+    // non-underscored token, so stripping the first underscore would truncate
+    // multi-word tool names such as `fetch_image_<id>` down to `fetch`.
     function firstFunctionResponseName(history: Message[]): string | undefined {
       const contents = messagesToGoogleGenAIContents(history);
       for (const content of contents) {
@@ -813,6 +813,30 @@ describe('GoogleGenAIChatProvider', () => {
         },
       ];
       expect(firstFunctionResponseName(history)).toBe('bareid');
+    });
+
+    it('strips both the entropy suffix and the upstream id', () => {
+      const history: Message[] = [
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCallId: 'AgentSwarm_0_ab12cd34',
+          toolCalls: [],
+        },
+      ];
+      expect(firstFunctionResponseName(history)).toBe('AgentSwarm');
+    });
+
+    it('strips entropy and upstream id from multi-word tool names', () => {
+      const history: Message[] = [
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCallId: 'fetch_image_abc123_a1b2c3d4',
+          toolCalls: [],
+        },
+      ];
+      expect(firstFunctionResponseName(history)).toBe('fetch_image');
     });
   });
 
@@ -1224,7 +1248,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'add_call_1',
+          id: expect.stringMatching(/^add_call_1_[0-9a-f]{8}$/),
           name: 'add', arguments: '{"a":2,"b":3}',
         },
       ]);
@@ -1254,7 +1278,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'search_fc_1',
+          id: expect.stringMatching(/^search_fc_1_[0-9a-f]{8}$/),
           name: 'search', arguments: '{"q":"test"}',
           extras: { thought_signature_b64: 'sig_abc123' },
         },

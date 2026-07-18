@@ -70,7 +70,7 @@ describe('stepRetry plugin', () => {
           step: 1,
           failedAttempt: 1,
           nextAttempt: 2,
-          maxAttempts: 3,
+          maxAttempts: 10,
           delayMs: expect.any(Number),
           errorName: 'APIConnectionError',
           errorMessage: 'terminated',
@@ -102,11 +102,11 @@ describe('stepRetry plugin', () => {
     const result = await runTurn(1);
 
     expect(result.type).toBe('failed');
-    expect(calls).toBe(3);
-    expect(rpcEvents('turn.step.retrying')).toHaveLength(2);
+    expect(calls).toBe(10);
+    expect(rpcEvents('turn.step.retrying')).toHaveLength(9);
     expect(rpcEvents('turn.step.interrupted')).toEqual([
       expect.objectContaining({
-        args: expect.objectContaining({ reason: 'error', step: 3 }),
+        args: expect.objectContaining({ reason: 'error', step: 10 }),
       }),
     ]);
   });
@@ -221,7 +221,7 @@ describe('stepRetry plugin', () => {
 
     const first = await runTurn(1);
     expect(first.type).toBe('failed');
-    expect(calls).toBe(3);
+    expect(calls).toBe(10);
 
     failing = false;
     const second = await runTurn(2);

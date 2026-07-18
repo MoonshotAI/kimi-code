@@ -28,6 +28,7 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
+import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -313,7 +314,6 @@ const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   'lost',
 ]);
 const SIGTERM_GRACE_MS = 5_000;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 interface ForegroundRelease {
@@ -542,7 +542,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
         const signal = registerOptions.signal;
         const abortFromSignal = (): void => {
           if (entry.foregroundRelease === undefined) return;
-          void stopEntry(entry, USER_INTERRUPT_REASON);
+          void stopEntry(entry, userCancellationReason().message);
         };
         if (signal.aborted) {
           abortFromSignal();
@@ -610,6 +610,10 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       const entry = tasks.get(taskId);
       if (entry === undefined) return undefined;
       return stopEntry(entry, reason);
+    },
+
+    async stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
+      return service.stop(taskId, userCancellationReason().message);
     },
 
     async stopAll(reason?: string): Promise<readonly AgentTaskInfo[]> {
@@ -823,7 +827,6 @@ describe('BashTool', () => {
     expect(result).toMatchObject({
       output: 'ok\n',
       isError: false,
-      message: 'Command executed successfully.',
     });
   });
 
@@ -863,7 +866,6 @@ describe('BashTool', () => {
     expect(result).toMatchObject({
       output: 'ok\n',
       isError: false,
-      message: 'Command executed successfully.',
     });
   });
 
@@ -875,7 +877,6 @@ describe('BashTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      message: 'Command failed with exit code: 2.',
       brief: 'Failed with exit code: 2',
     });
     expect(result.output).toContain('boom\n');
@@ -891,7 +892,6 @@ describe('BashTool', () => {
     expect(result).toMatchObject({
       output: 'out\nwarn\n',
       isError: false,
-      message: 'Command executed successfully.',
     });
   });
 
@@ -905,7 +905,6 @@ describe('BashTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      message: 'Command failed with exit code: 2.',
       brief: 'Failed with exit code: 2',
     });
     expect(result.output).toContain('partial\nboom\n');
@@ -928,7 +927,6 @@ describe('BashTool', () => {
 
     expect(result).toMatchObject({
       isError: true,
-      message: 'wait failed',
       brief: 'wait failed',
     });
     expect(result.output).toContain('partial output\nwait failed');
@@ -953,7 +951,6 @@ describe('BashTool', () => {
       expect(result).toMatchObject({
         isError: false,
         output: 'err-first\nout-second\nerr-third\n',
-        message: 'Command executed successfully.',
       });
     } finally {
       vi.useRealTimers();
@@ -986,7 +983,6 @@ describe('BashTool', () => {
       expect(proc.kill).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         isError: false,
-        message: expect.stringContaining('timed out and moved to background'),
       });
       expect(result.output).toContain('task_id: bash-');
       resolveWait(0);
@@ -1120,7 +1116,6 @@ describe('BashTool', () => {
 
     expect(result.output).toContain('[...truncated]');
     expect(result.output).toContain('Output is truncated');
-    expect((result as { message?: string }).message).toContain('Output is truncated');
   });
 
   it('marks the truncated output buffer with a "[...truncated]" sentinel at the cut point', async () => {
@@ -1330,7 +1325,6 @@ describe('BashTool background mode', () => {
     expect(result.output).toContain(`task_id: ${task.taskId}`);
     expect(result.output).toContain('automatic_notification: true');
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput');
-    expect(result).toMatchObject({ message: 'Task moved to background.' });
     expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId}`);
     expect(service.getTask(task.taskId)).toMatchObject({ detached: true });
     await vi.waitFor(async () => {
@@ -1404,7 +1398,6 @@ describe('BashTool background mode', () => {
       expect(proc.kill).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         isError: false,
-        message: expect.stringContaining('timed out and moved to background'),
         brief: expect.stringContaining('after timeout'),
       });
       const taskId = /^task_id: (\S+)/m.exec(result.output as string)?.[1];
@@ -1532,7 +1525,6 @@ describe('BashTool background mode', () => {
 
     expect(result.output).toMatch(/task_id: bash-[0-9a-z]{8}/);
     expect(result.output).toContain('automatic_notification: true');
-    expect(result).toMatchObject({ message: 'Background task started.' });
     expect((result as { brief?: string }).brief).toMatch(/^Started bash-[0-9a-z]{8}$/);
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
     expect(result.output).not.toContain('block=false');

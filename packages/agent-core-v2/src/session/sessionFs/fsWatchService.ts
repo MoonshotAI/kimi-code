@@ -26,7 +26,7 @@ import {
   IHostFsWatchService,
 } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { FsChangeEntry, FsChangeEvent } from '@moonshot-ai/protocol';
+import type { FsChangeEntry, FsChangeEvent } from './fsWatch';
 
 import { ISessionFsWatchService } from './fsWatch';
 

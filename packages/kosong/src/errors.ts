@@ -43,18 +43,27 @@ export class APIStatusError extends ChatProviderError {
    * exponential delay.
    */
   readonly retryAfterMs: number | null;
+  /**
+   * Provider trace identifier from the `x-trace-id` response header
+   * (Kimi/KFC only), or `null` when the error response did not carry one.
+   * A failed request usually still returns response headers, so hosts can
+   * attribute the failure to its server-side request.
+   */
+  readonly traceId: string | null;
 
   constructor(
     statusCode: number,
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
     super(message);
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
     this.retryAfterMs = retryAfterMs ?? null;
+    this.traceId = traceId ?? null;
   }
 }
 
@@ -68,8 +77,9 @@ export class APIContextOverflowError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs);
+    super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIContextOverflowError';
   }
 }
@@ -86,8 +96,9 @@ export class APIRequestTooLargeError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs);
+    super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -97,8 +108,13 @@ export class APIRequestTooLargeError extends APIStatusError {
  * request.
  */
 export class APIProviderRateLimitError extends APIStatusError {
-  constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
-    super(429, message, requestId, retryAfterMs);
+  constructor(
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+    traceId?: string | null,
+  ) {
+    super(429, message, requestId, retryAfterMs, traceId);
     this.name = 'APIProviderRateLimitError';
   }
 }
@@ -329,24 +345,50 @@ export function normalizeAPIStatusError(
   message: string,
   requestId?: string | null,
   retryAfterMs?: number | null,
+  traceId?: string | null,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
   }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
   // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, traceId);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, traceId);
   }
   return new APIStatusError(
     statusCode,
     appendThinkingEffortConfigHint(statusCode, message),
     requestId,
     retryAfterMs,
+    traceId,
   );
+}
+
+/**
+ * Read a single response header from an unknown headers-like object (anything
+ * exposing a `get(name)` method, e.g. the Fetch `Headers` the SDKs carry on
+ * their errors). Returns `null` when the object is not headers-like or the
+ * header is absent.
+ */
+function readResponseHeader(headers: unknown, name: string): string | null {
+  return headers !== null &&
+    typeof headers === 'object' &&
+    typeof (headers as { get?: unknown }).get === 'function'
+    ? (headers as { get(name: string): string | null }).get(name)
+    : null;
+}
+
+/**
+ * Parse the provider trace identifier from the `x-trace-id` response header
+ * (Kimi/KFC only). Returns `null` when the header is absent or empty.
+ */
+export function parseTraceId(headers: unknown): string | null {
+  const raw = readResponseHeader(headers, 'x-trace-id');
+  if (raw === null || raw === undefined || raw.length === 0) return null;
+  return raw;
 }
 
 /**
@@ -357,12 +399,7 @@ export function normalizeAPIStatusError(
  * backoff directive.
  */
 export function parseRetryAfterMs(headers: unknown): number | null {
-  const raw =
-    headers !== null &&
-    typeof headers === 'object' &&
-    typeof (headers as { get?: unknown }).get === 'function'
-      ? (headers as { get(name: string): string | null }).get('retry-after')
-      : null;
+  const raw = readResponseHeader(headers, 'retry-after');
   if (raw === null || raw === undefined) return null;
   const seconds = Number.parseInt(raw, 10);
   if (!Number.isFinite(seconds) || seconds < 0) return null;

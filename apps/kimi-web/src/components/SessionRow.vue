@@ -8,7 +8,6 @@ import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
 import Spinner from './ui/Spinner.vue';
 import Badge from './ui/Badge.vue';
-import { useConfirmDialog } from '../composables/useConfirmDialog';
 import IconButton from './ui/IconButton.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
@@ -16,7 +15,6 @@ import Icon from './ui/Icon.vue';
 import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -168,18 +166,11 @@ function exportRow(): void {
   emit('export', props.session.id);
 }
 
-// Archive confirm — modal, consistent with remove-workspace.
-async function startArchive(): Promise<void> {
+// Archive — the modal confirm and the async work live in App.vue
+// (confirmArchiveSession); the row only emits the intent.
+function startArchive(): void {
   closeMenu();
-  if (
-    await confirm({
-      title: t('sidebar.archive'),
-      message: t('sidebar.archiveConfirm'),
-      variant: 'danger',
-    })
-  ) {
-    emit('archive', props.session.id);
-  }
+  emit('archive', props.session.id);
 }
 
 // Expose closeMenu so the parent can close on outside-click.
@@ -214,12 +205,11 @@ defineExpose({ closeMenu });
 
       <!-- Pending tags — coloured per kind, shown even when the row isn't
            active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-           permission request is waiting. The session's lifecycle status drives
-           the same tags as a fallback for background sessions whose pending
-           lists aren't loaded yet (status known, counts not). -->
+           permission request is waiting. The list-level interaction fact is
+           the fallback for sessions whose detailed pending lists aren't loaded. -->
       <Tooltip :text="t('workspace.awaitingAnswerTitle')">
         <Badge
-          v-if="!renaming && (questionCount > 0 || session.status === 'awaitingQuestion')"
+          v-if="!renaming && (questionCount > 0 || session.pendingInteraction === 'question')"
           variant="info"
           size="sm"
         >
@@ -228,17 +218,20 @@ defineExpose({ closeMenu });
       </Tooltip>
       <Tooltip :text="t('workspace.awaitingPermissionTitle')">
         <Badge
-          v-if="!renaming && (approvalCount > 0 || session.status === 'awaitingApproval')"
+          v-if="!renaming && (approvalCount > 0 || session.pendingInteraction === 'approval')"
           variant="warning"
           size="sm"
         >
           {{ t('workspace.awaitingPermission') }}
         </Badge>
       </Tooltip>
-      <!-- Aborted: a distinct, low-key error tag (not collapsed into idle). -->
+      <!-- Aborted: a distinct, low-key error tag — the session is quiet and
+           its last main turn was cancelled or failed. Hidden while input is
+           pending (the awaiting pills own the row then, exactly like the
+           retired awaiting_* lifecycle status superseded `aborted`). -->
       <Tooltip :text="t('workspace.abortedTitle')">
         <Badge
-          v-if="!renaming && session.status === 'aborted'"
+          v-if="!renaming && !session.busy && session.pendingInteraction !== 'question' && session.pendingInteraction !== 'approval' && questionCount === 0 && approvalCount === 0 && (session.lastTurnReason === 'cancelled' || session.lastTurnReason === 'failed')"
           variant="danger"
           size="sm"
         >

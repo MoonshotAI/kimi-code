@@ -152,6 +152,66 @@ describe('ConfigState model capabilities', () => {
     expect(requestMaxTokens).toBe(131072);
   });
 
+  it('warns and sends when an Anthropic effort is not listed by the model', async () => {
+    let requests = 0;
+    const config: KimiConfig = {
+      providers: {
+        compatible: {
+          type: 'kimi',
+          apiKey: 'test-key',
+          baseUrl: 'https://api.example.test',
+        },
+      },
+      models: {
+        compatible: {
+          provider: 'compatible',
+          model: 'compatible-model',
+          protocol: 'anthropic',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['max'],
+        },
+      },
+    };
+    const ctx = testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
+      generate: async (provider) => {
+        requests += 1;
+        expect(provider.thinkingEffort).toBe('high');
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+    });
+    ctx.agent.config.update({
+      modelAlias: 'compatible',
+      systemPrompt: 'system',
+    });
+    ctx.agent.config.setThinkingEffort('high');
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toBe(1);
+    expect(ctx.allEvents).toContainEqual({
+      type: '[rpc]',
+      event: 'warning',
+      args: {
+        code: 'anthropic-thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+      },
+    });
+  });
+
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
       providerManager: new ProviderManager({

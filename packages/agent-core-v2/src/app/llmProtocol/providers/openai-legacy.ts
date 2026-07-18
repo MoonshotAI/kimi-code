@@ -433,7 +433,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
   private _reasoningKey: string | undefined;
-  private _reasoningEffort: string | undefined;
+  private _thinkingEffort: ThinkingEffort | undefined;
   private _generationKwargs: OpenAILegacyGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
@@ -452,7 +452,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       normalizedReasoningKey !== undefined && normalizedReasoningKey.length > 0
         ? normalizedReasoningKey
         : undefined;
-    this._reasoningEffort = undefined;
+    this._thinkingEffort = undefined;
     this._generationKwargs =
       options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
@@ -467,8 +467,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    if (this._reasoningEffort === undefined) return null;
-    return this._reasoningEffort === 'none' ? 'off' : this._reasoningEffort;
+    return this._thinkingEffort ?? null;
   }
 
   get maxCompletionTokens(): number | undefined {
@@ -506,9 +505,19 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       this._generationKwargs,
     );
 
-    let reasoningEffort: string | undefined = this._reasoningEffort;
+    // 'off' and 'on' have no wire encoding; only a concrete effort is passed
+    // through. An explicit 'off' must also suppress the history-based
+    // auto-enable below (issue #1616), so it stays distinguishable from
+    // "never configured".
+    const effort = this._thinkingEffort;
+    let reasoningEffort: string | undefined =
+      effort === undefined || effort === 'off' || effort === 'on' ? undefined : effort;
 
-    if (reasoningEffort === undefined && kwargs['reasoning_effort'] === undefined) {
+    if (
+      reasoningEffort === undefined &&
+      effort !== 'off' &&
+      kwargs['reasoning_effort'] === undefined
+    ) {
       const hasThinkPart = history.some((message) =>
         message.content.some((part) => part.type === 'think'),
       );
@@ -560,9 +569,8 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAILegacyChatProvider {
-    const reasoningEffort = effort === 'off' || effort === 'on' ? undefined : effort;
     const clone = this._clone();
-    clone._reasoningEffort = reasoningEffort;
+    clone._thinkingEffort = effort;
     return clone;
   }
 

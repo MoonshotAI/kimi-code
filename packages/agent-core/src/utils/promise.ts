@@ -1,5 +1,12 @@
 const NEVER = new Promise<never>(() => {});
 
+/**
+ * Largest delay `setTimeout` accepts: beyond this Node clamps the delay to 1ms,
+ * which would fire immediately. Clamp instead so huge ("effectively unbounded")
+ * timeouts still mean a long wait (~24.8 days).
+ */
+const MAX_TIMER_DELAY_MS = 0x7fffffff;
+
 export type TimeoutOutcomePromise<Outcome> = Promise<Outcome> & {
   clear(): void;
 };
@@ -13,10 +20,13 @@ export function timeoutOutcome<Outcome>(
     timeoutMs === undefined || timeoutMs <= 0
       ? NEVER
       : new Promise((resolve) => {
-          timeout = setTimeout(() => {
-            timeout = undefined;
-            resolve(outcome);
-          }, timeoutMs);
+          timeout = setTimeout(
+            () => {
+              timeout = undefined;
+              resolve(outcome);
+            },
+            Math.min(timeoutMs, MAX_TIMER_DELAY_MS),
+          );
         });
 
   return Object.assign(promise, {
@@ -57,10 +67,13 @@ export function resettableTimeoutOutcome<Outcome>(
   const reset = (timeoutMs: number | undefined): void => {
     clear();
     if (timeoutMs === undefined || timeoutMs <= 0) return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      resolvePromise(outcome);
-    }, timeoutMs);
+    timer = setTimeout(
+      () => {
+        timer = undefined;
+        resolvePromise(outcome);
+      },
+      Math.min(timeoutMs, MAX_TIMER_DELAY_MS),
+    );
   };
   reset(initialMs);
   return Object.assign(promise, { reset, clear });

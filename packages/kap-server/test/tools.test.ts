@@ -27,7 +27,7 @@ import {
 import {
   listMcpServersResponseSchema,
   listToolsResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '../src/protocol/rest-tool';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';

@@ -23,9 +23,9 @@ import { UNKNOWN_CAPABILITY } from '#/app/llmProtocol/capability';
 import { ISessionLegacyService } from '#/app/sessionLegacy/sessionLegacy';
 import { SessionLegacyService } from '#/app/sessionLegacy/sessionLegacyService';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
+import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
-import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -79,6 +79,10 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [IAgentPermissionModeService, { mode: 'manual' }],
         [IAgentPlanService, { status: () => Promise.resolve(null) }],
         [IAgentSwarmService, { isActive: false }],
+        [
+          IAgentActivityView,
+          { state: () => ({ lifecycle: 'ready', background: [] }) },
+        ],
       ]),
       dispose: () => {},
     };
@@ -87,6 +91,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
       // already exists, so return it as-is (same as whenReady).
       create: () => Promise.resolve(agent),
       whenReady: () => Promise.resolve(agent),
+      list: () => [agent],
     } as unknown as IAgentLifecycleService;
     const session: ISessionScopeHandle = {
       id: 'session-test',
@@ -94,7 +99,6 @@ describe('Session legacy status (best-effort runtime state)', () => {
       accessor: accessor([
         [IAgentLifecycleService, agents],
         [ISessionCronService, { _serviceBrand: undefined }],
-        [ISessionActivity, { status: () => 'idle' }],
       ]),
       dispose: () => {},
     };
@@ -107,7 +111,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
     const status = await ix.get(ISessionLegacyService).status('session-test');
 
     expect(status).toMatchObject({
-      status: 'idle',
+      busy: false,
       model: 'removed-model',
       thinking_level: 'high',
       max_context_tokens: 0,

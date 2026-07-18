@@ -2,9 +2,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
@@ -39,7 +40,11 @@ const props = defineProps<{
   pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
   /** Approval ids with an in-flight respond (drives the card loading state). */
   pendingApprovalActions?: Record<string, true>;
+  /** Session busy (any agent, incl. background work) — Stop/Escape affordances. */
   running?: boolean;
+  /** MAIN agent turn in flight — the conversation's streaming state (streaming
+   *  reveal, turn-end scroll settle). Background-only work does NOT set this. */
+  turnActive?: boolean;
   queued?: QueuedPromptView[];
   searchFiles?: (q: string) => Promise<FileItem[]>;
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
@@ -47,7 +52,9 @@ const props = defineProps<{
   changes?: { path: string; status: string }[];
   /** Cache-buster that remounts the chat pane when the active session changes. */
   fileReloadKey?: string | number;
-  sending?: boolean;
+  /** The main conversation has an unfinished prompt (submitted or a main turn
+   *  in flight) — the working moon. */
+  working?: boolean;
   /** True while the empty-composer first prompt is being created + submitted.
    *  Drives the empty-session "starting conversation…" loading state. */
   starting?: boolean;
@@ -91,8 +98,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string }];
   cancelTask: [taskId: string];
   answer: [questionId: string, response: QuestionResponse];
@@ -122,7 +129,7 @@ const emit = defineEmits<{
   openChanges: [];
   refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
-  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
+  editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
@@ -189,7 +196,7 @@ let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
     so the caller can avoid dropping the prompt. */
 function loadComposerForEdit(
   value: string,
-  attachments?: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[],
+  attachments?: TurnAttachment[],
 ): boolean {
   const composer = dockedComposerRef.value ?? emptyComposerRef.value;
   if (!composer) return false;
@@ -421,7 +428,7 @@ const chatDockStyle = computed(() => ({
 }));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
-  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
 };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
@@ -894,7 +901,9 @@ watch(
 );
 
 watch(
-  () => props.running,
+  // Settle the scroll-follow when the conversation's turn finishes (not when
+  // background-only work ends — the transcript didn't move then).
+  () => props.turnActive,
   async (now, was) => {
     if (now || !was) return;
     if (!following.value && !hasUserActionFollowLock()) return;
@@ -914,7 +923,7 @@ function followAfterUserAction(): void {
   });
 }
 
-function handleComposerSubmit(payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }): void {
+function handleComposerSubmit(payload: { text: string; attachments: PromptAttachment[] }): void {
   followAfterUserAction();
   emit('submit', payload);
 }
@@ -926,7 +935,7 @@ function handleComposerSubmit(payload: { text: string; attachments: { fileId: st
 // smooth-scrolls once the truncated turns actually land.
 function handleEditMessage(payload: {
   text: string;
-  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+  attachments?: TurnAttachment[];
 }): void {
   following.value = true;
   showPill.value = false;
@@ -1166,10 +1175,18 @@ function handleInterrupt(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (props.running || props.sending)) {
+  if (event.key === 'Escape' && (props.running || props.working)) {
     event.preventDefault();
     handleInterrupt();
   }
+}
+
+// When the on-screen keyboard opens, browsers without interactive-widget support
+// fire a visualViewport resize instead of shrinking the layout viewport. Re-follow
+// the tail so the latest turn stays visible above the keyboard. No-op while the
+// user has manually scrolled away (following === false).
+function onVisualViewportResize(): void {
+  if (following.value) scheduleFollow();
 }
 
 onMounted(() => {
@@ -1203,6 +1220,7 @@ onMounted(() => {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
     }
+    window.visualViewport?.addEventListener('resize', onVisualViewportResize);
   });
 });
 
@@ -1222,6 +1240,7 @@ onUnmounted(() => {
     document.removeEventListener('visibilitychange', onVisibilityChange);
     document.removeEventListener('keydown', onKeyDown);
   }
+  window.visualViewport?.removeEventListener('resize', onVisualViewportResize);
 });
 
 function focusComposer(): void {
@@ -1394,8 +1413,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
               :approvals="approvals"
-              :running="running"
-              :sending="sending"
+              :turn-active="turnActive"
+              :working="working"
               :fast-moon="fastMoon"
               :session-loading="sessionLoading"
               :compaction="compaction"

@@ -115,6 +115,12 @@ async function harnessIsAuthed(harness: KimiHarness): Promise<boolean> {
   return status.providers.some((entry) => entry.hasToken === true);
 }
 
+function thinkingEnabledFromEffort(effort: unknown): boolean | undefined {
+  if (typeof effort !== 'string') return undefined;
+  const normalized = effort.trim().toLowerCase();
+  return normalized.length > 0 && normalized !== 'off';
+}
+
 /**
  * Agent-side ACP handler. Routes `initialize` + `session/new` + `session/cancel`
  * into {@link KimiHarness}; refuses methods that are not yet wired with a
@@ -295,7 +301,7 @@ export class AcpServer implements Agent {
       mcpServers,
     });
     const currentModelId = await this.resolveCurrentModelId();
-    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled();
+    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled(session);
     const acpSession = new AcpSession(
       this.conn,
       session,
@@ -492,14 +498,13 @@ export class AcpServer implements Agent {
     // Phase 15 reads the resumed thinking effort off the main-agent
     // config and projects it onto the binary toggle: any non-`'off'`
     // effort reads as "thinking on" because the ACP surface only
-    // exposes the boolean axis. Falls back to the harness-level default
-    // when the resume state lacks the field.
+    // exposes the boolean axis. Falls back to the live session status, then
+    // the harness-level default, when the resume state lacks the field.
     const resumedThinkingEffort = resumeState?.agents?.['main']?.config?.thinkingEffort;
-    const currentThinkingEnabled =
-      typeof resumedThinkingEffort === 'string'
-        ? resumedThinkingEffort.trim().toLowerCase() !== 'off' &&
-          resumedThinkingEffort.trim().length > 0
-        : await this.resolveCurrentThinkingEnabled();
+    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled(
+      session,
+      resumedThinkingEffort,
+    );
     const acpSession = new AcpSession(
       this.conn,
       session,
@@ -824,31 +829,43 @@ export class AcpServer implements Agent {
   }
 
   /**
-   * Compute the initial value for the `thinking` toggle when
-   * a session is created (or loaded with no persisted thinking state).
-   * Reads the harness's `getConfig().thinking.enabled` flag if exposed —
-   * the same source `Session.createSession` would consult for new
-   * sessions. Returns `false` when the harness has no opinion, so the
-   * toggle starts off.
+   * Compute the initial value for the `thinking` toggle from the session's
+   * effective effort. A persisted resume-state effort wins; otherwise the
+   * live session status is authoritative. The harness config remains a
+   * best-effort fallback for partial SDK stubs and status-read failures.
    *
-   * Tolerant to partial-stub harnesses for the same reason
-   * {@link resolveCurrentModelId} is — adapter-level unit tests
-   * routinely omit `getConfig`. The swallow-and-fallback path keeps
-   * the test ergonomics symmetric.
+   * Tolerant to partial SDK/session stubs for the same reason
+   * {@link resolveCurrentModelId} is — adapter-level unit tests routinely
+   * omit `getStatus` or `getConfig`. The swallow-and-fallback path keeps the
+   * test ergonomics symmetric.
    */
-  private async resolveCurrentThinkingEnabled(): Promise<boolean> {
+  private async resolveCurrentThinkingEnabled(
+    session: Session,
+    resumedThinkingEffort?: unknown,
+  ): Promise<boolean> {
+    const resumed = thinkingEnabledFromEffort(resumedThinkingEffort);
+    if (resumed !== undefined) return resumed;
+
+    if (typeof session.getStatus === 'function') {
+      try {
+        const current = thinkingEnabledFromEffort((await session.getStatus()).thinkingEffort);
+        if (current !== undefined) return current;
+      } catch (error) {
+        log.warn('acp: session.getStatus threw during thinking toggle resolution; falling back', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     if (typeof this.harness.getConfig !== 'function') return false;
     try {
       const config = await this.harness.getConfig();
       const thinking = (config as { thinking?: { enabled?: unknown; effort?: unknown } })
         .thinking;
-      if (typeof thinking?.enabled === 'boolean') return thinking.enabled;
-      // A non-empty effort with no explicit enabled flag still means thinking
-      // is on — agent-core's resolveThinkingEffort treats config.effort as
-      // enabled unless enabled === false, so mirror that here to keep the
-      // toggle consistent with the runtime.
-      if (typeof thinking?.effort === 'string' && thinking.effort.length > 0) return true;
-      return false;
+      if (thinking?.enabled === false) return false;
+      const configured = thinkingEnabledFromEffort(thinking?.effort);
+      if (configured !== undefined) return configured;
+      return thinking?.enabled === true;
     } catch (err) {
       log.warn('acp: harness.getConfig threw during thinking toggle resolution; defaulting to off', {
         error: err instanceof Error ? err.message : String(err),

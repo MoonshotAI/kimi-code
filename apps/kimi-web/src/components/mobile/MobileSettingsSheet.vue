@@ -21,6 +21,7 @@ import {
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import { formatTokens } from '../../lib/formatTokens';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
@@ -78,10 +79,10 @@ const currentModel = computed<AppModel | undefined>(() =>
 );
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
-// The stored level is shown and submitted verbatim (same as the composer and
-// the TUI) — no coercion against the active model. No stored preference shows
-// the model default (what the daemon will resolve); a level the model doesn't
-// declare simply highlights no segment.
+// The client resolves the level per model (the model's stored pick when still
+// declared, else the catalog default), so what arrives here is valid for the
+// active model. An undeclared level can only appear transiently, before the
+// catalog loads, and simply highlights no segment.
 const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
 const activeThinkingSegment = computed<string>(() => {
   const segs = thinkingSegments.value;
@@ -106,15 +107,15 @@ const permSub = computed<string>(() => {
   return `${p} · ${desc}`;
 });
 
-const kFmt = (n: number): string => `${Math.round(n / 1000)}k`;
 const ctxPct = computed<number>(() =>
+  // ceil (not round) so sub-0.5% usage still renders a visible bar sliver.
   props.status.ctxMax > 0
-    ? Math.min(100, Math.max(0, Math.round((props.status.ctxUsed / props.status.ctxMax) * 100)))
+    ? Math.min(100, Math.max(0, Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100)))
     : 0,
 );
-// Same "12k/256k" format as the desktop toolbar ring.
+// Shared 1024-based formatter, same as the desktop tooltip / status panel.
 const ctxValue = computed<string>(() =>
-  props.status.ctxMax > 0 ? `${kFmt(props.status.ctxUsed)}/${kFmt(props.status.ctxMax)}` : t('status.statusNone'),
+  props.status.ctxMax > 0 ? `${formatTokens(props.status.ctxUsed)}/${formatTokens(props.status.ctxMax)}` : t('status.statusNone'),
 );
 
 function setThinkingSegment(value: string): void {
@@ -585,11 +586,11 @@ watch(
     align-items: flex-start;
     gap: 10px;
     min-width: 0;
-    padding: 14px max(14px, env(safe-area-inset-right)) 14px max(14px, env(safe-area-inset-left));
+    padding: 14px max(14px, var(--safe-right)) 14px max(14px, var(--safe-left));
   }
   .group-title {
-    padding-left: max(14px, env(safe-area-inset-left));
-    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(14px, var(--safe-left));
+    padding-right: max(14px, var(--safe-right));
   }
   .srow-main {
     flex: 1 1 auto;

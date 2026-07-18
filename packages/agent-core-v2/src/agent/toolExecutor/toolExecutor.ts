@@ -12,6 +12,7 @@ import type { ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { OrderedHookSlot } from '#/hooks';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 
 export interface ToolCallStartedPayload {
   readonly toolCallId: string;
@@ -22,6 +23,7 @@ export interface ToolCallStartedPayload {
 export interface ToolExecutorExecuteOptions {
   readonly signal: AbortSignal;
   readonly turnId: number;
+  readonly trace?: LLMRequestTrace;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
 }
 
