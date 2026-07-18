@@ -49,6 +49,15 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(plan!, 'clear')).toBe('idle-only');
   });
 
+  it('describes YOLO and Auto according to their approval behavior', () => {
+    expect(findBuiltInSlashCommand('yolo')?.description).toBe(
+      'Toggle YOLO mode: auto-approve regular tools; sensitive actions may still need approval, and the agent may ask.',
+    );
+    expect(findBuiltInSlashCommand('auto')?.description).toBe(
+      'Toggle Auto mode: run unattended, auto-approve permission prompts, and never ask questions.',
+    );
+  });
+
   it('keeps swarm mode changes and swarm tasks idle-only', () => {
     const swarm = findBuiltInSlashCommand('swarm');
     expect(swarm).toBeDefined();

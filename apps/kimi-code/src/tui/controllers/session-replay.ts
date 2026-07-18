@@ -569,7 +569,8 @@ export class SessionReplayRenderer {
     if (mode === 'yolo') {
       this.host.appendTranscriptEntry(
         replayEntry(context, 'status', 'YOLO mode: ON', 'notice', {
-          detail: 'Tool actions auto-approved; the agent may still ask you questions.',
+          detail:
+            'Regular tools auto-approved; sensitive actions may still need approval, and the agent may ask.',
         }),
       );
       return;

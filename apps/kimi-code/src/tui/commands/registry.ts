@@ -136,14 +136,16 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
+    description:
+      'Toggle YOLO mode: auto-approve regular tools; sensitive actions may still need approval, and the agent may ask.',
     priority: 101,
     availability: 'always',
   },
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle Auto mode: fully autonomous, agent decides everything without asking.',
+    description:
+      'Toggle Auto mode: run unattended, auto-approve permission prompts, and never ask questions.',
     priority: 99,
     availability: 'always',
   },

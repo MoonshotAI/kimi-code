@@ -46,8 +46,16 @@ export function createProgram(
     )
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
-    .option('-y, --yolo', 'Auto-approve regular tool calls; the agent may still ask questions.', false)
-    .option('--auto', 'Start in auto permission mode: fully autonomous, the agent will not ask questions.', false)
+    .option(
+      '-y, --yolo',
+      'Auto-approve regular tools; sensitive actions may still need approval, and the agent may ask.',
+      false,
+    )
+    .option(
+      '--auto',
+      'Run unattended: auto-approve permission prompts and never ask questions.',
+      false,
+    )
     .addOption(
       new Option(
         '-m, --model <model>',

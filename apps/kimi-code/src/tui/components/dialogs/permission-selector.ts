@@ -6,17 +6,18 @@ const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'manual',
     label: 'Manual',
-    description: 'Approve every action yourself.',
+    description: 'Review actions that require approval.',
   },
   {
     value: 'yolo',
     label: 'YOLO',
-    description: 'Auto-approve tool actions, but the agent may still ask questions.',
+    description:
+      'Auto-approve regular tools; sensitive actions may still need approval, and the agent may ask.',
   },
   {
     value: 'auto',
     label: 'Auto',
-    description: 'Fully autonomous — agent decides everything without asking.',
+    description: 'Run unattended — auto-approve permission prompts and never ask questions.',
   },
 ];
 
