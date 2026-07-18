@@ -172,6 +172,9 @@ function makeCore(sessions: Map<string, FakeLifecycle>, eventBus = new FakeEvent
       if (token === IEventService) return eventBus;
       if (token === ISessionLifecycleService) {
         return {
+          // Inert lifecycle events (TranscriptService subscribes on construction).
+          onDidCloseSession: () => ({ dispose: () => {} }),
+          onDidArchiveSession: () => ({ dispose: () => {} }),
           get: (sid: string) => {
             const lifecycle = sessions.get(sid);
             if (lifecycle === undefined) return undefined;

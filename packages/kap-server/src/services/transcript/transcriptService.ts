@@ -26,6 +26,17 @@
  * `SnapshotReader` read (`readWireRecords` + `reduceContextTranscript`), then
  * groups the flat messages into a snapshot via
  * `groupMessagesIntoSnapshot` — best-effort fidelity.
+ *
+ * Lifecycle: entries are dropped when the session closes or archives
+ * (`onDidCloseSession` / `onDidArchiveSession`, plus a lifecycle re-check on
+ * the cached-entry path), so later reads fall through to the cold rebuild
+ * instead of serving a stale store.
+ *
+ * Post-turn heal: a projector that attached mid-turn (or a backfill that ran
+ * before the request's content was flushed to `wire.jsonl`) holds only the
+ * streamed suffix of the turn's text frames. Once a terminal `turn.upsert`
+ * flows through the live-op callback, the ended turn is re-read from disk
+ * (debounced per agent) and merged back live-first — see `healTurnOps`.
  */
 
 import { join } from 'node:path';
@@ -46,6 +57,7 @@ import {
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptTaskRef,
+  type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
 import { readWireRecords } from '../snapshot/snapshotReader';
@@ -78,8 +90,16 @@ interface LiveEntry {
 export class TranscriptService {
   private readonly live = new Map<string, LiveEntry>();
   private readonly opsListeners = new Map<string, Set<(event: TranscriptChangeEvent) => void>>();
+  /** Debounced post-turn heals: `${sessionId}:${agentId}` → pending ordinals + timer. */
+  private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
 
-  constructor(private readonly deps: TranscriptServiceDeps) {}
+  constructor(private readonly deps: TranscriptServiceDeps) {
+    // Live entries must not outlive their session: once it closes or archives,
+    // reads should fall through to the cold rebuild from disk.
+    const lifecycle = deps.core.accessor.get(ISessionLifecycleService);
+    lifecycle.onDidCloseSession(({ sessionId }) => this.dropSession(sessionId));
+    lifecycle.onDidArchiveSession(({ sessionId }) => this.dropSession(sessionId));
+  }
 
   /**
    * Get (or create + bind) the transcript store for a session that is live in
@@ -87,14 +107,22 @@ export class TranscriptService {
    */
   forSessionLive(sessionId: string): TranscriptStore | undefined {
     const existing = this.live.get(sessionId);
-    if (existing !== undefined) return existing.store;
+    if (existing !== undefined) {
+      if (this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId) !== undefined) {
+        return existing.store;
+      }
+      // Stale entry for a session already closed/archived (the drop event may
+      // not have fired on every teardown path) — do not serve it.
+      this.dropSession(sessionId);
+      return undefined;
+    }
     const session = this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) return undefined;
     const store = new TranscriptStore(sessionId);
     let binding: IDisposable;
     try {
       binding = bindSessionTranscript(store, session, this.deps.logger, (event) =>
-        this.dispatchOps(sessionId, event),
+        this.handleLiveOps(sessionId, event),
       );
     } catch (error) {
       // The session's core scope can be disposed mid-bind during shutdown
@@ -238,6 +266,78 @@ export class TranscriptService {
   }
 
   /**
+   * Live (projector-mapped) op batches: fan out, then watch for terminal
+   * turns to heal. Backfill batches go through `dispatchOps` directly so a
+   * replayed history cannot retrigger heals.
+   */
+  private handleLiveOps(sessionId: string, event: TranscriptChangeEvent): void {
+    this.dispatchOps(sessionId, event);
+    for (const op of event.ops) {
+      if (op.op === 'turn.upsert' && TERMINAL_TURN_STATES.has(op.turn.state)) {
+        this.scheduleTurnHeal(sessionId, event.agentId, op.turn.ordinal);
+      }
+    }
+  }
+
+  private scheduleTurnHeal(sessionId: string, agentId: string, ordinal: number): void {
+    const key = `${sessionId}:${agentId}`;
+    const existing = this.healTimers.get(key);
+    if (existing !== undefined) {
+      existing.ordinals.add(ordinal);
+      existing.timer.refresh();
+      return;
+    }
+    const ordinals = new Set([ordinal]);
+    const timer = setTimeout(() => {
+      this.healTimers.delete(key);
+      void this.healEndedTurns(sessionId, agentId, ordinals);
+    }, TURN_HEAL_DEBOUNCE_MS);
+    timer.unref();
+    this.healTimers.set(key, { ordinals, timer });
+  }
+
+  /**
+   * Re-read the agent's persisted history and merge the ended turn(s) back
+   * into the live store. The projector attaches to the bus at bind time, so
+   * text streamed (and persisted) before that is missing from its frames; by
+   * the time a turn ends, its records are complete on disk. The merge is
+   * deliberately conservative (`healTurnOps`): live state wins everywhere
+   * except the one regression being healed — truncated text/thinking frames.
+   */
+  private async healEndedTurns(
+    sessionId: string,
+    agentId: string,
+    ordinals: ReadonlySet<number>,
+  ): Promise<void> {
+    const entry = this.live.get(sessionId);
+    if (entry === undefined) return;
+    let snapshot: AgentTranscriptSnapshot | undefined;
+    try {
+      snapshot = await this.readColdSnapshot(sessionId, agentId);
+    } catch (error) {
+      this.deps.logger?.warn(
+        { sessionId, agentId, err: error instanceof Error ? error.message : error },
+        'transcript: post-turn heal failed, continuing without it',
+      );
+      return;
+    }
+    // The entry may have been dropped (session closed) while reading from disk.
+    if (snapshot === undefined || this.live.get(sessionId)?.store !== entry.store) return;
+    const transcript = entry.store.getAgent(agentId);
+    if (transcript === undefined) return;
+    const ops: TranscriptOperation[] = [];
+    for (const item of snapshot.items) {
+      if (item.kind !== 'turn' || !ordinals.has(item.ordinal)) continue;
+      ops.push(...healTurnOps(item, transcript.getTurn(item.turnId)));
+    }
+    if (ops.length === 0) return;
+    transcript.apply(ops);
+    // Fan the heal out like any mapped-op batch so attached subscribers
+    // converge; all ops are state-style upserts.
+    this.dispatchOps(sessionId, { agentId, ops });
+  }
+
+  /**
    * Rebuild one agent's transcript snapshot for a cold session from its
    * persisted wire records. Returns `undefined` when the session is unknown to
    * the index; a known session without wire records for the agent yields an
@@ -274,6 +374,12 @@ export class TranscriptService {
   /** Dispose the live store + binding for a session (session closed / server shutdown). */
   dropSession(sessionId: string): void {
     this.opsListeners.delete(sessionId);
+    for (const [key, pending] of this.healTimers) {
+      if (key.startsWith(`${sessionId}:`)) {
+        clearTimeout(pending.timer);
+        this.healTimers.delete(key);
+      }
+    }
     const entry = this.live.get(sessionId);
     if (entry === undefined) return;
     this.live.delete(sessionId);
@@ -335,5 +441,79 @@ export function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOper
     ops.push({ op: 'task.upsert', task });
   }
   ops.push({ op: 'meta.merge', meta: snapshot.meta });
+  return ops;
+}
+
+/** Post-turn heals fire this long after the last terminal turn of an agent. */
+const TURN_HEAL_DEBOUNCE_MS = 250;
+const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+/**
+ * Merge one persisted (snapshot) turn back into the live store after the turn
+ * ended — the post-turn heal for mid-turn attaches:
+ *   - turn the live store never saw: taken wholesale;
+ *   - header: the snapshot is authoritative for origin/prompt (it reads the
+ *     persisted user message, which a mid-turn-attached projector missed);
+ *     the live header wins on state and timestamps;
+ *   - steps the live turn never saw: taken wholesale from the snapshot;
+ *   - existing steps: only text/thinking frames are re-emitted, and only when
+ *     the persisted text is longer — a fresh live frame may still be ahead of
+ *     a lagging flush, and tool/interaction frames are richer live (approvals
+ *     are not persisted as context messages at all).
+ */
+export function healTurnOps(
+  snapshotTurn: TranscriptTurn,
+  liveTurn: TranscriptTurn | undefined,
+): TranscriptOperation[] {
+  const { steps, ...header } = snapshotTurn;
+  const ops: TranscriptOperation[] = [];
+  if (liveTurn === undefined) {
+    ops.push({ op: 'turn.upsert', turn: header });
+    for (const step of steps) {
+      const { frames, ...stepHeader } = step;
+      ops.push({ op: 'step.upsert', turnId: snapshotTurn.turnId, step: stepHeader });
+      for (const frame of frames) {
+        ops.push({ op: 'frame.upsert', turnId: snapshotTurn.turnId, stepId: step.stepId, frame });
+      }
+    }
+    return ops;
+  }
+  ops.push({
+    op: 'turn.upsert',
+    turn: {
+      ...header,
+      state: liveTurn.state,
+      prompt: liveTurn.prompt ?? header.prompt,
+      startedAt: liveTurn.startedAt ?? header.startedAt,
+      endedAt: liveTurn.endedAt ?? header.endedAt,
+    },
+  });
+  for (const step of steps) {
+    const liveStep = liveTurn.steps.find((entry) => entry.stepId === step.stepId);
+    const { frames, ...stepHeader } = step;
+    if (liveStep === undefined) {
+      ops.push({ op: 'step.upsert', turnId: snapshotTurn.turnId, step: stepHeader });
+      for (const frame of frames) {
+        ops.push({ op: 'frame.upsert', turnId: snapshotTurn.turnId, stepId: step.stepId, frame });
+      }
+      continue;
+    }
+    for (const frame of frames) {
+      if (frame.kind !== 'text' && frame.kind !== 'thinking') continue;
+      const liveFrame = liveStep.frames.find((entry) => entry.frameId === frame.frameId);
+      if (
+        liveFrame !== undefined &&
+        (liveFrame.kind === 'text' || liveFrame.kind === 'thinking') &&
+        liveFrame.text.length >= frame.text.length
+      ) {
+        continue;
+      }
+      ops.push({ op: 'frame.upsert', turnId: snapshotTurn.turnId, stepId: step.stepId, frame });
+    }
+  }
   return ops;
 }

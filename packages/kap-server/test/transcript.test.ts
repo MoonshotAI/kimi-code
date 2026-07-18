@@ -50,6 +50,7 @@ interface TurnWire {
   kind: 'turn';
   turnId: string;
   state: string;
+  origin?: { kind: string };
   prompt?: string;
   steps: { stepId: string; state: string; frames: FrameWire[] }[];
 }
@@ -467,6 +468,93 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/transcript?agent_id=main');
     expect(body.code).toBe(40401);
+  });
+
+  it('drops the live store when the session closes so reads fall back to the cold rebuild', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'hello there' }], toolCalls: [] },
+    ]);
+
+    // Bind the live store; the backfill serves the persisted turn.
+    const bound = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(bound.body.data.items).toHaveLength(1);
+
+    // A live-only turn (never persisted) distinguishes the stale store from
+    // the cold rebuild: served live it would show up, from disk it cannot.
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    await server!.core.accessor.get(ISessionLifecycleService).close(id);
+
+    const { body } = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((item) => (item as TurnWire).turnId)).toEqual(['t0']);
+    const turn = body.data.items[0] as TurnWire;
+    expect(turn.prompt).toBe('hi');
+    expect(turn.steps[0]!.frames).toContainEqual(
+      expect.objectContaining({ kind: 'text', text: 'hello there' }),
+    );
+  });
+
+  it('heals the missing stream prefix after a mid-turn attach once the turn ends', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+
+    // A turn is already streaming, but none of the step content is persisted
+    // yet (the engine flushes response content when the request completes).
+    const bus = mainAgentBus(id);
+    bus.publish(
+      serverEvent({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }),
+    );
+    bus.publish(serverEvent({ type: 'turn.step.started', turnId: 0, step: 1 }));
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 0, delta: 'Hello ' }));
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ]);
+
+    // The transcript attaches now: the backfill sees only the user message
+    // and the projector missed the early deltas, so the live frame ends up
+    // suffix-only.
+    await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    bus.publish(serverEvent({ type: 'assistant.delta', turnId: 0, delta: 'world' }));
+    const suffix = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const suffixTurn = suffix.body.data.items.find(
+      (item): item is TurnWire => item.kind === 'turn' && item.turnId === 't0',
+    );
+    expect(suffixTurn!.steps[0]!.frames).toContainEqual(
+      expect.objectContaining({ kind: 'text', text: 'world' }),
+    );
+
+    // The request completes: the full text lands on disk, then the turn ends.
+    await seedMainAgentMessages(id, [
+      { role: 'assistant', content: [{ type: 'text', text: 'Hello world' }], toolCalls: [] },
+    ]);
+    bus.publish(serverEvent({ type: 'turn.step.completed', turnId: 0, step: 1 }));
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    // The debounced post-turn heal re-reads the persisted turn and merges it
+    // back: the prefix is restored and the header recovers origin/prompt.
+    await vi.waitFor(
+      async () => {
+        const { body } = await getJson<TranscriptWire>(
+          `/api/v1/sessions/${id}/transcript?agent_id=main`,
+        );
+        const turn = body.data.items.find(
+          (item): item is TurnWire => item.kind === 'turn' && item.turnId === 't0',
+        );
+        expect(turn).toBeDefined();
+        expect(turn!.origin).toMatchObject({ kind: 'user' });
+        expect(turn!.prompt).toBe('hi');
+        expect(turn!.steps[0]!.frames).toContainEqual(
+          expect.objectContaining({ kind: 'text', text: 'Hello world' }),
+        );
+      },
+      { timeout: 5000, interval: 50 },
+    );
   });
 
   it('rejects before_turn + after_turn together with 40001', async () => {
