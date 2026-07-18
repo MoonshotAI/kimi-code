@@ -600,6 +600,32 @@ export class ContextMemory {
         toolCallIds: closed.slice(0, 5),
       });
     }
+    // A `step.begin` that never produced content or tool calls (e.g. the
+    // process was killed before the first `content.part`) leaves an empty
+    // assistant message at the tail of the replayed history. Providers reject
+    // empty assistant messages (400), bricking every subsequent resume.
+    // Repair here, at replay time, so the record write path stays untouched;
+    // the torn records are re-dropped idempotently on every resume. #1404
+    let droppedEmptyTail = 0;
+    while (this._history.length > 0) {
+      const last = this._history[this._history.length - 1]!;
+      if (last.role !== 'assistant' || last.content.length > 0 || last.toolCalls.length > 0) {
+        break;
+      }
+      this._history.pop();
+      droppedEmptyTail += 1;
+    }
+    if (droppedEmptyTail > 0) {
+      // tokenCountCoveredMessageCount counts a prefix of `_history`; clamp it
+      // to the shortened history so the covered/pending split stays exact.
+      this.tokenCountCoveredMessageCount = Math.min(
+        this.tokenCountCoveredMessageCount,
+        this._history.length,
+      );
+      this.agent.log.warn('dropped empty assistant messages left by an interrupted turn', {
+        droppedEmptyTail,
+      });
+    }
   }
 
   // Synthesize interrupted tool results for any still-open tool calls, closing
