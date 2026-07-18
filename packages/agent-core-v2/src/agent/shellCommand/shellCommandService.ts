@@ -35,6 +35,8 @@ export interface ShellOutputEvent {
   readonly type: 'shell.output';
   readonly commandId: string;
   readonly update: ToolUpdate;
+  /** Present once the foreground task is registered — lets consumers that missed `shell.started` route the chunk. */
+  readonly taskId?: string;
 }
 
 /**
@@ -56,6 +58,8 @@ export interface ShellCompletedEvent {
   readonly type: 'shell.completed';
   readonly commandId: string;
   readonly isError: boolean;
+  /** Present once the foreground task is registered (see `shell.output`). */
+  readonly taskId?: string;
 }
 
 declare module '#/app/event/eventBus' {
@@ -71,6 +75,8 @@ const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 export class AgentShellCommandService implements IAgentShellCommandService {
   declare readonly _serviceBrand: undefined;
   private readonly shellCommandControllers = new Map<string, AbortController>();
+  /** `commandId` → foreground process task id (registered via `onForegroundTaskStart`). */
+  private readonly shellCommandTasks = new Map<string, string>();
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -110,11 +116,17 @@ export class AgentShellCommandService implements IAgentShellCommandService {
           else if (update.kind === 'stderr') stderr += update.text ?? '';
           else return;
           if (input.commandId !== undefined) {
-            this.eventBus.publish({ type: 'shell.output', commandId: input.commandId, update });
+            this.eventBus.publish({
+              type: 'shell.output',
+              commandId: input.commandId,
+              update,
+              taskId: this.shellCommandTasks.get(input.commandId),
+            });
           }
         },
         onForegroundTaskStart: (taskId: string) => {
           if (input.commandId !== undefined) {
+            this.shellCommandTasks.set(input.commandId, taskId);
             this.eventBus.publish({ type: 'shell.started', commandId: input.commandId, taskId });
           }
         },
@@ -134,11 +146,17 @@ export class AgentShellCommandService implements IAgentShellCommandService {
             type: 'shell.output',
             commandId: input.commandId,
             update: { kind: 'stderr', text: stderr },
+            taskId: this.shellCommandTasks.get(input.commandId),
           });
         }
       }
       if (input.commandId !== undefined) {
-        this.eventBus.publish({ type: 'shell.completed', commandId: input.commandId, isError });
+        this.eventBus.publish({
+          type: 'shell.completed',
+          commandId: input.commandId,
+          isError,
+          taskId: this.shellCommandTasks.get(input.commandId),
+        });
       }
       this.appendShellOutput(stdout, stderr, isError);
       return { stdout, stderr, isError };
@@ -152,15 +170,22 @@ export class AgentShellCommandService implements IAgentShellCommandService {
             type: 'shell.output',
             commandId: input.commandId,
             update: { kind: 'stderr', text: message },
+            taskId: this.shellCommandTasks.get(input.commandId),
           });
         }
-        this.eventBus.publish({ type: 'shell.completed', commandId: input.commandId, isError: true });
+        this.eventBus.publish({
+          type: 'shell.completed',
+          commandId: input.commandId,
+          isError: true,
+          taskId: this.shellCommandTasks.get(input.commandId),
+        });
       }
       this.appendShellOutput(stdout, stderr, true);
       return { stdout, stderr, isError: true };
     } finally {
       if (input.commandId !== undefined) {
         this.shellCommandControllers.delete(input.commandId);
+        this.shellCommandTasks.delete(input.commandId);
       }
     }
   }

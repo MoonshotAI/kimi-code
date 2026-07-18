@@ -490,6 +490,23 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getTask('task-1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
   });
 
+  it('routes shell output/completion via the event taskId when shell.started was missed', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    // Mid-command attach: no shell.started observed, but later events carry
+    // the task id — output and terminal state must still land.
+    tx.apply(
+      projector.map(
+        ev({ type: 'shell.output', commandId: 'c1', taskId: 'task-1', update: { kind: 'stdout', text: 'hello' } }),
+      ),
+    );
+    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'running', outputTail: 'hello' });
+
+    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: false })));
+    expect(tx.getTask('task-1')).toMatchObject({ state: 'completed', outputTail: 'hello' });
+  });
+
   it('marks a foreground shell task terminal on shell.completed', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');

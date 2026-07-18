@@ -545,19 +545,41 @@ export class AgentTranscriptProjector {
 
   private onShellOutput(event: {
     commandId: string;
+    taskId?: string;
     update: { kind: string; text?: string };
   }): TranscriptOperation[] {
-    const taskId = this.shellTasks.get(event.commandId);
+    // `shell.started` may have been missed (mid-command attach) — later
+    // events carry the task id themselves.
+    const taskId = this.shellTasks.get(event.commandId) ?? event.taskId;
+    if (taskId === undefined) return [];
+    this.shellTasks.set(event.commandId, taskId);
     // progress/status/custom updates carry no transcript text; only
     // stdout/stderr chunks append (see `toolUpdateSchema`).
     const text = event.update.text;
-    if (taskId === undefined || typeof text !== 'string' || text.length === 0) return [];
-    const task = this.tasks.get(taskId);
-    const offset = task?.outputTail.length ?? 0;
-    if (task !== undefined) {
-      this.tasks.set(taskId, { ...task, outputTail: task.outputTail + text });
+    if (typeof text !== 'string' || text.length === 0) return [];
+    const ops: TranscriptOperation[] = [];
+    let task = this.tasks.get(taskId);
+    if (task === undefined) {
+      // Seed the task so the chunk has somewhere to land (the attach missed
+      // `shell.started`, and the terminal upsert would otherwise clobber the
+      // output with an empty tail).
+      task = this.upsertTask(taskId, (prev) => ({
+        taskId,
+        kind: 'shell',
+        state: 'running',
+        detached: prev?.detached ?? false,
+        description: prev?.description,
+        agentId: prev?.agentId,
+        outputTail: prev?.outputTail ?? '',
+        startedAt: prev?.startedAt ?? nowIso(),
+        endedAt: prev?.endedAt,
+      }));
+      ops.push({ op: 'task.upsert', task });
     }
-    return [{ op: 'append', target: { type: 'task', taskId }, offset, text }];
+    const offset = task.outputTail.length;
+    this.tasks.set(taskId, { ...task, outputTail: task.outputTail + text });
+    ops.push({ op: 'append', target: { type: 'task', taskId }, offset, text });
+    return ops;
   }
 
   /**
@@ -566,9 +588,15 @@ export class AgentTranscriptProjector {
    * task would stay 'running' forever). Detached runs report through
    * `task.*` instead.
    */
-  private onShellCompleted(event: { commandId: string; isError: boolean }): TranscriptOperation[] {
-    const taskId = this.shellTasks.get(event.commandId);
+  private onShellCompleted(event: {
+    commandId: string;
+    taskId?: string;
+    isError: boolean;
+  }): TranscriptOperation[] {
+    // Same mid-command-attach fallback as `onShellOutput`.
+    const taskId = this.shellTasks.get(event.commandId) ?? event.taskId;
     if (taskId === undefined) return [];
+    this.shellTasks.set(event.commandId, taskId);
     const task = this.upsertTask(taskId, (prev) => ({
       taskId,
       kind: prev?.kind ?? 'shell',
