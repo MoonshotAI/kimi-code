@@ -8,6 +8,7 @@
 
 import {
   IAgentLifecycleService,
+  IEventBus,
   ISessionIndex,
   ISessionInteractionService,
   ISessionLifecycleService,
@@ -812,16 +813,70 @@ describe('AgentTranscript transcript task vocabulary', () => {
 });
 
 describe('bindSessionTranscript', () => {
-  function fakeSession(interactions: SessionInteractionService): ISessionScopeHandle {
+  class FakeBus {
+    private readonly handlers = new Set<(event: DomainEvent) => void>();
+    subscribe(cb: (event: DomainEvent) => void): { dispose: () => void } {
+      this.handlers.add(cb);
+      return { dispose: () => this.handlers.delete(cb) };
+    }
+    emit(event: DomainEvent): void {
+      for (const cb of this.handlers) cb(event);
+    }
+  }
+
+  interface FakeAgentHandle {
+    readonly id: string;
+    readonly bus: FakeBus;
+    readonly accessor: { get: (token: unknown) => unknown };
+  }
+
+  class FakeAgents {
+    private readonly handles = new Map<string, FakeAgentHandle>();
+    private readonly createHandlers = new Set<(handle: FakeAgentHandle) => void>();
+    private readonly disposeHandlers = new Set<(agentId: string) => void>();
+    list(): FakeAgentHandle[] {
+      return [...this.handles.values()];
+    }
+    onDidCreate(cb: (handle: FakeAgentHandle) => void): { dispose: () => void } {
+      this.createHandlers.add(cb);
+      return { dispose: () => this.createHandlers.delete(cb) };
+    }
+    onDidDispose(cb: (agentId: string) => void): { dispose: () => void } {
+      this.disposeHandlers.add(cb);
+      return { dispose: () => this.disposeHandlers.delete(cb) };
+    }
+    add(id: string): FakeAgentHandle {
+      const bus = new FakeBus();
+      const handle: FakeAgentHandle = {
+        id,
+        bus,
+        accessor: { get: (token: unknown) => (token === IEventBus ? bus : undefined) },
+      };
+      this.handles.set(id, handle);
+      for (const cb of this.createHandlers) cb(handle);
+      return handle;
+    }
+    remove(id: string): void {
+      this.handles.delete(id);
+      for (const cb of this.disposeHandlers) cb(id);
+    }
+  }
+
+  function fakeSession(
+    interactions: SessionInteractionService,
+    agents?: FakeAgents,
+  ): ISessionScopeHandle {
     return {
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentLifecycleService) {
-            return {
-              list: () => [],
-              onDidCreate: () => ({ dispose: () => undefined }),
-              onDidDispose: () => ({ dispose: () => undefined }),
-            };
+            return (
+              agents ?? {
+                list: () => [],
+                onDidCreate: () => ({ dispose: () => undefined }),
+                onDidDispose: () => ({ dispose: () => undefined }),
+              }
+            );
           }
           if (token === ISessionInteractionService) return interactions;
           if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
@@ -859,6 +914,28 @@ describe('bindSessionTranscript', () => {
       .filter((op): op is FrameUpsertOp => op.op === 'frame.upsert')
       .map((op) => (op.frame.kind === 'interaction' ? op.frame.state : undefined));
     expect(states).toEqual(['pending', 'approved']);
+    binding.dispose();
+  });
+
+  it('keeps the materialized transcript and roster entry when an agent is disposed', () => {
+    const agents = new FakeAgents();
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(), agents),
+    );
+
+    const sub = agents.add('sub-1');
+    sub.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'scan' }));
+    sub.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+    expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
+
+    // Disposal kills the projector but must not drop already-served history:
+    // the service's backfill cache dedupes per agent, so removing the
+    // transcript would rebuild an empty shell on the next read.
+    agents.remove('sub-1');
+    expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
+    expect(store.agents().map((a) => a.agentId)).toContain('sub-1');
     binding.dispose();
   });
 });

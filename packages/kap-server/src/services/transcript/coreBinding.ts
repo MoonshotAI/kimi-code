@@ -188,8 +188,13 @@ export function bindSessionTranscript(
       refreshDescriptors();
     }),
     agents.onDidDispose((agentId) => {
+      // Only the projector dies with the scope. The materialized transcript
+      // and roster entry stay: the roster mirrors session metadata (which
+      // keeps completed agents), and dropping the transcript would lose
+      // already-served history for good — the service's backfill cache
+      // dedupes per agent, so a later read would rebuild an empty shell
+      // instead of replaying the persisted records.
       projectors.delete(agentId);
-      store.removeAgent(agentId);
     }),
   );
 
