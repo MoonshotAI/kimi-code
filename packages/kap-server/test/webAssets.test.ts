@@ -39,7 +39,7 @@ describe('web asset cache policy', () => {
     );
   });
 
-  it.each(['/', '/index.html', '/sessions/current'])(
+  it.each(['/', '/index.html', '/sessions/current', '/assets/preview'])(
     'revalidates HTML responses for %s',
     async (url) => {
       const response = await app.inject({ method: 'GET', url });

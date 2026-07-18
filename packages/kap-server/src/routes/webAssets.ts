@@ -56,13 +56,14 @@ async function serveWebAsset(
 
   return reply
     .type(mimeType(filePath))
-    .header('Cache-Control', cacheControl(requestUrl.pathname))
+    .header('Cache-Control', cacheControl(assetsDir, filePath))
     .header('Content-Length', String(fileInfo.size))
     .send(createReadStream(filePath));
 }
 
-function cacheControl(pathname: string): string {
-  return pathname.startsWith('/assets/')
+function cacheControl(assetsDir: string, filePath: string): string {
+  const assetsRoot = resolve(assetsDir, 'assets');
+  return filePath.startsWith(`${assetsRoot}${sep}`)
     ? 'public, max-age=31536000, immutable'
     : 'no-cache';
 }
