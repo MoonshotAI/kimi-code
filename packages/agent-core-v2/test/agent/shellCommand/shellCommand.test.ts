@@ -105,6 +105,21 @@ describe('AgentShellCommandService', () => {
     ]);
   });
 
+  it('emits the synthesized failure output before completing', async () => {
+    setup('', 1);
+    const events: { type: string; commandId?: string; update?: { kind: string; text?: string } }[] =
+      [];
+    ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
+
+    await shell.run({ command: 'false', commandId: 'cmd-3' });
+    const relevant = events.filter((e) => e.type === 'shell.output' || e.type === 'shell.completed');
+    // The failure text was never streamed live — it rides a final output
+    // chunk ahead of the completion event.
+    expect(relevant[0]).toMatchObject({ type: 'shell.output', commandId: 'cmd-3' });
+    expect(relevant[0]?.update?.text?.length).toBeGreaterThan(0);
+    expect(relevant.at(-1)).toMatchObject({ type: 'shell.completed', commandId: 'cmd-3' });
+  });
+
   it('records the failure when the Bash tool is not registered', async () => {
     const emptyRegistry: IAgentToolRegistryService = {
       _serviceBrand: undefined,

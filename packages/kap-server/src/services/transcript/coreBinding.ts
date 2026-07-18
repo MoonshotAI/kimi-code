@@ -71,6 +71,8 @@ export function bindSessionTranscript(
   const agents = session.accessor.get(IAgentLifecycleService);
   const interactions = session.accessor.get(ISessionInteractionService);
   const disposables: IDisposable[] = [];
+  /** Per-agent subscriptions (bus listeners capturing the agent's projector) — disposed with the agent. */
+  const agentDisposables = new Map<string, IDisposable[]>();
   const projectors = new Map<string, AgentTranscriptProjector>();
   /** interaction id → owning projector agent id (for resolve routing). */
   const interactionAgents = new Map<string, string>();
@@ -135,10 +137,14 @@ export function bindSessionTranscript(
     const projector = projectorFor(handle.id);
     store.ensureAgent(handle.id, { agentId: handle.id });
     // Every domain emits live events via the per-agent `IEventBus`; the bus is
-    // Agent-scoped, so this sees only this agent's events.
+    // Agent-scoped, so this sees only this agent's events. The subscription is
+    // tracked per agent and disposed with it — the listener captures the
+    // projector, so a dead agent must not keep projecting into the store.
     const bus = handle.accessor.get(IEventBus);
     const busD = bus.subscribe((event) => applyOps(handle.id, projector.map(event)));
-    disposables.push(busD);
+    const list = agentDisposables.get(handle.id) ?? [];
+    list.push(busD);
+    agentDisposables.set(handle.id, list);
   };
 
   const interactionAgentId = (interaction: Interaction): string => {
@@ -188,12 +194,15 @@ export function bindSessionTranscript(
       refreshDescriptors();
     }),
     agents.onDidDispose((agentId) => {
-      // Only the projector dies with the scope. The materialized transcript
-      // and roster entry stay: the roster mirrors session metadata (which
-      // keeps completed agents), and dropping the transcript would lose
-      // already-served history for good — the service's backfill cache
-      // dedupes per agent, so a later read would rebuild an empty shell
-      // instead of replaying the persisted records.
+      // Release the agent's subscriptions first — late events from a dying
+      // scope must not project into the store. Only the projector dies with
+      // the scope; the materialized transcript and roster entry stay (the
+      // roster mirrors session metadata, which keeps completed agents), and
+      // dropping the transcript would lose already-served history for good —
+      // the service's backfill cache dedupes per agent, so a later read
+      // would rebuild an empty shell instead of replaying persisted records.
+      for (const d of agentDisposables.get(agentId) ?? []) d.dispose();
+      agentDisposables.delete(agentId);
       projectors.delete(agentId);
     }),
   );
@@ -266,6 +275,10 @@ export function bindSessionTranscript(
     seedPendingInteractions,
     dispose: () => {
       for (const d of disposables) d.dispose();
+      for (const list of agentDisposables.values()) {
+        for (const d of list) d.dispose();
+      }
+      agentDisposables.clear();
       projectors.clear();
       interactionAgents.clear();
       knownInteractions.clear();

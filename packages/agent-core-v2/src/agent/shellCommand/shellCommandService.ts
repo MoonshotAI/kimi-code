@@ -127,6 +127,15 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       }
       if (isError && stdout.length === 0 && stderr.length === 0) {
         stderr = typeof result.output === 'string' ? result.output : 'Command failed.';
+        // The failure text was never streamed — emit it before completing,
+        // so live consumers (transcript tasks) see the output too.
+        if (input.commandId !== undefined && stderr.length > 0) {
+          this.eventBus.publish({
+            type: 'shell.output',
+            commandId: input.commandId,
+            update: { kind: 'stderr', text: stderr },
+          });
+        }
       }
       if (input.commandId !== undefined) {
         this.eventBus.publish({ type: 'shell.completed', commandId: input.commandId, isError });
@@ -134,8 +143,17 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       this.appendShellOutput(stdout, stderr, isError);
       return { stdout, stderr, isError };
     } catch (error) {
-      stderr += error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      stderr += message;
       if (input.commandId !== undefined) {
+        // The error message was never streamed — emit it before completing.
+        if (message.length > 0) {
+          this.eventBus.publish({
+            type: 'shell.output',
+            commandId: input.commandId,
+            update: { kind: 'stderr', text: message },
+          });
+        }
         this.eventBus.publish({ type: 'shell.completed', commandId: input.commandId, isError: true });
       }
       this.appendShellOutput(stdout, stderr, true);

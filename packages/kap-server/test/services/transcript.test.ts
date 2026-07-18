@@ -477,6 +477,19 @@ describe('AgentTranscriptProjector', () => {
     ).toEqual([]);
   });
 
+  it('fills the shell task output from late stderr chunks before completing', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' })));
+    tx.apply(
+      projector.map(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stderr', text: 'boom' } })),
+    );
+    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: true })));
+
+    expect(tx.getTask('task-1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
+  });
+
   it('marks a foreground shell task terminal on shell.completed', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
@@ -992,6 +1005,26 @@ describe('bindSessionTranscript', () => {
       },
     } as unknown as Scope;
   }
+
+  it('stops projecting for an agent once it is disposed', () => {
+    const agents = new FakeAgents();
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(), agents),
+    );
+
+    const sub = agents.add('sub-1');
+    sub.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'scan' }));
+    expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
+
+    agents.remove('sub-1');
+    // The agent's subscriptions are disposed with it — late events from the
+    // dying scope must not project into the store.
+    sub.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+    expect(store.getAgent('sub-1')?.getItems()[0]).toMatchObject({ kind: 'turn', state: 'running' });
+    binding.dispose();
+  });
 
   it('overlays the in-flight turn as running after a backfill', async () => {
     const home = await seedWireHome();
