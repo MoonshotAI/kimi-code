@@ -13,13 +13,13 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 
 桌面端最新安装包（CDN 固定入口，永远指向最新版本）：
 
-| 平台 | 链接 |
-| --- | --- |
-| macOS · Apple Silicon | [KimiCode-mac-arm64.dmg](https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-arm64.dmg) |
-| macOS · Intel | [KimiCode-mac-x64.dmg](https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-x64.dmg) |
-| Windows | [KimiCode-win-x64.exe](https://code.kimi.com/kimi-code/desktop/download/KimiCode-win-x64.exe) |
-| Linux · AppImage | [KimiCode-linux-x86_64.AppImage](https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-x86_64.AppImage) |
-| Linux · deb（Debian / Ubuntu） | [KimiCode-linux-amd64.deb](https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-amd64.deb) |
+```
+macOS · Apple Silicon    https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-arm64.dmg
+macOS · Intel            https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-x64.dmg
+Windows                  https://code.kimi.com/kimi-code/desktop/download/KimiCode-win-x64.exe
+Linux · AppImage         https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-x86_64.AppImage
+Linux · deb              https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-amd64.deb
+```
 
 历史版本与完整产物见 [GitHub Releases](https://github.com/MoonshotAI/kimi-code-app/releases)。
 
