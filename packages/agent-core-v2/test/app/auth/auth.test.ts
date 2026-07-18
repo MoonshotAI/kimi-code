@@ -26,11 +26,14 @@ import {
 } from '#/app/auth/configSection';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { WebSearchProviderService } from '#/app/auth/webSearch/webSearchService';
+import { IRerankService } from '#/app/auth/webSearch/rerank';
+import { RerankService } from '#/app/auth/webSearch/rerankService';
 import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
 import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { type DomainEvent, IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
 import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
 import { MODELS_SECTION, type ModelAlias } from '#/app/model/model';
@@ -38,6 +41,7 @@ import { IPlatformService, type PlatformConfig } from '#/app/platform/platform';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/app/provider/provider';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
+import { stubFlag } from '../flag/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
 
 const OAUTH_PROVIDER = 'managed:kimi-code';
@@ -766,11 +770,13 @@ describe('WebSearchProviderService', () => {
   let providers: Record<string, ProviderConfig>;
   let servicesConfig: ServicesConfig | undefined;
   let resolveTokenProvider: ReturnType<typeof vi.fn>;
+  let langSearchFlagEnabled: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     providers = {};
     servicesConfig = undefined;
+    langSearchFlagEnabled = true;
     resolveTokenProvider = vi
       .fn()
       .mockReturnValue({ getAccessToken: async () => 'access-token' });
@@ -793,7 +799,9 @@ describe('WebSearchProviderService', () => {
           get: ((domain: string) =>
             domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
         });
+        reg.defineInstance(IFlagService, stubFlag(() => langSearchFlagEnabled));
         reg.define(IWebSearchProviderService, WebSearchProviderService);
+        reg.define(IRerankService, RerankService);
       },
     });
   });
@@ -971,6 +979,185 @@ describe('WebSearchProviderService', () => {
     expect(createService().getWebSearchProvider()).toBeUndefined();
     expect(resolveTokenProvider).not.toHaveBeenCalled();
   });
+
+  // --- LangSearch provider tests ---
+
+  function langsearchFetchMock(
+    searchResults: Array<{ name?: string; url?: string; snippet?: string; summary?: string; datePublished?: string }>,
+    rerankResults?: Array<{ index: number; relevance_score?: number }>,
+  ): ReturnType<typeof vi.fn> {
+    return vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/v1/web-search')) {
+        return Promise.resolve({
+          status: 200,
+          json: async () => ({
+            code: 200,
+            data: { webPages: { value: searchResults } },
+          }),
+        });
+      }
+      if (url.endsWith('/v1/rerank')) {
+        if (rerankResults === undefined) {
+          return Promise.resolve({ status: 500, text: async () => 'rerank error' });
+        }
+        return Promise.resolve({
+          status: 200,
+          json: async () => ({ code: 200, results: rerankResults }),
+        });
+      }
+      return Promise.resolve({ status: 404, text: async () => 'not found' });
+    });
+  }
+
+  it('returns undefined when langsearch has no apiKey', () => {
+    servicesConfig = { langsearch: { baseUrl: 'https://api.langsearch.com' } };
+    expect(createService().getWebSearchProvider()).toBeUndefined();
+  });
+
+  it('does not activate LangSearch while its experimental flag is disabled', () => {
+    langSearchFlagEnabled = false;
+    servicesConfig = { langsearch: { apiKey: 'ls-key' } };
+    expect(createService().getWebSearchProvider()).toBeUndefined();
+  });
+
+  it('rejects unsuccessful LangSearch API codes returned with HTTP 200', async () => {
+    servicesConfig = { langsearch: { apiKey: 'ls-key' } };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        json: async () => ({ code: 500, msg: 'backend unavailable' }),
+      }),
+    );
+
+    await expect(createService().getWebSearchProvider()!.search('query')).rejects.toThrow(
+      'LangSearch web search request failed: API code 500. backend unavailable',
+    );
+  });
+
+  it('builds a LangSearch provider from services.langsearch apiKey with rerank', async () => {
+    servicesConfig = {
+      langsearch: { apiKey: 'ls-key', tier: 'tier2' },
+      rerank: { enabled: true, provider: 'langsearch' },
+    };
+    const fetchMock = langsearchFetchMock(
+      [
+        { name: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' },
+        { name: 'Result B', url: 'https://b.example.com', snippet: 'Snippet B' },
+      ],
+      [
+        { index: 1, relevance_score: 0.9 },
+        { index: 0, relevance_score: 0.5 },
+      ],
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createService().getWebSearchProvider();
+    expect(provider).not.toBeUndefined();
+    const results = await provider!.search('query');
+
+    // Reranked: index 1 first, then index 0.
+    expect(results).toEqual([
+      { title: 'Result B', url: 'https://b.example.com', snippet: 'Snippet B' },
+      { title: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [searchUrl, searchInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(searchUrl).toBe('https://api.langsearch.com/v1/web-search');
+    expect((searchInit.headers as Record<string, string>)['Authorization']).toBe('Bearer ls-key');
+    const searchBody = JSON.parse(searchInit.body as string);
+    expect(searchBody.query).toBe('query');
+    // Rerank call reuses the langsearch apiKey when rerank has none of its own.
+    const [, rerankInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect((rerankInit.headers as Record<string, string>)['Authorization']).toBe('Bearer ls-key');
+  });
+
+  it('ignores fractional LangSearch rerank indexes', async () => {
+    servicesConfig = {
+      langsearch: { apiKey: 'ls-key' },
+      rerank: { enabled: true, provider: 'langsearch' },
+    };
+    const fetchMock = langsearchFetchMock(
+      [
+        { name: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' },
+        { name: 'Result B', url: 'https://b.example.com', snippet: 'Snippet B' },
+      ],
+      [
+        { index: 0.5, relevance_score: 1 },
+        { index: 1, relevance_score: 0.9 },
+      ],
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createService().getWebSearchProvider()!.search('query')).resolves.toEqual([
+      { title: 'Result B', url: 'https://b.example.com', snippet: 'Snippet B' },
+      { title: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' },
+    ]);
+  });
+
+  it('LangSearch provider skips rerank when services.rerank is disabled', async () => {
+    servicesConfig = {
+      langsearch: { apiKey: 'ls-key' },
+      rerank: { enabled: false, provider: 'langsearch' },
+    };
+    const fetchMock = langsearchFetchMock(
+      [{ name: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' }],
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createService().getWebSearchProvider();
+    const results = await provider!.search('query');
+
+    expect(results).toEqual([
+      { title: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' },
+    ]);
+    // Only one fetch — the search. No rerank call.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://api.langsearch.com/v1/web-search');
+  });
+
+  it('LangSearch rerank failure falls back to original search order', async () => {
+    servicesConfig = {
+      langsearch: { apiKey: 'ls-key' },
+      rerank: { enabled: true, provider: 'langsearch' },
+    };
+    // rerankResults undefined → mock returns 500 for /v1/rerank
+    const fetchMock = langsearchFetchMock(
+      [
+        { name: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' },
+        { name: 'Result B', url: 'https://b.example.com', snippet: 'Snippet B' },
+      ],
+      undefined,
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createService().getWebSearchProvider();
+    const results = await provider!.search('query');
+
+    // Original order preserved when rerank fails.
+    expect(results).toEqual([
+      { title: 'Result A', url: 'https://a.example.com', snippet: 'Snippet A' },
+      { title: 'Result B', url: 'https://b.example.com', snippet: 'Snippet B' },
+    ]);
+  });
+
+  it('langsearch takes precedence over moonshot_search', async () => {
+    servicesConfig = {
+      langsearch: { apiKey: 'ls-key' },
+      moonshotSearch: { baseUrl: 'https://moonshot.example.com/search', apiKey: 'ms-key' },
+    };
+    const fetchMock = langsearchFetchMock([
+      { name: 'LS Result', url: 'https://ls.example.com', snippet: 'LS snippet' },
+    ]);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createService().getWebSearchProvider();
+    expect(provider).not.toBeUndefined();
+    await provider!.search('query');
+
+    // First call should be to LangSearch, not Moonshot.
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://api.langsearch.com/v1/web-search');
+  });
 });
 
 describe('services config section', () => {
@@ -982,15 +1169,22 @@ describe('services config section', () => {
       registry.validate(SERVICES_SECTION, {
         moonshotSearch: { baseUrl: 'https://api.example.com/search', apiKey: 'search-key' },
         moonshotFetch: { baseUrl: 'https://api.example.com/fetch' },
+        langsearch: { apiKey: 'ls-key', tier: 'tier1', count: 5 },
+        rerank: { enabled: true, provider: 'langsearch' },
         customService: { baseUrl: 'https://service.example.com', retries: 3 },
       }),
     ).toEqual({
       moonshotSearch: { baseUrl: 'https://api.example.com/search', apiKey: 'search-key' },
       moonshotFetch: { baseUrl: 'https://api.example.com/fetch' },
+      langsearch: { apiKey: 'ls-key', tier: 'tier1', count: 5 },
+      rerank: { enabled: true, provider: 'langsearch' },
       customService: { baseUrl: 'https://service.example.com', retries: 3 },
     });
     expect(() =>
-      registry.validate(SERVICES_SECTION, { moonshotSearch: { baseUrl: 42 } }),
+      registry.validate(SERVICES_SECTION, { langsearch: { tier: 'invalid' } }),
+    ).toThrow();
+    expect(() =>
+      registry.validate(SERVICES_SECTION, { langsearch: { count: 11 } }),
     ).toThrow();
   });
 
@@ -1004,6 +1198,8 @@ describe('services config section', () => {
           oauth: { storage: 'file', key: 'oauth/kimi-code', oauth_host: 'https://auth.example.com' },
         },
         moonshot_fetch: { base_url: 'https://api.example.com/fetch', api_key: 'fetch-key' },
+        langsearch: { api_key: 'ls-key', tier: 'tier1', count: 5 },
+        rerank: { enabled: true, provider: 'langsearch' },
       }),
     ).toEqual({
       moonshotSearch: {
@@ -1013,6 +1209,8 @@ describe('services config section', () => {
         oauth: { storage: 'file', key: 'oauth/kimi-code', oauthHost: 'https://auth.example.com' },
       },
       moonshotFetch: { baseUrl: 'https://api.example.com/fetch', apiKey: 'fetch-key' },
+      langsearch: { apiKey: 'ls-key', tier: 'tier1', count: 5 },
+      rerank: { enabled: true, provider: 'langsearch' },
     });
   });
 

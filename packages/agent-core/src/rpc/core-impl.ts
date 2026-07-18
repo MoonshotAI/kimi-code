@@ -4,9 +4,17 @@ import { homedir } from 'node:os';
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import { PluginManager } from '#/plugin';
+import type { WebSearchProvider } from '#/tools/builtin/web/web-search';
+import { LangSearchRerankProvider } from '#/tools/providers/langsearch-rerank';
+import { LangSearchWebSearchProvider } from '#/tools/providers/langsearch-web-search';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
+import { RerankingWebSearchProvider } from '#/tools/providers/reranking-web-search';
+import {
+  LANGSEARCH_TIER_LIMITS,
+  RateLimiter,
+} from '#/tools/providers/rate-limiter';
 import { ImageLimits } from '#/tools/support/image-limits';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
@@ -121,6 +129,8 @@ import type {
   ReloadSessionPayload,
   ReloadPluginsResult,
   RemoveKimiProviderPayload,
+  RemoveKimiServicePayload,
+  ReplaceKimiServicePayload,
   RemovePluginPayload,
   RenameSessionPayload,
   ResumeSessionPayload,
@@ -686,6 +696,26 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.reloadRuntimeConfig();
   }
 
+  async replaceKimiService(input: ReplaceKimiServicePayload): Promise<KimiConfig> {
+    const config = this.readConfigForWrite();
+    config.services ??= {};
+    config.services[input.service] = input.config;
+    await writeConfigFile(this.configPath, config);
+    return this.reloadRuntimeConfig();
+  }
+
+  async removeKimiService(input: RemoveKimiServicePayload): Promise<KimiConfig> {
+    const config = this.readConfigForWrite();
+    if (config.services !== undefined) {
+      delete config.services[input.service];
+      if (Object.keys(config.services).length === 0) {
+        config.services = undefined;
+      }
+    }
+    await writeConfigFile(this.configPath, config);
+    return this.reloadRuntimeConfig();
+  }
+
   async listGlobalMcpServers(_input?: EmptyPayload): Promise<readonly GlobalMcpServerConfig[]> {
     return this.globalMcpConfig.list();
   }
@@ -1148,6 +1178,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     if (this.runtime !== undefined) return this.runtime;
     const runtime = await createRuntimeConfig({
       config,
+      langSearchEnabled: this.experimentalFlags.enabled('langsearch-web-search'),
       kimiRequestHeaders: this.kimiRequestHeaders,
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
     });
@@ -1380,12 +1411,16 @@ function standaloneMcpTestResult(
 
 async function createRuntimeConfig(input: {
   readonly config: KimiConfig;
+  readonly langSearchEnabled: boolean;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
 }): Promise<ToolServices> {
   const localFetcher = new LocalFetchURLProvider();
-  const searchService = input.config.services?.moonshotSearch;
-  const fetchService = input.config.services?.moonshotFetch;
+  const services = input.config.services;
+  const fetchService = services?.moonshotFetch;
+  const langSearchLimiter = createLangSearchRateLimiter(input.config, input.langSearchEnabled);
+  const search = createWebSearchProvider(input, langSearchLimiter);
+  const reranker = createRerankProvider(input.config, input.langSearchEnabled, langSearchLimiter);
 
   return {
     urlFetcher:
@@ -1398,14 +1433,88 @@ async function createRuntimeConfig(input: {
             ...serviceCredentials(fetchService, input.resolveOAuthTokenProvider),
           }),
     webSearcher:
-      searchService?.baseUrl === undefined
-        ? undefined
-        : new MoonshotWebSearchProvider({
-            baseUrl: searchService.baseUrl,
-            defaultHeaders: input.kimiRequestHeaders,
-            ...serviceCredentials(searchService, input.resolveOAuthTokenProvider),
-          }),
+      search !== undefined && reranker !== undefined
+        ? new RerankingWebSearchProvider(search, reranker)
+        : search,
   };
+}
+
+function createWebSearchProvider(
+  input: {
+    readonly config: KimiConfig;
+    readonly langSearchEnabled: boolean;
+    readonly kimiRequestHeaders?: Record<string, string> | undefined;
+    readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
+  },
+  limiter: RateLimiter | undefined,
+): WebSearchProvider | undefined {
+  const services = input.config.services;
+  const langsearch = services?.langsearch;
+  const langsearchApiKey = nonEmptyString(langsearch?.apiKey);
+  if (input.langSearchEnabled && langsearchApiKey !== undefined) {
+    return new LangSearchWebSearchProvider({
+      apiKey: langsearchApiKey,
+      baseUrl: langsearch?.baseUrl,
+      tier: langsearch?.tier,
+      freshness: langsearch?.freshness,
+      summary: langsearch?.summary,
+      count: langsearch?.count,
+      customHeaders: langsearch?.customHeaders,
+      limiter,
+    });
+  }
+
+  const moonshot = services?.moonshotSearch;
+  if (moonshot?.baseUrl === undefined) return undefined;
+  return new MoonshotWebSearchProvider({
+    baseUrl: moonshot.baseUrl,
+    defaultHeaders: input.kimiRequestHeaders,
+    ...serviceCredentials(moonshot, input.resolveOAuthTokenProvider),
+  });
+}
+
+function createRerankProvider(
+  config: KimiConfig,
+  langSearchEnabled: boolean,
+  limiter: RateLimiter | undefined,
+): LangSearchRerankProvider | undefined {
+  const services = config.services;
+  const rerank = services?.rerank;
+  if (
+    !langSearchEnabled ||
+    rerank?.enabled === false ||
+    rerank?.provider !== 'langsearch'
+  ) {
+    return undefined;
+  }
+
+  const apiKey = nonEmptyString(rerank.apiKey) ?? nonEmptyString(services?.langsearch?.apiKey);
+  if (apiKey === undefined) return undefined;
+  return new LangSearchRerankProvider({
+    apiKey,
+    baseUrl: rerank.baseUrl,
+    tier: services?.langsearch?.tier,
+    customHeaders: rerank.customHeaders,
+    limiter,
+  });
+}
+
+function createLangSearchRateLimiter(
+  config: KimiConfig,
+  langSearchEnabled: boolean,
+): RateLimiter | undefined {
+  if (!langSearchEnabled) return undefined;
+  const services = config.services;
+  const searchConfigured = nonEmptyString(services?.langsearch?.apiKey) !== undefined;
+  const rerankConfigured =
+    services?.rerank?.enabled !== false &&
+    services?.rerank?.provider === 'langsearch' &&
+    (nonEmptyString(services.rerank.apiKey) ?? nonEmptyString(services.langsearch?.apiKey)) !==
+      undefined;
+  if (!searchConfigured && !rerankConfigured) return undefined;
+
+  const tier = services?.langsearch?.tier ?? 'free';
+  return new RateLimiter(LANGSEARCH_TIER_LIMITS[tier], tier);
 }
 
 function serviceCredentials(

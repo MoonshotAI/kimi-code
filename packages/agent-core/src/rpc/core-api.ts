@@ -15,7 +15,14 @@ import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm';
 import type { ToolInfo } from '#/agent/tool';
-import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
+import type {
+  KimiConfig,
+  KimiConfigPatch,
+  LangSearchServiceConfig,
+  McpServerConfig,
+  MoonshotServiceConfig,
+  RerankServiceConfig,
+} from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
@@ -436,6 +443,26 @@ export interface RemoveKimiProviderPayload {
   readonly providerId: string;
 }
 
+export interface ReplaceableKimiServices {
+  readonly moonshotSearch: MoonshotServiceConfig;
+  readonly langsearch: LangSearchServiceConfig;
+  readonly rerank: RerankServiceConfig;
+}
+
+export type ReplaceableKimiService = keyof ReplaceableKimiServices;
+export type RemovableKimiService = ReplaceableKimiService;
+
+export type ReplaceKimiServicePayload = {
+  readonly [Service in ReplaceableKimiService]: {
+    readonly service: Service;
+    readonly config: ReplaceableKimiServices[Service];
+  };
+}[ReplaceableKimiService];
+
+export interface RemoveKimiServicePayload {
+  readonly service: RemovableKimiService;
+}
+
 export interface GetCronTasksResult {
   readonly tasks: readonly CronTaskSnapshot[];
 }
@@ -512,6 +539,8 @@ export interface CoreAPI extends SessionAPIWithId {
   getConfigDiagnostics: (payload: EmptyPayload) => ConfigDiagnostics;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
+  replaceKimiService: (payload: ReplaceKimiServicePayload) => KimiConfig;
+  removeKimiService: (payload: RemoveKimiServicePayload) => KimiConfig;
   listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
   addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
   updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];

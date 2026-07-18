@@ -7,7 +7,8 @@ export type SettingsSelection =
   | 'permission'
   | 'experiments'
   | 'upgrade'
-  | 'usage';
+  | 'usage'
+  | 'webSearch';
 
 const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   {
@@ -45,6 +46,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     label: 'Usage',
     description: 'Show session tokens, context window, and plan quotas.',
   },
+  {
+    value: 'webSearch',
+    label: 'Web Search',
+    description: 'Configure web search and rerank providers.',
+  },
 ];
 
 function isSettingsSelection(value: string): value is SettingsSelection {
@@ -55,7 +61,8 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'permission' ||
     value === 'experiments' ||
     value === 'upgrade' ||
-    value === 'usage'
+    value === 'usage' ||
+    value === 'webSearch'
   );
 }
 

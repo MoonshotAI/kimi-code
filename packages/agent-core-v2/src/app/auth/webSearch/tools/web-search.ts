@@ -3,16 +3,16 @@
  * `WebSearchProvider` contract.
  *
  * Defines the `WebSearch` tool and the host-injected `WebSearchProvider`
- * interface (plus `WebSearchResult`). Web search needs an authenticated
- * Moonshot backend, so the tool lives in the KimiOAuth `auth` domain: it reads
- * its provider from the App-scope `IWebSearchProviderService` at
- * registry-construction time and self-registers via `registerTool(...)` at
- * module load, but only when a provider is configured (there is no local
- * search backend).
+ * interface (plus `WebSearchResult`). The tool lives in the cross-cutting
+ * `auth` domain because its Moonshot and LangSearch backends use credentials
+ * from the App-scope `IWebSearchProviderService`. It self-registers through
+ * `toolRegistry` only when a provider is configured; no local search backend
+ * is exposed. Bound at Agent scope through the tool registry.
  */
 
 import { z } from 'zod';
 
+import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -23,7 +23,6 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { ToolResultBuilder } from '#/tool/result-builder';
-import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebSearchProviderService } from '../webSearch';
 import DESCRIPTION from './web-search.md?raw';

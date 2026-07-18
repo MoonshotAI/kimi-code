@@ -114,6 +114,7 @@ export function promptApiKey(
   host: SlashCommandHost,
   platformName: string,
   subtitleLines: readonly string[] = ['Your key will be saved to ~/.kimi-code/config.toml'],
+  options: { readonly allowEmpty?: boolean } = {},
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(
@@ -123,6 +124,7 @@ export function promptApiKey(
         host.restoreEditor();
         resolve(result.kind === 'ok' ? result.value : undefined);
       },
+      options,
     );
     host.mountEditorReplacement(dialog);
   });

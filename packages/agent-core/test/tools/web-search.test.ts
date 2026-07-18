@@ -11,7 +11,10 @@ import {
   WebSearchTool,
   type WebSearchProvider,
 } from '../../src/tools/builtin/web/web-search';
+import { LangSearchRerankProvider } from '../../src/tools/providers/langsearch-rerank';
+import { LangSearchWebSearchProvider } from '../../src/tools/providers/langsearch-web-search';
 import { MoonshotWebSearchProvider } from '../../src/tools/providers/moonshot-web-search';
+import { RerankingWebSearchProvider } from '../../src/tools/providers/reranking-web-search';
 import { toolContentString } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -266,7 +269,7 @@ describe('WebSearchTool', () => {
     expect(content).toContain('The operation was aborted');
   });
 
-  it('passes only the query and toolCallId to the provider', async () => {
+  it('passes the query, toolCallId, and abort signal to the provider', async () => {
     const provider = fakeProvider([]);
     const tool = new WebSearchTool(provider);
     await executeTool(tool, {
@@ -277,6 +280,7 @@ describe('WebSearchTool', () => {
     });
     expect(provider.search).toHaveBeenCalledWith('test', {
       toolCallId: 'c4',
+      signal,
     });
   });
 
@@ -295,6 +299,189 @@ describe('WebSearchTool', () => {
     const tool = new WebSearchTool(fakeProvider());
     expect(tool.description.toLowerCase()).toMatch(/internet|search the web/);
     expect(tool.description.toLowerCase()).toContain('search');
+  });
+});
+
+describe('LangSearch providers', () => {
+  it('sends configured web search options and maps summary metadata', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: 200,
+          data: {
+            webPages: {
+              value: [
+                {
+                  name: 'Result',
+                  url: 'https://example.test/result',
+                  snippet: 'Search snippet',
+                  summary: 'Generated summary',
+                  siteName: 'Example',
+                  datePublished: '2026-07-18',
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const provider = new LangSearchWebSearchProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://search.example.test/',
+      tier: 'tier1',
+      freshness: 'oneMonth',
+      summary: true,
+      count: 7,
+      customHeaders: { 'X-Test': 'yes' },
+      fetchImpl,
+    });
+
+    await expect(provider.search('kimi search')).resolves.toEqual([
+      {
+        title: 'Result',
+        url: 'https://example.test/result',
+        snippet: 'Generated summary',
+        siteName: 'Example',
+        date: '2026-07-18',
+      },
+    ]);
+    expect(fetchImpl).toHaveBeenCalledWith('https://search.example.test/v1/web-search', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer sk-test',
+        'Content-Type': 'application/json',
+        'X-Test': 'yes',
+      },
+      body: JSON.stringify({
+        query: 'kimi search',
+        freshness: 'oneMonth',
+        summary: true,
+        count: 7,
+      }),
+      signal: undefined,
+    });
+  });
+
+  it('rejects unsuccessful API codes returned with HTTP 200', async () => {
+    const provider = new LangSearchWebSearchProvider({
+      apiKey: 'sk-test',
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(JSON.stringify({ code: 500, msg: 'backend unavailable' }), {
+          status: 200,
+        }),
+      ),
+    });
+
+    await expect(provider.search('query')).rejects.toThrow(
+      'LangSearch web search request failed: API code 500. backend unavailable',
+    );
+  });
+
+  it('reports authentication and rate-limit failures', async () => {
+    const unauthorized = new LangSearchWebSearchProvider({
+      apiKey: 'sk-test',
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response('bad key', { status: 401 }),
+      ),
+    });
+    const rateLimited = new LangSearchWebSearchProvider({
+      apiKey: 'sk-test',
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response('slow down', { status: 429 }),
+      ),
+    });
+
+    await expect(unauthorized.search('query')).rejects.toThrow(
+      'HTTP 401 (auth/unauthorized). bad key',
+    );
+    await expect(rateLimited.search('query')).rejects.toThrow(
+      'LangSearch rate limit exceeded (tier: free). slow down',
+    );
+  });
+
+  it('reranks any search backend using the semantic rerank response', async () => {
+    const original = [
+      { title: 'First', url: 'https://example.test/first', snippet: 'First snippet' },
+      { title: 'Second', url: 'https://example.test/second', snippet: 'Second snippet' },
+    ];
+    const delegate = fakeProvider(original);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [
+            { index: 1, relevance_score: 0.9 },
+            { index: 0, relevance_score: 0.4 },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const reranker = new LangSearchRerankProvider({
+      apiKey: 'sk-rerank-test',
+      baseUrl: 'https://rerank.example.test',
+      fetchImpl,
+    });
+    const provider = new RerankingWebSearchProvider(delegate, reranker);
+
+    await expect(provider.search('best result')).resolves.toEqual([
+      original[1],
+      original[0],
+    ]);
+    const request = fetchImpl.mock.calls[0]?.[1];
+    expect(request?.headers).toMatchObject({ Authorization: 'Bearer sk-rerank-test' });
+    expect(typeof request?.body).toBe('string');
+    expect(JSON.parse(request?.body as string)).toEqual({
+      model: 'langsearch-reranker-v1',
+      query: 'best result',
+      documents: ['First snippet', 'Second snippet'],
+      top_n: 2,
+      return_documents: false,
+    });
+  });
+
+  it('ignores fractional rerank indexes', async () => {
+    const original = [
+      { title: 'First', url: 'https://example.test/first', snippet: 'First snippet' },
+      { title: 'Second', url: 'https://example.test/second', snippet: 'Second snippet' },
+    ];
+    const reranker = new LangSearchRerankProvider({
+      apiKey: 'sk-test',
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            results: [
+              { index: 0.5, relevance_score: 1 },
+              { index: 1, relevance_score: 0.9 },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    });
+
+    await expect(reranker.rerank('query', original)).resolves.toEqual([
+      original[1],
+      original[0],
+    ]);
+  });
+
+  it('keeps the original order when rerank fails', async () => {
+    const original = [
+      { title: 'First', url: 'https://example.test/first', snippet: 'First snippet' },
+      { title: 'Second', url: 'https://example.test/second', snippet: 'Second snippet' },
+    ];
+    const provider = new RerankingWebSearchProvider(
+      fakeProvider(original),
+      new LangSearchRerankProvider({
+        apiKey: 'sk-test',
+        fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+          new Response('service unavailable', { status: 503 }),
+        ),
+      }),
+    );
+
+    await expect(provider.search('query')).resolves.toEqual(original);
   });
 });
 

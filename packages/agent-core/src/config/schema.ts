@@ -210,9 +210,42 @@ export const MoonshotServiceConfigSchema = z.object({
 
 export type MoonshotServiceConfig = z.infer<typeof MoonshotServiceConfigSchema>;
 
+export const LangSearchTierSchema = z.enum(['free', 'tier1', 'tier2', 'tier3']);
+export const LangSearchFreshnessSchema = z.enum([
+  'oneDay',
+  'oneWeek',
+  'oneMonth',
+  'oneYear',
+  'noLimit',
+]);
+
+export const LangSearchServiceConfigSchema = z.object({
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  tier: LangSearchTierSchema.optional(),
+  freshness: LangSearchFreshnessSchema.optional(),
+  summary: z.boolean().optional(),
+  count: z.number().int().min(1).max(10).optional(),
+  customHeaders: StringRecordSchema.optional(),
+});
+
+export type LangSearchServiceConfig = z.infer<typeof LangSearchServiceConfigSchema>;
+
+export const RerankServiceConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  provider: z.enum(['langsearch']).optional(),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  customHeaders: StringRecordSchema.optional(),
+});
+
+export type RerankServiceConfig = z.infer<typeof RerankServiceConfigSchema>;
+
 export const ServicesConfigSchema = z.object({
   moonshotSearch: MoonshotServiceConfigSchema.optional(),
   moonshotFetch: MoonshotServiceConfigSchema.optional(),
+  langsearch: LangSearchServiceConfigSchema.optional(),
+  rerank: RerankServiceConfigSchema.optional(),
 });
 
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
@@ -325,9 +358,13 @@ const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
+const LangSearchServiceConfigPatchSchema = LangSearchServiceConfigSchema.partial();
+const RerankServiceConfigPatchSchema = RerankServiceConfigSchema.partial();
 const ServicesConfigPatchSchema = z.object({
   moonshotSearch: MoonshotServiceConfigPatchSchema.optional(),
   moonshotFetch: MoonshotServiceConfigPatchSchema.optional(),
+  langsearch: LangSearchServiceConfigPatchSchema.optional(),
+  rerank: RerankServiceConfigPatchSchema.optional(),
 });
 
 export const KimiConfigPatchSchema = z

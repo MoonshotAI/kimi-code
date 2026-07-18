@@ -120,7 +120,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `server` (run and manage the local REST/WebSocket/web service), `web` (open the web UI; runs the server in the foreground by default), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `server` (run and manage the local REST/WebSocket/web service), `web` (open the web UI; runs the server in the foreground by default), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), `search` (manage web search and rerank), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -315,6 +315,31 @@ kimi vis 01HZ...XYZ
 # Bind a fixed port and host without opening a browser (e.g. on a remote host)
 kimi vis --host 0.0.0.0 --port 8123 --no-open
 ```
+
+### `kimi search`
+
+Manage the web search backend and semantic rerank without opening the TUI. In **Settings → Web Search**, the current providers appear at the top: **Web search provider** configures Moonshot or LangSearch, while **Rerank provider** independently manages the reranker status and API key. Moonshot setup can reuse the current Kimi Code OAuth login or accept an API key for the China or Global API region. Both the CLI and TUI persist changes to `[services]` in `config.toml`. LangSearch search and rerank are experimental; enable **LangSearch web search** under **Settings → Experiments** or set `KIMI_CODE_EXPERIMENTAL_LANGSEARCH_WEB_SEARCH=1` before configuring them.
+
+| Command | Description |
+| --- | --- |
+| `kimi search status` | Show the active search backend and rerank status |
+| `kimi search set langsearch --api-key <key>` | Configure LangSearch web search |
+| `kimi search set rerank` | Configure LangSearch semantic rerank; reuses the search API key by default |
+| `kimi search clear langsearch` | Remove `[services.langsearch]` and fall back to Moonshot when available |
+| `kimi search clear rerank` | Remove `[services.rerank]` |
+| `kimi search limits` | Show the published LangSearch quotas for each tier |
+
+`kimi search set langsearch` accepts `--tier <free|tier1|tier2|tier3>` and `--count <1-10>`. `kimi search set rerank` accepts `--provider langsearch`, an optional `--api-key <key>`, and `--enabled <true|false>`.
+
+```sh
+kimi search set langsearch --api-key YOUR_API_KEY --tier free --count 10
+kimi search set rerank
+kimi search status
+kimi search clear rerank
+kimi search clear langsearch
+```
+
+See [`services`](../configuration/config-files.md#services) for the complete configuration field reference and backend precedence.
 
 ### `kimi provider`
 

@@ -13,6 +13,7 @@ import {
   type HookDefConfig,
   type ImageConfig,
   type KimiConfig,
+  type LangSearchServiceConfig,
   type LoopControl,
   type ModelAlias,
   type MoonshotServiceConfig,
@@ -639,10 +640,22 @@ function servicesToToml(services: ServicesConfig, rawServices: unknown): Record<
   } else {
     delete out['moonshot_fetch'];
   }
+  if (services.langsearch !== undefined) {
+    out['langsearch'] = serviceToToml(services.langsearch);
+  } else {
+    delete out['langsearch'];
+  }
+  if (services.rerank !== undefined) {
+    out['rerank'] = serviceToToml(services.rerank);
+  } else {
+    delete out['rerank'];
+  }
   return out;
 }
 
-function serviceToToml(service: MoonshotServiceConfig): Record<string, unknown> {
+function serviceToToml(
+  service: MoonshotServiceConfig | LangSearchServiceConfig | NonNullable<ServicesConfig['rerank']>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(service)) {
     if (key === 'oauth' && value !== undefined) {
