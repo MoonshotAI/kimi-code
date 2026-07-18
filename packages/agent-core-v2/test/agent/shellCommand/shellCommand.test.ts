@@ -5,6 +5,7 @@ import {
   IAgentContextMemoryService,
   IAgentShellCommandService,
   IAgentToolRegistryService,
+  IEventBus,
 } from '#/index';
 
 import {
@@ -80,6 +81,28 @@ describe('AgentShellCommandService', () => {
     await shell.run({ command: 'echo hi' });
 
     expect(ctx.llmCalls.length).toBe(0);
+  });
+
+  it('publishes shell.completed with the outcome for interactive runs', async () => {
+    setup('hello\n', 0);
+    const events: { type: string; commandId?: string; isError?: boolean }[] = [];
+    ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
+
+    await shell.run({ command: 'echo hello', commandId: 'cmd-1' });
+    expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
+      { type: 'shell.completed', commandId: 'cmd-1', isError: false },
+    ]);
+  });
+
+  it('publishes shell.completed as failed for a failing command', async () => {
+    setup('', 1);
+    const events: { type: string; commandId?: string; isError?: boolean }[] = [];
+    ctx.get(IEventBus).subscribe((event) => events.push(event as (typeof events)[number]));
+
+    await shell.run({ command: 'false', commandId: 'cmd-2' });
+    expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
+      { type: 'shell.completed', commandId: 'cmd-2', isError: true },
+    ]);
   });
 
   it('records the failure when the Bash tool is not registered', async () => {

@@ -464,6 +464,22 @@ describe('AgentTranscriptProjector', () => {
     ).toEqual([]);
   });
 
+  it('marks a foreground shell task terminal on shell.completed', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' })));
+    expect(tx.getTask('task-1')?.state).toBe('running');
+
+    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: false })));
+    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'completed' });
+    expect(tx.getTask('task-1')?.endedAt).toBeTypeOf('string');
+
+    tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c2', taskId: 'task-2' })));
+    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c2', isError: true })));
+    expect(tx.getTask('task-2')?.state).toBe('failed');
+  });
+
   it('ignores task.notified (it re-surfaces as an origin:task turn)', () => {
     const projector = new AgentTranscriptProjector('main');
     expect(projector.map(ev({ type: 'task.notified', taskId: 't' }))).toEqual([]);

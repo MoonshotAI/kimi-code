@@ -47,10 +47,22 @@ export interface ShellStartedEvent {
   readonly taskId: string;
 }
 
+/**
+ * Fired once when a foreground `!` shell command settles (success or
+ * failure). Runs detached to background do NOT fire it — they report through
+ * the task lifecycle instead. Transient, like the other `shell.*` events.
+ */
+export interface ShellCompletedEvent {
+  readonly type: 'shell.completed';
+  readonly commandId: string;
+  readonly isError: boolean;
+}
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'shell.output': ShellOutputEvent;
     'shell.started': ShellStartedEvent;
+    'shell.completed': ShellCompletedEvent;
   }
 }
 
@@ -116,10 +128,16 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       if (isError && stdout.length === 0 && stderr.length === 0) {
         stderr = typeof result.output === 'string' ? result.output : 'Command failed.';
       }
+      if (input.commandId !== undefined) {
+        this.eventBus.publish({ type: 'shell.completed', commandId: input.commandId, isError });
+      }
       this.appendShellOutput(stdout, stderr, isError);
       return { stdout, stderr, isError };
     } catch (error) {
       stderr += error instanceof Error ? error.message : String(error);
+      if (input.commandId !== undefined) {
+        this.eventBus.publish({ type: 'shell.completed', commandId: input.commandId, isError: true });
+      }
       this.appendShellOutput(stdout, stderr, true);
       return { stdout, stderr, isError: true };
     } finally {

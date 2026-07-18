@@ -158,6 +158,8 @@ export class AgentTranscriptProjector {
         return this.onShellStarted(event);
       case 'shell.output':
         return this.onShellOutput(event);
+      case 'shell.completed':
+        return this.onShellCompleted(event);
       case 'subagent.spawned':
         return this.onSubagentSpawned(event);
       case 'subagent.started':
@@ -556,6 +558,29 @@ export class AgentTranscriptProjector {
       this.tasks.set(taskId, { ...task, outputTail: task.outputTail + text });
     }
     return [{ op: 'append', target: { type: 'task', taskId }, offset, text }];
+  }
+
+  /**
+   * `shell.completed` — terminal state for a foreground `!` command (the task
+   * lifecycle never reports foreground tasks, so without this the transcript
+   * task would stay 'running' forever). Detached runs report through
+   * `task.*` instead.
+   */
+  private onShellCompleted(event: { commandId: string; isError: boolean }): TranscriptOperation[] {
+    const taskId = this.shellTasks.get(event.commandId);
+    if (taskId === undefined) return [];
+    const task = this.upsertTask(taskId, (prev) => ({
+      taskId,
+      kind: prev?.kind ?? 'shell',
+      state: event.isError ? 'failed' : 'completed',
+      detached: prev?.detached ?? false,
+      description: prev?.description,
+      agentId: prev?.agentId,
+      outputTail: prev?.outputTail ?? '',
+      startedAt: prev?.startedAt ?? nowIso(),
+      endedAt: nowIso(),
+    }));
+    return [{ op: 'task.upsert', task }];
   }
 
   private upsertTask(
