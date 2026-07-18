@@ -10,7 +10,7 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -1696,7 +1696,7 @@ function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
   const state = { shutdownCalls: 0 };
   const clock = { t: 0 };
   const deps: KillCommandDeps = {
-    getLiveInstance: async () => undefined,
+    getLiveInstances: async () => [],
     requestShutdown: async () => {
       state.shutdownCalls += 1;
     },
@@ -1733,7 +1733,7 @@ describe('`kimi server kill`', () => {
 
   it('prints "No running Kimi server." and sends no signal when no live instance exists', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
-    const { deps, writes, signals } = makeKillDeps({ getLiveInstance: async () => undefined });
+    const { deps, writes, signals } = makeKillDeps({ getLiveInstances: async () => [] });
 
     await handleKillCommand(deps);
 
@@ -1744,7 +1744,7 @@ describe('`kimi server kill`', () => {
   it('attempts the API shutdown, then stops after SIGTERM when the pid exits promptly', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     const { deps, writes, signals, state, clock } = makeKillDeps({
-      getLiveInstance: async () => liveInstance,
+      getLiveInstances: async () => [liveInstance],
       pidAlive: () => clock.t < 50,
     });
 
@@ -1759,7 +1759,7 @@ describe('`kimi server kill`', () => {
   it('escalates to SIGKILL when the pid survives SIGTERM', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     const { deps, writes, signals, clock } = makeKillDeps({
-      getLiveInstance: async () => ({ ...liveInstance, pid: 5678 }),
+      getLiveInstances: async () => [{ ...liveInstance, pid: 5678 }],
       // Survives the 3s SIGTERM grace, dies during the 2s SIGKILL grace.
       pidAlive: () => clock.t < 3100,
     });
@@ -1774,11 +1774,37 @@ describe('`kimi server kill`', () => {
   it('throws a permissions error when the pid survives SIGKILL', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     const { deps } = makeKillDeps({
-      getLiveInstance: async () => ({ ...liveInstance, pid: 9999 }),
+      getLiveInstances: async () => [{ ...liveInstance, pid: 9999 }],
       pidAlive: () => true,
     });
 
     await expect(handleKillCommand(deps)).rejects.toThrow(/insufficient permissions/);
+  });
+
+  it('targets only the instance matching the given server-id', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    const other = { ...liveInstance, serverId: 'srv-2', pid: 5678, port: 58628 };
+    const { deps, writes, signals } = makeKillDeps({
+      getLiveInstances: async () => [liveInstance, other],
+      pidAlive: () => false,
+    });
+
+    await handleKillCommand(deps, 'srv-2');
+
+    expect(signals).toEqual([{ pid: 5678, signal: 'SIGTERM' }]);
+    expect(writes.join('')).toContain('pid 5678');
+  });
+
+  it('throws and lists live server ids when the given server-id matches nothing', async () => {
+    const { handleKillCommand } = await import('#/cli/sub/server/kill');
+    const { deps, signals } = makeKillDeps({
+      getLiveInstances: async () => [liveInstance],
+    });
+
+    await expect(handleKillCommand(deps, 'srv-nope')).rejects.toThrow(
+      /No running Kimi server with id srv-nope\. Live servers: srv-1\./,
+    );
+    expect(signals).toEqual([]);
   });
 });
 
@@ -1830,7 +1856,7 @@ describe('`kimi server kill` carries the bearer token', () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     let seenToken: string | undefined = 'unset';
     const { deps } = makeKillDeps({
-      getLiveInstance: async () => liveInstance,
+      getLiveInstances: async () => [liveInstance],
       resolveToken: () => 'tok-123',
       requestShutdown: async (_origin, token) => {
         seenToken = token;
@@ -1847,7 +1873,7 @@ describe('`kimi server kill` carries the bearer token', () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     let seenToken: string | undefined = 'unset';
     const { deps } = makeKillDeps({
-      getLiveInstance: async () => liveInstance,
+      getLiveInstances: async () => [liveInstance],
       resolveToken: () => undefined,
       requestShutdown: async (_origin, token) => {
         seenToken = token;
@@ -1858,6 +1884,159 @@ describe('`kimi server kill` carries the bearer token', () => {
     await handleKillCommand(deps);
 
     expect(seenToken).toBeUndefined();
+  });
+});
+
+describe('`kimi server ps`', () => {
+  let dir: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-ps-'));
+    prevHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = dir;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (prevHome === undefined) {
+      delete process.env['KIMI_CODE_HOME'];
+    } else {
+      process.env['KIMI_CODE_HOME'] = prevHome;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeInstance(serverId: string, port: number, startedAt: number): void {
+    mkdirSync(join(dir, 'server', 'instances'), { recursive: true });
+    writeFileSync(
+      join(dir, 'server', 'instances', `${serverId}.json`),
+      JSON.stringify({
+        server_id: serverId,
+        pid: process.pid,
+        host: '127.0.0.1',
+        port,
+        started_at: startedAt,
+        heartbeat_at: startedAt,
+      }),
+    );
+  }
+
+  function connection(id: string, userAgent: string): Record<string, unknown> {
+    return {
+      id,
+      connected_at: new Date().toISOString(),
+      remote_address: null,
+      user_agent: userAgent,
+      has_client_hello: true,
+      subscriptions: [],
+    };
+  }
+
+  function stubFetchForTwoServers(): void {
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/healthz')) {
+        return new Response(JSON.stringify({ code: 0 }), { status: 200 });
+      }
+      if (url === 'http://127.0.0.1:58627/api/v1/connections') {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            msg: 'ok',
+            data: { connections: [connection('conn-a', 'agent-a')] },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === 'http://127.0.0.1:58628/api/v1/connections') {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            msg: 'ok',
+            data: { connections: [connection('conn-b', 'agent-b')] },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response('not found', { status: 404 });
+    });
+  }
+
+  function captureStdout(): { read(): string; restore(): void } {
+    let stdout = '';
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout += String(chunk);
+      return true;
+    });
+    return {
+      read: () => stdout,
+      restore: () => spy.mockRestore(),
+    };
+  }
+
+  it('lists connections grouped by server id, oldest instance first', async () => {
+    writeFileSync(join(dir, 'server.token'), 'tok');
+    writeInstance('srv-a', 58627, 1000);
+    writeInstance('srv-b', 58628, 2000);
+    stubFetchForTwoServers();
+
+    const { registerServerCommand } = await import('#/cli/sub/server');
+    const program = new Command('kimi').exitOverride();
+    registerServerCommand(program);
+    const out = captureStdout();
+
+    await program.parseAsync(['node', 'kimi', 'server', 'ps']);
+    out.restore();
+
+    const plain = stripAnsi(out.read());
+    expect(plain).toContain('server srv-a (pid ');
+    expect(plain).toContain('server srv-b (pid ');
+    // Oldest instance first, each connection under its own server section.
+    expect(plain.indexOf('server srv-a')).toBeLessThan(plain.indexOf('agent-a'));
+    expect(plain.indexOf('agent-a')).toBeLessThan(plain.indexOf('server srv-b'));
+    expect(plain.indexOf('server srv-b')).toBeLessThan(plain.indexOf('agent-b'));
+  });
+
+  it('prints per-server sections in --json', async () => {
+    writeFileSync(join(dir, 'server.token'), 'tok');
+    writeInstance('srv-a', 58627, 1000);
+    writeInstance('srv-b', 58628, 2000);
+    stubFetchForTwoServers();
+
+    const { registerServerCommand } = await import('#/cli/sub/server');
+    const program = new Command('kimi').exitOverride();
+    registerServerCommand(program);
+    const out = captureStdout();
+
+    await program.parseAsync(['node', 'kimi', 'server', 'ps', '--json']);
+    out.restore();
+
+    const parsed = JSON.parse(out.read()) as {
+      servers: Array<{ server_id: string; connections: Array<{ id: string }> }>;
+    };
+    expect(parsed.servers.map((s) => s.server_id)).toEqual(['srv-a', 'srv-b']);
+    expect(parsed.servers[0]?.connections.map((c) => c.id)).toEqual(['conn-a']);
+    expect(parsed.servers[1]?.connections.map((c) => c.id)).toEqual(['conn-b']);
+  });
+
+  it('errors when no server is running', async () => {
+    const { registerServerCommand } = await import('#/cli/sub/server');
+    const program = new Command('kimi').exitOverride();
+    registerServerCommand(program);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    let stderr = '';
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderr += String(chunk);
+      return true;
+    });
+
+    await program.parseAsync(['node', 'kimi', 'server', 'ps']);
+    errSpy.mockRestore();
+    exitSpy.mockRestore();
+
+    expect(stderr).toContain('No running Kimi server.');
   });
 });
 

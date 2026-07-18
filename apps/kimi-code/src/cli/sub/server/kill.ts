@@ -1,5 +1,5 @@
 /**
- * `kimi server kill` — terminate the running server.
+ * `kimi server kill [serverId]` — terminate a running server.
  *
  * Combines two independent mechanisms so the server dies even if one path
  * fails:
@@ -10,15 +10,15 @@
  *                  wait → SIGKILL). SIGKILL / TerminateProcess is the hard
  *                  guarantee: it cannot be caught or ignored.
  *
- * With multiple servers sharing the home directory, the longest-running live
- * instance is the target. The only honest failure mode is insufficient
- * permissions (a process owned by another user), which surfaces as an error
- * rather than a silent miss.
+ * With multiple servers sharing the home directory, the optional `serverId`
+ * picks one instance; without it the longest-running live instance is the
+ * target. The only honest failure mode is insufficient permissions (a process
+ * owned by another user), which surfaces as an error rather than a silent miss.
  */
 
 import type { Command } from 'commander';
 
-import { getLiveServerInstance, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
+import { listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
 
 import { getDataDir } from '#/utils/paths';
 
@@ -35,7 +35,7 @@ const KILL_GRACE_MS = 2000;
 const POLL_INTERVAL_MS = 100;
 
 export interface KillCommandDeps {
-  getLiveInstance(): Promise<ServerInstanceInfo | undefined>;
+  getLiveInstances(): Promise<readonly ServerInstanceInfo[]>;
   requestShutdown(origin: string, token: string | undefined): Promise<void>;
   /** Best-effort read of the persistent bearer token; undefined on miss. */
   resolveToken(): string | undefined;
@@ -49,10 +49,14 @@ export interface KillCommandDeps {
 export function registerKillCommand(server: Command): void {
   server
     .command('kill')
-    .description('Stop the running Kimi server (graceful API + forced PID kill).')
-    .action(async () => {
+    .description('Stop a running Kimi server (graceful API + forced PID kill).')
+    .argument(
+      '[serverId]',
+      'Stop only the instance with this server id (default: the longest-running one).',
+    )
+    .action(async (serverId?: string) => {
       try {
-        await handleKillCommand(DEFAULT_KILL_DEPS);
+        await handleKillCommand(DEFAULT_KILL_DEPS, serverId);
       } catch (error) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exit(1);
@@ -60,11 +64,27 @@ export function registerKillCommand(server: Command): void {
     });
 }
 
-export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
-  const instance = await deps.getLiveInstance();
-  if (!instance) {
+export async function handleKillCommand(
+  deps: KillCommandDeps,
+  serverId?: string,
+): Promise<void> {
+  const instances = await deps.getLiveInstances();
+  // The registry sorts by startedAt ascending — the first entry is the
+  // longest-running instance, the default target.
+  const [longestRunning] = instances;
+  if (longestRunning === undefined) {
     deps.stdout.write('No running Kimi server.\n');
     return;
+  }
+
+  let instance = longestRunning;
+  if (serverId !== undefined) {
+    const found = instances.find((i) => i.serverId === serverId);
+    if (found === undefined) {
+      const live = instances.map((i) => i.serverId).join(', ');
+      throw new Error(`No running Kimi server with id ${serverId}. Live servers: ${live}.`);
+    }
+    instance = found;
   }
 
   const { pid } = instance;
@@ -155,7 +175,7 @@ export async function requestShutdownViaApi(
 }
 
 const DEFAULT_KILL_DEPS: KillCommandDeps = {
-  getLiveInstance: getLiveServerInstance,
+  getLiveInstances: listLiveServerInstances,
   requestShutdown: requestShutdownViaApi,
   resolveToken: () => tryResolveServerToken(getDataDir()),
   signalPid,

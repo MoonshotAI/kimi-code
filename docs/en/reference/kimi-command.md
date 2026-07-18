@@ -213,7 +213,7 @@ kimi web --background    # start a background daemon, open the browser, and rele
 kimi web --no-open       # don't open the browser; keep the server attached to the terminal
 ```
 
-Stop a foreground server with `Ctrl-C` and a background one with `kimi server kill`, and list active connections with `kimi server ps`. `--port`, `--log-level`, `--foreground`, and the other flags match `kimi server run`; `--background` is only available on `kimi web`.
+Stop a foreground server with `Ctrl-C` and a background one with `kimi server kill`; when multiple instances share the home directory, `kimi server kill <server-id>` stops only that instance (the default is the longest-running one). List active connections with `kimi server ps`, grouped per instance; `--port`, `--log-level`, `--foreground`, and the other flags match `kimi server run`; `--background` is only available on `kimi web`.
 
 ### `kimi doctor`
 
