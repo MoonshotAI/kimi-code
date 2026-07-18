@@ -371,4 +371,101 @@ describe('AcpSession slash routing', () => {
     expect(text).toContain('Model: mock-model');
     expect(text).toContain('Context: 1,234 / 200,000 (0.6%)');
   });
+
+  // Regression for #1881 codex review. `acpBlocksToPromptParts` in
+  // `../src/convert.ts` normalises a leading `text(" ")` away when building
+  // PromptParts (see #1777); slash-command routing must apply the same
+  // normalisation, otherwise the same payload would classify as passthrough
+  // and be sent to the model as text instead of being executed locally.
+  it('skips leading whitespace-only text blocks when routing slash commands (#1881)', async () => {
+    const sessionId = 'sess-slash-D';
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection(
+      (c) =>
+        new AcpServer(harness, c, {
+          slashCommands: async (s) => {
+            const skills = await s.listSkills();
+            const map = new Map<string, string>();
+            const commands = skills.map((sk) => {
+              const name = `skill:${sk.name}`;
+              map.set(name, sk.name);
+              return { name, description: sk.description };
+            });
+            return { commands, skillCommandMap: map };
+          },
+        }),
+      agentStream,
+    );
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    const response = await client.prompt({
+      sessionId,
+      prompt: [textBlock(' '), textBlock('/skill:foo bar')],
+    });
+
+    expect(response.stopReason).toBe('end_turn');
+    // Command was executed locally, not forwarded to the model as text.
+    expect(calls.prompt).toBe(0);
+    expect(calls.activate).toEqual([{ name: 'foo', args: 'bar' }]);
+  });
+
+  it('returns passthrough when a leading non-text block precedes a slash (#1881)', async () => {
+    // Guard: only whitespace *text* blocks are skipped. If an image or
+    // resource comes first, the input is a mixed prompt (not a bare command)
+    // and must flow to Session.prompt as usual.
+    const sessionId = 'sess-slash-E';
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection(
+      (c) =>
+        new AcpServer(harness, c, {
+          slashCommands: async (s) => {
+            const skills = await s.listSkills();
+            const map = new Map<string, string>();
+            const commands = skills.map((sk) => {
+              const name = `skill:${sk.name}`;
+              map.set(name, sk.name);
+              return { name, description: sk.description };
+            });
+            return { commands, skillCommandMap: map };
+          },
+        }),
+      agentStream,
+    );
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    const imageBlock: ContentBlock = {
+      type: 'image',
+      data: 'iVBORw0KGgo=',
+      mimeType: 'image/png',
+    };
+    await client.prompt({
+      sessionId,
+      prompt: [imageBlock, textBlock('/skill:foo')],
+    });
+
+    // Not classified as a slash command — the image lead makes it a mixed
+    // prompt, so it flows to Session.prompt.
+    expect(calls.activate).toEqual([]);
+    expect(calls.prompt).toBe(1);
+  });
 });
