@@ -841,11 +841,13 @@ function mapTurnEndState(reason: 'completed' | 'cancelled' | 'failed' | 'blocked
   switch (reason) {
     case 'completed':
       return 'completed';
-    case 'failed':
-      return 'failed';
     case 'cancelled':
-    case 'blocked':
       return 'cancelled';
+    case 'failed':
+    case 'blocked':
+      // The engine folds `blocked` into `failed` at the wire edge (see
+      // `TurnEndReason`); the transcript mirrors that contract.
+      return 'failed';
   }
 }
 

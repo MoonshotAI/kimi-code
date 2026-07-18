@@ -4,7 +4,10 @@
  * The LLM calls this tool when it needs structured input from the user
  * (multiple-choice, preference selection, disambiguation). The tool delegates
  * to the `questionTools` domain (backed by the `interaction` kernel), which owns
- * the actual UI interaction.
+ * the actual UI interaction. Requests record the owning agent
+ * (`IAgentScopeContext.agentId`) on the interaction origin, so question events
+ * and transcript frames route to the asking agent's surfaces instead of
+ * falling back to 'main' (a subagent's question must not land there).
  */
 
 import { z } from 'zod';
@@ -243,8 +246,6 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
             multiSelect: q.multi_select,
           })),
         },
-        // Record the owning agent so question events/frames route to this
-        // agent's surfaces (a subagent's question must not land on 'main').
         { signal, agentId: this.scopeContext.agentId },
       );
 

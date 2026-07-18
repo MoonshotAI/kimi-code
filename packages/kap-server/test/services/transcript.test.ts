@@ -691,6 +691,14 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('folds blocked turn endings into failed (engine wire contract)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    tx.apply(projector.map(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } })));
+    tx.apply(projector.map(ev({ type: 'turn.ended', turnId: 0, reason: 'blocked' })));
+    expect(turnOps('t0', tx.getItems()).state).toBe('failed');
+  });
+
   it('maps cron / task origins onto the turn header', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
