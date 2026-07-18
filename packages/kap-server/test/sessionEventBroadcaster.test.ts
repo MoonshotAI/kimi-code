@@ -1422,6 +1422,32 @@ describe('SessionEventBroadcaster', () => {
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
     });
 
+    it('delivers no transcript.ops before the baseline reset has landed', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      // Activate the stream with a first subscriber.
+      const first = collectingTarget();
+      await bc.subscribe('s1', first.target, undefined, { '*': 'delta' });
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+
+      // A second subscriber joins while ops are flowing: its first transcript
+      // frame must be the baseline reset, never mid-stream ops against an
+      // empty baseline.
+      const second = collectingTarget();
+      const pending = bc.subscribe('s1', second.target, undefined, { '*': 'delta' });
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
+      await pending;
+      // After the seed, ops flow normally again.
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'y' }));
+
+      const types = transcriptEnvelopes(second.envelopes).map((e) => e.type);
+      expect(types[0]).toBe('transcript.reset');
+      expect(types.indexOf('transcript.ops')).toBeGreaterThan(types.indexOf('transcript.reset'));
+    });
+
     it('sends resets to newly admitted agents when the agent filter broadens at the same grade', async () => {
       const lc = new FakeLifecycle();
       lc.addAgent('main');

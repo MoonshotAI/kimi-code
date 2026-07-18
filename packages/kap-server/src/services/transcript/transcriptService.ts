@@ -326,11 +326,11 @@ export class TranscriptService {
 
   /**
    * A backfill rebuilds every turn as 'completed' — the cold grouping cannot
-   * see in-flight work. When the agent's loop is actually mid-turn, overlay
-   * the active turn's header as 'running' (origin/prompt from the snapshot),
-   * so the transcript never presents the live turn as finished. Returns
-   * `undefined` when the loop is idle or the projector already owns a
-   * running header for the turn (post-bind starts keep their richer header).
+   * see in-flight work. When the agent's loop is actually mid-turn, re-assert
+   * the active turn's header as 'running' AFTER the snapshot ops (its cold
+   * 'completed' header would otherwise win, even over a live running header
+   * the projector already wrote). Live header fields win, then the
+   * snapshot's. Returns `undefined` only when the loop is idle.
    */
   private liveTurnOverlay(
     sessionId: string,
@@ -345,7 +345,6 @@ export class TranscriptService {
     const ordinal = status.activeTurnId;
     const turnId = `t${ordinal}`;
     const existing = transcript.getTurn(turnId);
-    if (existing?.state === 'running') return undefined;
     const snapshotTurn = snapshot.items.find(
       (item): item is TranscriptTurn => item.kind === 'turn' && item.ordinal === ordinal,
     );
@@ -356,9 +355,9 @@ export class TranscriptService {
         turnId,
         ordinal,
         state: 'running',
-        origin: snapshotTurn?.origin ?? existing?.origin ?? { kind: 'other' },
-        prompt: snapshotTurn?.prompt ?? existing?.prompt,
-        startedAt: snapshotTurn?.startedAt ?? existing?.startedAt,
+        origin: existing?.origin ?? snapshotTurn?.origin ?? { kind: 'other' },
+        prompt: existing?.prompt ?? snapshotTurn?.prompt,
+        startedAt: existing?.startedAt ?? snapshotTurn?.startedAt,
       },
     };
   }

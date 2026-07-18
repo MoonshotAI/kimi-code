@@ -955,45 +955,53 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
-  it('overlays the in-flight turn as running after a backfill', async () => {
+  async function seedWireHome(): Promise<string> {
     const home = await mkdtemp(join(tmpdir(), 'transcript-overlay-'));
-    try {
-      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
-      await mkdir(wireDir, { recursive: true });
-      await writeFile(
-        join(wireDir, 'wire.jsonl'),
-        `${JSON.stringify({
-          type: 'context.append_message',
-          message: {
-            role: 'user',
-            content: [{ type: 'text', text: 'hi' }],
-            toolCalls: [],
-            origin: { kind: 'user' },
-          },
-          time: new Date().toISOString(),
-        })}\n`,
-      );
+    const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+    await mkdir(wireDir, { recursive: true });
+    await writeFile(
+      join(wireDir, 'wire.jsonl'),
+      `${JSON.stringify({
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'hi' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: new Date().toISOString(),
+      })}\n`,
+    );
+    return home;
+  }
 
+  function fakeCoreWithAgents(interactions: SessionInteractionService, agents: FakeAgents): Scope {
+    return {
+      accessor: {
+        get: (token: unknown) => {
+          if (token === ISessionLifecycleService) {
+            return {
+              onDidCloseSession: () => ({ dispose: () => undefined }),
+              onDidArchiveSession: () => ({ dispose: () => undefined }),
+              get: (sid: string) => (sid === 's1' ? fakeSession(interactions, agents) : undefined),
+            };
+          }
+          if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+          return undefined;
+        },
+      },
+    } as unknown as Scope;
+  }
+
+  it('overlays the in-flight turn as running after a backfill', async () => {
+    const home = await seedWireHome();
+    try {
       const agents = new FakeAgents();
       agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
-      const interactions = new SessionInteractionService();
-      const core = {
-        accessor: {
-          get: (token: unknown) => {
-            if (token === ISessionLifecycleService) {
-              return {
-                onDidCloseSession: () => ({ dispose: () => undefined }),
-                onDidArchiveSession: () => ({ dispose: () => undefined }),
-                get: (sid: string) => (sid === 's1' ? fakeSession(interactions, agents) : undefined),
-              };
-            }
-            if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
-            return undefined;
-          },
-        },
-      } as unknown as Scope;
-
-      const service = new TranscriptService({ homeDir: home, core });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+      });
       const store = service.forSessionLive('s1');
       await service.whenReady('s1');
       // The cold rebuild marked the turn completed; the overlay restores the
@@ -1001,6 +1009,32 @@ describe('bindSessionTranscript', () => {
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
         state: 'running',
         prompt: 'hi',
+      });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('re-asserts running when the backfill rebuilds the live turn completed', async () => {
+    const home = await seedWireHome();
+    try {
+      const agents = new FakeAgents();
+      agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+      });
+      const store = service.forSessionLive('s1');
+      // The projector writes the live running header before the disk backfill
+      // lands; the snapshot's cold 'completed' header must not win.
+      agents
+        .get('main')!
+        .bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'live hi' }));
+      await service.whenReady('s1');
+      expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
+        state: 'running',
+        prompt: 'live hi',
       });
       service.dropSession('s1');
     } finally {

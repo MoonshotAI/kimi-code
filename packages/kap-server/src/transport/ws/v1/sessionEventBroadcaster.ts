@@ -162,6 +162,8 @@ interface SessionState {
   readonly knownInteractions: Map<string, { readonly kind: InteractionKind; readonly agentId: string }>;
   /** Attached on first transcript-grade subscription for this session. */
   transcriptStream?: TranscriptStream;
+  /** Connections whose transcript baseline reset has landed — the ops fan-out is gated on it. */
+  readonly transcriptSeeded: Set<BroadcastTarget>;
 }
 
 /** The aggregate-relevant slice of one agent's activity state. */
@@ -243,6 +245,10 @@ export class SessionEventBroadcaster {
     const prev = state.targets.get(target);
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
     if (transcriptGrades !== undefined) {
+      // Gate the ops fan-out until the baseline reset has landed — a
+      // subscriber must not receive deltas against an empty (or stale)
+      // baseline while its seed is still being read.
+      state.transcriptSeeded.delete(target);
       await this.subscribeTranscript(
         state,
         target,
@@ -250,12 +256,16 @@ export class SessionEventBroadcaster {
         prev?.transcriptGrades,
         prev?.agentFilter,
       );
+      if (state.targets.has(target)) state.transcriptSeeded.add(target);
     }
     return true;
   }
 
   unsubscribe(sessionId: string, target: BroadcastTarget): void {
-    this.sessions.get(sessionId)?.targets.delete(target);
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    state.targets.delete(target);
+    state.transcriptSeeded.delete(target);
   }
 
   // ---------------------------------------------------------------------------
@@ -334,6 +344,8 @@ export class SessionEventBroadcaster {
 
     const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }) => {
       for (const [target, sub] of state.targets) {
+        // No ops before the baseline reset (see subscribe).
+        if (!state.transcriptSeeded.has(target)) continue;
         // The legacy agent allowlist gates transcript frames too.
         if (sub.agentFilter !== undefined && !sub.agentFilter.has(agentId)) continue;
         const grade = gradeFor(sub.transcriptGrades, agentId);
@@ -361,6 +373,7 @@ export class SessionEventBroadcaster {
           const transcript = store.getAgent(descriptor.agentId);
           if (transcript === undefined) continue;
           for (const [target, sub] of state.targets) {
+            if (!state.transcriptSeeded.has(target)) continue;
             if (sub.agentFilter !== undefined && !sub.agentFilter.has(descriptor.agentId)) continue;
             const grade = gradeFor(sub.transcriptGrades, descriptor.agentId);
             if (grade === 'off') continue;
@@ -582,6 +595,7 @@ export class SessionEventBroadcaster {
       agentDisposables: new Map(),
       lifecycleDisposables: [],
       knownInteractions: new Map(),
+      transcriptSeeded: new Set(),
     };
     this.sessions.set(sessionId, state);
     try {
@@ -632,6 +646,7 @@ export class SessionEventBroadcaster {
       agentDisposables: new Map(),
       lifecycleDisposables: [],
       knownInteractions: new Map(),
+      transcriptSeeded: new Set(),
     };
     this.sessions.set(GLOBAL_SESSION_ID, state);
     return state;
