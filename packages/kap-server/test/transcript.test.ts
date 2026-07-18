@@ -491,6 +491,70 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     );
   });
 
+  it('announces a pre-existing pending approval against the backfilled tool frame', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    // Persist a tool call (assistant message with toolCalls) before anything
+    // binds — the persisted frame is the placement/back-link target.
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'run ls' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'running' }],
+        toolCalls: [{ type: 'function', id: 'call_9', name: 'Bash', arguments: '{"command":"ls"}' }],
+      },
+    ]);
+
+    // The approval is already pending when the transcript binds.
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    session!.accessor.get(ISessionInteractionService).enqueue({
+      id: 'apr-1',
+      kind: 'approval',
+      payload: { toolCallId: 'call_9', toolName: 'Bash', action: 'run' },
+      origin: { agentId: 'main', turnId: 0 },
+    });
+
+    // Binding defers the announce until after the backfill, so the frame
+    // lands with the backfilled tool call and resolve can back-link it.
+    const { body } = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(body.data.pending_interactions).toEqual(['apr-1']);
+    const turn = body.data.items.find(
+      (item): item is TurnWire => item.kind === 'turn' && item.turnId === 't0',
+    );
+    const frames = turn!.steps.flatMap((step) => step.frames);
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        kind: 'interaction',
+        interactionKind: 'approval',
+        toolCallId: 'call_9',
+        state: 'pending',
+      }),
+    );
+
+    session!.accessor.get(ISessionInteractionService).respond('apr-1', { decision: 'approved' });
+    const after = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const turnAfter = after.body.data.items.find(
+      (item): item is TurnWire => item.kind === 'turn' && item.turnId === 't0',
+    );
+    expect(turnAfter!.steps.flatMap((step) => step.frames)).toContainEqual(
+      expect.objectContaining({ kind: 'tool', toolCallId: 'call_9', approvalId: 'apr-1' }),
+    );
+  });
+
+  it('does not roster a ghost agent for an unknown agent id on a live session', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+
+    // Probing a nonexistent agent pages empty (no wire records)…
+    const none = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=nope`);
+    expect(none.body.code).toBe(0);
+    expect(none.body.data.items).toEqual([]);
+
+    // …but must not conjure a ghost roster entry.
+    const main = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(main.body.data.agents.map((a) => a.agentId)).not.toContain('nope');
+  });
+
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/transcript?agent_id=main');
     expect(body.code).toBe(40401);

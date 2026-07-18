@@ -64,6 +64,7 @@ import { readWireRecords } from '../snapshot/snapshotReader';
 import {
   bindSessionTranscript,
   descriptorFromMeta,
+  type TranscriptBinding,
   type TranscriptBindingLogger,
 } from './coreBinding';
 
@@ -80,7 +81,7 @@ export interface TranscriptServiceDeps {
 
 interface LiveEntry {
   readonly store: TranscriptStore;
-  readonly binding: IDisposable;
+  readonly binding: TranscriptBinding;
   /** Resolves when the initial main-agent history backfill has landed. */
   readonly ready: Promise<void>;
   /** Per-agent history backfill promises (dedupe concurrent ensures). */
@@ -119,7 +120,7 @@ export class TranscriptService {
     const session = this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) return undefined;
     const store = new TranscriptStore(sessionId);
-    let binding: IDisposable;
+    let binding: TranscriptBinding;
     try {
       binding = bindSessionTranscript(store, session, this.deps.logger, (event) =>
         this.handleLiveOps(sessionId, event),
@@ -135,7 +136,15 @@ export class TranscriptService {
     this.live.set(sessionId, {
       store,
       binding,
-      ready: this.backfillMain(sessionId, store),
+      ready: (async () => {
+        await this.backfillMain(sessionId, store);
+        // Pending interactions announce only after the initial backfill, so
+        // the persisted tool-call frames are present for frame placement and
+        // the resolve-time approvalId back-link (see TranscriptBinding).
+        if (this.live.get(sessionId)?.store === store) {
+          binding.seedPendingInteractions();
+        }
+      })(),
       agentBackfills: new Map(),
     });
     return store;
@@ -220,18 +229,22 @@ export class TranscriptService {
       this.dispatchOps(sessionId, { agentId, ops });
     }
     // Land the roster entry last, so roster-driven resets already see the
-    // backfilled content — this also guarantees a reset target for agents
-    // whose engine instance has not been created yet. Preserve a richer
-    // descriptor already seeded from session metadata (parentAgentId /
-    // label); only fill in what is missing.
+    // backfilled content. Preserve a richer descriptor already seeded from
+    // session metadata (parentAgentId / label); and skip ids that have
+    // neither a roster presence nor any persisted content — probing a
+    // nonexistent agent id must not conjure a ghost roster entry.
     const existing = store.agents().find((d) => d.agentId === agentId);
-    store.describeAgent({
-      agentId,
-      type: existing?.type ?? (agentId === MAIN_AGENT_ID ? 'main' : 'sub'),
-      parentAgentId: existing?.parentAgentId,
-      label: existing?.label,
-      createdAt: existing?.createdAt,
-    });
+    const hasContent =
+      snapshot !== undefined && (snapshot.items.length > 0 || snapshot.tasks.length > 0);
+    if (existing !== undefined || hasContent) {
+      store.describeAgent({
+        agentId,
+        type: existing?.type ?? (agentId === MAIN_AGENT_ID ? 'main' : 'sub'),
+        parentAgentId: existing?.parentAgentId,
+        label: existing?.label,
+        createdAt: existing?.createdAt,
+      });
+    }
   }
 
   /**

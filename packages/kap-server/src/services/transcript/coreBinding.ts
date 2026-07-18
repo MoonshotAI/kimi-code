@@ -39,6 +39,18 @@ export interface TranscriptBindingLogger {
   warn(obj: unknown, msg: string): void;
 }
 
+/** The live binding plus its deferred seeding hook. */
+export interface TranscriptBinding extends IDisposable {
+  /**
+   * Announce interactions that were already pending at bind time.
+   * Deliberately NOT run during bind: the store (and the projector's tool
+   * map) is empty until the initial history backfill lands, so an early
+   * announce misplaces the frame into a synthetic step and loses the
+   * resolve-time `approvalId` back-link. Call it after the backfill.
+   */
+  seedPendingInteractions(): void;
+}
+
 export function bindSessionTranscript(
   store: TranscriptStore,
   session: ISessionScopeHandle,
@@ -55,7 +67,7 @@ export function bindSessionTranscript(
    * state-style/idempotent, so replaying a locally-unchanged upsert is safe.
    */
   onOps?: (event: TranscriptChangeEvent) => void,
-): IDisposable {
+): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
   const interactions = session.accessor.get(ISessionInteractionService);
   const disposables: IDisposable[] = [];
@@ -174,21 +186,18 @@ export function bindSessionTranscript(
     }),
   );
 
-  // Interactions pending at bind time are announced too (a transcript
-  // subscriber attaches on demand — possibly after the request fired).
-  for (const pending of interactions.listPending()) {
-    if (knownInteractions.has(pending.id)) continue;
-    knownInteractions.add(pending.id);
-    announceInteraction(pending);
-  }
+  // Interactions pending at bind time are seeded via `seedPendingInteractions`
+  // (deferred until after the initial backfill — see the handle's doc); new
+  // pendings announce live through this same dedupe.
+  const seedPendingInteractions = (): void => {
+    for (const pending of interactions.listPending()) {
+      if (knownInteractions.has(pending.id)) continue;
+      knownInteractions.add(pending.id);
+      announceInteraction(pending);
+    }
+  };
   disposables.push(
-    interactions.onDidChangePending(() => {
-      for (const pending of interactions.listPending()) {
-        if (knownInteractions.has(pending.id)) continue;
-        knownInteractions.add(pending.id);
-        announceInteraction(pending);
-      }
-    }),
+    interactions.onDidChangePending(seedPendingInteractions),
     interactions.onDidResolve(({ id, response }) => {
       knownInteractions.delete(id);
       const agentId = interactionAgents.get(id);
@@ -203,6 +212,7 @@ export function bindSessionTranscript(
   refreshDescriptors();
 
   return {
+    seedPendingInteractions,
     dispose: () => {
       for (const d of disposables) d.dispose();
       projectors.clear();

@@ -729,7 +729,12 @@ export class AgentTranscriptProjector {
   mapInteractionRequested(interaction: ProjectorInteraction): TranscriptOperation[] {
     const payload = interaction.payload as { toolCallId?: unknown; turnId?: unknown };
     const toolCallId = typeof payload.toolCallId === 'string' ? payload.toolCallId : undefined;
-    const hit = toolCallId !== undefined ? this.toolFrames.get(toolCallId) : undefined;
+    // A mid-bind request adopts the seeded tool frame from the store first
+    // (the call started before this projector attached).
+    const hit =
+      toolCallId !== undefined
+        ? (this.toolFrames.get(toolCallId) ?? this.adoptToolFrame(toolCallId))
+        : undefined;
     let turnId: string;
     let stepId: string;
     if (hit !== undefined) {
@@ -770,7 +775,9 @@ export class AgentTranscriptProjector {
     ];
     const toolCallId = record.frame.toolCallId;
     if (toolCallId !== undefined) {
-      const hit = this.toolFrames.get(toolCallId);
+      // Adopt the seeded frame when the call predates this projector, so the
+      // back-link still lands after a mid-bind attach.
+      const hit = this.toolFrames.get(toolCallId) ?? this.adoptToolFrame(toolCallId);
       if (hit !== undefined) {
         const toolFrame: ToolCallFrame = { ...hit.frame, approvalId: id };
         this.toolFrames.set(toolCallId, { ...hit, frame: toolFrame });
