@@ -145,8 +145,10 @@ export class TranscriptService {
         // Pending interactions announce only after the initial backfill, so
         // the persisted tool-call frames are present for frame placement and
         // the resolve-time approvalId back-link (see TranscriptBinding).
+        // Scoped to the main agent here — other agents seed after their own
+        // on-demand backfill (ensureAgentHistory).
         if (this.live.get(sessionId)?.store === store) {
-          binding.seedPendingInteractions();
+          binding.seedPendingInteractions(MAIN_AGENT_ID);
         }
       })(),
       agentBackfills: new Map(),
@@ -182,6 +184,11 @@ export class TranscriptService {
       entry.agentBackfills.set(agentId, backfill);
     }
     await backfill;
+    // The agent's persisted tool frames are in place now — its pending
+    // interactions can be announced with correct placement and back-links.
+    if (this.live.get(sessionId)?.store === entry.store) {
+      entry.binding.seedPendingInteractions(agentId);
+    }
   }
 
   /** Initial backfill: main-agent history + the full roster from session metadata. */
@@ -531,10 +538,15 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
  *     persisted user message, which a mid-turn-attached projector missed);
  *     the live header wins on state and timestamps;
  *   - steps the live turn never saw: taken wholesale from the snapshot;
- *   - existing steps: only text/thinking frames are re-emitted, and only when
- *     the persisted text is longer — a fresh live frame may still be ahead of
- *     a lagging flush, and tool/interaction frames are richer live (approvals
- *     are not persisted as context messages at all).
+ *   - existing steps: text/thinking frames are re-emitted only when the
+ *     persisted text is longer and the kind matches (a fresh live frame may
+ *     still be ahead of a lagging flush); tool frames are re-emitted when
+ *     the live step lacks the frame or the live frame lacks the outcome the
+ *     persisted one carries (a tool.result dropped in the attach race is
+ *     otherwise unrecoverable until a cold rebuild) — live-only extras
+ *     (display / agentRefs / approvalId) are preserved on the emitted frame;
+ *   - interaction frames are never re-emitted: they are not persisted as
+ *     context messages and the live kernel bridge is always richer.
  */
 export function healTurnOps(
   snapshotTurn: TranscriptTurn,
@@ -574,8 +586,34 @@ export function healTurnOps(
       continue;
     }
     for (const frame of frames) {
-      if (frame.kind !== 'text' && frame.kind !== 'thinking') continue;
       const liveFrame = liveStep.frames.find((entry) => entry.frameId === frame.frameId);
+      if (frame.kind === 'tool') {
+        // Recover frames the live step never saw and results missed in the
+        // attach race (a dropped tool.result is unrecoverable live). Live
+        // frames that already carry the outcome stay untouched, and live-only
+        // extras (display / agentRefs / approvalId) ride the emitted frame.
+        const liveTool = liveFrame?.kind === 'tool' ? liveFrame : undefined;
+        const liveHasOutcome =
+          liveTool !== undefined && (liveTool.output !== undefined || liveTool.error !== undefined);
+        const snapshotHasOutcome = frame.output !== undefined || frame.error !== undefined;
+        if (liveTool !== undefined && (liveHasOutcome || !snapshotHasOutcome)) continue;
+        ops.push({
+          op: 'frame.upsert',
+          turnId: snapshotTurn.turnId,
+          stepId: step.stepId,
+          frame:
+            liveTool === undefined
+              ? frame
+              : {
+                  ...frame,
+                  display: liveTool.display ?? frame.display,
+                  agentRefs: liveTool.agentRefs ?? frame.agentRefs,
+                  approvalId: liveTool.approvalId ?? frame.approvalId,
+                },
+        });
+        continue;
+      }
+      if (frame.kind !== 'text' && frame.kind !== 'thinking') continue;
       // The length shortcut only applies to the SAME frame kind: a
       // kind-mismatched live frame (the projector guessed the stream kind
       // wrong mid-turn) must be replaced by the persisted one, not skipped.

@@ -1096,6 +1096,66 @@ describe('bindSessionTranscript', () => {
     expect(frames).toContainEqual(expect.objectContaining({ kind: 'text', frameId: 't0.1.f2', text: 'Hello world' }));
   });
 
+  it('heals missing tool frames and missed results, keeps richer live ones', () => {
+    const makeTurn = (frames: TranscriptTurn['steps'][number]['frames']): TranscriptTurn => ({
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      steps: [
+        { kind: 'step', stepId: 't0.1', turnId: 't0', ordinal: 1, state: 'completed', frames },
+      ],
+    });
+    const snapshotTurn = makeTurn([
+      { kind: 'tool', frameId: 't0.1.call_1', toolCallId: 'call_1', name: 'Bash', state: 'done', input: { command: 'ls' }, output: 'a.txt' },
+      { kind: 'tool', frameId: 't0.1.call_2', toolCallId: 'call_2', name: 'Read', state: 'done', input: {}, output: 'x' },
+      { kind: 'tool', frameId: 't0.1.call_3', toolCallId: 'call_3', name: 'Bash', state: 'done', input: {}, output: 'y' },
+    ]);
+    const liveTurn = makeTurn([
+      // Result missed in the attach race — the heal must fill it, keeping
+      // the live-only display payload.
+      { kind: 'tool', frameId: 't0.1.call_1', toolCallId: 'call_1', name: 'Bash', state: 'running', input: { command: 'ls' }, display: { kind: 'command', command: 'ls' } },
+      // Already resolved live — the heal must not touch it.
+      { kind: 'tool', frameId: 't0.1.call_2', toolCallId: 'call_2', name: 'Read', state: 'done', input: {}, output: 'live-out' },
+    ]);
+
+    const frames = healTurnOps(snapshotTurn, liveTurn)
+      .filter((op): op is FrameUpsertOp => op.op === 'frame.upsert')
+      .map((op) => op.frame);
+    expect(frames).toHaveLength(2);
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        frameId: 't0.1.call_1',
+        state: 'done',
+        output: 'a.txt',
+        display: { kind: 'command', command: 'ls' },
+      }),
+    );
+    expect(frames).toContainEqual(expect.objectContaining({ frameId: 't0.1.call_3', output: 'y' }));
+  });
+
+  it('seeds pending interactions per agent, not before that agent is backfilled', () => {
+    const interactions = new SessionInteractionService();
+    interactions.enqueue({ id: 'q-main', kind: 'question', payload: {}, origin: { agentId: 'main', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+
+    const store = new TranscriptStore('s1');
+    const byAgent = new Map<string, TranscriptOperation[]>();
+    const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) => {
+      byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
+    });
+
+    // A main-scoped seed announces only main-owned pendings; the subagent's
+    // waits for its own backfill.
+    binding.seedPendingInteractions('main');
+    expect([...byAgent.keys()]).toEqual(['main']);
+
+    binding.seedPendingInteractions('sub-1');
+    expect([...byAgent.keys()].toSorted()).toEqual(['main', 'sub-1']);
+    binding.dispose();
+  });
+
   it('overlays the in-flight turn as running after a backfill', async () => {
     const home = await seedWireHome();
     try {

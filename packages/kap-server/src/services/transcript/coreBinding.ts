@@ -46,9 +46,13 @@ export interface TranscriptBinding extends IDisposable {
    * Deliberately NOT run during bind: the store (and the projector's tool
    * map) is empty until the initial history backfill lands, so an early
    * announce misplaces the frame into a synthetic step and loses the
-   * resolve-time `approvalId` back-link. Call it after the backfill.
+   * resolve-time `approvalId` back-link. The service calls it after the
+   * initial backfill for the main agent, and after each agent's on-demand
+   * backfill for that agent's interactions — pass `agentId` to seed only the
+   * pendings routed to that agent (a subagent's pending must not be placed
+   * before its own history is replayed).
    */
-  seedPendingInteractions(): void;
+  seedPendingInteractions(agentId?: string): void;
 }
 
 export function bindSessionTranscript(
@@ -220,8 +224,10 @@ export function bindSessionTranscript(
     interactionAgents.set(pending.id, interactionAgentId(pending));
     unseeded.set(pending.id, pending);
   }
-  const seedPendingInteractions = (): void => {
+  const seedPendingInteractions = (agentId?: string): void => {
     for (const [id, interaction] of unseeded) {
+      if (agentId !== undefined && interactionAgents.get(id) !== agentId) continue;
+      unseeded.delete(id);
       announceInteraction(interaction);
       const early = earlyResolves.get(id);
       if (early === undefined) continue;
@@ -229,17 +235,17 @@ export function bindSessionTranscript(
       // emit request + resolve back to back so the frame lands resolved,
       // with the approvalId back-link on the (now backfilled) tool frame.
       interactionAgents.delete(id);
+      earlyResolves.delete(id);
       const projector = projectors.get(early.agentId);
       if (projector !== undefined) {
         applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
       }
     }
-    unseeded.clear();
-    earlyResolves.clear();
     // Pendings that arrived live since bind are announced already; sweep for
     // any that slipped past (e.g. a pending change during the backfill).
     for (const pending of interactions.listPending()) {
       if (knownInteractions.has(pending.id)) continue;
+      if (agentId !== undefined && interactionAgentId(pending) !== agentId) continue;
       knownInteractions.add(pending.id);
       announceInteraction(pending);
     }

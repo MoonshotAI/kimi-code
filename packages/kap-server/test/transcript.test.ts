@@ -555,6 +555,57 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(main.body.data.agents.map((a) => a.agentId)).not.toContain('nope');
   });
 
+  it('seeds a subagent pending question only after its own backfill', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    sub.accessor
+      .get(IAgentContextMemoryService)
+      .append(
+        { role: 'user', content: [{ type: 'text', text: 'scan' }], toolCalls: [] } as ContextMessage,
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_q', name: 'AskUserQuestion', arguments: '{}' }],
+        } as ContextMessage,
+      );
+    await sub.accessor.get(IWireService).flush();
+
+    // The subagent's question is pending BEFORE the transcript binds.
+    const questions = session!.accessor.get(ISessionQuestionService);
+    const pending = questions.request(
+      {
+        turnId: 0,
+        toolCallId: 'call_q',
+        questions: [{ question: 'Pick?', options: [{ label: 'A' }] }],
+      },
+      { agentId: 'sub-1' },
+    );
+
+    // Binding seeds only main-owned pendings after the main backfill — the
+    // subagent's question waits for its own history.
+    const mainBody = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(mainBody.body.data.pending_interactions).toEqual([]);
+
+    const subBody = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
+    expect(subBody.body.data.pending_interactions).toEqual(['call_q']);
+    const frames = subBody.body.data.items.flatMap(
+      (item) => (item as TurnWire).steps?.flatMap((step) => step.frames) ?? [],
+    );
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        kind: 'interaction',
+        interactionKind: 'question',
+        toolCallId: 'call_q',
+        state: 'pending',
+      }),
+    );
+
+    questions.dismiss('call_q');
+    await pending;
+  });
+
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/transcript?agent_id=main');
     expect(body.code).toBe(40401);
