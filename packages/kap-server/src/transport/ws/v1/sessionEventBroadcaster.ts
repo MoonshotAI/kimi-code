@@ -255,13 +255,10 @@ export class SessionEventBroadcaster {
     const prev = state.targets.get(target);
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
     if (transcriptGrades !== undefined) {
-      // Gate the ops fan-out until the baseline reset has landed — a
-      // subscriber must not receive deltas against an empty (or stale)
-      // baseline while its seed is still being read.
-      state.transcriptSeeded.delete(target);
       if (opts?.deferTranscriptReset === true) {
         // The baseline rides `flushTranscriptSeed` (after the caller's cursor
         // replay), so the reset's seq always follows the replayed backlog.
+        state.transcriptSeeded.delete(target);
         state.deferredTranscriptSeeds.set(target, {
           spec: transcriptGrades,
           prevGrades: prev?.transcriptGrades,
@@ -269,6 +266,10 @@ export class SessionEventBroadcaster {
         });
       } else {
         state.deferredTranscriptSeeds.delete(target);
+        // Gate the ops fan-out only while a replacement baseline is actually
+        // on its way — a no-reset resubscribe must not black out the stream.
+        const gated = this.willSendTranscriptReset(state, target, transcriptGrades, prev);
+        if (gated) state.transcriptSeeded.delete(target);
         await this.subscribeTranscript(
           state,
           target,
@@ -276,10 +277,38 @@ export class SessionEventBroadcaster {
           prev?.transcriptGrades,
           prev?.agentFilter,
         );
-        if (state.targets.has(target)) state.transcriptSeeded.add(target);
+        if (gated && state.targets.has(target)) state.transcriptSeeded.add(target);
       }
     }
     return true;
+  }
+
+  /**
+   * Whether `subscribeTranscript` will send at least one reset for this
+   * (target, spec) pair right now — an upgrade over the previous grades or an
+   * agent newly admitted by a widened legacy filter.
+   */
+  private willSendTranscriptReset(
+    state: SessionState,
+    target: BroadcastTarget,
+    spec: TranscriptGradeSpec,
+    prev: TargetSubscription | undefined,
+  ): boolean {
+    const service = this.opts.transcriptService;
+    if (service === undefined) return false;
+    const store = service.forSessionLive(state.sessionId);
+    if (store === undefined) return false;
+    const agentFilter = state.targets.get(target)?.agentFilter;
+    for (const descriptor of store.agents()) {
+      if (agentFilter !== undefined && !agentFilter.has(descriptor.agentId)) continue;
+      const grade = gradeFor(spec, descriptor.agentId);
+      if (grade === 'off') continue;
+      if (needsResetOnTransition(gradeFor(prev?.transcriptGrades, descriptor.agentId), grade)) {
+        return true;
+      }
+      if (prev?.agentFilter !== undefined && !prev.agentFilter.has(descriptor.agentId)) return true;
+    }
+    return false;
   }
 
   /**

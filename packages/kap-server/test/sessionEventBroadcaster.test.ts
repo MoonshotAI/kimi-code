@@ -1422,6 +1422,28 @@ describe('SessionEventBroadcaster', () => {
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
     });
 
+    it('keeps delivering ops across a no-reset resubscribe', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { main: 'delta' });
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      const before = transcriptEnvelopes(view.envelopes).length;
+
+      // Same grades, no upgrade: the stream must not black out while the
+      // resubscribe's seed work is in flight.
+      const resub = bc.subscribe('s1', view.target, undefined, { main: 'delta' });
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
+      await resub;
+
+      const after = transcriptEnvelopes(view.envelopes);
+      expect(after.length).toBeGreaterThan(before);
+      expect(after.some((e) => e.type === 'transcript.ops')).toBe(true);
+    });
+
     it('delivers no transcript.ops before the baseline reset has landed', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
