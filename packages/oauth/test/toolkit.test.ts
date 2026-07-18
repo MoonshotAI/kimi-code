@@ -133,6 +133,58 @@ describe('KimiOAuthToolkit', () => {
     await expect(toolkit.tokenProvider().getAccessToken()).resolves.toBe('access-1');
   });
 
+  it('surfaces API-key providers as authed when passed via apiKeyProviders', async () => {
+    const storage = new MemoryTokenStorage();
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    // The managed OAuth slot has no token file, but the API-key provider must
+    // still surface as authed so the ACP session gate does not reject it.
+    const status = await toolkit.status(undefined, undefined, {
+      apiKeyProviders: ['moonshot-cn'],
+    });
+    expect(status.providers).toContainEqual({ providerName: 'moonshot-cn', hasToken: true });
+    expect(status.providers.some((entry) => entry.hasToken)).toBe(true);
+  });
+
+  it('returns only the OAuth slot when no API-key providers are passed', async () => {
+    const storage = new MemoryTokenStorage();
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    const status = await toolkit.status();
+    expect(status.providers).toEqual([
+      { providerName: KIMI_CODE_PROVIDER_NAME, hasToken: false },
+    ]);
+    expect(status.providers.some((entry) => entry.hasToken)).toBe(false);
+  });
+
+  it('merges the API-key status into the primary entry when the requested provider is an API-key provider', async () => {
+    const storage = new MemoryTokenStorage();
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+    });
+
+    // `moonshot-cn` has no OAuth token file, so the OAuth probe alone would
+    // report hasToken:false. Because it is listed as an API-key provider, the
+    // primary entry must reflect hasToken:true with no duplicate appended.
+    const status = await toolkit.status('moonshot-cn', undefined, {
+      apiKeyProviders: ['moonshot-cn'],
+    });
+    expect(status.providers).toEqual([{ providerName: 'moonshot-cn', hasToken: true }]);
+  });
+
   it('resolves bearer token providers using the configured oauth key', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('custom-kimi-code', token('custom-access'));
@@ -494,7 +546,7 @@ describe('KimiOAuthToolkit', () => {
       key: devOauthKey,
       oauthHost: devOauthHost,
     });
-    const modelRequest = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const modelRequest = fetchMock.mock.calls[0]?.[1];
     expect(new Headers(modelRequest?.headers).get('authorization')).toBe('Bearer dev-access');
     expect(write).toHaveBeenCalledWith(config);
   });

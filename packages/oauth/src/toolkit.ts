@@ -136,18 +136,34 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   async status(
     providerName?: string | undefined,
     oauthRef?: KimiOAuthTokenRef | undefined,
+    options?: { readonly apiKeyProviders?: readonly string[] | undefined },
   ): Promise<AuthStatus> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     const oauthHost = this.oauthHostFor(oauthRef);
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
-    return {
-      providers: [
-        {
-          providerName: name,
-          hasToken: await this.managerFor(name, oauthKey, oauthHost).hasToken(),
-        },
-      ],
-    };
+    const apiKeyProviderNames = new Set(options?.apiKeyProviders ?? []);
+    // The requested provider may itself authenticate via an API key (no OAuth
+    // token file). Merge that case into the primary entry instead of appending
+    // a duplicate, so callers reading providers[0] see the correct status.
+    const providers: AuthProviderStatus[] = [
+      {
+        providerName: name,
+        hasToken:
+          apiKeyProviderNames.has(name) || (await this.managerFor(name, oauthKey, oauthHost).hasToken()),
+      },
+    ];
+    // API-key providers authenticate with a configured `apiKey` instead of an
+    // OAuth token file, so they have no credentials entry for `hasToken()` to
+    // find. Without surfacing them here the ACP session gate (which treats any
+    // provider with `hasToken` as authed) rejects API-key-only users with
+    // `auth_required`, even though their key is valid. The caller resolves the
+    // list of API-key provider names from a lenient config read so a broken
+    // unrelated config section cannot abort status resolution.
+    for (const apiKeyProviderName of options?.apiKeyProviders ?? []) {
+      if (apiKeyProviderName === name) continue;
+      providers.push({ providerName: apiKeyProviderName, hasToken: true });
+    }
+    return { providers };
   }
 
   async login(
