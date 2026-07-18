@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
@@ -139,6 +140,7 @@ export async function discoverSkills(
   const warn = options.onWarning ?? (() => {});
   const skip = options.onSkippedByPolicy ?? (() => {});
   const byName = new Map<string, SkillDefinition>();
+  const byContent = new Map<string, SkillDefinition>();
 
   async function walkSkillDir(
     dirPath: string,
@@ -177,6 +179,7 @@ export async function discoverSkills(
       const skill = await parseAndRegister({
         parse,
         byName,
+        byContent,
         skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
         skillDirName: entry,
         root,
@@ -202,6 +205,7 @@ export async function discoverSkills(
           await parseAndRegister({
             parse,
             byName,
+            byContent,
             skillMdPath: rootSkillMd,
             skillDirName: path.basename(dirPath),
             root,
@@ -227,6 +231,7 @@ export async function discoverSkills(
         await parseAndRegister({
           parse,
           byName,
+          byContent,
           skillMdPath,
           skillDirName: skillName,
           root,
@@ -362,6 +367,7 @@ async function pushProvidedRoot(
 async function parseAndRegister(input: {
   readonly parse: NonNullable<DiscoverSkillsOptions['parse']>;
   readonly byName: Map<string, SkillDefinition>;
+  readonly byContent: Map<string, SkillDefinition>;
   readonly skillMdPath: string;
   readonly skillDirName: string;
   readonly root: SkillRoot;
@@ -371,6 +377,9 @@ async function parseAndRegister(input: {
   readonly subSkillParentName?: string;
 }): Promise<SkillDefinition | undefined> {
   try {
+    const raw = await fs.readFile(input.skillMdPath, 'utf8');
+    const contentHash = hashSkillContent(raw);
+
     const parsed = await input.parse({
       skillMdPath: input.skillMdPath,
       skillDirName: input.skillDirName,
@@ -392,6 +401,14 @@ async function parseAndRegister(input: {
       ...skill,
       plugin: input.root.plugin,
     };
+    const existing = input.byContent.get(contentHash);
+    if (existing !== undefined) {
+      const preferCurrent =
+        discovered.metadata.isSubSkill === true && existing.metadata.isSubSkill !== true;
+      if (!preferCurrent) return undefined;
+      input.byName.delete(normalizeSkillName(existing.name));
+    }
+    input.byContent.set(contentHash, discovered);
     input.onDiscoveredSkill?.(discovered);
     const key = normalizeSkillName(discovered.name);
     if (!input.byName.has(key)) {
@@ -412,6 +429,10 @@ async function parseAndRegister(input: {
     }
     return undefined;
   }
+}
+
+function hashSkillContent(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
 }
 
 function qualifySubSkillName(parentName: string, skillName: string): string {
