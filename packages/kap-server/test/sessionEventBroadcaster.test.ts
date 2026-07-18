@@ -1422,6 +1422,27 @@ describe('SessionEventBroadcaster', () => {
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
     });
 
+    it('sends resets to newly admitted agents when the agent filter broadens at the same grade', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      lc.addAgent('sub-1');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, new Set(['main']), { '*': 'delta' });
+      expect(
+        transcriptEnvelopes(view.envelopes).map((e) => e.type),
+      ).toEqual(['transcript.reset']); // main only
+
+      // Same grades, broader filter: sub-1 was admitted by neither filter nor
+      // an upgraded grade before — it is owed a baseline despite delta→delta.
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      const resets = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.reset');
+      expect(resets).toHaveLength(2);
+      expect((resets[1]!.payload as { agent_id: string }).agent_id).toBe('sub-1');
+    });
+
     it('applies the legacy agent filter to transcript ops and resets', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');

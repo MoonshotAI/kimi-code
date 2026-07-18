@@ -240,10 +240,16 @@ export class SessionEventBroadcaster {
   ): Promise<boolean> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) return false;
-    const prevGrades = state.targets.get(target)?.transcriptGrades;
+    const prev = state.targets.get(target);
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
     if (transcriptGrades !== undefined) {
-      await this.subscribeTranscript(state, target, transcriptGrades, prevGrades);
+      await this.subscribeTranscript(
+        state,
+        target,
+        transcriptGrades,
+        prev?.transcriptGrades,
+        prev?.agentFilter,
+      );
     }
     return true;
   }
@@ -271,6 +277,7 @@ export class SessionEventBroadcaster {
     target: BroadcastTarget,
     spec: TranscriptGradeSpec,
     prev: TranscriptGradeSpec | undefined,
+    prevFilter?: AgentFilter,
   ): Promise<void> {
     const service = this.opts.transcriptService;
     if (service === undefined) return;
@@ -294,7 +301,17 @@ export class SessionEventBroadcaster {
       if (agentFilter !== undefined && !agentFilter.has(descriptor.agentId)) continue;
       const grade = gradeFor(spec, descriptor.agentId);
       if (grade === 'off') continue;
-      if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
+      // A broadened legacy filter admits agents the grade transition alone
+      // would skip (delta → delta) — having suppressed their ops so far, it
+      // owes them a baseline now.
+      const admittedByWiderFilter =
+        prevFilter !== undefined && !prevFilter.has(descriptor.agentId);
+      if (
+        !needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade) &&
+        !admittedByWiderFilter
+      ) {
+        continue;
+      }
       const transcript = store.getAgent(descriptor.agentId);
       if (transcript !== undefined) this.sendTranscriptReset(state, target, transcript, grade);
     }

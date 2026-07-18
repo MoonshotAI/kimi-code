@@ -7,13 +7,19 @@
  */
 
 import {
+  IAgentLifecycleService,
   ISessionIndex,
+  ISessionInteractionService,
   ISessionLifecycleService,
+  ISessionMetadata,
+  SessionInteractionService,
   type DomainEvent,
+  type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
   AgentTranscript,
+  TranscriptStore,
   type AgentTranscriptSnapshot,
   type AppendOp,
   type FrameUpsertOp,
@@ -23,6 +29,7 @@ import {
 } from '@moonshot-ai/transcript';
 import { describe, expect, it } from 'vitest';
 
+import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
 import { TranscriptService, snapshotToOps } from '../../src/services/transcript/transcriptService';
 
@@ -801,5 +808,57 @@ describe('AgentTranscript transcript task vocabulary', () => {
       'lost',
     ];
     expect(states).toHaveLength(6);
+  });
+});
+
+describe('bindSessionTranscript', () => {
+  function fakeSession(interactions: SessionInteractionService): ISessionScopeHandle {
+    return {
+      accessor: {
+        get: (token: unknown) => {
+          if (token === IAgentLifecycleService) {
+            return {
+              list: () => [],
+              onDidCreate: () => ({ dispose: () => undefined }),
+              onDidDispose: () => ({ dispose: () => undefined }),
+            };
+          }
+          if (token === ISessionInteractionService) return interactions;
+          if (token === ISessionMetadata) return { read: async () => ({ agents: {} }) };
+          return undefined;
+        },
+      },
+    } as unknown as ISessionScopeHandle;
+  }
+
+  it('registers pre-bind pendings without frames and replays an early resolve at seed time', () => {
+    const interactions = new SessionInteractionService();
+    interactions.enqueue({
+      id: 'apr-1',
+      kind: 'approval',
+      payload: { toolCallId: 'call_1' },
+      origin: { agentId: 'main', turnId: 0 },
+    });
+
+    const store = new TranscriptStore('s1');
+    const ops: TranscriptOperation[] = [];
+    const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) =>
+      ops.push(...event.ops),
+    );
+
+    // The pending is registered (so resolves route) but nothing is announced
+    // before the post-backfill seed.
+    expect(ops).toHaveLength(0);
+
+    // The user answers before the seed: captured for replay, not dropped.
+    interactions.respond('apr-1', { decision: 'approved' });
+    expect(ops).toHaveLength(0);
+
+    binding.seedPendingInteractions();
+    const states = ops
+      .filter((op): op is FrameUpsertOp => op.op === 'frame.upsert')
+      .map((op) => (op.frame.kind === 'interaction' ? op.frame.state : undefined));
+    expect(states).toEqual(['pending', 'approved']);
+    binding.dispose();
   });
 });

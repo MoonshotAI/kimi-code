@@ -76,6 +76,13 @@ export function bindSessionTranscript(
   const interactionAgents = new Map<string, string>();
   /** interaction ids already announced (seeded + seen), mirrors the broadcaster. */
   const knownInteractions = new Set<string>();
+  /**
+   * Pendings registered at bind time but not yet announced (deferred to the
+   * post-backfill seed): id → the interaction to announce.
+   */
+  const unseeded = new Map<string, Interaction>();
+  /** Resolves captured before the seed ran: id → routed resolve to replay. */
+  const earlyResolves = new Map<string, { agentId: string; response: unknown }>();
 
   const applyOps = (agentId: string, ops: ReturnType<AgentTranscriptProjector['map']>): void => {
     if (ops.length === 0) return;
@@ -186,10 +193,37 @@ export function bindSessionTranscript(
     }),
   );
 
-  // Interactions pending at bind time are seeded via `seedPendingInteractions`
-  // (deferred until after the initial backfill — see the handle's doc); new
-  // pendings announce live through this same dedupe.
+  // Interactions already pending at bind time are REGISTERED without frames
+  // (ownership must exist immediately so a resolve arriving before the
+  // deferred seed still routes); their frames land in seedPendingInteractions,
+  // which the service calls after the initial backfill so placement and the
+  // approvalId back-link find the persisted tool frames. New pendings
+  // announce live through onDidChangePending below.
+  for (const pending of interactions.listPending()) {
+    if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
+    if (knownInteractions.has(pending.id)) continue;
+    knownInteractions.add(pending.id);
+    interactionAgents.set(pending.id, interactionAgentId(pending));
+    unseeded.set(pending.id, pending);
+  }
   const seedPendingInteractions = (): void => {
+    for (const [id, interaction] of unseeded) {
+      announceInteraction(interaction);
+      const early = earlyResolves.get(id);
+      if (early === undefined) continue;
+      // The interaction opened and closed before the transcript attached:
+      // emit request + resolve back to back so the frame lands resolved,
+      // with the approvalId back-link on the (now backfilled) tool frame.
+      interactionAgents.delete(id);
+      const projector = projectors.get(early.agentId);
+      if (projector !== undefined) {
+        applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
+      }
+    }
+    unseeded.clear();
+    earlyResolves.clear();
+    // Pendings that arrived live since bind are announced already; sweep for
+    // any that slipped past (e.g. a pending change during the backfill).
     for (const pending of interactions.listPending()) {
       if (knownInteractions.has(pending.id)) continue;
       knownInteractions.add(pending.id);
@@ -197,12 +231,24 @@ export function bindSessionTranscript(
     }
   };
   disposables.push(
-    interactions.onDidChangePending(seedPendingInteractions),
+    interactions.onDidChangePending(() => {
+      for (const pending of interactions.listPending()) {
+        if (knownInteractions.has(pending.id)) continue;
+        knownInteractions.add(pending.id);
+        announceInteraction(pending);
+      }
+    }),
     interactions.onDidResolve(({ id, response }) => {
       knownInteractions.delete(id);
       const agentId = interactionAgents.get(id);
       if (agentId === undefined) return;
       interactionAgents.delete(id);
+      // A resolve that beats the post-backfill seed: capture and replay onto
+      // the freshly announced frame at seed time.
+      if (unseeded.has(id)) {
+        earlyResolves.set(id, { agentId, response });
+        return;
+      }
       const projector = projectors.get(agentId);
       if (projector === undefined) return;
       applyOps(agentId, projector.mapInteractionResolved(id, response));
@@ -218,6 +264,8 @@ export function bindSessionTranscript(
       projectors.clear();
       interactionAgents.clear();
       knownInteractions.clear();
+      unseeded.clear();
+      earlyResolves.clear();
     },
   };
 }
