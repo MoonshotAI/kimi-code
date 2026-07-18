@@ -20,13 +20,13 @@ const MAX_DIFF_CELLS = 1_000_000;
  */
 const MAX_DIFF_ROWS = 5000;
 
-function splitLines(s: string): string[] {
+/**
+ * Split into display rows: a trailing newline produces a trailing empty
+ * element that is not a real content line — drop exactly one of them.
+ */
+export function splitLines(s: string): string[] {
   if (s === '') return [];
-  const lines = s.split('\n');
-  // A trailing newline produces a trailing empty element that is not a real
-  // content line — drop exactly one of them.
-  if (lines.at(-1) === '') lines.pop();
-  return lines;
+  return s.endsWith('\n') ? s.slice(0, -1).split('\n') : s.split('\n');
 }
 
 export interface DiffStats {

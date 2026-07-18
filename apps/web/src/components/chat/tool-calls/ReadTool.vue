@@ -1,16 +1,15 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/EditTool.vue -->
-<!-- Edit / Write tool card. Expanding the row inline shows, syntax-highlighted:
-     the synthesized line diff for a single Edit, or the written content for a
-     Write (the client cannot tell a new file from an overwrite, so a from-empty
-     diff would mislead); otherwise (replace_all, error) the raw tool output is
-     shown instead — on error the diff describes what was attempted, not what
-     happened. -->
+<!-- apps/kimi-web/src/components/chat/tool-calls/ReadTool.vue -->
+<!-- Read tool card. Once the result is in, expanding the row shows the file
+     content syntax-highlighted with its real line numbers (the Read output's
+     <number>\t<content> prefixes become the gutter). While running, on error,
+     or for output that doesn't match that shape (non-text files), the raw
+     tool output is shown instead. -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
-import { diffStats } from '../../../lib/diffLines';
-import { buildEditDiffLines, buildWriteContent, toolFilePath } from '../../../lib/toolDiff';
-import { toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
+import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
+import { parseReadOutput } from '../../../lib/readOutput';
+import { toolFilePath } from '../../../lib/toolDiff';
+import { toolChip, toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
 import ToolRow from '../ToolRow.vue';
 import HighlightedCode from '../../HighlightedCode.vue';
 import ToolOutputBlock from './ToolOutputBlock.vue';
@@ -24,7 +23,7 @@ const props = withDefaults(
   { mobile: false, stackPosition: 'single' },
 );
 
-const emit = defineEmits<{
+defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
 }>();
@@ -34,27 +33,26 @@ const label = computed(() => toolLabel(props.tool.name));
 const glyph = computed(() => toolGlyph(props.tool.name));
 const summary = computed(() => toolSummary(props.tool.name, props.tool.arg));
 const summaryFull = computed(() => toolSummary(props.tool.name, props.tool.arg, true));
+const chip = computed(() =>
+  toolChip({
+    name: props.tool.name,
+    arg: props.tool.arg,
+    output: props.tool.output,
+    timing: props.tool.timing,
+    status: props.tool.status,
+  }),
+);
 
-const editDiff = computed<DiffViewLine[] | null>(() => buildEditDiffLines(props.tool));
-const editPath = computed(() => toolFilePath(props.tool));
-const writeContent = computed(() => buildWriteContent(props.tool));
-const chip = computed(() => {
-  const diff = editDiff.value;
-  if (diff && props.tool.status !== 'error') {
-    const { added, removed } = diffStats(diff);
-    if (added || removed) return `+${added} −${removed}`;
-  }
-  return '';
-});
+const readPath = computed(() => toolFilePath(props.tool));
+/** Only the settled, successful output is highlighted — streaming chunks would
+    re-highlight the whole file per chunk, and errors aren't code. */
+const parsed = computed(() => (props.tool.status === 'ok' ? parseReadOutput(props.tool.output ?? []) : null));
+const contentRows = computed(() => parsed.value?.contents ?? []);
+const lineNumbers = computed(() => parsed.value?.lineNumbers);
 
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
-const showDiff = computed(() => editDiff.value !== null && props.tool.status !== 'error');
-const showContent = computed(() => writeContent.value !== null && props.tool.status !== 'error');
-const open = ref(false);
-const canExpand = computed(() => showDiff.value || showContent.value || hasOutput.value);
-/** True when the expanded body is the HighlightedCode block (which owns its
-    scroll viewport), false for the ToolOutputBlock fallback. */
-const showHighlighted = computed(() => showDiff.value || showContent.value);
+const canExpand = computed(() => parsed.value !== null || hasOutput.value);
+const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
 // ToolRow hides a collapsed body purely with CSS, so slot content stays
 // mounted. Mount the (tokenizing) highlighter only after the first expand;
@@ -67,6 +65,13 @@ watch(open, (v) => {
 function toggle(): void {
   if (canExpand.value) open.value = !open.value;
 }
+
+watch(
+  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status] as const,
+  () => {
+    if (props.tool.defaultExpanded === true && canExpand.value) open.value = true;
+  },
+);
 </script>
 
 <template>
@@ -80,19 +85,14 @@ function toggle(): void {
     :expandable="canExpand"
     :stacked="stackPosition !== 'single'"
     :stack-position="stackPosition"
-    :self-scrolling-body="showHighlighted"
+    :self-scrolling-body="parsed !== null"
     @toggle="toggle"
   >
     <template #trailing>
       <span v-if="chip" class="chip">{{ chip }}</span>
     </template>
     <div v-if="summaryFull" class="bb-summary">{{ summaryFull }}</div>
-    <HighlightedCode v-if="showDiff && everOpened" :lines="editDiff ?? []" :path="editPath" />
-    <HighlightedCode
-      v-else-if="showContent && everOpened"
-      :code="writeContent?.content ?? ''"
-      :path="writeContent?.path"
-    />
+    <HighlightedCode v-if="parsed && everOpened" :code="contentRows" :path="readPath" :line-numbers="lineNumbers" />
     <ToolOutputBlock v-else :lines="tool.output" empty-text="Waiting for output…" />
   </ToolRow>
 </template>

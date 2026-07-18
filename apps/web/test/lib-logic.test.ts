@@ -6,7 +6,9 @@ import {
 } from '@moonshot-ai/web-markdown/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
 import { buildDiffLines } from '../src/lib/diffLines';
-import { buildEditDiffLines } from '../src/lib/toolDiff';
+import { buildEditDiffLines, buildWriteContent, toolFilePath } from '../src/lib/toolDiff';
+import { parseReadOutput } from '../src/lib/readOutput';
+import { codeLanguageFromPath } from '../src/lib/codeLanguage';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
 import { keepLiveSubagents, mergeSnapshotSubagents } from '../src/lib/taskMerge';
@@ -30,6 +32,7 @@ import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegis
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
 import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
+import ReadTool from '../src/components/chat/tool-calls/ReadTool.vue';
 import type { ToolCall } from '../src/types';
 import {
   clearTrace,
@@ -334,7 +337,13 @@ describe('buildEditDiffLines', () => {
     expect(buildEditDiffLines({ name: 'Edit', arg })).toBeNull();
   });
 
-  it('falls back to output for every Write (new file or overwrite)', () => {
+  it('falls back to output for oversized single-line edits (minified, base64)', () => {
+    const huge = 'x'.repeat(100 * 1024 + 1);
+    expect(buildEditDiffLines({ name: 'Edit', arg: JSON.stringify({ path: 'a.js', old_string: 'a', new_string: huge }) })).toBeNull();
+    expect(buildEditDiffLines({ name: 'Edit', arg: JSON.stringify({ path: 'a.js', old_string: huge, new_string: 'b' }) })).toBeNull();
+  });
+
+  it('never builds a diff for Write (new file or overwrite)', () => {
     expect(buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x' }) })).toBeNull();
     expect(
       buildEditDiffLines({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: 'x', mode: 'append' }) }),
@@ -343,6 +352,113 @@ describe('buildEditDiffLines', () => {
 
   it('returns null for non-edit/write tools', () => {
     expect(buildEditDiffLines({ name: 'Bash', arg: JSON.stringify({ command: 'ls' }) })).toBeNull();
+  });
+});
+
+describe('toolFilePath', () => {
+  it('reads the path from the usual keys', () => {
+    expect(toolFilePath({ arg: JSON.stringify({ path: 'a.ts', content: 'x' }) })).toBe('a.ts');
+    expect(toolFilePath({ arg: JSON.stringify({ file_path: 'b.ts', old_string: 'a', new_string: 'b' }) })).toBe(
+      'b.ts',
+    );
+  });
+
+  it('returns undefined when missing, empty, or unparseable', () => {
+    expect(toolFilePath({ arg: JSON.stringify({ content: 'x' }) })).toBeUndefined();
+    expect(toolFilePath({ arg: JSON.stringify({ path: '' }) })).toBeUndefined();
+    expect(toolFilePath({ arg: 'not json' })).toBeUndefined();
+  });
+});
+
+describe('parseReadOutput', () => {
+  it('strips <number>\\t prefixes and keeps the real line numbers', () => {
+    expect(parseReadOutput(['1\tconst a = 1', '2\t', '3\texport default a'])).toEqual({
+      contents: ['const a = 1', '', 'export default a'],
+      lineNumbers: [1, 2, 3],
+    });
+  });
+
+  it('keeps tabs inside the content and honours the read offset', () => {
+    expect(parseReadOutput(['10\tif (a) {\t', '11\t  b()\t}'])).toEqual({
+      contents: ['if (a) {\t', '  b()\t}'],
+      lineNumbers: [10, 11],
+    });
+  });
+
+  it('returns null when any line misses the pattern, or the output is empty', () => {
+    expect(parseReadOutput(['1\tok', 'not numbered'])).toBeNull();
+    expect(parseReadOutput(['"a.bin" is not a text file.'])).toBeNull();
+    expect(parseReadOutput([])).toBeNull();
+    expect(parseReadOutput([''])).toBeNull();
+  });
+
+  it('drops one phantom trailing empty line from the result-string split', () => {
+    expect(parseReadOutput(['1\tconst a = 1', '2\t', ''])).toEqual({
+      contents: ['const a = 1', ''],
+      lineNumbers: [1, 2],
+    });
+  });
+});
+
+describe('buildWriteContent', () => {
+  it('extracts the Write content and path verbatim', () => {
+    const arg = JSON.stringify({ path: 'a.ts', content: 'a\n\nb\n' });
+    expect(buildWriteContent({ name: 'Write', arg })).toEqual({ content: 'a\n\nb\n', path: 'a.ts' });
+  });
+
+  it('reads the path from alias keys for language inference', () => {
+    expect(buildWriteContent({ name: 'Write', arg: JSON.stringify({ file_path: 'b.ts', content: 'x' }) })).toEqual(
+      { content: 'x', path: 'b.ts' },
+    );
+  });
+
+  it('keeps the appended chunk for append mode and tolerates a missing path', () => {
+    expect(
+      buildWriteContent({ name: 'Write', arg: JSON.stringify({ content: 'x', mode: 'append' }) }),
+    ).toEqual({ content: 'x', path: undefined });
+    expect(buildWriteContent({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: '' }) })).toEqual({
+      content: '',
+      path: 'a.ts',
+    });
+  });
+
+  it('returns null for other tools or a missing/non-string content', () => {
+    expect(buildWriteContent({ name: 'Edit', arg: JSON.stringify({ old_string: 'a', new_string: 'b' }) })).toBeNull();
+    expect(buildWriteContent({ name: 'Write', arg: JSON.stringify({ path: 'a.ts' }) })).toBeNull();
+    expect(buildWriteContent({ name: 'Write', arg: 'not json' })).toBeNull();
+  });
+
+  it('returns null when the content is too large to render inline', () => {
+    const huge = Array.from({ length: 5001 }, (_, i) => `line${i}`).join('\n');
+    expect(buildWriteContent({ name: 'Write', arg: JSON.stringify({ path: 'a.ts', content: huge }) })).toBeNull();
+  });
+
+  it('returns null for an oversized single line (minified bundle, base64)', () => {
+    const oneHugeLine = 'x'.repeat(100 * 1024 + 1);
+    expect(
+      buildWriteContent({ name: 'Write', arg: JSON.stringify({ path: 'a.js', content: oneHugeLine }) }),
+    ).toBeNull();
+  });
+});
+
+describe('codeLanguageFromPath', () => {
+  it('maps extensions and shiki aliases to languages', () => {
+    expect(codeLanguageFromPath('src/a.ts')).toBe('ts');
+    expect(codeLanguageFromPath('src/a.vue')).toBe('vue');
+    expect(codeLanguageFromPath('ci/build.yml')).toBe('yml');
+    expect(codeLanguageFromPath('C:\\repo\\main.py')).toBe('py');
+  });
+
+  it('maps well-known extensionless filenames', () => {
+    expect(codeLanguageFromPath('Dockerfile')).toBe('dockerfile');
+    expect(codeLanguageFromPath('apps/web/Makefile')).toBe('makefile');
+  });
+
+  it('returns undefined for unknown, extensionless, or dotfile paths', () => {
+    expect(codeLanguageFromPath('.gitignore')).toBeUndefined();
+    expect(codeLanguageFromPath('LICENSE')).toBeUndefined();
+    expect(codeLanguageFromPath('notes.unknownext')).toBeUndefined();
+    expect(codeLanguageFromPath(undefined)).toBeUndefined();
   });
 });
 
@@ -412,9 +528,14 @@ describe('resolveToolRenderer', () => {
     expect(resolveToolRenderer(tool('multi_edit'))).toBe(EditTool);
   });
 
+  it('routes read calls to the Read renderer', () => {
+    expect(resolveToolRenderer(tool('read'))).toBe(ReadTool);
+    expect(resolveToolRenderer(tool('Read'))).toBe(ReadTool);
+  });
+
   it('falls back to the Generic renderer for unknown tools', () => {
     expect(resolveToolRenderer(tool('bash'))).toBe(GenericTool);
-    expect(resolveToolRenderer(tool('read'))).toBe(GenericTool);
+    expect(resolveToolRenderer(tool('some_custom_tool'))).toBe(GenericTool);
   });
 });
 

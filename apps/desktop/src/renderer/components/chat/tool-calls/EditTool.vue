@@ -1,16 +1,18 @@
 <!-- apps/kimi-web/src/components/chat/tool-calls/EditTool.vue -->
-<!-- Edit / Write tool card. Expanding the row inline shows the synthesized line
-     diff when it accurately represents the operation (a single Edit); otherwise
-     (Write, replace_all, error) the raw tool output is shown instead — on error
-     the diff describes what was attempted, not what happened. -->
+<!-- Edit / Write tool card. Expanding the row inline shows, syntax-highlighted:
+     the synthesized line diff for a single Edit, or the written content for a
+     Write (the client cannot tell a new file from an overwrite, so a from-empty
+     diff would mislead); otherwise (replace_all, error) the raw tool output is
+     shown instead — on error the diff describes what was attempted, not what
+     happened. -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { DiffViewLine, FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
 import { diffStats } from '../../../lib/diffLines';
-import { buildEditDiffLines } from '../../../lib/toolDiff';
+import { buildEditDiffLines, buildWriteContent, toolFilePath } from '../../../lib/toolDiff';
 import { toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
 import ToolRow from '../ToolRow.vue';
-import DiffLines from '../DiffLines.vue';
+import HighlightedCode from '../../HighlightedCode.vue';
 import ToolOutputBlock from './ToolOutputBlock.vue';
 
 const props = withDefaults(
@@ -34,6 +36,8 @@ const summary = computed(() => toolSummary(props.tool.name, props.tool.arg));
 const summaryFull = computed(() => toolSummary(props.tool.name, props.tool.arg, true));
 
 const editDiff = computed<DiffViewLine[] | null>(() => buildEditDiffLines(props.tool));
+const editPath = computed(() => toolFilePath(props.tool));
+const writeContent = computed(() => buildWriteContent(props.tool));
 const chip = computed(() => {
   const diff = editDiff.value;
   if (diff && props.tool.status !== 'error') {
@@ -45,8 +49,20 @@ const chip = computed(() => {
 
 const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
 const showDiff = computed(() => editDiff.value !== null && props.tool.status !== 'error');
+const showContent = computed(() => writeContent.value !== null && props.tool.status !== 'error');
 const open = ref(false);
-const canExpand = computed(() => showDiff.value || hasOutput.value);
+const canExpand = computed(() => showDiff.value || showContent.value || hasOutput.value);
+/** True when the expanded body is the HighlightedCode block (which owns its
+    scroll viewport), false for the ToolOutputBlock fallback. */
+const showHighlighted = computed(() => showDiff.value || showContent.value);
+
+// ToolRow hides a collapsed body purely with CSS, so slot content stays
+// mounted. Mount the (tokenizing) highlighter only after the first expand;
+// once mounted it stays mounted, so re-expanding does not re-highlight.
+const everOpened = ref(open.value);
+watch(open, (v) => {
+  if (v) everOpened.value = true;
+});
 
 function toggle(): void {
   if (canExpand.value) open.value = !open.value;
@@ -64,15 +80,19 @@ function toggle(): void {
     :expandable="canExpand"
     :stacked="stackPosition !== 'single'"
     :stack-position="stackPosition"
+    :self-scrolling-body="showHighlighted"
     @toggle="toggle"
   >
     <template #trailing>
       <span v-if="chip" class="chip">{{ chip }}</span>
     </template>
     <div v-if="summaryFull" class="bb-summary">{{ summaryFull }}</div>
-    <div v-if="showDiff" class="diff-scroll">
-      <DiffLines :lines="editDiff ?? []" :line-numbers="false" />
-    </div>
+    <HighlightedCode v-if="showDiff && everOpened" :lines="editDiff ?? []" :path="editPath" />
+    <HighlightedCode
+      v-else-if="showContent && everOpened"
+      :code="writeContent?.content ?? ''"
+      :path="writeContent?.path"
+    />
     <ToolOutputBlock v-else :lines="tool.output" empty-text="Waiting for output…" />
   </ToolRow>
 </template>
@@ -89,14 +109,5 @@ function toggle(): void {
   padding-bottom: 6px;
   margin-bottom: 6px;
   word-break: break-all;
-}
-/* Inline diff viewport: caps long diffs and scrolls horizontally for wide
-   lines (DiffLines sizes itself to the longest row). */
-.diff-scroll {
-  margin-top: var(--space-2);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  overflow: auto;
-  max-height: calc(24 * 1.5 * var(--ui-font-size));
 }
 </style>

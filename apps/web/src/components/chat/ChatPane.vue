@@ -1054,7 +1054,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > :deep(.media-tool:first-child) {
   margin-top: 0;
 }
-.a-msg :deep(code) {
+/* Inline-code chip. Must exclude <pre> descendants: a block <code> (shiki
+   output, tool-card code) is inline-level, so this chip would otherwise be
+   painted once per line box — a striped band on every line. */
+.a-msg :deep(:not(pre) > code) {
   font: .9em var(--font-mono);
   background: var(--color-surface-sunken);
   border: 1px solid var(--color-line);

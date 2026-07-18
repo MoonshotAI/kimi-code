@@ -16,6 +16,9 @@ withDefaults(
     monospace?: boolean;
     stacked?: boolean;
     stackPosition?: 'single' | 'first' | 'middle' | 'last';
+    /** Body content owns its scroll viewport (e.g. a code block): the detail
+        panel must NOT also clip/scroll it, or nested scrollbars result. */
+    selfScrollingBody?: boolean;
   }>(),
   {
     icon: '',
@@ -26,6 +29,7 @@ withDefaults(
     monospace: false,
     stacked: false,
     stackPosition: 'single',
+    selfScrollingBody: false,
   },
 );
 
@@ -74,7 +78,7 @@ function onHeadClick(): void {
       <Icon v-if="expandable" class="car" :name="open ? 'chevron-down' : 'chevron-right'" size="sm" />
     </div>
     <div class="bb" :class="{ open }" :inert="!open">
-      <div class="bb-pad">
+      <div class="bb-pad" :class="{ 'self-scroll': selfScrollingBody }">
         <slot />
       </div>
     </div>
@@ -220,6 +224,12 @@ function onHeadClick(): void {
   max-height: 16.5em; /* 10 lines at the 1.65 detail line-height. */
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+/* Content with its own scroll viewport (code blocks): the inner block clips
+   and scrolls, so the panel must not — that was the double-scrollbar. */
+.bb.open .bb-pad.self-scroll {
+  max-height: none;
+  overflow-y: visible;
 }
 .bb-pad {
   min-height: 0;
