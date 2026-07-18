@@ -1,0 +1,261 @@
+import { describe, expect, it } from 'vitest';
+
+import { AgentTranscript } from '#/store/agentTranscript';
+import { TranscriptStore } from '#/store/transcriptStore';
+import { appendAtOffset } from '#/ops/apply';
+import type {
+  FrameUpsertOp,
+  TurnUpsertOp,
+  TranscriptOperation,
+} from '#/ops/operation';
+import type { ThinkingFrame, ToolCallFrame, InteractionFrame } from '#/model/frame';
+
+const turn1: TurnUpsertOp = {
+  op: 'turn.upsert',
+  turn: { kind: 'turn', turnId: 't1', ordinal: 1, state: 'running', origin: { kind: 'user' }, prompt: 'hi' },
+};
+
+const doneThinking: FrameUpsertOp = {
+  op: 'frame.upsert',
+  turnId: 't1',
+  stepId: 't1.1',
+  frame: { kind: 'thinking', frameId: 't1.1.f1', text: 'ponder' } satisfies ThinkingFrame,
+};
+
+function toolFrame(state: ToolCallFrame['state'], output?: unknown): TranscriptOperation[] {
+  return [
+    turn1,
+    {
+      op: 'step.upsert',
+      turnId: 't1',
+      step: { kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'running' },
+    },
+    {
+      op: 'frame.upsert',
+      turnId: 't1',
+      stepId: 't1.1',
+      frame: {
+        kind: 'tool',
+        frameId: 't1.1.call_1',
+        toolCallId: 'call_1',
+        name: 'Read',
+        state,
+        input: { path: '/a' },
+        output,
+      } satisfies ToolCallFrame,
+    },
+  ];
+}
+
+describe('AgentTranscript', () => {
+  it('applies turn/step/frame and keeps a self-consistent snapshot', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply(toolFrame('running'));
+
+    const items = tx.getItems();
+    expect(items).toHaveLength(1);
+    const turn = items[0];
+    expect(turn?.kind).toBe('turn');
+    if (turn?.kind !== 'turn') return;
+    expect(turn.steps).toHaveLength(1);
+    expect(turn.steps[0]?.frames.map((f) => f.kind)).toEqual(['tool']);
+  });
+
+  it('auto-vivifies missing parents so any op order stays self-consistent', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      {
+        op: 'frame.upsert',
+        turnId: 't9',
+        stepId: 't9.2',
+        frame: { kind: 'thinking', frameId: 't9.2.f1', text: 'x' },
+      },
+    ]);
+    const turn = tx.getTurn('t9');
+    expect(turn?.ordinal).toBe(9);
+    expect(turn?.steps[0]?.stepId).toBe('t9.2');
+  });
+
+  it('upserts are idempotent under duplication in causal order', () => {
+    const ops: TranscriptOperation[] = [
+      turn1,
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: { kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'running' },
+      },
+      doneThinking,
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: { kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'completed' },
+      },
+      { op: 'turn.upsert', turn: { ...turn1.turn, state: 'completed' } },
+    ];
+    const a = new AgentTranscript('main');
+    a.apply(ops);
+    const b = new AgentTranscript('main');
+    b.apply([...ops, ...ops]);
+    b.apply(ops);
+    expect(b.getItems()).toEqual(a.getItems());
+  });
+
+  it('appends text chunks by offset; gaps stay un-applied and signalled', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      turn1,
+      {
+        op: 'frame.upsert',
+        turnId: 't1',
+        stepId: 't1.1',
+        frame: { kind: 'text', frameId: 't1.1.f1', role: 'assistant', text: '' },
+      },
+    ]);
+    const gap = tx.apply([
+      { op: 'append', target: { type: 'frame', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' }, offset: 5, text: 'late' },
+    ]);
+    expect(gap.gap).toEqual({
+      target: { type: 'frame', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' },
+      expected: 0,
+      got: 5,
+    });
+
+    const ok = tx.apply([
+      { op: 'append', target: { type: 'frame', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' }, offset: 0, text: 'hello ' },
+      { op: 'append', target: { type: 'frame', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' }, offset: 6, text: 'world' },
+    ]);
+    expect(ok.gap).toBeUndefined();
+    const turn = tx.getTurn('t1');
+    const frame = turn?.steps[0]?.frames[0];
+    expect(frame?.kind === 'text' && frame.text).toBe('hello world');
+
+    // duplicate delivery is absorbed
+    const dup = tx.apply([
+      { op: 'append', target: { type: 'frame', turnId: 't1', stepId: 't1.1', frameId: 't1.1.f1' }, offset: 6, text: 'world' },
+    ]);
+    expect(dup.accepted).toHaveLength(0);
+  });
+
+  it('appendAtOffset matches web alignDelta semantics', () => {
+    expect(appendAtOffset('abc', 3, 'd')).toEqual({ text: 'abcd', changed: true });
+    expect(appendAtOffset('abc', 1, 'bc').changed).toBe(false);
+    expect(appendAtOffset('abc', 1, 'bcd')).toEqual({ text: 'abcd', changed: true });
+    expect(appendAtOffset('abc', 5, 'x').gap).toEqual({ expected: 3, got: 5 });
+  });
+
+  it('tracks pending interactions as a derived index', () => {
+    const tx = new AgentTranscript('main');
+    const interaction = (state: InteractionFrame['state']): InteractionFrame => ({
+      kind: 'interaction',
+      frameId: 't1.1.i1',
+      interactionId: 'appr-1',
+      interactionKind: 'approval',
+      state,
+    });
+    tx.apply([turn1, { op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: interaction('pending') }]);
+    expect(tx.listPendingInteractions()).toEqual(['appr-1']);
+    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: interaction('approved') }]);
+    expect(tx.listPendingInteractions()).toEqual([]);
+  });
+
+  it('items.remove drops whole turns and their pending index entries', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      turn1,
+      {
+        op: 'frame.upsert',
+        turnId: 't1',
+        stepId: 't1.1',
+        frame: {
+          kind: 'interaction',
+          frameId: 't1.1.i1',
+          interactionId: 'appr-9',
+          interactionKind: 'approval',
+          state: 'pending',
+        },
+      },
+    ]);
+    tx.apply([{ op: 'items.remove', ids: ['t1'] }]);
+    expect(tx.getItems()).toHaveLength(0);
+    expect(tx.listPendingInteractions()).toEqual([]);
+  });
+
+  it('receive() equals full reset seed; snapshot windowing keeps newest turns', () => {
+    const tx = new AgentTranscript('main');
+    for (let n = 1; n <= 5; n += 1) {
+      tx.apply([
+        { op: 'marker.upsert', item: { kind: 'marker', markerId: `m${n}`, marker: 'goal' } },
+        {
+          op: 'turn.upsert',
+          turn: { kind: 'turn', turnId: `t${n}`, ordinal: n, state: 'completed', origin: { kind: 'user' } },
+        },
+      ]);
+    }
+    const snapshot = tx.snapshot({ tailTurns: 2 });
+    expect(snapshot.hasMoreOlder).toBe(true);
+    expect(snapshot.items.filter((i) => i.kind === 'turn').map((i) => i.kind === 'turn' && i.turnId)).toEqual(['t4', 't5']);
+    // markers between kept turns survive; the one before t4's segment does not…
+    expect(snapshot.items.filter((i) => i.kind === 'marker').length).toBeGreaterThan(0);
+
+    const fresh = new AgentTranscript('main');
+    fresh.receive([{ op: 'reset', agentId: 'main', snapshot }]);
+    expect(fresh.getItems()).toEqual(snapshot.items);
+    expect(fresh.hasMoreOlder).toBe(true);
+  });
+
+  it('onChange emits accepted ops once per apply batch', () => {
+    const tx = new AgentTranscript('main');
+    const seen: string[] = [];
+    tx.onChange((event) => {
+      seen.push(...event.ops.map((op) => op.op));
+    });
+    tx.apply([turn1, turn1]); // second upsert is a no-op
+    expect(seen).toEqual(['turn.upsert']);
+  });
+
+  it('task upsert + append keeps output tail globally, detached flips freely', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false, outputTail: '' } },
+      { op: 'append', target: { type: 'task', taskId: 'task1' }, offset: 0, text: 'line1\n' },
+      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: true, outputTail: 'line1\n' } },
+    ]);
+    const task = tx.getTask('task1');
+    expect(task?.detached).toBe(true);
+    expect(task?.outputTail).toBe('line1\n');
+  });
+
+  it('meta.merge merges goal/modes shallowly', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      { op: 'meta.merge', meta: { goal: { objective: 'ship it', status: 'active' } } },
+      { op: 'meta.merge', meta: { modes: { plan: { reviewPath: '/p' } } } },
+    ]);
+    expect(tx.getMeta().goal?.status).toBe('active');
+    expect(tx.getMeta().modes?.plan?.reviewPath).toBe('/p');
+  });
+
+  it('snapshot immutability: later applies do not mutate earlier reads', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply(toolFrame('running'));
+    const before = tx.getItems();
+    tx.apply(toolFrame('done', 'content'));
+    const beforeFrame = before[0]?.kind === 'turn' ? before[0].steps[0]?.frames[0] : undefined;
+    expect(beforeFrame?.kind === 'tool' && beforeFrame.state).toBe('running');
+  });
+});
+
+describe('TranscriptStore', () => {
+  it('lazily creates agent transcripts and tracks the roster', () => {
+    const store = new TranscriptStore('s1');
+    expect(store.getAgent('main')).toBeUndefined();
+    const tx = store.ensureAgent('main', { agentId: 'main', type: 'main' });
+    expect(store.getAgent('main')).toBe(tx);
+    const rosters: number[] = [];
+    store.onRosterChange((agents) => rosters.push(agents.length));
+    store.ensureAgent('sub-1', { agentId: 'sub-1', type: 'sub', parentAgentId: 'main' });
+    store.removeAgent('sub-1');
+    expect(rosters).toEqual([2, 1]);
+    expect(store.agents().map((a) => a.agentId)).toEqual(['main']);
+  });
+});

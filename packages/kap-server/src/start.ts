@@ -65,6 +65,7 @@ import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
 import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
+import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
@@ -331,10 +332,12 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   };
 
   const connectionRegistry = new ConnectionRegistry();
+  const transcriptService = new TranscriptService({ homeDir, core, logger });
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
+    transcriptService,
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
 
@@ -366,6 +369,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
           { name: 'sessions', description: 'Session lifecycle' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
+          { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'approvals', description: 'Approval resolution' },
           { name: 'questions', description: 'Question resolution & dismiss' },
@@ -401,6 +405,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     connectionRegistry,
     broadcaster,
     snapshotReader,
+    transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });
 

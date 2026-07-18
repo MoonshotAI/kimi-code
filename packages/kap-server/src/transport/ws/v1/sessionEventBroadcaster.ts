@@ -57,10 +57,21 @@ import { isVolatileEventType } from './events';
 import type { SessionCursor } from '../../../protocol/ws-control';
 import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
 import type { SessionPendingInteraction } from '../../../protocol/session';
+import {
+  filterOpsForGrade,
+  gradeFor,
+  needsResetOnTransition,
+  type AgentTranscript,
+  type TranscriptGradeSpec,
+  type TranscriptOpsEvent,
+  type TranscriptResetEvent,
+  type TranscriptStore,
+} from '@moonshot-ai/transcript';
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
+import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import { SubagentRosterTracker } from './subagentRosterTracker';
 import {
@@ -100,6 +111,22 @@ export interface BroadcastTarget {
  */
 export type AgentFilter = ReadonlySet<string> | undefined;
 
+/**
+ * What one connection wants from a session: the legacy agent allowlist plus
+ * the opt-in per-agent transcript grades (`Record<agentId|'*', grade>`; absent
+ * = all 'off' — legacy clients see no transcript frames at all).
+ */
+export interface TargetSubscription {
+  readonly agentFilter?: AgentFilter;
+  readonly transcriptGrades?: TranscriptGradeSpec;
+}
+
+/** Per-session transcript streaming state (shared across all targets). */
+interface TranscriptStream {
+  /** Agents already seeded (roster de-dup for the reset fan-out). */
+  readonly knownAgents: Set<string>;
+}
+
 interface SessionState {
   readonly sessionId: string;
   readonly journal: SessionEventJournal;
@@ -122,8 +149,8 @@ interface SessionState {
   pendingInteraction: SessionPendingInteraction;
   /** Recent durable envelopes for in-memory replay. */
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
-  /** Connections subscribed to this session, each with its optional agent allowlist. */
-  readonly targets: Map<BroadcastTarget, AgentFilter>;
+  /** Connections subscribed to this session, each with its subscription view. */
+  readonly targets: Map<BroadcastTarget, TargetSubscription>;
   /** Per-session dispatch queue — serializes stamp / journal / fan-out. */
   queue: Promise<void>;
   /** agentId → sink subscription. */
@@ -131,6 +158,8 @@ interface SessionState {
   readonly lifecycleDisposables: IDisposable[];
   /** Interactions already announced (or pre-existing at activation): id → kind. */
   readonly knownInteractions: Map<string, InteractionKind>;
+  /** Attached on first transcript-grade subscription for this session. */
+  transcriptStream?: TranscriptStream;
 }
 
 /** The aggregate-relevant slice of one agent's activity state. */
@@ -142,6 +171,8 @@ interface AgentWorkFold {
 
 export const DEFAULT_MAX_BUFFER_SIZE = 1000;
 const GLOBAL_SESSION_ID = '__global__';
+/** Turns shipped in a `transcript.reset` snapshot; older turns page in over REST. */
+const TRANSCRIPT_RESET_TAIL_TURNS = 30;
 
 async function disposeSessionState(state: SessionState): Promise<void> {
   for (const d of state.lifecycleDisposables) d.dispose();
@@ -173,6 +204,12 @@ export class SessionEventBroadcaster {
       readonly core: Scope;
       readonly logger?: JournalLogger;
       readonly maxBufferSize?: number;
+      /**
+       * Optional transcript owner; when present, `subscribe` with transcript
+       * grades activates per-agent op streaming for live sessions. Absent =
+       * transcript disabled (tests / minimal embeds).
+       */
+      readonly transcriptService?: TranscriptService;
     },
   ) {
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
@@ -181,20 +218,171 @@ export class SessionEventBroadcaster {
       .subscribe((event) => this.onCoreEvent(event));
   }
 
-  /** Subscribe a connection to a session's stream (activates the session). */
+  /**
+   * Subscribe a connection to a session's stream (activates the session).
+   *
+   * When `transcriptGrades` is present the connection also joins the
+   * session's transcript stream: every already-known agent whose grade is not
+   * 'off' and that is an upgrade over the connection's previous grade
+   * (`needsResetOnTransition`) is seeded with a `transcript.reset` snapshot;
+   * later ops arrive as `transcript.ops`. Transcript frames are ALWAYS
+   * volatile (current watermark as seq, never journaled, never replayed) —
+   * frame loss surfaces through the ordinary backpressure → `resync_required`
+   * → REST + re-subscribe path, which resets the transcript naturally.
+   */
   async subscribe(
     sessionId: string,
     target: BroadcastTarget,
     filter?: AgentFilter,
+    transcriptGrades?: TranscriptGradeSpec,
   ): Promise<boolean> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) return false;
-    state.targets.set(target, filter);
+    const prevGrades = state.targets.get(target)?.transcriptGrades;
+    state.targets.set(target, { agentFilter: filter, transcriptGrades });
+    if (transcriptGrades !== undefined) {
+      await this.subscribeTranscript(state, target, transcriptGrades, prevGrades);
+    }
     return true;
   }
 
   unsubscribe(sessionId: string, target: BroadcastTarget): void {
     this.sessions.get(sessionId)?.targets.delete(target);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transcript streaming (v1 incremental add-on; the durable event path is
+  // untouched — transcript frames never advance seq and never touch the journal)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Handle one connection's transcript subscription: attach the shared
+   * per-session stream on first use and send `transcript.reset` snapshots for
+   * every known agent admitted by `spec` that is an upgrade over the
+   * connection's previous grade. A cold session (not live in this process)
+   * silently skips streaming — cold transcripts stay REST-only. Live sessions
+   * first await the initial wire-records backfill, so the seeded resets carry
+   * the established main-agent transcript.
+   */
+  private async subscribeTranscript(
+    state: SessionState,
+    target: BroadcastTarget,
+    spec: TranscriptGradeSpec,
+    prev: TranscriptGradeSpec | undefined,
+  ): Promise<void> {
+    const service = this.opts.transcriptService;
+    if (service === undefined) return;
+    const store = service.forSessionLive(state.sessionId);
+    if (store === undefined) return;
+    await service.whenReady(state.sessionId);
+    // Explicitly graded agents get their persisted history replayed before
+    // their first reset (the wildcard covers the roster as-is — explicitly
+    // requested transcripts rebuild, wildcard subscribers see the live state).
+    await Promise.all(
+      Object.keys(spec)
+        .filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off')
+        .map((agentId) => service.ensureAgentHistory(state.sessionId, agentId)),
+    );
+    this.ensureTranscriptStream(state, store);
+    for (const descriptor of store.agents()) {
+      const grade = gradeFor(spec, descriptor.agentId);
+      if (grade === 'off') continue;
+      if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
+      const transcript = store.getAgent(descriptor.agentId);
+      if (transcript !== undefined) this.sendTranscriptReset(state, target, transcript);
+    }
+  }
+
+  /**
+   * Attach the session's shared transcript fan-out: one mapped-ops
+   * subscription for the whole session (grade filtering happens per target at
+   * fan-out). New agents appearing later seed a `transcript.reset` for every
+   * connected target whose grade admits them.
+   */
+  private ensureTranscriptStream(state: SessionState, store: TranscriptStore): void {
+    if (state.transcriptStream !== undefined) return;
+    const service = this.opts.transcriptService;
+    if (service === undefined) return;
+    const stream: TranscriptStream = {
+      knownAgents: new Set(store.agents().map((d) => d.agentId)),
+    };
+    state.transcriptStream = stream;
+
+    const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }) => {
+      for (const [target, sub] of state.targets) {
+        const grade = gradeFor(sub.transcriptGrades, agentId);
+        const filtered = filterOpsForGrade(grade, ops);
+        if (filtered.length === 0) continue;
+        try {
+          target.send(
+            this.buildTranscriptEnvelope(state, 'transcript.ops', {
+              agent_id: agentId,
+              ops: filtered,
+            }),
+          );
+        } catch {
+          // best-effort fan-out; a broken target is dropped, not fatal
+        }
+      }
+    });
+    if (opsDisposable !== undefined) state.lifecycleDisposables.push(opsDisposable);
+
+    state.lifecycleDisposables.push(
+      store.onRosterChange((agents) => {
+        for (const descriptor of agents) {
+          if (stream.knownAgents.has(descriptor.agentId)) continue;
+          stream.knownAgents.add(descriptor.agentId);
+          const transcript = store.getAgent(descriptor.agentId);
+          if (transcript === undefined) continue;
+          for (const [target, sub] of state.targets) {
+            if (gradeFor(sub.transcriptGrades, descriptor.agentId) === 'off') continue;
+            try {
+              this.sendTranscriptReset(state, target, transcript);
+            } catch {
+              // best-effort fan-out; a broken target is dropped, not fatal
+            }
+          }
+        }
+      }),
+    );
+  }
+
+  /** Volatile `transcript.reset` envelope carrying a tail-windowed snapshot. */
+  private sendTranscriptReset(
+    state: SessionState,
+    target: BroadcastTarget,
+    transcript: AgentTranscript,
+  ): void {
+    const snapshot = transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS });
+    target.send(
+      this.buildTranscriptEnvelope(state, 'transcript.reset', {
+        agent_id: transcript.agentId,
+        snapshot,
+        has_more_older: snapshot.hasMoreOlder ?? false,
+      }),
+    );
+  }
+
+  /**
+   * All transcript frames are volatile and carry the current durable watermark
+   * as `seq` (they never advance it and are never journaled or replayed). The
+   * payload is the flat protocol event (`{ type, agent_id, … }`), matching the
+   * `transcriptResetEventSchema` / `transcriptOpsEventSchema` shapes.
+   */
+  private buildTranscriptEnvelope(
+    state: SessionState,
+    type: 'transcript.reset' | 'transcript.ops',
+    payload: Omit<TranscriptResetEvent, 'type'> | Omit<TranscriptOpsEvent, 'type'>,
+  ): EventEnvelope {
+    return {
+      type,
+      seq: state.journal.seq,
+      epoch: state.journal.epoch,
+      volatile: true,
+      session_id: state.sessionId,
+      timestamp: new Date().toISOString(),
+      payload: { type, ...payload },
+    };
   }
 
   async getBufferedSince(
@@ -299,8 +487,11 @@ export class SessionEventBroadcaster {
     if (this.closed) return;
     this.closed = true;
     this.coreEventSubscription.dispose();
-    for (const state of this.sessions.values()) {
+    for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
+      // Transcript bindings die with the session stream (its store
+      // subscriptions were disposed above; the producer binding goes here).
+      this.opts.transcriptService?.dropSession(sessionId);
     }
     this.sessions.clear();
   }
@@ -794,8 +985,8 @@ export class SessionEventBroadcaster {
         }
       }
     } else {
-      for (const [target, filter] of targets) {
-        if (!matchesAgentFilter(envelope, filter)) continue;
+      for (const [target, sub] of targets) {
+        if (!matchesAgentFilter(envelope, sub.agentFilter)) continue;
         try {
           target.send(envelope);
         } catch {

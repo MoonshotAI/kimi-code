@@ -1,0 +1,95 @@
+/**
+ * Per-(session, agent) transcript state for the chat view.
+ *
+ * A thin observable wrapper over the package's L1 convergence path
+ * (`applyOperation` on an `AgentState`) — the reducer is NOT re-implemented
+ * here. State arrives through exactly two channels:
+ *
+ *  - REST pages (`applyPage`): the only source of FULL state. A `replace`
+ *    page (initial load / full refresh) is the newest slice and replaces
+ *    local state wholesale, globals included; a non-replace page is an older
+ *    slice fetched with `before_turn` and prepended ahead of the loaded
+ *    window (items only — globals stay with the fresher live state).
+ *  - WS delta ops (`applyOps`): incremental `transcript.ops` only. Ops are
+ *    idempotent upserts plus offset-placed appends, so ops buffered while a
+ *    REST refresh is in flight converge when flushed onto the fresh pages.
+ *
+ * `onGap` surfaces `append` placement gaps so the caller can trigger a full
+ * REST refresh (the WS channel carries no snapshots to fall back on).
+ */
+
+import {
+  applyOperation,
+  EMPTY_AGENT_STATE,
+  itemId,
+  type AgentState,
+  type TranscriptOperation,
+} from '@moonshot-ai/transcript';
+
+import type { TranscriptPage } from './api';
+
+export class TranscriptChatStore {
+  private state: AgentState = EMPTY_AGENT_STATE;
+  private readonly listeners = new Set<() => void>();
+
+  /** Called when an `append` op could not be placed — the caller should refresh. */
+  onGap: (() => void) | undefined;
+
+  getState(): AgentState {
+    return this.state;
+  }
+
+  /** `useSyncExternalStore`-compatible subscribe. */
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  /**
+   * Merge one REST page. With `replace`, the page is the newest slice and
+   * becomes the whole state (initial load / full refresh); otherwise it is an
+   * older slice prepended ahead of the window (deduped by item id), updating
+   * only `items` and `hasMoreOlder`.
+   */
+  applyPage(page: TranscriptPage, opts?: { replace?: boolean }): void {
+    if (opts?.replace === true) {
+      this.state = {
+        items: page.items,
+        tasks: new Map(page.tasks.map((task) => [task.taskId, task])),
+        meta: page.meta,
+        pendingInteractions: new Set(page.pendingInteractions),
+        hasMoreOlder: page.hasMoreOlder,
+      };
+      this.notify();
+      return;
+    }
+    const existing = new Set(this.state.items.map(itemId));
+    const fresh = page.items.filter((item) => !existing.has(itemId(item)));
+    if (fresh.length === 0 && page.hasMoreOlder === this.state.hasMoreOlder) return;
+    this.state = {
+      ...this.state,
+      items: [...fresh, ...this.state.items],
+      hasMoreOlder: page.hasMoreOlder,
+    };
+    this.notify();
+  }
+
+  /** Apply incremental WS ops; notifies once per changed batch. */
+  applyOps(ops: readonly TranscriptOperation[]): void {
+    let changed = false;
+    for (const op of ops) {
+      const result = applyOperation(this.state, op);
+      if (result.gap !== undefined) this.onGap?.();
+      if (!result.changed) continue;
+      this.state = result.state;
+      changed = true;
+    }
+    if (changed) this.notify();
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener();
+  }
+}

@@ -1,0 +1,506 @@
+/**
+ * `AgentTranscriptProjector` — core event → L2 ops mapping fixtures.
+ *
+ * Each test feeds event batches through the projector and applies the emitted
+ * ops to a real `AgentTranscript`, asserting both the op stream (offsets,
+ * flush upserts) and the converged store state.
+ */
+
+import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
+import {
+  AgentTranscript,
+  type AppendOp,
+  type FrameUpsertOp,
+  type TranscriptOperation,
+  type TranscriptTask,
+  type TranscriptTurn,
+} from '@moonshot-ai/transcript';
+import { describe, expect, it } from 'vitest';
+
+import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
+
+function ev(payload: Record<string, unknown>): DomainEvent {
+  return payload as unknown as DomainEvent;
+}
+
+function turnOps(turnId: string, items: ReturnType<AgentTranscript['getItems']>): TranscriptTurn {
+  const turn = items.find(
+    (item): item is TranscriptTurn => item.kind === 'turn' && item.turnId === turnId,
+  );
+  if (turn === undefined) throw new Error(`turn ${turnId} not found`);
+  return turn;
+}
+
+describe('AgentTranscriptProjector', () => {
+  it('projects a full turn: headers, delta appends, flush, tool frames', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: DomainEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1, stepId: 'u1' }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'Hello' }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: ' world' }));
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_1',
+        name: 'Bash',
+        args: '{"command":"ls"}',
+        display: { kind: 'command', command: 'ls' },
+      }),
+    );
+    feed(ev({ type: 'tool.result', turnId: 1, toolCallId: 'call_1', output: 'file.txt' }));
+    feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1, stepId: 'u1' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    // Op-level: turn/step headers carry no render content; deltas are appends
+    // with cumulative offsets; the step flush re-emits the full text.
+    const appends = ops.filter((op): op is AppendOp => op.op === 'append');
+    expect(appends.map((op) => [op.offset, op.text])).toEqual([
+      [0, 'Hello'],
+      [5, ' world'],
+    ]);
+    const upserts = ops.filter((op): op is FrameUpsertOp => op.op === 'frame.upsert');
+    const flushUpsert = upserts.find(
+      (op) => op.frame.kind === 'text' && op.frame.text === 'Hello world',
+    );
+    expect(flushUpsert).toBeDefined();
+
+    // Converged store state.
+    const turn = turnOps('t1', tx.getItems());
+    expect(turn.state).toBe('completed');
+    expect(turn.origin).toEqual({ kind: 'user', payload: { kind: 'user' } });
+    expect(turn.endedAt).toBeTypeOf('string');
+    expect(turn.steps).toHaveLength(1);
+    const step = turn.steps[0]!;
+    expect(step.state).toBe('completed');
+    const text = step.frames.find((frame) => frame.kind === 'text');
+    expect(text).toMatchObject({ role: 'assistant', text: 'Hello world' });
+    const tool = step.frames.find((frame) => frame.kind === 'tool');
+    expect(tool).toMatchObject({
+      frameId: 't1.1.call_1',
+      toolCallId: 'call_1',
+      name: 'Bash',
+      state: 'done',
+      input: { command: 'ls' },
+      output: 'file.txt',
+      display: { kind: 'command', command: 'ls' },
+    });
+  });
+
+  it('flushes open frames on turn.ended even without step completion', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(ev({ type: 'thinking.delta', turnId: 1, delta: 'hmm' }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'partial' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'cancelled' }));
+
+    const turn = turnOps('t1', tx.getItems());
+    expect(turn.state).toBe('cancelled');
+    const step = turn.steps[0]!;
+    // The interrupted step is closed and both open frames carry whole text.
+    expect(step.state).toBe('interrupted');
+    expect(step.frames).toContainEqual(
+      expect.objectContaining({ kind: 'thinking', text: 'hmm' }),
+    );
+    expect(step.frames).toContainEqual(
+      expect.objectContaining({ kind: 'text', text: 'partial' }),
+    );
+  });
+
+  it('drops tool.call.delta / tool.progress (argument & progress streaming out of scope)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    expect(
+      projector.map(ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'c', argumentsPart: '{' })),
+    ).toEqual([]);
+    expect(
+      projector.map(
+        ev({ type: 'tool.progress', turnId: 1, toolCallId: 'c', update: { kind: 'progress' } }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('marks tool.result errors and keeps the display payload', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'c1',
+        name: 'Read',
+        args: { path: '/x' },
+        display: { kind: 'file', path: '/x' },
+      }),
+    );
+    feed(ev({ type: 'tool.result', turnId: 1, toolCallId: 'c1', output: 'ENOENT', isError: true }));
+
+    const tool = turnOps('t1', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
+    expect(tool).toMatchObject({
+      state: 'error',
+      output: 'ENOENT',
+      error: 'ENOENT',
+      display: { kind: 'file', path: '/x' },
+    });
+  });
+
+  it('projects process tasks as shell tasks with streaming output', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: DomainEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    const started = {
+      taskId: 'bash-1',
+      kind: 'process',
+      description: 'ls -la',
+      status: 'running',
+      detached: false,
+      startedAt: 1_700_000_000_000,
+      endedAt: null,
+    };
+    feed(ev({ type: 'task.started', info: started }));
+    feed(ev({ type: 'shell.started', commandId: 'cmd-1', taskId: 'bash-1' }));
+    feed(ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'stdout', text: 'a\n' } }));
+    feed(ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'stderr', text: 'b\n' } }));
+    feed(
+      ev({
+        type: 'task.terminated',
+        info: { ...started, status: 'completed', endedAt: 1_700_000_001_000 },
+      }),
+    );
+
+    // Taskref anchors the entity in the timeline; output appends are offset-keyed.
+    expect(ops.some((op) => op.op === 'taskref.upsert' && op.item.taskId === 'bash-1')).toBe(true);
+    const appends = ops.filter((op): op is AppendOp => op.op === 'append');
+    expect(appends.map((op) => [op.offset, op.text])).toEqual([
+      [0, 'a\n'],
+      [2, 'b\n'],
+    ]);
+
+    const task = tx.getTask('bash-1');
+    expect(task).toMatchObject({
+      kind: 'shell',
+      state: 'completed',
+      detached: false,
+      description: 'ls -la',
+      outputTail: 'a\nb\n',
+    });
+    // Non-text updates are dropped.
+    expect(
+      projector.map(
+        ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'progress', percent: 50 } }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('ignores task.notified (it re-surfaces as an origin:task turn)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    expect(projector.map(ev({ type: 'task.notified', taskId: 't' }))).toEqual([]);
+  });
+
+  it('links spawned subagents to the spawning tool frame (member for swarm)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {},
+      }),
+    );
+    feed(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-0',
+        subagentName: 'worker',
+        parentToolCallId: 'call_swarm',
+        description: 'scan the repo',
+        swarmIndex: 0,
+        runInBackground: false,
+      }),
+    );
+    feed(ev({ type: 'subagent.completed', subagentId: 'agent-0', resultSummary: 'done' }));
+
+    const tool = turnOps('t1', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
+    expect(tool).toMatchObject({
+      agentRefs: [{ agentId: 'agent-0', role: 'member' }],
+    });
+    const task = tx.getTask('agent-0');
+    expect(task).toMatchObject({
+      kind: 'subagent',
+      state: 'completed',
+      agentId: 'agent-0',
+      description: 'scan the repo',
+      detached: false,
+    });
+  });
+
+  it('projects goal updates into meta.goal plus an inline marker', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const snapshot = {
+      goalId: 'g1',
+      objective: 'ship it',
+      status: 'active',
+      completionCriterion: 'tests green',
+      turnsUsed: 3,
+      tokensUsed: 1234,
+      wallClockMs: 5000,
+      budget: { tokenBudget: 50000 },
+    };
+    const ops = projector.map(ev({ type: 'goal.updated', snapshot, change: { kind: 'lifecycle' } }));
+    tx.apply(ops);
+
+    expect(tx.getMeta().goal).toEqual({
+      objective: 'ship it',
+      status: 'active',
+      completionCriterion: 'tests green',
+      budgetUsed: 1234,
+      budgetLimit: 50000,
+    });
+    const marker = tx.getItems().find((item) => item.kind === 'marker');
+    expect(marker).toMatchObject({ marker: 'goal', payload: { snapshot } });
+
+    // Cleared goal: only the marker lands (meta.merge cannot express clearing).
+    const clearedOps = projector.map(ev({ type: 'goal.updated', snapshot: null }));
+    expect(clearedOps.every((op) => op.op === 'marker.upsert')).toBe(true);
+  });
+
+  it('mirrors plan / swarm mode slices into meta.modes (only when provided)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: true })));
+    expect(tx.getMeta().modes).toEqual({ plan: {}, swarm: {} });
+
+    // Usage-only slice: nothing to project.
+    expect(projector.map(ev({ type: 'agent.status.updated', usage: {} }))).toEqual([]);
+    // `false` does not clear (merge limitation).
+    expect(projector.map(ev({ type: 'agent.status.updated', planMode: false }))).toEqual([]);
+  });
+
+  it('projects skill / plugin-command / cron / compaction / undo markers', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'skill.activated', activationId: 'a1', skillName: 'gen-docs', trigger: 'user-slash' }));
+    feed(
+      ev({
+        type: 'plugin_command.activated',
+        activationId: 'a2',
+        pluginId: 'p',
+        commandName: 'c',
+        trigger: 'user-slash',
+      }),
+    );
+    feed(ev({ type: 'cron.fired', origin: { kind: 'cron_job', jobId: 'j1' }, prompt: 'ping' }));
+    feed(ev({ type: 'compaction.started', trigger: 'auto' }));
+    feed(ev({ type: 'compaction.completed', result: { kept: 3 } }));
+    feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
+
+    const markers = tx
+      .getItems()
+      .filter((item): item is Extract<typeof item, { kind: 'marker' }> => item.kind === 'marker');
+    expect(markers.map((m) => m.marker)).toEqual([
+      'skill',
+      'skill',
+      'cron.fired',
+      'compaction',
+      'compaction',
+      'undo',
+    ]);
+    expect(markers[1]!.payload).toMatchObject({ variant: 'plugin_command' });
+    expect(markers[3]!.payload).toMatchObject({ phase: 'started' });
+    expect(markers[4]!.payload).toMatchObject({ phase: 'completed' });
+    expect(markers[5]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
+  });
+
+  it('projects error / warning events as notice markers outside any step', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.map(ev({ type: 'error', code: 'mcp.failed', message: 'boom', retryable: false })),
+    );
+    tx.apply(projector.map(ev({ type: 'warning', message: 'AGENTS.md oversized' })));
+
+    const markers = tx
+      .getItems()
+      .filter((item): item is Extract<typeof item, { kind: 'marker' }> => item.kind === 'marker');
+    expect(markers).toHaveLength(2);
+    expect(markers[0]).toMatchObject({
+      marker: 'notice',
+      payload: { level: 'error', message: 'boom', event: { code: 'mcp.failed' } },
+    });
+    expect(markers[1]).toMatchObject({
+      marker: 'notice',
+      payload: { level: 'warning', message: 'AGENTS.md oversized' },
+    });
+  });
+
+  it('places interaction frames next to the gating tool call and back-links on resolve', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 2, step: 1 }));
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 2,
+        toolCallId: 'call_9',
+        name: 'Bash',
+        args: {},
+      }),
+    );
+
+    const request = {
+      toolCallId: 'call_9',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'rm -rf /tmp/x' },
+    };
+    tx.apply(
+      projector.mapInteractionRequested({
+        id: 'apr-1',
+        kind: 'approval',
+        payload: request,
+        origin: { agentId: 'main', turnId: 2 },
+      }),
+    );
+
+    let tool = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
+    const interaction = turnOps('t2', tx.getItems()).steps[0]!.frames.find(
+      (f) => f.kind === 'interaction',
+    );
+    expect(interaction).toMatchObject({
+      frameId: 'i-apr-1',
+      interactionId: 'apr-1',
+      interactionKind: 'approval',
+      toolCallId: 'call_9',
+      state: 'pending',
+      request,
+    });
+    expect(tx.listPendingInteractions()).toEqual(['apr-1']);
+
+    tx.apply(projector.mapInteractionResolved('apr-1', { decision: 'approved', scope: 'session' }));
+
+    tool = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
+    expect(tool).toMatchObject({ approvalId: 'apr-1' });
+    expect(
+      turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'interaction'),
+    ).toMatchObject({ state: 'approved', response: { decision: 'approved', scope: 'session' } });
+    expect(tx.listPendingInteractions()).toEqual([]);
+  });
+
+  it('falls back to the turn skeleton when the gating tool call is unknown', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.mapInteractionRequested({
+        id: 'q1',
+        kind: 'question',
+        payload: { questions: [{ question: 'Pick', options: [] }] },
+        origin: { agentId: 'main', turnId: 3 },
+      }),
+    );
+    const turn = turnOps('t3', tx.getItems());
+    expect(turn.steps[0]!.stepId).toBe('t3.1');
+    expect(turn.steps[0]!.frames[0]).toMatchObject({ kind: 'interaction', state: 'pending' });
+
+    // Dismissed question (null response).
+    tx.apply(projector.mapInteractionResolved('q1', null));
+    expect(turnOps('t3', tx.getItems()).steps[0]!.frames[0]).toMatchObject({
+      state: 'dismissed',
+    });
+  });
+
+  it('maps cron / task origins onto the turn header', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 1,
+        origin: { kind: 'cron_job', jobId: 'job-9', cron: '* * * * *' },
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 2,
+        origin: { kind: 'task', taskId: 'bash-1', status: 'completed', notificationId: 'n1' },
+      }),
+    );
+
+    expect(turnOps('t1', tx.getItems()).origin).toEqual({
+      kind: 'cron',
+      taskId: 'job-9',
+      payload: { kind: 'cron_job', jobId: 'job-9', cron: '* * * * *' },
+    });
+    expect(turnOps('t2', tx.getItems()).origin).toEqual({
+      kind: 'task',
+      taskId: 'bash-1',
+      payload: { kind: 'task', taskId: 'bash-1', status: 'completed', notificationId: 'n1' },
+    });
+  });
+
+  it('treats subagent.started/failed/suspended within the running→failed vocabulary', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
+    expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
+    feed(ev({ type: 'subagent.suspended', subagentId: 'agent-1', reason: 'approval' }));
+    expect(tx.getTask('agent-1')).toMatchObject({ state: 'running' });
+    feed(ev({ type: 'subagent.failed', subagentId: 'agent-1', error: 'boom' }));
+    expect(tx.getTask('agent-1')).toMatchObject({ state: 'failed' });
+  });
+});
+
+describe('AgentTranscript transcript task vocabulary', () => {
+  it('documents the task states used by the projector', () => {
+    const states: Array<TranscriptTask['state']> = [
+      'running',
+      'completed',
+      'failed',
+      'timed_out',
+      'killed',
+      'lost',
+    ];
+    expect(states).toHaveLength(6);
+  });
+});

@@ -19,6 +19,7 @@ import {
   ISessionInteractionService,
   ISessionLifecycleService,
   IWireService,
+  ISessionMetadata,
   SessionInteractionService,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
@@ -29,6 +30,7 @@ import {
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
+import { TranscriptService } from '../src/services/transcript/transcriptService';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -177,6 +179,8 @@ function makeCore(sessions: Map<string, FakeLifecycle>, eventBus = new FakeEvent
               get: (t: unknown) => {
                 if (t === IAgentLifecycleService) return lifecycle;
                 if (t === ISessionInteractionService) return lifecycle.interactions;
+                // Minimal metadata read for the transcript binding's descriptor pass.
+                if (t === ISessionMetadata) return { read: async () => ({ agents: {} }) };
                 return undefined;
               },
             };
@@ -1234,5 +1238,175 @@ describe('SessionEventBroadcaster', () => {
           delta: (envelope.payload as { delta: string }).delta,
         })),
     ).toEqual([{ offset: 0, delta: 'abc' }]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Transcript streaming (volatile add-on; the durable event path is untouched)
+  // -------------------------------------------------------------------------
+
+  describe('transcript streaming', () => {
+    function makeBroadcasterWithTranscript(): SessionEventBroadcaster {
+      const core = makeCore(sessions, eventBus);
+      return new SessionEventBroadcaster({
+        eventsDir: dir,
+        core,
+        maxBufferSize: 3,
+        transcriptService: new TranscriptService({ homeDir: dir, core }),
+      });
+    }
+
+    function transcriptEnvelopes(envelopes: readonly EventEnvelope[]): EventEnvelope[] {
+      return envelopes.filter(
+        (e) => e.type === 'transcript.reset' || e.type === 'transcript.ops',
+      );
+    }
+
+    interface OpsPayload {
+      agent_id: string;
+      ops: Array<{ op: string }>;
+    }
+
+    it('sends transcript.reset on first subscription, then fans ops out filtered per grade', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const deltaView = collectingTarget();
+      const blockView = collectingTarget();
+      const turnView = collectingTarget();
+      const plainView = collectingTarget();
+      await bc.subscribe('s1', deltaView.target, undefined, { '*': 'delta' });
+      await bc.subscribe('s1', blockView.target, undefined, { '*': 'block' });
+      await bc.subscribe('s1', turnView.target, undefined, { '*': 'turn' });
+      await bc.subscribe('s1', plainView.target); // no transcript spec — legacy client
+
+      // Every graded connection got exactly one initial reset for 'main'; the
+      // legacy connection got none. Resets are volatile and ride the watermark.
+      for (const view of [deltaView, blockView, turnView]) {
+        const resets = transcriptEnvelopes(view.envelopes);
+        expect(resets).toHaveLength(1);
+        expect(resets[0]).toMatchObject({
+          type: 'transcript.reset',
+          volatile: true,
+          session_id: 's1',
+          payload: { agent_id: 'main', has_more_older: false, snapshot: { items: [] } },
+        });
+      }
+      expect(transcriptEnvelopes(plainView.envelopes)).toHaveLength(0);
+
+      // turn.started → turn.upsert flows at every grade ≥ 'turn'.
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      for (const view of [deltaView, blockView, turnView]) {
+        const ops = transcriptEnvelopes(view.envelopes).at(-1)!;
+        expect(ops.type).toBe('transcript.ops');
+        expect(ops.volatile).toBe(true);
+        expect((ops.payload as OpsPayload).ops.map((o) => o.op)).toEqual(['turn.upsert']);
+      }
+      expect(transcriptEnvelopes(plainView.envelopes)).toHaveLength(0);
+
+      // assistant.delta → frame.upsert + append flow at 'delta', the
+      // frame.upsert alone flows at 'block', nothing flows at 'turn'.
+      main.bus.emit(agentEvent('turn.step.started', { turnId: 1, step: 1 }));
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'Hi' }));
+      const deltaOps = transcriptEnvelopes(deltaView.envelopes).at(-1)!.payload as OpsPayload;
+      expect(deltaOps.ops.map((o) => o.op)).toEqual(['frame.upsert', 'append']);
+      const blockOps = transcriptEnvelopes(blockView.envelopes).at(-1)!.payload as OpsPayload;
+      expect(blockOps.ops.map((o) => o.op)).toEqual(['frame.upsert']);
+      expect(
+        (transcriptEnvelopes(turnView.envelopes).at(-1)!.payload as OpsPayload).ops.map(
+          (o) => o.op,
+        ),
+      ).toEqual(['turn.upsert']);
+
+      // step completion flushes the full-text frame — 'block' reconverges
+      // without ever seeing an append.
+      main.bus.emit(agentEvent('turn.step.completed', { turnId: 1, step: 1 }));
+      const flushed = transcriptEnvelopes(blockView.envelopes).at(-1)!.payload as OpsPayload;
+      expect(flushed.ops).toEqual([
+        expect.objectContaining({
+          op: 'frame.upsert',
+          frame: expect.objectContaining({ kind: 'text', text: 'Hi' }),
+        }),
+        expect.objectContaining({ op: 'step.upsert' }),
+      ]);
+      // And the seq of every transcript frame is the current durable watermark.
+      expect(transcriptEnvelopes(deltaView.envelopes).every((e) => e.volatile === true)).toBe(true);
+    });
+
+    it('re-sends transcript.reset on grade upgrade, not on equal or downgraded re-subscribe', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'turn' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
+
+      // Same grade — no new reset.
+      await bc.subscribe('s1', view.target, undefined, { '*': 'turn' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
+
+      // Downgrade — no reset, and ops stop flowing above the new grade.
+      await bc.subscribe('s1', view.target, undefined, { '*': 'off' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
+
+      // Upgrade — a fresh snapshot reset.
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+      expect(transcriptEnvelopes(view.envelopes).at(-1)!.type).toBe('transcript.reset');
+    });
+
+    it('seeds transcript.reset for agents appearing after the subscription (roster-driven)', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      const offView = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      await bc.subscribe('s1', offView.target, undefined, { '*': 'off' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // main reset
+
+      // A sub-agent appears: the binding creates its transcript, the roster
+      // listener fans a reset out to grade-matching connections only.
+      const late = lc.addAgent('agent-0');
+      const resets = transcriptEnvelopes(view.envelopes);
+      expect(resets).toHaveLength(2);
+      expect(resets.at(-1)).toMatchObject({
+        type: 'transcript.reset',
+        payload: { agent_id: 'agent-0' },
+      });
+      expect(transcriptEnvelopes(offView.envelopes)).toHaveLength(0);
+
+      // The late agent's own events now stream too.
+      late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      const ops = transcriptEnvelopes(view.envelopes).at(-1)!;
+      expect(ops.type).toBe('transcript.ops');
+      expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
+    });
+
+    it('honours per-agent grade overrides over the wildcard', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'off', main: 'delta' });
+
+      // Only main matches — and it does.
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      expect(transcriptEnvelopes(view.envelopes).at(-1)!.type).toBe('transcript.ops');
+
+      // A new agent matches only the wildcard ('off') → no reset, no ops.
+      const late = lc.addAgent('agent-0');
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+      late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+    });
   });
 });
