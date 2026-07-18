@@ -126,7 +126,7 @@ export class WorkflowTool implements BuiltinTool<WorkflowToolInput> {
     });
 
     return {
-      output: `Workflow "${workflowName}" started. run_id: ${runId}\nThe result will be delivered as a notification when complete.\nUse Workflow({ operation: "status", run_id: "${runId}" }) to check progress.`,
+      output: `Workflow "${workflowName}" started. run_id: ${runId}\nUse Workflow({ operation: "wait", run_id: "${runId}" }) to block until it completes, or Workflow({ operation: "status", run_id: "${runId}" }) to check progress.`,
     };
   }
 

@@ -510,14 +510,14 @@ function InteractionsCard({ sessionId }: { sessionId: string }) {
     <div className="mb-3 rounded-lg border border-amber-900/50 bg-amber-950/20">
       <div className="flex items-center justify-between border-b border-amber-900/40 px-3 py-2">
         <span className="text-[12px] font-medium text-amber-200">
-          Pending interactions {pending.length > 0 ? `(${pending.length})` : ''}
+          {t('inspector.pendingInteractions')} {pending.length > 0 ? `(${pending.length})` : ''}
         </span>
-        <ActionButton onClick={() => void reload()}>Load</ActionButton>
+        <ActionButton onClick={() => void reload()}>{t('inspector.load')}</ActionButton>
       </div>
       <div className="px-3 py-2">
         {error !== null ? <div className="mb-2"><ErrorLine error={error} /></div> : null}
         {pending.length === 0 ? (
-          <div className="text-[11px] text-neutral-600 italic">nothing pending</div>
+          <div className="text-[11px] text-neutral-600 italic">{t('inspector.nothingPending')}</div>
         ) : (
           pending.map((item) => (
             <div key={item.id} className="mb-2 rounded border border-neutral-800 bg-neutral-950/60 p-2">
@@ -529,15 +529,15 @@ function InteractionsCard({ sessionId }: { sessionId: string }) {
               {item.kind === 'approval' ? (
                 <>
                   <div className="mb-1.5 text-[11px] text-neutral-300">
-                    <span className="text-neutral-500">tool </span>
+                    <span className="text-neutral-500">{t('inspector.tool')} </span>
                     {payloadField(item.payload, 'toolName', '?')}
                     <span className="text-neutral-500"> · </span>
                     {payloadField(item.payload, 'action', '')}
                   </div>
                   <JsonView data={item.payload['display'] ?? item.payload} />
                   <div className="mt-2 flex gap-1.5">
-                    <ActionButton onClick={() => void decide(item.id, 'approved')}>Approve</ActionButton>
-                    <ActionButton danger onClick={() => void decide(item.id, 'rejected')}>Reject</ActionButton>
+                    <ActionButton onClick={() => void decide(item.id, 'approved')}>{t('inspector.approve')}</ActionButton>
+                    <ActionButton danger onClick={() => void decide(item.id, 'rejected')}>{t('inspector.reject')}</ActionButton>
                   </div>
                 </>
               ) : item.kind === 'question' ? (

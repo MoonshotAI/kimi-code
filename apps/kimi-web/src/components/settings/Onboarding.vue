@@ -35,7 +35,7 @@ function finish(): void {
   >
     <template #head>
       <div class="ob-brand">
-        <svg class="ob-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code">
+        <svg class="ob-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" :aria-label="$t('sidebar.brand')">
           <defs>
             <mask id="obKimiEyes" maskUnits="userSpaceOnUse">
               <rect x="0" y="0" width="32" height="22" fill="#fff" />

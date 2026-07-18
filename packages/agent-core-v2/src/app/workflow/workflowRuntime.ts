@@ -6,9 +6,12 @@
  * async IIFE — `agent()`, `parallel()`, `pipeline()` primitives compose
  * multi-phase agent work.
  *
- * The sandbox has no access to `require`, `process`, `fs`, or any Node
- * API — only the injected host functions and the `parallel`/`pipeline`/`URL`
- * prelude globals.
+ * The sandbox surface exposes no `require`, `process`, `fs`, or Node API —
+ * only the injected host functions and the `parallel`/`pipeline`/`URL`
+ * prelude globals. NOTE: `node:vm` is an isolation convenience, not a
+ * security boundary — injected host functions leak the host realm (e.g.
+ * via `fn.constructor`). Only run scripts from trusted sources (the local
+ * user, or the agent itself acting on the user's behalf).
  */
 
 import { createHash } from 'node:crypto';
@@ -17,12 +20,18 @@ import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ISessionSubagentService } from '#/session/subagent/subagent';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ILogService } from '#/_base/log/log';
 import type { WorkflowRunEntry, AgentOpts } from './workflowTypes';
 
 const MAX_CONCURRENT = Math.min(16, 2 * (navigator?.hardwareConcurrency ?? 4));
+
+/** Directories never descended into by the glob hook's workspace walk. */
+const GLOB_WALK_IGNORED_DIRS = new Set(['node_modules', '.git']);
+const MAX_GLOB_WALK_DEPTH = 8;
+const MAX_GLOB_RESULTS = 1000;
 
 /** Simple counting semaphore for agent concurrency control. */
 class Semaphore {
@@ -114,10 +123,13 @@ export async function executeWorkflow(opts: WorkflowRunOptions): Promise<unknown
   };
 
   const globHook = async (pattern: string): Promise<string[]> => {
-    // Simple glob: convert pattern to regex
+    // Simple glob: convert pattern to regex. Walk skips dependency/VCS
+    // directories and caps depth + results so a broad pattern cannot stall
+    // the workflow on a large workspace.
     const regex = globToRegex(pattern);
     const results: string[] = [];
     await walkDir(workspaceRoot, '', (relPath) => {
+      if (results.length >= MAX_GLOB_RESULTS) return;
       if (regex.test(relPath)) results.push(relPath);
     });
     return results;
@@ -173,10 +185,15 @@ export async function executeWorkflow(opts: WorkflowRunOptions): Promise<unknown
 ${script}
 })()`;
 
-  // Set a deadline timer.
+  // Set a deadline timer. Note: vm's `timeout` option only guards
+  // synchronous execution — for an async script the deadline is enforced
+  // by racing a rejection, plus aborting the run entry so in-flight
+  // subagent runs (the only async work the script can be parked on)
+  // are cancelled instead of leaking past the deadline.
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const deadlinePromise = new Promise<never>((_resolve, reject) => {
     deadlineTimer = setTimeout(() => {
+      entry.abortController.abort(new Error('Workflow script deadline exceeded'));
       reject(new Error('Workflow script deadline exceeded'));
     }, deadlineMs);
   });
@@ -210,11 +227,23 @@ async function spawnAgent(
     fullPrompt = `${prompt}\n\nYou MUST respond with a JSON object matching this schema:\n${JSON.stringify(opts.schema, null, 2)}\n\nReturn ONLY the JSON object, no markdown fences, no explanation.`;
   }
 
+  // Resolve the model: explicit per-call override, otherwise inherit the
+  // caller agent's bound model (mirrors the Agent tool in
+  // session/subagent/tools/agent.ts). Passing anything that is not a
+  // configured model alias makes IModelResolver.resolve throw.
+  const caller = deps.lifecycle.get(deps.callerAgentId);
+  const callerData = caller?.accessor.get(IAgentProfileService).data();
+  const modelAlias = opts.model ?? callerData?.modelAlias;
+  if (modelAlias === undefined) {
+    throw new Error('Cannot spawn workflow agent: caller has no model bound');
+  }
+
   // Create a subagent.
   const handle = await lifecycle.create({
     binding: {
       profile: opts.agentType ?? 'coder',
-      model: sessionContext.cwd, // placeholder — will be overridden
+      model: modelAlias,
+      thinking: callerData?.thinkingLevel,
       cwd: sessionContext.cwd,
     },
     labels: {
@@ -278,10 +307,15 @@ function parseJsonResult(text: string): unknown {
 // ── Utilities ─────────────────────────────────────────────────────
 
 function resolveInWorkspace(root: string, path: string): string {
-  if (isAbsolute(path) || path.includes('..')) {
+  if (isAbsolute(path) || path.split(/[/\\]/).includes('..')) {
     throw new Error(`Path escapes workspace root: ${path}`);
   }
-  return resolve(join(root, path));
+  const resolved = resolve(join(root, path));
+  const rootWithSep = resolve(root).replace(/[/\\]+$/, '');
+  if (resolved !== rootWithSep && !resolved.startsWith(`${rootWithSep}/`)) {
+    throw new Error(`Path escapes workspace root: ${path}`);
+  }
+  return resolved;
 }
 
 function globToRegex(pattern: string): RegExp {
@@ -297,7 +331,9 @@ async function walkDir(
   base: string,
   rel: string,
   fn: (relPath: string) => void,
+  depth = 0,
 ): Promise<void> {
+  if (depth > MAX_GLOB_WALK_DEPTH) return;
   let entries: string[];
   try {
     entries = await readdir(join(base, rel));
@@ -310,7 +346,8 @@ async function walkDir(
     try {
       const s = await stat(full);
       if (s.isDirectory()) {
-        await walkDir(base, childRel, fn);
+        if (GLOB_WALK_IGNORED_DIRS.has(name)) continue;
+        await walkDir(base, childRel, fn, depth + 1);
       } else {
         fn(childRel);
       }

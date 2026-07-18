@@ -280,6 +280,7 @@
   "dependencies": {
     "@base-ui/react": "^1.0.0",
     "@fontsource-variable/inter": "5.2.8",
+    "@moonshot-ai/i18n-shared": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
     "@radix-ui/react-accordion": "^1.2.12",

@@ -701,6 +701,62 @@ function nativeGoalRenderObjectiveUpdated(objective, tokensUsed, tokenBudget) {
 }
 
 // ============================================================================
+// i18n Translation engine — compiled Rust core for the project's i18n system
+// ============================================================================
+
+/**
+ * Resolve a dot-separated translation key against locale JSON, with
+ * `{{param}}` interpolation.
+ */
+function nativeTranslate(localeJson, fallbackJson, key, params) {
+  if (typeof binding.nativeTranslate !== 'function') {
+    throw new Error('nativeTranslate is not available in the loaded binding');
+  }
+  return binding.nativeTranslate(localeJson, fallbackJson, key, params ?? null);
+}
+
+/**
+ * Batch translation — resolves multiple keys against the same locale data
+ * in a single call, parsing the JSON only once.
+ */
+function nativeTranslateBatch(localeJson, fallbackJson, keys, params) {
+  if (typeof binding.nativeTranslateBatch !== 'function') {
+    throw new Error('nativeTranslateBatch is not available in the loaded binding');
+  }
+  return binding.nativeTranslateBatch(localeJson, fallbackJson, keys, params ?? null);
+}
+
+/**
+ * Cached translation — uses a process-wide cached translator.
+ */
+function nativeTranslateCached(localeJson, fallbackJson, key, params) {
+  if (typeof binding.nativeTranslateCached !== 'function') {
+    return nativeTranslate(localeJson, fallbackJson, key, params);
+  }
+  return binding.nativeTranslateCached(localeJson, fallbackJson, key, params ?? null);
+}
+
+/**
+ * Clear the parsed-JSON cache of the global cached translator.
+ */
+function nativeTranslateClearCache() {
+  if (typeof binding.nativeTranslateClearCache === 'function') {
+    binding.nativeTranslateClearCache();
+  }
+}
+
+/**
+ * Cached batch translation — resolves multiple keys using the process-wide
+ * cached translator.
+ */
+function nativeTranslateBatchCached(localeJson, fallbackJson, keys, params) {
+  if (typeof binding.nativeTranslateBatchCached !== 'function') {
+    return nativeTranslateBatch(localeJson, fallbackJson, keys, params);
+  }
+  return binding.nativeTranslateBatchCached(localeJson, fallbackJson, keys, params ?? null);
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 
@@ -768,4 +824,11 @@ module.exports = {
   nativeGoalRenderContinuation,
   nativeGoalRenderBudgetLimit,
   nativeGoalRenderObjectiveUpdated,
+
+  // i18n Translation
+  nativeTranslate,
+  nativeTranslateBatch,
+  nativeTranslateCached,
+  nativeTranslateClearCache,
+  nativeTranslateBatchCached,
 };

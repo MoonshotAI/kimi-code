@@ -1,0 +1,96 @@
+{
+  "app": {
+    "title": "KIMI INSPECT",
+    "disconnect": "断开连接",
+    "failedToOpenSession": "打开会话失败：{{message}}",
+    "wsLabel": "ws：{{state}}"
+  },
+  "connection": {
+    "title": "Kimi Inspect",
+    "description": "连接到 kap-server (/api/v2)。将 URL 留空以使用同源开发代理 ({{target}})。",
+    "discovered": "在本机上发现",
+    "discoveredHome": "在本机上发现 ({{home}})",
+    "connecting": "连接到 {{url}}…",
+    "discovering": "正在发现本地 kap-server…",
+    "serverUrl": "服务器 URL",
+    "urlPlaceholder": "http://127.0.0.1:58627（留空 = 开发代理）",
+    "tokenLabel": "Bearer token（可选）",
+    "tokenPlaceholder": "~/.kimi-code/server.token",
+    "connectButton": "连接"
+  },
+  "chat": {
+    "nonTextContent": "[非文本内容]",
+    "selectSessionHint": "在左侧选择一个会话以打开其对话。",
+    "loadingSession": "正在加载会话…",
+    "emptyContext": "上下文为空 — 在下方发送提示。",
+    "promptPlaceholder": "向活动 Agent 发送提示…（回车发送，Shift+回车换行）",
+    "agentLabel": "agent：{{agentId}}",
+    "turnRunning": "回合运行中",
+    "idle": "空闲",
+    "send": "发送",
+    "cancel": "取消",
+    "tool": "工具"
+  },
+  "inspector": {
+    "tabs": {
+      "app": "App",
+      "session": "会话",
+      "agent": "Agent",
+      "events": "事件"
+    },
+    "dynamicChannelUnavailable": "动态通道列表不可用 — 仅显示手写面板",
+    "activeAgent": "活动 Agent",
+    "agentNotLoaded": "{{id}}（未加载）",
+    "agentNotMaterialized": "此 Agent 未在运行中的服务器实例化（例如在重启前创建）— 调用将失败；其持久化记录保留在磁盘",
+    "methodsCount": "{{n}} 个方法 ⇄ {{domain}}",
+    "noSessionSelected": "未选择会话。",
+    "loadingSession": "正在加载会话…",
+    "refresh": "刷新",
+    "load": "加载",
+    "clickLoadHint": "点击 Load 读取此 Service",
+    "argNotValidJson": "arg 不是有效的 JSON",
+    "noResult": "(无结果)",
+    "noCallableMembers": "无可调用成员",
+    "argJsonPlaceholder": "arg (JSON)",
+    "nothingPending": "无待处理项",
+    "filterJsonPlaceholder": "过滤 JSON…",
+    "resume": "继续",
+    "pause": "暂停",
+    "eventsCount": "{{count}} 个事件（最新优先）",
+    "payload": "(负载)",
+    "pendingInteractions": "待处理交互",
+    "pendingInteractionsCount": "({{count}})",
+    "approve": "批准",
+    "reject": "拒绝",
+    "other": "其他…",
+    "dismiss": "忽略",
+    "clear": "清空",
+    "tool": "工具",
+    "get": "获取"
+  },
+  "server": {
+    "proxy": " ⇄ 代理",
+    "localServers": "本地 kap-server（{{home}}）",
+    "custom": "自定义：{{url}}",
+    "pid": " ⇄ pid {{pid}}"
+  },
+  "sidebar": {
+    "workingDirectoryPrompt": "新会话的工作目录：",
+    "newSessionNoWorkspace": "新建会话（无工作区）",
+    "newSessionInWorkspace": "在此工作区新建会话",
+    "loading": "加载中…",
+    "noSessions": "无会话",
+    "workspaces": "工作区",
+    "sessions": "会话",
+    "all": "(全部)",
+    "archived": "已归档",
+    "createSessionFailed": "创建会话失败：{{message}}"
+  },
+  "panels": {
+    "reconnectServer": "重新连接服务器",
+    "serverName": "服务器名称",
+    "enterManual": "进入（手动）",
+    "cancelTurn": "取消当前轮次",
+    "steps": "步数"
+  }
+}

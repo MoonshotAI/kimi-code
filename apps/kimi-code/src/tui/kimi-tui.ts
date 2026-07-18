@@ -722,11 +722,10 @@ export class KimiTUI {
           if (resolve(target.workDir) !== resolve(workDir)) {
             this.state.ui.stop();
             process.stderr.write(
-              `${currentTheme.fg(
+              currentTheme.fg(
                 'warning',
-                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
-                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
-              )}\n\n`,
+                t('tui.statusMessages.sessionDifferentDir', { sessionId: startup.sessionFlag, cwd: target.workDir }),
+              ) + '\n\n',
             );
             throw new Error(
               `Session "${startup.sessionFlag}" was created under a different directory.`,

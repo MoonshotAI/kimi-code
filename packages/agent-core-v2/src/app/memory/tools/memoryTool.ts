@@ -7,13 +7,14 @@
  */
 
 import { z } from 'zod';
-import { join } from 'pathe';
+import { isAbsolute, join } from 'pathe';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IMemoryStore } from '#/app/memory/memoryStore';
 import {
   detectType,
@@ -64,6 +65,7 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
     @IMemoryStore private readonly store: IMemoryStore,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   resolveExecution(args: MemoryToolInput): ToolExecution {
@@ -143,16 +145,19 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
 
     const scope = args.scope ?? 'project';
     const scopeId = this.resolveScopeId(scope);
-    const fileName = normalizeFileName(args.path);
+    const fileName = sanitizeFileName(args.path);
+    if (fileName === undefined) {
+      return {
+        output: `Invalid memory filename: "${args.path}". Use a plain filename without path separators or "..".`,
+        isError: true,
+      };
+    }
     const relPath = buildRelPath(scope, scopeId, fileName);
 
-    const { stat } = await import('node:fs/promises');
+    const { stat, mkdir, writeFile } = await import('node:fs/promises');
     const { join: joinPath } = await import('pathe');
-    const { mkdir, writeFile } = await import('node:fs/promises');
 
-    const homeDir = this.sessionContext.sessionDir
-      .replace(/\/sessions\/.*$/, '');
-    const baseDir = memoryDir(homeDir);
+    const baseDir = memoryDir(this.bootstrap.homeDir);
     const fullDir = scopeDir(baseDir, scope, scopeId);
     const fullPath = joinPath(fullDir, fileName);
 

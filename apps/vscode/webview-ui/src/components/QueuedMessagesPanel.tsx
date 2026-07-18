@@ -1,10 +1,13 @@
 import { useState } from "react";
+import { t } from "@/i18n";
 import { IconTrash, IconArrowUp, IconPencil, IconCheck, IconX, IconBolt } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/stores";
 import { bridge } from "@/services";
 import { Content } from "@/lib/content";
+import { t } from "@/i18n";
 
+import { t } from "@/i18n";
 import type { ContentPart } from "shared/legacy-sdk";
 
 function QueueItem({ id, content, isStreaming, onEdit }: { id: string; content: string | ContentPart[]; isStreaming: boolean; onEdit: (id: string) => void }) {
@@ -35,7 +38,7 @@ function QueueItem({ id, content, isStreaming, onEdit }: { id: string; content: 
             onClick={() => {
               void handleSteer();
             }}
-            title="Insert now (steer)"
+            title={t('queuedMessages.insertNow')}
           >
             <IconBolt className="size-3" />
           </Button>

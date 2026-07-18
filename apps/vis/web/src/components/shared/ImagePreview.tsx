@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { t } from '../../i18n';
 
 import { CopyButton } from './CopyButton';
 
@@ -25,7 +26,7 @@ export function ImagePreview({ url, label = 'image_url' }: ImagePreviewProps) {
   if (!supported) {
     return (
       <div className="border border-border bg-surface-0 p-2">
-        <div className="mb-1 font-mono text-[10px] text-fg-3">{label} (unsupported scheme)</div>
+        <div className="mb-1 font-mono text-[10px] text-fg-3">{label} {t('imagePreview.unsupportedScheme')}</div>
         <span className="break-all font-mono text-[12px] text-fg-1">{url}</span>
       </div>
     );
@@ -39,14 +40,14 @@ export function ImagePreview({ url, label = 'image_url' }: ImagePreviewProps) {
           <span className="ml-2 text-fg-3">· {sizeLabel}</span>
         </span>
         <span className="flex items-center gap-2">
-          <CopyButton value={url} label="copy url" />
+          <CopyButton value={url} label={t('imagePreview.copyUrl')} />
           <a
             href={url}
             target="_blank"
             rel="noreferrer"
             className="font-mono text-[10px] text-fg-3 hover:text-fg-1"
           >
-            open in tab ↗
+            {t('imagePreview.openInTab')} ↗
           </a>
           <button
             type="button"
@@ -55,18 +56,18 @@ export function ImagePreview({ url, label = 'image_url' }: ImagePreviewProps) {
             }}
             className="font-mono text-[10px] text-fg-3 hover:text-fg-1"
           >
-            {open ? 'shrink' : 'expand'}
+            {open ? t('imagePreview.shrink') : t('imagePreview.expand')}
           </button>
         </span>
       </div>
       {failed ? (
         <div className="font-mono text-[11px] text-[var(--color-sev-error)]">
-          failed to load image
+          {t('imagePreview.failedToLoad')}
         </div>
       ) : (
         <img
           src={url}
-          alt="content image"
+          alt={t('imagePreview.contentImage')}
           loading="lazy"
           onError={() => {
             setFailed(true);

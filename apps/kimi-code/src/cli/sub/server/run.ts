@@ -204,14 +204,14 @@ export function buildRunCommand(
     .option(
       '--foreground',
       defaultForeground
-        ? 'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (default; pass --background to run as a daemon instead).'
+        ? t('cli.optionDescriptions.serverRunOptionForegroundDefault')
         : t('cli.optionDescriptions.serverRunOptionForeground'),
       false,
     );
   if (defaultForeground) {
     cmd.option(
       '--background',
-      'Run the server as a background daemon and return once it is healthy, releasing this terminal.',
+      t('cli.optionDescriptions.serverRunOptionBackground'),
       false,
     );
   }
@@ -348,9 +348,8 @@ export async function handleRunCommand(
 
 function formatReuseNotice(origin: string): string {
   return (
-    `${chalk.hex(darkColors.warning)('A server is already running')} at ${origin} — ` +
-    `the options from this command were not applied. ` +
-    `Run ${chalk.bold('kimi server kill')} first to bind a new host/port.\n`
+    `${chalk.hex(darkColors.warning)(t('tui.statusMessages.serverReuseNoticeTitle'))} ${t('tui.statusMessages.serverReuseNoticeBody', { origin })} — ` +
+    `${t('tui.statusMessages.serverReuseNoticeHint')}\n`
   );
 }
 
@@ -361,8 +360,8 @@ function formatReuseNotice(origin: string): string {
  */
 function formatServerUpgradeNotice(runningVersion: string): string {
   return (
-    `${chalk.hex(darkColors.warning)('Server version mismatch')}: the running server is ` +
-    `${runningVersion}, this CLI is ${getVersion()} — restarting picks up the new version.\n`
+    `${chalk.hex(darkColors.warning)(t('tui.statusMessages.serverVersionMismatch'))}: ` +
+    `${t('tui.statusMessages.serverVersionMismatchDetail', { runningVersion, cliVersion: getVersion() })}\n`
   );
 }
 
@@ -711,7 +710,7 @@ export function formatReadyBanner(
     // Set the token off with surrounding whitespace rather than color, so it is
     // easy to spot without being highlighted.
     lines.push('');
-    lines.push(`  ${label('Token:    ')}${opts.token}`);
+    lines.push(`  ${label(t('tui.statusMessages.serverTokenLabel'))}${opts.token}`);
     lines.push('');
   }
 

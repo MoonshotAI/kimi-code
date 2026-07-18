@@ -126,7 +126,7 @@ host.showStatus(t('tui.statusMessages.startingServerAndWebUi'));
         },
       });
     } catch (error) {
-      process.stderr.write(`Failed to start server: ${formatErrorMessage(error)}\n`);
+      process.stderr.write(t('tui.statusMessages.failedToStartServer', { error: formatErrorMessage(error) }) + '\n');
       process.exit(1);
     }
   });

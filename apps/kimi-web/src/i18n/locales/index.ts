@@ -56,7 +56,11 @@ import zh_settings from './zh/settings';
 import en_header from './en/header';
 import zh_header from './zh/header';
 import en_sideChat from './en/sideChat';
+import en_terminal from './en/terminal';
+import en_agentDetail from './en/agentDetail';
 import zh_sideChat from './zh/sideChat';
+import zh_terminal from './zh/terminal';
+import zh_agentDetail from './zh/agentDetail';
 
 export const messages = {
   en: {
@@ -89,6 +93,8 @@ export const messages = {
     settings: en_settings,
     header: en_header,
     sideChat: en_sideChat,
+    terminal: en_terminal,
+    agentDetail: en_agentDetail,
   },
   zh: {
     common: zh_common,
@@ -120,6 +126,8 @@ export const messages = {
     settings: zh_settings,
     header: zh_header,
     sideChat: zh_sideChat,
+    terminal: zh_terminal,
+    agentDetail: zh_agentDetail,
   },
 } as const;
 

@@ -1,4 +1,5 @@
 import type { ProjectedMessage } from '../../types';
+import { t } from '../../i18n';
 
 interface CompactionRibbonProps {
   /** The synthetic compaction-summary message emitted by the projector. */
@@ -19,14 +20,13 @@ export function CompactionRibbon({ message }: CompactionRibbonProps) {
       <div className="flex items-center gap-3">
         <span className="h-px flex-1 bg-[var(--color-compaction)] opacity-50" />
         <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--color-compaction)]">
-          prior context compacted · line {message.lineNo}
+          {t('context.compactHint', { lineNo: message.lineNo })}
         </span>
         <span className="h-px flex-1 bg-[var(--color-compaction)] opacity-50" />
       </div>
       {stats ? (
         <div className="text-center font-mono text-[10.5px] text-fg-3">
-          {stats.compactedCount} msgs · {stats.tokensBefore.toLocaleString()}→
-          {stats.tokensAfter.toLocaleString()} tok
+          {t('context.compactStats', { count: stats.compactedCount, before: stats.tokensBefore.toLocaleString(), after: stats.tokensAfter.toLocaleString() })}
         </div>
       ) : null}
       {summary.length > 0 ? (

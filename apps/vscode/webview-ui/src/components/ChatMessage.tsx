@@ -1,6 +1,8 @@
 import { useState, Fragment } from "react";
+import { t } from "@/i18n";
 import { IconLoader3, IconGitFork } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
 import { Content } from "@/lib/content";
 import { Markdown } from "./Markdown";
 import { ToolCallCard } from "./ToolRenderers";
@@ -17,6 +19,7 @@ import { toast } from "@/components/ui/sonner";
 import { useChatStore } from "@/stores";
 import { bridge } from "@/services";
 import type { ChatMessage as ChatMessageType, UIStep, UIStepItem } from "@/stores/chat.store";
+import { t } from "@/i18n";
 import type { ContentPart } from "shared/legacy-sdk";
 
 interface ChatMessageProps {
@@ -184,7 +187,7 @@ function ForkButton({ turnIndex, className }: ForkButtonProps) {
         )}
         onClick={handleFork}
         disabled={isForking || !sessionId}
-        title="Fork conversation from this point"
+        title={t('chatMessage.forkFromPoint')}
       >
         <IconGitFork className="size-3.5" />
       </Button>
@@ -192,7 +195,7 @@ function ForkButton({ turnIndex, className }: ForkButtonProps) {
       <StreamingConfirmDialog
         open={showConfirm}
         onOpenChange={setShowConfirm}
-        title="Fork Conversation"
+        title={t('chatMessage.forkConversation')}
         description={
           isStreaming
             ? "The current conversation is still generating a response. Forking will stop the generation and create a new conversation from this point. Continue?"
@@ -267,7 +270,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
       <div className="flex gap-3 flex-col">
         <div className="flex flex-row items-center justify-start gap-2">
           <div className="shrink-0 size-5 rounded flex items-center justify-center text-[10px] font-medium bg-blue-500 text-white">K</div>
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Kimi</div>
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t('chatMessage.kimi')}</div>
         </div>
 
         <div className="flex-1 min-w-0">

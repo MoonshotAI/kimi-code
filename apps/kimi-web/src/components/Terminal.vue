@@ -173,17 +173,17 @@ onUnmounted(() => {
         <span class="terminal-dot" :class="{ on: terminalClient.connected.value }"></span>
         <span v-if="terminalClient.terminal.value">{{ terminalClient.terminal.value.shell }}</span>
         <span v-if="terminalClient.terminal.value" class="terminal-cwd">{{ terminalClient.terminal.value.cwd }}</span>
-        <span v-if="terminalClient.readOnly.value" class="terminal-readonly">exited</span>
+        <span v-if="terminalClient.readOnly.value" class="terminal-readonly">{{ $t('terminal.exited') }}</span>
       </div>
       <div class="terminal-actions">
-        <Button size="sm" variant="secondary" @click="fitAndResize">fit</Button>
-        <Button size="sm" variant="secondary" @click="terminalClient.close">close</Button>
-        <Button size="sm" variant="primary" @click="restart">new</Button>
+        <Button size="sm" variant="secondary" @click="fitAndResize">{{ $t('terminal.fit') }}</Button>
+        <Button size="sm" variant="secondary" @click="terminalClient.close">{{ $t('common.close') }}</Button>
+        <Button size="sm" variant="primary" @click="restart">{{ $t('terminal.new') }}</Button>
       </div>
     </div>
     <div class="terminal-surface">
       <div ref="hostRef" class="terminal-host"></div>
-      <div v-if="terminalClient.loading.value" class="terminal-overlay">starting terminal...</div>
+      <div v-if="terminalClient.loading.value" class="terminal-overlay">{{ $t('terminal.starting') }}</div>
       <div v-else-if="terminalClient.error.value" class="terminal-overlay error">{{ terminalClient.error.value }}</div>
     </div>
   </section>

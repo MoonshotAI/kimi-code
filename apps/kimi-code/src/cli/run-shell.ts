@@ -18,13 +18,13 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
-import { getLocale, t } from '#/i18n';
+import { getLocale, setLocale, t } from '#/i18n';
+import { setLocale as setAgentCoreLocale } from '@moonshot-ai/agent-core/i18n';
 import { detectPendingMigration } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { KimiTUI } from '#/tui/index';
-import { setLocale as setAgentCoreLocale } from '@moonshot-ai/agent-core';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { combineStartupNotice } from '#/tui/utils/startup';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
@@ -104,7 +104,9 @@ export async function runShell(
   }
   const configMs = Date.now() - configStartedAt;
   // Propagate locale to agent-core for i18n
-  setAgentCoreLocale(getLocale());
+  const locale = getLocale();
+  setLocale(locale);
+  setAgentCoreLocale(locale);
 
   const tui = new KimiTUI(harness, {
     cliOptions: opts,

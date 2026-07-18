@@ -499,10 +499,7 @@ export async function cropImageForModel(
   const nativeOutcome = await tryNativeCropImage(
     bytes,
     normalizedMime,
-    region.x,
-    region.y,
-    region.width,
-    region.height,
+    { x: region.x, y: region.y, width: region.width, height: region.height },
     {
       maxEdge,
       byteBudget,

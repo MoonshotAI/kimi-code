@@ -1,4 +1,5 @@
 import { Fragment, useRef, useMemo, useState, useEffect, useCallback } from "react";
+import { t } from "@/i18n";
 import { useMemoizedFn } from "ahooks";
 import { IconSend, IconPlayerStop, IconChevronDown, IconPlus } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,8 @@ import {
 import { bridge, Events } from "@/services";
 import { Content } from "@/lib/content";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
+import { t } from "@/i18n";
 import { useSlashMenu, findActiveToken } from "./hooks/useSlashMenu";
 import { useFilePicker } from "./hooks/useFilePicker";
 import { useMediaUpload } from "./hooks/useMediaUpload";
@@ -491,7 +494,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
       <StreamingConfirmDialog
         open={showPlanModeConfirm}
         onOpenChange={setShowPlanModeConfirm}
-        title="Exit Plan Mode"
+        title={t('inputArea.exitPlanMode')}
         description="The agent is still working. Exiting plan mode now will affect the current turn. Are you sure you want to exit plan mode immediately?"
         confirmLabel="Exit Now"
         onConfirm={handleConfirmExitPlanMode}

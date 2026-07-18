@@ -1,0 +1,39 @@
+{
+  "name": "@moonshot-ai/i18n-shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared i18n core — types, locale detection, and translation engine (Rust-backed for Node.js, pure JS for browsers)",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./node": {
+      "types": "./src/node.ts",
+      "default": "./src/node.ts"
+    },
+    "./web": {
+      "types": "./src/web.ts",
+      "default": "./src/web.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./src/types.ts"
+    },
+    "./detect": {
+      "types": "./src/detect.ts",
+      "default": "./src/detect.ts"
+    },
+    "./core": {
+      "types": "./src/core.ts",
+      "default": "./src/core.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

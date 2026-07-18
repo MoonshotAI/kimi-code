@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { t } from "@/i18n";
 import { IconPlus, IconChevronDown, IconInfoCircle } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -45,7 +46,7 @@ export function Header() {
             className="gap-1 h-6 border-0! pl-px! pr-1! text-muted-foreground hover:text-foreground @max-[320px]:hidden"
             onClick={() => setShowSessionInfo(true)}
           >
-            <span className="text-[11px] @max-[500px]:hidden">Session</span>
+            <span className="text-[11px] @max-[500px]:hidden">{t('header.session')}</span>
             <IconInfoCircle className="size-3.5 hidden @max-[500px]:block" />
           </Button>
         )}
@@ -53,7 +54,7 @@ export function Header() {
         <Popover open={showSessionList} onOpenChange={setShowSessionList}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="xs" className="gap-1 h-6">
-              <span className="text-xs @max-[280px]:hidden">History</span>
+              <span className="text-xs @max-[280px]:hidden">{t('header.history')}</span>
               <IconChevronDown className="size-3.5" />
             </Button>
           </PopoverTrigger>
@@ -84,7 +85,7 @@ export function Header() {
               <code className="text-xs font-mono text-foreground break-all select-all">{sessionId}</code>
             </div>
             <div>
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Messages</div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{t('header.messages')}</div>
               <span className="text-xs text-foreground">{messages.length}</span>
             </div>
             <TokenInfo />
@@ -95,7 +96,7 @@ export function Header() {
       <StreamingConfirmDialog
         open={showConfirmNew}
         onOpenChange={(open) => !open && setShowConfirmNew(false)}
-        title="Start New Conversation?"
+        title={t('header.startNewConversation')}
         description="The current conversation is still generating a response. Starting a new one will truncate the output. Are you sure you want to continue?"
         confirmLabel="New Conversation"
         onConfirm={() => {

@@ -1,4 +1,5 @@
 import { useState, memo } from 'react';
+import { t } from '../../i18n';
 
 import { CopyButton } from './CopyButton';
 
@@ -76,7 +77,7 @@ const Node = memo(function Node({
           <span className="truncate text-[var(--color-cat-ephemeral)]">
             {`"${value.slice(0, LONG_STRING_THRESHOLD)}…"`}
           </span>
-          <span className="text-fg-3 shrink-0">({value.length.toLocaleString()} chars)</span>
+          <span className="text-fg-3 shrink-0">({value.length.toLocaleString()} {t('jsonViewer.chars')})</span>
         </button>
         {open ? (
           <div className="ml-[5px] my-1 border-l border-border pl-3">

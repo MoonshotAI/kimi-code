@@ -1,4 +1,5 @@
 import { memo, useCallback } from 'react';
+import { t } from '../../i18n';
 
 import type { WireEntry } from '../../types';
 import { formatDuration, formatWallClock } from '../../util/time';
@@ -82,7 +83,7 @@ export const WireRow = memo(function WireRow({
             className="font-mono text-[11px] text-fg-3 tabular w-[68px] shrink-0"
             title={timeTitle}
           >
-            {record.time !== undefined ? formatWallClock(record.time) : '--:--:--'}
+            {record.time !== undefined ? formatWallClock(record.time) : t('wireRow.noTime')}
           </span>
           <span className="shrink-0">
             <TypeBadge type={record.type} />
@@ -118,11 +119,11 @@ function PairIndicator({
   const label = orphan ? `${arrow} ?` : `${arrow} #${target}`;
   const title = orphan
     ? isCall
-      ? 'no matching tool.result yet'
-      : 'no preceding tool.call seen'
+      ? t('wireRow.noMatchingResult')
+      : t('wireRow.noPrecedingCall')
     : isCall
-      ? `jump to tool.result on line ${target}`
-      : `jump to tool.call on line ${target}`;
+      ? t('wireRow.jumpToResult', { target })
+      : t('wireRow.jumpToCall', { target });
 
   const className = `font-mono text-[10px] tabular ${
     orphan ? 'text-[var(--color-sev-error)]' : 'text-[var(--color-cat-tools)] hover:text-fg-0'
@@ -131,7 +132,7 @@ function PairIndicator({
   // Show the call→result elapsed time on whichever row has its partner.
   const duration =
     pair.durationMs !== null ? (
-      <span className="font-mono text-[10px] text-fg-3 tabular" title="tool.call → tool.result elapsed">
+      <span className="font-mono text-[10px] text-fg-3 tabular" title={t('wireRow.callResultElapsed')}>
         {formatDuration(pair.durationMs)}
       </span>
     ) : null;
@@ -172,9 +173,9 @@ function PairIndicator({
 }
 
 function formatTimeTitle(epochMs: number | undefined): string {
-  if (epochMs === undefined || !Number.isFinite(epochMs)) return 'missing time';
+  if (epochMs === undefined || !Number.isFinite(epochMs)) return t('wireRow.missingTime');
   const date = new Date(epochMs);
-  if (!Number.isFinite(date.getTime())) return 'invalid time';
+  if (!Number.isFinite(date.getTime())) return t('wireRow.invalidTime');
   return date.toISOString();
 }
 

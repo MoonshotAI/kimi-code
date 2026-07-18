@@ -1,4 +1,5 @@
 import { useChatStore } from "@/stores";
+import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { IconArrowUp, IconArrowDown, IconBrandSpeedtest, IconRefresh } from "@tabler/icons-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -20,18 +21,18 @@ export function TokenInfo() {
 
   return (
     <div className="space-y-2">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Token Usage</div>
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{t('chatStatus.tokenUsage')}</div>
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div className="flex flex-col">
-          <span className="text-muted-foreground text-[10px]">Context</span>
+          <span className="text-muted-foreground text-[10px]">{t('chatStatus.context')}</span>
           <span className={cn(contextPercent > 80 && "text-amber-500", contextPercent > 95 && "text-destructive")}>{contextPercent}%</span>
         </div>
         <div className="flex flex-col">
-          <span className="text-muted-foreground text-[10px]">Input</span>
+          <span className="text-muted-foreground text-[10px]">{t('chatStatus.input')}</span>
           <span>{inputTotal.toLocaleString()}</span>
         </div>
         <div className="flex flex-col">
-          <span className="text-muted-foreground text-[10px]">Output</span>
+          <span className="text-muted-foreground text-[10px]">{t('chatStatus.output')}</span>
           <span>{outputTotal.toLocaleString()}</span>
         </div>
       </div>
@@ -68,16 +69,16 @@ export function ChatStatus() {
           <TooltipTrigger asChild>
             <span className="flex items-center gap-1 text-amber-500">
               <IconRefresh className="size-3" />
-              Retry {retrying.next_attempt}/{retrying.max_attempts}
+              {t('chatStatus.retry', { next: retrying.next_attempt, max: retrying.max_attempts })}
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            Retrying in {Math.ceil(retrying.delay_ms / 1000)}s: {retrying.message}
+            {t('chatStatus.retryingIn', { seconds: Math.ceil(retrying.delay_ms / 1000), message: retrying.message })}
           </TooltipContent>
         </Tooltip>
       )}
       {retrying && <div className="w-px h-3 bg-border/50" />}
-      <div className="flex items-center gap-1.5" title="Context Window Usage">
+      <div className="flex items-center gap-1.5" title={t('chatStatus.contextWindowUsage')}>
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="flex items-center gap-1.5">
@@ -85,11 +86,11 @@ export function ChatStatus() {
               <span className={cn(contextPercent > 80 && "text-amber-500", contextPercent > 95 && "text-destructive")}>{contextPercent}%</span>
             </span>
           </TooltipTrigger>
-          <TooltipContent>Context Window Usage</TooltipContent>
+          <TooltipContent>{t('chatStatus.contextWindowUsage')}</TooltipContent>
         </Tooltip>
       </div>
       <div className="w-px h-3 bg-border/50 @max-[440px]:hidden" />
-      <div className="flex items-center gap-1.5 @max-[440px]:hidden" title="Total Input Tokens">
+      <div className="flex items-center gap-1.5 @max-[440px]:hidden" title={t('chatStatus.totalInputTokens')}>
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="flex items-center gap-1.5">
@@ -97,11 +98,11 @@ export function ChatStatus() {
               <span>{inputTotal.toLocaleString()}</span>
             </span>
           </TooltipTrigger>
-          <TooltipContent>Total Input Tokens</TooltipContent>
+          <TooltipContent>{t('chatStatus.totalInputTokens')}</TooltipContent>
         </Tooltip>
       </div>
       <div className="w-px h-3 bg-border/50 @max-[440px]:hidden" />
-      <div className="flex items-center gap-1.5 @max-[440px]:hidden" title="Output Tokens">
+      <div className="flex items-center gap-1.5 @max-[440px]:hidden" title={t('chatStatus.outputTokens')}>
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="flex items-center gap-1.5">
@@ -109,7 +110,7 @@ export function ChatStatus() {
               <span>{outputTotal.toLocaleString()}</span>
             </span>
           </TooltipTrigger>
-          <TooltipContent>Total Output Tokens</TooltipContent>
+          <TooltipContent>{t('chatStatus.outputTokens')}</TooltipContent>
         </Tooltip>
       </div>
     </div>

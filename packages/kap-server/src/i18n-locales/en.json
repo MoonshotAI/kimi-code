@@ -1,0 +1,59 @@
+{
+  "svc": {
+    "common": {
+      "description": "Kimi Code local server (managed by `kimi server install`)"
+    },
+    "schtasks": {
+      "alreadyExists": "Scheduled task \"{{name}}\" already exists. Rerun with --force to replace it.",
+      "installButRunFailed": "Task {{status}} but /Run failed: {{error}}.",
+      "installed": "Kimi server scheduled task {{status}} ({{name}}, port {{port}}).",
+      "nothingToRemove": "Scheduled task was not installed; nothing to remove.",
+      "deleteFailed": "schtasks /Delete failed: {{error}}",
+      "removed": "Scheduled task removed ({{name}}).",
+      "notInstalled": "Scheduled task is not installed. Run `kimi server install` first.",
+      "runFailed": "schtasks /Run failed: {{error}}",
+      "started": "Kimi server started ({{name}}).",
+      "endFailed": "schtasks /End failed: {{error}}",
+      "stopped": "Kimi server stopped ({{name}}).",
+      "endFailedRestart": "schtasks /End failed during restart: {{error}}",
+      "runFailedRestart": "schtasks /Run failed during restart: {{error}}",
+      "restarted": "Kimi server restarted ({{name}}).",
+      "statusReplaced": "replaced",
+      "statusInstalled": "installed"
+    },
+    "systemd": {
+      "alreadyExists": "systemd unit already installed at {{path}}. Rerun with --force to replace it.",
+      "installed": "Kimi server systemd unit {{status}} at {{path}} (port {{port}}).",
+      "nothingToRemove": "systemd unit was not installed; nothing to remove.",
+      "removed": "systemd unit removed ({{path}}).",
+      "notInstalled": "systemd unit is not installed. Run `kimi server install` first.",
+      "startFailed": "systemctl --user start failed: {{error}}",
+      "started": "Kimi server started ({{name}}).",
+      "stopFailed": "systemctl --user stop failed: {{error}}",
+      "stopped": "Kimi server stopped ({{name}}).",
+      "restartFailed": "systemctl --user restart failed: {{error}}",
+      "restarted": "Kimi server restarted ({{name}})."
+    },
+    "launchd": {
+      "alreadyExists": "LaunchAgent already installed at {{path}}. Rerun with --force to replace it.",
+      "installed": "Kimi server LaunchAgent {{status}} at {{path}} (port {{port}}).",
+      "nothingToRemove": "LaunchAgent was not installed; nothing to remove.",
+      "removed": "LaunchAgent removed ({{path}}).",
+      "notInstalled": "LaunchAgent is not installed. Run `kimi server install` first.",
+      "kickstartBootstrapFailed": "launchctl kickstart + bootstrap both failed: {{error1}} / {{error2}}",
+      "kickstartFailedAfterBootstrap": "launchctl kickstart failed after bootstrap: {{error}}",
+      "started": "Kimi server started ({{name}}).",
+      "killBootoutFailed": "launchctl kill + bootout both failed: {{error1}} / {{error2}}",
+      "stopped": "Kimi server stopped ({{name}}).",
+      "kickstartRestartFailed": "launchctl kickstart -k failed: {{error}}",
+      "restarted": "Kimi server restarted ({{name}})."
+    },
+    "systemdUnit": {
+      "cannotContainCRLF": "{{label}} cannot contain CR or LF characters."
+    }
+  },
+  "errors": {
+    "indexHtmlNotAFile": "index.html is not a file",
+    "paginationMutuallyExclusive": "before_id and after_id are mutually exclusive"
+  }
+}

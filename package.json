@@ -26,6 +26,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "clean": "pnpm -r run clean",
+    "generate:locale-json": "npx tsx scripts/generate-locale-json.cjs",
+    "check:locale-keys": "npx tsx scripts/check-locale-keys.mjs",
     "changeset": "changeset",
     "version": "changeset version",
     "version:release": "changeset version",

@@ -80,12 +80,14 @@
   },
   "optionalDependencies": {
     "@mariozechner/clipboard": "^0.3.9",
+    "@moonshot-ai/kimi-native-tools": "workspace:^",
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@moonshot-ai/acp-adapter": "workspace:^",
     "@moonshot-ai/agent-core": "workspace:^",
     "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/i18n-shared": "workspace:^",
     "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",

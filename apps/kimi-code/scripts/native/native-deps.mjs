@@ -84,6 +84,14 @@ export const nativeDeps = Object.freeze([
     parent: null,
     nativeFileRelatives: (target) => piTuiNativeFileByTarget[target] ?? [],
   },
+  {
+    id: 'kimi-native-tools',
+    name: () => '@moonshot-ai/kimi-native-tools',
+    // Rust NAPI module — translations, compaction, fs search, goal accounting.
+    // JS is bundled; only the .node binary needs to ship as a native asset.
+    collect: 'native-files',
+    parent: null,
+  },
 ]);
 
 /**

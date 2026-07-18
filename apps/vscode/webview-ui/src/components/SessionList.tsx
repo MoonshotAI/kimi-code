@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { t } from "@/i18n";
 import { useRequest } from "ahooks";
 import { IconSearch, IconDots, IconTrash, IconCheck } from "@tabler/icons-react";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,8 @@ import { cn } from "@/lib/utils";
 import { useChatStore, useSettingsStore } from "@/stores";
 import { cleanSystemTags } from "shared/utils";
 import { toast } from "./ui/sonner";
+import { t } from "@/i18n";
+import { t } from "@/i18n";
 
 interface SessionListProps {
   onClose: () => void;
@@ -203,7 +206,7 @@ export function SessionList({ onClose }: SessionListProps) {
       <StreamingConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="Delete Conversation?"
+        title={t('sessionList.deleteConversation')}
         description="This will permanently delete this conversation. This action cannot be undone."
         confirmLabel="Delete"
         onConfirm={() => {
@@ -217,7 +220,7 @@ export function SessionList({ onClose }: SessionListProps) {
       <StreamingConfirmDialog
         open={pendingSession !== null}
         onOpenChange={(open) => !open && setPendingSession(null)}
-        title="Switch Conversation?"
+        title={t('sessionList.switchConversation')}
         description="The current conversation is still generating a response. Switching will truncate the output. Are you sure you want to continue?"
         confirmLabel="Switch"
         onConfirm={() => {

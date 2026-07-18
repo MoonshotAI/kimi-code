@@ -1,41 +1,130 @@
-export type Locale = 'en' | 'zh';
+/**
+ * kap-server i18n — backed by the compiled Rust translation engine.
+ *
+ * Uses `nativeTranslateCached` (process-wide `CachedTranslator` singleton) so
+ * that repeated calls with the same locale JSON skip re-parsing entirely.
+ * The cache is invalidated on locale switch via `nativeTranslateClearCache`.
+ */
+
+import type { Locale, TranslationKey } from '@moonshot-ai/i18n-shared';
+import { detectLocaleNode } from '@moonshot-ai/i18n-shared';
 
 import { default as en } from './i18n-locales/en';
 import { default as zh } from './i18n-locales/zh';
 
+// Re-export shared types for consumers.
+export type { Locale };
+export type KapTranslationKey = TranslationKey<typeof en>;
+
 const messages: Record<Locale, object> = { en, zh };
-let currentLocale: Locale = 'en';
+
+let currentLocale: Locale = detectLocaleNode();
 
 export function setLocale(locale: Locale): void {
-  currentLocale = locale;
+  if (locale in messages) {
+    currentLocale = locale;
+    // Invalidate the Rust-side cache so stale parsed JSON is evicted.
+    localeJsonCurrent = undefined;
+    try {
+      const native = ensureNative();
+      native.nativeTranslateClearCache?.();
+    } catch {
+      /* native module may not be loaded yet */
+    }
+  }
 }
 
 export function getLocale(): Locale {
   return currentLocale;
 }
 
-function resolveMessage(key: string, locale: Locale): string | undefined {
-  const parts = key.split('.');
-  let current: unknown = messages[locale];
-  for (const part of parts) {
-    if (current && typeof current === 'object' && part in current) {
-      current = (current as Record<string, unknown>)[part];
-    } else {
-      return undefined;
-    }
-  }
-  return typeof current === 'string' ? current : undefined;
+// ── Native Rust engine (compiled, no fallback) ───────────────────────────────
+// The Rust module is compiled into the binary via napi-rs. If it's not available
+// the error is thrown immediately — no silent fallback, because the compiled
+// engine is the only canonical implementation.
+
+interface NativeModule {
+  nativeTranslateCached?: (
+    localeJson: string,
+    fallbackJson: string,
+    key: string,
+    params: Record<string, string> | null | undefined,
+  ) => string;
+  nativeTranslate: (
+    localeJson: string,
+    fallbackJson: string,
+    key: string,
+    params: Record<string, string> | null | undefined,
+  ) => string;
+  nativeTranslateClearCache?: () => void;
 }
 
+let nativeModule: NativeModule | undefined;
+
+let localeJsonEn: string | undefined;
+let localeJsonCurrent: string | undefined;
+
+function ensureNative(): NativeModule {
+  if (nativeModule) return nativeModule;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  try {
+    const mod = require('@moonshot-ai/kimi-native-tools') as NativeModule;
+    nativeModule = mod;
+    localeJsonEn = JSON.stringify(en);
+    localeJsonCurrent = JSON.stringify(messages[currentLocale]);
+    return mod;
+  } catch {
+    // In a SEA binary the module is a native asset, not a bundled JS module.
+    // Load it from the extracted cache via the globally-exposed helper.
+    const getPackageRoot = (globalThis as Record<string, unknown>)
+      .__kimi_getNativePackageRoot as ((name: string) => string | null) | undefined;
+    const pkgRoot = getPackageRoot?.('@moonshot-ai/kimi-native-tools');
+    if (pkgRoot === null || pkgRoot === undefined) {
+      throw new Error(
+        'Failed to load @moonshot-ai/kimi-native-tools: not available as a bundled module or native asset.',
+      );
+    }
+    const { createRequire } = require('node:module');
+    const { join } = require('node:path');
+    const cacheRequire = createRequire(join(pkgRoot, 'index.js'));
+    const mod = cacheRequire(pkgRoot) as NativeModule;
+    nativeModule = mod;
+    localeJsonEn = JSON.stringify(en);
+    localeJsonCurrent = JSON.stringify(messages[currentLocale]);
+    return mod;
+  }
+}
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
 export function t(
-  key: string,
+  key: KapTranslationKey | (string & {}),
   params?: Record<string, string | number>,
 ): string {
-  let msg = resolveMessage(key, currentLocale) ?? resolveMessage(key, 'en') ?? key;
-  if (params) {
-    msg = msg.replace(/\{\{(\w+)\}\}/g, (_: string, name: string) =>
-      params[name] !== undefined ? String(params[name]) : `{{${name}}}`,
+  const native = ensureNative();
+  if (localeJsonCurrent === undefined) {
+    localeJsonCurrent = JSON.stringify(messages[currentLocale]);
+  }
+  const stringParams: Record<string, string> | undefined = params
+    ? Object.fromEntries(
+        Object.entries(params).map(([k, v]) => [k, String(v)]),
+      )
+    : undefined;
+
+  // Use the cached translator (skips JSON re-parsing on repeated calls).
+  // Falls back to uncached `nativeTranslate` if the .node file predates it.
+  if (native.nativeTranslateCached) {
+    return native.nativeTranslateCached(
+      localeJsonCurrent!,
+      localeJsonEn!,
+      key,
+      stringParams,
     );
   }
-  return msg;
+  return native.nativeTranslate(
+    localeJsonCurrent!,
+    localeJsonEn!,
+    key,
+    stringParams,
+  );
 }

@@ -41,7 +41,7 @@ export function Drawer({ open, onClose, title, children, width = 560 }: DrawerPr
             className="font-mono text-[11px] text-fg-2 hover:text-fg-0"
             aria-label={t('drawer.close')}
           >
-            esc ✕
+            {t('drawer.closeLabel')}
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">{children}</div>

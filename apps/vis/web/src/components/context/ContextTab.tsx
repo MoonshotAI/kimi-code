@@ -76,7 +76,7 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
               sees) vs 'full' (full reconstructed history for debugging). */}
           <div
             role="group"
-            aria-label="history view"
+            aria-label={t('context.historyView')}
             className="flex items-center overflow-hidden border border-border"
           >
             <button

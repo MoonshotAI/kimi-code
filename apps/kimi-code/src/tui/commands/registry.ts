@@ -4,8 +4,14 @@ import { basename, dirname, join, relative, resolve } from 'pathe';
 
 import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
+
+/** Map hyphenated command names to i18n keys under `tui.slashCommands.<key>`. */
+function slashI18nKey(name: string): string {
+  return `tui.slashCommands.${name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())}`;
+}
 
 /** Subcommands offered when autocompleting `/goal <…>`. */
 const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
@@ -438,5 +444,8 @@ export function sortSlashCommands(commands: readonly KimiSlashCommand[]): KimiSl
 }
 
 export function getBuiltinSlashCommands(): readonly KimiSlashCommand[] {
-  return BUILTIN_SLASH_COMMANDS;
+  return BUILTIN_SLASH_COMMANDS.map((cmd) => ({
+    ...cmd,
+    description: t(slashI18nKey(cmd.name) as any, undefined as any) || cmd.description,
+  }));
 }

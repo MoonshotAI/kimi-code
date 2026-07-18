@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { t } from "@/i18n";
 import { IconSettings, IconServer, IconLogout, IconLogin, IconLoader2, IconRefresh, IconFileText, IconFolder } from "@tabler/icons-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,8 @@ import { useSettingsStore } from "@/stores";
 import { bridge } from "@/services";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
+import { t } from "@/i18n";
 
 interface ActionMenuProps {
   className?: string;
@@ -100,7 +103,7 @@ export function ActionMenu({ className, onAuthAction }: ActionMenuProps) {
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[calc(100vw-1rem)] max-w-72 p-1.5 gap-0!" align="end" side="top">
-        <MenuSection title="Settings">
+        <MenuSection title={t('actionMenu.settings')}>
           <MenuItem onClick={handleChangeWorkDir}>
             <IconFolder className="size-4 text-muted-foreground" />
             <span className="flex-1">Working Directory</span>
@@ -118,7 +121,7 @@ export function ActionMenu({ className, onAuthAction }: ActionMenuProps) {
 
         <Separator className="my-px" />
 
-        <MenuSection title="Support" subtitle={extensionConfig.version ? `v${extensionConfig.version}` : undefined}>
+        <MenuSection title={t('actionMenu.support')} subtitle={extensionConfig.version ? `v${extensionConfig.version}` : undefined}>
           <MenuItem onClick={handleShowLogs}>
             <IconFileText className="size-4 text-muted-foreground" />
             <span className="flex-1">Show Logs</span>
@@ -131,7 +134,7 @@ export function ActionMenu({ className, onAuthAction }: ActionMenuProps) {
 
         <Separator className="my-px" />
 
-        <MenuSection title="Account">
+        <MenuSection title={t('actionMenu.account')}>
           <MenuItem
             onClick={() => {
               void handleAuthAction();

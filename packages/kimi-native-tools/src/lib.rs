@@ -16,6 +16,7 @@ mod mcp;
 mod napi_bindings;
 mod output_truncate;
 mod read;
+mod translation;
 mod tool_access;
 mod tokens;
 mod tool_naming;

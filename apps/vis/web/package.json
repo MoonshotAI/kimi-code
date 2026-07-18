@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@moonshot-ai/i18n-shared": "workspace:^",
     "@tanstack/react-query": "^5.74.4",
     "@tanstack/react-virtual": "^3.13.5",
     "react": "^19.1.0",

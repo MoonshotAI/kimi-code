@@ -86,6 +86,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../packages/agent-core-v2
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../../packages/i18n-shared
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../../packages/kap-server
@@ -159,6 +162,9 @@ importers:
       '@mariozechner/clipboard':
         specifier: ^0.3.9
         version: 0.3.9
+      '@moonshot-ai/kimi-native-tools':
+        specifier: workspace:^
+        version: link:../../packages/kimi-native-tools
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
@@ -168,6 +174,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../packages/agent-core-v2
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../../packages/i18n-shared
       '@tanstack/react-query':
         specifier: ^5.74.4
         version: 5.99.2(react@19.2.5)
@@ -214,6 +223,9 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.2.8
         version: 5.2.8
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../../packages/i18n-shared
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -312,6 +324,9 @@ importers:
 
   apps/vis/web:
     dependencies:
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../../../packages/i18n-shared
       '@tanstack/react-query':
         specifier: ^5.74.4
         version: 5.99.2(react@19.2.5)
@@ -364,6 +379,9 @@ importers:
       '@fontsource-variable/inter':
         specifier: 5.2.8
         version: 5.2.8
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../../packages/i18n-shared
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../../packages/node-sdk
@@ -550,6 +568,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.3.6)
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../i18n-shared
       '@moonshot-ai/kaos':
         specifier: workspace:^
         version: link:../kaos
@@ -805,6 +826,8 @@ importers:
         specifier: ^6.3.3
         version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
+  packages/i18n-shared: {}
+
   packages/kaos:
     dependencies:
       pathe:
@@ -829,6 +852,12 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/i18n-shared':
+        specifier: workspace:^
+        version: link:../i18n-shared
+      '@moonshot-ai/kimi-native-tools':
+        specifier: workspace:^
+        version: link:../kimi-native-tools
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -12451,6 +12480,13 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
+  '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
+    dependencies:
+      '@emnapi/core': 1.10.0
+      '@emnapi/runtime': 1.10.0
+      '@tybys/wasm-util': 0.10.3
+    optional: true
+
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
     dependencies:
       '@emnapi/core': 1.11.2
@@ -13602,7 +13638,7 @@ snapshots:
 
   '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
-      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      '@napi-rs/wasm-runtime': 1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'

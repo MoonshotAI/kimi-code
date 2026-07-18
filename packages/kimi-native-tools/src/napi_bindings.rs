@@ -18,6 +18,7 @@ use crate::write::{self, WriteMode, WriteResult};
 use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 // ============================================================================
 // Read tool
@@ -1390,4 +1391,160 @@ fn get_i64(v: &serde_json::Value, key: &str) -> Result<i64, String> {
     v.get(key)
         .and_then(|x| x.as_i64())
         .ok_or_else(|| format!("missing or non-integer field: {key}"))
+}
+
+// ============================================================================
+// i18n Translation engine — compiled Rust core for the project's i18n system
+// ============================================================================
+
+use crate::translation;
+
+/// Result of a single translation in a batch call.
+#[napi(object)]
+pub struct NativeBatchTranslateResult {
+    /// The translation key that was resolved.
+    pub key: String,
+    /// The resolved and interpolated message.
+    pub message: String,
+}
+
+/// Resolve a dot-separated translation key against locale JSON, with
+/// `{{param}}` interpolation.
+///
+/// The engine is stateless: all locale data is passed in at call time. This
+/// keeps locale data maintainable in TypeScript/JSON while the core logic is
+/// compiled Rust — fixed, fast, and never lost.
+///
+/// Resolution order:
+/// 1. Try `locale_json` (current language).
+/// 2. Try `fallback_json` (defaults to English).
+/// 3. Return the `key` itself as last resort.
+///
+/// @param locale_json - Current-locale messages as a JSON string.
+/// @param fallback_json - Fallback-locale messages as a JSON string.
+/// @param key - Dot-separated translation key (e.g. "common.ok").
+/// @param params - Optional param map for `{{name}}` interpolation.
+/// @returns The resolved and interpolated message string.
+#[napi]
+pub fn native_translate(
+    locale_json: String,
+    fallback_json: String,
+    key: String,
+    params: Option<HashMap<String, String>>,
+) -> String {
+    translation::translate(&locale_json, &fallback_json, &key, params.as_ref())
+}
+
+/// Batch translation — resolves multiple keys against the same locale data
+/// in a single call, parsing the JSON only once.
+///
+/// More efficient than calling `native_translate` N times when you have many
+/// keys to resolve against the same locale data.
+///
+/// @param locale_json - Current-locale messages as a JSON string.
+/// @param fallback_json - Fallback-locale messages as a JSON string.
+/// @param keys - Array of dot-separated translation keys.
+/// @param params - Optional param map for `{{name}}` interpolation (same for all keys).
+/// @returns Array of { key, message } results, in input order.
+#[napi]
+pub fn native_translate_batch(
+    locale_json: String,
+    fallback_json: String,
+    keys: Vec<String>,
+    params: Option<HashMap<String, String>>,
+) -> Vec<NativeBatchTranslateResult> {
+    let results = translation::translate_batch(&locale_json, &fallback_json, &keys, params.as_ref());
+    results
+        .into_iter()
+        .map(|r| NativeBatchTranslateResult {
+            key: r.key,
+            message: r.message,
+        })
+        .collect()
+}
+
+// ── Cached translation — global singleton ────────────────────────────────────
+//
+// `native_translate` re-parses both JSON strings on every call.  For hot paths
+// (TUI rendering, server responses) this is wasteful.  `native_translate_cached`
+// uses a process-wide `CachedTranslator` that caches the parsed `serde_json::Value`
+// keyed by the JSON string itself.  After the first call with a given locale
+// pair, subsequent calls skip JSON parsing entirely.
+
+static CACHED_TRANSLATOR: OnceLock<translation::CachedTranslator> = OnceLock::new();
+
+fn cached_translator() -> &'static translation::CachedTranslator {
+    CACHED_TRANSLATOR.get_or_init(|| translation::CachedTranslator::new())
+}
+
+/// Resolve a translation key using a process-wide cached translator.
+///
+/// Identical semantics to `native_translate`, but the parsed JSON `Value` trees
+/// are cached across calls keyed by the JSON string.  After the first call with
+/// a particular `locale_json` / `fallback_json` pair, subsequent calls with the
+/// same strings skip JSON parsing entirely — only the key lookup and
+/// interpolation run.
+///
+/// Use this in long-running processes (TUI sessions, servers, daemons) where the
+/// same locale data is reused.  Call `native_translate_clear_cache` when locale
+/// data is reloaded.
+///
+/// @param locale_json - Current-locale messages as a JSON string.
+/// @param fallback_json - Fallback-locale messages as a JSON string.
+/// @param key - Dot-separated translation key (e.g. "common.ok").
+/// @param params - Optional param map for `{{name}}` interpolation.
+/// @returns The resolved and interpolated message string.
+#[napi]
+pub fn native_translate_cached(
+    locale_json: String,
+    fallback_json: String,
+    key: String,
+    params: Option<HashMap<String, String>>,
+) -> String {
+    cached_translator().translate(&locale_json, &fallback_json, &key, params.as_ref())
+}
+
+/// Clear the parsed-JSON cache of the global cached translator.
+///
+/// Call this when locale data has been reloaded (e.g. after `setLocale` or a
+/// hot-reload of locale files) so that stale parsed JSON is evicted.
+#[napi]
+pub fn native_translate_clear_cache() {
+    if let Some(t) = CACHED_TRANSLATOR.get() {
+        t.clear_cache();
+    }
+}
+
+/// Batch translation using the process-wide cached translator.
+///
+/// Identical semantics to `native_translate_batch`, but uses the same
+/// `CachedTranslator` singleton as `native_translate_cached`. After the first
+/// call with a particular `locale_json` / `fallback_json` pair, subsequent
+/// batch calls skip JSON parsing entirely.
+///
+/// @param locale_json - Current-locale messages as a JSON string.
+/// @param fallback_json - Fallback-locale messages as a JSON string.
+/// @param keys - Array of dot-separated translation keys.
+/// @param params - Optional param map for `{{name}}` interpolation (same for all keys).
+/// @returns Array of { key, message } results, in input order.
+#[napi]
+pub fn native_translate_batch_cached(
+    locale_json: String,
+    fallback_json: String,
+    keys: Vec<String>,
+    params: Option<HashMap<String, String>>,
+) -> Vec<NativeBatchTranslateResult> {
+    let results = cached_translator().translate_batch(
+        &locale_json,
+        &fallback_json,
+        &keys,
+        params.as_ref(),
+    );
+    results
+        .into_iter()
+        .map(|r| NativeBatchTranslateResult {
+            key: r.key,
+            message: r.message,
+        })
+        .collect()
 }

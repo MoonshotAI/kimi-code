@@ -92,7 +92,7 @@ export function App() {
     <LiveBusProvider busRef={emitRef}>
       <div className="flex h-screen flex-col">
         <header className="flex items-center gap-3 border-b border-neutral-800 px-4 py-1.5">
-          <span className="text-[12px] font-bold tracking-widest text-neutral-200">KIMI INSPECT</span>
+          <span className="text-[12px] font-bold tracking-widest text-neutral-200">{t('app.title')}</span>
           <ServerSwitcher />
           <Badge tone={wsState === 'open' ? 'green' : wsState === 'connecting' ? 'amber' : 'red'}>
             {t('app.wsLabel', { state: wsState })}

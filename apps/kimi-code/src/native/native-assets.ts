@@ -258,6 +258,10 @@ export function getNativePackageRoot(
   return cacheRoot === null ? null : join(cacheRoot, pkg.root);
 }
 
+// Expose globally for modules that can't import this function directly
+// (e.g. packages/kap-server/src/i18n.ts in the same SEA bundle).
+(globalThis as Record<string, unknown>).__kimi_getNativePackageRoot = getNativePackageRoot;
+
 export function hasNativePackage(packageName: string, manifest: NativeAssetManifest): boolean {
   return manifest.packages.some((pkg) => pkg.name === packageName);
 }

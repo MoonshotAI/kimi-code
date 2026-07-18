@@ -1,6 +1,4 @@
-type DeepPartial<T> = T extends string ? string : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : never;
-
-export const zh: DeepPartial<typeof import('./en').default> = {
+export const zh = {
   errors: {
     configInvalid: '配置无效',
     sessionNotFound: '未找到会话',
@@ -167,6 +165,6 @@ export const zh: DeepPartial<typeof import('./en').default> = {
     rpcMicrotaskTitle: 'RPC 微任务调度',
     rpcMicrotaskDesc: '对进程内 RPC 模拟使用 queueMicrotask 而非 setTimeout(0)，降低每次调用的延迟。',
   },
-};
+} as const;
 
 export default zh;

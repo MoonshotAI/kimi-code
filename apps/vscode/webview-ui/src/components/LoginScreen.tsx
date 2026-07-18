@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { IconLoader2, IconCopy, IconCheck, IconExternalLink, IconArrowRight } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import { KimiMascot } from "./KimiMascot";
 import { bridge, Events } from "@/services";
 import {
@@ -153,7 +154,7 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
 
             <div className="text-left space-y-1">
               <Button type="button" variant="outline" onClick={onSkip} className="w-full relative justify-center font-normal">
-                <span>Skip</span>
+                <span>{t('login.skip')}</span>
                 <IconArrowRight className="size-4 text-muted-foreground absolute right-3" />
               </Button>
               <p className="text-[11px] text-muted-foreground leading-4">Use your existing API key configuration.</p>
@@ -171,8 +172,8 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setShowSubscribeDialog(false)}>Skip</AlertDialogCancel>
-            <AlertDialogAction onClick={handleSubscribe}>Subscribe</AlertDialogAction>
+            <AlertDialogCancel onClick={() => setShowSubscribeDialog(false)}>{t('login.skip')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSubscribe}>{t('login.subscribe')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

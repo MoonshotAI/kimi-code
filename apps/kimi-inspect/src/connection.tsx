@@ -25,6 +25,8 @@ import {
   type ReactNode,
 } from 'react';
 
+import { t } from './i18n';
+
 import {
   createInspectClient,
   probeRpcBasePath,
@@ -206,12 +208,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       ) : config !== null ? (
         <div className="flex h-screen items-center justify-center">
           <div className="text-sm text-neutral-500">
-            Connecting to {resolveBaseUrl(config.url)}…
+            {t('connection.connecting', { url: resolveBaseUrl(config.url) })}
           </div>
         </div>
       ) : discovering && !suppressDiscovery ? (
         <div className="flex h-screen items-center justify-center">
-          <div className="text-sm text-neutral-500">Discovering local kap-servers…</div>
+          <div className="text-sm text-neutral-500">{t('connection.discovering')}</div>
         </div>
       ) : (
         <ConnectScreen onConnect={connect} initial={readInitialConfig()} />
@@ -248,16 +250,14 @@ function ConnectScreen({
           onConnect({ url, token });
         }}
       >
-        <h1 className="mb-1 text-lg font-semibold text-neutral-100">Kimi Inspect</h1>
+        <h1 className="mb-1 text-lg font-semibold text-neutral-100">{t('connection.title')}</h1>
         <p className="mb-5 text-xs text-neutral-500">
-          Connect to a kap-server (<code className="text-neutral-400">/api/v2</code>). Leave the
-          URL empty to use the same-origin dev proxy
-          {` (${__KIMI_INSPECT_PROXY_TARGET__})`}.
+          {t('connection.description', { target: __KIMI_INSPECT_PROXY_TARGET__ })}
         </p>
         {servers.length > 0 ? (
           <div className="mb-5">
             <div className="mb-1 text-xs text-neutral-400">
-              Discovered on this machine{discovery.data?.home ? ` (${discovery.data.home})` : ''}
+              {discovery.data?.home ? t('connection.discoveredHome', { home: discovery.data.home }) : t('connection.discovered')}
             </div>
             <div className="space-y-1.5">
               {servers.map((s) => (
@@ -274,7 +274,7 @@ function ConnectScreen({
                 >
                   <span className="font-mono">{s.url.replace(/^https?:\/\//, '')}</span>
                   {s.pid !== undefined ? (
-                    <span className="text-[10px] text-neutral-500">pid {s.pid}</span>
+                    <span className="text-[10px] text-neutral-500">{t('server.pid', { pid: s.pid })}</span>
                   ) : null}
                   <span className="ml-auto text-[10px] uppercase text-neutral-600">{s.source}</span>
                 </button>
@@ -282,17 +282,17 @@ function ConnectScreen({
             </div>
           </div>
         ) : null}
-        <label className="mb-1 block text-xs text-neutral-400">Server URL</label>
+        <label className="mb-1 block text-xs text-neutral-400">{t('connection.serverUrl')}</label>
         <input
           className="mb-4 w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-sky-600"
-          placeholder="http://127.0.0.1:58627 (empty = dev proxy)"
+          placeholder={t('connection.urlPlaceholder')}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
         />
-        <label className="mb-1 block text-xs text-neutral-400">Bearer token (optional)</label>
+        <label className="mb-1 block text-xs text-neutral-400">{t('connection.tokenLabel')}</label>
         <input
           className="mb-5 w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-sky-600"
-          placeholder="~/.kimi-code/server.token"
+          placeholder={t('connection.tokenPlaceholder')}
           value={token}
           onChange={(e) => setToken(e.target.value)}
         />
@@ -300,7 +300,7 @@ function ConnectScreen({
           type="submit"
           className="w-full rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
         >
-          Connect
+          {t('connection.connectButton')}
         </button>
       </form>
     </div>

@@ -58,7 +58,7 @@ export function IssuesDrawer({ issues, onClose, onJumpTo, isLineVisible }: Issue
       <aside
         className="absolute right-0 top-0 bottom-0 z-20 flex w-[360px] flex-col border-l border-border bg-surface-1 shadow-[-8px_0_32px_rgba(0,0,0,0.25)]"
         role="dialog"
-        aria-label="issues"
+        aria-label={t('wire.issues')}
       >
         <header className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2 font-mono text-[12px] text-fg-0">
           <span>

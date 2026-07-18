@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { t } from '../../i18n';
 
 interface SizePreviewProps {
   label?: string;
@@ -13,7 +14,7 @@ interface SizePreviewProps {
 }
 
 export function SizePreview({
-  label = 'payload',
+  label = t('sizePreview.defaultLabel'),
   sizeBytes,
   preview,
   children,
@@ -49,7 +50,7 @@ export function SizePreview({
 }
 
 export function formatBytes(n: number): string {
-  if (n < 1024) return `${n}B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
-  return `${(n / 1024 / 1024).toFixed(2)}MB`;
+  if (n < 1024) return t('sizePreview.bytes', { count: n });
+  if (n < 1024 * 1024) return t('sizePreview.kilobytes', { count: (n / 1024).toFixed(1) });
+  return t('sizePreview.megabytes', { count: (n / 1024 / 1024).toFixed(2) });
 }

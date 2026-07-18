@@ -120,15 +120,15 @@ watch(
       <div v-if="member.subagentType" class="ap-type">{{ member.subagentType }}</div>
       <div v-if="member.suspendedReason" class="ap-reason">{{ member.suspendedReason }}</div>
       <div v-if="member.prompt" class="ap-field">
-        <span class="ap-field-label">Task</span>
+        <span class="ap-field-label">{{ $t('agentDetail.task') }}</span>
         <div class="ap-field-body">{{ member.prompt }}</div>
       </div>
       <div v-if="liveText" class="ap-field">
-        <span class="ap-field-label">Output</span>
+        <span class="ap-field-label">{{ $t('agentDetail.output') }}</span>
         <div class="ap-field-body ap-live">{{ liveText }}</div>
       </div>
       <div v-if="progressGroups.length > 0" class="ap-field">
-        <span class="ap-field-label">Progress</span>
+        <span class="ap-field-label">{{ $t('agentDetail.progress') }}</span>
         <div class="ap-field-body ap-progress">
           <div v-for="group in progressGroups" :key="group.key" class="ap-group">
             <div v-if="group.call" class="ap-call">
@@ -142,7 +142,7 @@ watch(
               <template v-else>
                 <div v-for="(line, li) in group.output.slice(0, OUTPUT_HEAD)" :key="li" class="ap-out-line">{{ line }}</div>
                 <button type="button" class="ap-fold" @click="toggleGroup(group.key)">
-                  … ({{ foldCount(group) }} more)
+                  {{ $t('agentDetail.more', { count: foldCount(group) }) }}
                 </button>
                 <div v-for="(line, li) in group.output.slice(-OUTPUT_TAIL)" :key="'t' + li" class="ap-out-line">{{ line }}</div>
               </template>
@@ -151,7 +151,7 @@ watch(
         </div>
       </div>
       <div v-if="member.summary" class="ap-field">
-        <span class="ap-field-label">Result</span>
+        <span class="ap-field-label">{{ $t('agentDetail.result') }}</span>
         <div class="ap-field-body">{{ member.summary }}</div>
       </div>
     </div>

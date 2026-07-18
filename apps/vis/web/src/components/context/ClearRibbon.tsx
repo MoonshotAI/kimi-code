@@ -1,4 +1,5 @@
 import type { ProjectedMessage } from '../../types';
+import { t } from '../../i18n';
 
 interface ClearRibbonProps {
   /** The synthetic clear-marker message emitted by the projector in
@@ -18,7 +19,7 @@ export function ClearRibbon({ message }: ClearRibbonProps) {
     <div className="my-3 flex items-center gap-3">
       <span className="h-px flex-1 bg-[var(--color-sev-warning)] opacity-50" />
       <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--color-sev-warning)]">
-        context cleared · line {message.lineNo}
+        {t('context.clearHint', { lineNo: message.lineNo })}
       </span>
       <span className="h-px flex-1 bg-[var(--color-sev-warning)] opacity-50" />
     </div>

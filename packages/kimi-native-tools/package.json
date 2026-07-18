@@ -18,10 +18,12 @@
     "build": "napi build --platform --release --dts target/napi-generated.d.ts",
     "build:debug": "napi build --platform --dts target/napi-generated.d.ts",
     "artifacts": "napi artifacts",
-    "test": "cargo test"
+    "test": "cargo test",
+    "test:js": "vitest run"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.0.0"
+    "@napi-rs/cli": "^3.0.0",
+    "vitest": "4.1.4"
   },
   "engines": {
     "node": ">= 24.15.0"

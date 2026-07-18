@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import type { AgentNode } from '../../types';
+import { t } from '../../i18n';
 import { Pill, type PillTone } from '../shared/Pill';
 
 const TYPE_TONE: Record<AgentNode['type'], PillTone> = {
@@ -45,11 +46,11 @@ export function SubagentNode({ node, sessionId }: Props) {
             ) : null}
             {broken ? (
               <Pill tone="warning" variant="outline">
-                no wire
+                {t('subagentDetail.noWire')}
               </Pill>
             ) : null}
             <span className="ml-auto font-mono text-[10.5px] text-fg-3 tabular">
-              {node.wireRecordCount} rec{node.wireRecordCount === 1 ? '' : 's'}
+              {node.wireRecordCount} {t('wire.records', { count: node.wireRecordCount })}
               {node.wireProtocolVersion !== null
                 ? ` · v${node.wireProtocolVersion}`
                 : ''}

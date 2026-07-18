@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { t } from "@/i18n";
 import {
   IconX,
   IconPlus,
@@ -30,6 +31,7 @@ import { useSettingsStore } from "@/stores";
 import { bridge } from "@/services";
 import { RECOMMENDED_MCP_SERVERS, recommendedToConfig, type RecommendedMCPServer } from "@/services/recommended-mcp";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
 import { MCP_SECRET_MASK, type MCPServerConfig } from "shared/legacy-sdk";
 
 type TransportType = "stdio" | "http";
@@ -195,11 +197,11 @@ function ServerForm({
     <div className="space-y-3 pt-2 border-t border-border/50">
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <Label className="text-[10px] text-muted-foreground">Name</Label>
+          <Label className="text-[10px] text-muted-foreground">{t('mcpServers.name')}</Label>
           <Input value={data.name} onChange={(e) => set("name", e.target.value)} className="h-7 text-xs" />
         </div>
         <div>
-          <Label className="text-[10px] text-muted-foreground">Transport</Label>
+          <Label className="text-[10px] text-muted-foreground">{t('mcpServers.transport')}</Label>
           <div className="flex gap-1">
             {(["stdio", "http"] as const).map((t) => (
               <button
@@ -246,12 +248,12 @@ function ServerForm({
       ) : (
         <div className="space-y-2">
           <div>
-            <Label className="text-[10px] text-muted-foreground">Command</Label>
+            <Label className="text-[10px] text-muted-foreground">{t('mcpServers.command')}</Label>
             <Input value={data.command} onChange={(e) => set("command", e.target.value)} placeholder="npx" className="h-7 text-xs font-mono" />
           </div>
           <div>
             <div className="flex items-center justify-between">
-              <Label className="text-[10px] text-muted-foreground">Arguments</Label>
+              <Label className="text-[10px] text-muted-foreground">{t('mcpServers.arguments')}</Label>
               <button
                 onClick={() => set("args", [...data.args, ""])}
                 className="text-xs text-muted-foreground hover:text-foreground"
@@ -293,7 +295,7 @@ function ServerForm({
 
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onCancel}>
-          Cancel
+          {t('mcpServers.cancel')}
         </Button>
         <Button size="sm" className="h-6 text-xs" onClick={handleSubmit}>
           {submitLabel}
@@ -549,7 +551,7 @@ export function MCPServersModal() {
             )}
 
             <div className="space-y-1.5">
-              <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Recommended</h3>
+              <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{t('mcpServers.recommended')}</h3>
               {RECOMMENDED_MCP_SERVERS.filter((s) => !installedNames.has(s.id)).map((server) => (
                 <RecommendedItem key={server.id} server={server} onInstall={() => { void handleInstallRecommended(server); }} isInstalling={installingRecommended === server.id} />
               ))}
@@ -568,7 +570,7 @@ export function MCPServersModal() {
             <AlertDialogDescription>This will remove "{deleteTarget}" from your configuration. This action cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>{t('mcpServers.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => { void handleDelete(); }} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {isDeleting ? "Deleting..." : "Delete"}
             </AlertDialogAction>

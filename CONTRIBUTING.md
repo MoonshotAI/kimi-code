@@ -54,6 +54,105 @@ Useful scripts:
 - `pnpm lint:fix` — oxlint with auto-fix
 - `pnpm build` — build all packages
 
+## Build & Local Deploy
+
+After making changes, build the full project:
+
+```sh
+pnpm build
+```
+
+If you only changed code under `apps/kimi-code`, you can build just that package:
+
+```sh
+pnpm --filter @moonshot-ai/kimi-code run build
+```
+
+This produces:
+
+| Output | Path |
+|--------|------|
+| CLI entry (ESM) | `apps/kimi-code/dist/main.mjs` |
+| Web UI assets | `apps/kimi-code/dist-web/` |
+| Native prebuilds | `apps/kimi-code/native/` |
+
+### Deploy to local `.kimi-code` for testing
+
+To run your local build instead of the released binary:
+
+1. **Sync dist files** to the Kimi Code home directory:
+
+```powershell
+# Remove old dist
+Remove-Item -Recurse -Force "$env:USERPROFILE\.kimi-code\dist" -ErrorAction SilentlyContinue
+# Create fresh directory and copy contents
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.kimi-code\dist"
+Copy-Item -Recurse -Force apps/kimi-code/dist/* "$env:USERPROFILE\.kimi-code\dist\"
+
+# Sync web assets
+Remove-Item -Recurse -Force "$env:USERPROFILE\.kimi-code\dist-web" -ErrorAction SilentlyContinue
+Copy-Item -Recurse -Force apps/kimi-code/dist-web "$env:USERPROFILE\.kimi-code\dist-web"
+```
+
+2. **Copy native `.node` files** into `dist/chunks/` (the ESM bundle resolves relative requires from chunk files):
+
+```powershell
+Copy-Item -Force packages/kimi-native-tools/kimi-native-tools.win32-x64-msvc.node `
+    "$env:USERPROFILE\.kimi-code\dist\chunks\"
+Copy-Item -Force packages/kimi-native-tools/kimi_native_tools.win32-x64-msvc.node `
+    "$env:USERPROFILE\.kimi-code\dist\chunks\"
+```
+
+3. **Run with locale** (set `KIMI_LANG=zh` for Chinese interface):
+
+```powershell
+$env:KIMI_LANG="zh"
+node $env:USERPROFILE\.kimi-code\dist\main.mjs
+```
+
+To make `kimi` command use the local build, rename the CDN binary and create a launcher:
+
+```powershell
+Rename-Item "$env:USERPROFILE\.kimi-code\bin\kimi.exe" "kimi.cdn.exe"
+```
+
+Create `$env:USERPROFILE\.kimi-code\bin\kimi.cmd`:
+
+```bat
+@echo off
+setlocal
+if "%KIMI_LANG%"=="" (
+    for /f "tokens=2 delims== " %%a in (
+        'type "%USERPROFILE%\.kimi-code\tui.toml" 2^>nul ^| findstr /r "^locale"'
+    ) do set KIMI_LANG=%%~a
+)
+set KIMI_CODE_HOME=%USERPROFILE%\.kimi-code
+node "%KIMI_CODE_HOME%\dist\main.mjs" %*
+```
+
+### Native SEA build (self-contained `.exe`)
+
+The native build produces a standalone executable using Node.js Single Executable Applications. Requires Rust toolchain (MSVC on Windows).
+
+```sh
+pnpm --filter @moonshot-ai/kimi-code run build:native:release
+```
+
+Output: `apps/kimi-code/dist-native/bin/win32-x64/kimi.exe`
+
+> **Note**: The SEA build currently requires `@moonshot-ai/kimi-native-tools` listed as a dependency in `apps/kimi-code/package.json` and registered in `apps/kimi-code/scripts/native/native-deps.mjs`. See [Common Issues](#common-issues) for known pitfalls.
+
+### Common Issues
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Cannot find module '@moonshot-ai/i18n-shared'` | Workspace link broken; `pnpm install` hasn't re-linked after adding packages | Run `pnpm install` |
+| `ERR_MODULE_NOT_FOUND` pointing to `src/index.ts` in `.kimi-code/node_modules` | Deployed package.json exports still point to source files | Edit exports to point to `dist/*.mjs` |
+| `Failed to load kimi-native-tools binding` | `.node` files missing from `dist/chunks/` (the ESM bundle resolves from chunk directory) | Copy `.node` files directly into `dist/chunks/` |
+| `ERR_UNKNOWN_BUILTIN_MODULE: @moonshot-ai/kimi-native-tools` in SEA binary | Native module not registered in `native-deps.mjs` | Add entry to `nativeDeps` array with `collect: 'native-files'` |
+| `packages/i18n-shared` build fails with `UNRESOLVED_ENTRY` | Missing `src/index.ts` | Create `src/index.ts` re-exporting types, core, and detect modules |
+| `kimi.exe` from CDN shows English despite `locale=zh` | The CDN binary includes only the bundled locale; download date determines version | Build locally or wait for next CDN release |
+
 ## Commit Convention
 
 All commits and PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/).

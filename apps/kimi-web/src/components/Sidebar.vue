@@ -650,7 +650,7 @@ onBeforeUnmount(() => {
       <div class="ch">
         <div class="ch-brand">
           <template v-if="!isMacosDesktop">
-            <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+            <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" :aria-label="t('sidebar.brand')" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
               <defs>
                 <mask id="kimiEyes" maskUnits="userSpaceOnUse">
                   <rect x="0" y="0" width="32" height="22" fill="#fff" />
@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
               </defs>
               <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
             </svg>
-            <span class="ch-name">Kimi Code</span>
+            <span class="ch-name">{{ t('sidebar.brand') }}</span>
             <Pill
               v-if="isDev"
               class="ch-backend"
