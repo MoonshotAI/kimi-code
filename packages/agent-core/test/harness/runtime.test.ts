@@ -331,6 +331,151 @@ custom_headers = { "X-Test" = "1" }
     });
   });
 
+  it('registers WebSearch from services.langsearch in the v1 runtime', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `${baseModelConfig()}
+[experimental]
+langsearch-web-search = true
+
+[services.langsearch]
+api_key = "sk-test"
+tier = "tier1"
+count = 5
+`,
+    );
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            webPages: {
+              value: [
+                {
+                  name: 'LangSearch result',
+                  url: 'https://example.test/result',
+                  snippet: 'Result snippet',
+                },
+              ],
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_langsearch_v1',
+      workDir,
+      model: 'default-mock',
+    });
+    const session = core.sessions.get(created.id);
+    const mainAgent = session?.getReadyAgent('main');
+
+    expect(mainAgent?.tools.data().some((tool) => tool.name === 'WebSearch')).toBe(true);
+    await expect(session?.options.toolServices?.webSearcher?.search('query')).resolves.toEqual([
+      {
+        title: 'LangSearch result',
+        url: 'https://example.test/result',
+        snippet: 'Result snippet',
+      },
+    ]);
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.langsearch.com/v1/web-search');
+    expect(typeof init.body).toBe('string');
+    expect(JSON.parse(init.body as string)).toMatchObject({ query: 'query', count: 5 });
+  });
+
+  it('applies configured LangSearch rerank to the Moonshot search backend', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `${baseModelConfig()}
+[experimental]
+langsearch-web-search = true
+
+[services.moonshot_search]
+base_url = "https://moonshot.example.test/search"
+api_key = "sk-moonshot-test"
+
+[services.rerank]
+enabled = true
+provider = "langsearch"
+api_key = "sk-rerank-test"
+base_url = "https://rerank.example.test"
+`,
+    );
+    const fetchImpl = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://moonshot.example.test/search') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              search_results: [
+                { title: 'First', url: 'https://example.test/first', snippet: 'First' },
+                { title: 'Second', url: 'https://example.test/second', snippet: 'Second' },
+              ],
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            results: [
+              { index: 1, relevance_score: 0.9 },
+              { index: 0, relevance_score: 0.2 },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_moonshot_rerank_v1',
+      workDir,
+      model: 'default-mock',
+    });
+    const search = core.sessions.get(created.id)?.options.toolServices?.webSearcher;
+
+    await expect(search?.search('query')).resolves.toEqual([
+      { title: 'Second', url: 'https://example.test/second', snippet: 'Second' },
+      { title: 'First', url: 'https://example.test/first', snippet: 'First' },
+    ]);
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      'https://moonshot.example.test/search',
+      'https://rerank.example.test/v1/rerank',
+    ]);
+  });
+
   it('falls back to defaultModel when createSession receives no model option', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');

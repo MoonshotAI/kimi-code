@@ -296,6 +296,152 @@ describe('KimiHarness config API', () => {
     expect(text).toContain('claim_stale_after_ms = 15000');
   });
 
+  it('persists LangSearch and rerank config through setConfig', async () => {
+    const homeDir = await makeTempDir();
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, COMPLETE_TOML, 'utf-8');
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await harness.setConfig({
+      services: {
+        langsearch: {
+          apiKey: 'sk-langsearch-test',
+          tier: 'tier2',
+          freshness: 'oneMonth',
+          summary: true,
+          count: 8,
+        },
+        rerank: {
+          enabled: true,
+          provider: 'langsearch',
+          apiKey: 'sk-rerank-test',
+        },
+      },
+    });
+
+    const config = await harness.getConfig({ reload: true });
+    expect(config.services?.langsearch).toMatchObject({
+      apiKey: 'sk-langsearch-test',
+      tier: 'tier2',
+      freshness: 'oneMonth',
+      summary: true,
+      count: 8,
+    });
+    expect(config.services?.rerank).toMatchObject({
+      enabled: true,
+      provider: 'langsearch',
+      apiKey: 'sk-rerank-test',
+    });
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('[services.langsearch]');
+    expect(text).toContain('api_key = "sk-langsearch-test"');
+    expect(text).toContain('freshness = "oneMonth"');
+    expect(text).toContain('count = 8');
+    expect(text).toContain('[services.rerank]');
+    expect(text).toContain('api_key = "sk-rerank-test"');
+  });
+
+  it('atomically replaces service sections instead of deep-merging stale credentials', async () => {
+    const homeDir = await makeTempDir();
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(
+      configPath,
+      `${COMPLETE_TOML}
+[services.rerank]
+enabled = true
+provider = "langsearch"
+api_key = "sk-rerank-test"
+`,
+      'utf-8',
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await harness.replaceService('moonshotSearch', {
+      baseUrl: 'https://search.example.test',
+      apiKey: 'sk-search-stale',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    });
+    await harness.replaceService('moonshotSearch', {
+      baseUrl: 'https://search.example.test',
+      apiKey: 'sk-search-replaced',
+    });
+    await harness.replaceService('rerank', {
+      enabled: false,
+      provider: 'langsearch',
+    });
+
+    const config = await harness.getConfig({ reload: true });
+    expect(config.services?.moonshotSearch).toEqual({
+      baseUrl: 'https://search.example.test',
+      apiKey: 'sk-search-replaced',
+    });
+    expect(config.services?.rerank).toEqual({
+      enabled: false,
+      provider: 'langsearch',
+    });
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).not.toContain('oauth/kimi-code');
+    expect(text).not.toContain('sk-rerank-test');
+  });
+
+  it('removes search and rerank sections without changing other services', async () => {
+    const homeDir = await makeTempDir();
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(
+      configPath,
+      `${COMPLETE_TOML}
+[services.langsearch]
+api_key = "sk-langsearch-test"
+tier = "tier1"
+count = 5
+
+[services.rerank]
+enabled = true
+provider = "langsearch"
+api_key = "sk-rerank-test"
+`,
+      'utf-8',
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await harness.removeService('moonshotSearch');
+
+    let config = await harness.getConfig({ reload: true });
+    expect(config.services?.moonshotSearch).toBeUndefined();
+    expect(config.services?.moonshotFetch?.apiKey).toBe('sk-fetch');
+    expect(config.services?.langsearch?.apiKey).toBe('sk-langsearch-test');
+    expect(config.services?.rerank?.apiKey).toBe('sk-rerank-test');
+    let text = await readFile(configPath, 'utf-8');
+    expect(text).not.toContain('[services.moonshot_search]');
+    expect(text).toContain('[services.moonshot_fetch]');
+    expect(text).toContain('[services.langsearch]');
+    expect(text).toContain('[services.rerank]');
+
+    await harness.removeService('langsearch');
+
+    config = await harness.getConfig({ reload: true });
+    expect(config.services?.langsearch).toBeUndefined();
+    expect(config.services?.rerank).toMatchObject({
+      enabled: true,
+      provider: 'langsearch',
+      apiKey: 'sk-rerank-test',
+    });
+    expect(config.services?.moonshotFetch?.apiKey).toBe('sk-fetch');
+    text = await readFile(configPath, 'utf-8');
+    expect(text).not.toContain('[services.langsearch]');
+    expect(text).toContain('[services.rerank]');
+    expect(text).toContain('[services.moonshot_fetch]');
+
+    await harness.removeService('rerank');
+
+    config = await harness.getConfig({ reload: true });
+    expect(config.services?.rerank).toBeUndefined();
+    expect(config.services?.moonshotFetch?.apiKey).toBe('sk-fetch');
+    text = await readFile(configPath, 'utf-8');
+    expect(text).not.toContain('[services.rerank]');
+    expect(text).toContain('[services.moonshot_fetch]');
+  });
+
   it('does not write invalid config patches', async () => {
     const homeDir = await makeTempDir();
     const configPath = join(homeDir, 'config.toml');
@@ -341,6 +487,17 @@ describe('KimiHarness config API', () => {
           'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares dynamically loaded tools.',
         surface: 'core',
         env: 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT',
+        defaultEnabled: false,
+        enabled: false,
+        source: 'default',
+      },
+      {
+        id: 'langsearch-web-search',
+        title: 'LangSearch web search',
+        description:
+          'Use LangSearch as a configurable WebSearch backend and optionally rerank search results with its semantic reranker.',
+        surface: 'both',
+        env: 'KIMI_CODE_EXPERIMENTAL_LANGSEARCH_WEB_SEARCH',
         defaultEnabled: false,
         enabled: false,
         source: 'default',

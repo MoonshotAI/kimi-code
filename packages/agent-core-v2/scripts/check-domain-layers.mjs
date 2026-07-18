@@ -307,6 +307,10 @@ const ALLOWED_EXCEPTIONS = new Set([
   // auth-independent `web` domain.
   'auth>tool',
   'auth>toolRegistry',
+  // `auth` owns the credential-backed LangSearch providers. The feature is
+  // unreleased, so the provider resolver reads the App-scoped flag service and
+  // contributes its flag definition from the same owning domain.
+  'auth>flag',
   'permissionGate>approval',
   // `permissionRules` (L3) persists the approval broker's `ApprovalResponse`
   // (Session, L7) verbatim in its wire-logged `PermissionApprovalResultRecord`

@@ -2,16 +2,20 @@
  * `auth` domain (L2) — `services` config-section schema and TOML transforms.
  *
  * Owns the `[services]` configuration section (`moonshot_search` /
- * `moonshot_fetch`), mirroring v1's `ServicesConfigSchema`: the schema, and the
- * snake_case ↔ camelCase TOML transforms (including the nested `oauth` and
- * `custom_headers` normalization, with `custom_headers` record keys preserved
- * verbatim). Self-registered at module load via `registerConfigSection`, so the
- * `config` domain never imports this domain's types.
+ * `moonshot_fetch` / `langsearch`), mirroring v1's `ServicesConfigSchema`: the
+ * schema, and the snake_case ↔ camelCase TOML transforms (including the nested
+ * `oauth` and `custom_headers` normalization, with `custom_headers` record keys
+ * preserved verbatim). Self-registered at module load via `registerConfigSection`,
+ * so the `config` domain never imports this domain's types.
  *
  * The `auth` domain owns this section because its OAuth login/logout flows
  * provision and clear it (see `authService`) and its `WebSearchProviderService`
- * consumes `moonshot_search`; the `web` domain reads `moonshot_fetch` from the
- * same section. Bound at App scope.
+ * consumes `moonshot_search` and `langsearch`; the `web` domain reads
+ * `moonshot_fetch` from the same section. Bound at App scope.
+ *
+ * `langsearch` is an alternative web-search backend (LangSearch API) with
+ * optional rerank and per-tier rate limiting. It takes precedence over
+ * `moonshot_search` when configured.
  */
 
 import { z } from 'zod';
@@ -41,10 +45,43 @@ export const MoonshotServiceConfigSchema = z.object({
 
 export type MoonshotServiceConfig = z.infer<typeof MoonshotServiceConfigSchema>;
 
+export const LangSearchTierSchema = z.enum(['free', 'tier1', 'tier2', 'tier3']);
+export const LangSearchFreshnessSchema = z.enum([
+  'oneDay',
+  'oneWeek',
+  'oneMonth',
+  'oneYear',
+  'noLimit',
+]);
+
+export const LangSearchServiceConfigSchema = z.object({
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  tier: LangSearchTierSchema.optional(),
+  freshness: LangSearchFreshnessSchema.optional(),
+  summary: z.boolean().optional(),
+  count: z.number().int().min(1).max(10).optional(),
+  customHeaders: StringRecordSchema.optional(),
+});
+
+export type LangSearchServiceConfig = z.infer<typeof LangSearchServiceConfigSchema>;
+
+export const RerankServiceConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  provider: z.enum(['langsearch']).optional(),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  customHeaders: StringRecordSchema.optional(),
+});
+
+export type RerankServiceConfig = z.infer<typeof RerankServiceConfigSchema>;
+
 export const ServicesConfigSchema = z
   .object({
     moonshotSearch: MoonshotServiceConfigSchema.optional(),
     moonshotFetch: MoonshotServiceConfigSchema.optional(),
+    langsearch: LangSearchServiceConfigSchema.optional(),
+    rerank: RerankServiceConfigSchema.optional(),
   })
   .passthrough();
 
@@ -79,6 +116,8 @@ export const servicesToToml = (value: unknown, rawSnake: unknown): unknown => {
   const out = cloneRecord(rawSnake);
   writeService(out, 'moonshot_search', value['moonshotSearch']);
   writeService(out, 'moonshot_fetch', value['moonshotFetch']);
+  writeService(out, 'langsearch', value['langsearch']);
+  writeService(out, 'rerank', value['rerank']);
   return out;
 };
 

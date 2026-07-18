@@ -13,6 +13,9 @@ import {
   type GetCronTasksResult,
   type QuestionRequest,
   type QuestionResult,
+  type RemovableKimiService,
+  type ReplaceableKimiService,
+  type ReplaceableKimiServices,
   type RPCMethods,
   type SDKAPI,
   type ToolCallRequest,
@@ -257,6 +260,19 @@ export abstract class SDKRpcClientBase {
   async removeProvider(providerId: string): Promise<KimiConfig> {
     const rpc = await this.getRpc();
     return rpc.removeKimiProvider({ providerId });
+  }
+
+  async replaceService<Service extends ReplaceableKimiService>(
+    service: Service,
+    config: ReplaceableKimiServices[Service],
+  ): Promise<KimiConfig> {
+    const rpc = await this.getRpc();
+    return rpc.replaceKimiService({ service, config });
+  }
+
+  async removeService(service: RemovableKimiService): Promise<KimiConfig> {
+    const rpc = await this.getRpc();
+    return rpc.removeKimiService({ service });
   }
 
   async listGlobalMcpServers(): Promise<readonly McpServerConfig[]> {

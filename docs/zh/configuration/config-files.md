@@ -260,7 +260,22 @@ display_name = "Kimi for Coding (custom)"
 
 ## `services`
 
-`services` 配置网页搜索（`moonshot_search`）和网页抓取（`moonshot_fetch`）两项内置服务。只识别这两个固定 key，其他 key 会被忽略。两项字段相同：
+`services` 配置内置网页搜索、网页抓取和可选的结果重排。可识别以下配置表：
+
+- **`moonshot_search`**：Moonshot 网页搜索后端。
+- **`moonshot_fetch`**：Moonshot 网页抓取后端。
+- **`langsearch`**：LangSearch 网页搜索后端。
+- **`rerank`**：可选的语义重排服务，可对任一搜索后端返回的结果重新排序。
+
+LangSearch 搜索和重排属于实验功能，默认关闭。可在 **Settings → Experiments** 中启用 **LangSearch web search**，设置 `KIMI_CODE_EXPERIMENTAL_LANGSEARCH_WEB_SEARCH=1`，或在 `[experimental]` 下添加 `langsearch-web-search = true`。关闭该 flag 时，Moonshot 搜索仍可正常使用。
+
+同时配置两个搜索后端且实验 flag 已启用时，`langsearch` 的优先级高于 `moonshot_search`。关闭该 flag 或移除 `langsearch` 后，如果 Moonshot 搜索凭据可用，运行时会回退到 Moonshot。
+
+在 TUI 的 **Settings → Web Search** 中，顶部会显示当前搜索和重排供应商。使用 **Web search provider** 可配置或编辑 Moonshot 或 LangSearch；使用 **Rerank provider** 可独立配置、启用、禁用、编辑或移除语义重排。选择 Moonshot 时，可以复用当前 Kimi Code OAuth 登录，也可以为中国区或全球区 API 配置密钥。
+
+### Moonshot 服务
+
+`moonshot_search` 和 `moonshot_fetch` 接受相同字段：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -269,15 +284,50 @@ display_name = "Kimi for Coding (custom)"
 | `oauth` | `table` | 否 | OAuth 凭据引用，结构同 `providers.*.oauth` |
 | `custom_headers` | `table<string, string>` | 否 | 请求时附加的自定义 HTTP 头 |
 
-```toml
-[services.moonshot_search]
-base_url = "https://api.moonshot.cn/v1/search"
-api_key = "sk-xxx"
+### LangSearch 网页搜索
 
-[services.moonshot_fetch]
-base_url = "https://api.moonshot.cn/v1/fetch"
-api_key = "sk-xxx"
+`langsearch` 调用 [LangSearch Web Search API](https://docs.langsearch.com/api/web-search-api)。可以在 TUI 的 **Settings → Web Search** 中配置，也可以运行 `kimi search set langsearch` 或直接编辑 `config.toml`。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `api_key` | `string` | — | LangSearch API 密钥；激活该后端时必填 |
+| `base_url` | `string` | `https://api.langsearch.com` | API 基础 URL |
+| `tier` | `string` | `free` | 限流档位：`free`、`tier1`、`tier2` 或 `tier3` |
+| `freshness` | `string` | `noLimit` | 发送给 LangSearch 的结果时效筛选：`oneDay`、`oneWeek`、`oneMonth`、`oneYear` 或 `noLimit` |
+| `summary` | `boolean` | `true` | 请求生成摘要，并在有摘要时将其用作结果片段 |
+| `count` | `integer` | `10` | 每次请求的结果数量，范围为 `1` 到 `10` |
+| `custom_headers` | `table<string, string>` | — | 请求时附加的自定义 HTTP 头 |
+
+### 语义重排
+
+`rerank` 与所选搜索后端相互独立。启用后，无论结果来自 LangSearch 还是 Moonshot，都会在搜索完成后发送给配置的语义重排服务。重排采用尽力而为策略：如果重排请求失败，会保留原始搜索结果顺序。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `true` | 是否对搜索结果进行重排 |
+| `provider` | `string` | — | 重排供应商；目前仅支持 `langsearch` |
+| `api_key` | `string` | — | 重排 API 密钥；省略时复用 `services.langsearch.api_key` |
+| `base_url` | `string` | `https://api.langsearch.com` | 重排 API 基础 URL |
+| `custom_headers` | `table<string, string>` | — | 请求时附加的自定义 HTTP 头 |
+
+以下示例会启用 LangSearch 搜索和 [LangSearch Semantic Rerank API](https://docs.langsearch.com/api/semantic-rerank-api)：
+
+```toml
+[experimental]
+langsearch-web-search = true
+
+[services.langsearch]
+api_key = "YOUR_API_KEY"
+tier = "free"
+count = 10
+
+[services.rerank]
+enabled = true
+provider = "langsearch"
+# api_key = "YOUR_RERANK_API_KEY" # 省略时复用 services.langsearch.api_key
 ```
+
+运行 `kimi search status` 可查看当前配置；`kimi search clear langsearch` 会移除 LangSearch，`kimi search clear rerank` 会移除重排配置。这些命令会直接更新 `config.toml`。
 
 ## `permission`
 

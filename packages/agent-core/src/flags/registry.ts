@@ -32,6 +32,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'langsearch-web-search',
+    title: 'LangSearch web search',
+    description:
+      'Use LangSearch as a configurable WebSearch backend and optionally rerank search results with its semantic reranker.',
+    env: 'KIMI_CODE_EXPERIMENTAL_LANGSEARCH_WEB_SEARCH',
+    default: false,
+    surface: 'both',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

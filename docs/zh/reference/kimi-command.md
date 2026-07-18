@@ -120,7 +120,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`server`（运行并管理本地 REST/WebSocket/web 服务）、`web`（打开 web UI，默认前台运行服务）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`server`（运行并管理本地 REST/WebSocket/web 服务）、`web`（打开 web UI，默认前台运行服务）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`search`（管理网页搜索和重排）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -315,6 +315,31 @@ kimi vis 01HZ...XYZ
 # 绑定固定主机和端口且不打开浏览器（例如在远程主机上）
 kimi vis --host 0.0.0.0 --port 8123 --no-open
 ```
+
+### `kimi search`
+
+无需打开 TUI 即可管理网页搜索后端和语义重排。在 **Settings → Web Search** 中，顶部会显示当前供应商：**Web search provider** 用于配置 Moonshot 或 LangSearch，**Rerank provider** 则独立管理重排状态和 API 密钥。Moonshot 配置可以复用当前 Kimi Code OAuth 登录，也可以使用中国区或全球区 API 密钥。CLI 和 TUI 都会把更改持久化到 `config.toml` 的 `[services]` 中。LangSearch 搜索和重排属于实验功能；配置前请在 **Settings → Experiments** 中启用 **LangSearch web search**，或设置 `KIMI_CODE_EXPERIMENTAL_LANGSEARCH_WEB_SEARCH=1`。
+
+| 命令 | 说明 |
+| --- | --- |
+| `kimi search status` | 显示当前搜索后端和重排状态 |
+| `kimi search set langsearch --api-key <key>` | 配置 LangSearch 网页搜索 |
+| `kimi search set rerank` | 配置 LangSearch 语义重排；默认复用搜索 API 密钥 |
+| `kimi search clear langsearch` | 移除 `[services.langsearch]`，并在 Moonshot 可用时回退到 Moonshot |
+| `kimi search clear rerank` | 移除 `[services.rerank]` |
+| `kimi search limits` | 显示 LangSearch 各档位公布的配额 |
+
+`kimi search set langsearch` 接受 `--tier <free|tier1|tier2|tier3>` 和 `--count <1-10>`。`kimi search set rerank` 接受 `--provider langsearch`、可选的 `--api-key <key>` 以及 `--enabled <true|false>`。
+
+```sh
+kimi search set langsearch --api-key YOUR_API_KEY --tier free --count 10
+kimi search set rerank
+kimi search status
+kimi search clear rerank
+kimi search clear langsearch
+```
+
+完整配置字段和后端优先级见 [`services`](../configuration/config-files.md#services)。
 
 ### `kimi provider`
 

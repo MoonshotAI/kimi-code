@@ -5,6 +5,9 @@ import {
   ImageLimits,
   withTelemetryContext,
   type ExperimentalFeatureState,
+  type RemovableKimiService,
+  type ReplaceableKimiService,
+  type ReplaceableKimiServices,
 } from '@moonshot-ai/agent-core';
 
 import { Session } from '#/session';
@@ -276,6 +279,17 @@ export class KimiHarness {
 
   async removeProvider(providerId: string): Promise<KimiConfig> {
     return this.rpc.removeProvider(providerId);
+  }
+
+  async replaceService<Service extends ReplaceableKimiService>(
+    service: Service,
+    config: ReplaceableKimiServices[Service],
+  ): Promise<KimiConfig> {
+    return this.rpc.replaceService(service, config);
+  }
+
+  async removeService(service: RemovableKimiService): Promise<KimiConfig> {
+    return this.rpc.removeService(service);
   }
 
   /** User-global MCP entries from `<KIMI_CODE_HOME>/mcp.json` only. */

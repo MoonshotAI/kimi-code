@@ -260,7 +260,22 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 
 ## `services`
 
-`services` configures two built-in services: web search (`moonshot_search`) and web fetch (`moonshot_fetch`). Only these two fixed keys are recognized; other keys are ignored. Both entries share the same fields:
+`services` configures built-in web search, web fetch, and optional result reranking. The recognized tables are:
+
+- **`moonshot_search`**: Moonshot web search backend.
+- **`moonshot_fetch`**: Moonshot web fetch backend.
+- **`langsearch`**: LangSearch web search backend.
+- **`rerank`**: Optional semantic reranker that can reorder results from either search backend.
+
+LangSearch search and rerank are experimental and disabled by default. Enable **LangSearch web search** under **Settings → Experiments**, set `KIMI_CODE_EXPERIMENTAL_LANGSEARCH_WEB_SEARCH=1`, or add `langsearch-web-search = true` under `[experimental]`. Moonshot search remains available when the flag is off.
+
+When both search backends are configured and the experimental flag is enabled, `langsearch` takes precedence over `moonshot_search`. Disabling the flag or removing `langsearch` makes the runtime fall back to Moonshot when Moonshot search credentials are available.
+
+In the TUI, **Settings → Web Search** shows the current search and rerank providers at the top. Use **Web search provider** to configure or edit Moonshot or LangSearch, and **Rerank provider** to configure, enable, disable, edit, or remove semantic reranking independently. Selecting Moonshot can reuse the current Kimi Code OAuth login or configure an API key for the China or Global API region.
+
+### Moonshot services
+
+`moonshot_search` and `moonshot_fetch` accept the same fields:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -269,15 +284,50 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | `oauth` | `table` | No | OAuth credential reference, same structure as `providers.*.oauth` |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |
 
-```toml
-[services.moonshot_search]
-base_url = "https://api.moonshot.cn/v1/search"
-api_key = "sk-xxx"
+### LangSearch web search
 
-[services.moonshot_fetch]
-base_url = "https://api.moonshot.cn/v1/fetch"
-api_key = "sk-xxx"
+`langsearch` calls the [LangSearch Web Search API](https://docs.langsearch.com/api/web-search-api). Configure it from **Settings → Web Search** in the TUI, with `kimi search set langsearch`, or by editing `config.toml`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `api_key` | `string` | — | LangSearch API key; required to activate this backend |
+| `base_url` | `string` | `https://api.langsearch.com` | API base URL |
+| `tier` | `string` | `free` | Rate-limit tier: `free`, `tier1`, `tier2`, or `tier3` |
+| `freshness` | `string` | `noLimit` | Result age filter sent to LangSearch: `oneDay`, `oneWeek`, `oneMonth`, `oneYear`, or `noLimit` |
+| `summary` | `boolean` | `true` | Request generated summaries and use them as result snippets when available |
+| `count` | `integer` | `10` | Number of results per request, from `1` to `10` |
+| `custom_headers` | `table<string, string>` | — | Custom HTTP headers attached to each request |
+
+### Semantic rerank
+
+`rerank` is independent of the selected search backend. When enabled, it sends search results to the configured semantic reranker after either LangSearch or Moonshot returns them. Reranking is best-effort: if the rerank request fails, the original search result order is preserved.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `true` | Whether to rerank search results |
+| `provider` | `string` | — | Rerank provider; currently only `langsearch` is supported |
+| `api_key` | `string` | — | Rerank API key; when omitted, reuses `services.langsearch.api_key` |
+| `base_url` | `string` | `https://api.langsearch.com` | Rerank API base URL |
+| `custom_headers` | `table<string, string>` | — | Custom HTTP headers attached to each request |
+
+The following example activates LangSearch search and the [LangSearch Semantic Rerank API](https://docs.langsearch.com/api/semantic-rerank-api):
+
+```toml
+[experimental]
+langsearch-web-search = true
+
+[services.langsearch]
+api_key = "YOUR_API_KEY"
+tier = "free"
+count = 10
+
+[services.rerank]
+enabled = true
+provider = "langsearch"
+# api_key = "YOUR_RERANK_API_KEY" # Omit to reuse services.langsearch.api_key
 ```
+
+Use `kimi search status` to inspect the current configuration, `kimi search clear langsearch` to remove LangSearch, and `kimi search clear rerank` to remove rerank settings. These commands update `config.toml` directly.
 
 ## `permission`
 

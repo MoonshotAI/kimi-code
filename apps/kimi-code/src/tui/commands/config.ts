@@ -27,6 +27,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
+import { showWebSearchConfig } from './web-search';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -773,5 +774,6 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;
+    case 'webSearch': void showWebSearchConfig(host); return;
   }
 }
