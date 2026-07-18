@@ -34,6 +34,8 @@ export default {
   decreaseUiFontSize: 'Decrease font size',
   increaseUiFontSize: 'Increase font size',
   languageHint: 'Choose the interface language',
+  defaultOpenInApp: 'Default open-in app',
+  defaultOpenInAppHint: 'App used when opening files and folders from the header menu',
   agentDefaults: 'Agent defaults',
   providers: 'Providers',
   providersHint: 'Add, remove, or refresh providers',

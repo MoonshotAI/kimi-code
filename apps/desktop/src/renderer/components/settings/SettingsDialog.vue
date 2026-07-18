@@ -9,6 +9,7 @@ import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
+import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
@@ -119,6 +120,33 @@ function handleKeydown(e: KeyboardEvent): void {
 }
 onMounted(() => document.addEventListener('keydown', handleKeydown));
 onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
+
+// Desktop-only: default "open workspace in <app>" target. The catalog comes
+// from the main process via lib/nativeOpenIn.ts; the row stays hidden without
+// the bridge (web) or with an empty catalog (non-macOS). The value is the
+// shared reactive selection (null = unset → first available shown), so the
+// header pill updates live — a menu pick writes the same key.
+const openInAppOptions = ref<Array<{ value: string; label: string; icon?: string }> | null>(null);
+const defaultOpenInApp = useDefaultOpenInTarget();
+
+const openInSelectValue = computed(() => {
+  const options = openInAppOptions.value ?? [];
+  const current = defaultOpenInApp.value;
+  return current !== null && options.some((o) => o.value === current)
+    ? current
+    : (options[0]?.value ?? '');
+});
+
+onMounted(async () => {
+  if (!canOpenInNative()) return;
+  const apps = await listNativeOpenInApps();
+  if (apps.length === 0) return;
+  openInAppOptions.value = apps.map((app) => ({
+    value: app.id,
+    label: app.label,
+    icon: openInAppIcon(app.id) || undefined,
+  }));
+});
 
 function exportLog(): void {
   downloadTraceLog();
@@ -454,6 +482,20 @@ function archiveTime(iso: string): string {
                 <span class="hint">{{ t('settings.languageHint') }}</span>
               </span>
               <LanguageSwitcher />
+            </div>
+            <div v-if="openInAppOptions" class="row">
+              <span class="rlabel">
+                {{ t('settings.defaultOpenInApp') }}
+                <span class="hint">{{ t('settings.defaultOpenInAppHint') }}</span>
+              </span>
+              <div class="select-wrap">
+                <Select
+                  :model-value="openInSelectValue"
+                  :options="openInAppOptions"
+                  :aria-label="t('settings.defaultOpenInApp')"
+                  @update:model-value="saveDefaultOpenInTarget"
+                />
+              </div>
             </div>
             <div class="row">
               <span class="rlabel">

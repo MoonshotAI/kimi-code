@@ -1,19 +1,22 @@
-<!-- apps/kimi-web/src/components/chat/OpenInMenu.vue -->
-<!-- "Open" button group for the chat header: workspace path label + quick-open
-     (last used target) + dropdown caret, matching the kimi-cli/web pattern.
-     Falls back to a simple icon+text "Open" button on non-mac platforms. -->
+<!-- apps/desktop/src/renderer/components/chat/OpenInMenu.vue -->
+<!-- Desktop-only "open workspace in <app>" control: a compact pill in the chat
+     header. Left half = current target's icon, click opens with it; right
+     caret expands the app menu. Picking a menu item opens immediately and
+     becomes the shown target. The catalog and the launch live in the main
+     process (lib/nativeOpenIn.ts, no daemon REST); web keeps its own copy. -->
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
+import { openInAppIcon, resolveOpenInTarget, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import { Button, Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
 const props = defineProps<{
+  /** Absolute path of the workspace to open; the control is disabled without it. */
   workDir?: string;
-  /** Installed app IDs from the daemon; when empty/unset the menu falls back to platform defaults. */
+  /** Installed app IDs from the main process; unset/empty shows the full catalog. */
   availableApps?: string[];
 }>();
 
@@ -21,91 +24,104 @@ const emit = defineEmits<{
   openInApp: [appId: string];
 }>();
 
-function isMacOS(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  if (/Mac|iPod|iPhone|iPad/.test(navigator.platform)) return true;
-  try {
-    // @ts-expect-error userAgentData is experimental
-    if (navigator.userAgentData?.platform === 'macOS') return true;
-  } catch { /* ignore */ }
-  return false;
-}
+type TargetId =
+  | 'vscode'
+  | 'cursor'
+  | 'zed'
+  | 'finder'
+  | 'terminal'
+  | 'iterm'
+  | 'ghostty'
+  | 'warp'
+  | 'xcode';
 
-const isMac = isMacOS();
-
-const TRAILING_SLASH = /\/+$/;
-function compactPath(path: string, maxLength = 22): string {
-  const trimmed = path.trim().replace(/\\/g, '/');
-  const normalized = trimmed === '' ? '/' : trimmed.replace(TRAILING_SLASH, '') || '/';
-  if (normalized.length <= maxLength) return normalized;
-  const parts = normalized.split('/').filter(Boolean);
-  if (parts.length === 0) return `${normalized.slice(0, maxLength - 1)}…`;
-  const tail = parts.slice(-2).join('/');
-  if (tail.length + 2 <= maxLength) return `…/${tail}`;
-  return `…/${tail.slice(-maxLength + 2)}`;
-}
-
-const hasWorkDir = computed(() => Boolean(props.workDir && props.workDir.trim().length > 0));
-const displayPath = computed(() => (hasWorkDir.value ? compactPath(props.workDir!) : 'No directory'));
-
-const TARGETS: Array<{ id: TargetId; label: string; macOnly?: boolean }> = [
-  { id: 'finder', label: 'Finder', macOnly: true },
-  { id: 'cursor', label: 'Cursor' },
+const TARGETS: Array<{ id: TargetId; label: string }> = [
   { id: 'vscode', label: 'VS Code' },
-  { id: 'iterm', label: 'iTerm', macOnly: true },
-  { id: 'terminal', label: 'Terminal', macOnly: true },
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'zed', label: 'Zed' },
+  { id: 'finder', label: 'Finder' },
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'iterm', label: 'iTerm2' },
+  { id: 'ghostty', label: 'Ghostty' },
+  { id: 'warp', label: 'Warp' },
+  { id: 'xcode', label: 'Xcode' },
 ];
 
-type TargetId = 'finder' | 'cursor' | 'vscode' | 'iterm' | 'terminal';
+const hasWorkDir = computed(() => Boolean(props.workDir && props.workDir.trim().length > 0));
 
 const visibleTargets = computed(() => {
-  const platformTargets = TARGETS.filter((t) => !t.macOnly || isMac);
-  if (!props.availableApps || props.availableApps.length === 0) {
-    return platformTargets;
-  }
+  if (!props.availableApps || props.availableApps.length === 0) return TARGETS;
   const available = new Set(props.availableApps);
-  return platformTargets.filter((t) => available.has(t.id));
+  return TARGETS.filter((target) => available.has(target.id));
 });
 
-const LAST_TARGET_KEY = STORAGE_KEYS.openInLastTarget;
-const lastTargetId = ref<TargetId | null>(null);
+// ---------------------------------------------------------------------------
+// Target selection: the chosen app (shared reactive ref — the settings
+// dropdown writes the same key), falling back to the first available one.
+// ---------------------------------------------------------------------------
+const selectedTargetId = useDefaultOpenInTarget();
 
-function loadLastTarget(): void {
-  try {
-    const raw = safeGetString(LAST_TARGET_KEY);
-    if (raw && visibleTargets.value.some((t) => t.id === raw)) {
-      lastTargetId.value = raw as TargetId;
-    } else {
-      lastTargetId.value = null;
-    }
-  } catch {
-    lastTargetId.value = null;
-  }
+const quickTargetId = computed(() =>
+  resolveOpenInTarget(visibleTargets.value.map((t) => t.id), selectedTargetId.value),
+);
+
+const quickTargetLabel = computed(
+  () => visibleTargets.value.find((t) => t.id === quickTargetId.value)?.label ?? null,
+);
+
+/** Icon URL for the pill's left half; '' when nothing can be resolved. */
+const quickTargetIcon = computed(() =>
+  quickTargetId.value === null ? '' : openInAppIcon(quickTargetId.value),
+);
+
+const quickTooltipText = computed(() =>
+  quickTargetLabel.value === null
+    ? t('header.openInEditor')
+    : t('header.openInApp', { app: quickTargetLabel.value }),
+);
+
+function handleOpenTarget(id: TargetId): void {
+  // Picking an item both opens with it and selects it — the same key the
+  // settings dropdown writes, so the pill and settings stay in sync.
+  saveDefaultOpenInTarget(id);
+  closeMenu();
+  if (hasWorkDir.value) emit('openInApp', id);
 }
-loadLastTarget();
 
-function saveLastTarget(id: TargetId): void {
-  try {
-    safeSetString(LAST_TARGET_KEY, id);
-  } catch { /* ignore */ }
-  lastTargetId.value = id;
+function handleQuickOpen(): void {
+  // Quick open only acts on the resolved target — it must NOT persist it.
+  // Only an explicit pick (a menu item or the settings select) pins a
+  // selection; otherwise the first quick open would freeze the "auto"
+  // behavior (first available app) forever, even after installing editors.
+  const id = quickTargetId.value;
+  if (id !== null && hasWorkDir.value) emit('openInApp', id);
 }
 
-const lastTarget = computed(() => visibleTargets.value.find((t) => t.id === lastTargetId.value) ?? null);
-
-// Menu state
+// ---------------------------------------------------------------------------
+// Dropdown menu (hand-rolled positioning, same pattern as ChatHeader's menu)
+// ---------------------------------------------------------------------------
 const menuOpen = ref(false);
-const triggerRef = ref<InstanceType<typeof IconButton> | null>(null);
+const triggerRef = ref<HTMLButtonElement | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const menuStyle = ref<Record<string, string>>({});
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
-  if (menuRef.value?.el?.contains(target) || triggerRef.value?.el?.contains(target)) return;
+  if (menuRef.value?.el?.contains(target) || triggerRef.value?.contains(target)) return;
   closeMenu();
 }
 
 function onScrollResize(): void {
+  closeMenu();
+}
+
+// While the menu is open, swallow Escape in the capture phase: the
+// ConversationPane listens for keydown on document in the bubble phase and
+// reads any Escape during a running turn as "interrupt the prompt". Capture
+// runs first, so Esc here only closes the menu.
+function onDocKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return;
+  e.stopPropagation();
   closeMenu();
 }
 
@@ -116,9 +132,10 @@ async function openMenu(): Promise<void> {
   }
   menuOpen.value = true;
   document.addEventListener('mousedown', onDocClick);
+  document.addEventListener('keydown', onDocKeydown, true);
   window.addEventListener('resize', onScrollResize);
   await nextTick();
-  const btn = triggerRef.value?.el;
+  const btn = triggerRef.value;
   const menu = menuRef.value?.el;
   if (!btn || !menu) return;
   const r = btn.getBoundingClientRect();
@@ -141,24 +158,15 @@ async function openMenu(): Promise<void> {
 function closeMenu(): void {
   menuOpen.value = false;
   document.removeEventListener('mousedown', onDocClick);
+  document.removeEventListener('keydown', onDocKeydown, true);
   window.removeEventListener('resize', onScrollResize);
 }
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocClick);
+  document.removeEventListener('keydown', onDocKeydown, true);
   window.removeEventListener('resize', onScrollResize);
 });
-
-function handleOpenTarget(id: TargetId): void {
-  saveLastTarget(id);
-  closeMenu();
-  if (hasWorkDir.value) emit('openInApp', id);
-}
-
-function handleQuickOpen(): void {
-  const target = lastTarget.value ?? visibleTargets.value[0];
-  if (target) handleOpenTarget(target.id);
-}
 
 const copiedPath = ref(false);
 async function copyPath(): Promise<void> {
@@ -171,140 +179,114 @@ async function copyPath(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="isMac" class="open-group">
-    <Tooltip :text="workDir ?? ''">
-      <span
-        class="open-label"
-        :class="{ muted: !hasWorkDir }"
-      >
-        <Icon name="folder" size="sm" />
-        <span class="open-path">{{ displayPath }}</span>
-      </span>
-    </Tooltip>
-
-    <Tooltip :text="lastTarget ? `Open in ${lastTarget.label}` : t('header.openInEditor')">
-      <Button
-        size="sm"
-        variant="secondary"
+  <div class="open-in" :class="{ open: menuOpen }">
+    <Tooltip :text="quickTooltipText">
+      <button
+        type="button"
+        class="open-in-main"
         :disabled="!hasWorkDir"
+        :aria-label="quickTooltipText"
         @click.stop="handleQuickOpen"
       >
-        {{ t('header.openInEditorShort') }}
-      </Button>
+        <img v-if="quickTargetIcon !== ''" class="open-in-icon" :src="quickTargetIcon" alt="" />
+        <Icon v-else name="external-link" size="sm" />
+      </button>
     </Tooltip>
-
-    <IconButton
-      ref="triggerRef"
-      size="sm"
-      :class="{ open: menuOpen }"
-      :disabled="!hasWorkDir"
-      :label="t('header.chooseOpenApp')"
-      @click.stop="openMenu"
-    >
-      <Icon name="chevron-down" size="sm" />
-    </IconButton>
+    <span class="open-in-sep" aria-hidden="true" />
+    <Tooltip :text="t('header.chooseOpenApp')">
+      <button
+        ref="triggerRef"
+        type="button"
+        class="open-in-caret"
+        :disabled="!hasWorkDir"
+        :aria-expanded="menuOpen"
+        aria-haspopup="menu"
+        :aria-label="t('header.chooseOpenApp')"
+        @click.stop="openMenu"
+      >
+        <Icon name="chevron-down" size="sm" />
+      </button>
+    </Tooltip>
 
     <Menu
       v-if="menuOpen"
       ref="menuRef"
-      class="open-menu"
+      class="open-in-menu"
       :style="menuStyle"
       @click.stop
     >
       <MenuItem
         v-for="target in visibleTargets"
         :key="target.id"
-        :active="target.id === lastTargetId"
+        :active="target.id === quickTargetId"
         @click="handleOpenTarget(target.id)"
       >
+        <img class="om-icon" :src="openInAppIcon(target.id)" alt="" />
         <span class="om-label">{{ target.label }}</span>
-        <span v-if="target.id === lastTargetId" class="om-last">Last used</span>
       </MenuItem>
       <MenuItem separator />
       <MenuItem @click="copyPath">
+        <Icon :name="copiedPath ? 'check' : 'copy'" size="sm" />
         {{ copiedPath ? t('header.copied') : t('header.copyPath') }}
       </MenuItem>
     </Menu>
   </div>
-
-  <!-- Non-mac fallback: maintain the previous simple open-in-editor button -->
-  <Tooltip :text="t('header.openInEditor')">
-    <button
-      v-else
-      type="button"
-      class="open-fallback"
-      @click="emit('openInApp', 'vscode')"
-    >
-      <Icon name="external-link" size="sm" />
-      <span class="open-fallback-label">{{ t('header.openInEditorShort') }}</span>
-    </button>
-  </Tooltip>
 </template>
 
 <style scoped>
-.open-group {
+.open-in {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   flex: none;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  height: 26px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-xs);
   overflow: hidden;
-  background: var(--bg);
-  font-family: var(--mono);
-  font-size: var(--text-base);
 }
-.open-label {
+/* The macOS chat header is a window-drag region whose scoped `no-drag` rule
+   cannot reach into this component — carve the whole control out here, or
+   real mouse presses start a window drag instead of clicking. */
+.open-in,
+.open-in * {
+  -webkit-app-region: no-drag;
+}
+.open-in-main,
+.open-in-caret {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  color: var(--dim);
-  max-width: 180px;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
 }
-.open-label.muted { color: var(--muted); }
-.open-label svg { flex: none; }
-.open-path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.open-in-main { width: 30px; }
+.open-in-caret { width: 22px; }
+.open-in-main:hover:not(:disabled),
+.open-in-caret:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
 }
-.open-menu {
+.open-in-main:disabled,
+.open-in-caret:disabled { cursor: default; opacity: 0.5; }
+.open-in.open .open-in-caret { background: var(--color-surface-sunken); color: var(--color-text); }
+.open-in-sep {
+  flex: none;
+  width: 0.5px;
+  margin: 5px 0;
+  background: var(--color-line);
+}
+.open-in-icon { width: 16px; height: 16px; border-radius: 4px; }
+
+.open-in-menu {
   position: fixed;
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
 }
+.om-icon { width: 16px; height: 16px; flex: none; border-radius: 4px; }
 .om-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.om-last {
-  flex: none;
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  color: var(--muted);
-}
-
-.open-fallback {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: none;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--dim);
-  font-family: var(--sans);
-  font-size: var(--ui-font-size-xs);
-  padding: 0;
-  cursor: pointer;
-}
-.open-fallback:hover { color: var(--color-text); }
-.open-fallback svg { flex: none; }
-
-@media (max-width: 980px) {
-  .open-fallback-label,
-  .open-path,
-  .open-quick { display: none; }
-}
-@media (max-width: 640px) {
-  .open-group,
-  .open-fallback { display: none; }
-}
 </style>

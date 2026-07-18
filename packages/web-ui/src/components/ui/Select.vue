@@ -11,6 +11,8 @@ type SelectOption = {
   label: string;
   disabled?: boolean;
   group?: string;
+  /** Optional leading icon (image URL), shown in the trigger and the option row. */
+  icon?: string;
 };
 
 const props = withDefaults(defineProps<{
@@ -148,7 +150,10 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
       @click="toggleMenu"
       @keydown="onKeydown"
     >
-      <span class="ui-select__value" :class="{ 'is-placeholder': !selectedOption }">{{ displayLabel }}</span>
+      <span class="ui-select__value" :class="{ 'is-placeholder': !selectedOption }">
+        <img v-if="selectedOption?.icon" class="ui-select__icon" :src="selectedOption.icon" alt="" />
+        <span class="ui-select__value-text">{{ displayLabel }}</span>
+      </span>
       <Icon class="ui-select__chevron" name="chevron-down" size="sm" />
     </button>
 
@@ -172,6 +177,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
           @click="selectOption(option)"
         >
           <Icon class="ui-select__check" name="check" size="sm" />
+          <img v-if="option.icon" class="ui-select__icon ui-select__icon--option" :src="option.icon" alt="" />
           <span>{{ option.label }}</span>
         </button>
       </template>
@@ -222,11 +228,20 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
 .ui-select__value {
   min-width: 0;
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ui-select__value-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ui-select__value.is-placeholder { color: var(--color-text-faint); }
+.ui-select__icon { flex: none; width: 14px; height: 14px; border-radius: 3px; }
+.ui-select__icon--option { width: 16px; height: 16px; border-radius: 4px; }
 .ui-select__chevron {
   flex: none;
   color: var(--color-text-muted);

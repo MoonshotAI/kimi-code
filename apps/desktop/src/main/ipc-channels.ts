@@ -7,6 +7,8 @@ export const IPC = {
   openExternal: 'kimi:open-external',
   dialogOpen: 'kimi:dialog-open',
   dialogSave: 'kimi:dialog-save',
+  openInList: 'kimi:open-in-list',
+  openInApp: 'kimi:open-in',
   getServerToken: 'kimi:get-server-token',
   isFullscreen: 'kimi:is-fullscreen',
   menuAction: 'kimi:menu-action',

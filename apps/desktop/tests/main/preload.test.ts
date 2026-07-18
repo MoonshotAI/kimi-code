@@ -20,11 +20,13 @@ vi.mock('electron', () => ({
 const WHITELIST = [
   'getServerToken',
   'isFullscreen',
+  'listOpenInApps',
   'onFullscreenChanged',
   'onMenu',
   'onMenuAction',
   'onShortcut',
   'openExternal',
+  'openInApp',
   'setTheme',
   'showOpenDialog',
   'showSaveDialog',
@@ -99,6 +101,12 @@ describe('kimiDesktop preload bridge', () => {
     const saveOpts = { defaultPath: 'untitled.txt' };
     await exposed.showSaveDialog(saveOpts);
     expect(invoke).toHaveBeenCalledWith('kimi:dialog-save', saveOpts);
+
+    await exposed.listOpenInApps();
+    expect(invoke).toHaveBeenCalledWith('kimi:open-in-list');
+
+    await exposed.openInApp('ghostty', '/work/dir');
+    expect(invoke).toHaveBeenCalledWith('kimi:open-in', 'ghostty', '/work/dir');
 
     await exposed.getServerToken();
     expect(invoke).toHaveBeenCalledWith('kimi:get-server-token');

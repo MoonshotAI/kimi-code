@@ -3,10 +3,12 @@
      status, "open in editor", and a ⋮ more-menu that bundles copy-all plus
      the same session actions available from the sidebar session row. -->
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { isMacosDesktop } from '../../lib/desktopFlag';
+import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
+import OpenInMenu from './OpenInMenu.vue';
 import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -212,6 +214,27 @@ function startArchive(): void {
   closeMenu();
   emit('archiveSession', props.sessionId);
 }
+
+// ---------------------------------------------------------------------------
+// Open-in-app (desktop-only fork): the catalog comes from the main process,
+// never from the daemon. Empty catalog (non-desktop / non-macOS) hides the
+// whole control.
+// ---------------------------------------------------------------------------
+const openInApps = ref<Array<{ id: string; label: string }>>([]);
+
+onMounted(async () => {
+  if (canOpenInNative()) {
+    openInApps.value = await listNativeOpenInApps();
+  }
+});
+
+const showOpenIn = computed(() => openInApps.value.length > 0 && Boolean(props.workspaceRoot));
+const openInAppIds = computed(() => openInApps.value.map((app) => app.id));
+
+async function onOpenInApp(appId: string): Promise<void> {
+  if (!props.workspaceRoot) return;
+  await openInNativeApp(appId, props.workspaceRoot);
+}
 </script>
 
 <template>
@@ -291,6 +314,14 @@ function startArchive(): void {
     </Menu>
 
     <div class="ch-spacer" />
+
+    <!-- Open workspace in editor/terminal (desktop-only fork; hidden otherwise) -->
+    <OpenInMenu
+      v-if="showOpenIn"
+      :work-dir="workspaceRoot"
+      :available-apps="openInAppIds"
+      @open-in-app="onOpenInApp"
+    />
 
     <!-- Git branch + status — plain text with semantic colors. Renders for any
          git repo, even a detached HEAD (empty branch → "detached" label), so the

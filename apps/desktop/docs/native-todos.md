@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 10 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 12 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意两点：
 
@@ -32,9 +32,12 @@
   - **web 不改**：红绿灯只存在于 Electron macOS；`App.vue` 两端分叉又添一块（模板 class、fullscreen CSS、import），整目录 re-copy 时需保留。
   - 测试：`src/renderer/composables/useFullscreen.test.ts`（4 用例：无桥、初值、推送、桥故障）；`tests/main/preload.test.ts` 白名单 + 通道断言同步更新。
 
-- [ ] **打开文件 / 在 Finder 显示 / OpenIn 菜单本地化**
-  - 现状：`useWorkspaceState.ts:2405-2439`（`openWorkspaceFile` / `revealWorkspaceFile` / `openInApp`）走 daemon REST 由 server 执行 OS 打开；UI 入口 `FilePreview.vue:493`、`OpenInMenu.vue`。
-  - 做法：desktop 里 server 同进程，可主进程直接 `shell.openPath` / `shell.showItemInFolder`，省一跳。
+- [x] **打开文件 / 在 Finder 显示 / OpenIn 菜单本地化**（OpenIn 部分已完成，desktop 专属）
+  - 实现：「用 xxx 打开」全链路在主进程、不走 daemon REST。`src/main/open-in.ts` 负责应用目录检测（macOS only：`/Applications` + `~/Applications` 存在性；Finder/Terminal 系统恒有）与启动（`open -a <bundle>` / Finder 裸 `open <dir>` / Terminal 用 `open -b com.apple.Terminal`，各 app 的文件夹打开能力已对 Info.plist 核实；Xcode 未声明 folder 注册，纯目录可能只弹提示——已知限制）。IPC：`kimi:open-in-list` / `kimi:open-in`（`ipc-channels.ts` + `ipc.ts`，参数在 handler 校验），preload 白名单加 `listOpenInApps` / `openInApp`（`preload.test.ts` 同步）。renderer 侧 `src/renderer/lib/nativeOpenIn.ts`：`canOpenInNative()` 探测（桥缺方法也判 false），列表/打开失败一律归 false/[]（无桥降级=隐藏入口，不回退 REST，用户明确决定）。`ChatHeader.vue` 挂载 `OpenInMenu.vue`（desktop 分叉块：import/onMounted/模板 `showOpenIn` 块，整目录 re-copy 时需保留）；`OpenInMenu.vue` 与 web 版整体分叉重写：紧凑 pill（左=当前选中应用图标，点击只打开不写盘；右=caret 展开菜单，菜单项点击才=打开+选中），菜单项带彩色图标。选中态单源：菜单点击与设置页写同一个 key `kimi-web.open-in.default-target`（`saveDefaultOpenInTarget`，模块级响应式 ref `useDefaultOpenInTarget`，改动同 tick 同步到 pill 与设置页），未选择时显示第一个可用（`resolveOpenInTarget`）。注意 pill 自带 `-webkit-app-region: no-drag`（ChatHeader 的 scoped no-drag 规则到不了子组件内部，不写会被 macOS 拖拽区吃掉点击）；菜单打开期间在 capture 阶段吞掉 Escape（ConversationPane 的 document 级 bubble 监听会把 Esc 当中断运行，capture 先执行，Esc 只关菜单）。设置项在 `SettingsDialog.vue` 通用页（desktop 分叉块，`openInAppOptions` 为 null 即隐藏），选项即检测到的应用列表。
+  - 测试：`tests/main/open-in.test.ts`（13 用例：平台门控、检测、argv 构造、失败回传）；`tests/main/preload.test.ts` 白名单；`src/renderer/lib/nativeOpenIn.test.ts`（16 用例：桥探测、列表过滤、打开回传、默认目标持久化、快捷解析优先级）。
+  - 遗留：打开失败暂无 UI 反馈（静默）；「打开文件 / 在 Finder 显示」（FilePreview 的 `openWorkspaceFile`/`revealWorkspaceFile`）仍走 daemon REST，未原生化。
+  - 图标：彩色官方图标从本机 app bundle 的 `.icns` 提取为 128px PNG（`src/renderer/assets/app-icons/`，9 个），经 `lib/nativeOpenIn.ts` 的 `openInAppIcon(id)` 映射；菜单项与快捷按钮用 `<img>` 渲染（nominative use），设置页 Select 靠 web-ui `Select` 新增的 `option.icon` 字段（可选、向后兼容，web 同步受益）。
+  - 已知限制：第一版仅 macOS；Windows/Linux 返回空目录并隐藏入口。
 
 - [x] **文件导出走保存对话框**（已完成，desktop 专属）
   - 实现：新增 `src/main/downloads.ts`——主进程 `will-download` 统一接管所有下载（会话导出 zip、trace 日志、未来任何下载），`dialog.showSaveDialogSync` 弹系统保存框（预选"上次目录 + 建议文件名"，首次 `~/Downloads`），确认才 `setSavePath` 落盘、取消 `item.cancel()` 不落盘；`WeakSet` 防窗口重建重复注册（renderer 零改动、零 web 分叉，未走 `kimi:dialog-save` IPC）。
@@ -71,5 +74,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（9 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（11 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

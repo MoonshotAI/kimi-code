@@ -3,6 +3,7 @@ import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 
 import { getMainWindow } from './window';
 import { readServerToken } from './connect';
+import { listAvailableOpenInApps, openInApp } from './open-in';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -29,6 +30,15 @@ export function registerIpcHandlers(): void {
     return win === null || win.isDestroyed()
       ? dialog.showSaveDialog(opts)
       : dialog.showSaveDialog(win, opts);
+  });
+  // "Open workspace in <app>": the main process owns both the installed-app
+  // catalog and the actual launch (open-in.ts); results are forwarded verbatim.
+  ipcMain.handle(IPC.openInList, () => listAvailableOpenInApps());
+  ipcMain.handle(IPC.openInApp, (_event, appId: unknown, path: unknown) => {
+    if (typeof appId !== 'string' || typeof path !== 'string' || path.trim() === '') {
+      return { ok: false as const, error: 'invalid open-in arguments' };
+    }
+    return openInApp(appId, path);
   });
   // Token for the renderer's credentialStore (Task 4.5); read in main, never fs in renderer.
   ipcMain.handle(IPC.getServerToken, () => readServerToken());

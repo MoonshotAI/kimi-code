@@ -38,7 +38,7 @@ export const STORAGE_KEYS = {
   locale: 'kimi-locale',
   clientId: 'kimi-web.client-id',
   debug: 'kimi-web.debug',
-  openInLastTarget: 'kimi-web.open-in.last-target',
+  openInDefaultTarget: 'kimi-web.open-in.default-target',
   sidebarCollapsed: 'kimi-web.sidebar-collapsed',
   sidebarWidth: 'kimi-web.sidebar-width',
   // deprecated cleanups (kept so the removals still fire for old users)

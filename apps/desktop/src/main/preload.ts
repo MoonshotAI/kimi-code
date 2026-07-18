@@ -6,6 +6,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 // contextIsolation and must reach the main process only through these methods.
 export type DialogOptions = Record<string, unknown>;
 
+/** One installed editor/terminal the workspace can be opened in (open-in.ts). */
+export type OpenInApp = { id: string; label: string };
+export type OpenInResult = { ok: boolean; error?: string };
+
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   onMenu: (cb: (action: string) => void) => () => void;
@@ -14,6 +18,8 @@ export type KimiDesktopApi = {
   openExternal: (url: string) => Promise<void>;
   showOpenDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePaths: string[] }>;
   showSaveDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePath?: string }>;
+  listOpenInApps: () => Promise<OpenInApp[]>;
+  openInApp: (appId: string, path: string) => Promise<OpenInResult>;
   getServerToken: () => Promise<string | undefined>;
   /** Current native-window fullscreen state (initial value; transitions come
    *  through `onFullscreenChanged`). */
@@ -46,6 +52,8 @@ export const api: KimiDesktopApi = {
   openExternal: (url) => ipcRenderer.invoke('kimi:open-external', url),
   showOpenDialog: (opts) => ipcRenderer.invoke('kimi:dialog-open', opts),
   showSaveDialog: (opts) => ipcRenderer.invoke('kimi:dialog-save', opts),
+  listOpenInApps: () => ipcRenderer.invoke('kimi:open-in-list'),
+  openInApp: (appId, path) => ipcRenderer.invoke('kimi:open-in', appId, path),
   getServerToken: () => ipcRenderer.invoke('kimi:get-server-token'),
   isFullscreen: () => ipcRenderer.invoke('kimi:is-fullscreen'),
   onFullscreenChanged: (cb) => {

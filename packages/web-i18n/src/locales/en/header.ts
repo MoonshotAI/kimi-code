@@ -1,6 +1,7 @@
 export default {
   openInEditor: 'Open in editor',
   openInEditorShort: 'Open',
+  openInApp: 'Open in {app}',
   chooseOpenApp: 'Choose application',
   copyAll: 'Copy all as Markdown',
   copyFinalSummary: 'Copy final summary',

@@ -34,6 +34,8 @@ export default {
   decreaseUiFontSize: '减小字体大小',
   increaseUiFontSize: '增大字体大小',
   languageHint: '选择界面显示语言',
+  defaultOpenInApp: '默认打开应用',
+  defaultOpenInAppHint: '从顶栏菜单打开文件和文件夹时默认使用的应用',
   agentDefaults: 'Agent 默认值',
   providers: '提供商',
   providersHint: '添加、删除或刷新提供商',

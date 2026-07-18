@@ -1,6 +1,7 @@
 export default {
   openInEditor: '在编辑器中打开',
   openInEditorShort: '打开',
+  openInApp: '用 {app} 打开',
   chooseOpenApp: '选择应用',
   copyAll: '复制全部对话为 Markdown',
   copyFinalSummary: '仅复制最终总结',
