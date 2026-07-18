@@ -78,7 +78,7 @@ describe('runHook process runner', () => {
 
   it('returns allow with timedOut=true when the command exceeds the timeout', async () => {
     const runHook = await importRunHook();
-    const result = await runHook('sleep 10', { tool_name: 'Shell' }, { timeout: 1 });
+    const result = await runHook('sleep 10', { tool_name: 'Shell' }, { timeout: 0.05 });
     expect(result.action).toBe('allow');
     expect(result.timedOut).toBe(true);
   });

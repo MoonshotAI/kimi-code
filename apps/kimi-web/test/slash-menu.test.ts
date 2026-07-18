@@ -3,6 +3,9 @@ import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '../src/api/types';
 import { useSlashMenu } from '../src/composables/useSlashMenu';
 
+// Public slash-menu contract: matching built-ins and dispatching selected
+// commands without coupling tests to component internals.
+
 interface MockTextarea {
   value: string;
   selectionStart: number;
@@ -50,10 +53,16 @@ describe('useSlashMenu — update', () => {
   });
 
   it('filters to matching commands', () => {
-    const { slash } = setup('/mod');
+    const { slash } = setup('/com');
     slash.update();
     expect(slash.open.value).toBe(true);
-    expect(slash.items.value.map((i) => i.name)).toContain('/model');
+    expect(slash.items.value.map((i) => i.name)).toContain('/compact');
+  });
+
+  it('offers the session export command for an export prefix', () => {
+    const { slash } = setup('/exp');
+    slash.update();
+    expect(slash.items.value.map((item) => item.name)).toContain('/export');
   });
 
   it('closes when nothing matches', () => {
@@ -98,11 +107,11 @@ describe('useSlashMenu — update', () => {
 
 describe('useSlashMenu — select', () => {
   it('non-acceptsInput: clears text, pushes history, emits the command', () => {
-    const { text, emitted, pushed, slash } = setup('/model');
-    slash.select({ name: '/model', desc: '' });
+    const { text, emitted, pushed, slash } = setup('/new');
+    slash.select({ name: '/new', desc: '' });
     expect(text.value).toBe('');
-    expect(pushed).toEqual(['/model']);
-    expect(emitted).toEqual(['/model']);
+    expect(pushed).toEqual(['/new']);
+    expect(emitted).toEqual(['/new']);
     expect(slash.open.value).toBe(false);
   });
 

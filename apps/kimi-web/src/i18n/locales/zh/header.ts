@@ -20,4 +20,5 @@ export default {
   renameSession: '重命名',
   forkSession: '分叉会话',
   archiveSession: '归档',
+  exportSession: '导出会话',
 };

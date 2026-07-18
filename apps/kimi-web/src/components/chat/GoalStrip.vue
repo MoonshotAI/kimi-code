@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppGoal } from '../../api/types';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
+import { formatTokens } from '../../lib/formatTokens';
 import Card from '../ui/Card.vue';
 import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
@@ -11,6 +13,7 @@ const props = defineProps<{ goal: AppGoal; forceExpanded?: number }>();
 const emit = defineEmits<{ controlGoal: [action: 'pause' | 'resume' | 'cancel'] }>();
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 const expanded = ref(false);
 
@@ -45,12 +48,24 @@ function formatMs(ms: number): string {
   const hour = Math.floor(min / 60);
   return `${hour}h ${min % 60}m`;
 }
+
+async function onCancel(): Promise<void> {
+  const confirmed = await confirm({
+    title: t('status.goalCancel'),
+    message: t('status.goalCancelConfirm'),
+    confirmLabel: t('status.goalCancelConfirmYes'),
+    cancelLabel: t('status.goalCancelConfirmNo'),
+    variant: 'danger',
+  });
+  if (confirmed) emit('controlGoal', 'cancel');
+}
 </script>
 
 <template>
   <Card class="goal-strip" :class="{ expanded }">
     <template #head>
       <button class="goal-row" type="button" @click="expanded = !expanded">
+        <Icon class="goal-icon" name="target" size="md" />
         <span class="goal-kicker">{{ t('status.goalLabel') }}</span>
         <span class="goal-objective" :class="{ 'expanded-hidden': expanded }">{{ goal.objective }}</span>
         <Badge
@@ -58,14 +73,14 @@ function formatMs(ms: number): string {
           size="sm"
           class="goal-status"
         >{{ goalStatusLabel(goal.status) }}</Badge>
-        <span class="goal-progress" aria-hidden="true">
+        <span v-if="goal.budget.tokenBudget !== null" class="goal-progress" aria-hidden="true">
           <span class="goal-progress-fill" :style="{ width: `${tokenPct}%` }"></span>
         </span>
         <Icon class="goal-chevron" :class="{ open: expanded }" name="chevron-right" size="md" />
       </button>
     </template>
 
-    <template v-if="expanded" #default>
+    <template #default>
       <div class="goal-full">{{ goal.objective }}</div>
       <div v-if="goal.completionCriterion" class="goal-criterion">
         <span>Done when</span>
@@ -73,11 +88,15 @@ function formatMs(ms: number): string {
       </div>
     </template>
 
-    <template v-if="expanded" #foot>
-      <div class="goal-footer">
+    <template #foot>
+      <div
+        class="goal-footer"
+        :inert="!expanded"
+        :aria-hidden="!expanded"
+      >
         <div class="goal-meta">
           <span>{{ goal.turnsUsed }} turns</span>
-          <span>{{ goal.tokensUsed.toLocaleString() }} tokens</span>
+          <span>{{ formatTokens(goal.tokensUsed) }} tokens</span>
           <span>{{ formatMs(goal.wallClockMs) }}</span>
           <span v-if="goal.budget.tokenBudget !== null">{{ tokenPct }}% token budget</span>
         </div>
@@ -106,7 +125,7 @@ function formatMs(ms: number): string {
             size="sm"
             variant="danger-soft"
             class="goal-action"
-            @click.stop="emit('controlGoal', 'cancel')"
+            @click.stop="onCancel"
           >
             <Icon name="close" size="md" />
             <span>{{ t('status.goalCancel') }}</span>
@@ -121,10 +140,17 @@ function formatMs(ms: number): string {
 .goal-strip {
   --composer-send-size: 32px;
   --composer-send-inset: var(--space-2);
+  --goal-corner-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
   margin: var(--space-2) var(--space-4) 0;
+  box-shadow: var(--shadow-md);
 }
 .goal-strip.ui-card {
-  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset));
+  border-radius: var(--goal-corner-radius);
+  corner-shape: superellipse(1.5);
+}
+.goal-strip:not(.expanded).ui-card {
+  border-radius: var(--radius-full);
+  corner-shape: round;
 }
 .goal-strip :deep(.ui-card__foot) {
   padding: var(--composer-send-inset);
@@ -134,10 +160,31 @@ function formatMs(ms: number): string {
 .goal-strip :deep(.ui-card__foot) {
   padding-left: calc((var(--composer-send-inset) + var(--composer-send-size)) / 2);
 }
-/* When collapsed the body/foot slots are not rendered; collapse the (always-
-   rendered) Card body and drop the head border so the strip is a single row. */
-.goal-strip:not(.expanded) :deep(.ui-card__body) { display: none; }
-.goal-strip:not(.expanded) :deep(.ui-card__head) { border-bottom: none; }
+.goal-strip :deep(.ui-card__body) {
+  background: var(--color-surface-raised);
+  max-height: 480px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height var(--duration-slow) var(--ease-out),
+    padding-top var(--duration-slow) var(--ease-out),
+    padding-bottom var(--duration-slow) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
+}
+/* Collapse the body and footer while keeping both mounted so their height and
+   padding can animate instead of jumping between two layouts. */
+.goal-strip:not(.expanded) :deep(.ui-card__body) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
+.goal-strip :deep(.ui-card__head) {
+  border-bottom-color: var(--color-line);
+  transition: border-bottom-color var(--duration-base) var(--ease-out);
+}
+.goal-strip:not(.expanded) :deep(.ui-card__head) {
+  border-bottom-color: transparent;
+}
 
 .goal-row {
   width: 100%;
@@ -157,6 +204,11 @@ function formatMs(ms: number): string {
   color: var(--color-success);
   font: var(--text-base)/var(--leading-normal) var(--font-ui);
   font-weight: var(--weight-semibold);
+}
+.goal-icon {
+  flex: none;
+  color: var(--color-success);
+  margin-right: calc(-1 * var(--space-1));
 }
 .goal-objective {
   min-width: 0;
@@ -201,7 +253,7 @@ function formatMs(ms: number): string {
 }
 .goal-full {
   color: var(--color-text);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   line-height: var(--leading-normal);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -226,13 +278,30 @@ function formatMs(ms: number): string {
   width: 100%;
   min-width: 0;
 }
+.goal-strip :deep(.ui-card__foot) {
+  max-height: 100px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height var(--duration-slow) var(--ease-out),
+    padding-top var(--duration-slow) var(--ease-out),
+    padding-bottom var(--duration-slow) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out),
+    border-top-color var(--duration-base) var(--ease-out);
+}
+.goal-strip:not(.expanded) :deep(.ui-card__foot) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  opacity: 0;
+}
 .goal-meta {
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   color: var(--color-text-muted);
-  font: 12px/var(--leading-normal) var(--font-ui);
+  font: var(--text-xs)/var(--leading-normal) var(--font-ui);
   font-weight: 450;
   font-variant-numeric: tabular-nums;
 }
@@ -259,6 +328,13 @@ function formatMs(ms: number): string {
   }
   .goal-progress {
     display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .goal-strip :deep(.ui-card__head),
+  .goal-strip :deep(.ui-card__body),
+  .goal-strip :deep(.ui-card__foot) {
+    transition: none;
   }
 }
 </style>

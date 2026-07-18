@@ -1,4 +1,7 @@
 import type { CreateSessionOptions, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+
+import { createKimiCodeUserAgent } from '#/cli/version';
+
 import type { SkillListSession } from '../commands';
 
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
@@ -173,6 +176,7 @@ export class AuthFlowController {
           const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
           return tokenProvider.getAccessToken();
         },
+        userAgent: createKimiCodeUserAgent(),
       },
       { scope },
     );

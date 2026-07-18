@@ -154,7 +154,7 @@ describe('clipboard image paste compression', () => {
     // the submitted image both read from these bytes, so they cannot diverge.
     const dims = parseImageMeta(att.bytes);
     expect(dims).not.toBeNull();
-    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(3000);
   });
 
   it('honors the harness [image] max_edge_px when pasting', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
 import type { AppMessage, AppSession, AppTask } from '../src/api/types';
+import { i18n } from '../src/i18n';
 
 function makeSession(id: string, updatedAt: string): AppSession {
   return {
@@ -8,7 +9,7 @@ function makeSession(id: string, updatedAt: string): AppSession {
     title: id,
     createdAt: updatedAt,
     updatedAt,
-    status: 'idle',
+    busy: false,
     archived: false,
     cwd: '/workspace',
     model: 'kimi-code',
@@ -43,10 +44,174 @@ function makeSubagentTask(id: string, sessionId: string): AppTask {
     sessionId,
     kind: 'subagent',
     description: 'subagent task',
-    status: 'running',
+    busy: true,
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
+
+describe('reduceAppEvent turnActiveChanged', () => {
+  it('sets and clears the per-session main-turn liveness flag', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+    const started = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: 's1', active: true },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(started.turnActiveBySession['s1']).toBe(true);
+    expect(started.sessions[0]?.mainTurnActive).toBe(true);
+    const ended = reduceAppEvent(
+      started,
+      { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(ended.turnActiveBySession['s1']).toBeUndefined();
+    expect(ended.sessions[0]?.mainTurnActive).toBe(false);
+  });
+
+  it('drops the flag with the rest of a deleted session', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      turnActiveBySession: { s1: true },
+    };
+    const next = reduceAppEvent(state, { type: 'sessionDeleted', sessionId: 's1' }, { sessionId: 's1', seq: 1 });
+    expect(next.turnActiveBySession['s1']).toBeUndefined();
+  });
+});
+
+describe('reduceAppEvent sessionWorkChanged', () => {
+  it('updates list-level main-turn liveness for an unopened session', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: true,
+        mainTurnActive: true,
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]).toMatchObject({
+      busy: true,
+      mainTurnActive: true,
+    });
+    expect(next.turnActiveBySession['s1']).toBe(true);
+  });
+
+  it('updates the listed action-required fallback for an unopened session', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: true,
+        pendingInteraction: 'question',
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]?.pendingInteraction).toBe('question');
+  });
+
+  it('clears streamed main-turn liveness while aggregate work remains busy', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        {
+          ...makeSession('s1', '2026-01-01T00:00:00.000Z'),
+          busy: true,
+          mainTurnActive: true,
+        },
+      ],
+      turnActiveBySession: { s1: true },
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: true,
+        mainTurnActive: false,
+        pendingInteraction: 'none',
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]).toMatchObject({ busy: true, mainTurnActive: false });
+    expect(next.turnActiveBySession['s1']).toBeUndefined();
+  });
+
+  it('clears stale main-turn liveness when an idle update omits the optional field', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        {
+          ...makeSession('s1', '2026-01-01T00:00:00.000Z'),
+          busy: true,
+          mainTurnActive: true,
+        },
+      ],
+      turnActiveBySession: { s1: true },
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: false,
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]).toMatchObject({ busy: false, mainTurnActive: false });
+    expect(next.turnActiveBySession['s1']).toBeUndefined();
+  });
+
+  it('clears a stale turn outcome when the update omits lastTurnReason', () => {
+    // An omitted last_turn_reason is authoritative ("no current outcome" —
+    // e.g. a fresh turn cleared the previous one), not "keep the old value".
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        {
+          ...makeSession('s1', '2026-01-01T00:00:00.000Z'),
+          busy: false,
+          lastTurnReason: 'cancelled' as const,
+        },
+      ],
+    };
+
+    const cleared = reduceAppEvent(
+      state,
+      { type: 'sessionWorkChanged', sessionId: 's1', busy: true },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(cleared.sessions[0]?.lastTurnReason).toBeUndefined();
+
+    const set = reduceAppEvent(
+      state,
+      { type: 'sessionWorkChanged', sessionId: 's1', busy: false, lastTurnReason: 'failed' },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(set.sessions[0]?.lastTurnReason).toBe('failed');
+  });
+});
 
 describe('reduceAppEvent messageCreated', () => {
   it('bumps the session updatedAt so it floats to the top of the sidebar', () => {
@@ -265,6 +430,47 @@ describe('reduceAppEvent taskProgress', () => {
       text: 'partial',
     });
   });
+
+  it('keeps the roster-seeded description when a re-projected task carries the placeholder', () => {
+    // After a page refresh the snapshot roster seeds the real description; a
+    // later subagent.* lifecycle event re-projects the task with the
+    // projector's skeleton default ('Sub Agent') — it must not clobber it.
+    const state = {
+      ...createInitialState(),
+      tasksBySession: {
+        's1': [{ ...makeSubagentTask('t1', 's1'), description: 'explore the auth flow' }],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: { ...makeSubagentTask('t1', 's1'), description: 'Sub Agent' },
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]?.description).toBe('explore the auth flow');
+  });
+
+  it('takes the incoming description when it is a real one', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: {
+        's1': [{ ...makeSubagentTask('t1', 's1'), description: 'Sub Agent' }],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: { ...makeSubagentTask('t1', 's1'), description: 'write the tests' },
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]?.description).toBe('write the tests');
+  });
 });
 
 describe('reduceAppEvent sessions reference stability', () => {
@@ -351,5 +557,79 @@ describe('reduceAppEvent messageCreated cron origin', () => {
     const msgs = next.messagesBySession[sid]!;
     expect(msgs).toHaveLength(2);
     expect(msgs.map((m) => m.id)).toEqual(['opt_1', 'cron_1']);
+  });
+});
+
+describe('reduceAppEvent unknown agent error', () => {
+  function reduceRaw(raw: unknown): ReturnType<typeof reduceAppEvent> {
+    return reduceAppEvent(
+      createInitialState(),
+      { type: 'unknown', raw },
+      { sessionId: 's1', seq: 1 },
+    );
+  }
+
+  it('surfaces a rate-limit failure as a structured notice with full diagnostics', () => {
+    const next = reduceRaw({
+      _agentError: true,
+      code: 'provider.rate_limit',
+      message: 'Rate limit reached for requests. Please try again later.',
+      name: 'RateLimitError',
+      details: { statusCode: 429, requestId: 'req_1' },
+      retryable: true,
+    });
+    const notice = next.warnings[0];
+    expect(typeof notice).toBe('object');
+    if (typeof notice !== 'object' || notice === null) return;
+    expect(notice.severity).toBe('error');
+    expect(notice.title).toBe(i18n.global.t('warnings.agentError.rateLimit'));
+    expect(notice.message).toBe('Rate limit reached for requests. Please try again later.');
+    const byLabel = new Map(notice.details?.map((d) => [d.label, d.value]));
+    expect(byLabel.get(i18n.global.t('warnings.details.code'))).toBe('provider.rate_limit');
+    expect(byLabel.get(i18n.global.t('warnings.details.status'))).toBe('429');
+    expect(byLabel.get(i18n.global.t('warnings.details.requestId'))).toBe('req_1');
+    expect(byLabel.get(i18n.global.t('warnings.details.errorName'))).toBe('RateLimitError');
+  });
+
+  it('keeps extra detail fields such as finishReason visible', () => {
+    const next = reduceRaw({
+      _agentError: true,
+      code: 'provider.filtered',
+      message: 'Provider filtered the response',
+      details: { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+    });
+    const notice = next.warnings[0];
+    if (typeof notice !== 'object' || notice === null) throw new Error('expected notice');
+    const values = notice.details?.map((d) => d.value) ?? [];
+    expect(values).toContain('filtered');
+    expect(values).toContain('content_filter');
+  });
+
+  it('shows a connection failure without status/requestId rows', () => {
+    const next = reduceRaw({
+      _agentError: true,
+      code: 'provider.connection_error',
+      message: 'Connection error.',
+    });
+    const notice = next.warnings[0];
+    if (typeof notice !== 'object' || notice === null) throw new Error('expected notice');
+    expect(notice.title).toBe(i18n.global.t('warnings.agentError.connection'));
+    expect(notice.message).toBe('Connection error.');
+    expect(notice.details?.map((d) => d.value)).toEqual(['provider.connection_error']);
+  });
+
+  it('falls back to the generic title for unmapped or missing codes', () => {
+    for (const code of ['internal', undefined]) {
+      const next = reduceRaw({ _agentError: true, code, message: 'boom' });
+      const notice = next.warnings[0];
+      if (typeof notice !== 'object' || notice === null) throw new Error('expected notice');
+      expect(notice.title).toBe(i18n.global.t('warnings.agentError.title'));
+      expect(notice.message).toBe('boom');
+    }
+  });
+
+  it('still renders agent warnings as plain strings', () => {
+    const next = reduceRaw({ _agentWarning: true, message: 'heads up' });
+    expect(next.warnings[0]).toBe(`${i18n.global.t('warnings.noteLabel')}: heads up`);
   });
 });

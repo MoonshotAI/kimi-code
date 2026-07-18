@@ -13,14 +13,15 @@ import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
 import type { ColorScheme } from '../../composables/useKimiWebClient';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import {
-  coerceThinkingForModel,
   commitLevel,
+  effectiveThinkingLevel,
   effortLabel,
   modelThinkingAvailability,
   segmentsFor,
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import { formatTokens } from '../../lib/formatTokens';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
@@ -72,28 +73,20 @@ function onColorScheme(v: string): void {
 
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
 
-const currentModel = computed<AppModel | undefined>(() => {
-  const raw = props.status?.modelId ?? props.status?.model ?? '';
-  return props.models?.find(
-    (m) => m.id === raw || m.model === raw || m.displayName === props.status?.model,
-  );
-});
+// Identity is the model id — display/model names can collide across providers.
+const currentModel = computed<AppModel | undefined>(() =>
+  props.models?.find((m) => m.id === props.status?.modelId),
+);
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
-// The persisted level can be stale relative to the active model (e.g. 'on'
-// from a boolean model, or 'off' while viewing an always-on effort model).
-// Coerce it before computing the active segment so the mobile sheet shows and
-// selects the same model-aware default the composer and prompt submission use.
-const coercedThinkingLevel = computed(() =>
-  coerceThinkingForModel(currentModel.value, props.thinking ?? 'off'),
-);
-// Runtime level clamped to the segments this model actually offers.
+// The client resolves the level per model (the model's stored pick when still
+// declared, else the catalog default), so what arrives here is valid for the
+// active model. An undeclared level can only appear transiently, before the
+// catalog loads, and simply highlights no segment.
+const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
 const activeThinkingSegment = computed<string>(() => {
   const segs = thinkingSegments.value;
-  const level = coercedThinkingLevel.value;
-  if (segs.includes(level)) return level;
-  if (segs.includes('on')) return 'on';
-  return segs[0] ?? 'off';
+  return segs.includes(thinkingLevel.value) ? thinkingLevel.value : '';
 });
 const thinkingOptions = computed(() =>
   thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
@@ -114,15 +107,15 @@ const permSub = computed<string>(() => {
   return `${p} · ${desc}`;
 });
 
-const kFmt = (n: number): string => `${Math.round(n / 1000)}k`;
 const ctxPct = computed<number>(() =>
+  // ceil (not round) so sub-0.5% usage still renders a visible bar sliver.
   props.status.ctxMax > 0
-    ? Math.min(100, Math.max(0, Math.round((props.status.ctxUsed / props.status.ctxMax) * 100)))
+    ? Math.min(100, Math.max(0, Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100)))
     : 0,
 );
-// Same "12k/256k" format as the desktop toolbar ring.
+// Shared 1024-based formatter, same as the desktop tooltip / status panel.
 const ctxValue = computed<string>(() =>
-  props.status.ctxMax > 0 ? `${kFmt(props.status.ctxUsed)}/${kFmt(props.status.ctxMax)}` : t('status.statusNone'),
+  props.status.ctxMax > 0 ? `${formatTokens(props.status.ctxUsed)}/${formatTokens(props.status.ctxMax)}` : t('status.statusNone'),
 );
 
 function setThinkingSegment(value: string): void {
@@ -276,8 +269,8 @@ watch(
       <span
         v-else
         class="srow-val"
-        :class="{ dim: activeThinkingSegment === 'off' }"
-      >{{ activeThinkingSegment === 'off' ? t('status.planOff') : effortLabel(activeThinkingSegment) }}</span>
+        :class="{ dim: thinkingLevel === 'off' }"
+      >{{ thinkingLevel === 'off' ? t('status.planOff') : effortLabel(thinkingLevel) }}</span>
     </div>
 
     <!-- Plan mode → real toggle switch -->
@@ -593,11 +586,11 @@ watch(
     align-items: flex-start;
     gap: 10px;
     min-width: 0;
-    padding: 14px max(14px, env(safe-area-inset-right)) 14px max(14px, env(safe-area-inset-left));
+    padding: 14px max(14px, var(--safe-right)) 14px max(14px, var(--safe-left));
   }
   .group-title {
-    padding-left: max(14px, env(safe-area-inset-left));
-    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(14px, var(--safe-left));
+    padding-right: max(14px, var(--safe-right));
   }
   .srow-main {
     flex: 1 1 auto;

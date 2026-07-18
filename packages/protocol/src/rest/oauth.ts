@@ -22,17 +22,42 @@ export const oauthLoginStartRequestSchema = z.object({
 });
 export type OAuthLoginStartRequest = z.infer<typeof oauthLoginStartRequestSchema>;
 
-export const oauthFlowStartSchema = z.object({
+/**
+ * Result of `POST /v1/oauth/login`.
+ *
+ * Two shapes, discriminated by `status`:
+ *   - `pending`: a real device-code flow was started; the `verification_*`,
+ *     `user_code`, `expires_*`, and `interval` fields are populated so the
+ *     client can render the device-code step and start polling.
+ *   - `authenticated`: the toolkit already had a usable token and short-
+ *     circuited via its `ensureFresh` fast path, so no device code was
+ *     issued. The client can skip the device-code step and treat the login
+ *     as already complete.
+ */
+export const oauthFlowStartPendingSchema = z.object({
   flow_id: z.string().min(1),
   provider: z.string().min(1),
+  status: z.literal('pending'),
   verification_uri: z.string().url(),
   verification_uri_complete: z.string().url(),
   user_code: z.string().min(1),
   expires_in: z.number().int().positive(),
   interval: z.number().int().positive(),
-  status: z.literal('pending'),
   expires_at: isoDateTimeSchema,
 });
+export type OAuthFlowStartPending = z.infer<typeof oauthFlowStartPendingSchema>;
+
+export const oauthFlowStartAuthenticatedSchema = z.object({
+  flow_id: z.string().min(1),
+  provider: z.string().min(1),
+  status: z.literal('authenticated'),
+});
+export type OAuthFlowStartAuthenticated = z.infer<typeof oauthFlowStartAuthenticatedSchema>;
+
+export const oauthFlowStartSchema = z.discriminatedUnion('status', [
+  oauthFlowStartPendingSchema,
+  oauthFlowStartAuthenticatedSchema,
+]);
 export type OAuthFlowStart = z.infer<typeof oauthFlowStartSchema>;
 
 export const oauthFlowSnapshotSchema = z.object({

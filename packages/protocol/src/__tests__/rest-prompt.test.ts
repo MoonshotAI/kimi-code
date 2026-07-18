@@ -135,6 +135,18 @@ describe('promptSubmitResultSchema', () => {
     expect(parsed.status).toBe('running');
   });
 
+  it('parses a blocked prompt result shape', () => {
+    const parsed = promptSubmitResultSchema.parse({
+      prompt_id: 'prompt_blocked',
+      user_message_id: 'msg_blocked',
+      status: 'blocked',
+      content: [{ type: 'text', text: 'blocked' }],
+      created_at: '2026-06-09T00:00:00.000Z',
+    });
+
+    expect(parsed.status).toBe('blocked');
+  });
+
   it('rejects empty prompt_id', () => {
     expect(
       promptSubmitResultSchema.safeParse({ prompt_id: '', user_message_id: 'msg' })

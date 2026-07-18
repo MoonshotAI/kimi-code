@@ -5,15 +5,35 @@
 // model pick. Cross-dependencies (failure reporting, status refresh, activity,
 // in-flight set, thinking storage) are injected by the facade.
 
-import { ref, type ComputedRef } from 'vue';
+import { ref, watch, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, ThinkingLevel } from '../../api/types';
+import type {
+  AppMessage,
+  AppModel,
+  AppProvider,
+  AppSession,
+  AppSkill,
+  OAuthLoginStartResult,
+  ThinkingLevel,
+} from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
-import { coerceThinkingForModel } from '../../lib/modelThinking';
+import {
+  defaultThinkingLevelFor,
+  levelDeclaredBy,
+  thinkingLevelForModelSwitch,
+  thinkingLevelToConfig,
+} from '../../lib/modelThinking';
+import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
 import type { ActivityState } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
 
 const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
+
+/** Sentinel thrown to abort a skill activation when the prerequisite profile
+ *  persist failed — persistSessionProfile already surfaced that failure, so
+ *  the catch skips activating without reporting a second, synthetic error.
+ *  (An actual Error instance: oxlint only-throw-error.) */
+const PROFILE_PERSIST_FAILED = new Error('profile persist failed');
 
 function loadStarredModelsFromStorage(): string[] {
   try {
@@ -54,10 +74,16 @@ export interface UseModelProviderStateDeps {
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
+  /** Persist profile fields to the daemon. Resolves false (after surfacing the
+   *  failure itself) when the daemon rejected the patch — awaited callers that
+   *  order strictly after the profile must NOT proceed on false. */
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
   activity: ComputedRef<ActivityState>;
-  inFlightPromptSessions: Set<string>;
-  saveThinkingToStorage: (v: ThinkingLevel) => void;
+  /** Read the persisted thinking pick for a model (undefined = never picked
+   *  for that model). Storage is keyed by model id. */
+  loadThinkingForModel: (modelId: string) => ThinkingLevel | undefined;
+  /** Persist an explicit thinking pick under the given model id. */
+  saveThinkingToStorage: (modelId: string, level: ThinkingLevel) => void;
   /** Replace one session in place (matched by id). Owned by the facade so the
    *  model module never assigns rawState.sessions directly. */
   updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
@@ -77,7 +103,7 @@ export function useModelProviderState(
     refreshSessionStatus,
     persistSessionProfile,
     activity,
-    inFlightPromptSessions,
+    loadThinkingForModel,
     saveThinkingToStorage,
     updateSession,
     updateSessionMessages,
@@ -102,21 +128,88 @@ export function useModelProviderState(
 
   function modelById(modelId: string | null | undefined): AppModel | undefined {
     if (modelId === undefined || modelId === null || modelId.length === 0) return undefined;
-    return models.value.find((m) => m.id === modelId || m.model === modelId);
+    // Prefer the exact id — model names can collide across providers.
+    return (
+      models.value.find((m) => m.id === modelId) ??
+      models.value.find((m) => m.model === modelId)
+    );
   }
 
-  function activeThinkingModel(): AppModel | undefined {
+  function currentModelId(): string | undefined {
     const activeSession = rawState.activeSessionId
       ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
       : undefined;
-    return modelById(activeSession?.model ?? draftModel.value ?? rawState.defaultModel);
+    const rawModel =
+      activeSession === undefined
+        ? draftModel.value ?? rawState.defaultModel
+        : activeSession.model || rawState.defaultModel;
+    return modelById(rawModel)?.id ?? rawModel ?? undefined;
   }
 
-  function applyThinkingLevel(level: ThinkingLevel): ThinkingLevel {
-    const next = coerceThinkingForModel(activeThinkingModel(), level);
-    rawState.thinking = next;
-    saveThinkingToStorage(next);
-    return next;
+  /**
+   * The level a model should run at: the user's stored pick for THIS model when
+   * the model still declares it, else the model's catalog default. Validation
+   * against the catalog entry is what keeps a stale or foreign level (picked
+   * for another model, or dropped by a catalog update) from reaching the UI and
+   * the daemon.
+   */
+  function thinkingLevelForModel(model: AppModel): ThinkingLevel {
+    const stored = loadThinkingForModel(model.id);
+    if (stored !== undefined && levelDeclaredBy(model, stored)) return stored;
+    return defaultThinkingLevelFor(model);
+  }
+
+  /** thinkingLevelForModel by model id, for paths that submit a prompt for a
+   *  session other than the active one (queued drain, steer): the level must
+   *  come from the prompt's OWN model, not from rawState.thinking, which always
+   *  tracks the active session's model. Undefined when the id is not in the
+   *  catalog (caller falls back to the active value, same as before). */
+  function thinkingLevelForModelId(modelId: string | undefined): ThinkingLevel | undefined {
+    if (modelId === undefined) return undefined;
+    const model = modelById(modelId);
+    return model === undefined ? undefined : thinkingLevelForModel(model);
+  }
+
+  function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
+    // The explicit-picker path (setThinking) — the ONLY writer of thinking
+    // storage. Model switches (setModel) and passive resolution update
+    // rawState.thinking in-memory instead, so a level the user never actually
+    // picked (e.g. a derived catalog default) is never mistaken for a stored
+    // choice. Persisted under the CURRENT model id — per-model storage keeps a
+    // pick from leaking onto models that never declared it. Only concrete
+    // levels are persisted; "no preference" stays in-memory.
+    rawState.thinking = level;
+    const modelId = currentModelId();
+    if (level !== undefined && modelId !== undefined) saveThinkingToStorage(modelId, level);
+    return level;
+  }
+
+  // The active model can change WITHOUT a picker action: switching sessions,
+  // the snapshot adopting another session, or the catalog/default arriving
+  // late. Re-resolve the level for the new model so a pick made for one model
+  // is never submitted to — or rendered on — another (a foreign level used to
+  // leave the composer showing nothing selected with no way to switch). The
+  // picker path (setModel) applies the same resolution synchronously, so the
+  // watcher's re-resolution after it is an idempotent no-op.
+  watch(
+    () => currentModelId(),
+    (id, prevId) => {
+      if (id === undefined || id === prevId) return;
+      const model = modelById(id);
+      if (model === undefined) return;
+      rawState.thinking = thinkingLevelForModel(model);
+    },
+  );
+
+  /** Persist an explicit thinking pick as the daemon-wide default ([thinking]
+   *  in config.toml), mirroring the TUI's persistModelSelection, so sessions
+   *  created by other clients inherit it. Fire-and-forget: the session-level
+   *  and local values have already been applied. Never called for derived
+   *  values (e.g. the loadModels default pin) — only for user actions. */
+  function persistGlobalThinking(level: ThinkingLevel): void {
+    void getKimiWebApi()
+      .setConfig({ thinking: thinkingLevelToConfig(level) })
+      .catch((error: unknown) => pushOperationFailure('setConfig', error));
   }
 
   async function loadSkillsForSession(sessionId: string): Promise<void> {
@@ -146,22 +239,15 @@ export function useModelProviderState(
     try {
       const api = getKimiWebApi();
       models.value = await api.listModels();
-      applyThinkingLevel(rawState.thinking);
+      // Resolve the active model's level: the stored pick for THIS model when
+      // still declared, else the catalog default. In-memory only — localStorage
+      // stays reserved for levels the user actually picked. Always re-resolved
+      // (not just when unset) so a level carried over from another model can't
+      // outlive the catalog refresh that makes it invalid.
+      const active = modelById(currentModelId());
+      if (active !== undefined) rawState.thinking = thinkingLevelForModel(active);
     } catch (err) {
       pushOperationFailure('loadModels', err);
-    }
-  }
-
-  async function refreshOAuthProviderModels(): Promise<void> {
-    try {
-      const result = await getKimiWebApi().refreshOAuthProviderModels();
-      for (const failure of result.failed) {
-        pushOperationFailure('refreshOAuthProviderModels', new Error(failure.reason), {
-          message: failure.provider,
-        });
-      }
-    } catch {
-      // Older daemons may not expose this endpoint; model listing still works.
     }
   }
 
@@ -188,22 +274,38 @@ export function useModelProviderState(
    */
   async function setModel(modelId: string): Promise<boolean> {
     const sid = rawState.activeSessionId;
-    const nextThinking = coerceThinkingForModel(modelById(modelId), rawState.thinking);
+    const targetModel = modelById(modelId);
     const prevThinking = rawState.thinking;
+    const prevSessionModel = sid
+      ? rawState.sessions.find((s) => s.id === sid)?.model
+      : undefined;
+    const isSwitch = currentModelId() !== (targetModel?.id ?? modelId);
+    // On a real switch, restore the target model's own stored pick when still
+    // declared; otherwise its catalog default (see thinkingLevelForModelSwitch).
+    const nextThinking = thinkingLevelForModelSwitch(
+      targetModel,
+      prevThinking,
+      isSwitch,
+      targetModel === undefined ? undefined : loadThinkingForModel(targetModel.id),
+    );
     if (!sid) {
       // New-session draft (onboarding composer): no backend session to update.
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
+      // In-memory only: a model switch is not a thinking pick, so nothing is
+      // persisted (a derived default would otherwise masquerade as an explicit
+      // choice later). Storage writes stay with setThinking.
       draftModel.value = modelId;
-      applyThinkingLevel(nextThinking);
+      rawState.thinking = nextThinking;
+      if (nextThinking !== prevThinking && nextThinking !== undefined) {
+        persistGlobalThinking(nextThinking);
+      }
       return true;
     }
     // Optimistic: show the chosen model immediately, but remember the previous
     // one so we can roll back if the switch never reaches the daemon.
-    const prevModel = rawState.sessions.find((s) => s.id === sid)?.model;
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     if (nextThinking !== prevThinking) {
       rawState.thinking = nextThinking;
-      saveThinkingToStorage(nextThinking);
     }
     try {
       await getKimiWebApi().updateSession(sid, {
@@ -215,13 +317,17 @@ export function useModelProviderState(
       // not fail it — but when the daemon is unreachable the request throws here.
       // Roll the picker back to the real model so the UI can't keep showing the
       // new one as if the switch succeeded, then surface the failure.
-      updateSession(sid, (s) => ({ ...s, model: prevModel ?? s.model }));
+      updateSession(sid, (s) => ({ ...s, model: prevSessionModel ?? s.model }));
       if (nextThinking !== prevThinking) {
         rawState.thinking = prevThinking;
-        saveThinkingToStorage(prevThinking);
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
       return false;
+    }
+    // The switch reached the daemon: also persist the thinking pick as the
+    // daemon-wide default (mirrors the TUI). Skipped on rollback above.
+    if (nextThinking !== prevThinking && nextThinking !== undefined) {
+      persistGlobalThinking(nextThinking);
     }
     // refreshSessionStatus folds the authoritative current model from /status
     // back into the session (the profile echo can return ''). Best-effort: a
@@ -254,12 +360,14 @@ export function useModelProviderState(
   async function activateSkill(skillName: string, args?: string, sessionId?: string): Promise<void> {
     const sid = sessionId ?? rawState.activeSessionId;
     if (!sid) return;
-    const guarded = activity.value === 'idle' && !inFlightPromptSessions.has(sid);
+    const guarded = activity.value === 'idle' && !rawState.inFlightBySession[sid];
     const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
 
+    const localTurnToken = guarded ? beginLocalTurn(sid) : undefined;
     if (guarded) {
-      inFlightPromptSessions.add(sid);
-      rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
+      // Share the local-turn-start lifecycle with prompt submits: a racing
+      // terminal snapshot must not clear this skill's turn either.
+      rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: true };
       const optimisticMsg: AppMessage = {
         id: tempId,
         sessionId: sid,
@@ -280,14 +388,35 @@ export function useModelProviderState(
     }
 
     try {
+      // Skill activation carries only name/args — the daemon runs the turn at
+      // the SESSION PROFILE effort. Persist the level resolved for this
+      // session's own model first (awaited, mirroring the new-session skill
+      // path), so a profile that predates the per-model restore can't run the
+      // skill at a stale effort while the UI shows the restored level. When
+      // the persist fails (it surfaces the error itself), activating would
+      // launch the skill at exactly that stale effort — abort instead.
+      // Session models can be '' transiently (daemon profile echo) — treat
+      // that as "unset" and resolve through the configured default, same as
+      // the prompt/BTW/steer paths, before selecting the thinking level.
+      const rawModel = rawState.sessions.find((s) => s.id === sid)?.model;
+      const skillModel = (rawModel && rawModel.length > 0 ? rawModel : rawState.defaultModel) ?? undefined;
+      const persisted = await persistSessionProfile(
+        { thinking: thinkingLevelForModelId(skillModel) ?? rawState.thinking },
+        sid,
+      );
+      if (!persisted) throw PROFILE_PERSIST_FAILED;
       await getKimiWebApi().activateSkill(sid, skillName, args);
     } catch (err) {
       if (guarded) {
-        inFlightPromptSessions.delete(sid);
-        rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+        rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
         updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       }
-      pushOperationFailure('activateSkill', err, { sessionId: sid });
+      // The persist failure was already surfaced by persistSessionProfile.
+      if (err !== PROFILE_PERSIST_FAILED) pushOperationFailure('activateSkill', err, { sessionId: sid });
+    } finally {
+      // The daemon answered the activation (accepted or rejected) — the
+      // pending window in which a snapshot can't reflect this turn is over.
+      if (localTurnToken !== undefined) settleLocalTurn(sid, localTurnToken);
     }
   }
 
@@ -349,17 +478,7 @@ export function useModelProviderState(
   }
 
   /** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
-  async function startOAuthLogin(): Promise<{
-    flowId: string;
-    provider: string;
-    verificationUri: string;
-    verificationUriComplete: string;
-    userCode: string;
-    expiresIn: number;
-    interval: number;
-    status: 'pending';
-    expiresAt: string;
-  } | null> {
+  async function startOAuthLogin(): Promise<OAuthLoginStartResult | null> {
     try {
       const api = getKimiWebApi();
       return await api.startOAuthLogin();
@@ -377,7 +496,10 @@ export function useModelProviderState(
     try {
       const api = getKimiWebApi();
       return await api.pollOAuthLogin();
-    } catch {
+    } catch (err) {
+      // The dialog counts consecutive nulls and gives up after a few; keep the
+      // cause in the log so a dead daemon is diagnosable.
+      console.warn('[kimi-web] pollOAuthLogin failed', err);
       return null;
     }
   }
@@ -397,6 +519,7 @@ export function useModelProviderState(
   function setThinking(level: ThinkingLevel): void {
     const next = applyThinkingLevel(level);
     void persistSessionProfile({ thinking: next });
+    if (next !== undefined) persistGlobalThinking(next);
   }
 
   return {
@@ -411,9 +534,9 @@ export function useModelProviderState(
     loadSkillsForSession,
     loadSkillsForWorkspace,
     loadModels,
-    refreshOAuthProviderModels,
     loadProviders,
     setModel,
+    thinkingLevelForModelId,
     toggleStarModel,
     activateSkill,
     addProvider,

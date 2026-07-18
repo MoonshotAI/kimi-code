@@ -12,12 +12,13 @@ import type { WireEnvelope } from './wire';
     composer's in-flight flag with them. Generous enough for slow endpoints;
     streaming runs over the WS, not these REST calls. */
 const REQUEST_TIMEOUT_MS = 30_000;
+const EXPORT_TIMEOUT_MS = 5 * 60_000;
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const BODY_PREVIEW_LIMIT = 500;
 
-// Server-transport auth failure envelope code (see packages/server
-// middleware/auth.ts AUTH_ERROR_CODE). Distinct from provider-auth 40110–40113.
-const SERVER_AUTH_UNAUTHORIZED_CODE = 40101;
+// Server-transport auth failure envelope code (see kap-server
+// src/middleware/auth.ts AUTH_ERROR_CODE). Distinct from provider-auth 40110–40113.
+export const SERVER_AUTH_UNAUTHORIZED_CODE = 40101;
 
 export interface DaemonHttpClientIdentity {
   readonly clientId: string;
@@ -27,9 +28,9 @@ export interface DaemonHttpClientIdentity {
 }
 
 /** AbortSignal.timeout with a fallback for older environments (jsdom). */
-function timeoutSignal(): AbortSignal | undefined {
+function timeoutSignal(timeoutMs = REQUEST_TIMEOUT_MS): AbortSignal | undefined {
   try {
-    return AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    return AbortSignal.timeout(timeoutMs);
   } catch {
     return undefined;
   }
@@ -176,6 +177,161 @@ export class DaemonHttpClient {
 
   async post<T>(path: string, body?: unknown, opts?: { allowCodes?: number[] }): Promise<T> {
     return this.request<T>('POST', path, body, undefined, opts?.allowCodes);
+  }
+
+  /** POST JSON and receive a raw ZIP. The request trace accepts a separate
+   * metadata-only body so large/sensitive export logs never enter the trace. */
+  async postZip(
+    path: string,
+    body: unknown,
+    traceBody: Record<string, number>,
+  ): Promise<{ blob: Blob; contentDisposition?: string }> {
+    const method = 'POST';
+    const url = buildRestUrl(this.origin, path);
+    const requestId = createRequestId();
+    const headers: Record<string, string> = {
+      'X-Request-Id': requestId,
+      'Content-Type': 'application/json; charset=utf-8',
+    };
+    this.addClientHeaders(headers);
+    const startedAt = Date.now();
+    traceRestRequest({ method, path, url, requestId, body: traceBody });
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(body),
+        signal: timeoutSignal(EXPORT_TIMEOUT_MS),
+      });
+    } catch (error) {
+      traceRestFailure({
+        method,
+        path,
+        requestId,
+        phase: 'fetch',
+        durationMs: Date.now() - startedAt,
+        error,
+      });
+      throw new DaemonNetworkError({
+        message: `Network error calling ${method} ${path}`,
+        cause: error,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'fetch',
+        timeoutMs: EXPORT_TIMEOUT_MS,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    const contentType = response.headers.get('content-type') ?? undefined;
+    const mediaType = contentType?.split(';', 1)[0]?.trim().toLowerCase();
+    if (!response.ok || mediaType !== 'application/zip') {
+      let envelope: WireEnvelope<unknown> | undefined;
+      try {
+        envelope = (await response.clone().json()) as WireEnvelope<unknown>;
+      } catch {
+        // A non-JSON response is diagnosed below without consuming the body.
+      }
+      this.checkAuthRequired(response, envelope?.code ?? 0);
+      if (!response.ok || (envelope !== undefined && envelope.code !== 0)) {
+        const code = envelope?.code ?? response.status;
+        const msg = envelope?.msg ?? response.statusText;
+        traceRestResponse({
+          method,
+          path,
+          requestId,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          code,
+          msg,
+          envelopeRequestId: envelope?.request_id,
+        });
+        throw new DaemonApiError({
+          code,
+          msg,
+          requestId: envelope?.request_id ?? requestId,
+          details: envelope?.details,
+          timestamp: Date.now(),
+          durationMs: Date.now() - startedAt,
+        });
+      }
+
+      const diagnosticResponse = response.clone();
+      const error = new TypeError(`Expected application/zip, received ${contentType ?? 'no content type'}`);
+      traceRestFailure({
+        method,
+        path,
+        requestId,
+        phase: 'parse',
+        durationMs: Date.now() - startedAt,
+        status: response.status,
+        error,
+      });
+      throw new DaemonNetworkError({
+        message: `Invalid ZIP response from ${method} ${path}`,
+        cause: error,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'parse',
+        timeoutMs: EXPORT_TIMEOUT_MS,
+        status: response.status,
+        statusText: response.statusText,
+        contentType,
+        bodyPreview: await readResponsePreview(diagnosticResponse),
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+
+    let blob: Blob;
+    try {
+      blob = await response.blob();
+    } catch (error) {
+      traceRestFailure({
+        method,
+        path,
+        requestId,
+        phase: 'parse',
+        durationMs: Date.now() - startedAt,
+        status: response.status,
+        error,
+      });
+      throw new DaemonNetworkError({
+        message: `Failed to read ZIP response from ${method} ${path}`,
+        cause: error,
+        method,
+        path,
+        url,
+        requestId,
+        phase: 'parse',
+        timeoutMs: EXPORT_TIMEOUT_MS,
+        status: response.status,
+        statusText: response.statusText,
+        contentType,
+        timestamp: Date.now(),
+        durationMs: Date.now() - startedAt,
+      });
+    }
+    traceRestResponse({
+      method,
+      path,
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      code: 0,
+      msg: '',
+    });
+    return {
+      blob,
+      contentDisposition: response.headers.get('content-disposition') ?? undefined,
+    };
   }
 
   /** Send multipart/form-data (FormData). Does NOT set Content-Type — browser sets it with boundary. */

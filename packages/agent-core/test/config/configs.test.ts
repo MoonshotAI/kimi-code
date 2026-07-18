@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   KimiConfigSchema,
+  applyPrintModeConfigDefaults,
   configToTomlData,
   ensureConfigFile,
   loadRuntimeConfig,
@@ -101,8 +102,12 @@ compaction_trigger_ratio = 0.85
 [background]
 max_running_tasks = 4
 keep_alive_on_exit = false
+bash_auto_background_on_timeout = false
 kill_grace_period_ms = 2000
 print_wait_ceiling_s = 3600
+
+[subagent]
+timeout_ms = 600000
 
 [image]
 max_edge_px = 1500
@@ -182,9 +187,11 @@ describe('harness config TOML loader', () => {
     expect(config.background).toMatchObject({
       maxRunningTasks: 4,
       keepAliveOnExit: false,
+      bashAutoBackgroundOnTimeout: false,
       killGracePeriodMs: 2000,
       printWaitCeilingS: 3600,
     });
+    expect(config.subagent).toMatchObject({ timeoutMs: 600000 });
     expect(config.image).toEqual({ maxEdgePx: 1500, readByteBudget: 131072 });
     expect(config.hooks).toEqual([
       {
@@ -929,5 +936,27 @@ support_efforts = ["low", "high"]
     const overrides = models['kimi-code/kimi-k2']?.['overrides'] as Record<string, unknown>;
 
     expect(overrides['support_efforts']).toEqual(['low', 'high']);
+  });
+});
+
+describe('applyPrintModeConfigDefaults', () => {
+  it('fills unbounded print defaults when nothing is configured', () => {
+    const config = applyPrintModeConfigDefaults({ providers: {} });
+    expect(config.loopControl?.maxStepsPerTurn).toBe(0);
+    expect(config.background?.bashTaskTimeoutS).toBe(0);
+    expect(config.subagent?.timeoutMs).toBe(0);
+  });
+
+  it('lets explicit user config win over every print default', () => {
+    const config = applyPrintModeConfigDefaults({
+      providers: {},
+      loopControl: { maxStepsPerTurn: 7 },
+      background: { bashTaskTimeoutS: 30, keepAliveOnExit: true },
+      subagent: { timeoutMs: 5000 },
+    });
+    expect(config.loopControl?.maxStepsPerTurn).toBe(7);
+    expect(config.background?.bashTaskTimeoutS).toBe(30);
+    expect(config.background?.keepAliveOnExit).toBe(true);
+    expect(config.subagent?.timeoutMs).toBe(5000);
   });
 });

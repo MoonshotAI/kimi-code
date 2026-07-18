@@ -10,7 +10,7 @@ describe('metaResponseSchema', () => {
       file_upload: true,
       fs_query: true,
       mcp: true,
-      background_tasks: true,
+      tasks: true,
       terminal: true,
     },
     server_id: '01HXYZABCDEFGHJKMNPQRSTVWX',
@@ -65,6 +65,21 @@ describe('metaResponseSchema', () => {
   it('accepts dangerous_bypass_auth = true', () => {
     const parsed = metaResponseSchema.parse({ ...sample, dangerous_bypass_auth: true });
     expect(parsed.dangerous_bypass_auth).toBe(true);
+  });
+
+  it('accepts backend = v2', () => {
+    const parsed = metaResponseSchema.parse({ ...sample, backend: 'v2' });
+    expect(parsed.backend).toBe('v2');
+  });
+
+  it('accepts a missing backend (treated as v1)', () => {
+    const parsed = metaResponseSchema.parse(sample);
+    expect(parsed.backend).toBeUndefined();
+  });
+
+  it('rejects an unknown backend value', () => {
+    const bad = { ...sample, backend: 'v3' };
+    expect(metaResponseSchema.safeParse(bad).success).toBe(false);
   });
 
   it('rejects a capability set with the wrong boolean literal', () => {

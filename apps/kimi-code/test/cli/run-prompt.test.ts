@@ -1,5 +1,5 @@
 import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runPrompt } from '#/cli/run-prompt';
 import { PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
     waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
     getCronTasks: vi.fn(async () => ({ tasks: [] })),
+    handlePrintMainTurnCompleted: vi.fn(async (): Promise<'finish' | 'continue'> => 'finish'),
   };
 
   return {
@@ -66,6 +67,42 @@ const mocks = vi.hoisted(() => {
     harnessClose: vi.fn(),
     harnessTrack: vi.fn(),
     harnessGetCachedAccessToken: vi.fn(),
+    runV2Print: vi.fn(
+      async (
+        opts: { readonly outputFormat?: string },
+        version: string,
+        io?: {
+          readonly stdout?: { write(chunk: string): boolean };
+          readonly stderr?: { write(chunk: string): boolean };
+        },
+      ) => {
+        // Mirror the native runner's output protocol so the version-banner
+        // assertions stay meaningful: version first, then the assistant
+        // message, then the resume hint — in the active output format.
+        const stdout = io?.stdout ?? process.stdout;
+        const stderr = io?.stderr ?? process.stderr;
+        const outputFormat = opts?.outputFormat ?? 'text';
+        if (outputFormat === 'stream-json') {
+          stdout.write(
+            `${JSON.stringify({ role: 'meta', type: 'system.version', version })}\n`,
+          );
+          stdout.write(`${JSON.stringify({ role: 'assistant', content: 'hello world' })}\n`);
+          stdout.write(
+            `${JSON.stringify({
+              role: 'meta',
+              type: 'session.resume_hint',
+              session_id: 'ses_prompt',
+              command: 'kimi -r ses_prompt',
+              content: 'To resume this session: kimi -r ses_prompt',
+            })}\n`,
+          );
+          return;
+        }
+        stderr.write(`kimi version ${version}\n`);
+        stdout.write('• hello world\n\n');
+        stderr.write('To resume this session: kimi -r ses_prompt\n');
+      },
+    ),
     initializeTelemetry: vi.fn(),
     setCrashPhase: vi.fn(),
     shutdownTelemetry: vi.fn(),
@@ -128,6 +165,14 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   withTelemetryContext: mocks.withTelemetryContext,
 }));
 
+// The experimental v2 engine is loaded via a dynamic import from run-prompt.ts
+// when KIMI_CODE_EXPERIMENTAL_FLAG is set. Mock the native v2 runner so tests
+// that flip that flag can exercise the dispatch without pulling in the real
+// agent-core-v2 graph.
+vi.mock('../../src/cli/v2/run-v2-print', () => ({
+  runV2Print: mocks.runV2Print,
+}));
+
 function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
   return {
     session: undefined,
@@ -187,8 +232,17 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
 }
 
 describe('runPrompt', () => {
+  beforeEach(() => {
+    // Pin the experimental engine flag off so the default v1 path is
+    // deterministic regardless of the host environment. Tests that exercise the
+    // experimental path opt back in explicitly with `vi.stubEnv(..., '1')`.
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
+    vi.stubEnv('KIMI_MODEL_OUTPUT_FORMAT', '');
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     mocks.eventHandlers.clear();
     mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
     mocks.resolveKimiHome.mockImplementation(
@@ -752,6 +806,56 @@ describe('runPrompt', () => {
     await runPromise;
   });
 
+  it('follows a background-steered second main turn before finishing in steer mode', async () => {
+    // First end-of-turn: stay alive (a background task is still pending).
+    // Second end-of-turn: finish.
+    mocks.session.handlePrintMainTurnCompleted
+      .mockResolvedValueOnce('continue')
+      .mockResolvedValueOnce('finish');
+
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 10, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 10, delta: 'first' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 10, reason: 'completed' }));
+      }
+    });
+
+    const stdout = writer();
+    const stderr = writer();
+    const runPromise = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    // The first turn's assistant message must be flushed and the end-of-turn
+    // policy consulted, while the run stays alive (action === 'continue').
+    await waitForAssertion(() => {
+      expect(mocks.session.handlePrintMainTurnCompleted).toHaveBeenCalledTimes(1);
+      expect(stdout.text()).toContain('{"role":"assistant","content":"first"}');
+    });
+
+    // Simulate a background-task completion steering the main agent into a new
+    // turn (the runtime does this via turn.steer; here we drive the events
+    // directly to verify the driver follows and finishes only after it).
+    for (const handler of mocks.eventHandlers) {
+      handler(
+        mocks.mainEvent({
+          type: 'turn.started',
+          turnId: 11,
+          origin: { kind: 'background_task' },
+        }),
+      );
+      handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 11, delta: 'second' }));
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 11, reason: 'completed' }));
+    }
+
+    await runPromise;
+
+    expect(mocks.session.handlePrintMainTurnCompleted).toHaveBeenCalledTimes(2);
+    expect(stdout.text()).toContain('{"role":"assistant","content":"second"}');
+  });
+
   it('resumes a concrete session without a configured default model', async () => {
     mocks.harnessGetConfig.mockResolvedValueOnce({ providers: {}, telemetry: true });
     mocks.session.getStatus.mockResolvedValueOnce({ permission: 'manual', model: 'saved-model' });
@@ -1043,7 +1147,13 @@ describe('runPrompt', () => {
           mocks.mainEvent({
             type: 'turn.ended',
             turnId: 2,
-            reason: 'filtered',
+            reason: 'failed',
+            error: {
+              code: 'provider.filtered',
+              message: 'Provider safety policy blocked the response.',
+              name: 'ProviderFilteredError',
+              retryable: false,
+            },
           }),
         );
       }
@@ -1078,6 +1188,53 @@ describe('runPrompt', () => {
 
     const handler = mocks.session.setQuestionHandler.mock.calls[0]![0] as () => unknown;
     expect(handler()).toBeNull();
+  });
+
+  it('emits the version first in text mode when the experimental flag is enabled', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), '1.2.3-test', { stdout, stderr });
+
+    // The experimental engine is selected and the version banner is the very
+    // first write, ahead of any assistant output or the resume hint.
+    expect(mocks.runV2Print).toHaveBeenCalled();
+    expect(mocks.kimiHarnessConstructor).not.toHaveBeenCalled();
+    expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
+    expect(stderr.text().startsWith('kimi version 1.2.3-test\n')).toBe(true);
+    expect(stdout.text()).toBe('• hello world\n\n');
+  });
+
+  it('emits the version first in stream-json mode when the experimental flag is enabled', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    expect(mocks.runV2Print).toHaveBeenCalled();
+    expect(mocks.kimiHarnessConstructor).not.toHaveBeenCalled();
+    const lines = stdout.text().split('\n');
+    expect(lines[0]).toBe(
+      '{"role":"meta","type":"system.version","version":"1.2.3-test"}',
+    );
+    expect(stderr.text()).toBe('');
+  });
+
+  it('does not emit the version when the experimental flag is disabled', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), '1.2.3-test', { stdout, stderr });
+
+    expect(mocks.runV2Print).not.toHaveBeenCalled();
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalled();
+    expect(stderr.text()).not.toContain('kimi version');
   });
 
   it('does not settle on end_turn while a goal is still active', async () => {

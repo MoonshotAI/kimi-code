@@ -338,6 +338,34 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.supportEfforts to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'compatible-alias': {
+            provider: 'anthropic',
+            model: 'compatible-model',
+            maxContextSize: 200000,
+            supportEfforts: ['low', 'high', 'max'],
+          },
+        },
+      },
+      model: 'compatible-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'compatible-model',
+      supportEfforts: ['low', 'high', 'max'],
+    });
+  });
+
   it('forwards alias.betaApi to the anthropic provider config', () => {
     const resolved = resolveRuntimeProvider({
       config: {
@@ -840,8 +868,10 @@ describe('resolveThinkingEffort', () => {
   });
 
   it('forces always-thinking models back on even when off is requested', () => {
-    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel)).toBe('on');
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel, true)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel, true)).toBe(
+      'on',
+    );
   });
 });
 
@@ -1040,7 +1070,7 @@ describe('per-model protocol routing', () => {
 });
 
 describe('resolveRuntimeProvider model overrides', () => {
-  it('passes overridden supportEfforts to the kimi provider config', () => {
+  it('keeps supportEfforts out of the kimi provider config', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         ...BASE_CONFIG,
@@ -1054,9 +1084,7 @@ describe('resolveRuntimeProvider model overrides', () => {
       },
     });
 
-    expect(resolved.provider).toMatchObject({
-      type: 'kimi',
-      supportEfforts: ['low', 'high'],
-    });
+    expect(resolved.provider).toMatchObject({ type: 'kimi' });
+    expect(resolved.provider).not.toHaveProperty('supportEfforts');
   });
 });

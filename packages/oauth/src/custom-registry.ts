@@ -18,6 +18,12 @@ export interface CustomRegistrySource {
   readonly apiKey: string;
 }
 
+export interface FetchCustomRegistryOptions {
+  readonly signal?: AbortSignal;
+  readonly fetchImpl?: typeof fetch;
+  readonly userAgent?: string;
+}
+
 /**
  * The kosong `ProviderConfig` union (`packages/kosong/src/providers/index.ts`)
  * mirrors these literal values. `kimi` is included because the api.json schema
@@ -39,6 +45,8 @@ export interface CustomRegistryModelEntry {
     input?: readonly string[];
     output?: readonly string[];
   };
+  readonly support_efforts?: readonly string[];
+  readonly default_effort?: string;
 }
 
 export interface CustomRegistryProviderEntry {
@@ -102,6 +110,8 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
     tool_call?: boolean;
     reasoning?: boolean;
     modalities?: { input?: readonly string[]; output?: readonly string[] };
+    support_efforts?: readonly string[];
+    default_effort?: string;
   } = { id };
 
   const name = value['name'];
@@ -125,6 +135,13 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
 
   if (typeof value['tool_call'] === 'boolean') entry.tool_call = value['tool_call'];
   if (typeof value['reasoning'] === 'boolean') entry.reasoning = value['reasoning'];
+
+  const supportEfforts = toStringArrayOrUndefined(value['support_efforts']);
+  if (supportEfforts !== undefined) entry.support_efforts = supportEfforts;
+  const defaultEffort = value['default_effort'];
+  if (typeof defaultEffort === 'string' && defaultEffort.length > 0) {
+    entry.default_effort = defaultEffort;
+  }
 
   const modalities = value['modalities'];
   if (isRecord(modalities)) {
@@ -178,15 +195,21 @@ function toProviderEntry(value: unknown): CustomRegistryProviderEntry | undefine
  * Fetches and validates an api.json document. The returned record is keyed by
  * the top-level provider key in the document (which may differ from
  * `entry.id`); callers should iterate `Object.values` to apply each entry.
+ *
+ * `userAgent` identifies the host product (e.g. `kimi-code-cli/1.2.3`); when
+ * omitted the request falls back to the runtime default (`User-Agent: node`).
  */
 export async function fetchCustomRegistry(
   source: CustomRegistrySource,
-  fetchImpl: typeof fetch = fetch,
-  signal?: AbortSignal,
+  options: FetchCustomRegistryOptions = {},
 ): Promise<Record<string, CustomRegistryProviderEntry>> {
+  const { signal, fetchImpl = fetch, userAgent } = options;
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
+  if (userAgent !== undefined) {
+    headers['User-Agent'] = userAgent;
+  }
   if (source.apiKey.length > 0) {
     headers['Authorization'] = `Bearer ${source.apiKey}`;
   }
@@ -238,7 +261,11 @@ export async function fetchCustomRegistry(
 export function capabilitiesFromCustomEntry(model: CustomRegistryModelEntry): string[] {
   const caps = new Set<string>();
   if (model.tool_call === true) caps.add('tool_use');
-  if (model.reasoning === true) caps.add('thinking');
+  // Declaring concrete effort levels implies thinking support even when the
+  // legacy `reasoning` boolean is absent.
+  if (model.reasoning === true || (model.support_efforts?.length ?? 0) > 0) {
+    caps.add('thinking');
+  }
   if (model.modalities?.input?.includes('image') === true) caps.add('image_in');
   if (model.modalities?.input?.includes('video') === true) caps.add('video_in');
   if (model.modalities?.output?.includes('image') === true) caps.add('image_out');
@@ -250,7 +277,8 @@ function hasRichCapabilityHints(model: CustomRegistryModelEntry): boolean {
   return (
     typeof model.tool_call === 'boolean' ||
     typeof model.reasoning === 'boolean' ||
-    model.modalities !== undefined
+    model.modalities !== undefined ||
+    model.support_efforts !== undefined
   );
 }
 
@@ -323,6 +351,8 @@ export function applyCustomRegistryProvider(
       maxContextSize,
       capabilities,
       displayName,
+      ...(model.support_efforts !== undefined ? { supportEfforts: model.support_efforts } : {}),
+      ...(model.default_effort !== undefined ? { defaultEffort: model.default_effort } : {}),
     };
     existingModels[aliasKey] = mergeRefreshedModelAlias(
       existing,

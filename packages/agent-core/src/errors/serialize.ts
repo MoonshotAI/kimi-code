@@ -104,15 +104,19 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
   }
 
   if (error instanceof APIEmptyResponseError) {
+    const code =
+      error.finishReason === 'filtered'
+        ? ErrorCodes.PROVIDER_FILTERED
+        : ErrorCodes.PROVIDER_API_ERROR;
     return {
-      code: ErrorCodes.PROVIDER_API_ERROR,
+      code,
       message: error.message,
       name: error.name,
       details: {
         finishReason: error.finishReason,
         rawFinishReason: error.rawFinishReason,
       },
-      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_API_ERROR].retryable,
+      retryable: KIMI_ERROR_INFO[code].retryable,
     };
   }
 

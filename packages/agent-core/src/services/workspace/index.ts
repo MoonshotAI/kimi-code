@@ -4,7 +4,7 @@ export {
   WorkspaceRootNotFoundError,
   type WorkspacePatch,
 } from './workspaceRegistry';
-export { WorkspaceRegistryService, detectGit } from './workspaceRegistryService';
+export { WorkspaceRegistryService } from './workspaceRegistryService';
 export {
   IWorkspaceFsService,
   WorkspaceFsNotAbsoluteError,

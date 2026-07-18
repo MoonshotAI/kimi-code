@@ -32,6 +32,7 @@ export type {
   Catalog,
   CatalogModel,
   CatalogProviderEntry,
+  FetchCatalogOptions,
 } from '#/catalog';
 
 export {
@@ -51,6 +52,7 @@ export {
 // RootLogger / getRootLogger / LoggingConfig stay inside agent-core.
 export {
   flushDiagnosticLogs,
+  flushDiagnosticLogsSync,
   log,
   redact,
   resolveGlobalLogPath,

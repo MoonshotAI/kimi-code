@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createProgram } from '#/cli/commands';
 import type { CLIOptions } from '#/cli/options';
-import { OptionConflictError, validateOptions } from '#/cli/options';
+import { OptionConflictError, OUTPUT_FORMAT_ENV, resolveOutputFormat, validateOptions } from '#/cli/options';
 
 function parse(argv: string[]): CLIOptions {
   let captured: CLIOptions | undefined;
@@ -300,6 +300,84 @@ describe('CLI options parsing', () => {
       expect(() => validateOptions(opts)).toThrow(
         'Output format is only supported in prompt mode.',
       );
+    });
+  });
+
+  describe('KIMI_MODEL_OUTPUT_FORMAT', () => {
+    it('defaults to text when unset in prompt mode', () => {
+      expect(resolveOutputFormat({ prompt: 'run this', outputFormat: undefined }, {})).toBe('text');
+    });
+
+    it('uses stream-json from the env in prompt mode', () => {
+      expect(
+        resolveOutputFormat(
+          { prompt: 'run this', outputFormat: undefined },
+          { [OUTPUT_FORMAT_ENV]: 'stream-json' },
+        ),
+      ).toBe('stream-json');
+    });
+
+    it('uses text from the env in prompt mode', () => {
+      expect(
+        resolveOutputFormat(
+          { prompt: 'run this', outputFormat: undefined },
+          { [OUTPUT_FORMAT_ENV]: 'text' },
+        ),
+      ).toBe('text');
+    });
+
+    it('trims surrounding whitespace from the env value', () => {
+      expect(
+        resolveOutputFormat(
+          { prompt: 'run this', outputFormat: undefined },
+          { [OUTPUT_FORMAT_ENV]: '  stream-json  ' },
+        ),
+      ).toBe('stream-json');
+    });
+
+    it('lets the --output-format flag override the env', () => {
+      expect(
+        resolveOutputFormat(
+          { prompt: 'run this', outputFormat: 'text' },
+          { [OUTPUT_FORMAT_ENV]: 'stream-json' },
+        ),
+      ).toBe('text');
+    });
+
+    it('ignores the env outside prompt mode', () => {
+      expect(
+        resolveOutputFormat(
+          { prompt: undefined, outputFormat: undefined },
+          { [OUTPUT_FORMAT_ENV]: 'stream-json' },
+        ),
+      ).toBe('text');
+    });
+
+    it('rejects an invalid env value', () => {
+      expect(() =>
+        resolveOutputFormat(
+          { prompt: 'run this', outputFormat: undefined },
+          { [OUTPUT_FORMAT_ENV]: 'json' },
+        ),
+      ).toThrow(OptionConflictError);
+      expect(() =>
+        resolveOutputFormat(
+          { prompt: 'run this', outputFormat: undefined },
+          { [OUTPUT_FORMAT_ENV]: 'json' },
+        ),
+      ).toThrow('Invalid KIMI_MODEL_OUTPUT_FORMAT value "json"');
+    });
+
+    it('fails validation fast for an invalid env value in prompt mode', () => {
+      const opts = parse(['-p', 'run this']);
+      expect(() => validateOptions(opts, { [OUTPUT_FORMAT_ENV]: 'json' })).toThrow(
+        OptionConflictError,
+      );
+    });
+
+    it('does not validate the env outside prompt mode', () => {
+      const opts = parse([]);
+      expect(() => validateOptions(opts, { [OUTPUT_FORMAT_ENV]: 'json' })).not.toThrow();
     });
   });
 

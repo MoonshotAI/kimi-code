@@ -70,6 +70,7 @@ describe('Event public types', () => {
         case 'session.meta.updated':
         case 'event.session.created':
         case 'event.session.status_changed':
+        case 'event.session.work_changed':
         case 'event.workspace.created':
         case 'event.workspace.updated':
         case 'event.workspace.deleted':
@@ -106,10 +107,15 @@ describe('Event public types', () => {
         case 'compaction.blocked':
         case 'compaction.cancelled':
         case 'compaction.completed':
+        case 'task.started':
+        case 'task.terminated':
         case 'background.task.started':
         case 'background.task.terminated':
         case 'cron.fired':
         case 'prompt.submitted':
+        case 'prompt.completed':
+        case 'prompt.aborted':
+        case 'prompt.steered':
           return;
         default:
           assertNever(event);

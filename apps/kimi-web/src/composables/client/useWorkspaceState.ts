@@ -12,8 +12,11 @@ import { getKimiWebApi } from '../../api';
 import { i18n } from '../../i18n';
 import { useConfirmDialog } from '../useConfirmDialog';
 import { isDaemonApiError } from '../../api/errors';
+import { SERVER_AUTH_UNAUTHORIZED_CODE } from '../../api/daemon/http';
+import { isPlaceholderSessionUsage } from '../../api/daemon/mappers';
 import type {
   AppConfig,
+  AppInFlightTurn,
   AppMessage,
   AppSession,
   AppWorkspace,
@@ -30,7 +33,8 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
-import { coerceThinkingForModel } from '../../lib/modelThinking';
+import { workspaceRootKey } from '../../lib/rootKey';
+import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import type {
@@ -57,6 +61,10 @@ const WORKSPACE_NOT_FOUND_CODE = 40410;
 // duplicate submit is reported as a conflict even though the desired end
 // state (resolved) is already reached. We treat it as a benign no-op.
 const ALREADY_RESOLVED_CODE = 40902;
+// First load polls /auth until it gives a definitive answer (see load()).
+const FIRST_LOAD_AUTH_RETRY_MS = 2000;
+
+type AuthCheckResult = 'proceed' | 'retry' | 'server-auth-required';
 
 function isAlreadyResolvedError(err: unknown): boolean {
   return isDaemonApiError(err) && err.code === ALREADY_RESOLVED_CODE;
@@ -75,7 +83,7 @@ function isTaskAlreadyFinishedError(err: unknown): boolean {
  * action kind. Drives the card's loading state and guards against a duplicate
  * submit while the first request is still in flight (the server would reject
  * the second resolve with 40902). Module-level singleton — matches
- * `inFlightPromptSessions` in the facade.
+ * `inFlightBySession` on rawState.
  */
 const pendingQuestionActions = reactive<Record<string, 'answer' | 'dismiss'>>({});
 /** Approval ids with an in-flight respond, keyed by approvalId. */
@@ -86,13 +94,106 @@ const pendingTaskCancellations = reactive<Record<string, true>>({});
  * Workspace ids whose empty-session first prompt is currently being created +
  * submitted. The empty-composer path (`startSessionAndSendPrompt`) awaits
  * `createDraftSession` (addWorkspace + createSession + selectSession) before
- * the session id exists, so the per-session `inFlightPromptSessions` guard
- * cannot cover that window — a second Enter / send-button click during it
+ * the session id exists, so the per-session prompt-in-flight guard cannot
+ * cover that window — a second Enter / send-button click during it
  * would otherwise fire a second concurrent POST and trip the daemon's
  * `turn.agent_busy` race. Module-level singleton — matches the other
  * `pending*Actions` guards above.
  */
 const startingFirstPromptWorkspaces = reactive(new Set<string>());
+
+/**
+ * Per-session local-turn-start lifecycle, shared by EVERY entry point that
+ * starts a turn locally (prompt submit/steer in this module, skill activation
+ * in useModelProviderState). Two pieces of state:
+ *  - generation: bumped synchronously at every local turn start, so a
+ *    snapshot requested BEFORE the start can tell it predates the turn;
+ *  - pending: set while the start request (POST /prompts or skill
+ *    activation) has not been acknowledged by the daemon — a snapshot
+ *    requested in that window cannot reflect the turn server-side either.
+ * Module-level singleton — matches `inFlightBySession` on rawState.
+ */
+const promptGenerationBySession = new Map<string, number>();
+const pendingLocalTurnStarts = new Map<string, Set<number>>();
+const afterLocalTurnsSettled = new Map<string, () => void>();
+let nextLocalTurnToken = 0;
+
+/**
+ * Consecutive flushQueueHead failures per queue ENTRY (not per session) —
+ * keyed by entry id, falling back to its text for entries without one.
+ * Keying by entry keeps a removed or reordered head from handing its
+ * failure budget down to the next entry. Module-level singleton — the queue
+ * itself is per-session on rawState, so a page reload resets both.
+ */
+const queueFlushFailures = new Map<string, { key: string; count: number }>();
+const MAX_QUEUE_FLUSH_FAILURES = 3;
+
+let queueEntryCounter = 0;
+function nextQueueEntryId(): string {
+  queueEntryCounter += 1;
+  return `${Date.now().toString(36)}-${queueEntryCounter}`;
+}
+
+export interface LocalTurnStartState {
+  generation: number;
+  pending: boolean;
+}
+
+/** Snapshot of the local-turn-start state, captured BEFORE an async snapshot
+ *  fetch so the caller can reject a snapshot that predates a local turn. */
+export function localTurnStartState(sid: string): LocalTurnStartState {
+  return {
+    generation: promptGenerationBySession.get(sid) ?? 0,
+    pending: (pendingLocalTurnStarts.get(sid)?.size ?? 0) > 0,
+  };
+}
+
+/** Shared "a local turn just started" lifecycle: bumps the generation and
+ *  marks the start request pending. Call synchronously before the first
+ *  await of every local turn entry point. */
+export function beginLocalTurn(sid: string): number {
+  const token = ++nextLocalTurnToken;
+  promptGenerationBySession.set(sid, token);
+  const pending = pendingLocalTurnStarts.get(sid) ?? new Set<number>();
+  pending.add(token);
+  pendingLocalTurnStarts.set(sid, pending);
+  return token;
+}
+
+/** The daemon acknowledged (or rejected) the turn-start request. */
+export function settleLocalTurn(sid: string, token: number): void {
+  const pending = pendingLocalTurnStarts.get(sid);
+  if (pending === undefined) return;
+  pending.delete(token);
+  if (pending.size > 0) return;
+  pendingLocalTurnStarts.delete(sid);
+  const callback = afterLocalTurnsSettled.get(sid);
+  afterLocalTurnsSettled.delete(sid);
+  callback?.();
+}
+
+/** Drop lifecycle state with the rest of a forgotten session. */
+export function forgetLocalTurnState(sid: string): void {
+  promptGenerationBySession.delete(sid);
+  pendingLocalTurnStarts.delete(sid);
+  afterLocalTurnsSettled.delete(sid);
+  queueFlushFailures.delete(sid);
+}
+
+/** Whether a snapshot request can still be applied without overwriting a
+ *  local turn that started before or during the request. */
+export function isLocalTurnSnapshotCurrent(sid: string, atRequest: LocalTurnStartState): boolean {
+  return !atRequest.pending && atRequest.generation === (promptGenerationBySession.get(sid) ?? 0);
+}
+
+/** Coalesce a skipped snapshot into one retry after local turn-start requests settle. */
+export function afterLocalTurnStartsSettle(sid: string, callback: () => void): void {
+  if ((pendingLocalTurnStarts.get(sid)?.size ?? 0) === 0) {
+    callback();
+    return;
+  }
+  afterLocalTurnsSettled.set(sid, callback);
+}
 
 type SyncSessionResult = 'ok' | 'not-found' | 'failed';
 
@@ -116,7 +217,6 @@ export interface UseWorkspaceStateDeps {
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
   activity: ComputedRef<ActivityState>;
-  inFlightPromptSessions: Set<string>;
   sessionsKnownEmpty: Set<string>;
   // rawState.sessions mutation funnel, owned by the facade. This module never
   // assigns rawState.sessions directly — it goes through these.
@@ -137,7 +237,11 @@ export interface UseWorkspaceStateDeps {
   reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
+  refreshSessionGoal: (sessionId: string) => Promise<void>;
+  /** Persist profile fields to the daemon. Resolves false (after surfacing the
+   *  failure itself) when the daemon rejected the patch — awaited callers that
+   *  order strictly after the profile must NOT proceed on false. */
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
@@ -156,6 +260,9 @@ export interface UseWorkspaceStateDeps {
   goalErrorMessage: (err: unknown) => string | undefined;
   resetFastMoon: () => void;
   initialized: Ref<boolean>;
+  /** Diagnostic for the connecting splash, set by checkAuth on transient
+   *  failures and cleared once a check gets through. */
+  connectIssue: Ref<string | null>;
   selectedDiffPath: Ref<string | null>;
   fileDiffLines: Ref<DiffViewLine[]>;
   fileDiffLoading: Ref<boolean>;
@@ -170,7 +277,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     modelProvider,
     pushOperationFailure,
     activity,
-    inFlightPromptSessions,
     sessionsKnownEmpty,
     setSessions,
     updateSession,
@@ -185,6 +291,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     reopenSession,
     hasLoadedMessages,
     refreshSessionStatus,
+    refreshSessionGoal,
     persistSessionProfile,
     mergedWorkspaces,
     workspacesView,
@@ -201,10 +308,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     goalErrorMessage,
     resetFastMoon,
     initialized,
+    connectIssue,
     selectedDiffPath,
     fileDiffLines,
     fileDiffLoading,
   } = deps;
+  let exportInFlight = false;
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
@@ -252,6 +361,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     void taskPoller.loadTasksForSession(sessionId);
     void loadGitStatus(sessionId);
     void refreshSessionStatus(sessionId);
+    void refreshSessionGoal(sessionId);
     if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsBySession.value, sessionId)) {
       void modelProvider.loadSkillsForSession(sessionId);
     }
@@ -303,16 +413,61 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  /** Fetch auth readiness from GET /api/v1/auth. Defensive — never throws. */
-  async function checkAuth(): Promise<void> {
+  /** Fetch auth readiness from GET /api/v1/auth. Defensive — never throws.
+   *  The web bundle always ships paired with its daemon, so this endpoint is
+   *  guaranteed to exist — every failure is either a credential rejection or
+   *  a transient error worth retrying:
+   *  - 'proceed'              — response received; rawState reflects it (ready
+   *                             or not)
+   *  - 'server-auth-required' — the daemon rejected our server credential
+   *                             (401/40101); the ServerAuthDialog owns recovery
+   *                             (it reloads once the token is entered)
+   *  - 'retry'                — transient failure (network, timeout, 5xx); the
+   *                             caller should retry instead of treating it as
+   *                             "not signed in" */
+  async function checkAuth(): Promise<AuthCheckResult> {
     try {
       const api = getKimiWebApi();
       const result = await api.getAuth();
       rawState.authReady = result.ready;
       rawState.defaultModel = result.defaultModel;
       rawState.managedProviderStatus = result.managedProvider?.status ?? null;
-    } catch {
-      // Daemon may not have this endpoint yet; leave defaults (authReady: false)
+      connectIssue.value = null;
+      return 'proceed';
+    } catch (err) {
+      if (
+        isDaemonApiError(err) &&
+        (err.code === 401 || err.code === SERVER_AUTH_UNAUTHORIZED_CODE)
+      ) {
+        // The ServerAuthDialog explains this one — nothing to surface.
+        connectIssue.value = null;
+        return 'server-auth-required';
+      }
+      // Surface the reason on the splash so "cannot connect" is diagnosable
+      // instead of an unexplained spinner.
+      connectIssue.value = (err instanceof Error ? err.message : String(err)).slice(0, 140);
+      return 'retry';
+    }
+  }
+
+  /** Poll /auth until the daemon gives a definitive outcome, waiting
+   *  FIRST_LOAD_AUTH_RETRY_MS between transient failures. Never resolves with
+   *  'retry'. Used only by the first load. */
+  async function waitForFirstAuth(): Promise<AuthCheckResult> {
+    let firstRetry = true;
+    for (;;) {
+      const result = await checkAuth();
+      if (result !== 'retry') return result;
+      // Keep the first quick failure silent — a single blip right after page
+      // load shouldn't flash an error. Surface it from the 2nd failed attempt
+      // (~2s in) onward, so a genuinely stuck connection stays diagnosable.
+      if (firstRetry) {
+        connectIssue.value = null;
+        firstRetry = false;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, FIRST_LOAD_AUTH_RETRY_MS);
+      });
     }
   }
 
@@ -353,22 +508,68 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
   /** Drain every page of sessions, newest first. A single global walk (instead of
    *  per-workspace) so sessions whose cwd is not a registered workspace root are
-   *  still reachable after a refresh. */
-  async function listAllSessionsGlobal(): Promise<AppSession[]> {
+   *  still reachable after a refresh. A later-page failure returns the pages
+   *  already fetched plus the error; only a first-page failure rejects. */
+  async function listAllSessionsGlobal(): Promise<{
+    sessions: AppSession[];
+    error?: unknown;
+  }> {
     const api = getKimiWebApi();
     const items: AppSession[] = [];
     let beforeId: string | undefined;
+    let continuationError: unknown;
     for (;;) {
-      const page = await api.listSessions({
-        pageSize: SESSION_PAGE_SIZE,
-        beforeId,
-        excludeEmpty: true,
-      });
+      let page: { items: AppSession[]; hasMore: boolean };
+      try {
+        page = await api.listSessions({
+          pageSize: SESSION_PAGE_SIZE,
+          beforeId,
+          excludeEmpty: true,
+        });
+      } catch (error) {
+        if (items.length === 0) throw error;
+        continuationError = error;
+        break;
+      }
       items.push(...page.items);
       if (!page.hasMore || page.items.length === 0) break;
       beforeId = page.items[page.items.length - 1]!.id;
     }
-    return items;
+    return { sessions: items, error: continuationError };
+  }
+
+  /**
+   * Replace the sessions list wholesale, preserving the live usage accumulated
+   * from /status and the WS status stream: the list endpoint returns all-zero
+   * placeholder usage for every session, and a blind replace would zero the
+   * context ring until the next refresh.
+   */
+  function setSessionsPreservingLiveUsage(sessions: AppSession[]): void {
+    const liveUsageById = new Map(rawState.sessions.map((s) => [s.id, s.usage] as const));
+    setSessions(
+      sessions.map((s) => {
+        const live = liveUsageById.get(s.id);
+        return live !== undefined &&
+          isPlaceholderSessionUsage(s.usage) &&
+          !isPlaceholderSessionUsage(live)
+          ? { ...s, usage: live }
+          : s;
+      }),
+    );
+  }
+
+  /** Keep fresh rows authoritative while retaining cached rows a partial list
+   *  request never reached. */
+  function mergePartialSessionsWithCached(sessions: AppSession[]): AppSession[] {
+    const merged = [...sessions];
+    const loadedIds = new Set(merged.map((session) => session.id));
+    for (const session of rawState.sessions) {
+      if (loadedIds.has(session.id)) continue;
+      merged.push(session);
+      loadedIds.add(session.id);
+    }
+    merged.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return merged;
   }
 
   /** Load the initial page of sessions for one workspace, then keep fetching
@@ -379,7 +580,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  keeping only up to the first session that falls outside the window. */
   async function loadInitialSessionsForWorkspace(
     workspaceId: string,
-  ): Promise<{ workspaceId: string; page: { items: AppSession[]; hasMore: boolean } }> {
+  ): Promise<{
+    workspaceId: string;
+    page: { items: AppSession[]; hasMore: boolean };
+    error?: unknown;
+  }> {
     const api = getKimiWebApi();
     const items: AppSession[] = [];
     const now = Date.now();
@@ -387,6 +592,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     let beforeId: string | undefined;
     let hasMore = false;
     let isFirstPage = true;
+    let continuationError: unknown;
     for (;;) {
       let page: { items: AppSession[]; hasMore: boolean };
       try {
@@ -398,9 +604,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         });
       } catch (error) {
         // A failed continuation page must not discard sessions already loaded
-        // from earlier pages; only a page-1 failure propagates (the caller then
-        // falls back to an empty page for that workspace).
+        // from earlier pages; only a page-1 failure rejects the workspace load.
         if (isFirstPage) throw error;
+        continuationError = error;
+        hasMore = true;
         break;
       }
       hasMore = page.hasMore;
@@ -427,39 +634,97 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!page.hasMore || oldestBeyondWindow) break;
       beforeId = oldest.id;
     }
-    return { workspaceId, page: { items, hasMore } };
+    return { workspaceId, page: { items, hasMore }, error: continuationError };
   }
 
   /** Fetch the first page of sessions for every known workspace concurrently.
-   *  Returns the merged, recency-sorted list and seeds per-workspace hasMore. */
-  async function loadInitialSessionsByWorkspace(): Promise<AppSession[]> {
+   *  Returns the merged, recency-sorted list and seeds per-workspace hasMore.
+   *  When every workspace request fails, returns undefined so the caller keeps
+   *  the previously loaded sessions instead of committing a false empty list. */
+  async function loadInitialSessionsByWorkspace(): Promise<AppSession[] | undefined> {
     const workspaces = rawState.workspaces;
     if (workspaces.length === 0) {
       // /workspaces may be unavailable or empty on older / partially-failing
       // daemons while /sessions still works. Fall back to the legacy global
       // walk so history still shows and mergedWorkspaces can derive workspaces
       // from session cwds, instead of rendering a blank sidebar.
-      const fallback = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
+      const fallback = await listAllSessionsGlobal();
+      const sessions =
+        fallback.error === undefined
+          ? fallback.sessions
+          : mergePartialSessionsWithCached(fallback.sessions);
       rawState.sessionsHasMoreByWorkspace = {};
       rawState.sessionsCursorByWorkspace = {};
       rawState.sessionsInitialCountByWorkspace = {};
-      rawState.sessionsFullyLoaded = true;
-      return fallback;
+      rawState.sessionsFullyLoaded = fallback.error === undefined;
+      if (fallback.error !== undefined) pushOperationFailure('load', fallback.error);
+      return sessions;
     }
-    const pages = await Promise.all(
-      workspaces.map((w) =>
-        loadInitialSessionsForWorkspace(w.id).catch(() => ({
-          workspaceId: w.id,
-          page: { items: [] as AppSession[], hasMore: false },
-        })),
-      ),
+    const results = await Promise.allSettled(
+      workspaces.map((w) => loadInitialSessionsForWorkspace(w.id)),
     );
     const loaded: AppSession[] = [];
+    const loadedIds = new Set<string>();
+    const successfulPages = new Map<string, { items: AppSession[]; hasMore: boolean }>();
+    const failedWorkspaceIds = new Set<string>();
+    let firstError: unknown;
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index]!;
+      if (result.status === 'fulfilled') {
+        successfulPages.set(result.value.workspaceId, result.value.page);
+        if (result.value.error !== undefined) {
+          if (failedWorkspaceIds.size === 0) firstError = result.value.error;
+          failedWorkspaceIds.add(result.value.workspaceId);
+        }
+        for (const session of result.value.page.items) {
+          if (loadedIds.has(session.id)) continue;
+          loaded.push(session);
+          loadedIds.add(session.id);
+        }
+        continue;
+      }
+      if (failedWorkspaceIds.size === 0) firstError = result.reason;
+      failedWorkspaceIds.add(workspaces[index]!.id);
+    }
+
+    // One failed workspace must not erase another workspace's successful page,
+    // nor the failed workspace's last usable rows. If every request failed,
+    // leave both sessions and pagination state untouched for a natural retry.
+    if (successfulPages.size === 0) {
+      pushOperationFailure('load', firstError);
+      return undefined;
+    }
+    const failedWorkspaceRoots = new Set(
+      workspaces
+        .filter((workspace) => failedWorkspaceIds.has(workspace.id))
+        .map((workspace) => workspace.root),
+    );
+    const registeredWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+    for (const session of rawState.sessions) {
+      const belongsToFailedWorkspace =
+        session.workspaceId !== undefined && registeredWorkspaceIds.has(session.workspaceId)
+          ? failedWorkspaceIds.has(session.workspaceId)
+          : failedWorkspaceRoots.has(session.cwd) ||
+            failedWorkspaceIds.has(workspaceIdForSession(session));
+      if (!belongsToFailedWorkspace || loadedIds.has(session.id)) continue;
+      loaded.push(session);
+      loadedIds.add(session.id);
+    }
+
     const hasMore: Record<string, boolean> = {};
     const cursors: Record<string, string | undefined> = {};
     const counts: Record<string, number> = {};
-    for (const { workspaceId, page } of pages) {
-      loaded.push(...page.items);
+    for (const { id: workspaceId } of workspaces) {
+      const page = successfulPages.get(workspaceId);
+      if (page === undefined) {
+        const previousHasMore = rawState.sessionsHasMoreByWorkspace[workspaceId];
+        const previousCursor = rawState.sessionsCursorByWorkspace[workspaceId];
+        const previousCount = rawState.sessionsInitialCountByWorkspace[workspaceId];
+        if (previousHasMore !== undefined) hasMore[workspaceId] = previousHasMore;
+        if (previousCursor !== undefined) cursors[workspaceId] = previousCursor;
+        if (previousCount !== undefined) counts[workspaceId] = previousCount;
+        continue;
+      }
       // Trust the server's hasMore — the per-workspace session_count is only a
       // (possibly stale) label total, not an authority on whether more pages exist.
       hasMore[workspaceId] = page.hasMore;
@@ -483,6 +748,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Keep rawState.sessions newest-first for readers that pick sessions[0]
     // (e.g. auto-selecting the most recent session on first load).
     loaded.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    if (failedWorkspaceIds.size > 0) pushOperationFailure('load', firstError);
     return loaded;
   }
 
@@ -536,32 +802,69 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  first search; a no-op once the full list is loaded. */
   async function loadAllSessions(): Promise<void> {
     if (rawState.sessionsFullyLoaded) return;
-    const sessions = await listAllSessionsGlobal().catch(() => null);
-    if (sessions === null) return;
-    setSessions(sessions);
-    rawState.sessionsFullyLoaded = true;
+    const result = await listAllSessionsGlobal().catch((err) => {
+      console.warn('[kimi-web] loadAllSessions failed; search covers only loaded sessions', err);
+      return null;
+    });
+    if (result === null) return;
+    const sessions =
+      result.error === undefined
+        ? result.sessions
+        : mergePartialSessionsWithCached(result.sessions);
+    setSessionsPreservingLiveUsage(sessions);
+    rawState.sessionsFullyLoaded = result.error === undefined;
+    if (result.error !== undefined) return;
     const cleared: Record<string, boolean> = {};
     for (const w of rawState.workspaces) cleared[w.id] = false;
     rawState.sessionsHasMoreByWorkspace = cleared;
   }
 
+  /**
+   * Re-read GET /meta and apply the server-self fields (version, open-in
+   * apps, auth bypass, backend engine). Called on first load and on every WS
+   * (re)connect — the latter keeps the values truthful across backend
+   * restarts and dev-proxy backend switches.
+   */
+  async function refreshServerMeta(): Promise<void> {
+    const m = await getKimiWebApi()
+      .getMeta()
+      .catch(() => null);
+    if (m === null) return;
+    rawState.serverVersion = m.serverVersion;
+    rawState.availableOpenInApps = m.openInApps;
+    rawState.dangerousBypassAuth = m.dangerousBypassAuth;
+    rawState.backend = m.backend;
+  }
+
   async function load(): Promise<void> {
+    const startedAt = Date.now();
+    let traceStatus = 'accepted';
+    traceKeyEvent('app:load:start');
     rawState.loading = true;
+    // The very first load gates on /auth before anything else: a transient
+    // failure there (daemon still booting, network blip, 5xx) must NOT be read
+    // as "not signed in" — that bounced users to /login until a manual refresh.
+    // Keep the connecting splash up and poll /auth until a definitive outcome.
+    // A 401/40101 means the server wants a token: stop and let the
+    // ServerAuthDialog take over (it reloads once the token is entered).
+    const firstLoad = !initialized.value;
+    let authResolved = true;
     try {
+      if (firstLoad && (await waitForFirstAuth()) === 'server-auth-required') {
+        authResolved = false;
+        traceStatus = 'auth-required';
+        return;
+      }
       const api = getKimiWebApi();
       // Parallel: health + meta + models
       await Promise.all([
         api.getHealth().catch(() => null),
-        api.getMeta().then((m) => {
-          rawState.serverVersion = m.serverVersion;
-          rawState.availableOpenInApps = m.openInApps;
-          rawState.dangerousBypassAuth = m.dangerousBypassAuth;
-        }).catch(() => null),
+        refreshServerMeta(),
         modelProvider.loadModels(),
       ]);
 
       // Check auth readiness and global config (separate calls — defensive)
-      await checkAuth();
+      if (!firstLoad) await checkAuth();
       await loadConfig();
 
       // Load workspaces first (registered + derived, each with a session_count),
@@ -569,8 +872,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // the old full global walk: the sidebar now truncates by loading, not by
       // hiding already-fetched rows.
       await loadWorkspaces();
-      const sessions = await loadInitialSessionsByWorkspace();
-      setSessions(sessions);
+      const loadedSessions = await loadInitialSessionsByWorkspace();
+      const sessions = loadedSessions ?? rawState.sessions;
+      if (loadedSessions !== undefined) setSessionsPreservingLiveUsage(loadedSessions);
 
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
@@ -603,11 +907,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         await selectSession(sessions[0]!.id, { urlMode: 'replace' });
       }
     } catch (err) {
+      traceStatus = 'failed';
       pushOperationFailure('load', err);
       // Do not re-throw — app stays mounted with empty sessions
     } finally {
       rawState.loading = false;
-      initialized.value = true;
+      // Without a definitive /auth outcome the splash stays up (retry loop or
+      // ServerAuthDialog is handling it) — never expose the half-loaded app.
+      if (authResolved) initialized.value = true;
+      traceKeyEvent('app:load:complete', {
+        status: traceStatus,
+        sessionId: rawState.activeSessionId,
+        sessionCount: rawState.sessions.length,
+        workspaceCount: rawState.workspaces.length,
+        durationMs: Date.now() - startedAt,
+      });
     }
   }
 
@@ -670,9 +984,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // clobber the name with the default basename.
     const override = loadWorkspaceNameOverrides()[workspace.root];
     const ws = override !== undefined ? { ...workspace, name: override } : workspace;
-    // Re-adding a path the user previously removed should bring it back.
-    if (rawState.hiddenWorkspaceRoots.includes(ws.root)) {
-      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter((r) => r !== ws.root);
+    // Re-adding a path the user previously removed should bring it back. The
+    // hidden match in mergeWorkspaces is folded, so the removal must fold too
+    // — otherwise hiding `C:\Foo` and re-adding `c:\foo` leaves the folded
+    // entry hiding the workspace forever.
+    const wsKey = workspaceRootKey(ws.root);
+    if (rawState.hiddenWorkspaceRoots.some((r) => workspaceRootKey(r) === wsKey)) {
+      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter(
+        (r) => workspaceRootKey(r) !== wsKey,
+      );
       saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
     }
     const index = rawState.workspaces.findIndex(
@@ -828,7 +1148,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   ): Promise<void> {
     // Guard the whole "create draft session + submit first prompt" flow: the
     // session id doesn't exist until `createDraftSession` resolves, so the
-    // per-session `inFlightPromptSessions` guard can't cover this window. A
+    // per-session in-flight guard can't cover this window. A
     // second Enter / send-button click in that window would otherwise fire a
     // concurrent first POST for the same new session and trip the daemon's
     // `turn.agent_busy` race.
@@ -868,34 +1188,37 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!sid) return;
       // Unlike a plain prompt, skill activation only carries `args`, so the
       // daemon never sees the prompt-time controls the user may have changed on
-      // the draft (plan/swarm, plus permission via /auto|/yolo and thinking via
-      // /thinking). Persist them onto this new session's profile and await it
-      // before activating, otherwise the first skill turn can start before
-      // applyAgentState and run at daemon defaults while the UI shows otherwise.
-      // Goal mode is a one-shot flag consumed per send, not a profile field, so
-      // there is nothing to persist for it.
+      // the draft (plan/swarm, plus permission via /auto|/yolo). Persist them
+      // onto this new session's profile and await it before activating,
+      // otherwise the first skill turn can start before applyAgentState and
+      // run at daemon defaults while the UI shows otherwise. Thinking is NOT
+      // persisted here — activateSkill resolves and persists it for this
+      // session's model (gated) immediately before activating. Goal mode is a
+      // one-shot flag consumed per send, not a profile field, so there is
+      // nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
-      // Coerce thinking against the new session's model the same way the
-      // first-prompt path does (coercePromptThinking below): a value carried
-      // over from another/default model (e.g. 'max' from an effort model) would
-      // otherwise be persisted verbatim, and the first skill turn would run at
-      // a level the UI wouldn't send for this model.
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
-      await persistSessionProfile(
+      // No thinking in this patch: activateSkill itself resolves and persists
+      // the level for this session's model (single writer, gated) right before
+      // activating — a second write here would be a redundant profile update
+      // whose transient failure could false-veto a ready activation.
+      const persisted = await persistSessionProfile(
         {
           model,
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
-          thinking: coercePromptThinking(model),
         },
         sid,
       );
+      // The persist surfaces its own failure; activating at a stale profile
+      // effort is worse than not activating (the finally still re-arms below).
+      if (!persisted) return;
       await modelProvider.activateSkill(skillName, args, sid);
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
@@ -947,7 +1270,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
       return true;
-    } catch {
+    } catch (err) {
+      // The caller shows an inline error in the picker; keep the cause in the log.
+      console.warn('[kimi-web] addWorkspaceByPath failed for', trimmed, err);
       return false;
     }
   }
@@ -1112,29 +1437,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  // Coerce the persisted thinking level against the prompt's target model before
-  // submitting, so a stale value carried over from another session (e.g. 'max'
-  // from an effort model) isn't sent to a model that doesn't declare it. The
-  // composer already renders the coerced value; this keeps the submitted level
-  // in sync with what's displayed. Falls back to the raw level when the model
-  // catalog hasn't loaded yet (coerceThinkingForModel preserves it).
-  function coercePromptThinking(model: string | undefined) {
-    const promptModel =
-      model === undefined
-        ? undefined
-        : modelProvider.models.value.find(
-            (m) => m.model === model || m.id === model || m.displayName === model,
-          );
-    return coerceThinkingForModel(promptModel, rawState.thinking);
-  }
-
   /** Internal: submit a prompt to a specific session, bypassing the queue check.
-      Returns true when the daemon accepted the prompt. */
-  async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
+      Returns 'ok' when the daemon accepted the prompt, 'rejected' on a
+      definitive refusal (structured API error — the server holds nothing, so
+      re-queueing is safe), and 'uncertain' when the failure was ambiguous
+      (dropped response, network error): the merged prompt may already be
+      queued server-side, and callers must NOT re-queue or they'd duplicate it. */
+  async function submitPromptInternal(
+    sid: string,
+    text: string,
+    attachments?: PromptAttachment[],
+  ): Promise<'ok' | 'rejected' | 'uncertain'> {
     // Mark this session as having a prompt in flight BEFORE any await, so a racing
-    // sendPrompt sees it and enqueues. Cleared when activity returns to idle.
-    inFlightPromptSessions.add(sid);
-    rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
+    // sendPrompt sees it and enqueues. Cleared when the main turn ends (or the
+    // prompt dies without one). beginLocalTurn also bumps the snapshot generation
+    // and marks the submit pending, so a racing terminal snapshot can't clear
+    // this prompt (see handleSessionSnapshot).
+    const localTurnToken = beginLocalTurn(sid);
+    rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: true };
     const tempId = nextOptimisticMsgId();
     try {
       const api = getKimiWebApi();
@@ -1142,12 +1462,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (text) content.push({ type: 'text', text });
       for (const att of attachments ?? []) {
         if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-        else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
+        else if (att.kind === 'file') {
+          content.push({
+            type: 'file',
+            fileId: att.fileId,
+            name: att.name ?? '',
+            mediaType: att.mediaType || 'application/octet-stream',
+            size: att.size ?? 0,
+          });
+        } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
       }
       if (content.length === 0) {
-        inFlightPromptSessions.delete(sid);
-        rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-        return false;
+        rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
+        return 'rejected';
       }
 
       // OPTIMISTICALLY add the user message to local state BEFORE awaiting the
@@ -1184,19 +1511,23 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           await api.updateSession(sid, { goalObjective: text.trim() });
         } catch (err) {
           pushOperationFailure('createGoal', err, { sessionId: sid });
-          inFlightPromptSessions.delete(sid);
-          rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+          rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
           updateSessionMessages(sid, (msgs) =>
             msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
           );
-          return false;
+          return 'rejected';
         }
       }
 
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: coercePromptThinking(model),
+        // Resolved against THIS prompt's model (its stored pick when declared,
+        // else its catalog default) — never the active-session rawState.thinking,
+        // which tracks whatever session the user is looking at now: a queue
+        // drain for a background session would otherwise submit the level of
+        // the session the user switched to since enqueueing.
+        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1236,19 +1567,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // session.meta.updated (projected to sessionMetaUpdated). PATCHing a title
       // locally would mark the session isCustomTitle=true and SUPPRESS the
       // daemon's auto-title, so we let the daemon own it.
-      return true;
+      return 'ok';
     } catch (err) {
       // Submit failed — clear the in-flight flag so the next prompt isn't stuck
       // queued forever (turn.ended will never arrive), and roll back the
       // optimistic user message so the transcript doesn't show a delivered-
-      // looking message the daemon never received.
-      inFlightPromptSessions.delete(sid);
-      rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+      // looking message the daemon never received. A structured API error is a
+      // definitive refusal; anything else (network, truncated response) is
+      // ambiguous — the prompt may already sit in the server's queue.
+      rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
       updateSessionMessages(sid, (msgs) =>
         msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
       );
       pushOperationFailure('sendPrompt', err, { sessionId: sid });
-      return false;
+      return isDaemonApiError(err) ? 'rejected' : 'uncertain';
+    } finally {
+      // The daemon answered the submit (accepted or rejected) — the pending
+      // window in which a snapshot can't reflect this turn is over.
+      settleLocalTurn(sid, localTurnToken);
     }
   }
 
@@ -1257,11 +1593,24 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!sid) return;
 
     // If the session is not idle OR a prompt is already in flight (submitted but
-    // the WS turn.started hasn't flipped activity to 'running' yet), enqueue
-    // instead of submitting directly. Gating on inFlightPromptSessions closes the
-    // window where two rapid prompts would both submit and race.
-    if (activity.value !== 'idle' || inFlightPromptSessions.has(sid)) {
+    // the WS turn.started hasn't arrived yet), enqueue instead of submitting
+    // directly. The in-flight flag closes the window where two rapid prompts
+    // would both submit and race.
+    if (activity.value !== 'idle' || rawState.inFlightBySession[sid]) {
       enqueue(text, attachments);
+      return;
+    }
+
+    // The queue should be empty by the time the session is idle, so a
+    // non-empty queue means earlier prompts never made it out (e.g. a drain
+    // that raced a still-busy daemon right after an abort). Preserve FIFO:
+    // enqueue this prompt behind them and flush the head now — the flush
+    // re-arms the in-flight flag, and each later turn end drains the next
+    // entry. Submitting directly here would jump the queue AND leave the
+    // stuck entries without a flush driver.
+    if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
+      enqueue(text, attachments);
+      flushQueueHead(sid);
       return;
     }
 
@@ -1297,9 +1646,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     const merged = parts.join('\n\n');
 
+    // Put back every entry that was merged into this steer when its submit
+    // fails, so the queued prompts aren't silently lost. Entries enqueued
+    // while the submit was in flight stay behind them.
+    const restoreQueue = (): void => {
+      if (queue.length === 0) return;
+      const current = rawState.queuedBySession[sid] ?? [];
+      rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [...queue, ...current] };
+    };
+
     // Idle and nothing in flight — there is no turn to steer into; normal send.
-    if (activity.value === 'idle' && !inFlightPromptSessions.has(sid)) {
-      await submitPromptInternal(sid, merged, mergedAttachments);
+    if (activity.value === 'idle' && !rawState.inFlightBySession[sid]) {
+      const outcome = await submitPromptInternal(sid, merged, mergedAttachments);
+      // Same never-duplicate rule as the running-path catch below: restore
+      // the merged entries only on a definitive rejection.
+      if (outcome === 'rejected') restoreQueue();
       return;
     }
 
@@ -1308,7 +1669,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (merged) content.push({ type: 'text', text: merged });
     for (const att of mergedAttachments) {
       if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-      else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
+      else if (att.kind === 'file') {
+        content.push({
+          type: 'file',
+          fileId: att.fileId,
+          name: att.name ?? '',
+          mediaType: att.mediaType || 'application/octet-stream',
+          size: att.size ?? 0,
+        });
+      } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
     }
     const tempId = nextOptimisticMsgId();
     const optimisticMsg: AppMessage = {
@@ -1321,6 +1690,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     };
     updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
 
+    const localTurnToken = beginLocalTurn(sid);
     try {
       const api = getKimiWebApi();
       const promptSession = rawState.sessions.find((s) => s.id === sid);
@@ -1331,7 +1701,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: coercePromptThinking(model),
+        // Resolved against this prompt's own model, same as a normal send (see
+        // submitPromptInternal).
+        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
@@ -1367,7 +1739,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Submit failed: drop the optimistic echo so the transcript doesn't show
       // a delivered-looking message the daemon never received.
       updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
+      // Restore the merged queue entries ONLY on a definitive daemon rejection
+      // (a structured API error means nothing was accepted). On an ambiguous
+      // failure — dropped response, network error — the merged prompt may
+      // already be queued server-side; re-queueing the originals would
+      // duplicate it (the exact ghost-send behavior this change exists to
+      // prevent). The failure toast below tells the user what happened.
+      if (isDaemonApiError(err)) restoreQueue();
       pushOperationFailure('steer', err, { sessionId: sid });
+    } finally {
+      settleLocalTurn(sid, localTurnToken);
     }
   }
 
@@ -1391,10 +1772,141 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const sid = rawState.activeSessionId;
     if (!sid) return;
     const current = rawState.queuedBySession[sid] ?? [];
+    // The id keys the per-entry flush failure budget (removing/reordering
+    // the head then resets the next entry's budget).
+    const entry = { text, attachments, id: nextQueueEntryId() };
     rawState.queuedBySession = {
       ...rawState.queuedBySession,
-      [sid]: [...current, { text, attachments }],
+      [sid]: [...current, entry],
     };
+  }
+
+  /**
+   * Submit the head of the session's local prompt queue. On failure the
+   * entry goes back at the head with NO immediate retry — the daemon that
+   * just rejected it is the one we'd race against (e.g. right after an
+   * abort); the next turn end or the next idle sendPrompt drives the next
+   * attempt. After MAX_QUEUE_FLUSH_FAILURES consecutive failures the entry
+   * is dropped instead, so one permanently rejected prompt cannot wedge the
+   * queue. The budget is tracked PER ENTRY (by id), so removing or
+   * reordering the head resets it for the next entry. Every failure is
+   * already surfaced via pushOperationFailure.
+   */
+  function flushQueueHead(sid: string): void {
+    const [next, ...rest] = rawState.queuedBySession[sid] ?? [];
+    if (next === undefined) return;
+    rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
+    void submitPromptInternal(sid, next.text, next.attachments).then((outcome) => {
+      if (outcome === 'ok') {
+        queueFlushFailures.delete(sid);
+        return;
+      }
+      // Ambiguous failure: the daemon may have accepted the prompt and lost
+      // the response — the entry is dropped (the failure was already toasted)
+      // rather than re-queued and possibly submitted twice.
+      if (outcome === 'uncertain') {
+        queueFlushFailures.delete(sid);
+        return;
+      }
+      // Definitively rejected below this point. If the session was forgotten
+      // (e.g. archived) while the submit was pending, its queue was already
+      // discarded — don't resurrect it.
+      if (!rawState.sessions.some((s) => s.id === sid)) {
+        queueFlushFailures.delete(sid);
+        return;
+      }
+      // Per-entry budget: a different head (removed/reordered since) starts
+      // fresh instead of inheriting the previous entry's failures.
+      const key = next.id ?? next.text;
+      const previous = queueFlushFailures.get(sid);
+      const count = previous !== undefined && previous.key === key ? previous.count + 1 : 1;
+      if (count >= MAX_QUEUE_FLUSH_FAILURES) {
+        queueFlushFailures.delete(sid);
+        // Advance the queue instead of stranding the entries behind the
+        // dropped head: the failed submit produced no turn, so nothing else
+        // will drive the next entry until the user sends again. The new head
+        // carries its own budget, so a poisoned successor just goes through
+        // the same retry cycle.
+        if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
+          flushQueueHead(sid);
+        }
+        return;
+      }
+      queueFlushFailures.set(sid, { key, count });
+      const current = rawState.queuedBySession[sid] ?? [];
+      rawState.queuedBySession = {
+        ...rawState.queuedBySession,
+        [sid]: [next, ...current],
+      };
+    });
+  }
+
+  /**
+   * Shared prompt-finish cleanup, used by BOTH the main-turn-ended path
+   * (facade `onMainTurnEnd`) and the authoritative-snapshot path
+   * (handleSessionSnapshot below). Returns whether this call actually flipped
+   * an in-flight prompt to finished.
+   *
+   * Clears the local in-flight/prompt-id state and drains exactly ONE
+   * queued message — the resubmitted prompt re-arms the in-flight flag, and
+   * its own finish drains the following one. Repeat calls (e.g. a late
+   * duplicate idle event) therefore cannot drain more than one message per
+   * real turn end. Callers layer their own side effects (notify, sound,
+   * unread) on top; the snapshot path deliberately adds none.
+   *
+   * The drain is GATED on this client having actually witnessed a live
+   * prompt/turn: a finish with no local in-flight prompt, no locally
+   * tracked active turn, and no `turnWasActive` hint must NOT submit
+   * queued prompts. That is what fired stale queued messages (and their
+   * old file attachments) spontaneously when a session was merely
+   * re-opened after an earlier drain had failed.
+   */
+  function finishPromptLocal(sid: string, opts?: { turnWasActive?: boolean }): boolean {
+    const wasInFlight = rawState.inFlightBySession[sid] === true;
+    rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
+    // Drop any cached prompt_id so a later skill activation (which has no
+    // prompt_id) doesn't accidentally reuse this stale id for :abort.
+    if (rawState.promptIdBySession[sid] !== undefined) {
+      const nextPromptIds = { ...rawState.promptIdBySession };
+      delete nextPromptIds[sid];
+      rawState.promptIdBySession = nextPromptIds;
+    }
+    if (sid === rawState.activeSessionId) {
+      resetFastMoon();
+    }
+
+    const mayDrain =
+      wasInFlight || opts?.turnWasActive === true || (rawState.turnActiveBySession[sid] ?? false);
+    if (mayDrain) {
+      flushQueueHead(sid);
+    }
+
+    return wasInFlight;
+  }
+
+  /**
+   * Snapshot-driven finish. An authoritative snapshot replaces the event
+   * stream on resync (buffer overflow / epoch change / delta gap): no
+   * sessionStatusChanged event arrives in that case, so without this the
+   * local in-flight flag would stick forever — the moon keeps spinning and
+   * the next prompt queues behind a turn that already ended.
+   *
+   * Unlike the WS path this adds NO completion side effects (no notification,
+   * sound, or unread): opening a historical session must not cry wolf. The
+   * queue drain inside finishPromptLocal is additionally gated on a locally
+   * witnessed prompt/turn, so merely re-opening a session can never
+   * spontaneously submit queued prompts (with their stale attachments).
+   */
+  function handleSessionSnapshot(
+    sid: string,
+    snapshot: { inFlightTurn: AppInFlightTurn | null; busy: boolean },
+  ): void {
+    // inFlightTurn tracks only the main agent, while busy aggregates all
+    // agents and background work. Keep the local prompt alive only when both
+    // facts still support a running main turn. Either terminal fact may also
+    // reconcile the other tracker when a snapshot catches it stale.
+    if (snapshot.inFlightTurn !== null && snapshot.busy) return;
+    finishPromptLocal(sid);
   }
 
   async function abortCurrentPrompt(): Promise<void> {
@@ -1405,11 +1917,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // 1. Authoritative id captured at submit time.
     let promptId = rawState.promptIdBySession[sid];
 
-    // 2. Fallback to projector-derived id only when it is a real daemon prompt_id
-    //    (synthetic `pr_...` ids are rejected by the daemon).
+    // 2. Fallback to projector-derived id only when it is a real daemon prompt_id.
+    //    The v1 daemon uses `prompt_...`, server-v2 legacy uses `msg_...`;
+    //    only local synthetic `pr_...` ids are rejected by the daemon.
     if (promptId === undefined) {
       const candidate = session?.currentPromptId;
-      if (candidate?.startsWith('prompt_')) {
+      if (candidate !== undefined && candidate.length > 0 && !candidate.startsWith('pr_')) {
         promptId = candidate;
       }
     }
@@ -1552,7 +2065,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     pendingTaskCancellations[taskId] = true;
     try {
       const api = getKimiWebApi();
-      await api.cancelTask(sid, taskId);
+      // A background subagent row is keyed by agent id, but REST `/tasks` only
+      // knows its background-task id.
+      const restTaskId = (rawState.tasksBySession[sid] ?? []).find((t) => t.id === taskId)
+        ?.backgroundTaskId;
+      await api.cancelTask(sid, restTaskId ?? taskId);
       // Update task status locally
       const list = rawState.tasksBySession[sid] ?? [];
       rawState.tasksBySession = {
@@ -1819,8 +2336,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Best-effort registry cleanup; ignore failures (the hide already took effect).
     try {
       await getKimiWebApi().deleteWorkspace(id);
-    } catch {
+    } catch (err) {
       // registry delete is optional — the sidebar hide is what the user sees.
+      console.warn('[kimi-web] deleteWorkspace registry cleanup failed for', id, err);
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
@@ -1863,6 +2381,77 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
     } catch (err) {
       pushOperationFailure('archiveSession', err, { sessionId: id });
+    }
+  }
+
+  /** Export the given session (default: the active one). The id is captured
+   * synchronously so a later session switch cannot redirect the in-flight
+   * request, and a lock prevents duplicate ZIP generation. */
+  async function exportSession(targetSessionId?: string): Promise<void> {
+    if (exportInFlight) return;
+    const sessionId = targetSessionId ?? rawState.activeSessionId;
+    if (!sessionId) {
+      const message = t('commands.export.noSession');
+      traceKeyEvent('export:failed', { status: 'no-session' });
+      pushOperationFailure('exportSession', new Error(message), { message });
+      return;
+    }
+    exportInFlight = true;
+    const startedAt = Date.now();
+    traceKeyEvent('export:start', { sessionId });
+    try {
+      const webLog = sessionExportTraceToJsonl();
+      const { blob, fileName } = await getKimiWebApi().exportSession(sessionId, webLog);
+      if (typeof document === 'undefined') throw new Error('Document is unavailable');
+      const url = URL.createObjectURL(blob);
+      let anchor: HTMLAnchorElement | undefined;
+      try {
+        anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.append(anchor);
+        anchor.click();
+      } finally {
+        anchor?.remove();
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch {
+            // Object URL cleanup is best-effort in restricted browser contexts.
+          }
+        }, 0);
+      }
+      traceKeyEvent('export:accepted', {
+        sessionId,
+        status: 'accepted',
+        zipBytes: blob.size,
+        durationMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      const failure =
+        typeof error === 'object' && error !== null
+          ? (error as {
+              name?: unknown;
+              code?: unknown;
+              requestId?: unknown;
+              phase?: unknown;
+              status?: unknown;
+            })
+          : undefined;
+      traceKeyEvent('export:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        errorName:
+          typeof failure?.name === 'string' ? failure.name : typeof error,
+        errorCode: typeof failure?.code === 'number' ? failure.code : undefined,
+        requestId: typeof failure?.requestId === 'string' ? failure.requestId : undefined,
+        phase: typeof failure?.phase === 'string' ? failure.phase : undefined,
+        httpStatus: typeof failure?.status === 'number' ? failure.status : undefined,
+      });
+      pushOperationFailure('exportSession', error, { sessionId });
+    } finally {
+      exportInFlight = false;
     }
   }
 
@@ -2043,7 +2632,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         size: result.size,
         lineCount: result.lineCount,
       };
-    } catch {
+    } catch (err) {
+      console.warn('[kimi-web] readFileContent failed for', path, err);
       return null;
     }
   }
@@ -2157,6 +2747,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     updateConfig,
     listAllSessionsGlobal,
     load,
+    refreshServerMeta,
     loadWorkspaces,
     loadMoreSessions,
     loadAllSessions,
@@ -2178,6 +2769,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     bindSessionRoute,
     selectSession,
     submitPromptInternal,
+    finishPromptLocal,
+    localTurnStartState,
+    isLocalTurnSnapshotCurrent,
+    afterLocalTurnStartsSettle,
+    handleSessionSnapshot,
     sendPrompt,
     steerPrompt,
     uploadImage,
@@ -2205,6 +2801,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     renameWorkspace,
     deleteWorkspace,
     archiveSession,
+    exportSession,
     restoreSession,
     loadArchivedSessions,
     logout,

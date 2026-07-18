@@ -1,9 +1,9 @@
 /**
  *   GET  /v1/sessions/{session_id}/tasks                 query: {status?}
- *     Response data: `{ items: BackgroundTask[] }`
+ *     Response data: `{ items: Task[] }`
  *
  *   GET  /v1/sessions/{session_id}/tasks/{task_id}       query: {with_output?, output_bytes?}
- *     Response data: `BackgroundTask`
+ *     Response data: `Task`
  *     Errors: 40406 (task.not_found)
  *
  *   POST /v1/sessions/{session_id}/tasks/{task_id}:cancel
@@ -14,15 +14,15 @@
 
 import { z } from 'zod';
 
-import { backgroundTaskSchema, backgroundTaskStatusSchema } from '../task';
+import { taskSchema, taskStatusSchema } from '../task';
 
 export const listTasksQuerySchema = z.object({
-  status: backgroundTaskStatusSchema.optional(),
+  status: taskStatusSchema.optional(),
 });
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 
 export const listTasksResponseSchema = z.object({
-  items: z.array(backgroundTaskSchema),
+  items: z.array(taskSchema),
 });
 export type ListTasksResponse = z.infer<typeof listTasksResponseSchema>;
 
@@ -32,7 +32,7 @@ export const getTaskQuerySchema = z.object({
 });
 export type GetTaskQuery = z.infer<typeof getTaskQuerySchema>;
 
-export const getTaskResponseSchema = backgroundTaskSchema;
+export const getTaskResponseSchema = taskSchema;
 export type GetTaskResponse = z.infer<typeof getTaskResponseSchema>;
 
 export const cancelTaskResultSchema = z.object({

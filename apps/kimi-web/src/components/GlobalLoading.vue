@@ -7,6 +7,9 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import Spinner from './ui/Spinner.vue';
+/** Last connection error from the first-load auth gate's retry loop, shown so
+ *  a "cannot connect" state is diagnosable instead of a bare spinner. */
+defineProps<{ issue?: string | null }>();
 const { t } = useI18n();
 </script>
 
@@ -21,6 +24,10 @@ const { t } = useI18n();
       </svg>
       <Spinner size="md" :label="t('app.connecting')" />
       <div class="gload-text">{{ t('app.connecting') }}</div>
+      <div v-if="issue" class="gload-issue">
+        <div>{{ t('app.connectRetrying') }}</div>
+        <div class="gload-issue-detail">{{ issue }}</div>
+      </div>
     </div>
   </div>
 </template>
@@ -62,6 +69,24 @@ const { t } = useI18n();
   font-size: var(--text-base);
   color: var(--muted);
   letter-spacing: 0.04em;
+}
+.gload-issue {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(480px, 80vw);
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  text-align: center;
+}
+.gload-issue-detail {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  opacity: 0.8;
+  word-break: break-word;
 }
 @keyframes gload-pop {
   from { opacity: 0; transform: translateY(6px) scale(0.96); }

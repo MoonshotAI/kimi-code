@@ -478,9 +478,19 @@ describe('goal session end-to-end', () => {
   it('pauses the goal on provider rate limits', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];
-    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], async () => {
-      throw new APIStatusError(429, 'Rate limited', 'req-429');
-    });
+    // Pin the retry budget to 1 attempt: the pause behavior under test does
+    // not depend on retries, and the default 10-attempt backoff would blow
+    // the test timeout.
+    const { session, agent } = await setupSession(
+      sessionDir,
+      events,
+      ['GetGoal'],
+      async () => {
+        throw new APIStatusError(429, 'Rate limited', 'req-429');
+      },
+      undefined,
+      { providers: {}, loopControl: { maxRetriesPerStep: 1 } },
+    );
     const api = new SessionAPIImpl(session);
     await api.createGoal({ agentId: 'main', objective: 'work' });
 
@@ -495,9 +505,19 @@ describe('goal session end-to-end', () => {
   it('pauses the goal on provider connection errors', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];
-    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], async () => {
-      throw new APIConnectionError('socket hang up');
-    });
+    // Pin the retry budget to 1 attempt: the pause behavior under test does
+    // not depend on retries, and the default 10-attempt backoff would blow
+    // the test timeout.
+    const { session, agent } = await setupSession(
+      sessionDir,
+      events,
+      ['GetGoal'],
+      async () => {
+        throw new APIConnectionError('socket hang up');
+      },
+      undefined,
+      { providers: {}, loopControl: { maxRetriesPerStep: 1 } },
+    );
     const api = new SessionAPIImpl(session);
     await api.createGoal({ agentId: 'main', objective: 'work' });
 
@@ -581,7 +601,11 @@ describe('goal session end-to-end', () => {
     expect(goal?.status).toBe('paused');
     expect(goal?.terminalReason).toBe('Paused after provider safety policy block');
     expect(events).toContainEqual(
-      expect.objectContaining({ type: 'turn.ended', reason: 'filtered' }),
+      expect.objectContaining({
+        type: 'turn.ended',
+        reason: 'failed',
+        error: expect.objectContaining({ code: 'provider.filtered' }),
+      }),
     );
   });
 

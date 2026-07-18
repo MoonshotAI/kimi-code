@@ -13,8 +13,9 @@
 
 import { join } from 'node:path';
 
+import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
+import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
-import { startServer, type RunningServer } from '@moonshot-ai/server';
 import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
@@ -25,7 +26,11 @@ import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
 import { initializeServerTelemetry } from '../../telemetry';
-import { createKimiCodeHostIdentity, getHostPackageRoot, getVersion } from '../../version';
+import {
+  buildKimiDefaultHeaders,
+  getHostPackageRoot,
+  getVersion,
+} from '../../version';
 import {
   accessUrlLines,
   buildOpenableUrl,
@@ -47,6 +52,17 @@ import {
 } from './shared';
 
 const WEB_ASSETS_DIR = 'dist-web';
+
+/**
+ * Minimal surface `runServerInProcess` needs from the server. kap-server's
+ * `RunningServer` is adapted to it (it returns `{ host, port, close }`
+ * instead of `{ address, logger, close }`).
+ */
+interface RoutedServer {
+  readonly address: string;
+  readonly logger: ServerLogger;
+  close(): Promise<void>;
+}
 
 export interface RunCliOptions extends ServerCliOptions {
   open?: boolean;
@@ -340,9 +356,11 @@ async function runServerInProcess(
   onReady?: (origin: string) => void,
 ): Promise<never> {
   const version = getVersion();
-  const telemetry = initializeServerTelemetry({ version });
+  // Registers the telemetry provider for `track` / `shutdownTelemetry`; the
+  // client itself is not passed into kap-server.
+  initializeServerTelemetry({ version });
 
-  let running: RunningServer | undefined;
+  let running: RoutedServer | undefined;
   let stopping = false;
 
   // Idle auto-shutdown is only for the on-demand personal daemon. It is skipped
@@ -375,30 +393,53 @@ async function runServerInProcess(
     process.exit(0);
   }
 
-  running = await startServer({
+  // kap-server (the DI × Scope engine server) is the only server flavor. Its
+  // `startServer` returns `{ host, port, close }` rather than `{ address,
+  // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
+  // this runner consumes.
+  const logger = createServerLogger({ level: options.logLevel });
+  const v2 = await startServer({
     host: options.host,
     port: options.port,
+    // Report the CLI's product version as `server_version` (/meta, web UI)
+    // rather than kap-server's private package version.
+    version,
     logLevel: options.logLevel,
+    logger,
     debugEndpoints: options.debugEndpoints,
     insecureNoTls: options.insecureNoTls,
     allowRemoteShutdown: options.allowRemoteShutdown,
     allowRemoteTerminals: options.allowRemoteTerminals,
-    dangerousBypassAuth: options.dangerousBypassAuth,
     allowedHosts: options.allowedHosts,
+    disableAuth: options.dangerousBypassAuth,
+    // Seed the CLI's Kimi identity headers so the engine's outbound
+    // requests (model, WebSearch, FetchURL) carry the same User-Agent +
+    // X-Msh-* identity as direct CLI runs.
+    seeds: hostRequestHeadersSeed(buildKimiDefaultHeaders(version)),
     webAssetsDir: serverWebAssetsDir(),
-    coreProcessOptions: {
-      identity: createKimiCodeHostIdentity(version),
-      telemetry,
-    },
-    wsGatewayOptions: {
-      telemetry,
-      onConnectionCountChange: idle
-        ? (size) => {
-            idle.onConnectionCountChange(size);
-          }
-        : undefined,
-    },
   });
+  // The connection registry exposes no count-change hook, so forward
+  // add/remove to the daemon's idle-shutdown handler (a no-op when `idle`
+  // is undefined, e.g. foreground or --keep-alive).
+  if (idle !== undefined) {
+    const registry = v2.connectionRegistry;
+    const add = registry.add.bind(registry);
+    const remove = registry.remove.bind(registry);
+    registry.add = (conn) => {
+      add(conn);
+      idle.onConnectionCountChange(registry.size());
+    };
+    registry.remove = (connId) => {
+      remove(connId);
+      idle.onConnectionCountChange(registry.size());
+    };
+  }
+  logger.info('serving the REST/WS API and the bundled web UI');
+  running = {
+    address: `http://${v2.host}:${v2.port}`,
+    logger,
+    close: () => v2.close(),
+  };
 
   track('server_started', { daemon: mode.daemon });
 

@@ -6,13 +6,12 @@ import {
   APITimeoutError,
   ChatProviderError,
   isRetryableGenerateError,
+  normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart } from '#/message';
 import {
   convertContentPart,
   convertOpenAIError,
-  reasoningEffortToThinkingEffort,
-  thinkingEffortToReasoningEffort,
 } from '#/providers/openai-common';
 import { OpenAILegacyChatProvider, OpenAILegacyStreamedMessage } from '#/providers/openai-legacy';
 import {
@@ -141,6 +140,37 @@ describe('convertOpenAIError: provider rate limit', () => {
     const result = convertOpenAIError(err);
     expect(result).toBeInstanceOf(APIProviderRateLimitError);
     expect((result as APIProviderRateLimitError).retryAfterMs).toBeNull();
+  });
+
+  it('carries the x-trace-id response header onto the status error', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': 'trace-err-500' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBe('trace-err-500');
+  });
+
+  it('leaves traceId null when the error response has no x-trace-id header', () => {
+    const err = new OpenAIAPIError(500, undefined, 'Internal server error', new Headers());
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBeNull();
+  });
+
+  it('leaves traceId null when the x-trace-id header is empty', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': '' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBeNull();
   });
 });
 describe('convertOpenAIError: subclass errors still match first', () => {
@@ -340,59 +370,14 @@ describe('convertContentPart', () => {
     expect(() => convertContentPart(bogus)).toThrow(/Unknown content part type/);
   });
 });
-describe('thinkingEffortToReasoningEffort', () => {
-  it('maps off -> undefined', () => {
-    expect(thinkingEffortToReasoningEffort('off')).toBeUndefined();
-  });
-  it('maps low -> "low"', () => {
-    expect(thinkingEffortToReasoningEffort('low')).toBe('low');
-  });
-  it('maps medium -> "medium"', () => {
-    expect(thinkingEffortToReasoningEffort('medium')).toBe('medium');
-  });
-  it('maps high -> "high"', () => {
-    expect(thinkingEffortToReasoningEffort('high')).toBe('high');
-  });
-  it('maps xhigh -> "xhigh"', () => {
-    expect(thinkingEffortToReasoningEffort('xhigh')).toBe('xhigh');
-  });
-  it('maps max -> "xhigh"', () => {
-    expect(thinkingEffortToReasoningEffort('max')).toBe('xhigh');
-  });
-  it('normalizes unknown effort to undefined', () => {
-    // Unknown / model-declared efforts (including 'on') are tolerated: the
-    // provider omits reasoning_effort and lets the model use its own default.
-    expect(thinkingEffortToReasoningEffort('extreme' as never)).toBeUndefined();
-  });
-});
-describe('reasoningEffortToThinkingEffort', () => {
-  it('returns null for undefined', () => {
-    const effort: string | undefined = undefined;
-    expect(reasoningEffortToThinkingEffort(effort)).toBeNull();
-  });
-  it('maps "low" -> low', () => {
-    expect(reasoningEffortToThinkingEffort('low')).toBe('low');
-  });
-  it('maps "minimal" -> low (alias)', () => {
-    expect(reasoningEffortToThinkingEffort('minimal')).toBe('low');
-  });
-  it('maps "medium" -> medium', () => {
-    expect(reasoningEffortToThinkingEffort('medium')).toBe('medium');
-  });
-  it('maps "high" -> high', () => {
-    expect(reasoningEffortToThinkingEffort('high')).toBe('high');
-  });
-  it('maps "xhigh" -> xhigh', () => {
-    expect(reasoningEffortToThinkingEffort('xhigh')).toBe('xhigh');
-  });
-  it('maps "max" -> xhigh (alias)', () => {
-    expect(reasoningEffortToThinkingEffort('max')).toBe('xhigh');
-  });
-  it('maps "none" -> off', () => {
-    expect(reasoningEffortToThinkingEffort('none')).toBe('off');
-  });
-  it('unknown values fall back to off', () => {
-    expect(reasoningEffortToThinkingEffort('ultra')).toBe('off');
+describe('normalizeAPIStatusError thinking effort guidance', () => {
+  it('adds configuration guidance when a provider rejects reasoning_effort', () => {
+    const error = normalizeAPIStatusError(400, 'Invalid reasoning_effort: xhigh');
+
+    expect(error.message).toContain('Non-Kimi providers receive effort strings');
+    expect(error.message).toContain(
+      'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking',
+    );
   });
 });
 describe('convertOpenAIError: non-Error values', () => {

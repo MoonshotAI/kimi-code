@@ -1,0 +1,40 @@
+{
+  "name": "@moonshot-ai/kap-server",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Kimi Code server backed by the DI × Scope agent engine (agent-core-v2)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./contract": {
+      "types": "./src/contract.ts",
+      "default": "./src/contract.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/swagger": "^9.7.0",
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^5.1.0",
+    "pino": "^9.5.0",
+    "smol-toml": "^1.6.1",
+    "ulid": "^3.0.1",
+    "ws": "^8.18.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/ws": "^8.18.0",
+    "tsx": "^4.21.0"
+  }
+}

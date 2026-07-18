@@ -417,8 +417,10 @@ onUnmounted(() => {
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
                 <tr><td class="tk">--p-sidebar-w</td><td class="val">264px</td><td>left session sidebar width</td></tr>
-                <tr><td class="tk">--p-content-max</td><td class="val">760px</td><td>chat reading-column max width</td></tr>
+                <tr><td class="tk">--p-content-max</td><td class="val">760px</td><td>chat reading-column max width (regular chat prose)</td></tr>
                 <tr><td class="tk">--p-content-wide</td><td class="val">920px</td><td>wide content (settings / panel)</td></tr>
+                <tr><td class="tk">--p-table-max</td><td class="val">1040px</td><td>desktop wide-table max width (see §04)</td></tr>
+                <tr><td class="tk">--p-table-cell-max</td><td class="val">700px</td><td>max width of a single table column; longer cell content wraps (see §04)</td></tr>
                 <tr><td class="tk">--p-bp-sm</td><td class="val">640px</td><td>mobile / desktop boundary</td></tr>
                 <tr><td class="tk">--p-bp-md</td><td class="val">980px</td><td>narrow / wide screen boundary</td></tr>
               </tbody>
@@ -1118,6 +1120,7 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+            <p><b>Wide markdown tables (desktop):</b> regular chat prose stays within the 760px reading column (<code>--p-content-max</code>). On desktop a wide table may grow naturally with its content up to 1040px (<code>--p-table-max</code>), centred within the conversation pane; beyond that the excess scrolls horizontally inside the table's own wrapper — the page and the chat area never scroll sideways. A single column is capped at 700px (<code>--p-table-cell-max</code>), so long cell content wraps inside the cell instead of stretching the table. The conversation outline (TOC) keeps its usual position just outside the reading column; when a table grows past it and scrolls under the rail, the TOC is hidden temporarily and returns as soon as the table leaves, without touching the user's TOC setting. On mobile a table never breaks out of the reading column.</p>
 
             <h3 class="sub">Tool calls: compact by default, grouped, expand on demand</h3>
             <p>High-frequency calls like <code>read_file</code> / <code>bash</code> / <code>grep</code> are "operational noise" — if each one took a full card, parallel triggers would quickly drown out the conversation.
@@ -1446,7 +1449,7 @@ onUnmounted(() => {
               <tbody>
                 <tr><td>Width / cursor</td><td>4px / <code>col-resize</code></td></tr>
                 <tr><td>Normal / active</td><td>transparent / <code>accent</code> fill</td></tr>
-                <tr><td>Layer</td><td><code>--z-sticky</code>, over the column border</td></tr>
+                <tr><td>Layer</td><td><code>--z-dropdown</code>, above pane-level sticky chrome (chat dock at <code>--z-sticky</code>) so the overhang stays visible and grabbable</td></tr>
                 <tr><td>Behavior</td><td>panel width follows the pointer 1:1 while dragging (the parent disables transitions to avoid lag); on release it is persisted to localStorage</td></tr>
               </tbody>
             </table>

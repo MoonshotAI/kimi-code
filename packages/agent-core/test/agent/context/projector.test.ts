@@ -2,8 +2,10 @@ import type { ContentPart, Message, ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import {
+  captureMediaStripSnapshot,
   degradeOlderMediaParts,
   project,
+  stripMediaPartsBySnapshot,
   type ProjectionAnomaly,
 } from '../../../src/agent/context/projector';
 import type { ContextMessage } from '../../../src/agent/context/types';
@@ -157,6 +159,24 @@ function compactionSummary(text = 'summary'): ContextMessage {
 // ---------------------------------------------------------------------------
 // Targeted regression tests
 // ---------------------------------------------------------------------------
+
+describe('project UI-only context metadata', () => {
+  it('does not send persisted tool displays to the model provider', () => {
+    const assistantMessage = assistant(['edit-call']);
+    assistantMessage.toolCallDisplays = {
+      'edit-call': {
+        kind: 'diff',
+        path: '/workspace/file.txt',
+        before: 'old',
+        after: 'new',
+      },
+    };
+
+    const projected = project([user('update it'), assistantMessage, tool('edit-call')]);
+
+    expect(projected[1]).not.toHaveProperty('toolCallDisplays');
+  });
+});
 
 describe('project tool_use/tool_result adjacency', () => {
   it('leaves an already well-formed history unchanged (idempotent)', () => {
@@ -830,5 +850,60 @@ describe('degradeOlderMediaParts', () => {
     expect(degraded[2]).toBe(messages[2]);
     // The input's first message still carries its image part.
     expect(messages[0]!.content.some((part) => part.type === 'image_url')).toBe(true);
+  });
+});
+
+describe('media strip snapshots', () => {
+  it('strips a cloned media container when its provider-visible identity is unchanged', () => {
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            imageUrl: { id: 'old-image', url: 'data:image/png;base64,T0xE' },
+          },
+        ],
+        toolCalls: [],
+      },
+    ];
+    const snapshot = captureMediaStripSnapshot(messages);
+
+    const projected = stripMediaPartsBySnapshot(structuredClone(messages), snapshot);
+
+    expect(projected[0]?.content).toEqual([
+      {
+        type: 'text',
+        text: '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
+      },
+    ]);
+  });
+
+  it('preserves media when its id or part type differs from the captured identity', () => {
+    const sharedContainer = { id: 'shared', url: 'data:application/octet-stream;base64,U0FNRQ==' };
+    const snapshot = captureMediaStripSnapshot([
+      {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: sharedContainer }],
+        toolCalls: [],
+      },
+    ]);
+    const candidates: Message[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            imageUrl: { id: 'different', url: sharedContainer.url },
+          },
+          { type: 'audio_url', audioUrl: sharedContainer },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const projected = stripMediaPartsBySnapshot(candidates, snapshot);
+
+    expect(projected).toBe(candidates);
   });
 });

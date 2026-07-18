@@ -7,7 +7,7 @@ export default {
   searchPlaceholder: '搜索模型或提供商…',
   loading: '加载模型中…',
   unavailable: 'daemon 暂不支持模型列表',
-  contextSuffix: '{size}k ctx',
+  contextSuffix: '{size} ctx',
   emptyNoModels: 'daemon 未提供可选模型',
   emptyNoMatch: '无匹配模型',
   starTitle: '添加到收藏',

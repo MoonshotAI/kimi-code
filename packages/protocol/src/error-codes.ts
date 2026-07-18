@@ -97,6 +97,8 @@ export const ErrorCode = {
   GOAL_OBJECTIVE_TOO_LONG: 40918,
   /** fs.mkdir 目标路径已存在（文件或目录） */
   FS_ALREADY_EXISTS: 40919,
+  /** goal 只允许主 agent 使用 */
+  GOAL_UNSUPPORTED_AGENT: 40920,
 
   /** approval 60s 超时 */
   APPROVAL_EXPIRED: 41001,
@@ -191,6 +193,7 @@ export const ErrorCodeReason: Readonly<Record<ErrorCode, string>> = {
   [ErrorCode.GOAL_OBJECTIVE_EMPTY]: 'goal.objective_empty',
   [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: 'goal.objective_too_long',
   [ErrorCode.FS_ALREADY_EXISTS]: 'fs.already_exists',
+  [ErrorCode.GOAL_UNSUPPORTED_AGENT]: 'goal.unsupported_agent',
 
   [ErrorCode.APPROVAL_EXPIRED]: 'approval.expired',
   [ErrorCode.QUESTION_EXPIRED]: 'question.expired',

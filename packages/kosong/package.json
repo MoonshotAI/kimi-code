@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kosong",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "The LLM abstraction layer for modern AI agent applications",
   "license": "MIT",
@@ -25,10 +25,7 @@
   ],
   "type": "module",
   "imports": {
-    "#/*": [
-      "./src/*.ts",
-      "./src/*/index.ts"
-    ]
+    "#/*": "./src/*.ts"
   },
   "exports": {
     ".": {

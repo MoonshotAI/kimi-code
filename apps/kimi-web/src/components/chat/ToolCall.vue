@@ -31,6 +31,7 @@ const Renderer = computed(() => resolveToolRenderer(props.tool));
     :mobile="mobile"
     :stack-position="stackPosition"
     :tool-diff-panel="toolDiffPanel"
+    :data-scroll-anchor-id="tool.id"
     @open-media="emit('openMedia', $event)"
     @open-file="emit('openFile', $event)"
     @open-tool-diff="emit('openToolDiff', $event)"

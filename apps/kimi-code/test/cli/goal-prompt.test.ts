@@ -168,6 +168,11 @@ describe('runPrompt headless goal mode', () => {
   let savedExitCode: typeof process.exitCode;
 
   beforeEach(() => {
+    // Pin the experimental engine flag off so runPrompt stays on the v1 path
+    // this suite mocks, regardless of the host environment (matches
+    // run-prompt.test.ts). With the flag on, runPrompt dispatches to the
+    // native v2 runner, which ignores these mocks and hangs the test.
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     savedExitCode = process.exitCode;
     mocks.experimentalFeatures = [{ id: 'micro_compaction', enabled: true }];
     mocks.sessions = [];
@@ -180,6 +185,7 @@ describe('runPrompt headless goal mode', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     process.exitCode = savedExitCode;
   });
 

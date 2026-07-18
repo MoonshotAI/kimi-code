@@ -5,5 +5,6 @@ export default {
   authPageMessage: '先连接 Kimi Code 账号，然后再开始或继续对话。',
   authPageLogin: '登录',
   connecting: '连接中…',
+  connectRetrying: '无法连接服务器，正在重试…',
   internalBuildBanner: '仅供内部测试',
 } as const;

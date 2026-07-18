@@ -338,6 +338,15 @@ const codeBlockProps = {
   loading: false,
 };
 
+function copyCodeBlockFallback(code: string): void {
+  // markstream emits `copy` even when it skipped the write because the
+  // Clipboard API is unavailable. Reuse our plain-HTTP fallback in that case,
+  // while avoiding a duplicate write after markstream succeeds on HTTPS.
+  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+  if (clipboard && typeof clipboard.writeText === 'function') return;
+  void copyTextToClipboard(code);
+}
+
 // Root cause for the "large session turns into code skeletons" failure:
 // markstream mounts every code block in the loaded transcript, then shiki has
 // to tokenize all of them. `loading: false` removes the visible skeleton gate,
@@ -437,6 +446,7 @@ function copyDiff(code: string, idx: number) {
         :smooth-streaming="streaming"
         :batch-rendering="allowBatchRender"
         :defer-nodes-until-visible="false"
+        @copy="copyCodeBlockFallback"
       />
 
       <!-- ```diff fence → local renderer (preserves +/- markers + colours) -->
@@ -723,37 +733,58 @@ function copyDiff(code: string, idx: number) {
   font-weight: var(--weight-medium);
 }
 
-/* Markdown tables. markstream-vue pins these to the message width
-   (`width:100%` + `table-layout:fixed`), squeezing wide content into narrow
-   columns. Instead we size columns to their content (`width:auto` +
-   `table-layout:auto`) and let cells WRAP, so a wide table fills the reading
-   column and wraps its text rather than being crushed or scrolling. (An earlier
-   attempt to break the table out into a *wider* column than the prose — via
-   container units and then fixed @container caps — is parked; see the handover
-   doc.) `!important` beats markstream's scoped `.table-node[data-v-…]` rules
-   regardless of injection order. */
+/* Markdown tables — wide tables scroll horizontally INSIDE the table's own
+   wrapper instead of squeezing into (or overflowing) the reading column.
+   The wrapper is a fixed-width local scroll container: it stays pinned to the
+   message width (`width:100%`, `min-width:0` so it can shrink inside flex
+   tracks) and clips any overflow behind its own `overflow-x:auto` scrollbar —
+   the chat pane and the page never scroll sideways. The table itself grows to
+   its content width (`width:max-content`, `max-width:none`,
+   `table-layout:auto`), so many-column or long-cell tables keep their natural
+   layout and only the excess scrolls within the wrapper. `min-width:100%` keeps
+   narrow tables stretched to fill the wrapper exactly as before. `!important`
+   beats markstream's scoped `.table-node[data-v-…]` rules regardless of
+   injection order. */
+.md :deep(.table-node-wrapper) {
+  width: 100%;
+  max-width: 100% !important;
+  min-width: 0;
+  overflow-x: auto !important;
+}
+
 .md :deep(.table-node) {
   --table-border: var(--color-line);
   --table-header-bg: var(--color-surface);
   font-size: var(--text-lg);
   margin: 0.5em 0;
-  width: auto !important;
-  max-width: 100% !important;
+  width: max-content !important;
+  min-width: 100%;
+  max-width: none !important;
   table-layout: auto !important;
-}
-/* Default: the table stays inside the reading column and its cells wrap to fit
-   — markstream's own cell default is already `white-space:normal`, so a wide
-   table simply wraps into the column instead of forcing a horizontal scroll.
-   `max-content` + `max-width:100%` sizes columns to their content up to the
-   column width; `overflow-x:auto` is a safety net for an unbreakable cell. */
-.md :deep(.table-node-wrapper) {
-  width: max-content;
-  max-width: 100% !important;
-  overflow-x: auto !important;
 }
 .md :deep(.table-node th),
 .md :deep(.table-node td) {
   text-align: left;
+  vertical-align: top;
+  /* Cap runaway columns: a single cell with long prose should stop stretching
+     its column at --p-table-cell-max and wrap inside the cell instead.
+     max-width on the cell itself only works in Firefox — Chromium ignores it
+     under table-layout:auto — so the clamp is reinforced on the content box
+     below. Wider tables made of many columns still scroll inside the
+     wrapper. */
+  max-width: var(--p-table-cell-max);
+}
+/* Chromium honors max-width on this inner box even under table-layout:auto:
+   markstream wraps plain-text cell content in a .text-node span, and as an
+   inline-block its max-content contribution to the column is clamped to
+   --p-table-cell-max, so the column stops there and the text wraps inside
+   (the span is already white-space:pre-wrap + overflow-wrap:break-word).
+   Cells mixing several inline children can still exceed the cap by the sum
+   of those children — acceptable; the runaway single-prose-cell case is the
+   one that matters. */
+.md :deep(.table-node .text-node) {
+  display: inline-block;
+  max-width: var(--p-table-cell-max);
   vertical-align: top;
 }
 

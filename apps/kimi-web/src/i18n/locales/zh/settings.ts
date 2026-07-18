@@ -48,6 +48,7 @@ export default {
   advanced: '高级',
   build: '构建',
   serverVersion: '服务端版本',
+  backend: '后端',
   exportLog: '故障排查日志',
   logHint: '加 ?debug=1 开启采集',
   exportLogBtn: '导出日志',

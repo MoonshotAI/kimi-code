@@ -6,7 +6,7 @@ import {
 
 import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
-import { ErrorCodes, type KimiErrorPayload } from '../errors';
+import { ErrorCodes } from '../errors';
 import { DenyAllPermissionPolicy } from '../agent/permission/policies/deny-all';
 import { InMemoryAgentRecordPersistence } from '../agent/records';
 import { isAbortError } from '../loop/errors';
@@ -30,8 +30,46 @@ import {
 } from './subagent-batch';
 import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md?raw';
 
-export const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
-export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '30 minutes';
+export const DEFAULT_SUBAGENT_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '2 hours';
+
+const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
+
+/**
+ * Resolve the effective subagent per-task timeout. Precedence:
+ * `KIMI_SUBAGENT_TIMEOUT_MS` (integer ms) → `configMs` →
+ * `DEFAULT_SUBAGENT_TIMEOUT_MS` (2 hours). `0` means no timeout: the value
+ * feeds the background-task manager's per-task timeout (where `0` arms no
+ * timer), so it governs foreground and background subagents (and AgentSwarm).
+ */
+export function resolveSubagentTimeoutMs(configMs?: number): number {
+  const raw = process.env[SUBAGENT_TIMEOUT_ENV];
+  if (raw !== undefined && raw.trim().length > 0) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  }
+  if (configMs !== undefined && Number.isInteger(configMs) && configMs >= 0) {
+    return configMs;
+  }
+  return DEFAULT_SUBAGENT_TIMEOUT_MS;
+}
+
+/** Human-readable duration for the subagent timeout message. */
+export function formatSubagentTimeoutDescription(ms: number): string {
+  if (ms % (60 * 60 * 1000) === 0) {
+    const h = ms / (60 * 60 * 1000);
+    return `${h} hour${h === 1 ? '' : 's'}`;
+  }
+  if (ms % (60 * 1000) === 0) {
+    const m = ms / (60 * 1000);
+    return `${m} minute${m === 1 ? '' : 's'}`;
+  }
+  if (ms % 1000 === 0) {
+    const s = ms / 1000;
+    return `${s} second${s === 1 ? '' : 's'}`;
+  }
+  return `${ms} ms`;
+}
 
 export type {
   SubagentResult as QueuedSubagentRunResult,
@@ -331,6 +369,7 @@ export class SessionSubagentHost {
     options: RunSubagentOptions,
   ): Promise<SubagentCompletion> {
     await runChildTurnToCompletion(child, options.signal);
+    await this.drainChildBackgroundTasks(child, options.signal);
 
     // A subagent that returns an overly terse summary leaves the parent
     // agent under-informed. Give it a bounded number of chances to expand
@@ -376,6 +415,49 @@ export class SessionSubagentHost {
     );
     child.useProfile(profile, context, this.session.options.kimiHomeDir);
     child.tools.inheritUserTools(parent.tools);
+  }
+
+  /**
+   * Hold the run open until the child agent's background tasks (background
+   * Bash, nested background agents) settle — the print-mode (`kimi -p`)
+   * drain semantics applied to subagent completion. Drained tasks get their
+   * terminal notifications suppressed: without that, a task outliving the
+   * child's final turn steers a fresh turn on the finished subagent
+   * (`steer` degrades to `launch`), which runs unobserved and whose output
+   * never reaches the parent. Bounded by the run's signal — the Agent
+   * tool's per-run timeout / user-cancel envelope covers the drain too.
+   */
+  private async drainChildBackgroundTasks(child: Agent, signal: AbortSignal): Promise<void> {
+    for (;;) {
+      signal.throwIfAborted();
+      await this.suppressChildTaskNotifications(child);
+      await child.background.waitForActiveTasks(() => true, { signal });
+      // Suppress again after the wait: notification delivery re-checks
+      // suppression after its async output snapshot, so this pass still
+      // blocks notifications for tasks that settled during the wait.
+      await this.suppressChildTaskNotifications(child);
+      // A terminal effect that slipped past the suppression race may have
+      // steered a follow-up turn onto the child; let it finish (it can fan
+      // out new tasks) before declaring the child drained.
+      if (child.turn.hasActiveTurn) {
+        await runChildTurnToCompletion(child, signal);
+        continue;
+      }
+      if (child.background.list(true).length === 0) return;
+    }
+  }
+
+  /**
+   * Suppress terminal notifications for every child background task —
+   * including already-settled ones whose notification may still be in
+   * flight. `list(false)` is required: the active-only list drops a task
+   * the moment it terminates, which is exactly when an unsuppressed
+   * notification can still steer an orphan turn onto the finished child.
+   */
+  private async suppressChildTaskNotifications(child: Agent): Promise<void> {
+    for (const task of child.background.list(false)) {
+      await child.background.suppressTerminalNotification(task.taskId);
+    }
   }
 
   private async triggerSubagentStart(
@@ -469,7 +551,7 @@ async function runChildTurnToCompletion(child: Agent, signal: AbortSignal): Prom
   const completion = await child.turn.waitForCurrentTurn(signal);
   const turnEnded = completion.event;
   if (turnEnded.reason !== 'completed') {
-    if (turnEnded.reason === 'filtered') {
+    if (turnEnded.error?.code === ErrorCodes.PROVIDER_FILTERED) {
       throw new Error('Subagent turn blocked by provider safety policy');
     }
     if (turnEnded.error?.code === ErrorCodes.PROVIDER_RATE_LIMIT) {
@@ -486,7 +568,10 @@ async function runChildTurnToCompletion(child: Agent, signal: AbortSignal): Prom
   }
 }
 
-function providerRateLimitErrorFromPayload(error: KimiErrorPayload): APIProviderRateLimitError {
+function providerRateLimitErrorFromPayload(error: {
+  readonly message: string;
+  readonly details?: Record<string, unknown>;
+}): APIProviderRateLimitError {
   const requestId =
     typeof error.details?.['requestId'] === 'string' ? error.details['requestId'] : null;
   return new APIProviderRateLimitError(error.message, requestId);

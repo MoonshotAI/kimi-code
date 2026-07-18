@@ -110,18 +110,19 @@ describe('events / display re-exports', () => {
       sessionId: 'sess_1',
       promptId: 'prompt_1',
       userMessageId: 'msg_1',
-      status: 'running',
+      status: 'blocked',
       content: [{ type: 'text', text: 'hello' }],
       createdAt: '2026-06-11T00:00:00.000Z',
     });
 
     expect(parsed.type).toBe('prompt.submitted');
     expect((parsed as { promptId: string }).promptId).toBe('prompt_1');
+    expect((parsed as { status: string }).status).toBe('blocked');
   });
 
-  it('preserves detached on background task events', () => {
+  it('preserves detached on task events', () => {
     const parsed = eventSchema.parse({
-      type: 'background.task.started',
+      type: 'task.started',
       agentId: 'main',
       sessionId: 'sess_1',
       info: {
@@ -138,7 +139,7 @@ describe('events / display re-exports', () => {
       },
     });
 
-    expect(parsed.type).toBe('background.task.started');
+    expect(parsed.type).toBe('task.started');
     expect((parsed as { info: { detached?: boolean } }).info.detached).toBe(false);
   });
 
@@ -153,7 +154,7 @@ describe('events / display re-exports', () => {
         title: 'Created session',
         created_at: '2026-06-11T00:00:00.000Z',
         updated_at: '2026-06-11T00:00:00.000Z',
-        status: 'idle',
+        busy: false,
         metadata: { cwd: '/tmp/project' },
         agent_config: { model: 'kimi-k2' },
         usage: {
@@ -181,8 +182,6 @@ describe('events / display re-exports', () => {
       id: 'wd_project_123456abcdef',
       root: '/tmp/project',
       name: 'project',
-      is_git_repo: true,
-      branch: 'main',
       created_at: '2026-06-11T00:00:00.000Z',
       last_opened_at: '2026-06-11T00:00:00.000Z',
       session_count: 1,
@@ -229,6 +228,23 @@ describe('events / display re-exports', () => {
     expect((parsed as { status: string }).status).toBe('running');
     expect((parsed as { previous_status: string }).previous_status).toBe('idle');
     expect((parsed as { current_prompt_id: string }).current_prompt_id).toBe('prompt_1');
+  });
+
+  it('validates orthogonal session work facts for unsubscribed clients', () => {
+    const parsed = eventSchema.parse({
+      type: 'event.session.work_changed',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      busy: true,
+      main_turn_active: false,
+      pending_interaction: 'question',
+      last_turn_reason: 'completed',
+    });
+
+    expect(parsed).toMatchObject({
+      main_turn_active: false,
+      pending_interaction: 'question',
+    });
   });
 
   it('rejects event.session.status_changed with invalid status', () => {

@@ -4,7 +4,7 @@
 
 import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
-import { traceClientEvent } from '../debug/trace';
+import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
@@ -14,28 +14,42 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { workspaceRootKey } from '../lib/rootKey';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
+import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceSort,
+  safeGetJson,
   safeGetString,
   safeRemove,
+  safeSetJson,
   safeSetString,
   saveUnread,
   saveWorkspaceOrder,
   saveWorkspaceSort,
   STORAGE_KEYS,
 } from '../lib/storage';
-import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
+import {
+  coalesceAppRenderEvents,
+  createEventBatcher,
+  isRenderEvent,
+  splitOversizedAppRenderEvent,
+  type PendingAppEvent,
+} from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification, shouldNotifyCompletion } from './client/useNotification';
 import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
-import { SESSIONS_INITIAL_PAGE_SIZE, useWorkspaceState } from './client/useWorkspaceState';
+import {
+  forgetLocalTurnState,
+  SESSIONS_INITIAL_PAGE_SIZE,
+  useWorkspaceState,
+} from './client/useWorkspaceState';
 
 const appearance = useAppearance();
 const notification = useNotification();
@@ -59,10 +73,11 @@ import type {
   AppWorkspace,
   ApprovalDecision,
   KimiEventConnection,
+  KimiEventMeta,
   ThinkingLevel,
 } from '../api/types';
 import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
-import { toAppEvent } from '../api/daemon/mappers';
+import { isPlaceholderSessionUsage, toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
@@ -101,12 +116,20 @@ const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
-// A persisted thinking level may be any non-empty effort string: the reserved
-// 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max'). Since the
-// set of legal levels comes from each model's support_efforts, we can't
-// whitelist values — only guard against corrupted localStorage with a charset
-// + length check. coerceThinkingForModel adapts the loaded value to the active
-// model once the catalog is available.
+// Thinking levels are persisted PER MODEL: `kimi-web.thinking` holds a JSON map
+// of model id → level. A persisted level may be any non-empty effort string:
+// the reserved 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max').
+// Since the set of legal levels comes from each model's support_efforts, we
+// can't whitelist values — only guard against corrupted localStorage with a
+// charset + length check, and let the resolution in useModelProviderState drop
+// entries the model no longer declares. Per-model storage is what keeps a level
+// picked for one model (e.g. 'low' on an effort model) from leaking onto a
+// model that never declared it (e.g. a max-only always-on model) — the old
+// global format did exactly that, leaving the composer showing nothing selected
+// with no way to switch. The legacy pre-map format (a single global level,
+// stored raw) is not discarded: it becomes a fallback for any model that
+// declares it (see hydrateThinkingPicks), so an existing user's preference
+// survives the upgrade while a max-only model still can't be trapped by it.
 const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
@@ -140,22 +163,67 @@ function savePermissionToStorage(mode: PermissionMode): void {
   }
 }
 
-function loadThinkingFromStorage(): ThinkingLevel {
-  try {
-    const v = safeGetString(THINKING_STORAGE_KEY);
-    if (v && PERSISTED_THINKING_LEVEL_RE.test(v)) return v as ThinkingLevel;
-  } catch {
-    // ignore
+function loadThinkingMap(): Record<string, ThinkingLevel> {
+  const parsed = safeGetJson<unknown>(THINKING_STORAGE_KEY);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out: Record<string, ThinkingLevel> = {};
+  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value === 'string' && PERSISTED_THINKING_LEVEL_RE.test(value)) {
+      out[id] = value as ThinkingLevel;
+    }
   }
-  return 'high';
+  return out;
 }
 
-function saveThinkingToStorage(v: ThinkingLevel): void {
-  try {
-    safeSetString(THINKING_STORAGE_KEY, v);
-  } catch {
-    // ignore
-  }
+// Legacy pre-map format: a single global level stored raw via safeSetString
+// (not JSON). It fails JSON.parse in loadThinkingMap above — detect it from the
+// raw string instead of dropping the user's preference on upgrade.
+function loadLegacyThinkingValue(): ThinkingLevel | undefined {
+  const raw = safeGetString(THINKING_STORAGE_KEY);
+  return raw && PERSISTED_THINKING_LEVEL_RE.test(raw) ? (raw as ThinkingLevel) : undefined;
+}
+
+// Map key for the migrated legacy value — never a real model id. Kept INSIDE
+// the map (not a sidecar variable) so the first per-model write, which rewrites
+// the raw legacy string into map format, carries the fallback forward instead
+// of deleting it for every model without its own entry.
+const LEGACY_THINKING_PICK_KEY = '*';
+
+// The RUNTIME source of truth for per-model picks is this in-memory map,
+// hydrated from localStorage once at startup. Explicit picks update it first
+// (see saveThinkingToStorage), so a pick takes effect even when persistence is
+// unavailable (storage policy/quota — safeSetJson swallows those failures),
+// and so a pick made later in ANOTHER tab can never change what this tab
+// displays or submits mid-session. localStorage is hydration + best-effort
+// persistence only: written with a read-modify-write merge (same pattern as
+// saveUnread) so concurrent tabs' entries survive, and re-read from scratch on
+// the next startup.
+const thinkingPicks: Record<string, ThinkingLevel> = loadThinkingMap();
+if (Object.keys(thinkingPicks).length === 0) {
+  const legacy = loadLegacyThinkingValue();
+  if (legacy !== undefined) thinkingPicks[LEGACY_THINKING_PICK_KEY] = legacy;
+}
+
+function loadThinkingForModel(modelId: string): ThinkingLevel | undefined {
+  // Per-model entries win; the '*' entry is the migrated legacy pre-map global
+  // pick — useModelProviderState validates it against each model's catalog
+  // entry, so it only ever applies to models that declare it (a max-only model
+  // still falls through to its default).
+  return thinkingPicks[modelId] ?? thinkingPicks[LEGACY_THINKING_PICK_KEY];
+}
+
+function saveThinkingToStorage(modelId: string, level: ThinkingLevel): void {
+  thinkingPicks[modelId] = level;
+  // Delta write (same pattern as saveUnread): overlay only the CHANGED entry —
+  // overlaying this tab's whole in-memory snapshot would revert another tab's
+  // newer pick for any model this tab still holds a stale copy of. The one
+  // extra entry carried along is the migrated legacy '*' fallback, so the
+  // first write rewrites it into map format rather than dropping it.
+  const map = loadThinkingMap();
+  const legacy = thinkingPicks[LEGACY_THINKING_PICK_KEY];
+  if (legacy !== undefined) map[LEGACY_THINKING_PICK_KEY] = legacy;
+  map[modelId] = level;
+  safeSetJson(THINKING_STORAGE_KEY, map);
 }
 
 // Plan / swarm / goal modes are per-session. Each is persisted as a compact
@@ -269,14 +337,25 @@ interface GitStatusEntry {
 }
 
 /** An uploaded attachment to send with a prompt. `kind` drives the content-block
-    type (image vs video) so a still and a clip resolve to the right wire shape. */
-export type PromptAttachment = { fileId: string; kind: 'image' | 'video' };
+    type: images/videos become media parts; any other kind becomes a file part
+    the server materializes and hands to the model as a path reference.
+    name/mediaType/size feed the wire file shape (the server's file-store meta
+    stays authoritative, so a chip reloaded from history may omit them). */
+export type PromptAttachment = {
+  fileId: string;
+  kind: 'image' | 'video' | 'file';
+  name?: string;
+  mediaType?: string;
+  size?: number;
+};
 
 /** A prompt waiting for the session to go idle. Keeps the uploaded
-    fileIds so attachments survive queueing (not just the text). */
+    fileIds so attachments survive queueing (not just the text). The id keys
+    the per-entry flush failure budget locally (assigned at enqueue). */
 interface QueuedPrompt {
   text: string;
   attachments?: PromptAttachment[];
+  id?: string;
 }
 
 export interface ExtendedState extends KimiClientState {
@@ -288,10 +367,21 @@ export interface ExtendedState extends KimiClientState {
    * prompt and connects without a credential.
    */
   dangerousBypassAuth: boolean;
+  /**
+   * Engine generation of the connected server: `'v2'` = kap-server /
+   * agent-core-v2, `'v1'` = an older (legacy) server binary. Read from `/meta`
+   * (`backend` field; older servers omit it ⇒ v1). Drives the dev-mode
+   * backend badge in the Sidebar.
+   */
+  backend: 'v1' | 'v2';
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
-  thinking: ThinkingLevel;
+  /** The thinking level shown and submitted. Resolved per model by
+   *  useModelProviderState (the model's stored pick when still declared, else
+   *  its catalog default) once the catalog/session is known — undefined only
+   *  transiently before that, so display and submission always agree. */
+  thinking: ThinkingLevel | undefined;
   /** Plan-mode toggle per session. Bound to a session (not global) so toggling
    *  it in one session does not affect another. */
   planModeBySession: Record<string, boolean>;
@@ -307,8 +397,13 @@ export interface ExtendedState extends KimiClientState {
   // AUTHORITATIVE id for :abort — the event projector synthesizes a `pr_…` id
   // when turn.started races ahead of binding, which the daemon rejects.
   promptIdBySession: Record<string, string>;
-  // True while a prompt is in flight but the assistant reply hasn't started yet.
-  sendingBySession: Record<string, boolean>;
+  // A prompt this client submitted (or skill-activated) has not reached its
+  // terminal state yet — the OPTIMISTIC half of the working moon, covering the
+  // window before the turn.started round-trips (and the queue-drain re-arm).
+  // Set at every local turn entry point; cleared by finishPromptLocal, the
+  // entry points' own error paths, the authoritative-quiet fallback, or session
+  // forget. `turnActiveBySession` owns everything from turn.started on.
+  inFlightBySession: Record<string, boolean>;
   // True when a BACKGROUND session finished a turn the user hasn't opened since
   // (drives the unread blue dot in the sidebar). Set on idle for a non-active
   // session, cleared when the session is selected.
@@ -360,10 +455,14 @@ const rawState: ExtendedState = reactive({
   connected: false,
   serverVersion: '',
   dangerousBypassAuth: false,
+  backend: 'v1',
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
-  thinking: loadThinkingFromStorage(),
+  // Resolved per model once the catalog/session is known (loadModels and the
+  // active-model watcher in useModelProviderState) — storage is keyed by model
+  // id, which isn't known this early.
+  thinking: undefined,
   planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
@@ -372,7 +471,7 @@ const rawState: ExtendedState = reactive({
   queuedBySession: {},
   gitStatusBySession: {},
   promptIdBySession: {},
-  sendingBySession: {},
+  inFlightBySession: {},
   unreadBySession: loadUnread(),
   authReady: false,
   defaultModel: null,
@@ -483,6 +582,10 @@ if (typeof window !== 'undefined') {
 function recoverStaleConnection(): void {
   if (eventConn === null) return;
   if (!eventConn.health().stale) return;
+  traceKeyEvent('ws:stale-reconnect', {
+    sessionId: rawState.activeSessionId,
+    status: 'stale',
+  });
   traceClientEvent('ws: stale socket on focus, reconnecting', {
     activeSessionId: rawState.activeSessionId,
   });
@@ -498,6 +601,10 @@ if (typeof document !== 'undefined') {
       recoverStaleConnection();
     }
   });
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('focus', recoverStaleConnection);
+  window.addEventListener('online', recoverStaleConnection);
 }
 
 // ---------------------------------------------------------------------------
@@ -547,13 +654,11 @@ function forgetSession(sessionId: string): void {
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
   dropWsSubscription(sessionId);
-  // Drain the streaming-event batcher too. unsubscribe() stops future server
-  // frames, but events already queued for the next animation frame would
-  // otherwise survive and be reduced AFTER the maps below are cleared —
-  // recreating entries like messagesBySession[id] and lastSeqBySession[id].
-  // That would make hasLoadedMessages() treat the stale empty cache as
-  // authoritative and skip the next snapshot fetch for this id.
-  enqueueEvent.flush();
+  // Drop this session's queued render AND control events. Flushing them here is
+  // unsafe: a delayed idle event can drain a queued prompt into the session
+  // after the archive request succeeded. Other sessions keep their own ordered
+  // backlog and scheduled continuation.
+  enqueueEvent.discard(({ meta }) => meta.sessionId === sessionId);
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
@@ -567,15 +672,18 @@ function forgetSession(sessionId: string): void {
   delete rawState.messagesHasMoreBySession[sessionId];
   delete rawState.messagesLoadMoreErrorBySession[sessionId];
   delete epochBySession[sessionId];
+  sessionsRequiringSnapshot.delete(sessionId);
+  sessionsRetryingStaleSnapshot.delete(sessionId);
   sessionsKnownEmpty.delete(sessionId);
   // In-flight / queued prompt state: drop these too so a queued follow-up
   // can't be submitted to a session that was just archived when its turn later
-  // goes idle (onSessionIdle drains queuedBySession[sid] without re-checking
+  // ends (onMainTurnEnd drains queuedBySession[sid] without re-checking
   // that the session still exists).
-  inFlightPromptSessions.delete(sessionId);
+  forgetLocalTurnState(sessionId);
   delete rawState.queuedBySession[sessionId];
   delete rawState.promptIdBySession[sessionId];
-  delete rawState.sendingBySession[sessionId];
+  delete rawState.inFlightBySession[sessionId];
+  delete rawState.turnActiveBySession[sessionId];
   // Drop per-session mode toggles and re-persist so a deleted session's entry
   // doesn't linger in localStorage.
   delete rawState.planModeBySession[sessionId];
@@ -599,6 +707,10 @@ const fileDiffLoading = ref(false);
 // False until the very first load() settles (success OR failure). Gates the
 // global connecting-splash so a page refresh doesn't flash a half-empty app.
 const initialized = ref(false);
+// Short diagnostic shown on the connecting splash while the first-load /auth
+// gate keeps retrying (e.g. the daemon's error message). Null when no attempt
+// has failed yet or the last attempt got through.
+const connectIssue = ref<string | null>(null);
 
 /**
  * Fetch GET /sessions/{id}/status and fold the live model + context usage back
@@ -626,15 +738,50 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
 }
 
+/**
+ * Fetch GET /sessions/{id}/goal and fold the result into goalBySession — the
+ * recovery channel for the goal card after a full-page reload (the snapshot +
+ * WS-replay path never carries the historical `goal.updated`, since its seq is
+ * ≤ the snapshot watermark). Never throws — an old daemon without the /goal
+ * endpoint keeps any live-event state.
+ */
+async function refreshSessionGoal(sessionId: string): Promise<void> {
+  // A live `goal.updated` arriving during the request is newer than whatever
+  // the server read when handling it — never let this recovery write override
+  // such an event (it would resurrect a finished goal until the next reload).
+  // Track the per-session goal event version, not the goal entry itself:
+  // clear/complete events DELETE the entry, which would leave an
+  // undefined === undefined comparison blind to exactly the race that matters.
+  const versionBefore = rawState.goalVersionBySession[sessionId] ?? 0;
+  let goal: AppGoal | null;
+  try {
+    goal = await getKimiWebApi().getSessionGoal(sessionId);
+  } catch {
+    return; // goal endpoint missing/unreachable — keep what we have.
+  }
+  if ((rawState.goalVersionBySession[sessionId] ?? 0) !== versionBefore) {
+    return; // a live goal event won the race
+  }
+  // Mirror the reducer's goalUpdated branch: null (or a completed goal) clears
+  // the card, anything else replaces it.
+  const nextGoals = { ...rawState.goalBySession };
+  if (goal === null || goal.status === 'complete') delete nextGoals[sessionId];
+  else nextGoals[sessionId] = goal;
+  rawState.goalBySession = nextGoals;
+}
+
 /** Persist runtime controls to a session via POST /profile, then re-read
  *  /status. `sessionId` overrides the active session — used when creating a
  *  session and immediately persisting its draft modes, so a concurrent session
  *  switch can't write the patch to the wrong session.
  *
- *  Returns the update promise (errors swallowed — the UI already updated
- *  optimistically). Most callers fire-and-forget via `void persistSessionProfile(...)`;
- *  call sites that must order strictly after the profile (e.g. a skill
- *  activation that can't carry its own modes) await it. */
+ *  Resolves false when the daemon did not apply the patch (also surfaced via
+ *  pushOperationFailure — the UI already updated optimistically, so the user
+ *  must be told); true on success. Most callers fire-and-forget via
+ *  `void persistSessionProfile(...)`; call sites that must order strictly
+ *  after the profile (e.g. a skill activation that can't carry its own modes)
+ *  await it and must NOT proceed on false — awaiting alone enforces nothing,
+ *  since the promise never rejects. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -643,14 +790,18 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
-}, sessionId?: string): Promise<void> {
+}, sessionId?: string): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
-  if (!sid) return Promise.resolve();
+  if (!sid) return Promise.resolve(false);
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
     .then(() => refreshSessionStatus(sid))
-    .catch(() => {
-      /* ignore — local state already reflects the change */
+    .then(() => true)
+    .catch((err) => {
+      // Local state already reflects the change; tell the user (and the log)
+      // that the daemon did not persist it.
+      pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
+      return false;
     });
 }
 
@@ -717,13 +868,6 @@ function nextOptimisticMsgId(): string {
   return `msg_opt_${Date.now().toString(36)}_${optimisticMsgSeq}`;
 }
 
-// Per-session "a prompt is in flight" flag. Flipped SYNCHRONOUSLY the moment we
-// decide to submit (before any await), and cleared when the session returns to
-// idle. This gates concurrent prompts: `activity` only turns 'running' after the
-// WS turn.started round-trips, so a fast second sendPrompt would otherwise race
-// past the queue check and clobber promptIdBySession (breaking abort).
-const inFlightPromptSessions = new Set<string>();
-
 // Helper: mutate rawState by applying a reducer on a snapshot then re-assigning fields
 function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq: number): void {
   const snapshot: KimiClientState = {
@@ -735,7 +879,9 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
+    goalVersionBySession: rawState.goalVersionBySession,
     lastSeqBySession: rawState.lastSeqBySession,
+    turnActiveBySession: rawState.turnActiveBySession,
     compactionBySession: rawState.compactionBySession,
     config: rawState.config,
     warnings: rawState.warnings,
@@ -750,7 +896,9 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
+  rawState.goalVersionBySession = next.goalVersionBySession;
   rawState.lastSeqBySession = next.lastSeqBySession;
+  rawState.turnActiveBySession = next.turnActiveBySession;
   rawState.compactionBySession = next.compactionBySession;
   rawState.config = next.config ?? null;
   rawState.warnings = next.warnings;
@@ -786,17 +934,19 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
 // synchronously triggers a full Vue re-render per event, which saturates the
 // main thread and makes the stream look janky (see messagesToTurns / Markdown).
 //
-// We coalesce those render-only events onto the next animation frame so Vue
-// commits a single render per frame. Lifecycle / control-flow events
-// (sessionStatusChanged, messageCreated, approval*, question*, ...) are applied
-// immediately: they are infrequent, and some (e.g. sessionStatusChanged idle)
-// drive turn-end cleanup that must not be delayed by a throttled rAF in a
-// background tab. Ordering is preserved by draining any pending render events
-// before applying an immediate event.
+// Adjacent, offset-contiguous assistant/thinking deltas are merged before they
+// reach the reducer. The remaining ordered groups are processed with a fixed
+// per-frame budget and a task fallback, so a hidden tab cannot turn the entire
+// backlog into one unbounded rAF drain. Lifecycle / control-flow events remain
+// strict ordering barriers and are never dropped or merged.
 
-type PendingEvent = { appEvent: AppEvent; meta: { sessionId: string; seq: number } };
-
-function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number }): void {
+function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
+  // Capture BEFORE applyEvent advances lastSeqBySession: turn-end side
+  // effects below only run when this event actually moves the durable cursor
+  // forward. A late duplicate idle (e.g. replayed after a snapshot already
+  // advanced past it) must not drain a second queued message.
+  const prevSeq = rawState.lastSeqBySession[meta.sessionId] ?? 0;
+  const wasMainTurnActive = rawState.turnActiveBySession[meta.sessionId] ?? false;
   // meta carries wire-level seq/sessionId so the reducer can advance
   // lastSeqBySession[sessionId] = seq. Compaction completion appends a
   // persistent divider marker in the reducer (TUI parity: the scrollback
@@ -841,16 +991,58 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
     appearance.recordMoonDelta((appEvent.delta.text?.length ?? 0) + (appEvent.delta.thinking?.length ?? 0));
   }
 
-  // Turn-end cleanup for the session the event belongs to — including
-  // sessions running in the background (see onSessionIdle).
-  // Turn-end: both 'idle' and 'aborted' mean the prompt is no longer in
-  // flight, so both must flush in-flight/queued state. (Awaiting-* is still
-  // in flight — it's waiting on the user — and must NOT flush.)
+  // Prompt-end cleanup. The MAIN agent's turn boundary is the authoritative
+  // "the prompt is done" signal: it drives the in-flight/moon cleanup, the
+  // queued-message drain, and the completion side effects. The session may
+  // stay busy afterwards (background subagents / BTW) — that must NOT hold
+  // any of these. The session's idle/aborted status is only a fallback quiet
+  // signal (a turn.ended can be lost on abrupt agent disposal): it clears the
+  // boolean liveness flags, but drain/notify stay single-owned by the
+  // turn-boundary path. Both are gated on the durable cursor advancing so a
+  // late duplicate cannot fire twice.
   if (
-    appEvent.type === 'sessionStatusChanged' &&
-    (appEvent.status === 'idle' || appEvent.status === 'aborted')
+    appEvent.type === 'turnActiveChanged' &&
+    !appEvent.active &&
+    meta.seq > prevSeq
   ) {
-    onSessionIdle(appEvent.sessionId, appEvent.status);
+    const reason = appEvent.reason;
+    // wasMainTurnActive was captured BEFORE the reducer consumed this event
+    // (the reducer clears turnActiveBySession on turn end), so it is the only
+    // remaining signal that this client witnessed a live turn — pass it down
+    // so finishPromptLocal may drain queued prompts behind a turn the user
+    // actually watched (including one started by another client).
+    onMainTurnEnd(
+      appEvent.sessionId,
+      reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle',
+      wasMainTurnActive,
+    );
+  }
+
+  if (
+    appEvent.type === 'sessionWorkChanged' &&
+    ((appEvent.mainTurnActive === false && wasMainTurnActive) ||
+      (appEvent.mainTurnActive === undefined && !appEvent.busy)) &&
+    meta.seq > prevSeq
+  ) {
+    clearWorkingFlags(appEvent.sessionId);
+  }
+
+  // A prompt that never produced a turn gets no turn.ended and no session
+  // status flip: a QUEUED prompt aborted before launch (prompt.aborted), or a
+  // prompt blocked by a pre-submit hook (prompt.completed with reason
+  // 'blocked'). Without this the local in-flight flag — and the working moon —
+  // would stick forever. Keyed on the promptId captured at submit: a normal
+  // turn's prompt.completed/aborted arrives AFTER its status_changed (which
+  // already cleared the id), so it no-ops; another client's prompt never
+  // matches. Only fires when the event moves the durable cursor forward, same
+  // as the status path above.
+  if (
+    (appEvent.type === 'promptAborted' ||
+      (appEvent.type === 'promptCompleted' && appEvent.reason === 'blocked')) &&
+    meta.seq > prevSeq &&
+    rawState.promptIdBySession[appEvent.sessionId] === appEvent.promptId
+  ) {
+    workspaceState.finishPromptLocal(appEvent.sessionId);
   }
 
   // The agent asked a question and is waiting for an answer — surface it so
@@ -867,9 +1059,10 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
   }
 }
 
-const enqueueEvent = createEventBatcher<PendingEvent>(
+const enqueueEvent = createEventBatcher<PendingAppEvent>(
   ({ appEvent, meta }) => processEvent(appEvent, meta),
   ({ appEvent }) => isRenderEvent(appEvent),
+  { coalesce: coalesceAppRenderEvents },
 );
 
 // ---------------------------------------------------------------------------
@@ -881,6 +1074,7 @@ function connectEventsIfNeeded(): void {
   // Guard: jsdom and some environments have no WebSocket
   if (typeof WebSocket === 'undefined') return;
 
+  traceKeyEvent('ws:connection', { status: 'connecting' });
   rawState.connection = 'connecting';
 
   const api = getKimiWebApi();
@@ -899,13 +1093,19 @@ function connectEventsIfNeeded(): void {
         return;
       }
 
-      // Coalesce high-frequency render events onto the next animation frame;
-      // everything else is applied immediately. See createEventBatcher /
-      // processEvent above.
-      enqueueEvent({ appEvent, meta });
+      // Merge safe streaming chunks, then process the ordered queue in bounded
+      // slices. See createEventBatcher / processEvent above.
+      for (const pendingEvent of splitOversizedAppRenderEvent({ appEvent, meta })) {
+        enqueueEvent(pendingEvent);
+      }
     },
 
     onResync(sessionId: string, currentSeq: number, epoch?: string) {
+      traceKeyEvent('ws:resync', {
+        sessionId,
+        status: 'required',
+        seq: currentSeq,
+      });
       // Flush streaming deltas already queued so they render on the
       // pre-snapshot state (the snapshot is authoritative and will overwrite
       // them). Stragglers that arrive during the snapshot fetch are drained
@@ -913,14 +1113,21 @@ function connectEventsIfNeeded(): void {
       // so they are applied to the pre-snapshot array too rather than on top
       // of the fresh snapshot (which would duplicate text / tool output).
       enqueueEvent.flush();
-      // The server-announced cursor is only a hint; the snapshot fetch
-      // returns the authoritative {asOfSeq, epoch} and re-subscribes.
-      if (epoch !== undefined) epochBySession[sessionId] = epoch;
+      // The server-announced cursor is only a hint; keep the previous epoch
+      // until the snapshot arrives so seq values from two epochs are never
+      // compared with each other.
       void currentSeq;
+      void epoch;
+      sessionsRequiringSnapshot.add(sessionId);
       snapshotSyncRunner.request(sessionId);
     },
 
-    onError(_code: number, msg: string, _fatal: boolean) {
+    onError(code: number, msg: string, fatal: boolean) {
+      traceKeyEvent('ws:error', {
+        status: 'failed',
+        errorCode: code,
+        fatal,
+      });
       pushWarning({
         severity: 'error',
         title: i18n.global.t('warnings.wsTitle'),
@@ -932,6 +1139,9 @@ function connectEventsIfNeeded(): void {
     },
 
     onConnectionChange(connected: boolean) {
+      traceKeyEvent('ws:connection', {
+        status: connected ? 'connected' : 'disconnected',
+      });
       rawState.connected = connected;
       rawState.connection = connected ? 'connected' : 'disconnected';
       // The data channel is healthy again (server_hello received). Clear any
@@ -939,7 +1149,13 @@ function connectEventsIfNeeded(): void {
       // auto-dismiss timer: iOS Safari freezes timers while a tab is
       // backgrounded, so the toast would otherwise linger until a manual
       // refresh even though the reconnect already succeeded.
-      if (connected) dismissWsError();
+      if (connected) {
+        dismissWsError();
+        // A (re)connect can mean the backend was restarted — or switched, when
+        // the dev proxy was moved to the other engine. Re-read /meta so
+        // serverVersion / backend never go stale.
+        void workspaceState.refreshServerMeta();
+      }
     },
   });
 }
@@ -947,6 +1163,12 @@ function connectEventsIfNeeded(): void {
 // Journal epoch per session, learned from snapshots / resync frames. Not
 // reactive — only consulted when building the subscribe cursor.
 const epochBySession: Record<string, string> = {};
+// onResync resets the event projector, so that path must apply a snapshot even
+// if a newer global event advances the local cursor while the GET is in flight.
+const sessionsRequiringSnapshot = new Set<string>();
+// A normal foreground refresh may race one newer event. Retry once with a
+// fresh snapshot so volatile text missed during sleep is still restored.
+const sessionsRetryingStaleSnapshot = new Set<string>();
 
 // Sessions created locally in this client instance are known to be empty until
 // they receive their first message. This is more reliable than the daemon's
@@ -1124,6 +1346,21 @@ function pushOperationFailure(
   err: unknown,
   opts?: { title?: string; message?: string; sessionId?: string },
 ): void {
+  // Always-on logging: a surfaced failure must be diagnosable from the console
+  // and from the exported web log (session export), not just from the toast.
+  console.error(`[kimi-web] operation failed: ${operation}`, err);
+  const api = isDaemonApiError(err);
+  const network = isDaemonNetworkError(err);
+  traceKeyEvent('operation:failed', {
+    sessionId: opts?.sessionId,
+    status: 'failed',
+    operation,
+    errorName: err instanceof Error ? err.name : typeof err,
+    errorCode: api ? err.code : undefined,
+    requestId: api || network ? err.requestId : undefined,
+    phase: network ? err.phase : undefined,
+    httpStatus: network ? err.status : undefined,
+  });
   pushWarning(operationFailureNotice(operation, err, opts));
 }
 
@@ -1176,9 +1413,12 @@ async function pullSessionWarnings(sessionId: string): Promise<void> {
 }
 
 async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionResult> {
+  // A snapshot that races a local turn start must not overwrite that turn.
+  const turnStartAtRequest = workspaceState.localTurnStartState(sessionId);
   try {
     const api = getKimiWebApi();
     const snap = await api.getSessionSnapshot(sessionId);
+    if (!rawState.sessions.some((session) => session.id === sessionId)) return 'ok';
 
     // Drain any queued streaming deltas before the snapshot replaces
     // messagesBySession[sessionId]. The snapshot is authoritative (it already
@@ -1187,12 +1427,43 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // the pre-snapshot array, which the snapshot then overwrites.
     enqueueEvent.flush();
 
+    // Do not let an old snapshot overwrite state that moved forward while the
+    // request was in flight. Retry once to recover volatile text at a fresh
+    // cursor; resync/LRU rebuilds must always apply because their projector or
+    // subscription was deliberately reset.
+    const currentSeq = rawState.lastSeqBySession[sessionId] ?? 0;
+    const knownEpoch = epochBySession[sessionId];
+    const mustApplySnapshot =
+      sessionsRequiringSnapshot.has(sessionId) || sessionsWithStaleCursor.has(sessionId);
+    if (
+      !mustApplySnapshot &&
+      knownEpoch !== undefined &&
+      knownEpoch === snap.epoch &&
+      currentSeq > snap.asOfSeq
+    ) {
+      if (sessionsRetryingStaleSnapshot.delete(sessionId)) return 'ok';
+      sessionsRetryingStaleSnapshot.add(sessionId);
+      snapshotSyncRunner.request(sessionId);
+      return 'ok';
+    }
+    if (!workspaceState.isLocalTurnSnapshotCurrent(sessionId, turnStartAtRequest)) {
+      workspaceState.afterLocalTurnStartsSettle(sessionId, () => {
+        snapshotSyncRunner.request(sessionId);
+      });
+      return 'ok';
+    }
+
+    const snapUsagePlaceholder = isPlaceholderSessionUsage(snap.session.usage);
     updateSession(sessionId, (s) => ({
       ...snap.session,
       model:
         snap.session.model && snap.session.model.length > 0
           ? snap.session.model
           : s.model,
+      // The wire session's usage is a placeholder (both engines return zeros
+      // for the heavy fields); keep the live usage folded in from /status and
+      // the WS status stream instead of zeroing it on every snapshot sync.
+      usage: snapUsagePlaceholder ? s.usage : snap.session.usage,
     }));
     // The snapshot only carries the most recent page; keep any older pages the
     // user already loaded so reopening does not reset scrollback.
@@ -1200,6 +1471,17 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       sessionId,
       mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
     );
+    // Seed the live subagent roster so swarm cards survive a page refresh
+    // (their member rows otherwise only exist from non-replayed WS events).
+    // loadTasksForSession's keepLiveSubagents preserves these across REST
+    // reloads; the roster stays authoritative until then.
+    rawState.tasksBySession = {
+      ...rawState.tasksBySession,
+      [sessionId]: mergeSnapshotSubagents(
+        snap.subagents,
+        rawState.tasksBySession[sessionId] ?? [],
+      ),
+    };
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
       [sessionId]: snap.hasMoreMessages,
@@ -1231,6 +1513,30 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       [sessionId]: snap.asOfSeq,
     };
     epochBySession[sessionId] = snap.epoch;
+    sessionsRequiringSnapshot.delete(sessionId);
+    sessionsRetryingStaleSnapshot.delete(sessionId);
+
+    // Resync replaces the missed event stream, so a terminal snapshot must
+    // also clear the local in-flight flag that normally ends with the turn.
+    workspaceState.handleSessionSnapshot(
+      sessionId,
+      { inFlightTurn: snap.inFlightTurn, busy: snap.session.busy },
+    );
+
+    // The snapshot's inFlightTurn is main-agent-only — seed the moon's
+    // liveness flag from it (the projector was reset by the resync, so no
+    // turn.ended may ever arrive for a turn that was live before it). Gated
+    // on the snapshot's busy fact: the live tracker can hold a stale turn
+    // whose turn.ended was lost (abrupt agent disposal) — the server-side
+    // busy read is the reconciler, so a dead turn never relights the moon.
+    {
+      const next = { ...rawState.turnActiveBySession };
+      const mainTurnActive =
+        snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
+      if (mainTurnActive) next[sessionId] = true;
+      else delete next[sessionId];
+      rawState.turnActiveBySession = next;
+    }
 
     connectEventsIfNeeded();
     if (eventConn) {
@@ -1241,6 +1547,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       retainWsSubscription(sessionId);
     }
     sessionsWithStaleCursor.delete(sessionId);
+    // The snapshot carries placeholder usage, so a preserved cached value may
+    // itself be stale — resync / stale-socket recovery reach here without
+    // selectSession's sidecar refresh, and the volatile status frames that
+    // would update it were exactly what the resync replaced. Re-read /status
+    // so the ring converges on the live value.
+    if (snapUsagePlaceholder) void refreshSessionStatus(sessionId);
     void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
@@ -1341,34 +1653,25 @@ async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
 // View-model mappers
 // ---------------------------------------------------------------------------
 
-/** Whether the session should show the "working" spinner. Only a `running`
-    session qualifies — `awaiting*` is waiting on the user (not working) and
-    `aborted` is finished, so neither spins. Additionally, a session whose only
-    running task is its BTW side-channel agent should not look busy. When tasks
-    have not been loaded yet — e.g. right after a page refresh — we trust the
-    daemon-reported `running` status rather than hiding the spinner. */
-function isSessionEffectivelyRunning(sessionId: string): boolean {
-  const session = rawState.sessions.find((s) => s.id === sessionId);
-  if (!session) return false;
-  if (session.status !== 'running') return false;
-  const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
-  const tasks = rawState.tasksBySession[sessionId] ?? [];
-  const runningTasks = tasks.filter((t) => t.status === 'running');
-  if (runningTasks.length === 0) {
-    // No task list yet (fresh refresh) — trust the daemon-reported session status,
-    // unless the only active work is a BTW side-chat agent. In that window the
-    // side chat is sending and its task hasn't been loaded, so suppress the main
-    // session spinner so the main composer stays usable.
-    if (hiddenBtwAgentId && rawState.sideChatSendingByAgent[hiddenBtwAgentId]) {
-      return false;
-    }
-    return true;
-  }
-  return runningTasks.some((t) => t.id !== hiddenBtwAgentId);
+/** Whether the session should show a "working" indicator (sidebar spinner,
+    row badge gating). ONE unified condition, shared with the working moon and
+    the Stop button: the main conversation has unfinished work — a prompt
+    submitted but not yet terminated (`inFlightBySession`) or a main turn in
+    flight (`turnActiveBySession`). Background tasks and subagent turns do NOT
+    light it; an approval/question pause does NOT dim it (the turn is still
+    open). */
+function isMainTurnActive(sessionId: string, listed?: boolean): boolean {
+  return (
+    (rawState.inFlightBySession[sessionId] ?? false) ||
+    (rawState.turnActiveBySession[sessionId] ?? false) ||
+    (listed ??
+      rawState.sessions.find((session) => session.id === sessionId)?.mainTurnActive ??
+      false)
+  );
 }
 
 /** Format createdAt/updatedAt into a short display string */
-function formatTime(iso: string, _status: string): string {
+function formatTime(iso: string): string {
   try {
     const d = new Date(iso);
     const now = Date.now();
@@ -1406,7 +1709,10 @@ function stopSessionTimeClock(): void {
 }
 
 if (import.meta.hot) {
-  import.meta.hot.dispose(stopSessionTimeClock);
+  import.meta.hot.dispose(() => {
+    stopSessionTimeClock();
+    enqueueEvent.dispose();
+  });
 }
 
 /** Build DiffLine[] from old_text/new_text strings */
@@ -1662,9 +1968,10 @@ const sessions = computed<Session[]>(() => {
     .map((s) => ({
       id: s.id,
       title: s.title,
-      time: formatTime(s.updatedAt, s.status),
-      status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
+      time: formatTime(s.updatedAt),
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
     }));
 });
 
@@ -1679,10 +1986,10 @@ const skills = computed<AppSkill[]>(() => {
   return wid ? (modelProvider.skillsByWorkspace.value[wid] ?? []) : [];
 });
 
-const isSending = computed<boolean>(() => {
+const inFlight = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return false;
-  return rawState.sendingBySession[sid] ?? false;
+  return rawState.inFlightBySession[sid] ?? false;
 });
 
 // True while the empty-composer first prompt for the active workspace is being
@@ -1695,7 +2002,8 @@ const sideChat = useSideChat(rawState, {
   nextOptimisticMsgId,
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
-  models: () => modelProvider.models.value,
+  // modelProvider is defined further below; deferred like eventConn above.
+  thinkingLevelForModelId: (modelId) => modelProvider.thinkingLevelForModelId(modelId),
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {
@@ -1717,10 +2025,28 @@ const turns = computed<ChatTurn[]>(() => {
     messages,
     approvals,
     (fileId) => getKimiWebApi().getFileUrl(fileId),
-    activity.value !== 'idle',
+    turnActive.value,
     rawState.planReviewByToolCallId,
   );
 });
+
+/** The MAIN agent of the active session has a turn in flight — the working
+ *  moon's authoritative half (the optimistic `inFlight` window covers the gap
+ *  before the turn.started round-trips). Background agents and BTW side chats
+ *  do NOT set this; the session-busy status lives on `activity`. */
+const turnActive = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return false;
+  return (
+    (rawState.turnActiveBySession[sid] ?? false) ||
+    (rawState.sessions.find((session) => session.id === sid)?.mainTurnActive ?? false)
+  );
+});
+
+/** The working moon: the main conversation has an unfinished prompt — either
+ *  submitted-but-not-terminated (`inFlight`) or a main turn in flight
+ *  (`turnActive`). */
+const working = computed<boolean>(() => inFlight.value || turnActive.value);
 
 const tasks = computed<TaskItem[]>(() => {
   // Touch the clock so a running task's elapsed time recomputes each tick.
@@ -1772,6 +2098,7 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
 
 /**
@@ -1785,7 +2112,7 @@ function clearDangerousBypassAuth(): void {
 }
 
 const permission = computed<PermissionMode>(() => rawState.permission);
-const thinking = computed<ThinkingLevel>(() => rawState.thinking);
+const thinking = computed<ThinkingLevel | undefined>(() => rawState.thinking);
 // Mode toggles reflect the ACTIVE session (or the draft when no session is
 // open). Each session keeps its own value in the *BySession maps above.
 const planMode = computed<boolean>(() => {
@@ -1830,6 +2157,7 @@ const queued = computed<QueuedPromptView[]>(() => {
       fileId: a.fileId,
       kind: a.kind,
       url: api.getFileUrl(a.fileId),
+      name: a.name,
     })),
   }));
 });
@@ -1864,6 +2192,13 @@ const pendingApprovals = computed<
 /**
  * Activity state for the active session.
  * Priority: awaiting-approval > awaiting-question > running > idle
+ *
+ * `running` is main-conversation liveness — the same condition as the working
+ * moon (the optimistic submit window or an in-flight main turn). The wire
+ * `busy` fact deliberately includes background tasks, but everything driven
+ * by `activity` (Stop button, composer/page-title spinners, send-vs-queue
+ * gating) follows the main conversation only: a session left with only
+ * background tasks is idle here, exactly like the retired turn-scoped status.
  */
 const activity = computed<ActivityState>(() => {
   const sid = rawState.activeSessionId;
@@ -1875,7 +2210,7 @@ const activity = computed<ActivityState>(() => {
   const questionList = rawState.questionsBySession[sid] ?? [];
   if (questionList.length > 0) return 'awaiting-question';
 
-  if (isSessionEffectivelyRunning(sid)) {
+  if (inFlight.value || turnActive.value) {
     return 'running';
   }
 
@@ -1887,7 +2222,7 @@ const modelProvider = useModelProviderState(rawState, {
   refreshSessionStatus,
   persistSessionProfile,
   activity,
-  inFlightPromptSessions,
+  loadThinkingForModel,
   saveThinkingToStorage,
   updateSession,
   updateSessionMessages,
@@ -1949,7 +2284,11 @@ const status = computed<ConversationStatus>(() => {
 
   // Use the friendly displayName from the models list; fall back to stripping
   // the provider prefix (e.g. "moonshot/moonshot-v1-128k" → "moonshot-v1-128k").
-  const matched = modelProvider.models.value.find((m) => m.id === rawModel || m.model === rawModel);
+  // Prefer the exact id — model names can collide across providers, so a
+  // name-only match may resolve to the wrong provider's entry.
+  const matched =
+    modelProvider.models.value.find((m) => m.id === rawModel) ??
+    modelProvider.models.value.find((m) => m.model === rawModel);
   const displayModel =
     matched?.displayName ||
     matched?.model ||
@@ -1996,12 +2335,19 @@ const changesByPath = computed<Record<string, string>>(() => {
 // ---------------------------------------------------------------------------
 
 /**
- * The workspace id a session belongs to: prefer the daemon-provided
- * session.workspaceId; otherwise map by cwd (in derived/fallback mode the
- * workspace id IS the cwd).
+ * The workspace id a session belongs to: the first registered workspace whose
+ * root identity-matches the session cwd (folds Windows case/slash variants —
+ * keeps grouping consistent with `mergeWorkspaces` so a session never falls
+ * out of the group the merge rendered); otherwise the daemon-provided
+ * session.workspaceId; otherwise the cwd itself (derived/fallback mode).
  */
 function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
-  return rawState.workspaces.find((w) => w.root === s.cwd)?.id ?? s.workspaceId ?? s.cwd;
+  const cwdKey = workspaceRootKey(s.cwd);
+  return (
+    rawState.workspaces.find((w) => workspaceRootKey(w.root) === cwdKey)?.id ??
+    s.workspaceId ??
+    s.cwd
+  );
 }
 
 /**
@@ -2015,8 +2361,6 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() =>
     workspaces: rawState.workspaces,
     sessions: rawState.sessions,
     hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
-    activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
-    activeBranch: gitInfo.value?.branch ?? null,
     sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
   }),
 );
@@ -2075,7 +2419,6 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     name: w.name,
     root: w.root,
     shortPath: shortenHome(w.root, rawState.fsHome),
-    branch: w.branch,
     sessionCount: w.sessionCount,
   }));
   if (workspaceSortMode.value === 'recent') {
@@ -2146,9 +2489,10 @@ const sessionsForView = computed<Session[]>(() => {
       return {
         id: s.id,
         title: s.title,
-        time: formatTime(s.updatedAt, s.status),
-        status: s.status,
-        busy: isSessionEffectivelyRunning(s.id),
+        time: formatTime(s.updatedAt),
+        busy: isMainTurnActive(s.id, s.mainTurnActive),
+        pendingInteraction: s.pendingInteraction,
+        lastTurnReason: s.lastTurnReason,
         lastPrompt: s.lastPrompt,
         workspaceId,
         workspaceName: nameByWorkspaceId.get(workspaceId),
@@ -2168,9 +2512,10 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
     const view: Session = {
       id: s.id,
       title: s.title,
-      time: formatTime(s.updatedAt, s.status),
-      status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
+      time: formatTime(s.updatedAt),
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
       updatedAt: s.updatedAt,
     };
     const list = byId.get(wid) ?? [];
@@ -2212,8 +2557,8 @@ function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
 /**
  * Per-session pending-attention count = pending approvals + pending questions.
  * For the active session this is live (driven by WS events). Other sessions
- * light up once the daemon ships Session.pending_attention; until then their
- * counts are derived from whatever approvals/questions we've already seen.
+ * are derived from whatever approvals/questions we've already seen; the row's
+ * list-level pendingInteraction fact supplies the pre-status badge fallback.
  */
 const attentionBySession = computed<Record<string, number>>(() => {
   const out: Record<string, number> = {};
@@ -2276,11 +2621,13 @@ const availableOpenInApps = computed<string[]>(() => rawState.availableOpenInApp
 
 // ---------------------------------------------------------------------------
 // Per-session turn-end cleanup + queue auto-flush.
-// Driven by the daemon's sessionStatusChanged → idle event (wired in
+// Driven by the main agent's turn.ended boundary (wired in
 // connectEventsIfNeeded), NOT by the active-session `activity` computed: a
 // watcher on `activity` only ever saw the ACTIVE session, so a session that
 // finished in the background kept its in-flight flag forever — every later
-// prompt to it was silently enqueued and never flushed.
+// prompt to it was silently enqueued and never flushed. The session-busy
+// status stream is deliberately NOT the trigger: background agents keep it
+// non-idle past the main turn's end, which would hold the moon and the queue.
 // ---------------------------------------------------------------------------
 
 const workspaceState = useWorkspaceState(rawState, {
@@ -2289,7 +2636,6 @@ const workspaceState = useWorkspaceState(rawState, {
   modelProvider,
   pushOperationFailure,
   activity,
-  inFlightPromptSessions,
   sessionsKnownEmpty,
   setSessions,
   updateSession,
@@ -2304,6 +2650,7 @@ const workspaceState = useWorkspaceState(rawState, {
   reopenSession,
   hasLoadedMessages,
   refreshSessionStatus,
+  refreshSessionGoal,
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,
@@ -2320,6 +2667,7 @@ const workspaceState = useWorkspaceState(rawState, {
   goalErrorMessage,
   resetFastMoon: appearance.resetFastMoon,
   initialized,
+  connectIssue,
   selectedDiffPath,
   fileDiffLines,
   fileDiffLoading,
@@ -2339,25 +2687,41 @@ function isUserWatching(sid: string): boolean {
   );
 }
 
-function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
-  // The turn finished — this session no longer has a prompt in flight.
-  inFlightPromptSessions.delete(sid);
-  rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
-  // Capture before the cleanup below drops it — it keys the completion
+/**
+ * Authoritative-quiet escape hatch. The session's idle/aborted status means no
+ * main turn can still be in flight (an awaiting interaction would report
+ * awaiting_*, not idle), so both working-moon flags are cleared even when the
+ * turn.ended that owned them never arrived (e.g. abrupt agent disposal). This
+ * is the ONLY writer of `turnActiveBySession` outside the reducer /
+ * snapshot seed, and the ONLY clearer of `inFlightBySession` outside
+ * finishPromptLocal / the entry points' error paths. Drain and completion
+ * side effects are NOT run here — they stay single-owned by the turn.ended
+ * path (onMainTurnEnd).
+ */
+function clearWorkingFlags(sid: string): void {
+  if (rawState.turnActiveBySession[sid]) {
+    const next = { ...rawState.turnActiveBySession };
+    delete next[sid];
+    rawState.turnActiveBySession = next;
+  }
+  if (rawState.inFlightBySession[sid]) {
+    rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
+  }
+}
+
+function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: boolean): void {
+  // Capture before finishPromptLocal drops it — it keys the completion
   // notification's dedup tag so each finished turn alerts once.
   const finishedPromptId = rawState.promptIdBySession[sid];
-  // Drop any cached prompt_id so a later skill activation (which has no
-  // prompt_id) doesn't accidentally reuse this stale id for :abort.
-  if (rawState.promptIdBySession[sid] !== undefined) {
-    const next = { ...rawState.promptIdBySession };
-    delete next[sid];
-    rawState.promptIdBySession = next;
-  }
+  // Shared finish cleanup: clears in-flight/prompt-id and drains one
+  // queued message. The notification/sound/unread side effects below stay
+  // WS-event-only — the snapshot path (handleSessionSnapshot) must not cry
+  // wolf when opening a historical session.
+  workspaceState.finishPromptLocal(sid, { turnWasActive });
 
   // For the session on screen, refresh git status (edits the agent just made)
   // and runtime status (model/context usage may have changed this turn).
   if (sid === rawState.activeSessionId) {
-    appearance.resetFastMoon();
     void workspaceState.loadGitStatus(sid);
     void refreshSessionStatus(sid);
   } else if (status === 'idle') {
@@ -2389,25 +2753,6 @@ function onSessionIdle(sid: string, status: 'idle' | 'aborted'): void {
   // silent). Plays regardless of visibility so it also reaches a backgrounded tab.
   if (status === 'idle') {
     sound.maybePlayCompletionSound();
-  }
-
-  const queue = rawState.queuedBySession[sid] ?? [];
-  if (queue.length === 0) return;
-
-  const [next, ...rest] = queue;
-  rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
-  // Flush the first queued message; on failure put it back at the head so a
-  // transient error doesn't silently drop the prompt.
-  if (next !== undefined) {
-    void workspaceState.submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
-      if (!ok) {
-        const current = rawState.queuedBySession[sid] ?? [];
-        rawState.queuedBySession = {
-          ...rawState.queuedBySession,
-          [sid]: [next, ...current],
-        };
-      }
-    });
   }
 }
 
@@ -2512,9 +2857,11 @@ export function useKimiWebClient() {
     hasMoreMessages,
     loadMoreMessagesError,
     serverVersion,
+    backend,
     dangerousBypassAuth,
     clearDangerousBypassAuth,
     initialized,
+    connectIssue,
     permission,
     thinking,
     planMode,
@@ -2524,7 +2871,9 @@ export function useKimiWebClient() {
     warnings,
     questions,
     activity,
-    isSending,
+    turnActive,
+    inFlight,
+    working,
     isStartingFirstPrompt,
     fastMoon: appearance.fastMoon,
 
@@ -2617,6 +2966,7 @@ export function useKimiWebClient() {
     reorderWorkspaces,
     setWorkspaceSortMode,
     archiveSession: workspaceState.archiveSession,
+    exportSession: workspaceState.exportSession,
     restoreSession: workspaceState.restoreSession,
     loadArchivedSessions: workspaceState.loadArchivedSessions,
     compact: workspaceState.compact,
@@ -2641,7 +2991,6 @@ export function useKimiWebClient() {
     resolveImageUrl: workspaceState.resolveImageUrl,
 
     // Model + Provider actions
-    refreshOAuthProviderModels: modelProvider.refreshOAuthProviderModels,
     loadModels: modelProvider.loadModels,
     loadProviders: modelProvider.loadProviders,
     skills,
