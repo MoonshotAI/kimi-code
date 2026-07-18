@@ -46,7 +46,12 @@ function makeInMemoryStreamPair(): {
 }
 
 interface CapturedCall {
-  options: { id?: string; workDir: string; mcpServers?: Record<string, unknown> };
+  options: {
+    id?: string;
+    workDir: string;
+    mcpServers?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  };
 }
 
 function makeHarness(
@@ -155,6 +160,42 @@ describe('AcpServer session/new', () => {
     expect(captured[0]?.options.id).toBe(first.sessionId);
     expect(captured[1]?.options.workDir).toBe('/tmp/b');
     expect(captured[1]?.options.id).toBe(second.sessionId);
+  });
+
+  it('tags created sessions as ACP-sourced via metadata, carrying clientInfo name when advertised', async () => {
+    const captured: CapturedCall[] = [];
+    const { harness } = makeHarness('sess-tagged', captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+      clientInfo: { name: 'kitty', version: '1.2.3' },
+    });
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    // The kernel persists `metadata` into the session's `custom` map;
+    // kap-server forwards it onto the wire session so surfaces like
+    // kimi-web can hide ACP-created workspaces.
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.options.metadata).toEqual({ source: 'acp', acp_client: 'kitty' });
+  });
+
+  it('tags metadata with source only when the client sent no clientInfo', async () => {
+    const captured: CapturedCall[] = [];
+    const { harness } = makeHarness('sess-tagged-no-info', captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.options.metadata).toEqual({ source: 'acp' });
   });
 
   it('advertises configOptions (PLAN D11 + Phase 15 thinking toggle) — model + thinking + mode under the unified SessionConfigOption surface', async () => {
