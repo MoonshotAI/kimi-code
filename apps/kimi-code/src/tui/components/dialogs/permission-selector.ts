@@ -11,8 +11,7 @@ const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'yolo',
     label: 'YOLO',
-    description:
-      'Auto-approve regular tools; sensitive actions may still need approval, and the agent may ask.',
+    description: 'Auto-approve regular tools; sensitive actions may still need approval, and the agent may ask.',
   },
   {
     value: 'auto',
