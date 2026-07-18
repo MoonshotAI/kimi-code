@@ -94,7 +94,8 @@ async function materializeEntrySource(source, pluginsRoot, outDir) {
   const sourcePath = resolveInsideRoot(pluginsRoot, source);
   const info = await stat(sourcePath).catch(() => undefined);
   if (info === undefined) {
-    throw new Error(`Marketplace source does not exist: ${source}`);
+    console.warn(`Warning: Marketplace source does not exist, skipping: ${source}`);
+    return { source };
   }
 
   if (info.isDirectory()) {
