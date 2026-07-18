@@ -13,6 +13,7 @@
 
 import type { Command } from 'commander';
 
+import { registerDeprecatedServerCommand } from './deprecated-server';
 import { registerKillCommand } from './kill';
 import { registerPsCommand } from './ps';
 import { registerRotateTokenCommand } from './rotate-token';
@@ -27,4 +28,5 @@ export function registerWebCommand(program: Command): void {
   registerKillCommand(web);
   registerPsCommand(web);
   registerRotateTokenCommand(web);
+  registerDeprecatedServerCommand(program);
 }

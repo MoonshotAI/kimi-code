@@ -112,9 +112,34 @@ describe('kimi web', () => {
     expect(longs).not.toContain('--idle-grace-ms');
   });
 
-  it('does not register a legacy `server` command', () => {
-    const program = makeProgram();
-    expect(program.commands.find((c) => c.name() === 'server')).toBeUndefined();
+  it('routes `kimi server` and any legacy subcommand to a deprecation notice', async () => {
+    for (const argv of [
+      ['node', 'kimi', 'server'],
+      ['node', 'kimi', 'server', 'run', '--port', '1'],
+      ['node', 'kimi', 'server', 'kill', 'abc'],
+      ['node', 'kimi', 'server', 'ps', '--json'],
+    ]) {
+      const program = makeProgram();
+      let stderr = '';
+      const exitCalls: number[] = [];
+      const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        stderr += String(chunk);
+        return true;
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        exitCalls.push(code ?? 0);
+        return undefined;
+      }) as never);
+
+      await program.parseAsync(argv);
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+
+      expect(exitCalls).toEqual([1]);
+      expect(stderr).toContain('`kimi server` has been deprecated and no longer works.');
+      expect(stderr).toContain('kimi web');
+      expect(stderr).toContain('next major version');
+    }
   });
 });
 
