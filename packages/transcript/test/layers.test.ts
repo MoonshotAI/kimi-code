@@ -223,7 +223,8 @@ describe('wire schemas', () => {
   it('rejects path-hostile agent ids in the transcript query', () => {
     const base = { agent_id: 'main', before_turn: undefined, after_turn: undefined, page_size: undefined };
     expect(transcriptQuerySchema.safeParse({ ...base, agent_id: 'sub-1' }).success).toBe(true);
-    for (const hostile of ['../main', '..\\main', '..', 'a/b', 'a\\b', '.']) {
+    expect(transcriptQuerySchema.safeParse({ ...base, agent_id: '01HF7YAT31J7SMRT1QXGJWKR8D' }).success).toBe(true);
+    for (const hostile of ['../main', '..\\main', '..', 'a/b', 'a\\b', '.', 'a\0b', 'x'.repeat(200)]) {
       expect(transcriptQuerySchema.safeParse({ ...base, agent_id: hostile }).success).toBe(false);
     }
   });

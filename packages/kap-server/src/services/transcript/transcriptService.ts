@@ -576,8 +576,12 @@ export function healTurnOps(
     for (const frame of frames) {
       if (frame.kind !== 'text' && frame.kind !== 'thinking') continue;
       const liveFrame = liveStep.frames.find((entry) => entry.frameId === frame.frameId);
+      // The length shortcut only applies to the SAME frame kind: a
+      // kind-mismatched live frame (the projector guessed the stream kind
+      // wrong mid-turn) must be replaced by the persisted one, not skipped.
       if (
         liveFrame !== undefined &&
+        liveFrame.kind === frame.kind &&
         (liveFrame.kind === 'text' || liveFrame.kind === 'thinking') &&
         liveFrame.text.length >= frame.text.length
       ) {

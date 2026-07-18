@@ -15,19 +15,22 @@ export const taskIdSchema = z.string().min(1);
 export const agentIdSchema = z.string().min(1);
 
 /**
- * Whether an agent id is a single plain name (no separators, no `.` / `..`
- * segments). Ids are joined into filesystem paths server-side
- * (`<sessionDir>/agents/<agentId>/`), so anything path-hostile must be
- * rejected before it can traverse outside the agents directory.
+ * Filename-safe agent id shape (engine-minted ids are slugs / ulids /
+ * uuids). Beyond traversal (`/`, `\`, `.` segments), anything outside this
+ * set — NUL bytes, control characters, overlong segments — makes the
+ * filesystem throw unhandled errors (`ERR_INVALID_ARG_VALUE`,
+ * `ENAMETOOLONG`) instead of reading a `wire.jsonl`.
+ */
+const AGENT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+
+/**
+ * Whether an agent id is a single plain name. Ids are joined into filesystem
+ * paths server-side (`<sessionDir>/agents/<agentId>/`), so anything
+ * path-hostile must be rejected before it can escape the agents directory
+ * or crash the read.
  */
 export function isPlainAgentId(agentId: string): boolean {
-  return (
-    agentId.length > 0 &&
-    agentId !== '.' &&
-    agentId !== '..' &&
-    !agentId.includes('/') &&
-    !agentId.includes('\\')
-  );
+  return AGENT_ID_PATTERN.test(agentId) && agentId !== '.' && agentId !== '..';
 }
 
 // ---------------------------------------------------------------- model

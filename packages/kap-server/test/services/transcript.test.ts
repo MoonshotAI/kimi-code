@@ -37,7 +37,11 @@ import { describe, expect, it } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
-import { TranscriptService, snapshotToOps } from '../../src/services/transcript/transcriptService';
+import {
+  healTurnOps,
+  TranscriptService,
+  snapshotToOps,
+} from '../../src/services/transcript/transcriptService';
 
 function ev(payload: Record<string, unknown>): DomainEvent {
   return payload as unknown as DomainEvent;
@@ -1041,6 +1045,55 @@ describe('bindSessionTranscript', () => {
     sub.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
     expect(store.getAgent('sub-1')?.getItems()[0]).toMatchObject({ kind: 'turn', state: 'running' });
     binding.dispose();
+  });
+
+  it('heals a kind-mismatched frame instead of skipping it on length', () => {
+    const snapshotTurn: TranscriptTurn = {
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      steps: [
+        {
+          kind: 'step',
+          stepId: 't0.1',
+          turnId: 't0',
+          ordinal: 1,
+          state: 'completed',
+          frames: [
+            { kind: 'thinking', frameId: 't0.1.f1', text: 'hmm' },
+            { kind: 'text', frameId: 't0.1.f2', role: 'assistant', text: 'Hello world' },
+          ],
+        },
+      ],
+    };
+    // The projector attached mid-turn and guessed f1's kind wrong (the
+    // thinking stream was missed); its longer text must NOT shield the real
+    // thinking frame from the heal.
+    const liveTurn: TranscriptTurn = {
+      kind: 'turn',
+      turnId: 't0',
+      ordinal: 0,
+      state: 'completed',
+      origin: { kind: 'user' },
+      steps: [
+        {
+          kind: 'step',
+          stepId: 't0.1',
+          turnId: 't0',
+          ordinal: 1,
+          state: 'completed',
+          frames: [{ kind: 'text', frameId: 't0.1.f1', role: 'assistant', text: 'world' }],
+        },
+      ],
+    };
+
+    const frames = healTurnOps(snapshotTurn, liveTurn)
+      .filter((op): op is FrameUpsertOp => op.op === 'frame.upsert')
+      .map((op) => op.frame);
+    expect(frames).toContainEqual(expect.objectContaining({ kind: 'thinking', frameId: 't0.1.f1', text: 'hmm' }));
+    expect(frames).toContainEqual(expect.objectContaining({ kind: 'text', frameId: 't0.1.f2', text: 'Hello world' }));
   });
 
   it('overlays the in-flight turn as running after a backfill', async () => {
