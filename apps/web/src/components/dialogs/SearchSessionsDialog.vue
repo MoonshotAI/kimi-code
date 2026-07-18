@@ -7,7 +7,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../../types';
 import { highlightHtml, snippet } from '../../lib/searchHighlight';
-import { Dialog, Icon, Kbd } from '@moonshot-ai/web-ui';
+import { Dialog, EmptyState, Icon, Kbd } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -100,6 +100,10 @@ function openSelected(): void {
   if (hit) openHit(hit.session.id);
 }
 
+function focusInput(): HTMLElement | null {
+  return inputRef.value;
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'ArrowDown') {
     e.preventDefault();
@@ -115,17 +119,25 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  // Dialog also auto-focuses the first focusable element; this is a belt-and-
-  // suspenders guarantee for the rare timing where it runs before mount.
+  // Dialog also focuses `initialFocus`; this is a belt-and-suspenders guarantee
+  // for the rare timing where it runs before mount.
   inputRef.value?.focus();
 });
 </script>
 
 <template>
-  <Dialog v-model:open="open" size="lg" height="fixed" :padded="false" @close="emit('close')">
+  <Dialog
+    v-model:open="open"
+    size="lg"
+    height="fixed"
+    :padded="false"
+    :aria-label="t('sidebar.searchPlaceholder')"
+    :initial-focus="focusInput"
+    @close="emit('close')"
+  >
     <template #head>
       <div class="sd-head">
-        <Icon class="sd-search-icon" name="search" size="md" />
+        <Icon class="sd-search-icon" name="search" size="lg" />
         <input
           ref="inputRef"
           v-model="query"
@@ -140,53 +152,62 @@ onMounted(() => {
       </div>
     </template>
 
-    <div ref="listRef" class="sd-list" role="listbox">
-      <template v-if="results.length > 0">
-        <button
-          v-for="(hit, i) in results"
-          :key="hit.session.id"
-          class="sd-row"
-          :class="{ on: i === selectedIndex, active: hit.session.id === activeId }"
-          role="option"
-          :aria-selected="i === selectedIndex"
-          @click="openHit(hit.session.id)"
-          @mousemove="selectedIndex = i"
-        >
-          <span class="sd-meta">
-            <Icon class="sd-folder" name="folder-closed" size="sm" />
+    <div class="sd-body">
+      <div ref="listRef" class="sd-list" role="listbox">
+        <template v-if="results.length > 0">
+          <button
+            v-for="(hit, i) in results"
+            :key="hit.session.id"
+            class="sd-row"
+            :class="{ on: i === selectedIndex, active: hit.session.id === activeId }"
+            role="option"
+            :aria-selected="i === selectedIndex"
+            @click="openHit(hit.session.id)"
+            @mousemove="selectedIndex = i"
+          >
+            <span class="sd-meta">
+              <Icon class="sd-folder" name="folder-closed" size="sm" />
+              <!-- eslint-disable-next-line vue/no-v-html -- highlightHtml escapes the source before injecting <mark>. -->
+              <span
+                class="sd-ws"
+                v-html="highlightHtml(hit.session.workspaceName ?? hit.session.workspaceId ?? '', hit.inWorkspace ? query : '')"
+              ></span>
+              <span class="sd-time">{{ hit.session.time }}</span>
+            </span>
+            <!-- eslint-disable-next-line vue/no-v-html -- highlightHtml escapes the source before injecting <mark>. -->
+            <span class="sd-title" v-html="highlightHtml(hit.session.title, hit.inTitle ? query : '')"></span>
             <!-- eslint-disable-next-line vue/no-v-html -- highlightHtml escapes the source before injecting <mark>. -->
             <span
-              class="sd-ws"
-              v-html="highlightHtml(hit.session.workspaceName ?? hit.session.workspaceId ?? '', hit.inWorkspace ? query : '')"
+              v-if="hit.snippetText"
+              class="sd-snippet"
+              v-html="highlightHtml(hit.snippetText, query)"
             ></span>
-            <span class="sd-time">{{ hit.session.time }}</span>
-          </span>
-          <!-- eslint-disable-next-line vue/no-v-html -- highlightHtml escapes the source before injecting <mark>. -->
-          <span class="sd-title" v-html="highlightHtml(hit.session.title, hit.inTitle ? query : '')"></span>
-          <!-- eslint-disable-next-line vue/no-v-html -- highlightHtml escapes the source before injecting <mark>. -->
-          <span
-            v-if="hit.snippetText"
-            class="sd-snippet"
-            v-html="highlightHtml(hit.snippetText, query)"
-          ></span>
-        </button>
-      </template>
-      <div v-else class="sd-empty">{{ t('sidebar.searchNoResults') }}</div>
-    </div>
+          </button>
+        </template>
+        <div v-else class="sd-empty">
+          <EmptyState :title="query.trim() ? t('sidebar.searchNoResults') : t('sidebar.searchEmpty')">
+            <template #icon>
+              <Icon name="search" size="lg" />
+            </template>
+          </EmptyState>
+        </div>
+      </div>
 
-    <template #foot>
-      <span class="sd-hint">
-        <span class="sd-hint-group"><Kbd :keys="['↑', '↓']" />{{ t('sidebar.searchHintSelect') }}</span>
-        <span aria-hidden="true">·</span>
-        <span class="sd-hint-group"><Kbd :keys="['↵']" />{{ t('sidebar.searchHintOpen') }}</span>
-        <span aria-hidden="true">·</span>
-        <span class="sd-hint-group"><Kbd :keys="['Esc']" />{{ t('sidebar.searchHintClose') }}</span>
-      </span>
-    </template>
+      <div class="sd-foot" aria-hidden="true">
+        <span class="sd-hint"><Kbd :keys="['↑', '↓']" />{{ t('sidebar.searchHintSelect') }}</span>
+        <span class="sd-hint"><Kbd :keys="['↵']" />{{ t('sidebar.searchHintOpen') }}</span>
+        <span class="sd-hint"><Kbd :keys="['Esc']" />{{ t('sidebar.searchHintClose') }}</span>
+      </div>
+    </div>
   </Dialog>
 </template>
 
 <style scoped>
+/* Note: Dialog renders through a Teleport, so its internal elements only
+   carry Dialog's own scope id — scoped :deep() overrides from here can never
+   match them. Styling must live on the slot content (`.sd-*`), which does
+   carry this component's scope id. */
+
 .sd-head {
   flex: 1;
   min-width: 0;
@@ -196,13 +217,13 @@ onMounted(() => {
 }
 .sd-search-icon {
   flex: none;
-  color: var(--color-text-muted);
+  color: var(--color-text-faint);
 }
 .sd-input {
   flex: 1;
   min-width: 0;
   font-family: var(--font-ui);
-  font-size: 16px;
+  font-size: var(--text-lg);
   color: var(--color-text);
   background: none;
   border: none;
@@ -210,11 +231,22 @@ onMounted(() => {
   padding: var(--space-1) 0;
 }
 .sd-input::placeholder {
-  color: var(--color-text-muted);
+  color: var(--color-text-faint);
 }
 
-.sd-list {
+.sd-body {
   height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Top separator under the query row, mirroring the shortcut bar's
+     border-top so input / results / hints read as three distinct zones.
+     Lives on .sd-body (full-width inside the flush dialog body) because the
+     head container itself is unreachable from scoped styles (see above). */
+  border-top: 1px solid var(--color-line);
+}
+.sd-list {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-1) var(--space-2);
@@ -233,9 +265,11 @@ onMounted(() => {
   font-family: var(--font-ui);
   color: var(--color-text);
 }
-.sd-row:hover,
+.sd-row:hover {
+  background: var(--color-hover);
+}
 .sd-row.on {
-  background: var(--color-surface-sunken);
+  background: var(--color-selected);
 }
 .sd-row.active .sd-title {
   color: var(--color-accent-hover);
@@ -283,29 +317,46 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-/* v-html content is outside the scoped tree, so :deep is required to style the
-   injected <mark>. */
-.sd-title :deep(mark),
-.sd-snippet :deep(mark) {
-  background: var(--color-accent);
-  color: var(--color-bg);
-  font-weight: 600;
+/* Quiet highlight: a soft accent wash + weight instead of a solid accent
+   block with inverted text. Meta/snippet marks additionally lift to the body
+   text color so matches stay legible at the smaller size. v-html lives
+   outside the scoped tree, so :deep is required to style the injected <mark>. */
+.sd-title :deep(mark) {
+  background: var(--color-accent-soft);
+  color: inherit;
+  font-weight: var(--weight-semibold);
   border-radius: var(--radius-xs);
-  padding: 0 2px;
+  padding: 0 1px;
+}
+.sd-meta :deep(mark),
+.sd-snippet :deep(mark) {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+  border-radius: var(--radius-xs);
+  padding: 0 1px;
 }
 
 .sd-empty {
-  padding: var(--space-6) var(--space-4);
-  text-align: center;
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sd-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-line);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
 }
 .sd-hint {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
+  gap: var(--space-1);
 }
-.sd-hint-group { display: inline-flex; align-items: center; gap: var(--space-1); }
 </style>

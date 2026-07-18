@@ -45,4 +45,5 @@ export default {
   searchHintOpen: 'open',
   searchHintClose: 'close',
   searchNoResults: 'No matching sessions',
+  searchEmpty: 'No sessions yet',
 } as const;

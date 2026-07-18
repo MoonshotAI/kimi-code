@@ -45,4 +45,5 @@ export default {
   searchHintOpen: '打开',
   searchHintClose: '关闭',
   searchNoResults: '没有匹配的会话',
+  searchEmpty: '暂无会话',
 };
