@@ -167,14 +167,10 @@ async function configureLangSearch(host: SlashCommandHost): Promise<void> {
   if (tier === undefined) return;
 
   try {
-    const config = await host.harness.getConfig();
     await host.harness.replaceService('langsearch', {
       apiKey,
       tier,
     });
-    if (config.services?.moonshotSearch !== undefined) {
-      await host.harness.removeService('moonshotSearch');
-    }
     await reloadSessionAfterWebSearchChange(host, 'LangSearch web search configured.');
   } catch (error) {
     host.showError(`Failed to save LangSearch config: ${formatErrorMessage(error)}`);
@@ -245,8 +241,20 @@ async function saveMoonshotConfig(
 ): Promise<void> {
   try {
     const config = await host.harness.getConfig();
+    const langsearch = config.services?.langsearch;
+    const rerank = config.services?.rerank;
     await host.harness.replaceService('moonshotSearch', service);
-    if (config.services?.langsearch !== undefined) {
+    if (
+      rerank?.provider === 'langsearch' &&
+      !isNonEmpty(rerank.apiKey) &&
+      isNonEmpty(langsearch?.apiKey)
+    ) {
+      await host.harness.replaceService('rerank', {
+        ...rerank,
+        apiKey: langsearch.apiKey,
+      });
+    }
+    if (langsearch !== undefined) {
       await host.harness.removeService('langsearch');
     }
     await reloadSessionAfterWebSearchChange(host, 'Moonshot web search configured.');

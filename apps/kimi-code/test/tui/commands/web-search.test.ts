@@ -146,7 +146,7 @@ describe('showWebSearchConfig', () => {
     await pending;
   });
 
-  it('switches from LangSearch to the existing Kimi OAuth Moonshot service', async () => {
+  it('preserves the LangSearch key used by rerank when switching to Moonshot', async () => {
     const session = { reloadSession: vi.fn(async () => {}) };
     const { host, getMounted } = makeHost(
       {
@@ -157,7 +157,15 @@ describe('showWebSearchConfig', () => {
             oauth: { storage: 'file', key: 'oauth/kimi-code' },
           },
         },
-        services: { langsearch: { apiKey: 'sk-test' } },
+        services: {
+          langsearch: { apiKey: 'sk-langsearch' },
+          rerank: {
+            provider: 'langsearch',
+            enabled: true,
+            baseUrl: 'https://rerank.example.test/v1',
+            customHeaders: { 'X-Test': 'test' },
+          },
+        },
       },
       session,
     );
@@ -176,12 +184,56 @@ describe('showWebSearchConfig', () => {
       apiKey: '',
       oauth: { storage: 'file', key: 'oauth/kimi-code' },
     });
+    expect(host.harness.replaceService).toHaveBeenCalledWith('rerank', {
+      provider: 'langsearch',
+      enabled: true,
+      apiKey: 'sk-langsearch',
+      baseUrl: 'https://rerank.example.test/v1',
+      customHeaders: { 'X-Test': 'test' },
+    });
+    expect(host.harness.replaceService.mock.invocationCallOrder[1]).toBeLessThan(
+      host.harness.removeService.mock.invocationCallOrder[0]!,
+    );
     expect(host.harness.removeService).toHaveBeenCalledWith('langsearch');
     expect(session.reloadSession).toHaveBeenCalledTimes(1);
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
       session,
       'Moonshot web search configured. Session reloaded.',
     );
+  });
+
+  it('keeps a dedicated rerank key unchanged when switching to Moonshot', async () => {
+    const { host, getMounted } = makeHost({
+      providers: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        },
+      },
+      services: {
+        langsearch: { apiKey: 'sk-langsearch' },
+        rerank: {
+          provider: 'langsearch',
+          enabled: true,
+          apiKey: 'sk-rerank',
+        },
+      },
+    });
+    const pending = showWebSearchConfig(host);
+    await settle();
+
+    await input(getMounted()!, ENTER); // Web search provider
+    await input(getMounted()!, UP); // Moonshot
+    await input(getMounted()!, ENTER);
+    await input(getMounted()!, ENTER); // Kimi Code OAuth
+    await pending;
+
+    expect(host.harness.replaceService).not.toHaveBeenCalledWith(
+      'rerank',
+      expect.anything(),
+    );
+    expect(host.harness.removeService).toHaveBeenCalledWith('langsearch');
   });
 
   it('configures Moonshot manually with an automatically derived search URL', async () => {
@@ -208,7 +260,7 @@ describe('showWebSearchConfig', () => {
     expect(host.showStatus).toHaveBeenCalledWith('Moonshot web search configured.');
   });
 
-  it('switches from Moonshot to LangSearch and removes Moonshot after saving', async () => {
+  it('keeps Moonshot as fallback when configuring LangSearch', async () => {
     const { host, getMounted } = makeHost({
       services: {
         moonshotSearch: {
@@ -232,10 +284,7 @@ describe('showWebSearchConfig', () => {
       apiKey: 'sk-langsearch',
       tier: 'free',
     });
-    expect(host.harness.replaceService.mock.invocationCallOrder[0]).toBeLessThan(
-      host.harness.removeService.mock.invocationCallOrder[0]!,
-    );
-    expect(host.harness.removeService).toHaveBeenCalledWith('moonshotSearch');
+    expect(host.harness.removeService).not.toHaveBeenCalledWith('moonshotSearch');
   });
 
   it('opens management for the current provider and removes it', async () => {
