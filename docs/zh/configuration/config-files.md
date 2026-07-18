@@ -103,6 +103,7 @@ timeout = 5
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
 | `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
+| `disabled_skills` | `array<string>` | `[]` | 在 Kimi 中完全禁用的 Skill 名称（模型列表、Skill 工具、斜杠菜单与用户激活）。大小写不敏感。磁盘上的文件保留 |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
 | `providers` | `table` | `{}` | API 供应商表 → [`providers`](#providers) |
 | `models` | `table` | — | 模型别名表 → [`models`](#models) |

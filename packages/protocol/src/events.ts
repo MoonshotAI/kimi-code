@@ -269,6 +269,7 @@ export type KimiErrorCode =
   | 'skill.not_found'
   | 'skill.type_unsupported'
   | 'skill.name_empty'
+  | 'skill.disabled'
   | 'records.write_failed'
   | 'compaction.failed'
   | 'compaction.unable'
@@ -1203,6 +1204,7 @@ export const kimiErrorCodeSchema = z.enum([
   'skill.not_found',
   'skill.type_unsupported',
   'skill.name_empty',
+  'skill.disabled',
   'records.write_failed',
   'compaction.failed',
   'compaction.unable',

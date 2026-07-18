@@ -62,6 +62,27 @@ export function normalizeSkillName(name: string): string {
   return name.toLowerCase();
 }
 
+/** Build a case-insensitive set of skill names from config `disabled_skills`. */
+export function createDisabledSkillNameSet(
+  names: readonly string[] | undefined,
+): ReadonlySet<string> {
+  const set = new Set<string>();
+  if (names === undefined) return set;
+  for (const name of names) {
+    const normalized = normalizeSkillName(name.trim());
+    if (normalized.length > 0) set.add(normalized);
+  }
+  return set;
+}
+
+export function isDisabledSkillName(name: string, disabled: ReadonlySet<string>): boolean {
+  return disabled.has(normalizeSkillName(name));
+}
+
+export function disabledSkillConfigMessage(skillName: string): string {
+  return `Skill "${skillName}" is disabled in configuration (disabled_skills).`;
+}
+
 export function isInlineSkillType(type: string | undefined): boolean {
   return type === undefined || type === 'prompt' || type === 'inline';
 }

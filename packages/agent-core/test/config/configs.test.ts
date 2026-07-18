@@ -57,6 +57,7 @@ default_permission_mode = "auto"
 default_plan_mode = false
 merge_all_available_skills = true
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
+disabled_skills = ["grok-delegation", "pi-delegation"]
 telemetry = false
 theme = "dark"
 
@@ -147,6 +148,7 @@ describe('harness config TOML loader', () => {
     expect(config.defaultPlanMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
     expect(config.extraSkillDirs).toEqual(['~/team-skills', '.agents/team-skills']);
+    expect(config.disabledSkills).toEqual(['grok-delegation', 'pi-delegation']);
     expect(config.telemetry).toBe(false);
     expect(config.providers['managed:kimi-code']).toMatchObject({
       type: 'kimi',
@@ -357,6 +359,7 @@ removed_flag = true
     expect(text).toContain('default_model = "kimi-code/kimi-for-coding"');
     expect(text).toContain('default_permission_mode = "auto"');
     expect(text).toContain('extra_skill_dirs = [ "~/team-skills", ".agents/team-skills" ]');
+    expect(text).toContain('disabled_skills = [ "grok-delegation", "pi-delegation" ]');
     expect(text).toContain('telemetry = false');
     expect(text).not.toContain('default_yolo');
     expect(text).toContain('[[permission.rules]]');

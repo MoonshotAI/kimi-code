@@ -103,6 +103,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `extra_agent_dirs` | `array<string>` | — | Extra custom agent search directories, layered on top of the default directories |
+| `disabled_skills` | `array<string>` | `[]` | Skill names to fully disable in Kimi (model listing, Skill tool, slash menu, and user activation). Case-insensitive. Files stay on disk |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
 | `providers` | `table` | `{}` | API provider table → [`providers`](#providers) |
 | `models` | `table` | — | Model alias table → [`models`](#models) |

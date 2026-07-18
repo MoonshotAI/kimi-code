@@ -98,6 +98,29 @@ describe('skill registry prompt rendering', () => {
   });
 });
 
+describe('disabled_skills config filter', () => {
+  it('hides disabled skill names from listSkills, listInvocableSkills, and model listing', () => {
+    const registry = new SessionSkillRegistry({
+      disabledSkills: ['Grok-Delegation', ' pi-delegation '],
+    });
+    registry.register(makeSkill('grok-delegation', 'user', 'Grok helper'));
+    registry.register(makeSkill('pi-delegation', 'user', 'Pi helper'));
+    registry.register(makeSkill('keep-me', 'user', 'Still available'));
+
+    expect(registry.isSkillDisabled('grok-delegation')).toBe(true);
+    expect(registry.isSkillDisabled('PI-DELEGATION')).toBe(true);
+    expect(registry.isSkillDisabled('keep-me')).toBe(false);
+
+    expect(registry.listSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.listInvocableSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.getModelSkillListing()).toContain('keep-me');
+    expect(registry.getModelSkillListing()).not.toContain('grok-delegation');
+    expect(registry.getModelSkillListing()).not.toContain('pi-delegation');
+    // Still resolvable for diagnostics / hard-deny paths.
+    expect(registry.getSkill('grok-delegation')?.name).toBe('grok-delegation');
+  });
+});
+
 describe('getModelSkillListing description truncation', () => {
   it('keeps descriptions at or below the 250-char limit unchanged', () => {
     const description = 'a'.repeat(250);

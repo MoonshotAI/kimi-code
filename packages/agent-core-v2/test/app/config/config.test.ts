@@ -29,6 +29,7 @@ import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
 import {
+  DISABLED_SKILLS_SECTION,
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/app/skillCatalog/configSection';
@@ -467,11 +468,12 @@ describe('ConfigService env overlay (live)', () => {
 });
 
 describe('skill config sections', () => {
-  it('registers defaults for extraSkillDirs and mergeAllAvailableSkills', () => {
+  it('registers defaults for extraSkillDirs, mergeAllAvailableSkills, and disabledSkills', () => {
     const registry = new ConfigRegistry();
 
     expect(registry.getSection(EXTRA_SKILL_DIRS_SECTION)?.defaultValue).toEqual([]);
     expect(registry.getSection(MERGE_ALL_AVAILABLE_SKILLS_SECTION)?.defaultValue).toBe(true);
+    expect(registry.getSection(DISABLED_SKILLS_SECTION)?.defaultValue).toEqual([]);
   });
 });
 
