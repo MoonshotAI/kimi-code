@@ -980,10 +980,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     selectWorkspace(id);
     const sessionsInWs = rawState.sessions.filter((s) => workspaceIdForSession(s) === id);
     if (sessionsInWs.length > 0) {
-      const mostRecent = sessionsInWs[0];
+      // Skip sessions hidden from the sidebar (e.g. ACP-created) — clicking a
+      // workspace must not land on a session the sidebar does not render.
+      const mostRecent = sessionsInWs.find((s) => !isSessionHiddenFromList(s));
       if (mostRecent && mostRecent.id !== rawState.activeSessionId) {
         // One user action (clicking the workspace) = one history entry.
         void selectSession(mostRecent.id);
+      } else if (!mostRecent) {
+        setActiveSessionId(undefined);
+        writeSessionUrl(undefined, 'push');
       }
     } else {
       setActiveSessionId(undefined);
@@ -1372,7 +1377,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         await selectSession(id, { urlMode: 'none' });
         return;
       }
-      const next = rawState.sessions[0];
+      const next = rawState.sessions.find((s) => !isSessionHiddenFromList(s));
       if (next) {
         await selectSession(next.id, { urlMode: 'replace' });
       } else {
@@ -2385,8 +2390,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // If archived session was active, pick another. 'replace' so the address
       // bar doesn't keep pointing at (and back doesn't return to) a dead session.
+      // Skip sessions hidden from the sidebar (e.g. ACP-created).
       if (rawState.activeSessionId === id) {
-        const next = rawState.sessions[0];
+        const next = rawState.sessions.find((s) => !isSessionHiddenFromList(s));
         if (next) {
           await selectSession(next.id, { urlMode: 'replace' });
         } else {

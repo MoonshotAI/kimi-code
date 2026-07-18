@@ -1258,10 +1258,7 @@ describe('useWorkspaceState — session list loading', () => {
     expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
   });
 
-  function createAutoSelectRig(
-    sessions: AppSession[],
-    isSessionHiddenFromList?: (s: AppSession) => boolean,
-  ) {
+  function createAutoSelectRig(isSessionHiddenFromList?: (s: AppSession) => boolean) {
     const state = createState();
     state.sessions = [];
     state.activeSessionId = null;
@@ -1301,10 +1298,7 @@ describe('useWorkspaceState — session list loading', () => {
     };
     apiMock.listWorkspaces.mockResolvedValue([workspace('wd_ws', '/workspace', 'Workspace')]);
     apiMock.listSessions.mockResolvedValue({ items: [acp, human], hasMore: false });
-    const { state, workspaceState } = createAutoSelectRig(
-      [acp, human],
-      (s) => s.source === 'acp',
-    );
+    const { state, workspaceState } = createAutoSelectRig((s) => s.source === 'acp');
 
     await workspaceState.load();
 
@@ -1317,7 +1311,7 @@ describe('useWorkspaceState — session list loading', () => {
     const acp = { ...createSession(), id: 'sess_acp', source: 'acp' };
     apiMock.listWorkspaces.mockResolvedValue([workspace('wd_ws', '/workspace', 'Workspace')]);
     apiMock.listSessions.mockResolvedValue({ items: [acp], hasMore: false });
-    const { state, workspaceState } = createAutoSelectRig([acp], (s) => s.source === 'acp');
+    const { state, workspaceState } = createAutoSelectRig((s) => s.source === 'acp');
 
     await workspaceState.load();
 
@@ -1329,11 +1323,36 @@ describe('useWorkspaceState — session list loading', () => {
     const second = { ...createSession(), id: 'sess_old', updatedAt: '2026-01-02T00:00:00.000Z' };
     apiMock.listWorkspaces.mockResolvedValue([workspace('wd_ws', '/workspace', 'Workspace')]);
     apiMock.listSessions.mockResolvedValue({ items: [first, second], hasMore: false });
-    const { state, workspaceState } = createAutoSelectRig([first, second]);
+    const { state, workspaceState } = createAutoSelectRig();
 
     await workspaceState.load();
 
     expect(state.activeSessionId).toBe('sess_new');
+  });
+
+  it('openWorkspace activates the most recent sidebar-visible session in a mixed workspace', () => {
+    const acp = {
+      ...createSession(),
+      id: 'sess_acp',
+      source: 'acp',
+      workspaceId: 'wd_ws',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    const human = {
+      ...createSession(),
+      id: 'sess_human',
+      workspaceId: 'wd_ws',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const { state, workspaceState } = createAutoSelectRig((s) => s.source === 'acp');
+    state.sessions = [acp, human];
+
+    workspaceState.openWorkspace('wd_ws');
+
+    // The ACP session is more recent but hidden; selectSession runs its
+    // synchronous activation before its first await, so the human session
+    // must already be active here.
+    expect(state.activeSessionId).toBe('sess_human');
   });
 
   it('keeps failed workspace sessions while replacing a successful shared-root workspace', async () => {
