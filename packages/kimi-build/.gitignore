@@ -1,0 +1,11 @@
+# Rust build output
+/target/
+
+# Test data
+/testdata/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

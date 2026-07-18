@@ -1,0 +1,16 @@
+[package]
+name = "kimi-build"
+version = "0.1.0"
+edition = "2024"
+description = "Kimi Code native build tool — SEA binary injection and asset management"
+
+[[bin]]
+name = "kimi-build"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winbase", "winnt", "winuser", "libloaderapi", "minwindef"] }
