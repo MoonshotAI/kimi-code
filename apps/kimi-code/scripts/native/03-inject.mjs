@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { copyFile, mkdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -18,8 +19,7 @@ function kimiBuildPath() {
   ];
   for (const candidate of candidates) {
     try {
-      const fs = require('node:fs');
-      if (fs.existsSync(candidate)) return candidate;
+      if (existsSync(candidate)) return candidate;
     } catch { /* ignore */ }
   }
   return null;
