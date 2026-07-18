@@ -1,7 +1,5 @@
-import { execFile } from 'node:child_process';
 import { copyFile, mkdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { promisify } from 'node:util';
 
 import { fail, run, tryRun } from './exec.mjs';
 import {
@@ -9,43 +7,22 @@ import {
   nativeBinDir,
   nativeBinPath,
   nativeBlobPath,
-  SEA_SENTINEL_FUSE,
   targetTriple,
 } from './paths.mjs';
 
-const execFileAsync = promisify(execFile);
-
-function postjectPath() {
-  const command = process.platform === 'win32' ? 'postject.cmd' : 'postject';
-  return resolve(appRoot, 'node_modules/.bin', command);
-}
-
-function kimiBuildCandidates() {
-  // Check for kimi-build in the packages/kimi-build directory
+function kimiBuildPath() {
   const ext = process.platform === 'win32' ? '.exe' : '';
-  return [
+  const candidates = [
     resolve(appRoot, 'packages/kimi-build/target/release/kimi-build' + ext),
     resolve(appRoot, 'packages/kimi-build/target/debug/kimi-build' + ext),
   ];
-}
-
-async function findKimiBuild() {
-  // Check local build directories first
-  for (const candidate of kimiBuildCandidates()) {
+  for (const candidate of candidates) {
     try {
-      await stat(candidate);
-      return candidate;
-    } catch {
-      // try next
-    }
+      const fs = require('node:fs');
+      if (fs.existsSync(candidate)) return candidate;
+    } catch { /* ignore */ }
   }
-  // Check if 'kimi-build' is on PATH
-  try {
-    await execFileAsync('kimi-build', ['--help'], { shell: true });
-    return 'kimi-build';
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 async function ensureBlobExists() {
@@ -77,19 +54,13 @@ async function removeSignatureIfNeeded(target) {
 
 async function injectSeaBlob(target) {
   const out = nativeBinPath(target);
-  const kimiBuild = await findKimiBuild();
-
-  if (kimiBuild) {
-    // Use kimi-build (Rust) — no sentinel-fuse flag needed, it handles it internally.
-    await run(kimiBuild, ['inject', out, nativeBlobPath(), '-o', out]);
-  } else {
-    // Fall back to postject (Node.js WASM)
-    const args = [out, 'NODE_SEA_BLOB', nativeBlobPath(), '--sentinel-fuse', SEA_SENTINEL_FUSE];
-    if (process.platform === 'darwin') {
-      args.push('--macho-segment-name', 'NODE_SEA');
-    }
-    await run(postjectPath(), args);
+  const kimiBuild = kimiBuildPath();
+  if (!kimiBuild) {
+    fail(
+      'kimi-build not found. Build it first with: cd packages/kimi-build && cargo build --release',
+    );
   }
+  await run(kimiBuild, ['inject', out, nativeBlobPath(), '-o', out]);
 }
 
 export async function runInjectStep() {
