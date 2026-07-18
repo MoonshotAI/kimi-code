@@ -6,8 +6,13 @@
  * flush upserts) and the converged store state.
  */
 
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
   IAgentLifecycleService,
+  IAgentLoopService,
   IEventBus,
   ISessionIndex,
   ISessionInteractionService,
@@ -837,6 +842,9 @@ describe('bindSessionTranscript', () => {
     list(): FakeAgentHandle[] {
       return [...this.handles.values()];
     }
+    get(id: string): FakeAgentHandle | undefined {
+      return this.handles.get(id);
+    }
     onDidCreate(cb: (handle: FakeAgentHandle) => void): { dispose: () => void } {
       this.createHandlers.add(cb);
       return { dispose: () => this.createHandlers.delete(cb) };
@@ -845,12 +853,20 @@ describe('bindSessionTranscript', () => {
       this.disposeHandlers.add(cb);
       return { dispose: () => this.disposeHandlers.delete(cb) };
     }
-    add(id: string): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: unknown }): FakeAgentHandle {
       const bus = new FakeBus();
       const handle: FakeAgentHandle = {
         id,
         bus,
-        accessor: { get: (token: unknown) => (token === IEventBus ? bus : undefined) },
+        accessor: {
+          get: (token: unknown) => {
+            if (token === IEventBus) return bus;
+            if (token === IAgentLoopService) {
+              return { status: () => opts?.loopStatus ?? { state: 'idle' } };
+            }
+            return undefined;
+          },
+        },
       };
       this.handles.set(id, handle);
       for (const cb of this.createHandlers) cb(handle);
@@ -937,5 +953,58 @@ describe('bindSessionTranscript', () => {
     expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
     expect(store.agents().map((a) => a.agentId)).toContain('sub-1');
     binding.dispose();
+  });
+
+  it('overlays the in-flight turn as running after a backfill', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-overlay-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      await writeFile(
+        join(wireDir, 'wire.jsonl'),
+        `${JSON.stringify({
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'hi' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: new Date().toISOString(),
+        })}\n`,
+      );
+
+      const agents = new FakeAgents();
+      agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
+      const interactions = new SessionInteractionService();
+      const core = {
+        accessor: {
+          get: (token: unknown) => {
+            if (token === ISessionLifecycleService) {
+              return {
+                onDidCloseSession: () => ({ dispose: () => undefined }),
+                onDidArchiveSession: () => ({ dispose: () => undefined }),
+                get: (sid: string) => (sid === 's1' ? fakeSession(interactions, agents) : undefined),
+              };
+            }
+            if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+            return undefined;
+          },
+        },
+      } as unknown as Scope;
+
+      const service = new TranscriptService({ homeDir: home, core });
+      const store = service.forSessionLive('s1');
+      await service.whenReady('s1');
+      // The cold rebuild marked the turn completed; the overlay restores the
+      // in-flight state and keeps the snapshot's prompt.
+      expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
+        state: 'running',
+        prompt: 'hi',
+      });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

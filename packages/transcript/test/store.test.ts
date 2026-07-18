@@ -320,6 +320,38 @@ describe('AgentTranscript', () => {
     const items = tx.getItems();
     expect(items.at(-1)?.kind).toBe('marker');
   });
+
+  it('re-applies tool frames when metadata-only fields change', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply(toolFrame('running'));
+    // Same state/output but a corrected input (e.g. a live/backfill
+    // reconciliation): the upsert must not be dropped as a no-op.
+    const corrected: TranscriptOperation[] = [
+      turn1,
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: { kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'running' },
+      },
+      {
+        op: 'frame.upsert',
+        turnId: 't1',
+        stepId: 't1.1',
+        frame: {
+          kind: 'tool',
+          frameId: 't1.1.call_1',
+          toolCallId: 'call_1',
+          name: 'Read',
+          state: 'running',
+          input: { path: '/b' },
+        } satisfies ToolCallFrame,
+      },
+    ];
+    tx.apply(corrected);
+    const turn = tx.getTurn('t1');
+    const frame = turn?.steps[0]?.frames.find((f) => f.kind === 'tool');
+    expect(frame?.kind === 'tool' && frame.input).toEqual({ path: '/b' });
+  });
 });
 
 describe('TranscriptStore', () => {

@@ -42,9 +42,11 @@
 import { join } from 'node:path';
 
 import {
+  IAgentLifecycleService,
   ISessionIndex,
   ISessionLifecycleService,
   ISessionMetadata,
+  IAgentLoopService,
   reduceContextTranscript,
   type IDisposable,
   type Scope,
@@ -53,6 +55,7 @@ import {
   TranscriptStore,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
+  type AgentTranscript,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
   type TranscriptMarker,
@@ -221,6 +224,8 @@ export class TranscriptService {
     const transcript = store.ensureAgent(agentId);
     if (snapshot !== undefined) {
       const ops = snapshotToOps(snapshot);
+      const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
+      if (overlay !== undefined) ops.push(overlay);
       const result = transcript.apply(ops);
       if (result.gap !== undefined) {
         this.deps.logger?.warn({ sessionId, agentId, gap: result.gap }, 'transcript: backfill append gap');
@@ -317,6 +322,45 @@ export class TranscriptService {
     }, TURN_HEAL_DEBOUNCE_MS);
     timer.unref();
     this.healTimers.set(key, { ordinals, timer });
+  }
+
+  /**
+   * A backfill rebuilds every turn as 'completed' — the cold grouping cannot
+   * see in-flight work. When the agent's loop is actually mid-turn, overlay
+   * the active turn's header as 'running' (origin/prompt from the snapshot),
+   * so the transcript never presents the live turn as finished. Returns
+   * `undefined` when the loop is idle or the projector already owns a
+   * running header for the turn (post-bind starts keep their richer header).
+   */
+  private liveTurnOverlay(
+    sessionId: string,
+    agentId: string,
+    transcript: AgentTranscript,
+    snapshot: AgentTranscriptSnapshot,
+  ): TranscriptOperation | undefined {
+    const session = this.deps.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    const agent = session?.accessor.get(IAgentLifecycleService).get(agentId);
+    const status = agent?.accessor.get(IAgentLoopService).status();
+    if (status?.state !== 'running' || status.activeTurnId === undefined) return undefined;
+    const ordinal = status.activeTurnId;
+    const turnId = `t${ordinal}`;
+    const existing = transcript.getTurn(turnId);
+    if (existing?.state === 'running') return undefined;
+    const snapshotTurn = snapshot.items.find(
+      (item): item is TranscriptTurn => item.kind === 'turn' && item.ordinal === ordinal,
+    );
+    return {
+      op: 'turn.upsert',
+      turn: {
+        kind: 'turn',
+        turnId,
+        ordinal,
+        state: 'running',
+        origin: snapshotTurn?.origin ?? existing?.origin ?? { kind: 'other' },
+        prompt: snapshotTurn?.prompt ?? existing?.prompt,
+        startedAt: snapshotTurn?.startedAt ?? existing?.startedAt,
+      },
+    };
   }
 
   /**

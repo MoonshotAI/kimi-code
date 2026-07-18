@@ -259,6 +259,10 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
   if (a.kind === 'tool' && b.kind === 'tool') {
     return (
       a.state === b.state &&
+      a.toolCallId === b.toolCallId &&
+      a.name === b.name &&
+      a.view === b.view &&
+      a.input === b.input &&
       a.output === b.output &&
       a.display === b.display &&
       a.error === b.error &&
