@@ -7,6 +7,27 @@
 //! - `Complete`: 完成（瞬态，发出事件后清除）
 //! - `BudgetLimited`: token 预算耗尽，仍可收尾
 //! - `UsageLimited`: API usage limit 耗尽，仍可收尾
+//!
+//! JSON schema (camelCase): matches TS `GoalState` one-to-one.
+//! All engine methods consume/produce this schema.
+//!
+//! | Field | Type | TS name |
+//! |---|---|---|
+//! | `goal_id` | String | `goalId` |
+//! | `objective` | String | `objective` |
+//! | `completion_criterion` | Option<String> | `completionCriterion` |
+//! | `status` | GoalStatus | `status` |
+//! | `token_budget` | Option<i64> | `tokenBudget` |
+//! | `turn_budget` | Option<i64> | `turnBudget` |
+//! | `wall_clock_budget_ms` | Option<i64> | `wallClockBudgetMs` |
+//! | `tokens_used` | i64 | `tokensUsed` |
+//! | `turns_used` | i64 | `turnsUsed` |
+//! | `wall_clock_ms` | i64 | `wallClockMs` |
+//! | `blocked_streak` | u32 | `blockedStreak` |
+//! | `wall_clock_resumed_at` | Option<i64> | `wallClockResumedAt` |
+//! | `terminal_reason` | Option<String> | `terminalReason` |
+//! | `created_at` | i64 | `createdAt` |
+//! | `updated_at` | i64 | `updatedAt` |
 
 use std::fmt;
 
@@ -83,14 +104,22 @@ pub struct GoalState {
     pub goal_id: String,
     /// User-provided objective text.
     pub objective: String,
+    /// Optional completion criterion (user-provided proof of done).
+    pub completion_criterion: Option<String>,
     /// Current lifecycle status.
     pub status: GoalStatus,
     /// Optional token budget for the goal (total tokens allowed).
     pub token_budget: Option<i64>,
+    /// Optional turn budget (max continuation turns).
+    pub turn_budget: Option<i64>,
+    /// Optional wall-clock budget in milliseconds.
+    pub wall_clock_budget_ms: Option<i64>,
     /// Cumulative tokens consumed toward this goal (input + output, excl. cache).
     pub tokens_used: i64,
-    /// Cumulative wall-clock seconds spent actively pursuing this goal.
-    pub time_used_seconds: i64,
+    /// Cumulative continuation turns run toward this goal.
+    pub turns_used: i64,
+    /// Cumulative wall-clock milliseconds spent actively pursuing this goal.
+    pub wall_clock_ms: i64,
     /// Consecutive turns that encountered a blocking condition (reset on resume).
     pub blocked_streak: u32,
     /// Timestamp when the current active interval started (epoch ms), if active.
@@ -110,10 +139,14 @@ impl GoalState {
         Self {
             goal_id,
             objective,
+            completion_criterion: None,
             status: GoalStatus::Active,
             token_budget,
+            turn_budget: None,
+            wall_clock_budget_ms: None,
             tokens_used: 0,
-            time_used_seconds: 0,
+            turns_used: 0,
+            wall_clock_ms: 0,
             blocked_streak: 0,
             wall_clock_resumed_at: None,
             terminal_reason: None,
@@ -122,17 +155,223 @@ impl GoalState {
         }
     }
 
-    /// Returns true if the goal is over its token budget.
-    pub fn is_over_token_budget(&self) -> bool {
-        self.token_budget
-            .is_some_and(|budget| self.tokens_used >= budget)
+    /// Live wall-clock: accumulated total + in-flight active interval.
+    pub fn live_wall_clock_ms(&self, now_ms: i64) -> i64 {
+        let base = self.wall_clock_ms;
+        if self.status == GoalStatus::Active {
+            if let Some(resumed_at) = self.wall_clock_resumed_at {
+                return base + (now_ms - resumed_at).max(0);
+            }
+        }
+        base
     }
 
-    /// Returns remaining tokens (0 if no budget).
+    /// Returns true if any configured budget dimension is reached.
+    pub fn is_over_budget(&self, now_ms: i64) -> bool {
+        let token_reached = self
+            .token_budget
+            .is_some_and(|b| self.tokens_used >= b);
+        let turn_reached = self.turn_budget.is_some_and(|b| self.turns_used >= b);
+        let wall_clock_reached = self
+            .wall_clock_budget_ms
+            .is_some_and(|b| self.live_wall_clock_ms(now_ms) >= b);
+        token_reached || turn_reached || wall_clock_reached
+    }
+
+    /// Returns remaining tokens (MAX if no budget).
     pub fn remaining_tokens(&self) -> i64 {
         self.token_budget
             .map(|b| (b - self.tokens_used).max(0))
             .unwrap_or(i64::MAX)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GoalBudgetReport — computed budget view (9 fields, matches TS)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalBudgetReport {
+    pub token_budget: Option<i64>,
+    pub turn_budget: Option<i64>,
+    pub wall_clock_budget_ms: Option<i64>,
+    pub remaining_tokens: Option<i64>,
+    pub remaining_turns: Option<i64>,
+    pub remaining_wall_clock_ms: Option<i64>,
+    pub token_budget_reached: bool,
+    pub turn_budget_reached: bool,
+    pub wall_clock_budget_reached: bool,
+    pub over_budget: bool,
+}
+
+impl GoalState {
+    /// Compute the full budget report.
+    pub fn compute_budget_report(&self, now_ms: i64) -> GoalBudgetReport {
+        let live_wc = self.live_wall_clock_ms(now_ms);
+        let token_remaining = self.token_budget.map(|b| (b - self.tokens_used).max(0));
+        let turn_remaining = self.turn_budget.map(|b| (b - self.turns_used).max(0));
+        let wc_remaining = self.wall_clock_budget_ms.map(|b| (b - live_wc).max(0));
+        let token_reached = self.token_budget.is_some_and(|b| self.tokens_used >= b);
+        let turn_reached = self.turn_budget.is_some_and(|b| self.turns_used >= b);
+        let wc_reached = self.wall_clock_budget_ms.is_some_and(|b| live_wc >= b);
+        GoalBudgetReport {
+            token_budget: self.token_budget,
+            turn_budget: self.turn_budget,
+            wall_clock_budget_ms: self.wall_clock_budget_ms,
+            remaining_tokens: token_remaining,
+            remaining_turns: turn_remaining,
+            remaining_wall_clock_ms: wc_remaining,
+            token_budget_reached: token_reached,
+            turn_budget_reached: turn_reached,
+            wall_clock_budget_reached: wc_reached,
+            over_budget: token_reached || turn_reached || wc_reached,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BlockedAuditDecision — result of the 3-turn blocked audit
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockedAuditDecision {
+    RecordAttempt {
+        streak: u32,
+        attempts_needed: u32,
+        message: String,
+    },
+    MarkBlocked {
+        streak: u32,
+    },
+}
+
+impl GoalState {
+    /// Apply the 3-turn blocked audit.
+    pub fn decide_blocked_audit(&self) -> BlockedAuditDecision {
+        const MAX_STREAK: u32 = 2; // 0-indexed: 0, 1, 2 = 3 turns
+        if self.blocked_streak < MAX_STREAK {
+            let attempts_needed = MAX_STREAK - self.blocked_streak;
+            BlockedAuditDecision::RecordAttempt {
+                streak: self.blocked_streak,
+                attempts_needed,
+                message: format!(
+                    "Blocking condition noted (attempt {}/3). The goal remains active. \
+                     Only mark blocked after the same condition persists for 3 consecutive goal turns.",
+                    self.blocked_streak + 1
+                ),
+            }
+        } else {
+            BlockedAuditDecision::MarkBlocked {
+                streak: self.blocked_streak + 1,
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
+
+/// Validate a goal objective. Returns an error message if invalid.
+pub fn validate_goal_objective(objective: &str) -> Result<(), String> {
+    let trimmed = objective.trim();
+    if trimmed.is_empty() {
+        return Err("Goal objective cannot be empty".to_string());
+    }
+    if trimmed.len() > 10_000 {
+        return Err("Goal objective too long (max 10,000 characters)".to_string());
+    }
+    Ok(())
+}
+
+/// Validate a goal budget value. Returns an error message if invalid.
+pub fn validate_goal_budget(value: Option<i64>) -> Result<(), String> {
+    if let Some(v) = value {
+        if v <= 0 {
+            return Err("Goal budget must be positive".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Budget unit for `validate_budget_input`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetUnit {
+    Turns,
+    Tokens,
+    Milliseconds,
+    Seconds,
+    Minutes,
+    Hours,
+}
+
+impl BudgetUnit {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "turns" => Some(Self::Turns),
+            "tokens" => Some(Self::Tokens),
+            "milliseconds" => Some(Self::Milliseconds),
+            "seconds" => Some(Self::Seconds),
+            "minutes" => Some(Self::Minutes),
+            "hours" => Some(Self::Hours),
+            _ => None,
+        }
+    }
+}
+
+/// Output of `validate_budget_input`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BudgetLimitsPatch {
+    pub token_budget: Option<Option<i64>>,
+    pub turn_budget: Option<Option<i64>>,
+    pub wall_clock_budget_ms: Option<Option<i64>>,
+}
+
+const MIN_REASONABLE_TIME_MS: i64 = 1_000;
+const MAX_REASONABLE_TIME_MS: i64 = 86_400_000; // 24h
+
+/// Validate and normalize a budget input into a patch.
+pub fn validate_budget_input(value: f64, unit: BudgetUnit) -> Result<BudgetLimitsPatch, String> {
+    match unit {
+        BudgetUnit::Turns => {
+            let rounded = (value.round() as i64).max(1);
+            Ok(BudgetLimitsPatch {
+                turn_budget: Some(Some(rounded)),
+                ..Default::default()
+            })
+        }
+        BudgetUnit::Tokens => {
+            let rounded = (value.round() as i64).max(1);
+            Ok(BudgetLimitsPatch {
+                token_budget: Some(Some(rounded)),
+                ..Default::default()
+            })
+        }
+        unit => {
+            let ms = match unit {
+                BudgetUnit::Milliseconds => value as i64,
+                BudgetUnit::Seconds => (value * 1000.0) as i64,
+                BudgetUnit::Minutes => (value * 60.0 * 1000.0) as i64,
+                BudgetUnit::Hours => (value * 60.0 * 60.0 * 1000.0) as i64,
+                _ => unreachable!(),
+            };
+            if ms < MIN_REASONABLE_TIME_MS {
+                return Err(format!(
+                    "Time budget too short (min {} second)",
+                    MIN_REASONABLE_TIME_MS / 1000
+                ));
+            }
+            if ms > MAX_REASONABLE_TIME_MS {
+                return Err(format!(
+                    "Time budget too long (max {} hours)",
+                    MAX_REASONABLE_TIME_MS / 3_600_000
+                ));
+            }
+            Ok(BudgetLimitsPatch {
+                wall_clock_budget_ms: Some(Some(ms)),
+                ..Default::default()
+            })
+        }
     }
 }
 
@@ -144,10 +383,14 @@ impl GoalState {
 #[derive(Debug, Clone, Default)]
 pub struct GoalUpdate {
     pub objective: Option<String>,
+    pub completion_criterion: Option<Option<String>>,
     pub status: Option<GoalStatus>,
     pub token_budget: Option<Option<i64>>,
+    pub turn_budget: Option<Option<i64>>,
+    pub wall_clock_budget_ms: Option<Option<i64>>,
     pub tokens_used: Option<i64>,
-    pub time_used_seconds: Option<i64>,
+    pub turns_used: Option<i64>,
+    pub wall_clock_ms: Option<i64>,
     pub blocked_streak: Option<u32>,
     pub wall_clock_resumed_at: Option<Option<i64>>,
     pub terminal_reason: Option<Option<String>>,
@@ -193,6 +436,12 @@ impl GoalState {
                 changed = true;
             }
         }
+        if let Some(criterion) = update.completion_criterion {
+            if criterion != self.completion_criterion {
+                self.completion_criterion = criterion;
+                changed = true;
+            }
+        }
         if let Some(status) = update.status {
             if status != self.status {
                 // Validate transition
@@ -208,18 +457,16 @@ impl GoalState {
                     self.wall_clock_resumed_at = Some(chrono_now_ms());
                     self.terminal_reason = None;
                 }
-                // On pause/block/complete: clear wall clock
+                // On leaving active: fold elapsed wall-clock into wall_clock_ms
                 if self.status == GoalStatus::Active
                     && status != GoalStatus::Active
                 {
-                    // Fold elapsed wall-clock into time_used_seconds before clearing
                     if let Some(resumed_at) = self.wall_clock_resumed_at {
-                        let elapsed = (chrono_now_ms() - resumed_at).max(0) / 1000;
-                        self.time_used_seconds += elapsed;
+                        let elapsed = (chrono_now_ms() - resumed_at).max(0);
+                        self.wall_clock_ms += elapsed;
                     }
                     self.wall_clock_resumed_at = None;
                 }
-                // On terminal states: keep the reason
                 self.status = status;
                 changed = true;
             }
@@ -230,15 +477,33 @@ impl GoalState {
                 changed = true;
             }
         }
+        if let Some(turn_budget) = update.turn_budget {
+            if turn_budget != self.turn_budget {
+                self.turn_budget = turn_budget;
+                changed = true;
+            }
+        }
+        if let Some(wc_budget) = update.wall_clock_budget_ms {
+            if wc_budget != self.wall_clock_budget_ms {
+                self.wall_clock_budget_ms = wc_budget;
+                changed = true;
+            }
+        }
         if let Some(tokens_used) = update.tokens_used {
             if tokens_used != self.tokens_used {
                 self.tokens_used = tokens_used;
                 changed = true;
             }
         }
-        if let Some(time) = update.time_used_seconds {
-            if time != self.time_used_seconds {
-                self.time_used_seconds = time;
+        if let Some(turns_used) = update.turns_used {
+            if turns_used != self.turns_used {
+                self.turns_used = turns_used;
+                changed = true;
+            }
+        }
+        if let Some(wall_clock_ms) = update.wall_clock_ms {
+            if wall_clock_ms != self.wall_clock_ms {
+                self.wall_clock_ms = wall_clock_ms;
                 changed = true;
             }
         }
@@ -310,33 +575,6 @@ fn chrono_now_ms() -> i64 {
         .as_millis() as i64
 }
 
-// ---------------------------------------------------------------------------
-// Validation
-// ---------------------------------------------------------------------------
-
-/// Validate a goal objective. Returns an error message if invalid.
-pub fn validate_goal_objective(objective: &str) -> Result<(), String> {
-    let trimmed = objective.trim();
-    if trimmed.is_empty() {
-        return Err("Goal objective cannot be empty".to_string());
-    }
-    // Cap objective length to prevent absurdly long goals
-    if trimmed.len() > 10_000 {
-        return Err("Goal objective too long (max 10,000 characters)".to_string());
-    }
-    Ok(())
-}
-
-/// Validate a goal token budget. Returns an error message if invalid.
-pub fn validate_goal_budget(value: Option<i64>) -> Result<(), String> {
-    if let Some(v) = value {
-        if v <= 0 {
-            return Err("Goal token budget must be positive".to_string());
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +585,11 @@ mod tests {
         assert_eq!(g.status, GoalStatus::Active);
         assert_eq!(g.tokens_used, 0);
         assert_eq!(g.remaining_tokens(), 1000);
+        assert_eq!(g.turns_used, 0);
+        assert_eq!(g.wall_clock_ms, 0);
+        assert!(g.completion_criterion.is_none());
+        assert!(g.turn_budget.is_none());
+        assert!(g.wall_clock_budget_ms.is_none());
     }
 
     #[test]
@@ -386,15 +629,28 @@ mod tests {
     fn test_is_over_budget() {
         let mut g = GoalState::new("g1".into(), "test".into(), Some(100));
         g.tokens_used = 150;
-        assert!(g.is_over_token_budget());
+        assert!(g.is_over_budget(0));
         assert_eq!(g.remaining_tokens(), 0);
     }
 
     #[test]
     fn test_no_budget() {
         let g = GoalState::new("g1".into(), "test".into(), None);
-        assert!(!g.is_over_token_budget());
+        assert!(!g.is_over_budget(0));
         assert_eq!(g.remaining_tokens(), i64::MAX);
+    }
+
+    #[test]
+    fn test_multi_budget() {
+        let mut g = GoalState::new("g1".into(), "test".into(), Some(1000));
+        g.turn_budget = Some(5);
+        g.wall_clock_budget_ms = Some(60_000);
+        g.turns_used = 5;
+        assert!(g.is_over_budget(0));
+        let report = g.compute_budget_report(0);
+        assert!(report.turn_budget_reached);
+        assert!(!report.token_budget_reached);
+        assert!(report.over_budget);
     }
 
     #[test]
@@ -433,5 +689,49 @@ mod tests {
         assert!(validate_goal_budget(Some(0)).is_err());
         assert!(validate_goal_budget(Some(100)).is_ok());
         assert!(validate_goal_budget(None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_budget_input_turns() {
+        let patch = validate_budget_input(5.0, BudgetUnit::Turns).unwrap();
+        assert_eq!(patch.turn_budget, Some(Some(5)));
+        assert_eq!(patch.token_budget, None);
+    }
+
+    #[test]
+    fn test_validate_budget_input_time_bounds() {
+        assert!(validate_budget_input(0.5, BudgetUnit::Seconds).is_err()); // < 1s
+        assert!(validate_budget_input(25.0, BudgetUnit::Hours).is_err()); // > 24h
+        let patch = validate_budget_input(30.0, BudgetUnit::Minutes).unwrap();
+        assert_eq!(patch.wall_clock_budget_ms, Some(Some(1_800_000)));
+    }
+
+    #[test]
+    fn test_decide_blocked_audit() {
+        let mut g = GoalState::new("g1".into(), "test".into(), None);
+        // Streak 0 -> record_attempt
+        let d = g.decide_blocked_audit();
+        assert!(matches!(d, BlockedAuditDecision::RecordAttempt { streak: 0, attempts_needed: 2, .. }));
+        // Streak 1 -> record_attempt
+        g.blocked_streak = 1;
+        let d = g.decide_blocked_audit();
+        assert!(matches!(d, BlockedAuditDecision::RecordAttempt { streak: 1, attempts_needed: 1, .. }));
+        // Streak 2 -> mark_blocked
+        g.blocked_streak = 2;
+        let d = g.decide_blocked_audit();
+        assert!(matches!(d, BlockedAuditDecision::MarkBlocked { streak: 3 }));
+    }
+
+    #[test]
+    fn test_live_wall_clock() {
+        let mut g = GoalState::new("g1".into(), "test".into(), None);
+        g.wall_clock_ms = 5000;
+        g.wall_clock_resumed_at = Some(1000);
+        g.status = GoalStatus::Active;
+        // now_ms = 3000 -> live = 5000 + (3000 - 1000) = 7000
+        assert_eq!(g.live_wall_clock_ms(3000), 7000);
+        // inactive goal -> no in-flight
+        g.status = GoalStatus::Paused;
+        assert_eq!(g.live_wall_clock_ms(3000), 5000);
     }
 }

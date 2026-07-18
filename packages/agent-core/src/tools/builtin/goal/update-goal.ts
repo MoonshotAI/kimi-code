@@ -21,6 +21,7 @@ import {
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
+import { tryNativeGoalEngineDecideBlockedAudit } from '../native-tools';
 import DESCRIPTION from './update-goal.md?raw';
 
 export const UpdateGoalToolInputSchema = z
@@ -73,20 +74,35 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           if (!goalIsActive) {
             return { output: 'Goal not blocked: no active goal.' };
           }
-          const streak = currentGoal?.blockedStreak ?? 0;
-          const MIN_BLOCKED_STREAK = 2; // 0-indexed: 0,1,2 = 3 turns
-          if (streak < MIN_BLOCKED_STREAK) {
+          // Engine owns the 3-turn blocked audit (native-first, TS fallback).
+          const auditResult = tryNativeGoalEngineDecideBlockedAudit(
+            JSON.stringify({ goal: currentGoal }),
+          );
+          let shouldBlock: boolean;
+          let attemptMessage: string | undefined;
+          if (auditResult?.action === 'record_attempt') {
+            shouldBlock = false;
+            attemptMessage = auditResult.message;
+          } else if (auditResult?.action === 'mark_blocked') {
+            shouldBlock = true;
+          } else {
+            // Native unavailable — fall back to inline TS audit.
+            const streak = currentGoal?.blockedStreak ?? 0;
+            const MIN_BLOCKED_STREAK = 2; // 0-indexed: 0,1,2 = 3 turns
+            shouldBlock = streak >= MIN_BLOCKED_STREAK;
+            if (!shouldBlock) {
+              attemptMessage = `Blocking condition noted (attempt ${streak + 1}/3). The same blocking condition must repeat for at least 3 consecutive goal turns before calling UpdateGoal with "blocked". Continue working or adjust your approach.`;
+            }
+          }
+          if (!shouldBlock) {
             await goal.recordBlockedAttempt();
-            return {
-              output: `Blocking condition noted (attempt ${streak + 1}/3). The same blocking condition must repeat for at least 3 consecutive goal turns before calling UpdateGoal with "blocked". Continue working or adjust your approach.`,
-            };
+            return { output: attemptMessage ?? 'Blocking condition noted.' };
           }
           const blocked = await goal.markBlocked({}, 'model');
           if (blocked === null) {
             return { output: 'Goal not blocked: no active goal.' };
           }
-          const output =
-            buildGoalBlockedReasonPrompt(blocked);
+          const output = buildGoalBlockedReasonPrompt(blocked);
           return { output, stopTurn: true };
         }
         return {

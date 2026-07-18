@@ -3,6 +3,7 @@
 mod bash;
 mod compaction;
 mod edit;
+
 mod escape;
 mod file_cache;
 mod file_type;
@@ -15,6 +16,8 @@ mod list_directory;
 mod mcp;
 mod napi_bindings;
 mod output_truncate;
+mod path_access;
+mod permission;
 mod read;
 mod tool_access;
 mod tokens;

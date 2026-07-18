@@ -5,8 +5,11 @@ import { t } from '#/i18n';
 import type { Agent } from '..';
 import type { AgentRecordOf } from '../records/types';
 import {
-  tryNativeGoalApplyUpdate,
-  tryNativeGoalValidateObjective,
+  tryNativeGoalEngineApplyUsage,
+  tryNativeGoalEngineComputeBudgetReport,
+  tryNativeGoalEngineDecideStatusTransition,
+  tryNativeGoalEngineValidateBudgetInput,
+  tryNativeGoalEngineValidateCreateInput,
 } from '../../tools/builtin/native-tools';
 import {
   type TelemetryProperties,
@@ -280,7 +283,7 @@ export class GoalMode {
 
     if (state.status === 'active') {
       const reason = 'Paused after agent resume';
-      this.applyStatus(state, 'paused');
+      this.transitionState('paused');
       state.terminalReason = reason;
       this.persistState(state, { silent: true });
       this.appendStatusUpdate(state, 'runtime', reason);
@@ -381,39 +384,45 @@ export class GoalMode {
 
   async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const objective = input.objective.trim();
-    if (objective.length === 0) {
-      throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
-    }
-    // Use native validation when available (supports length cap)
-    const nativeError = tryNativeGoalValidateObjective(objective);
-    if (nativeError !== undefined && nativeError.length > 0) {
-      throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_TOO_LONG, nativeError);
-    }
-    if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
-      throw new KimiError(
-        ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
-        `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters`,
-      );
+    // Engine owns validation (objective empty/length, criterion truncation).
+    const nativeResult = tryNativeGoalEngineValidateCreateInput(
+      JSON.stringify({ objective, completionCriterion: input.completionCriterion }),
+    );
+    let completionCriterion: string | undefined;
+    if (nativeResult !== undefined && nativeResult.ok) {
+      completionCriterion = nativeResult.completionCriterion ?? undefined;
+    } else if (nativeResult === undefined) {
+      // Native unavailable — fall back to TS validation.
+      if (objective.length === 0) {
+        throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
+      }
+      if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
+        throw new KimiError(
+          ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
+          `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters`,
+        );
+      }
+      completionCriterion = normalizeCompletionCriterion(input.completionCriterion);
+    } else {
+      // Native returned an explicit error.
+      const code = nativeResult.error.includes('empty')
+        ? ErrorCodes.GOAL_OBJECTIVE_EMPTY
+        : ErrorCodes.GOAL_OBJECTIVE_TOO_LONG;
+      throw new KimiError(code, nativeResult.error);
     }
 
     const existing = this.state;
     if (existing !== undefined) {
-      // Any persisted goal (active / paused / blocked) is intact and blocks a
-      // new one unless `replace` is set; `complete` never persists, so it is not
-      // observed here. This protects a resumable paused/blocked goal from being
-      // silently overwritten.
       if (input.replace !== true) {
         throw new KimiError(
           ErrorCodes.GOAL_ALREADY_EXISTS,
           'A goal already exists; use replace to start a new one',
         );
       }
-      // Clear the previous goal through the same internal clear path so records
-      // stay consistent before storing the replacement.
       this.clearInternal('system');
     }
 
-    const completionCriterion = normalizeCompletionCriterion(input.completionCriterion);
+    const now = Date.now();
     const state: GoalState = {
       goalId: randomUUID(),
       objective,
@@ -422,10 +431,10 @@ export class GoalMode {
       turnsUsed: 0,
       tokensUsed: 0,
       wallClockMs: 0,
-      wallClockResumedAt: Date.now(),
+      wallClockResumedAt: now,
       budgetLimits: {},
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     this.persistState(state);
@@ -450,9 +459,8 @@ export class GoalMode {
         `Cannot pause a goal in status "${state.status}"`,
       );
     }
-    // Validate transition through native when available
-    this.tryNativeStateTransition('paused');
-    this.applyStatus(state, 'paused');
+    // Engine owns wall-clock bookkeeping + transition validation.
+    this.transitionState('paused');
     state.terminalReason = input.reason;
     this.persistState(state, {
       change: { kind: 'lifecycle', status: 'paused', reason: input.reason, actor },
@@ -472,7 +480,7 @@ export class GoalMode {
   ): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    this.applyStatus(state, 'paused');
+    this.transitionState('paused');
     state.terminalReason = input.reason;
     this.persistState(state, {
       change: { kind: 'lifecycle', status: 'paused', reason: input.reason, actor },
@@ -490,13 +498,9 @@ export class GoalMode {
         `Cannot resume a goal in status "${state.status}"`,
       );
     }
-    // Validate transition through native when available
-    this.tryNativeStateTransition('active');
-    // Resuming is a fresh attempt: clear the stop reason so a re-activated goal
-    // starts clean.
-    state.terminalReason = undefined;
-    state.blockedStreak = 0; // reset blocked audit counter on resume
-    this.applyStatus(state, 'active');
+    // Engine owns wall-clock anchoring + blocked-streak reset + validation.
+    this.transitionState('active');
+    state.terminalReason = input.reason;
     this.persistState(state, {
       change: { kind: 'lifecycle', status: 'active', reason: input.reason, actor },
     });
@@ -509,7 +513,26 @@ export class GoalMode {
     actor: GoalActor = 'user',
   ): Promise<GoalSnapshot> {
     const state = this.requireState();
-    state.budgetLimits = { ...state.budgetLimits, ...input.budgetLimits };
+    // Engine owns budget validation (unit conversion, reasonable bounds).
+    const candidate = { ...state.budgetLimits, ...input.budgetLimits };
+    const validationPromises: Promise<void>[] = [];
+    if (candidate.tokenBudget !== undefined) {
+      validationPromises.push(
+        this.validateBudgetValue(candidate.tokenBudget, 'tokens'),
+      );
+    }
+    if (candidate.turnBudget !== undefined) {
+      validationPromises.push(
+        this.validateBudgetValue(candidate.turnBudget, 'turns'),
+      );
+    }
+    if (candidate.wallClockBudgetMs !== undefined) {
+      validationPromises.push(
+        this.validateBudgetValue(candidate.wallClockBudgetMs / 1000, 'seconds'),
+      );
+    }
+    await Promise.all(validationPromises);
+    state.budgetLimits = candidate;
     this.persistState(state);
     this.appendGoalUpdate({ budgetLimits: state.budgetLimits });
     this.track('goal_budget_set', {
@@ -517,6 +540,18 @@ export class GoalMode {
       ...budgetTelemetryProperties(input.budgetLimits),
     });
     return this.toSnapshot(state);
+  }
+
+  private async validateBudgetValue(
+    value: number,
+    unit: string,
+  ): Promise<void> {
+    const result = tryNativeGoalEngineValidateBudgetInput(
+      JSON.stringify({ value, unit }),
+    );
+    if (result !== undefined && !result.ok) {
+      throw new KimiError(ErrorCodes.INVALID_INPUT, result.error);
+    }
   }
 
   /**
@@ -557,9 +592,8 @@ export class GoalMode {
   ): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    // Validate transition through native when available
-    this.tryNativeStateTransition('blocked');
-    this.applyStatus(state, 'blocked');
+    // Engine owns transition validation + wall-clock bookkeeping.
+    this.transitionState('blocked');
     state.terminalReason = input.reason;
     this.persistState(state, {
       change: { kind: 'lifecycle', status: 'blocked', reason: input.reason, actor },
@@ -580,8 +614,7 @@ export class GoalMode {
   ): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    this.tryNativeStateTransition('budget_limited');
-    this.applyStatus(state, 'budget_limited');
+    this.transitionState('budget_limited');
     state.terminalReason = input.reason;
     this.persistState(state, {
       change: { kind: 'lifecycle', status: 'budget_limited', reason: input.reason, actor },
@@ -603,9 +636,8 @@ export class GoalMode {
   ): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    // Validate transition through native when available
-    this.tryNativeStateTransition('complete');
-    this.applyStatus(state, 'complete');
+    // Engine owns transition validation + wall-clock bookkeeping.
+    this.transitionState('complete');
     state.terminalReason = input.reason;
     const snapshot = this.toSnapshot(state);
     // Record + notify the UI of completion (with final stats) before clearing.
@@ -654,8 +686,15 @@ export class GoalMode {
   async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    const delta = Math.max(0, tokenDelta);
-    state.tokensUsed += delta;
+    const result = tryNativeGoalEngineApplyUsage(
+      JSON.stringify({ goal: state, tokenDelta, turnDelta: 0, nowMs: Date.now() }),
+    );
+    if (result !== undefined) {
+      this.syncStateFromEngine(state, result.goal);
+    } else {
+      // Native unavailable — fall back to inline TS accounting.
+      state.tokensUsed += Math.max(0, tokenDelta);
+    }
     this.persistState(state, { silent: true }); // per-step: no UI update
     this.appendGoalUpdate({ tokensUsed: state.tokensUsed });
     return this.toSnapshot(state);
@@ -664,7 +703,15 @@ export class GoalMode {
   async incrementTurn(): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    state.turnsUsed += 1;
+    const result = tryNativeGoalEngineApplyUsage(
+      JSON.stringify({ goal: state, tokenDelta: 0, turnDelta: 1, nowMs: Date.now() }),
+    );
+    if (result !== undefined) {
+      this.syncStateFromEngine(state, result.goal);
+    } else {
+      // Native unavailable — fall back to inline TS accounting.
+      state.turnsUsed += 1;
+    }
     this.persistState(state);
     this.appendGoalUpdate({ turnsUsed: state.turnsUsed });
     this.track('goal_continued', {
@@ -729,59 +776,70 @@ export class GoalMode {
   }
 
   /**
-   * Attempts a state transition through the native Rust module.
-   * Returns the updated status if native accepted the transition, or undefined
-   * if native is unavailable or disagrees (caller should use TS logic).
-   *
-   * This is a best-effort secondary validation — the TS logic is the source of
-   * truth. Native is called to validate expected_goal_id and check for illegal
-   * transitions.
+   * Delegates a status transition to the engine. The engine owns wall-clock
+   * anchoring/folding, blocked-streak reset, and transition validation.
+   * Updates the in-place state object from the engine result.
    */
-  private tryNativeStateTransition(
-    newStatus: GoalStatus,
-    expectedGoalId?: string,
-  ): GoalStatus | undefined {
+  private transitionState(targetStatus: GoalStatus): void {
     const state = this.state;
-    if (state === undefined) return undefined;
-
-    const goalJson = JSON.stringify({
-      goalId: state.goalId,
-      objective: state.objective,
-      status: state.status,
-      tokenBudget: state.budgetLimits.tokenBudget ?? null,
-      tokensUsed: state.tokensUsed,
-      timeUsedSeconds: Math.floor(state.wallClockMs / 1000),
-      blockedStreak: state.blockedStreak ?? 0,
-    });
-    const updateJson = JSON.stringify({
-      status: newStatus,
-      expectedGoalId: expectedGoalId ?? state.goalId,
-    });
-
-    const result = tryNativeGoalApplyUpdate(goalJson, updateJson);
-    if (result === undefined || !result.ok) {
-      return undefined; // native unavailable or rejected — fall back to TS
+    if (state === undefined) return;
+    const result = tryNativeGoalEngineDecideStatusTransition(
+      JSON.stringify({ goal: state, targetStatus, expectedGoalId: state.goalId }),
+    );
+    if (result !== undefined && result.ok) {
+      this.syncStateFromEngine(state, result.goal);
+    } else if (result === undefined) {
+      // Native unavailable — fall back to inline TS transition logic.
+      this.applyStatusFallback(state, targetStatus);
     }
-    // Native accepted the transition; use native's updated status
-    return result.goal?.['status'] as GoalStatus | undefined;
+    // If native returned an explicit error, the transition is invalid — do nothing.
   }
 
-  private applyStatus(
-    state: GoalState,
-    status: GoalStatus,
-  ): void {
-    // Fold the live wall-clock interval into the running total when leaving
-    // `active`, and anchor a fresh interval when entering it, so `wallClockMs`
-    // stays a correct, persistable total across pause/resume/complete.
+  /**
+   * Inline TS fallback for status transitions when native is unavailable.
+   * Mirrors the wall-clock anchoring/folding and blocked-streak reset that the
+   * Rust `decide_status_transition` owns when native is loaded.
+   */
+  private applyStatusFallback(state: GoalState, newStatus: GoalStatus): void {
+    if (newStatus === state.status) return;
     const now = Date.now();
+    // Fold the live wall-clock interval into the running total when leaving active.
     if (state.status === 'active' && state.wallClockResumedAt !== undefined) {
       state.wallClockMs += Math.max(0, now - state.wallClockResumedAt);
       state.wallClockResumedAt = undefined;
     }
-    if (status === 'active') {
+    // Anchor a fresh wall-clock interval when entering active.
+    if (newStatus === 'active') {
+      state.blockedStreak = 0;
       state.wallClockResumedAt = now;
+      state.terminalReason = undefined;
     }
-    state.status = status;
+    state.status = newStatus;
+  }
+
+  /**
+   * Syncs engine-computed fields back into the in-place TS state object.
+   * Used after engine-owned mutations (usage, transitions).
+   */
+  private syncStateFromEngine(state: GoalState, engine: Record<string, unknown>): void {
+    if (engine['tokensUsed'] !== undefined) {
+      state.tokensUsed = (engine['tokensUsed'] as number) || 0;
+    }
+    if (engine['turnsUsed'] !== undefined) {
+      state.turnsUsed = (engine['turnsUsed'] as number) || 0;
+    }
+    if (engine['wallClockMs'] !== undefined) {
+      state.wallClockMs = (engine['wallClockMs'] as number) || 0;
+    }
+    if (engine['wallClockResumedAt'] !== undefined) {
+      state.wallClockResumedAt = engine['wallClockResumedAt'] as number | undefined;
+    }
+    if (engine['blockedStreak'] !== undefined) {
+      state.blockedStreak = (engine['blockedStreak'] as number) || 0;
+    }
+    if (engine['status'] !== undefined) {
+      state.status = engine['status'] as GoalStatus;
+    }
   }
 
   private requireState(): GoalState {
@@ -855,17 +913,33 @@ function computeBudgetReport(
   state: GoalState,
   now: number = Date.now(),
 ): GoalBudgetReport {
+  // Engine owns the budget math.
+  const result = tryNativeGoalEngineComputeBudgetReport(
+    JSON.stringify({ goal: state, nowMs: now }),
+  );
+  if (result !== undefined) {
+    return {
+      tokenBudget: (result['tokenBudget'] as number | null) ?? null,
+      turnBudget: (result['turnBudget'] as number | null) ?? null,
+      wallClockBudgetMs: (result['wallClockBudgetMs'] as number | null) ?? null,
+      remainingTokens: (result['remainingTokens'] as number | null) ?? null,
+      remainingTurns: (result['remainingTurns'] as number | null) ?? null,
+      remainingWallClockMs: (result['remainingWallClockMs'] as number | null) ?? null,
+      tokenBudgetReached: (result['tokenBudgetReached'] as boolean) ?? false,
+      turnBudgetReached: (result['turnBudgetReached'] as boolean) ?? false,
+      wallClockBudgetReached: (result['wallClockBudgetReached'] as boolean) ?? false,
+      overBudget: (result['overBudget'] as boolean) ?? false,
+    };
+  }
+  // Fallback when engine is unavailable.
   const limits = state.budgetLimits;
   const tokenBudget = limits.tokenBudget ?? null;
   const turnBudget = limits.turnBudget ?? null;
   const wallClockBudgetMs = limits.wallClockBudgetMs ?? null;
   const wallClockMs = liveWallClockMs(state, now);
-
   const tokenBudgetReached = tokenBudget !== null && state.tokensUsed >= tokenBudget;
   const turnBudgetReached = turnBudget !== null && state.turnsUsed >= turnBudget;
-  const wallClockBudgetReached =
-    wallClockBudgetMs !== null && wallClockMs >= wallClockBudgetMs;
-
+  const wallClockBudgetReached = wallClockBudgetMs !== null && wallClockMs >= wallClockBudgetMs;
   return {
     tokenBudget,
     turnBudget,
@@ -889,6 +963,7 @@ function budgetTelemetryProperties(limits: GoalBudgetLimits): TelemetryPropertie
   };
 }
 
+/** @deprecated Engine owns criterion normalization via validate_create_input. */
 function normalizeCompletionCriterion(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed?.length) return undefined;

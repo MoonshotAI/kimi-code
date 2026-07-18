@@ -417,6 +417,31 @@ function nativeReduceCompactOnOverflow(messages, config) {
 }
 
 // ============================================================================
+// Compaction — split safety + user message selection
+// ============================================================================
+
+/**
+ * Check whether a compaction split is safe after messages[index].
+ * @param {Array<{role: string, toolCallsCount: number, tokens: number}>} messages
+ * @param {number} index
+ * @returns {boolean}
+ */
+function nativeCanSplitAfter(messages, index) {
+  return binding.nativeCanSplitAfter(messages, index);
+}
+
+/**
+ * Select user messages compaction keeps verbatim, with head/tail split.
+ * @param {Array<{role: string, text: string, tokens: number}>} messages
+ * @param {number} maxTokens
+ * @param {number} headTokens
+ * @returns {{headIndices: number[], tailIndices: number[], headTruncateChars: number|null, tailTruncateChars: number|null, elided: boolean, omittedTokens: number}}
+ */
+function nativeSelectCompactionUserMessages(messages, maxTokens, headTokens) {
+  return binding.nativeSelectCompactionUserMessages(messages, maxTokens, headTokens);
+}
+
+// ============================================================================
 // Tool access conflict detection
 // ============================================================================
 
@@ -765,6 +790,150 @@ function nativeGoalRenderObjectiveUpdated(objective, tokensUsed, tokenBudget) {
 }
 
 // ============================================================================
+// Path access
+// ============================================================================
+
+/** Normalize a user path (Win32/Cygwin drive conversion). */
+function nativePathNormalizeUserPath(path, pathClass) {
+  return binding.nativePathNormalizeUserPath(path, pathClass);
+}
+
+/** Expand `~` → home directory. */
+function nativePathExpandUserPath(path, homeDir, pathClass) {
+  return binding.nativePathExpandUserPath(path, homeDir, pathClass);
+}
+
+/** Lexical canonicalization (relative → absolute → normalize). Returns "ERROR: ..." on failure. */
+function nativePathCanonicalize(path, cwd, pathClass) {
+  return binding.nativePathCanonicalize(path, cwd, pathClass);
+}
+
+/** Component-boundary prefix check (true if candidate is base or its descendant). */
+function nativePathIsWithinDirectory(candidate, base, pathClass) {
+  return binding.nativePathIsWithinDirectory(candidate, base, pathClass);
+}
+
+/** Multi-root workspace containment check. */
+function nativePathIsWithinWorkspace(candidate, roots, pathClass) {
+  return binding.nativePathIsWithinWorkspace(candidate, roots, pathClass);
+}
+
+/**
+ * Glob-aware canonicalization: normalizes prefix before glob, leaves glob suffix.
+ * @returns {string} Canonicalized path or 'ERROR: ...'
+ */
+function nativePathCanonicalizeForGlob(path, cwd, pathClass) {
+  return binding.nativePathCanonicalizeForGlob(path, cwd, pathClass);
+}
+
+// ============================================================================
+// Permission — DSL pattern parsing
+// ============================================================================
+
+/**
+ * Parse a permission rule DSL pattern.
+ * @param {string} pattern - e.g. "Read(/etc/**)"
+ * @returns {string} JSON '{"toolName":"...","argPattern":...}' or 'ERROR: ...'
+ */
+function nativeParsePermissionPattern(pattern) {
+  return binding.nativeParsePermissionPattern(pattern);
+}
+
+// ============================================================================
+// GoalEngine — decision core (stateless, JSON-in/JSON-out)
+// ============================================================================
+
+/**
+ * Validate and normalize a goal creation input.
+ * @param {string} json - {"objective": string, "completionCriterion?": string}
+ * @returns {string} JSON '{ok:true,objective,completionCriterion?}' or '{ok:false,error}'
+ */
+function nativeGoalEngineValidateCreateInput(json) {
+  return binding.nativeGoalEngineValidateCreateInput(json);
+}
+
+/**
+ * Validate a budget input into a limits patch.
+ * @param {string} json - {"value": number, "unit": string}
+ * @returns {string} JSON '{ok:true,budgetLimits:{...}}' or '{ok:false,error}'
+ */
+function nativeGoalEngineValidateBudgetInput(json) {
+  return binding.nativeGoalEngineValidateBudgetInput(json);
+}
+
+/**
+ * Compute the full budget report.
+ * @param {string} json - {"goal": GoalStateJSON, "nowMs": number}
+ * @returns {string} JSON budget report
+ */
+function nativeGoalEngineComputeBudgetReport(json) {
+  return binding.nativeGoalEngineComputeBudgetReport(json);
+}
+
+/**
+ * Apply token + turn deltas to a goal.
+ * @param {string} json - {"goal": GoalStateJSON, "tokenDelta": number, "turnDelta": number, "nowMs": number}
+ * @returns {string} JSON '{goal: GoalStateJSON, overBudget: boolean}'
+ */
+function nativeGoalEngineApplyUsage(json) {
+  return binding.nativeGoalEngineApplyUsage(json);
+}
+
+/**
+ * Decide whether the goal driver should continue.
+ * @param {string} json - {"goal": GoalStateJSON, "nowMs": number}
+ * @returns {string} JSON '{action:"continue",steeringPrompt}' | '{action:"stop_budget",reason,steeringPrompt}' | '{action:"stop_inactive"}'
+ */
+function nativeGoalEngineDecideContinuation(json) {
+  return binding.nativeGoalEngineDecideContinuation(json);
+}
+
+/**
+ * Apply the 3-turn blocked audit.
+ * @param {string} json - {"goal": GoalStateJSON}
+ * @returns {string} JSON '{action:"record_attempt",streak,attemptsNeeded,message}' | '{action:"mark_blocked",streak}'
+ */
+function nativeGoalEngineDecideBlockedAudit(json) {
+  return binding.nativeGoalEngineDecideBlockedAudit(json);
+}
+
+/**
+ * Attempt a status transition.
+ * @param {string} json - {"goal": GoalStateJSON, "targetStatus": string, "expectedGoalId?": string}
+ * @returns {string} JSON '{ok:true,goal:GoalStateJSON}' or '{ok:false,error}'
+ */
+function nativeGoalEngineDecideStatusTransition(json) {
+  return binding.nativeGoalEngineDecideStatusTransition(json);
+}
+
+/**
+ * Render the full active-goal reminder.
+ * @param {string} json - {"goal": GoalStateJSON, "nowMs": number}
+ * @returns {string} rendered prompt
+ */
+function nativeGoalEngineRenderGoalReminder(json) {
+  return binding.nativeGoalEngineRenderGoalReminder(json);
+}
+
+/**
+ * Render a light blocked note.
+ * @param {string} json - {"goal": GoalStateJSON}
+ * @returns {string} rendered prompt
+ */
+function nativeGoalEngineRenderBlockedNote(json) {
+  return binding.nativeGoalEngineRenderBlockedNote(json);
+}
+
+/**
+ * Render a light paused note.
+ * @param {string} json - {"goal": GoalStateJSON}
+ * @returns {string} rendered prompt
+ */
+function nativeGoalEngineRenderPausedNote(json) {
+  return binding.nativeGoalEngineRenderPausedNote(json);
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 
@@ -792,6 +961,8 @@ module.exports = {
   // Compaction
   nativeComputeCompactCount,
   nativeReduceCompactOnOverflow,
+  nativeCanSplitAfter,
+  nativeSelectCompactionUserMessages,
 
   // Tool access conflict
   nativeToolAccessesConflict,
@@ -843,4 +1014,27 @@ module.exports = {
   nativeGoalRenderContinuation,
   nativeGoalRenderBudgetLimit,
   nativeGoalRenderObjectiveUpdated,
+
+  // GoalEngine
+  nativeGoalEngineValidateCreateInput,
+  nativeGoalEngineValidateBudgetInput,
+  nativeGoalEngineComputeBudgetReport,
+  nativeGoalEngineApplyUsage,
+  nativeGoalEngineDecideContinuation,
+  nativeGoalEngineDecideBlockedAudit,
+  nativeGoalEngineDecideStatusTransition,
+  nativeGoalEngineRenderGoalReminder,
+  nativeGoalEngineRenderBlockedNote,
+  nativeGoalEngineRenderPausedNote,
+
+  // Path access
+  nativePathNormalizeUserPath,
+  nativePathExpandUserPath,
+  nativePathCanonicalize,
+  nativePathIsWithinDirectory,
+  nativePathIsWithinWorkspace,
+  nativePathCanonicalizeForGlob,
+
+  // Permission
+  nativeParsePermissionPattern,
 };

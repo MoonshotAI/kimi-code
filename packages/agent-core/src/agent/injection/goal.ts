@@ -1,16 +1,16 @@
 import type { GoalSnapshot } from '../goal';
+import {
+  tryNativeGoalEngineRenderBlockedNote,
+  tryNativeGoalEngineRenderGoalReminder,
+  tryNativeGoalEngineRenderPausedNote,
+} from '../../tools/builtin/native-tools';
 import { DynamicInjector } from './injector';
 
 /**
  * Injects the current goal into the main agent's context once per turn, at the
  * continuation boundary (see `InjectionManager.injectGoal`), not per model step.
- * The objective is treated as user-provided task data wrapped in
- * `<untrusted_objective>` — it describes the work but does not override
- * higher-priority instructions (system/developer messages, tool schemas,
- * permission rules, host controls).
- *
- * This injector never enforces budgets; the goal driver (`TurnFlow.driveGoal`)
- * owns hard continuation stops.
+ * Prompt rendering is engine-owned; this injector only selects which renderer
+ * to call based on status.
  */
 export class GoalInjector extends DynamicInjector {
   protected override readonly injectionVariant = 'goal';
@@ -19,16 +19,17 @@ export class GoalInjector extends DynamicInjector {
     const store = this.agent.goal;
     const goal = store.getGoal().goal;
     if (goal === null) return undefined;
-    // Three intensity levels by status:
-    // - `active`: full reminder + budget guidance; the goal driver is running turns.
-    // - `blocked`: a light, non-demanding note so the model stays aware of the
-    //   (possibly just-edited) goal and can help unstick it if the user asks.
-    // - `paused`: a light guardrail so the model knows the goal exists but must
-    //   not work on it unless the user explicitly asks.
-    // `complete` never reaches here (it clears the record).
-    if (goal.status === 'active') return buildGoalReminder(goal);
-    if (goal.status === 'blocked' || goal.status === 'budget_limited' || goal.status === 'usage_limited') return buildBlockedNote(goal);
-    if (goal.status === 'paused') return buildPausedNote(goal);
+    // Prompt rendering is engine-owned; TS only selects which renderer to call.
+    const goalJson = JSON.stringify({ goal, nowMs: Date.now() });
+    if (goal.status === 'active') {
+      return tryNativeGoalEngineRenderGoalReminder(goalJson) ?? buildGoalReminder(goal);
+    }
+    if (goal.status === 'blocked' || goal.status === 'budget_limited' || goal.status === 'usage_limited') {
+      return tryNativeGoalEngineRenderBlockedNote(JSON.stringify({ goal })) ?? buildBlockedNote(goal);
+    }
+    if (goal.status === 'paused') {
+      return tryNativeGoalEngineRenderPausedNote(JSON.stringify({ goal })) ?? buildPausedNote(goal);
+    }
     return undefined;
   }
 }
@@ -62,9 +63,7 @@ function buildBlockedNote(goal: GoalSnapshot): string {
 }
 
 /**
- * Light context for a `paused` goal. It keeps the objective visible enough to
- * prevent accidental goal leakage into unrelated work, and gives the model the
- * explicit lifecycle action to take when the user asks to continue the goal.
+ * Light context for a `paused` goal. Fallback when engine is unavailable.
  */
 function buildPausedNote(goal: GoalSnapshot): string {
   const reason = goal.terminalReason;

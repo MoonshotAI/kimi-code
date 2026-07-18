@@ -285,7 +285,7 @@ fn fit_compact_count_to_window(
 ///     would be in the compacted prefix, orphaning the result), AND
 ///   - the compacted prefix itself does not end with an unresolved
 ///     tool exchange (pending tool results must stay in the tail).
-fn can_split_after(messages: &[CompactionMessageMeta], index: usize) -> bool {
+pub fn can_split_after(messages: &[CompactionMessageMeta], index: usize) -> bool {
     let m = match messages.get(index) {
         Some(m) => m,
         None => return false,
@@ -337,6 +337,146 @@ fn prefix_ends_with_open_tool_exchange(
         return msg.role == "assistant" && msg.tool_calls_count > tool_result_count;
     }
     false
+}
+
+/// A user message projected for handoff selection. Mirrors the TS
+/// `MessageLike` subset the handoff algorithm inspects. TS extracts text
+/// from `content` (skipping non-text parts) and pre-estimates tokens;
+/// Rust only needs the projection.
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct HandoffMessageMeta {
+    pub role: String,
+    pub text: String,
+    pub tokens: u32,
+}
+
+/// Result of `select_compaction_user_messages`. Indices reference the input
+/// `Vec<HandoffMessageMeta>` (user messages only, in original order).
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct CompactionUserSelection {
+    pub head_indices: Vec<u32>,
+    pub tail_indices: Vec<u32>,
+    pub head_truncate_chars: Option<u32>,
+    pub tail_truncate_chars: Option<u32>,
+    pub elided: bool,
+    pub omitted_tokens: u32,
+}
+
+/// Select user messages compaction keeps verbatim, with head/tail split.
+///
+/// Mirrors TS `selectCompactionUserMessages`. When total tokens fit, all go
+/// to tail. Otherwise: tail takes newest messages (boundary truncated keeping
+/// its END), head takes oldest (boundary truncated keeping its BEGINNING).
+pub fn select_compaction_user_messages(
+    messages: &[HandoffMessageMeta],
+    max_tokens: u32,
+    head_tokens: u32,
+) -> CompactionUserSelection {
+    let total_tokens: u32 = messages.iter().map(|m| m.tokens).sum();
+    if total_tokens == 0 || total_tokens <= max_tokens {
+        return CompactionUserSelection {
+            head_indices: vec![],
+            tail_indices: (0..messages.len() as u32).collect(),
+            head_truncate_chars: None,
+            tail_truncate_chars: None,
+            elided: false,
+            omitted_tokens: 0,
+        };
+    }
+
+    let head_budget = head_tokens.min(max_tokens);
+    let tail_budget = max_tokens - head_budget;
+
+    // ── Tail pass: newest → oldest ─────────────────────────────────────
+    let mut tail_remaining = tail_budget;
+    let mut head_end_exclusive = messages.len();
+    let mut tail_truncate_chars: Option<u32> = None;
+
+    for i in (0..messages.len()).rev() {
+        if tail_remaining == 0 {
+            break;
+        }
+        let m = &messages[i];
+        if m.tokens <= tail_remaining {
+            tail_remaining -= m.tokens;
+            head_end_exclusive = i;
+        } else {
+            let kept =
+                crate::tokens::truncate_text_to_tokens_from_end(&m.text, tail_remaining as usize);
+            if !kept.is_empty() {
+                head_end_exclusive = i;
+                tail_truncate_chars = Some(kept.len() as u32);
+            }
+            break;
+        }
+    }
+
+    let mut tail_indices: Vec<u32> = (head_end_exclusive as u32..messages.len() as u32).collect();
+    tail_indices.reverse();
+
+    // Boundary-beginning: if tail boundary was truncated (its END kept),
+    // the dropped BEGINNING is a head candidate at the same index.
+    let boundary_begin: Option<u32> = tail_truncate_chars.and_then(|kept_len| {
+        let idx = head_end_exclusive;
+        if idx < messages.len() {
+            let prefix_len = messages[idx].text.len() as u32 - kept_len;
+            if prefix_len > 0 { Some(idx as u32) } else { None }
+        } else {
+            None
+        }
+    });
+
+    let mut head_candidates: Vec<u32> = (0..head_end_exclusive as u32).collect();
+    if let Some(b) = boundary_begin {
+        head_candidates.push(b);
+    }
+
+    // ── Head pass: oldest → newest ─────────────────────────────────────
+    let mut head_remaining = head_budget;
+    let mut head_indices: Vec<u32> = Vec::new();
+    let mut head_truncate_chars: Option<u32> = None;
+
+    for &i in &head_candidates {
+        if head_remaining == 0 {
+            break;
+        }
+        let m = &messages[i as usize];
+        if m.tokens <= head_remaining {
+            head_remaining -= m.tokens;
+            head_indices.push(i);
+        } else {
+            let kept = crate::tokens::truncate_text_to_tokens(&m.text, head_remaining as usize);
+            if !kept.is_empty() {
+                head_truncate_chars = Some(kept.len() as u32);
+                head_indices.push(i);
+            }
+            break;
+        }
+    }
+
+    head_indices.sort_unstable();
+    head_indices.dedup();
+
+    let kept_tokens: u32 = head_indices
+        .iter()
+        .map(|&i| messages[i as usize].tokens)
+        .sum::<u32>()
+        + tail_indices
+            .iter()
+            .filter(|i| !head_indices.contains(i))
+            .map(|&i| messages[i as usize].tokens)
+            .sum::<u32>();
+
+    CompactionUserSelection {
+        head_indices,
+        tail_indices,
+        head_truncate_chars,
+        tail_truncate_chars,
+        elided: true,
+        omitted_tokens: total_tokens.saturating_sub(kept_tokens),
+    }
 }
 
 #[cfg(test)]
@@ -585,5 +725,63 @@ mod tests {
             msg("user", 10, 0),
         ];
         assert!(!prefix_ends_with_open_tool_exchange(&messages, 1));
+    }
+
+    // ── Helpers for handoff tests ────────────────────────────────────────
+
+    fn handoff_msg(role: &str, text: &str, tokens: u32) -> HandoffMessageMeta {
+        HandoffMessageMeta {
+            role: role.to_string(),
+            text: text.to_string(),
+            tokens,
+        }
+    }
+
+    // ---- select_compaction_user_messages --------------------------------
+
+    #[test]
+    fn handoff_all_fit_in_budget() {
+        let messages = vec![
+            handoff_msg("user", "hello", 10),
+            handoff_msg("user", "world", 10),
+        ];
+        let result = select_compaction_user_messages(&messages, 100, 20);
+        assert!(!result.elided);
+        assert_eq!(result.omitted_tokens, 0);
+        assert_eq!(result.head_indices, Vec::<u32>::new());
+        assert_eq!(result.tail_indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn handoff_splits_head_tail() {
+        // 3 messages, 30 tokens each (90 total). max=12, head=4.
+        // tail_budget=8 fits 0 whole; head_budget=4 fits 0 whole.
+        // Middle message (index 1) is fully dropped → omitted_tokens > 0.
+        let messages = vec![
+            handoff_msg("user", &"a".repeat(120), 30),
+            handoff_msg("user", &"b".repeat(120), 30),
+            handoff_msg("user", &"c".repeat(120), 30),
+        ];
+        let result = select_compaction_user_messages(&messages, 12, 4);
+        assert!(result.elided);
+        assert!(result.omitted_tokens > 0);
+        // Newest in tail, oldest in head.
+        assert!(result.tail_indices.contains(&2));
+        assert!(result.head_indices.contains(&0));
+    }
+
+    #[test]
+    fn handoff_empty_input() {
+        let result = select_compaction_user_messages(&[], 100, 20);
+        assert!(!result.elided);
+        assert_eq!(result.omitted_tokens, 0);
+    }
+
+    #[test]
+    fn handoff_single_message() {
+        let messages = vec![handoff_msg("user", "only", 10)];
+        let result = select_compaction_user_messages(&messages, 100, 20);
+        assert!(!result.elided);
+        assert_eq!(result.tail_indices, vec![0]);
     }
 }
