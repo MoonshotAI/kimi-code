@@ -51,6 +51,7 @@ import {
 import { useConnection } from '../connection';
 import { fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '../transcript/api';
 import {
+  createCoalescedRunner,
   oldestTurnId,
   recoverLoadedWindow,
   TranscriptChatStore,
@@ -94,12 +95,9 @@ function useTranscriptChannel(
     /** While a REST refresh is in flight, WS ops are buffered, then flushed. */
     let fetching = true;
     let buffer: TranscriptOperation[] = [];
-    let refreshing = false;
 
     /** Full-state (re)load: newest page first, then backwards over `before_turn`. */
-    const refresh = async (): Promise<void> => {
-      if (refreshing) return;
-      refreshing = true;
+    const refresh = createCoalescedRunner(async (): Promise<void> => {
       fetching = true;
       buffer = [];
       // The window's oldest turn is the re-cover anchor: after a refresh the
@@ -141,11 +139,10 @@ function useTranscriptChannel(
         if (!disposed) setLoadError(error);
       } finally {
         fetching = false;
-        refreshing = false;
         if (buffer.length > 0) store.applyOps(buffer);
         buffer = [];
       }
-    };
+    });
 
     const ws = new TranscriptWs({
       url: baseUrl,
@@ -158,15 +155,15 @@ function useTranscriptChannel(
           if (fetching) buffer.push(...ops);
           else store.applyOps(ops);
         },
-        onResyncRequired: () => void refresh(),
-        onReconnected: () => void refresh(),
+        onResyncRequired: refresh,
+        onReconnected: refresh,
       },
     });
-    store.onGap = () => void refresh();
+    store.onGap = refresh;
     setChannel({ store });
     setLoaded(false);
     setLoadError(null);
-    void refresh();
+    refresh();
     return () => {
       disposed = true;
       ws.close();

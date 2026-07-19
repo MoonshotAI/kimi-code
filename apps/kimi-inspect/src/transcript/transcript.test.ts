@@ -19,6 +19,7 @@ import type { WsLike } from '../channel/wsSocket';
 import { fetchTranscriptPage, type TranscriptPage } from './api';
 import {
   countTurns,
+  createCoalescedRunner,
   oldestTurnId,
   recoverLoadedWindow,
   TranscriptChatStore,
@@ -496,5 +497,74 @@ describe('recoverLoadedWindow', () => {
     // The anchor no longer exists server-side: one no-progress probe, then stop.
     expect(fetched).toEqual(['t10']);
     expect(countTurns(store.getState().items)).toBe(11);
+  });
+});
+
+describe('createCoalescedRunner', () => {
+  const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+
+  it('runs once per trigger when idle', async () => {
+    let runs = 0;
+    const kick = createCoalescedRunner(async () => {
+      runs += 1;
+    });
+    kick();
+    await Promise.resolve();
+    kick();
+    await Promise.resolve();
+    expect(runs).toBe(2);
+  });
+
+  it('coalesces triggers during a run into exactly one follow-up', async () => {
+    let runs = 0;
+    const gates: Array<() => void> = [];
+    const kick = createCoalescedRunner(async () => {
+      runs += 1;
+      const gate = deferred();
+      gates.push(gate.resolve);
+      await gate.promise;
+    });
+    kick();
+    kick();
+    kick();
+    expect(runs).toBe(1);
+    gates[0]?.();
+    await vi.waitFor(() => {
+      expect(runs).toBe(2);
+    });
+    gates[1]?.();
+    await vi.waitFor(() => {
+      expect(gates.length).toBe(2);
+    });
+    // No third run: the two mid-run triggers were coalesced into one.
+  });
+
+  it('queues again when a trigger lands during the follow-up run', async () => {
+    let runs = 0;
+    const gates: Array<() => void> = [];
+    const kick = createCoalescedRunner(async () => {
+      runs += 1;
+      const gate = deferred();
+      gates.push(gate.resolve);
+      await gate.promise;
+    });
+    kick();
+    kick();
+    gates[0]?.();
+    await vi.waitFor(() => {
+      expect(runs).toBe(2);
+    });
+    kick();
+    gates[1]?.();
+    await vi.waitFor(() => {
+      expect(runs).toBe(3);
+    });
+    gates[2]?.();
   });
 });

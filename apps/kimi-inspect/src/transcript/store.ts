@@ -70,6 +70,32 @@ export async function recoverLoadedWindow(
   }
 }
 
+/**
+ * Serialize refresh-style triggers: at most one run in flight; a trigger that
+ * arrives while a run is in flight is coalesced into exactly one follow-up run
+ * (so a subscribe ack landing mid-load still produces a post-load reconcile
+ * instead of being dropped).
+ */
+export function createCoalescedRunner(run: () => Promise<void>): () => void {
+  let running = false;
+  let queued = false;
+  const kick = (): void => {
+    if (running) {
+      queued = true;
+      return;
+    }
+    running = true;
+    void run().finally(() => {
+      running = false;
+      if (queued) {
+        queued = false;
+        kick();
+      }
+    });
+  };
+  return kick;
+}
+
 export class TranscriptChatStore {
   private state: AgentState = EMPTY_AGENT_STATE;
   private readonly listeners = new Set<() => void>();
