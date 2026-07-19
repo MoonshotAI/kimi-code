@@ -11,8 +11,9 @@
  *
  * Loss signals are surfaced, not repaired locally — transcript frames are
  * volatile by design (never journaled), so the consumer answers them with a
- * REST refresh: `resync_required` → `onResyncRequired`, a dropped-and-
- * re-established socket → `onReconnected` (ops missed during the drop).
+ * REST refresh: `resync_required` → `onResyncRequired`, and EVERY
+ * established socket (first included, since ops emitted between the REST
+ * page load and the subscription are just as lost) → `onReconnected`.
  *
  * The bearer token is presented at the upgrade through the
  * `kimi-code.bearer.<token>` subprotocol (same trick as the v2 `WsSocket`).
@@ -65,7 +66,6 @@ export class TranscriptWs {
 
   private ws: WsLike | undefined;
   private manualClose = false;
-  private everOpened = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -110,8 +110,6 @@ export class TranscriptWs {
     }
     this.ws = ws;
     ws.addEventListener('open', () => {
-      const isReconnect = this.everOpened;
-      this.everOpened = true;
       this.reconnectAttempt = 0;
       this.send({
         type: 'client_hello',
@@ -122,9 +120,13 @@ export class TranscriptWs {
           transcript: { [this.sessionId]: { [this.agentId]: 'delta' } },
         },
       });
-      // Volatile ops were missed while the socket was down; the consumer
-      // refreshes full state over REST instead of consuming a reset.
-      if (isReconnect) this.handlers.onReconnected();
+      // Reconcile on EVERY established socket, the first one included: ops
+      // emitted between the REST page load and this subscription are missed
+      // (volatile, never journaled). The consumer refreshes full state over
+      // REST instead of consuming a reset — a no-op while its initial
+      // refresh is still in flight, a real catch-up when the first open
+      // arrived late or after failed attempts.
+      this.handlers.onReconnected();
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);

@@ -285,21 +285,25 @@ describe('TranscriptWs', () => {
     expect(seen.resyncs).toBe(1);
   });
 
-  it('re-subscribes after a drop and reports the reconnect (no callback on first open)', () => {
+  it('re-subscribes after a drop and reports the reconnect on every established socket', () => {
     vi.useFakeTimers();
     try {
       FakeWs.reset();
       const { seen } = makeWs();
       const first = FakeWs.instances[0]!;
       first.open();
-      expect(seen.reconnects).toBe(0);
+      // The first open reports too: ops emitted between the REST page load
+      // and the subscription are missed, so the consumer re-reads (a no-op
+      // while its initial refresh is still in flight).
+      expect(seen.reconnects).toBe(1);
+      expect(first.sentFrames()[0]).toMatchObject({ type: 'client_hello' });
       first.emit('close');
       vi.advanceTimersByTime(600);
       expect(FakeWs.instances).toHaveLength(2);
       const second = FakeWs.instances[1]!;
       second.open();
       expect(second.sentFrames()[0]).toMatchObject({ type: 'client_hello' });
-      expect(seen.reconnects).toBe(1);
+      expect(seen.reconnects).toBe(2);
     } finally {
       vi.useRealTimers();
     }
