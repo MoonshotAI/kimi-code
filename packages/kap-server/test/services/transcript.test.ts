@@ -135,6 +135,23 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
   });
 
+  it('places late-attach deltas into the engine-reported active step', () => {
+    const tx = new AgentTranscript('main');
+    // The projector missed turn.started AND turn.step.started for step 2 —
+    // without the lookup the fallback would synthesize t0.1 and stream into
+    // the wrong step.
+    const projector = new AgentTranscriptProjector('main', {
+      stepOrdinal: (turnId) => (turnId === 't0' ? 2 : undefined),
+    });
+
+    const ops = projector.map(ev({ type: 'assistant.delta', turnId: 0, delta: 'late' }));
+    tx.apply(ops);
+
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.steps.map((s) => s.stepId)).toEqual(['t0.2']);
+    expect(turn.steps[0]?.frames[0]).toMatchObject({ kind: 'text', text: 'late' });
+  });
+
   it('adopts a backfilled stream frame on mid-turn attach instead of clobbering it', () => {
     const tx = new AgentTranscript('main');
     // The backfill seeded the in-flight step's partial text before the

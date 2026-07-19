@@ -105,6 +105,9 @@ class FakeLifecycle {
   list(): readonly FakeAgentHandle[] {
     return this.handles;
   }
+  get(id: string): FakeAgentHandle | undefined {
+    return this.getHandle(id);
+  }
   getHandle(id: string): FakeAgentHandle | undefined {
     return this.handles.find((h) => h.id === id);
   }

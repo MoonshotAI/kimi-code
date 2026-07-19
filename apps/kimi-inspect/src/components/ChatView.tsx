@@ -609,7 +609,7 @@ function ToolFrameView({
           {task.outputTail}
         </pre>
       ) : null}
-      {frame.error !== undefined ? (
+      {frame.error !== undefined && frame.error !== frame.output ? (
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-red-400">{frame.error}</pre>
       ) : null}
     </div>

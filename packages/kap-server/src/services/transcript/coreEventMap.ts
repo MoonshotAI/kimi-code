@@ -78,10 +78,18 @@ export type ProjectorFrameLookup = (
  */
 export type ProjectorToolFrameLookup = (toolCallId: string) => ToolFrameRecord | undefined;
 
+/**
+ * The engine-reported current step ordinal for a turn (the activity view).
+ * Used to place deltas correctly when the projector attached after
+ * `turn.step.started` for a later step — see `ensureStep`.
+ */
+export type ProjectorStepOrdinalLookup = (turnId: string) => number | undefined;
+
 /** Optional producer-store lookups that let the projector adopt seeded state. */
 export interface ProjectorLookups {
   readonly stepFrames?: ProjectorFrameLookup;
   readonly toolFrame?: ProjectorToolFrameLookup;
+  readonly stepOrdinal?: ProjectorStepOrdinalLookup;
 }
 
 interface OpenTextFrame {
@@ -400,15 +408,19 @@ export class AgentTranscriptProjector {
   }
 
   /**
-   * Resolve the step a content event belongs to. Mid-stream attaches (no
-   * `turn.step.started` seen) synthesize the turn's latest known step header;
-   * the store skeleton-fills anything still missing.
+   * Resolve the step a content event belongs to. When the projector missed
+   * `turn.step.started` (mid-stream attach), prefer the engine-reported
+   * active step from the activity view; then the latest step this projector
+   * saw; only then the `t<N>.1` fallback (the store skeleton-fills anything
+   * still missing). Without the lookup a late attach at step ≥ 2 would
+   * stream into the wrong step.
    */
   private ensureStep(turnId: string, ops: TranscriptOperation[]): StepHeader {
     if (this.currentStep !== undefined && this.currentStep.turnId === turnId) {
       return this.currentStep;
     }
-    const ordinal = this.stepOrdinals.get(turnId) ?? 1;
+    const ordinal =
+      this.lookups?.stepOrdinal?.(turnId) ?? this.stepOrdinals.get(turnId) ?? 1;
     this.currentStep = {
       kind: 'step',
       stepId: `${turnId}.${ordinal}`,

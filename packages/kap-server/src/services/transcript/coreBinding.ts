@@ -20,6 +20,7 @@
 
 import {
   IAgentLifecycleService,
+  IAgentActivityView,
   IEventBus,
   ISessionMetadata,
   ISessionInteractionService,
@@ -135,6 +136,16 @@ export function bindSessionTranscript(
             }
           }
           return undefined;
+        },
+        // The engine's folded activity view knows the current step even when
+        // the projector attached after `turn.step.started` for a later step.
+        // The handle resolves lazily (the projector may predate the handle).
+        stepOrdinal: (turnId) => {
+          const agentHandle = agents.get(agentId);
+          if (agentHandle === undefined) return undefined;
+          const view: IAgentActivityView | undefined = agentHandle.accessor.get(IAgentActivityView);
+          const turn = view?.state().turn;
+          return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
       });
       projectors.set(agentId, projector);
