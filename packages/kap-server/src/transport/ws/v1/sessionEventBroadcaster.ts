@@ -125,6 +125,8 @@ export interface TargetSubscription {
 
 /** Per-session transcript streaming state (shared across all targets). */
 interface TranscriptStream {
+  /** The store this stream's listeners are attached to — a rebuilt store (session reload) forces re-attachment. */
+  readonly store: TranscriptStore;
   /** Agents already seeded (roster de-dup for the reset fan-out). */
   readonly knownAgents: Set<string>;
 }
@@ -406,13 +408,19 @@ export class SessionEventBroadcaster {
    * Attach the session's shared transcript fan-out: one mapped-ops
    * subscription for the whole session (grade filtering happens per target at
    * fan-out). New agents appearing later seed a `transcript.reset` for every
-   * connected target whose grade admits them.
+   * connected target whose grade admits them. The attachment is pinned to the
+   * store instance: when the engine session closes, the service drops the
+   * store together with its ops listener set while this session state
+   * survives, so a subscribe after an in-daemon session resume must
+   * re-register the fan-out against the rebuilt store — returning early on
+   * any stale stream would deliver resets but never the live ops.
    */
   private ensureTranscriptStream(state: SessionState, store: TranscriptStore): void {
-    if (state.transcriptStream !== undefined) return;
+    if (state.transcriptStream?.store === store) return;
     const service = this.opts.transcriptService;
     if (service === undefined) return;
     const stream: TranscriptStream = {
+      store,
       knownAgents: new Set(store.agents().map((d) => d.agentId)),
     };
     state.transcriptStream = stream;

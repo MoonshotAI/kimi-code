@@ -1567,6 +1567,41 @@ describe('SessionEventBroadcaster', () => {
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
     });
 
+    it('reattaches the ops fan-out when the session store is rebuilt after a drop', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      const core = makeCore(sessions, eventBus);
+      const service = new TranscriptService({ homeDir: dir, core });
+      bc = new SessionEventBroadcaster({
+        eventsDir: dir,
+        core,
+        maxBufferSize: 3,
+        transcriptService: service,
+      });
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      const opsBefore = transcriptEnvelopes(view.envelopes).filter(
+        (e) => e.type === 'transcript.ops',
+      ).length;
+      expect(opsBefore).toBeGreaterThan(0);
+
+      // The engine session closes: the service drops the store and its ops
+      // listener set, but the broadcaster's session state survives (same
+      // daemon). A later subscribe rebuilds the store — and must re-register
+      // the fan-out, not just reseed.
+      service.dropSession('s1');
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
+
+      const opsAfter = transcriptEnvelopes(view.envelopes).filter(
+        (e) => e.type === 'transcript.ops',
+      ).length;
+      expect(opsAfter).toBeGreaterThan(opsBefore);
+    });
+
     it('delivers no transcript.ops before the baseline reset has landed', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
