@@ -74,12 +74,12 @@ function handleSelect(id) {
 
 ```js
 // composables/useCounter.mjs
-import { ref, computed } from 'vue'
+import { ref, computed } from'vue'
 
 /**
  * @typedef {Object} CounterState
- * @property {import('vue').Ref<number>} count - Reactive count value
- * @property {import('vue').ComputedRef<boolean>} isPositive - True when count > 0
+ * @property {import ('vue').Ref<number>} count - Reactive count value
+ * @property {import ('vue').ComputedRef<boolean>} isPositive - True when count > 0
  * @property {() => void} increment - Increases count by step
  * @property {() => void} reset - Resets count to initial value
  */
@@ -91,7 +91,7 @@ import { ref, computed } from 'vue'
  * @returns {CounterState}
  */
 export function useCounter(initial = 0, step = 1) {
-  /** @type {import('vue').Ref<number>} */
+  /** @type {import ('vue').Ref<number>} */
   const count = ref(initial)
 
   const isPositive = computed(() => count.value > 0)
@@ -122,7 +122,7 @@ export function useCounter(initial = 0, step = 1) {
  */
 
 // Import in other files with:
-// /** @type {import('./types/user.mjs').User} */
+// /** @type {import ('./types/user.mjs').User} */
 ```
 
 ## Constraints

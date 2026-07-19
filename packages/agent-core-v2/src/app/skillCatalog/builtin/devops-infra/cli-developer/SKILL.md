@@ -32,7 +32,7 @@ Load detailed guidance based on context:
 ```js
 #!/usr/bin/env node
 // npm install commander
-const { program } = require('commander');
+const { program } = require ('commander');
 
 program
   .name('mytool')

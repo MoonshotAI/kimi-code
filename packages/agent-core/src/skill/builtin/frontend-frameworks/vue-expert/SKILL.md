@@ -36,7 +36,7 @@ Minimal component demonstrating preferred patterns:
 
 ```vue
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed } from'vue'
 
 const props = defineProps<{ initialCount?: number }>()
 

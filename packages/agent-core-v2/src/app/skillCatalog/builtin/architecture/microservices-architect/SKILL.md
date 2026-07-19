@@ -38,7 +38,7 @@ Load detailed guidance based on context:
 
 ### Correlation ID Middleware (Node.js / Express)
 ```js
-const { v4: uuidv4 } = require('uuid');
+const { v4: uuidv4 } = require ('uuid');
 
 function correlationMiddleware(req, res, next) {
   req.correlationId = req.headers['x-correlation-id'] || uuidv4();
