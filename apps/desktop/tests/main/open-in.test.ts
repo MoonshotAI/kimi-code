@@ -44,6 +44,8 @@ describe('listAvailableOpenInApps', () => {
     });
     expect(everything.map((a) => a.id)).toEqual([...OPEN_IN_APP_IDS]);
     expect(everything).toContainEqual({ id: 'vscode', label: 'VS Code' });
+    expect(everything).toContainEqual({ id: 'vscode-insiders', label: 'VS Code Insiders' });
+    expect(everything).toContainEqual({ id: 'kitty', label: 'kitty' });
     expect(everything).toContainEqual({ id: 'iterm', label: 'iTerm2' });
   });
 });

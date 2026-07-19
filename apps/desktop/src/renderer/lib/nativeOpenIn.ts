@@ -13,6 +13,7 @@ import { ref, type Ref } from 'vue';
 // "open in <app>" menu is nominative use of the trademarks). PNG URLs are
 // bundled by Vite; keyed by the main-process app id (src/main/open-in.ts).
 import iconVscode from '../assets/app-icons/vscode.png';
+import iconVscodeInsiders from '../assets/app-icons/vscode-insiders.png';
 import iconCursor from '../assets/app-icons/cursor.png';
 import iconZed from '../assets/app-icons/zed.png';
 import iconFinder from '../assets/app-icons/finder.png';
@@ -20,10 +21,12 @@ import iconTerminal from '../assets/app-icons/terminal.png';
 import iconIterm from '../assets/app-icons/iterm2.png';
 import iconGhostty from '../assets/app-icons/ghostty.png';
 import iconWarp from '../assets/app-icons/warp.png';
+import iconKitty from '../assets/app-icons/kitty.png';
 import iconXcode from '../assets/app-icons/xcode.png';
 
 const APP_ICONS: Record<string, string> = {
   vscode: iconVscode,
+  'vscode-insiders': iconVscodeInsiders,
   cursor: iconCursor,
   zed: iconZed,
   finder: iconFinder,
@@ -31,6 +34,7 @@ const APP_ICONS: Record<string, string> = {
   iterm: iconIterm,
   ghostty: iconGhostty,
   warp: iconWarp,
+  kitty: iconKitty,
   xcode: iconXcode,
 };
 

@@ -14,6 +14,7 @@ import { join } from 'node:path';
 
 export type OpenInAppId =
   | 'vscode'
+  | 'vscode-insiders'
   | 'cursor'
   | 'zed'
   | 'finder'
@@ -21,6 +22,7 @@ export type OpenInAppId =
   | 'iterm'
   | 'ghostty'
   | 'warp'
+  | 'kitty'
   | 'xcode';
 
 export interface OpenInAppInfo {
@@ -40,6 +42,7 @@ interface OpenInAppSpec {
 // Menu order: editors first, then the file manager, then terminals; Xcode last.
 const APP_SPECS: readonly OpenInAppSpec[] = [
   { id: 'vscode', label: 'VS Code', bundleName: 'Visual Studio Code.app' },
+  { id: 'vscode-insiders', label: 'VS Code Insiders', bundleName: 'Visual Studio Code - Insiders.app' },
   { id: 'cursor', label: 'Cursor', bundleName: 'Cursor.app' },
   { id: 'zed', label: 'Zed', bundleName: 'Zed.app' },
   { id: 'finder', label: 'Finder' },
@@ -47,6 +50,7 @@ const APP_SPECS: readonly OpenInAppSpec[] = [
   { id: 'iterm', label: 'iTerm2', bundleName: 'iTerm.app' },
   { id: 'ghostty', label: 'Ghostty', bundleName: 'Ghostty.app' },
   { id: 'warp', label: 'Warp', bundleName: 'Warp.app' },
+  { id: 'kitty', label: 'kitty', bundleName: 'kitty.app' },
   // No folder registration in its Info.plist: Xcode decides per path (Swift
   // package folders open, plain folders may just alert). Kept to match the
   // familiar "editors I have" list.

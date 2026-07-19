@@ -26,6 +26,7 @@ const emit = defineEmits<{
 
 type TargetId =
   | 'vscode'
+  | 'vscode-insiders'
   | 'cursor'
   | 'zed'
   | 'finder'
@@ -33,10 +34,12 @@ type TargetId =
   | 'iterm'
   | 'ghostty'
   | 'warp'
+  | 'kitty'
   | 'xcode';
 
 const TARGETS: Array<{ id: TargetId; label: string }> = [
   { id: 'vscode', label: 'VS Code' },
+  { id: 'vscode-insiders', label: 'VS Code Insiders' },
   { id: 'cursor', label: 'Cursor' },
   { id: 'zed', label: 'Zed' },
   { id: 'finder', label: 'Finder' },
@@ -44,6 +47,7 @@ const TARGETS: Array<{ id: TargetId; label: string }> = [
   { id: 'iterm', label: 'iTerm2' },
   { id: 'ghostty', label: 'Ghostty' },
   { id: 'warp', label: 'Warp' },
+  { id: 'kitty', label: 'kitty' },
   { id: 'xcode', label: 'Xcode' },
 ];
 
