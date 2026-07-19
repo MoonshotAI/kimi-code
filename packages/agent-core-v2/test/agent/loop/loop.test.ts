@@ -635,7 +635,7 @@ describe('turn telemetry', () => {
 
       expect(records).toContainEqual({
         event: 'turn_started',
-        properties: { turn_id: 0, mode: 'agent', provider_type: 'kimi', protocol: 'kimi' },
+        properties: { turn_id: 0, mode: 'agent', provider_type: 'kimi', protocol: 'kimi', thinking_effort: 'off' },
       });
       expect(records).toContainEqual({
         event: 'turn_ended',
@@ -646,6 +646,7 @@ describe('turn telemetry', () => {
           mode: 'agent',
           provider_type: 'kimi',
           protocol: 'kimi',
+          thinking_effort: 'off',
         }),
       });
       expect(records.some((record) => record.event === 'turn_interrupted')).toBe(false);
