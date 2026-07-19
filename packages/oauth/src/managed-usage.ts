@@ -227,7 +227,7 @@ function resetHintFrom(raw: Record<string, unknown>): string | undefined {
   for (const key of ['reset_in', 'resetIn', 'ttl', 'window']) {
     const seconds = toInt(raw[key]);
     if (seconds !== null && seconds > 0) {
-      return `resets in ${formatDuration(seconds)}`;
+      return resetHintForEpoch(Date.now() + seconds * 1000);
     }
   }
   return undefined;
@@ -244,9 +244,40 @@ export function formatResetTime(val: string): string {
   }
   const parsed = Date.parse(normalised);
   if (!Number.isFinite(parsed)) return `resets at ${val}`;
-  const diffSec = Math.floor((parsed - Date.now()) / 1000);
+  return resetHintForEpoch(parsed);
+}
+
+/**
+ * Builds the combined reset hint: relative duration plus the absolute reset
+ * moment rendered in the terminal's local timezone. `Date` getters are
+ * inherently local-time, so no explicit timezone conversion is needed.
+ */
+function resetHintForEpoch(epochMs: number): string {
+  const diffSec = Math.floor((epochMs - Date.now()) / 1000);
   if (diffSec <= 0) return 'reset';
-  return `resets in ${formatDuration(diffSec)}`;
+  return `resets in ${formatDuration(diffSec)} (at ${formatLocalResetClock(epochMs)})`;
+}
+
+/**
+ * Local wall-clock rendering of the reset moment. The further the moment is
+ * from now, the more date context is included so a bare `14:30` is never
+ * ambiguous:
+ *   same day          → `14:30`
+ *   same year         → `01-21 14:30`
+ *   different year    → `2027-01-21 14:30`
+ */
+function formatLocalResetClock(epochMs: number): string {
+  const d = new Date(epochMs);
+  const now = new Date();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (d.getFullYear() !== now.getFullYear()) {
+    return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+  }
+  if (d.getMonth() !== now.getMonth() || d.getDate() !== now.getDate()) {
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+  }
+  return time;
 }
 
 export function formatDuration(totalSeconds: number): string {

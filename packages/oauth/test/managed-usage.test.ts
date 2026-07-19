@@ -119,7 +119,14 @@ describe('parseManagedUsagePayload', () => {
   it('surfaces reset hints from resetAt timestamps', () => {
     const future = new Date(Date.now() + 3600_000).toISOString();
     const parsed = parseManagedUsagePayload({ usage: { used: 1, limit: 10, resetAt: future } });
-    expect(parsed.summary?.resetHint).toMatch(/resets in/);
+    expect(parsed.summary?.resetHint).toMatch(/^resets in .+ \(at .+\)$/);
+  });
+
+  it('surfaces reset hints from relative reset_in seconds', () => {
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10, reset_in: 120 },
+    });
+    expect(parsed.summary?.resetHint).toMatch(/^resets in 2m \(at \d{2}:\d{2}\)$/);
   });
 
   it('extracts extra usage from boosterWallet.balance', () => {
@@ -288,9 +295,37 @@ describe('formatResetTime', () => {
     expect(formatResetTime(past)).toBe('reset');
   });
 
-  it('returns "resets in X" for future timestamps', () => {
+  it('returns "resets in X" plus a local clock time for future timestamps', () => {
     const future = new Date(Date.now() + 3600_000).toISOString();
-    expect(formatResetTime(future)).toMatch(/^resets in /);
+    expect(formatResetTime(future)).toMatch(/^resets in 1h \(at .+\)$/);
+  });
+
+  it('shows bare HH:MM when the reset lands on the same local day', () => {
+    const now = new Date();
+    const sameDay = new Date(now);
+    sameDay.setMinutes(now.getMinutes() + 30);
+    // Guard: if the +30m bump crosses midnight, the assertion below would
+    // expect a date prefix instead — skip the shape check on that boundary.
+    if (sameDay.getDate() !== now.getDate()) return;
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const expected = `${pad(sameDay.getHours())}:${pad(sameDay.getMinutes())}`;
+    expect(formatResetTime(sameDay.toISOString())).toContain(`(at ${expected})`);
+  });
+
+  it('includes the local date when the reset lands on another day of the same year', () => {
+    const target = new Date(Date.now() + 3 * 86_400_000);
+    // Guard: near year-end the +3d bump may cross into the next year.
+    if (target.getFullYear() !== new Date().getFullYear()) return;
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const expected = `${pad(target.getMonth() + 1)}-${pad(target.getDate())} ${pad(target.getHours())}:${pad(target.getMinutes())}`;
+    expect(formatResetTime(target.toISOString())).toContain(`(at ${expected})`);
+  });
+
+  it('includes the year when the reset lands in a different year', () => {
+    const target = new Date(Date.now() + 400 * 86_400_000);
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const expected = `${String(target.getFullYear())}-${pad(target.getMonth() + 1)}-${pad(target.getDate())} ${pad(target.getHours())}:${pad(target.getMinutes())}`;
+    expect(formatResetTime(target.toISOString())).toContain(`(at ${expected})`);
   });
 
   it('falls back when parsing fails', () => {
