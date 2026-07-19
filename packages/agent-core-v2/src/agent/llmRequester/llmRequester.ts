@@ -1,6 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { FinishReason } from '#/app/llmProtocol/finishReason';
 import type { Message, StreamedMessagePart } from '#/app/llmProtocol/message';
+import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { Tool } from '#/app/llmProtocol/tool';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
@@ -64,8 +65,14 @@ export interface LLMRequestTask {
   readonly result: Promise<LLMRequestFinish>;
 }
 
+export interface PreparedTurnRequestConfig {
+  readonly thinkingEffort: ThinkingEffort;
+}
+
 export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
+
+  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
 
   request(
     overrides?: LLMRequestOverrides,

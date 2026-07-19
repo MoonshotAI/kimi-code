@@ -9,13 +9,14 @@ import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } f
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { MiniDb } from '@moonshot-ai/minidb';
+import { ClusterDb } from '@moonshot-ai/minidb/cluster';
 import { MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { stubBootstrap } from '../../../app/bootstrap/stubs';
 import { stubLog } from '../../../_base/log/stubs';
 
 const COLLECTION = 'session';
+const SEP = String.fromCodePoint(0);
 
 describe('MiniDbQueryStore', () => {
   let homeDir: string;
@@ -132,36 +133,26 @@ describe('MiniDbQueryStore', () => {
     expect(await store.getCheckpoint('wire:abc')).toEqual({ seq: 42 });
   });
 
-  it('throws storage.locked when the database lock is held by another process', async () => {
+  it('shares the store with a second cluster instance instead of locking it out', async () => {
     const storeDir = join(homeDir, 'cache', 'query-store');
-    const lockHolder = await MiniDb.open({ dir: storeDir, valueCodec: 'json' });
+    // A peer instance stands in for another kimi process: it has its own
+    // lock pool, so write locks are genuinely contended between the two.
+    const peer = await ClusterDb.open({ dir: storeDir, shardCount: 16, valueCodec: 'json' });
     try {
       const store = build();
-      await expect(store.put(COLLECTION, 'a', { id: 'a' })).rejects.toMatchObject({
-        code: 'storage.locked',
-      });
-      await expect(
-        store.batch([{ kind: 'put', collection: COLLECTION, key: 'b', value: { id: 'b' } }]),
-      ).rejects.toMatchObject({ code: 'storage.locked' });
-      await expect(
-        store.ensureIndex(COLLECTION, { kind: 'value', name: 'byId', field: 'id' }),
-      ).rejects.toMatchObject({ code: 'storage.locked' });
-      await expect(store.get(COLLECTION, 'a')).rejects.toMatchObject({
-        code: 'storage.locked',
-      });
-      await expect(store.getCheckpoint('wire:abc')).rejects.toMatchObject({
-        code: 'storage.locked',
-      });
-      await expect(store.query(COLLECTION).execute()).rejects.toMatchObject({
-        code: 'storage.locked',
-      });
-      await expect(store.close()).resolves.toBeUndefined();
+      // Writes from the peer are visible here, and vice versa — the
+      // database-wide single-writer lockout (storage.locked) is gone.
+      await peer.set(`${COLLECTION}${SEP}peer`, { id: 'peer', v: 1 });
+      expect(await store.get(COLLECTION, 'peer')).toEqual({ id: 'peer', v: 1 });
+      await store.put(COLLECTION, 'mine', { id: 'mine', v: 2 });
+      expect(await peer.get(`${COLLECTION}${SEP}mine`)).toEqual({ id: 'mine', v: 2 });
+      await store.close();
     } finally {
-      await lockHolder.close();
+      await peer.close();
     }
   });
 
-  it('preserves data and drops a corrupt index sidecar on reopen', async () => {
+  it('wipes and rebuilds the store after the cluster registry is corrupted', async () => {
     const first = build();
     await first.put(COLLECTION, 'a', { id: 'a', v: 1 });
     await first.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
@@ -169,16 +160,32 @@ describe('MiniDbQueryStore', () => {
     disposeHost?.();
     disposeHost = undefined;
 
-    // A corrupt index-definition sidecar holds only derived metadata. The
-    // opener must not wipe the database over it: the sidecar is dropped, the
-    // data is preserved, and the caller can re-register the definition.
-    const indexFile = join(homeDir, 'cache', 'query-store', 'db.indexes.json');
-    await fsp.writeFile(indexFile, '{ definitely not valid json');
+    // A corrupt cluster registry surfaces as a SyntaxError on the next index
+    // op. The store answers with one process-lifetime rebuild: the directory
+    // is wiped (the read model is derivable, so data is NOT preserved) and
+    // the retried op succeeds against the fresh cluster.
+    const registryFile = join(homeDir, 'cache', 'query-store', 'cluster.indexes.json');
+    await fsp.writeFile(registryFile, '{ definitely not valid json');
 
     const second = build();
-    expect(await second.get(COLLECTION, 'a')).toEqual({ id: 'a', v: 1 });
     await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
-    const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 1 }).execute();
-    expect(page.items).toEqual([{ id: 'a', v: 1 }]);
+    expect(await second.get(COLLECTION, 'a')).toBeUndefined();
+    await second.put(COLLECTION, 'b', { id: 'b', v: 2 });
+    const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 2 }).execute();
+    expect(page.items).toEqual([{ id: 'b', v: 2 }]);
+  });
+
+  it('opens a 16-shard cluster under the cache dir', async () => {
+    const store = build();
+    await store.put(COLLECTION, 'a', { id: 'a' });
+    const storeDir = join(homeDir, 'cache', 'query-store');
+    const meta = JSON.parse(await fsp.readFile(join(storeDir, 'cluster.meta.json'), 'utf8')) as {
+      shardCount: number;
+    };
+    expect(meta.shardCount).toBe(16);
+    const entries = await fsp.readdir(storeDir);
+    for (let i = 0; i < 16; i++) {
+      expect(entries).toContain(`shard-${String(i).padStart(2, '0')}`);
+    }
   });
 });
