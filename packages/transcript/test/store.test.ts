@@ -151,6 +151,16 @@ describe('AgentTranscript', () => {
     expect(appendAtOffset('abc', 5, 'x').gap).toEqual({ expected: 3, got: 5 });
   });
 
+  it('appendAtOffset treats a mismatched overlap as a gap, never a rewrite', () => {
+    // The chunk is behind local state but is not the local suffix: rewriting
+    // from the offset would silently drop local content ('llo').
+    const result = appendAtOffset('hello', 2, ' world');
+    expect(result.text).toBe('hello');
+    expect(result.gap).toEqual({ expected: 5, got: 2 });
+    // A matching overlap still trims to the novel suffix.
+    expect(appendAtOffset('hello wo', 6, 'world')).toEqual({ text: 'hello world', changed: true });
+  });
+
   it('tracks pending interactions as a derived index', () => {
     const tx = new AgentTranscript('main');
     const interaction = (state: InteractionFrame['state']): InteractionFrame => ({

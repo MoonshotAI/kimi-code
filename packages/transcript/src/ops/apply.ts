@@ -346,7 +346,9 @@ function applyTaskAppend(state: AgentState, op: AppendOp): ApplyResult {
  * Offset placement, mirroring the web client's alignDelta semantics:
  * `offset > local length` is a gap (caller should re-snapshot); a chunk that
  * is already fully present is a duplicate (no change); a partially present
- * chunk is trimmed to its novel suffix.
+ * chunk is trimmed to its novel suffix — but only when the overlap region
+ * agrees. A chunk behind local state whose overlap does NOT match is a gap
+ * too (diverged stream), never a silent rewrite that drops local content.
  */
 export function appendAtOffset(
   local: string,
@@ -358,6 +360,13 @@ export function appendAtOffset(
     return { text: local, changed: false };
   }
   const overlap = local.length - offset;
+  // The overlap region must agree before trimming: a chunk whose head does
+  // not match the local tail at `offset` belongs to a diverged stream, and
+  // rewriting from `offset` would silently drop local content (e.g. a stale
+  // buffered append landing on a refreshed page).
+  if (local.slice(offset) !== chunk.slice(0, overlap)) {
+    return { text: local, changed: false, gap: { expected: local.length, got: offset } };
+  }
   const novel = overlap > 0 ? chunk.slice(overlap) : chunk;
   if (novel.length === 0) return { text: local, changed: false };
   return { text: local.slice(0, offset) + chunk, changed: true };
