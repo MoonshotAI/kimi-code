@@ -2,4 +2,4 @@
 "@moonshot-ai/pi-tui": patch
 ---
 
-Fix a crash when `PI_DEBUG_REDRAW=1` is set on a machine that has never used `~/.pi/agent` before.
+Make the TUI's debug logging robust on Windows: the `PI_DEBUG_REDRAW` and `PI_TUI_DEBUG` diagnostics no longer crash the render loop on a filesystem error, and `PI_TUI_DEBUG` writes render dumps to the OS temp dir instead of a hardcoded `/tmp`.

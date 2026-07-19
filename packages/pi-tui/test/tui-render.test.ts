@@ -405,7 +405,7 @@ describe("TUI resize handling", () => {
 	});
 });
 
-describe("TUI debug redraw logging", () => {
+describe("TUI debug logging", () => {
 	it("does not crash the render loop when the debug-redraw log directory is missing", async () => {
 		const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), "pi-tui-debug-redraw-"));
 		try {
@@ -438,6 +438,38 @@ describe("TUI debug redraw logging", () => {
 			assert.ok(contents.includes("terminal width changed"), "the debug log should still be written");
 		} finally {
 			await fs.rm(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("writes PI_TUI_DEBUG render dumps into the OS temp dir, not a hardcoded /tmp", async () => {
+		const fakeTmp = await fs.mkdtemp(path.join(os.tmpdir(), "pi-tui-debug-render-"));
+		try {
+			await withEnv(
+				{ PI_TUI_DEBUG: "1", TMPDIR: fakeTmp, TEMP: fakeTmp, TMP: fakeTmp },
+				async () => {
+					const terminal = new VirtualTerminal(40, 10);
+					const tui = new TUI(terminal);
+					const component = new TestComponent();
+					tui.addChild(component);
+					component.lines = ["Line 0", "Line 1"];
+					tui.start();
+					await terminal.waitForRender();
+					component.lines = ["Line 0", "CHANGED"];
+					tui.requestRender();
+					await terminal.waitForRender();
+					const viewport = terminal.getViewport();
+					assert.ok(viewport[1]?.includes("CHANGED"), "TUI keeps rendering with PI_TUI_DEBUG on");
+					tui.stop();
+				},
+			);
+			const dumpDir = path.join(fakeTmp, "tui");
+			const files = await fs.readdir(dumpDir);
+			assert.ok(
+				files.some((name) => name.startsWith("render-")),
+				"a render dump should be written under the OS temp dir",
+			);
+		} finally {
+			await fs.rm(fakeTmp, { recursive: true, force: true });
 		}
 	});
 });
