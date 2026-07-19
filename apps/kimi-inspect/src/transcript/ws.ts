@@ -11,9 +11,10 @@
  *
  * Loss signals are surfaced, not repaired locally — transcript frames are
  * volatile by design (never journaled), so the consumer answers them with a
- * REST refresh: `resync_required` → `onResyncRequired`, and EVERY
- * established socket (first included, since ops emitted between the REST
- * page load and the subscription are just as lost) → `onReconnected`.
+ * REST refresh: `resync_required` → `onResyncRequired`, and the subscribe
+ * ack after every established socket → `onReconnected` (the server attaches
+ * the stream only after processing `client_hello`; ops emitted between the
+ * REST page load and that point are missed).
  *
  * The bearer token is presented at the upgrade through the
  * `kimi-code.bearer.<token>` subprotocol (same trick as the v2 `WsSocket`).
@@ -50,6 +51,8 @@ export interface TranscriptWsOptions {
 
 interface ServerFrame {
   readonly type: string;
+  readonly id?: string;
+  readonly code?: number;
   readonly payload?: unknown;
 }
 
@@ -68,6 +71,8 @@ export class TranscriptWs {
   private manualClose = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private helloId: string | undefined;
+  private helloAcked = false;
 
   constructor(opts: TranscriptWsOptions) {
     this.wsUrl = toWsUrl(opts.url);
@@ -111,22 +116,21 @@ export class TranscriptWs {
     this.ws = ws;
     ws.addEventListener('open', () => {
       this.reconnectAttempt = 0;
+      this.helloId = `kimi-inspect-${Date.now().toString(36)}`;
+      this.helloAcked = false;
       this.send({
         type: 'client_hello',
-        id: `kimi-inspect-${Date.now().toString(36)}`,
+        id: this.helloId,
         payload: {
           client_id: 'kimi-inspect',
           subscriptions: [this.sessionId],
           transcript: { [this.sessionId]: { [this.agentId]: 'delta' } },
         },
       });
-      // Reconcile on EVERY established socket, the first one included: ops
-      // emitted between the REST page load and this subscription are missed
-      // (volatile, never journaled). The consumer refreshes full state over
-      // REST instead of consuming a reset — a no-op while its initial
-      // refresh is still in flight, a real catch-up when the first open
-      // arrived late or after failed attempts.
-      this.handlers.onReconnected();
+      // The reconcile fires on the subscribe ACK (see onMessage) — the server
+      // attaches the transcript stream only after processing client_hello,
+      // so refreshing at open could finish before the subscription is active
+      // and still miss the ops in between.
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);
@@ -150,6 +154,16 @@ export class TranscriptWs {
       return;
     }
     switch (frame.type) {
+      case 'ack': {
+        // The subscribe ack: the server has attached the transcript stream
+        // by now — reconcile once per hello (ops emitted between the REST
+        // page load and this point are missed; the consumer refreshes).
+        if (!this.helloAcked && frame.id !== undefined && frame.id === this.helloId) {
+          this.helloAcked = true;
+          this.handlers.onReconnected();
+        }
+        return;
+      }
       case 'transcript.ops': {
         const parsed = transcriptOpsEventSchema.safeParse(frame.payload);
         if (!parsed.success) return;
