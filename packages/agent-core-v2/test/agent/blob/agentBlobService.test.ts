@@ -18,7 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { type ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/_base/di/scope';

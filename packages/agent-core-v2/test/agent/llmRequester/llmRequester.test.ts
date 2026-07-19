@@ -1,8 +1,8 @@
-import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
+import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
-import { type StreamedMessagePart } from '#/app/llmProtocol/message';
-import type { Tool } from '#/app/llmProtocol/tool';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+import { type StreamedMessagePart } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

@@ -14,7 +14,7 @@
  * is projected by `AgentProfileService`; keeping it out of this Model prevents
  * that Kimi-only value from leaking through model switches or agent forks.
  * `modelCapabilities` is intentionally NOT in the Model — it is
- * derived live from `IModelResolver` so resume never pins stale capabilities.
+ * derived live from `IModelCatalog` so resume never pins stale capabilities.
  * Each `apply` returns the same reference when nothing changes so the wire's
  * reference-equality gate stays quiet. The `chdir` side effect and the
  * `agent.status.updated` emission are NOT part of `apply`: they run after
@@ -32,7 +32,7 @@
 
 import { z } from 'zod';
 
-import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
+import type { ThinkingEffort } from '#/kosong/contract/provider';
 import { defineModel } from '#/wire/model';
 import type { PayloadOf } from '#/wire/types';
 

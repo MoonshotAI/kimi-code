@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 
 import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
 import type { KimiErrorPayload } from '#/_base/errors/serialize';

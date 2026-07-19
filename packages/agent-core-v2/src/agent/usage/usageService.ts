@@ -11,7 +11,7 @@
  * live record. Bound at Agent scope.
  */
 
-import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
+import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';

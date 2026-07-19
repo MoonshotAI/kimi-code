@@ -6,7 +6,7 @@ import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationO
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from '#/agent/loop/stepRequestQueue';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { Op } from '#/wire/op';

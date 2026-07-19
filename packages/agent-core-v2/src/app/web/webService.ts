@@ -20,8 +20,8 @@ import {
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
-import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { IProviderService } from '#/app/provider/provider';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IProviderService } from '#/kosong/provider/provider';
 
 import { LocalFetchURLProvider } from './providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from './providers/moonshot-fetch-url';

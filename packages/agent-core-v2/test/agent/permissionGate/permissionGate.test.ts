@@ -31,7 +31,7 @@ import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';

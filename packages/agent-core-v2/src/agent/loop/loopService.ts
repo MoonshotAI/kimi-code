@@ -41,13 +41,13 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
-import { type FinishReason } from '#/app/llmProtocol/finishReason';
-import { type StreamedMessagePart } from '#/app/llmProtocol/message';
-import { type TokenUsage } from '#/app/llmProtocol/usage';
+import { type FinishReason } from '#/kosong/contract/provider';
+import { type StreamedMessagePart } from '#/kosong/contract/message';
+import { type TokenUsage } from '#/kosong/contract/usage';
 import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 

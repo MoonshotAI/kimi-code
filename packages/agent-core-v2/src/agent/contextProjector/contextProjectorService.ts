@@ -31,7 +31,7 @@ import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { ErrorCodes, Error2 } from '#/errors';
-import type { ContentPart, Message } from '#/app/llmProtocol/message';
+import type { ContentPart, Message } from '#/kosong/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentContextProjectorService,

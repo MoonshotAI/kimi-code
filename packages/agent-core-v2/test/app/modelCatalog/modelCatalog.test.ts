@@ -18,18 +18,18 @@ import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { isError2 } from '#/errors';
 import { IEventService } from '#/app/event/event';
-import { MODEL_CATALOG_SECTION } from '#/app/modelCatalog/configSection';
-import { IModelCatalogService } from '#/app/modelCatalog/modelCatalog';
-import { ModelCatalogService } from '#/app/modelCatalog/modelCatalogService';
-import { IModelService, type ModelAlias } from '#/app/model/model';
-import { HostRequestHeaders, IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { ModelService } from '#/app/model/modelService';
-import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
-import { ProviderService } from '#/app/provider/providerService';
+import { MODEL_CATALOG_SECTION } from '#/kosong/catalog/configSection';
+import { IModelCatalogService } from '#/kosong/catalog/modelCatalog';
+import { ModelCatalogService } from '#/kosong/catalog/modelCatalogService';
+import { IModelService, type ModelRecord } from '#/kosong/model/model';
+import { HostRequestHeaders, IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { ModelService } from '#/kosong/model/modelService';
+import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
+import { ProviderService } from '#/kosong/provider/providerService';
 
 interface Backing {
   providers: Record<string, ProviderConfig>;
-  models: Record<string, ModelAlias>;
+  models: Record<string, ModelRecord>;
   defaultModel?: string;
   thinking?: { enabled?: boolean; effort?: string };
 }

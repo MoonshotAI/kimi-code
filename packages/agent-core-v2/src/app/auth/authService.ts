@@ -53,8 +53,8 @@ import {
   effectiveModelConfig,
   nonEmpty,
   resolveModelAuthMaterial,
-} from '#/app/model/modelAuth';
-import { type ModelAlias, MODELS_SECTION } from '#/app/model/model';
+} from '#/kosong/model/modelAuth';
+import { type ModelRecord, MODELS_SECTION } from '#/kosong/model/model';
 import { IPlatformService } from '#/app/platform/platform';
 import {
   IProviderService,
@@ -62,7 +62,7 @@ import {
   type ProviderConfig,
   type ProvidersChangedEvent,
   PROVIDERS_SECTION,
-} from '#/app/provider/provider';
+} from '#/kosong/provider/provider';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import {
@@ -356,7 +356,7 @@ export class OAuthService extends Disposable implements IOAuthService {
   private readUserConfigShape(): ManagedKimiConfigShape {
     const providers =
       this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
-    const models = this.config.inspect<Record<string, ModelAlias>>(MODELS_SECTION).userValue ?? {};
+    const models = this.config.inspect<Record<string, ModelRecord>>(MODELS_SECTION).userValue ?? {};
     const services =
       this.config.inspect<ManagedKimiConfigShape['services']>(SERVICES_SECTION).userValue;
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
@@ -595,7 +595,7 @@ export class AuthSummaryService implements IAuthSummaryService {
   async ensureReady(modelOverride?: string): Promise<void> {
     await this.config.reload();
     const providers = this.providerService.list();
-    const models = this.config.get<Record<string, ModelAlias> | undefined>(MODELS_SECTION) ?? {};
+    const models = this.config.get<Record<string, ModelRecord> | undefined>(MODELS_SECTION) ?? {};
     const modelId = modelOverride ?? this.config.get<string | undefined>(DEFAULT_MODEL_SECTION);
     const configured = modelId === undefined || modelId === '' ? undefined : models[modelId];
     if (Object.keys(providers).length === 0 && !isProviderlessModel(configured)) {
@@ -646,7 +646,7 @@ function classifyFailure(err: unknown): OAuthFlowStatus {
   return 'denied';
 }
 
-function isProviderlessModel(model: ModelAlias | undefined): boolean {
+function isProviderlessModel(model: ModelRecord | undefined): boolean {
   if (model === undefined) return false;
   const effective = effectiveModelConfig(model);
   return (
@@ -656,7 +656,7 @@ function isProviderlessModel(model: ModelAlias | undefined): boolean {
   );
 }
 
-function providerNameFromFlatModel(model: ModelAlias): string | undefined {
+function providerNameFromFlatModel(model: ModelRecord): string | undefined {
   const baseUrl = nonEmpty(model.baseUrl);
   return baseUrl === undefined ? undefined : deriveProviderId(baseUrl);
 }

@@ -32,10 +32,10 @@ import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
-import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { MODELS_SECTION, type ModelAlias } from '#/app/model/model';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { MODELS_SECTION, type ModelRecord } from '#/kosong/model/model';
 import { IPlatformService, type PlatformConfig } from '#/app/platform/platform';
-import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/app/provider/provider';
+import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
@@ -80,7 +80,7 @@ describe('OAuthService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
-  let models: Record<string, ModelAlias>;
+  let models: Record<string, ModelRecord>;
   let services: Record<string, unknown> | undefined;
   let defaultModel: string | undefined;
   let thinking: { enabled?: boolean; effort?: string } | undefined;
@@ -126,7 +126,7 @@ describe('OAuthService', () => {
         return;
       }
       if (domain === 'models') {
-        models = value as Record<string, ModelAlias>;
+        models = value as Record<string, ModelRecord>;
         return;
       }
       if (domain === 'services') {
@@ -1078,7 +1078,7 @@ describe('AuthSummaryService', () => {
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
   let platforms: Record<string, PlatformConfig>;
-  let models: Record<string, ModelAlias>;
+  let models: Record<string, ModelRecord>;
   let defaultModel: string | undefined;
   let oauthStatus: ReturnType<typeof vi.fn>;
   let getCachedAccessToken: ReturnType<typeof vi.fn>;
@@ -1098,7 +1098,7 @@ describe('AuthSummaryService', () => {
       kimi: {
         provider: OAUTH_PROVIDER,
         model: 'kimi-k2',
-        protocol: 'kimi',
+        protocol: 'openai',
         maxContextSize: 128000,
       },
       openai: {
@@ -1258,7 +1258,7 @@ describe('AuthSummaryService', () => {
       kimi: {
         providerId: 'moonshot',
         name: 'kimi-k2',
-        protocol: 'kimi',
+        protocol: 'openai',
         maxContextSize: 128000,
       },
     };

@@ -20,7 +20,7 @@ import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import { OAuthRefSchema } from '#/app/provider/provider';
+import { OAuthRefSchema } from '#/kosong/provider/provider';
 
 const StringRecordSchema = z.record(z.string(), z.string());
 

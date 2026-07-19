@@ -6,7 +6,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { type IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IWireService } from '#/wire/wire';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';

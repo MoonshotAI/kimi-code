@@ -1,9 +1,9 @@
-import { emptyUsage } from '#/app/llmProtocol/usage';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import type { ModelConfig } from '#/app/model/model';
+import type { ModelRecord } from '#/kosong/model/model';
 import {
   configServices,
   createTestAgent,
@@ -16,7 +16,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 
 type TestKimiConfig = ReturnType<Parameters<typeof configServices>[0]>;
 type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
-  Pick<ModelConfig, 'protocol'>;
+  Pick<ModelRecord, 'protocol'>;
 type GenerateFn = Parameters<typeof llmGenerateServices>[0];
 
 function defaultGenerate(): ReturnType<GenerateFn> {
@@ -77,7 +77,7 @@ describe('ConfigState model capabilities', () => {
     profile.update({ modelAlias: 'kimi-code/kimi-for-coding' });
 
     expect(profile.getModel()).toBe('kimi-code/kimi-for-coding');
-    expect(profile.resolveModel()?.name).toBe('kimi-for-coding');
+    expect(ctx.modelResolver.get('kimi-code/kimi-for-coding').name).toBe('kimi-for-coding');
     expect(profile.getModelCapabilities()).toMatchObject({
       image_in: true,
       video_in: true,
@@ -230,7 +230,11 @@ describe('ConfigState prompt cache hint', () => {
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     profile.update({ modelAlias: 'kimi-code' });
 
-    expect(profile.resolveModel()?.protocol).toBe('kimi');
+    // Kimi is no longer a protocol: the vendor resolves to its `openai` base
+    // while keeping `kimi` as the provider type.
+    const model = ctx.modelResolver.get('kimi-code');
+    expect(model.protocol).toBe('openai');
+    expect(model.providerType).toBe('kimi');
     expect('sessionId' in ctx).toBe(false);
   });
 });

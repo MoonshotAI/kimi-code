@@ -17,7 +17,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
-import { IProviderService } from '#/app/provider/provider';
+import { IProviderService } from '#/kosong/provider/provider';
 
 import { IAuthLegacyService } from './authLegacy';
 

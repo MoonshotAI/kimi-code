@@ -13,7 +13,7 @@
  * itself stays flat. Bound at Session scope.
  */
 
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';

@@ -10,9 +10,9 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { OrderedHookSlot } from '#/hooks';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 
 export interface ToolCallStartedPayload {
   readonly toolCallId: string;

@@ -1,10 +1,9 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import type { Message, StreamedMessagePart } from '#/app/llmProtocol/message';
-import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import type { Tool } from '#/app/llmProtocol/tool';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { FinishReason, ThinkingEffort } from '#/kosong/contract/provider';
+import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import type { TokenUsage } from '#/kosong/contract/usage';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import type { LogContext } from '#/_base/log/log';
 
 export type LLMRequestLogFields = Readonly<LogContext>;

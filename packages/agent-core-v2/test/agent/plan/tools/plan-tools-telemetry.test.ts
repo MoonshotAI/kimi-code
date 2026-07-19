@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentPlanService, PlanData } from '#/agent/plan/plan';

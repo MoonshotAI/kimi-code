@@ -391,6 +391,7 @@ const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
   /roles must alternate/,
   /multiple .*(?:user|assistant).* roles in a row/,
   /tool_use[\s\S]*ids must be unique/,
+  /message at position \d+ with role ['"`]?[a-z]+['"`]? must not be empty/,
 ] as const;
 
 export function isRecoverableRequestStructureError(error: unknown): boolean {
