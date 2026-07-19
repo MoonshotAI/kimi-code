@@ -1,5 +1,25 @@
 # kimi-code-app
 
+## 0.0.5
+
+### Patch Changes
+
+- [#16](https://github.com/MoonshotAI/kimi-code-app/pull/16) [`004f2c1`](https://github.com/MoonshotAI/kimi-code-app/commit/004f2c18dd9710ac8818561fd6c3872265eb1c65) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复滚动时聊天消息从输入框下方透出来的问题。
+
+- [#9](https://github.com/MoonshotAI/kimi-code-app/pull/9) [`05de3b8`](https://github.com/MoonshotAI/kimi-code-app/commit/05de3b843cc905506d948b8fafda5fc37ccca555) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复代码差异文件列表中，以点开头的隐藏文件路径标点位置错乱的问题。
+
+- [#32](https://github.com/MoonshotAI/kimi-code-app/pull/32) [`7ca7c46`](https://github.com/MoonshotAI/kimi-code-app/commit/7ca7c463d783c66680c8bd776ec71339b005c1ab) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复深色主题搭配黑色主题色时，主要按钮白底白字看不清的问题。
+
+- [#33](https://github.com/MoonshotAI/kimi-code-app/pull/33) [`920c389`](https://github.com/MoonshotAI/kimi-code-app/commit/920c389ecca712550eeeff593cc97836455d2100) Thanks [@chengluyu](https://github.com/chengluyu)! - 「打开方式」菜单新增 kitty 终端，可直接用它打开当前工作目录。
+
+- [#33](https://github.com/MoonshotAI/kimi-code-app/pull/33) [`920c389`](https://github.com/MoonshotAI/kimi-code-app/commit/920c389ecca712550eeeff593cc97836455d2100) Thanks [@chengluyu](https://github.com/chengluyu)! - 「打开方式」菜单新增 VS Code Insiders，可直接用它打开当前工作目录。
+
+- [#34](https://github.com/MoonshotAI/kimi-code-app/pull/34) [`f653b6b`](https://github.com/MoonshotAI/kimi-code-app/commit/f653b6bd248b1c93261212a3e0bcfb7789d17f4f) Thanks [@liruifengv](https://github.com/liruifengv)! - 重新设计会话中的工具调用展示：每种工具都有贴合内容的专属样式，同种工具的连续调用合并为一句自然语言摘要（如“读取了 3 个文件”）并在完成后自动收起，子代理以独立卡片呈现、点击直达详情面板。
+
+- [#32](https://github.com/MoonshotAI/kimi-code-app/pull/32) [`7ca7c46`](https://github.com/MoonshotAI/kimi-code-app/commit/7ca7c463d783c66680c8bd776ec71339b005c1ab) Thanks [@liruifengv](https://github.com/liruifengv)! - 重新设计审批与提问卡片：白色浮起圆角卡片，标题改为更大的深色纯文字；操作按钮按 1-4 从左到右排列，数字直接标在按钮上，主要操作是主题蓝实心按钮；写文件审批显示语法高亮的内容预览，编辑文件审批显示语法高亮的行级 diff，内容较多时默认 24 行内滚动、可一键放大撑满阅读；plan 的方案选项固定在计划正文下方（描述固定第二行完整显示），不会被长文淹没，还可以一键放大阅读全文；plan 文件路径渲染成链接，点击在右侧栏预览计划内容；卡片收起后点击整条即可展开；提问卡的标题就是问题本身，新增关闭按钮，选项支持 ↑↓ 方向键选择、空格勾选（多选）、Enter 确认；运行危险命令（如 rm -rf、sudo、强推）时审批卡片会显示危险提示。
+
+- [#30](https://github.com/MoonshotAI/kimi-code-app/pull/30) [`8d0a46e`](https://github.com/MoonshotAI/kimi-code-app/commit/8d0a46e6e13bbb4e4ffba9826634749d93dc3b91) Thanks [@liruifengv](https://github.com/liruifengv)! - 读取、编辑和写入文件工具的卡片展开后显示代码内容，并按文件类型语法高亮；读取结果带真实行号。
+
 ## 0.0.4
 
 ### Patch Changes
