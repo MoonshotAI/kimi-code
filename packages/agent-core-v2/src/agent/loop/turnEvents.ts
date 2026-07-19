@@ -5,7 +5,11 @@
  * `turn.started` additionally carries the text extracted from the turn's
  * input parts (absent when the turn opened with no text part): consumers
  * that render the user's prompt must take it from there, because the context
- * append carrying the same text is not a bus event and lands later.
+ * append carrying the same text is not a bus event and lands later. The
+ * prompt rides the event only for displayable user origins
+ * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
+ * continuation, subagent run, cron…) has internal steering text as its input,
+ * which must never surface in transcripts.
  */
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
@@ -30,6 +34,14 @@ export function turnPromptText(input: readonly ContentPart[]): string | undefine
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
+}
+
+export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
+  if (origin.kind === 'user') return true;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  );
 }
 
 export interface TurnEndedEvent {

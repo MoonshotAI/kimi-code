@@ -121,9 +121,10 @@ export function groupMessagesIntoSnapshot(
     if (message.role === 'user') {
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
-          // A real turn boundary: advance the grouping (and the ordinal),
-          // mirroring the live path's prompt-from-input projection.
-          startTurn(mapOrigin(message), textOf(message));
+          // A real turn boundary: advance the grouping (and the ordinal).
+          // The steering text is internal — the boundary lands promptless,
+          // mirroring the live path's displayable-origin gate.
+          startTurn(mapOrigin(message));
         }
         continue;
       }

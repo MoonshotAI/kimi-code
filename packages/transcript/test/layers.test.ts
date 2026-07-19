@@ -322,13 +322,14 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     ]);
 
     // A subagent's run prompt launches its own engine turn — the response
-    // must not fold into the previous turn, and the prompt is preserved.
+    // must not fold into the previous turn. The run prompt itself is internal
+    // steering text: the boundary lands promptless.
     expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'turn']);
     const subTurn = snapshot.items[1];
     if (subTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(subTurn.ordinal).toBe(1);
     expect(subTurn.origin.kind).toBe('other');
-    expect(subTurn.prompt).toBe('scan the repo');
+    expect(subTurn.prompt).toBeUndefined();
     expect(subTurn.steps).toHaveLength(1);
   });
 
@@ -399,7 +400,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(first.steps.map((step) => step.frames.map((frame) => frame.kind))).toEqual([['text']]);
     expect(second.ordinal).toBe(1);
     expect(second.origin.kind).toBe('other');
-    expect(second.prompt).toBe('continue the goal');
+    expect(second.prompt).toBeUndefined();
     expect(second.steps).toHaveLength(2);
   });
 
