@@ -203,6 +203,27 @@ function writer(columns?: number) {
   };
 }
 
+function backpressuredWriter() {
+  let text = '';
+  let blocked = true;
+  const drainListeners = new Set<() => void>();
+  return {
+    write: vi.fn((chunk: string) => {
+      text += chunk;
+      return !blocked;
+    }),
+    once: vi.fn((event: 'drain', listener: () => void) => {
+      if (event === 'drain') drainListeners.add(listener);
+    }),
+    drain: () => {
+      blocked = false;
+      for (const listener of drainListeners) listener();
+      drainListeners.clear();
+    },
+    text: () => text,
+  };
+}
+
 function fakeProcess() {
   const listeners = new Map<NodeJS.Signals, () => Promise<void> | void>();
   return {
@@ -680,6 +701,31 @@ describe('runPrompt', () => {
     expect(stderr.text()).toBe('');
   });
 
+  it('waits for stream-json stdout backpressure before completing', async () => {
+    const stdout = backpressuredWriter();
+    const stderr = writer();
+    let settled = false;
+
+    const run = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr,
+    }).then(() => {
+      settled = true;
+    });
+
+    await waitForAssertion(() => {
+      expect(stdout.text()).toContain('"type":"session.resume_hint"');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(settled).toBe(false);
+    expect(stdout.once).toHaveBeenCalledWith('drain', expect.any(Function));
+
+    stdout.drain();
+    await run;
+    expect(settled).toBe(true);
+  });
+
   it('writes stream-json tool calls and tool results as JSONL messages', async () => {
     mocks.session.prompt.mockImplementationOnce(async () => {
       for (const handler of mocks.eventHandlers) {
@@ -1031,6 +1077,55 @@ describe('runPrompt', () => {
     await run;
 
     expect(mocks.harnessClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('drains pending stream-json output before exiting on a signal', async () => {
+    let releasePrompt!: () => void;
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(
+          mocks.mainEvent({ type: 'turn.started', turnId: 12, origin: { kind: 'user' } }),
+        );
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 12, delta: 'final answer' }));
+        handler(
+          mocks.mainEvent({
+            type: 'tool.result',
+            turnId: 12,
+            toolCallId: 'tc_done',
+            output: 'done',
+          }),
+        );
+      }
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+    });
+    const stdout = backpressuredWriter();
+    const processMock = fakeProcess();
+    const run = runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', {
+      stdout,
+      stderr: writer(),
+      process: processMock,
+    } as Parameters<typeof runPrompt>[2] & { process: ReturnType<typeof fakeProcess> });
+
+    await waitForAssertion(() => {
+      expect(stdout.text()).toContain('{"role":"assistant","content":"final answer"}');
+      expect(processMock.listener('SIGTERM')).toBeDefined();
+    });
+
+    const signalCleanup = processMock.listener('SIGTERM')?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(processMock.exit).not.toHaveBeenCalled();
+
+    stdout.drain();
+    await signalCleanup;
+    expect(processMock.exit).toHaveBeenCalledWith(143);
+
+    for (const handler of mocks.eventHandlers) {
+      handler(mocks.mainEvent({ type: 'turn.ended', turnId: 12, reason: 'completed' }));
+    }
+    releasePrompt();
+    await run;
   });
 
   it('waits for the pending auto permission write before signal restore', async () => {

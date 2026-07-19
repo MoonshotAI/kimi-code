@@ -85,11 +85,13 @@ import { createKimiCodeHostIdentity } from '../version';
 import { resolveOutputFormat } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';
 import {
+  drainPromptOutput,
   type PromptOutput,
   PromptJsonWriter,
   type PromptTurnWriter,
   PromptTranscriptWriter,
   writeExperimentalVersion,
+  writePromptOutput,
   writeResumeHint,
 } from '../prompt-render';
 
@@ -168,13 +170,18 @@ export async function runV2Print(
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
+      await drainPromptOutput(stdout);
       try {
         await restorePermission();
       } finally {
-        if (telemetryService !== undefined) {
-          await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
+        try {
+          if (telemetryService !== undefined) {
+            await raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS);
+          }
+          app.dispose();
+        } finally {
+          await drainPromptOutput(stdout);
         }
-        app.dispose();
       }
     })());
     await raceWithTimeout(pending, PROMPT_CLEANUP_TIMEOUT_MS);
@@ -232,6 +239,7 @@ export async function runV2Print(
       );
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
+    await drainPromptOutput(stdout);
 
     telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
@@ -535,7 +543,7 @@ async function runNativeGoal(
     subscription.dispose();
     const snapshot = completedSnapshot ?? goalService.getGoal().goal;
     if (outputFormat === 'stream-json') {
-      stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
+      writePromptOutput(stdout, `${JSON.stringify(goalSummaryJson(snapshot))}\n`);
     } else {
       stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
     }

@@ -29,7 +29,13 @@ import {
   type HeadlessGoalCreate,
 } from './goal-prompt';
 import type { PromptHarness, PromptSession } from './prompt-session';
-import { PromptJsonWriter, PromptTranscriptWriter, writeResumeHint } from './prompt-render';
+import {
+  drainPromptOutput,
+  PromptJsonWriter,
+  PromptTranscriptWriter,
+  writePromptOutput,
+  writeResumeHint,
+} from './prompt-render';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -149,12 +155,17 @@ export async function runPrompt(
   const cleanupPromptRun = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
+      await drainPromptOutput(stdout);
       setCrashPhase('shutdown');
       try {
         await restorePromptSessionPermission();
       } finally {
-        await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
-        await harness.close();
+        try {
+          await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+          await harness.close();
+        } finally {
+          await drainPromptOutput(stdout);
+        }
       }
     })());
     // Bound cleanup so a wedged shutdown step (e.g. a SessionEnd hook, MCP
@@ -213,6 +224,7 @@ export async function runPrompt(
       );
     }
     writeResumeHint(session.id, outputFormat, stdout, stderr);
+    await drainPromptOutput(stdout);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
       duration_ms: Date.now() - startedAt,
@@ -268,7 +280,7 @@ async function runHeadlessGoal(
     unsubscribeGoalEvents();
     const snapshot = completedSnapshot ?? (await session.getGoal()).goal;
     if (outputFormat === 'stream-json') {
-      stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
+      writePromptOutput(stdout, `${JSON.stringify(goalSummaryJson(snapshot))}\n`);
     } else {
       stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
     }
