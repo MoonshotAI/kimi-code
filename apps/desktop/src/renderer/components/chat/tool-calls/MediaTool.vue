@@ -3,6 +3,7 @@
 import { computed } from 'vue';
 import type { ToolCall, ToolMedia } from '../../../types';
 import { Tooltip } from '@moonshot-ai/web-ui';
+import AuthMedia from '../AuthMedia.vue';
 
 const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
 const emit = defineEmits<{ openMedia: [media: ToolMedia] }>();
@@ -52,6 +53,17 @@ function openMediaPreview(): void {
         />
       </button>
     </Tooltip>
+    <!-- Uploaded videos carry a provider-side `ms://…` url the browser cannot
+         load; with a fileId the daemon's bytes are fetched with auth instead
+         (same path as user-bubble videos). Inline data: URLs keep the bare
+         <video>. -->
+    <AuthMedia
+      v-else-if="media.kind === 'video' && media.fileId !== undefined"
+      kind="video"
+      :url="media.url"
+      :file-id="media.fileId"
+      media-class="media-video"
+    />
     <video
       v-else-if="media.kind === 'video'"
       class="media-video"

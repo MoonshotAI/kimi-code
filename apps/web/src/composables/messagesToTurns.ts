@@ -191,6 +191,16 @@ function normalizeToolMedia(toolName: string, output: unknown): ToolMedia | unde
     kind: media.kind ?? tagKind ?? 'image',
     url: media.url,
     path,
+    // An uploaded video's `video_url` part carries the provider-side `ms://…`
+    // id, which the browser cannot load — the daemon serves the same bytes at
+    // getFileUrl(fileId), so recover the id from the cache path tag. Only the
+    // unplayable `ms://` case: for images the preview prefers fileId over url
+    // (useFilePreview), and a crop/downsample read must show the returned
+    // data: image, not the original stored file.
+    fileId:
+      media.url.startsWith('ms://') && path !== undefined
+        ? fileIdFromCachePath(path)
+        : undefined,
     mimeType,
     bytes: Number.isFinite(bytes) ? bytes : undefined,
     dimensions,

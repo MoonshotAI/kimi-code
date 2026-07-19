@@ -373,6 +373,112 @@ describe('messagesToTurns', () => {
     expect(turns[0]?.attachments).toBeUndefined();
   });
 
+  it('recovers a playable fileId for an uploaded-video tool result (ms:// url)', () => {
+    // ReadMediaFile on an uploaded video returns the provider-side `ms://…`
+    // id as the media url — unloadable in the browser. The daemon serves the
+    // same bytes at /files/<fileId>, and that id rides in the `<video path>`
+    // cache tag, so the tool media must carry it for the player to work.
+    const fileId = 'f_d328dfaf-67b1-41a3-9858-bcfeb4faf0ef';
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          {
+            type: 'toolUse',
+            toolCallId: 'tool-1',
+            toolName: 'ReadMediaFile',
+            input: { path: `/Users/me/.kimi-code/cache/${fileId}.mov` },
+          },
+        ]),
+        message('t1', 'tool', [
+          {
+            type: 'toolResult',
+            toolCallId: 'tool-1',
+            output: [
+              { type: 'text', text: `<video path="/Users/me/.kimi-code/cache/${fileId}.mov">` },
+              { type: 'video_url', videoUrl: { url: 'ms://fbgg8drsrxmi11ewk411', id: 'fbgg8drsrxmi11ewk411' } },
+              { type: 'text', text: '</video>' },
+            ],
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.tools).toHaveLength(1);
+    expect(turns[0]?.tools?.[0]?.media).toMatchObject({
+      kind: 'video',
+      url: 'ms://fbgg8drsrxmi11ewk411',
+      path: `/Users/me/.kimi-code/cache/${fileId}.mov`,
+      fileId,
+    });
+  });
+
+  it('leaves a tool-result video without a file-store path without fileId', () => {
+    // TUI/legacy cache names are not file-store ids: no fileId to fetch with,
+    // the raw (likely data:) url stays the only playable source.
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-1', toolName: 'ReadMediaFile', input: {} },
+        ]),
+        message('t1', 'tool', [
+          {
+            type: 'toolResult',
+            toolCallId: 'tool-1',
+            output: [
+              { type: 'text', text: '<video path="/tmp/550e8400-e29b-41d4-a716-446655440000-clip.mp4">' },
+              { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+              { type: 'text', text: '</video>' },
+            ],
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    const media = turns[0]?.tools?.[0]?.media;
+    expect(media).toMatchObject({ kind: 'video', url: 'data:video/mp4;base64,AAAA' });
+    expect(media?.fileId).toBeUndefined();
+  });
+
+  it('does not attach the original upload’s fileId to a returned image', () => {
+    // A region/crop read of an uploaded image returns the crop as a data: URL
+    // while the path tag still names the original upload. The preview prefers
+    // fileId over url (useFilePreview), so attaching it here would open the
+    // original file instead of the returned crop — fileId must stay undefined
+    // for anything but the unplayable ms:// case.
+    const fileId = 'f_d328dfaf-67b1-41a3-9858-bcfeb4faf0ef';
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-1', toolName: 'ReadMediaFile', input: {} },
+        ]),
+        message('t1', 'tool', [
+          {
+            type: 'toolResult',
+            toolCallId: 'tool-1',
+            output: [
+              { type: 'text', text: `<image path="/Users/me/.kimi-code/cache/${fileId}.png">` },
+              { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+              { type: 'text', text: '</image>' },
+            ],
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    const media = turns[0]?.tools?.[0]?.media;
+    expect(media).toMatchObject({ kind: 'image', url: 'data:image/png;base64,AAAA' });
+    expect(media?.fileId).toBeUndefined();
+  });
+
   it('strips the hidden image-compression caption from a user bubble', () => {
     // The server persists this `<system>` note as its own text part next to a
     // compressed upload (buildImageCompressionCaption). It is model-facing
