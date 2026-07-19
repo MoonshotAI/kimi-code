@@ -169,7 +169,11 @@ class FakeLifecycle {
   }
 }
 
-function makeCore(sessions: Map<string, FakeLifecycle>, eventBus = new FakeEventBus()): Scope {
+function makeCore(
+  sessions: Map<string, FakeLifecycle>,
+  eventBus = new FakeEventBus(),
+  metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
+): Scope {
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
@@ -186,7 +190,7 @@ function makeCore(sessions: Map<string, FakeLifecycle>, eventBus = new FakeEvent
                 if (t === IAgentLifecycleService) return lifecycle;
                 if (t === ISessionInteractionService) return lifecycle.interactions;
                 // Minimal metadata read for the transcript binding's descriptor pass.
-                if (t === ISessionMetadata) return { read: async () => ({ agents: {} }) };
+                if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
                 return undefined;
               },
             };
@@ -1282,8 +1286,10 @@ describe('SessionEventBroadcaster', () => {
   // -------------------------------------------------------------------------
 
   describe('transcript streaming', () => {
-    function makeBroadcasterWithTranscript(): SessionEventBroadcaster {
-      const core = makeCore(sessions, eventBus);
+    function makeBroadcasterWithTranscript(
+      metaAgents?: Record<string, { type?: string; parentAgentId?: string }>,
+    ): SessionEventBroadcaster {
+      const core = makeCore(sessions, eventBus, metaAgents);
       return new SessionEventBroadcaster({
         eventsDir: dir,
         core,
@@ -1486,6 +1492,79 @@ describe('SessionEventBroadcaster', () => {
       await bc.flushTranscriptSeed('s1', view.target);
       const resets = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.reset');
       expect(resets).toHaveLength(2);
+    });
+
+    it('backfills wildcard-admitted roster agents before seeding their baseline', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      // sub-1 exists only in the persisted session metadata: its descriptor
+      // is seeded into the roster, but its transcript is not materialized
+      // until something backfills it.
+      bc = makeBroadcasterWithTranscript({ 'sub-1': { type: 'sub' } });
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      const ids = transcriptEnvelopes(view.envelopes)
+        .filter((e) => e.type === 'transcript.reset')
+        .map((e) => (e.payload as { agent_id: string }).agent_id)
+        .sort();
+      expect(ids).toEqual(['main', 'sub-1']);
+    });
+
+    it('sends no resets when the target downgrades while the seed is in flight', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'off' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
+
+      // The upgrade's seed work awaits history backfill; the downgrade lands
+      // first, so the stale call must not answer with a delta reset.
+      const pending = bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      await bc.subscribe('s1', view.target, undefined, { '*': 'off' });
+      await pending;
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
+    });
+
+    it('sends no resets when the target unsubscribes while the seed is in flight', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      const core = makeCore(sessions, eventBus, { 'sub-1': { type: 'sub' } });
+      const service = new TranscriptService({ homeDir: dir, core });
+      let releaseBackfill!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseBackfill = resolve;
+      });
+      const original = service.ensureAgentHistory.bind(service);
+      const backfillSpy = vi
+        .spyOn(service, 'ensureAgentHistory')
+        .mockImplementation(async (sessionId, agentId) => {
+          if (agentId === 'sub-1') await gate;
+          return original(sessionId, agentId);
+        });
+      bc = new SessionEventBroadcaster({
+        eventsDir: dir,
+        core,
+        maxBufferSize: 3,
+        transcriptService: service,
+      });
+
+      const view = collectingTarget();
+      const pending = bc.subscribe('s1', view.target, undefined, { 'sub-1': 'delta' });
+      // The target registers before the backfill starts — park the seed on the
+      // gate, then drop the subscription while history is still loading.
+      await vi.waitFor(() => {
+        expect(backfillSpy).toHaveBeenCalledWith('s1', 'sub-1');
+      });
+      bc.unsubscribe('s1', view.target);
+      releaseBackfill();
+      await pending;
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(0);
     });
 
     it('delivers no transcript.ops before the baseline reset has landed', async () => {

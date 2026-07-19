@@ -341,7 +341,13 @@ export class SessionEventBroadcaster {
    * connection's previous grade. A cold session (not live in this process)
    * silently skips streaming — cold transcripts stay REST-only. Live sessions
    * first await the initial wire-records backfill, so the seeded resets carry
-   * the established main-agent transcript.
+   * the established main-agent transcript. Explicitly graded agents AND roster
+   * agents admitted via the wildcard get their persisted history replayed
+   * before their first reset — a roster agent whose `AgentTranscript` was
+   * never materialized has nothing to snapshot, so without the backfill its
+   * baseline is silently skipped. Grades and the filter are re-read from
+   * `state.targets` after the awaits: subscribe work runs asynchronously, and
+   * a newer subscribe/unsubscribe must not be answered with stale resets.
    */
   private async subscribeTranscript(
     state: SessionState,
@@ -355,22 +361,30 @@ export class SessionEventBroadcaster {
     const store = service.forSessionLive(state.sessionId);
     if (store === undefined) return;
     await service.whenReady(state.sessionId);
-    // Explicitly graded agents get their persisted history replayed before
-    // their first reset (the wildcard covers the roster as-is — explicitly
-    // requested transcripts rebuild, wildcard subscribers see the live state).
-    await Promise.all(
-      Object.keys(spec)
-        .filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off')
-        .map((agentId) => service.ensureAgentHistory(state.sessionId, agentId)),
+    const backfillFilter = state.targets.get(target)?.agentFilter;
+    const backfill = new Set(
+      Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
     );
+    for (const descriptor of store.agents()) {
+      if (backfillFilter !== undefined && !backfillFilter.has(descriptor.agentId)) continue;
+      if (gradeFor(spec, descriptor.agentId) !== 'off') backfill.add(descriptor.agentId);
+    }
+    await Promise.all(
+      [...backfill].map((agentId) => service.ensureAgentHistory(state.sessionId, agentId)),
+    );
+    // A newer subscribe/unsubscribe may have replaced this target's grades
+    // while history was loading — only the latest subscription is owed resets.
+    const current = state.targets.get(target);
+    if (current?.transcriptGrades === undefined) return;
+    const currentSpec = current.transcriptGrades;
     this.ensureTranscriptStream(state, store);
     // The legacy agent allowlist composes with transcript grades: a
     // connection filtered to a subset never receives other agents'
     // transcript frames, whatever the grades admit.
-    const agentFilter = state.targets.get(target)?.agentFilter;
+    const agentFilter = current.agentFilter;
     for (const descriptor of store.agents()) {
       if (agentFilter !== undefined && !agentFilter.has(descriptor.agentId)) continue;
-      const grade = gradeFor(spec, descriptor.agentId);
+      const grade = gradeFor(currentSpec, descriptor.agentId);
       if (grade === 'off') continue;
       // A broadened legacy filter admits agents the grade transition alone
       // would skip (delta → delta) — having suppressed their ops so far, it
