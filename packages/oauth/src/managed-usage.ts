@@ -227,7 +227,10 @@ function resetHintFrom(raw: Record<string, unknown>): string | undefined {
   for (const key of ['reset_in', 'resetIn', 'ttl', 'window']) {
     const seconds = toInt(raw[key]);
     if (seconds !== null && seconds > 0) {
-      return resetHintForEpoch(Date.now() + seconds * 1000);
+      // Read the clock once so the derived epoch and the countdown below agree;
+      // a second read would floor away a whole second of the supplied duration.
+      const now = Date.now();
+      return resetHintForEpoch(now + seconds * 1000, now);
     }
   }
   return undefined;
@@ -252,10 +255,10 @@ export function formatResetTime(val: string): string {
  * moment rendered in the terminal's local timezone. `Date` getters are
  * inherently local-time, so no explicit timezone conversion is needed.
  */
-function resetHintForEpoch(epochMs: number): string {
-  const diffSec = Math.floor((epochMs - Date.now()) / 1000);
+function resetHintForEpoch(epochMs: number, nowMs = Date.now()): string {
+  const diffSec = Math.floor((epochMs - nowMs) / 1000);
   if (diffSec <= 0) return 'reset';
-  return `resets in ${formatDuration(diffSec)} (at ${formatLocalResetClock(epochMs)})`;
+  return `resets in ${formatDuration(diffSec)} (at ${formatLocalResetClock(epochMs, nowMs)})`;
 }
 
 /**
@@ -266,9 +269,9 @@ function resetHintForEpoch(epochMs: number): string {
  *   same year         → `01-21 14:30`
  *   different year    → `2027-01-21 14:30`
  */
-function formatLocalResetClock(epochMs: number): string {
+function formatLocalResetClock(epochMs: number, nowMs: number): string {
   const d = new Date(epochMs);
-  const now = new Date();
+  const now = new Date(nowMs);
   const pad = (n: number): string => String(n).padStart(2, '0');
   const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (d.getFullYear() !== now.getFullYear()) {

@@ -14,6 +14,8 @@ import {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('kimiCodeBaseUrl', () => {
@@ -123,10 +125,39 @@ describe('parseManagedUsagePayload', () => {
   });
 
   it('surfaces reset hints from relative reset_in seconds', () => {
+    // Frozen so the supplied duration survives verbatim: the epoch and the
+    // countdown must read the same clock, otherwise 120s renders as "1m".
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 21, 14, 0, 0));
     const parsed = parseManagedUsagePayload({
       usage: { used: 1, limit: 10, reset_in: 120 },
     });
-    expect(parsed.summary?.resetHint).toMatch(/^resets in 2m \(at \d{2}:\d{2}\)$/);
+    expect(parsed.summary?.resetHint).toBe('resets in 2m (at 14:02)');
+  });
+
+  // A frozen clock cannot catch the regression these two guard against: the
+  // epoch and the countdown must come from a *single* read, so the failure only
+  // appears once the clock ticks between them. Advance `Date.now` by 1ms per
+  // call to reproduce that in a deterministic way.
+  const tickingClock = (base: number): void => {
+    let calls = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => base + calls++);
+  };
+
+  it('keeps the supplied reset_in duration when the clock ticks mid-parse', () => {
+    tickingClock(new Date(2026, 0, 21, 14, 0, 0).getTime());
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10, reset_in: 120 },
+    });
+    expect(parsed.summary?.resetHint).toBe('resets in 2m (at 14:02)');
+  });
+
+  it('keeps a one-second reset_in window from collapsing to "reset"', () => {
+    tickingClock(new Date(2026, 0, 21, 14, 0, 0).getTime());
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10, reset_in: 1 },
+    });
+    expect(parsed.summary?.resetHint).toBe('resets in 1s (at 14:00)');
   });
 
   it('extracts extra usage from boosterWallet.balance', () => {
@@ -295,37 +326,42 @@ describe('formatResetTime', () => {
     expect(formatResetTime(past)).toBe('reset');
   });
 
+  // The clock is frozen for the boundary cases below so each one asserts an
+  // exact string. Targets are built with the local-time `Date` constructor, so
+  // the expectations hold in any timezone the suite runs under.
+  const freezeAt = (local: Date): void => {
+    vi.useFakeTimers();
+    vi.setSystemTime(local);
+  };
+
   it('returns "resets in X" plus a local clock time for future timestamps', () => {
-    const future = new Date(Date.now() + 3600_000).toISOString();
-    expect(formatResetTime(future)).toMatch(/^resets in 1h \(at .+\)$/);
+    freezeAt(new Date(2026, 0, 21, 14, 0, 0));
+    const future = new Date(2026, 0, 21, 15, 0, 0).toISOString();
+    expect(formatResetTime(future)).toBe('resets in 1h (at 15:00)');
   });
 
   it('shows bare HH:MM when the reset lands on the same local day', () => {
-    const now = new Date();
-    const sameDay = new Date(now);
-    sameDay.setMinutes(now.getMinutes() + 30);
-    // Guard: if the +30m bump crosses midnight, the assertion below would
-    // expect a date prefix instead — skip the shape check on that boundary.
-    if (sameDay.getDate() !== now.getDate()) return;
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    const expected = `${pad(sameDay.getHours())}:${pad(sameDay.getMinutes())}`;
-    expect(formatResetTime(sameDay.toISOString())).toContain(`(at ${expected})`);
+    freezeAt(new Date(2026, 0, 21, 14, 0, 0));
+    const target = new Date(2026, 0, 21, 14, 30, 0).toISOString();
+    expect(formatResetTime(target)).toBe('resets in 30m (at 14:30)');
   });
 
   it('includes the local date when the reset lands on another day of the same year', () => {
-    const target = new Date(Date.now() + 3 * 86_400_000);
-    // Guard: near year-end the +3d bump may cross into the next year.
-    if (target.getFullYear() !== new Date().getFullYear()) return;
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    const expected = `${pad(target.getMonth() + 1)}-${pad(target.getDate())} ${pad(target.getHours())}:${pad(target.getMinutes())}`;
-    expect(formatResetTime(target.toISOString())).toContain(`(at ${expected})`);
+    freezeAt(new Date(2026, 0, 21, 14, 0, 0));
+    const target = new Date(2026, 0, 24, 9, 5, 0).toISOString();
+    expect(formatResetTime(target)).toBe('resets in 2d 19h 5m (at 01-24 09:05)');
+  });
+
+  it('includes the local date when the reset crosses midnight into the next day', () => {
+    freezeAt(new Date(2026, 0, 21, 23, 50, 0));
+    const target = new Date(2026, 0, 22, 0, 20, 0).toISOString();
+    expect(formatResetTime(target)).toBe('resets in 30m (at 01-22 00:20)');
   });
 
   it('includes the year when the reset lands in a different year', () => {
-    const target = new Date(Date.now() + 400 * 86_400_000);
-    const pad = (n: number): string => String(n).padStart(2, '0');
-    const expected = `${String(target.getFullYear())}-${pad(target.getMonth() + 1)}-${pad(target.getDate())} ${pad(target.getHours())}:${pad(target.getMinutes())}`;
-    expect(formatResetTime(target.toISOString())).toContain(`(at ${expected})`);
+    freezeAt(new Date(2026, 11, 31, 23, 50, 0));
+    const target = new Date(2027, 0, 1, 0, 20, 0).toISOString();
+    expect(formatResetTime(target)).toBe('resets in 30m (at 2027-01-01 00:20)');
   });
 
   it('falls back when parsing fails', () => {
