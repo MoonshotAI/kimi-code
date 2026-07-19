@@ -11,7 +11,9 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
+import { detectShellDanger } from '../lib/shellDanger';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffViewLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
+import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -246,19 +248,6 @@ export function toAgentMember(task: AppTask): AgentMember {
 // here to avoid a circular import when tests import this module directly).
 // ---------------------------------------------------------------------------
 
-function buildDiffLines(oldText: string, newText: string): DiffLine[] {
-  const removed = oldText.split('\n');
-  const added = newText.split('\n');
-  const lines: DiffLine[] = [];
-  removed.forEach((text, i) => {
-    lines.push({ kind: 'rem', gutter: String(i + 1), text: `- ${text}` });
-  });
-  added.forEach((text, i) => {
-    lines.push({ kind: 'add', gutter: String(i + 1), text: `+ ${text}` });
-  });
-  return lines;
-}
-
 function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
   const d = (a.display ?? {}) as Record<string, unknown>;
   const kind = typeof d['kind'] === 'string' ? d['kind'] : '';
@@ -266,20 +255,44 @@ function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
   if (kind === 'diff') {
     const path = typeof d['path'] === 'string' ? d['path'] : '';
     if (Array.isArray(d['diff'])) {
-      return { kind: 'diff', path, diff: d['diff'] as DiffLine[] };
+      return { kind: 'diff', path, diff: d['diff'] as DiffViewLine[] };
     }
-    if (typeof d['old_text'] === 'string' && typeof d['new_text'] === 'string') {
-      return { kind: 'diff', path, diff: buildDiffLines(d['old_text'], d['new_text']) };
+    const before = typeof d['old_text'] === 'string' ? d['old_text'] : (typeof d['before'] === 'string' ? d['before'] : undefined);
+    const after = typeof d['new_text'] === 'string' ? d['new_text'] : (typeof d['after'] === 'string' ? d['after'] : undefined);
+    if (before !== undefined && after !== undefined) {
+      // An oversized before/after pair makes the LCS diff refuse (null) — fall
+      // back to a verbatim +/- listing so the approval never shows an empty diff.
+      const diff = buildDiffLines(before, after) ?? buildVerbatimDiffLines(before, after);
+      return { kind: 'diff', path, diff };
     }
     return { kind: 'diff', path, diff: [] };
   }
 
+  // file_io (Write / Edit / Read / Grep / Glob approvals). Write carries the
+  // full new-file content; Edit carries the old/new hunk — same mapping the
+  // TUI's approval adapter makes (content preview vs before/after diff).
+  if (kind === 'file_io') {
+    const path = typeof d['path'] === 'string' ? d['path'] : '';
+    const operation = typeof d['operation'] === 'string' ? d['operation'] : '';
+    if (operation === 'write' && typeof d['content'] === 'string') {
+      return { kind: 'file', path, content: d['content'] };
+    }
+    if (operation === 'edit' && typeof d['before'] === 'string' && typeof d['after'] === 'string') {
+      const diff = buildDiffLines(d['before'], d['after']) ?? buildVerbatimDiffLines(d['before'], d['after']);
+      return { kind: 'diff', path, diff };
+    }
+    const detail = typeof d['detail'] === 'string' ? d['detail'] : undefined;
+    return { kind: 'fileop', op: operation || kind, path, detail };
+  }
+
   if (kind === 'shell' || kind === 'command') {
+    const command = typeof d['command'] === 'string' ? d['command'] : a.action;
     return {
       kind: 'shell',
-      command: typeof d['command'] === 'string' ? d['command'] : a.action,
+      command,
       cwd: typeof d['cwd'] === 'string' ? d['cwd'] : undefined,
-      danger: typeof d['danger'] === 'string' ? d['danger'] : undefined,
+      // The daemon never fills `danger` — fall back to the display heuristic.
+      danger: typeof d['danger'] === 'string' ? d['danger'] : detectShellDanger(command),
     };
   }
 

@@ -100,6 +100,43 @@ export function buildDiffLines(before: string, after: string): DiffViewLine[] | 
   return result;
 }
 
+/**
+ * Cap on verbatim rows kept per side. The verbatim listing substitutes for a
+ * diff that already blew the LCS/rendering budget, so it must not materialize
+ * the full input either — oversized sides keep their first rows plus an
+ * omission marker line.
+ */
+const MAX_VERBATIM_SIDE_ROWS = 500;
+
+/**
+ * Verbatim before/after listing used when `buildDiffLines` refuses (inputs
+ * beyond the LCS budget). No alignment — every old line is a deletion row,
+ * every new line an addition row — but it always produces output, so an
+ * approval card never asks the user to approve a change it cannot show.
+ * Sides beyond `MAX_VERBATIM_SIDE_ROWS` are truncated with a `… N more
+ * lines …` marker row (no line number, so it renders as plain text).
+ */
+export function buildVerbatimDiffLines(before: string, after: string): DiffViewLine[] {
+  const result: DiffViewLine[] = [];
+  const oldLines = splitLines(before);
+  const newLines = splitLines(after);
+  const oldKept = Math.min(oldLines.length, MAX_VERBATIM_SIDE_ROWS);
+  const newKept = Math.min(newLines.length, MAX_VERBATIM_SIDE_ROWS);
+  for (let no = 1; no <= oldKept; no++) {
+    result.push({ type: 'del', text: oldLines[no - 1]!, oldNo: no });
+  }
+  if (oldLines.length > oldKept) {
+    result.push({ type: 'context', text: `… ${oldLines.length - oldKept} more lines …` });
+  }
+  for (let no = 1; no <= newKept; no++) {
+    result.push({ type: 'add', text: newLines[no - 1]!, newNo: no });
+  }
+  if (newLines.length > newKept) {
+    result.push({ type: 'context', text: `… ${newLines.length - newKept} more lines …` });
+  }
+  return result;
+}
+
 export function diffStats(lines: DiffViewLine[]): DiffStats {
   let added = 0;
   let removed = 0;

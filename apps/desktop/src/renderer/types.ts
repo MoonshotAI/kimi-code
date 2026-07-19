@@ -134,14 +134,6 @@ export interface AgentMember {
   swarmIndex?: number;
 }
 
-export type DiffKind = 'ctx' | 'add' | 'rem';
-
-export interface DiffLine {
-  kind: DiffKind;
-  gutter: string; // gutter (line-number) column text, e.g. '23' or '   13' or '7   7'
-  text: string;
-}
-
 /**
  * One row of a parsed UNIFIED diff (from the daemon's `fs:diff` action),
  * rendered line-by-line in the ~/diff tab.
@@ -162,12 +154,9 @@ export interface DiffViewLine {
 
 /**
  * Discriminated ApprovalBlock union.
- *
- * Phase 3 will render each kind differently; for now ApprovalCard.vue handles
- * 'diff' (the original shape) and falls back to 'generic' for everything else.
  */
 export type ApprovalBlock =
-  | { kind: 'diff'; path: string; diff: DiffLine[] }
+  | { kind: 'diff'; path: string; diff: DiffViewLine[] }
   | { kind: 'shell'; command: string; cwd?: string; danger?: string }
   | { kind: 'file'; path: string; content: string; language?: string }
   | { kind: 'fileop'; op: string; path: string; detail?: string }
@@ -188,6 +177,10 @@ export type TurnRole = 'user' | 'assistant' | 'compaction' | 'cron';
 export interface FilePreviewRequest {
   path: string;
   line?: number;
+  /** Inline content: when present the preview renders it directly without a
+   *  daemon read — used for files the daemon can't serve (e.g. plan files
+   *  living outside the workspace root). */
+  content?: string;
 }
 
 /** Metadata carried by a cron fire — shared by a standalone cron turn and by a

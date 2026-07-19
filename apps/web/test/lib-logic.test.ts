@@ -5,7 +5,7 @@ import {
   parseFilePathLinkCandidate,
 } from '@moonshot-ai/web-markdown/lib/filePathLinks';
 import { parseDiff } from '../src/lib/parseDiff';
-import { buildDiffLines } from '../src/lib/diffLines';
+import { buildDiffLines, buildVerbatimDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines, buildWriteContent, toolFilePath } from '../src/lib/toolDiff';
 import { parseReadOutput } from '../src/lib/readOutput';
 import { codeLanguageFromPath } from '../src/lib/codeLanguage';
@@ -319,6 +319,44 @@ describe('buildDiffLines', () => {
   it('returns null when one side is huge even though the matrix is small', () => {
     const huge = Array.from({ length: 6000 }, (_, i) => `line${i}`).join('\n');
     expect(buildDiffLines('one line', huge)).toBeNull();
+  });
+});
+
+describe('buildVerbatimDiffLines', () => {
+  it('lists every old line as a deletion and every new line as an addition', () => {
+    expect(buildVerbatimDiffLines('a\nb', 'B\nc\nd')).toEqual([
+      { type: 'del', text: 'a', oldNo: 1 },
+      { type: 'del', text: 'b', oldNo: 2 },
+      { type: 'add', text: 'B', newNo: 1 },
+      { type: 'add', text: 'c', newNo: 2 },
+      { type: 'add', text: 'd', newNo: 3 },
+    ]);
+  });
+
+  it('caps oversized sides with an omission marker row', () => {
+    const huge = Array.from({ length: 6000 }, (_, i) => `line${i}`).join('\n');
+    expect(buildDiffLines('one line', huge)).toBeNull();
+    const rows = buildVerbatimDiffLines('one line', huge);
+    // 1 del (under the cap) + 500 kept adds + 1 omission marker
+    expect(rows).toHaveLength(502);
+    expect(rows[0]).toEqual({ type: 'del', text: 'one line', oldNo: 1 });
+    expect(rows[1]).toEqual({ type: 'add', text: 'line0', newNo: 1 });
+    expect(rows[500]).toEqual({ type: 'add', text: 'line499', newNo: 500 });
+    expect(rows[501]).toEqual({ type: 'context', text: '… 5500 more lines …' });
+  });
+
+  it('truncates both sides when each exceeds the cap', () => {
+    const big = (prefix: string) => Array.from({ length: 6000 }, (_, i) => `${prefix}${i}`).join('\n');
+    const rows = buildVerbatimDiffLines(big('old'), big('new'));
+    expect(rows).toHaveLength(1002);
+    expect(rows[499]).toEqual({ type: 'del', text: 'old499', oldNo: 500 });
+    expect(rows[500]).toEqual({ type: 'context', text: '… 5500 more lines …' });
+    expect(rows[501]).toEqual({ type: 'add', text: 'new0', newNo: 1 });
+    expect(rows[1001]).toEqual({ type: 'context', text: '… 5500 more lines …' });
+  });
+
+  it('returns empty for two empties', () => {
+    expect(buildVerbatimDiffLines('', '')).toEqual([]);
   });
 });
 

@@ -118,6 +118,23 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
     previewTarget.value = target;
     previewNormalizedPath.value = null;
 
+    // Inline content (e.g. the plan file, which lives outside the workspace
+    // root and the daemon can't serve): render directly, no fetch. Keep
+    // previewNormalizedPath null — a download URL built from it would point at
+    // a path the daemon cannot serve.
+    if (typeof target.content === 'string') {
+      previewLoading.value = false;
+      previewFile.value = {
+        path: target.path,
+        content: target.content,
+        encoding: 'utf-8',
+        mime: 'text/markdown',
+        isBinary: false,
+        size: target.content.length,
+      };
+      return;
+    }
+
     const normalized = normalizePreviewPath(target.path);
     if ('error' in normalized) {
       previewLoading.value = false;

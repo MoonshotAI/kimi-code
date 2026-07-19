@@ -1517,6 +1517,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @open-agent="emit('openAgent', $event)"
+        :open-file="(target) => emit('openFile', target)"
         @answer="handleQuestionAnswer"
         @dismiss="emit('dismiss', $event)"
         @approval="handleApproval"

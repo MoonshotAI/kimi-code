@@ -164,14 +164,15 @@ html[data-accent="mono"] {
 
 /* mono accent × dark: the light grayscale above would win over the dark
    variables (same specificity, later in source) — remap to dark grays.
-   Text/icons sitting ON the accent colour use var(--bg), so the near-white
-   accent stays readable here. */
+   The accent itself goes near-white here, so text/icons sitting ON it must
+   flip to dark — otherwise buttons render white-on-white. */
 html[data-color-scheme="dark"][data-accent="mono"] {
   --accent-primary: #e8eaed;
   --color-accent: #e8eaed;
   --color-accent-hover: #c9cdd4;
   --color-accent-soft: #21262d;
   --color-accent-bd: #444c56;
+  --color-text-on-accent: #171717;
   --blue: #e8eaed;
   --blue2: #c9cdd4;
   --soft: #21262d;
@@ -187,6 +188,7 @@ html[data-color-scheme="dark"][data-accent="mono"] {
     --color-accent-hover: #c9cdd4;
     --color-accent-soft: #21262d;
     --color-accent-bd: #444c56;
+    --color-text-on-accent: #171717;
     --blue: #e8eaed;
     --blue2: #c9cdd4;
     --soft: #21262d;
@@ -359,6 +361,9 @@ html[data-color-scheme="dark"][data-accent="mono"] {
 
   /* -- IconButton box sizes (design-system §03) ----------------------------- */
   --icon-button-sm: 26px;
+
+  /* -- decision-card number chip (design-system §04) ------------------------ */
+  --p-chip-num: 20px;
 
   /* -- layout & breakpoints (design-system §02) ---------------------------- */
   --p-sidebar-w: 264px;

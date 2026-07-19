@@ -1,6 +1,4 @@
 export default {
-  title: 'Question',
-  step: 'Q{current}/{total}',
   back: '‹ Back',
   nextQuestion: 'Next question ›',
   otherDefault: 'Other…',
@@ -8,4 +6,5 @@ export default {
   dismiss: 'Dismiss',
   minimize: 'Minimize',
   expand: 'Expand',
+  hint: '↑↓ to choose · Enter to confirm',
 } as const;

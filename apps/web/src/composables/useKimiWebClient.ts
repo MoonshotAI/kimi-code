@@ -16,6 +16,8 @@ import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
+import { detectShellDanger } from '../lib/shellDanger';
+import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
 import {
   loadUnread,
   loadWorkspaceOrder,
@@ -92,7 +94,6 @@ import type {
   ChatTurn,
   ConnectionState,
   ConversationStatus,
-  DiffLine,
   DiffViewLine,
   PermissionMode,
   QueuedPromptView,
@@ -1662,43 +1663,53 @@ if (import.meta.hot) {
   });
 }
 
-/** Build DiffLine[] from old_text/new_text strings */
-function buildDiffLines(oldText: string, newText: string): DiffLine[] {
-  const removed = oldText.split('\n');
-  const added = newText.split('\n');
-  const lines: DiffLine[] = [];
-  removed.forEach((text, i) => {
-    lines.push({ kind: 'rem', gutter: String(i + 1), text: `- ${text}` });
-  });
-  added.forEach((text, i) => {
-    lines.push({ kind: 'add', gutter: String(i + 1), text: `+ ${text}` });
-  });
-  return lines;
-}
-
 /** Build ApprovalBlock from AppApprovalRequest (discriminated union) */
 function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
   // Cast display to a loose dict for defensive reading
   const d = (a.display ?? {}) as Record<string, unknown>;
   const kind = typeof d.kind === 'string' ? d.kind : '';
 
-  // diff
+  // diff (display kind): before/after pair or a prebuilt row array
   if (kind === 'diff') {
     const path = typeof d.path === 'string' ? d.path : '';
     if (Array.isArray(d.diff)) {
-      return { kind: 'diff', path, diff: d.diff as DiffLine[] };
+      return { kind: 'diff', path, diff: d.diff as DiffViewLine[] };
     }
-    if (typeof d.old_text === 'string' && typeof d.new_text === 'string') {
-      return { kind: 'diff', path, diff: buildDiffLines(d.old_text, d.new_text) };
+    const before = typeof d.old_text === 'string' ? d.old_text : (typeof d.before === 'string' ? d.before : undefined);
+    const after = typeof d.new_text === 'string' ? d.new_text : (typeof d.after === 'string' ? d.after : undefined);
+    if (before !== undefined && after !== undefined) {
+      // An oversized before/after pair makes the LCS diff refuse (null) — fall
+      // back to a verbatim +/- listing so the approval never shows an empty diff.
+      const diff = buildDiffLines(before, after) ?? buildVerbatimDiffLines(before, after);
+      return { kind: 'diff', path, diff };
     }
     return { kind: 'diff', path, diff: [] };
+  }
+
+  // file_io (Write / Edit / Read / Grep / Glob approvals). Write carries the
+  // full new-file content; Edit carries the old/new hunk — same mapping the
+  // TUI's approval adapter makes (content preview vs before/after diff).
+  if (kind === 'file_io') {
+    const path = typeof d.path === 'string' ? d.path : '';
+    const operation = typeof d.operation === 'string' ? d.operation : '';
+    if (operation === 'write' && typeof d.content === 'string') {
+      return { kind: 'file', path, content: d.content };
+    }
+    if (operation === 'edit' && typeof d.before === 'string' && typeof d.after === 'string') {
+      const diff = buildDiffLines(d.before, d.after) ?? buildVerbatimDiffLines(d.before, d.after);
+      return { kind: 'diff', path, diff };
+    }
+    const detail = typeof d.detail === 'string' ? d.detail : undefined;
+    return { kind: 'fileop', op: operation || kind, path, detail };
   }
 
   // shell / command
   if (kind === 'shell' || kind === 'command') {
     const command = typeof d.command === 'string' ? d.command : a.action;
     const cwd = typeof d.cwd === 'string' ? d.cwd : undefined;
-    const danger = typeof d.danger === 'string' ? d.danger : undefined;
+    // The daemon's `danger` slot is currently never filled — fall back to a
+    // display-layer heuristic so destructive commands still get the hint.
+    const danger = typeof d.danger === 'string' ? d.danger : detectShellDanger(command);
     return { kind: 'shell', command, cwd, danger };
   }
 

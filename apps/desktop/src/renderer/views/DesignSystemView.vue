@@ -594,10 +594,10 @@ onUnmounted(() => {
 
             <!-- ===== Card / Surface ===== -->
             <h3 class="sub">Card / Surface</h3>
-            <p>All cards across the site share <b>one shell</b>: flat, <code>1px</code> border, <code>--radius-md</code> radius, <b>no shadow</b>. The structure is split into three parts — <code>head / body / foot</code>. Cards differ <b>only in the head</b> — in two tiers by visual weight, while the shell stays consistent:</p>
+            <p>All cards across the site share <b>one structure</b> — <code>head / body / foot</code> — and come in two tiers by visual weight:</p>
             <ul class="clean">
-              <li><b>Operation card</b> —— "process" content such as tool calls, Agent, Todo. The head is compact mono with no fill, low weight by default, not competing with the conversation.</li>
-              <li><b>Attention card</b> —— content that needs a user decision, such as Question / Approval. The head carries a semantic color band (accent / warning) to stand out from the message stream.</li>
+              <li><b>Operation card</b> —— "process" content such as tool calls, Agent, Todo. Flat shell: <code>1px</code> border, <code>--radius-md</code>, no shadow. The head is compact mono with no fill, low weight by default, not competing with the conversation.</li>
+              <li><b>Attention card</b> —— content that needs a user decision, such as Question / Approval. A floating neutral card: white raised surface, <code>--radius-xl</code>, soft shadow, a plain dark title head, and a hairline footer whose actions read in number-key order (chips on the buttons) leading to one solid primary action. No semantic color band.</li>
             </ul>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Operation card · compact mono head (no fill)</span></div>
@@ -612,11 +612,12 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="stage-wrap">
-              <div class="stage-bar"><span class="st">Attention card · semantic color-band head (accent / warning)</span></div>
+              <div class="stage-bar"><span class="st">Attention card · floating neutral surface (no color band)</span></div>
               <div class="stage p col">
                 <div class="p-action" style="max-width:460px">
-                  <div class="p-action-head"><span class="p-action-title">A decision needs your confirmation</span><span class="p-badge info sm" style="margin-left:auto">question</span></div>
-                  <div class="p-action-body">The head uses a semantic light background (<code>accent-soft</code> / <code>warning-soft</code>) to stand out from the message stream, signaling that the user must step in. The shell is exactly the same as the operation card.</div>
+                  <div class="p-action-head"><span class="p-action-title">A decision needs your confirmation</span></div>
+                  <div class="p-action-body">A floating neutral card — no color band. The raised surface, large radius and soft shadow lift it above the transcript; the head is a plain dark title, and the hairline footer lines up quiet text buttons leading to one solid primary action.</div>
+                  <div class="p-action-foot"><button class="p-btn ghost sm">Dismiss</button><button class="p-btn primary sm">Confirm</button></div>
                 </div>
               </div>
             </div>
@@ -631,8 +632,8 @@ onUnmounted(() => {
               </div>
             </div>
             <ul class="clean check">
-              <li><b>Unified shell</b>: all cards are flat + 1px border + radius-md, casting no shadow.</li>
-              <li><b>Differences are intentional</b>: only the head distinguishes the type (compact mono vs semantic color band); the shell stays consistent.</li>
+              <li><b>One structure, two shells</b>: every card is <code>head / body / foot</code>; operation cards are flat + 1px border + radius-md with no shadow, while the attention card is the single exception — raised surface, radius-xl and a soft shadow, because it floats above the transcript in place of the composer.</li>
+              <li><b>Differences are intentional</b>: operation cards keep a compact mono head; attention cards get a plain dark title head and footer actions.</li>
               <li><b>Grouping</b>: the outer container owns the border and radius; inner rows are separated by <code>border-top</code> hairlines, rather than each row being its own card.</li>
               <li><b>Status dots</b>: running (pulsing blue) / done (green) / failed (red), sharing one color vocabulary (see §04 tool calls).</li>
             </ul>
@@ -1039,7 +1040,7 @@ onUnmounted(() => {
             </div>
             <p class="sec-desc">
               The message stream is the core of Kimi Web. The goal of the overhaul: have the 6 card types (Agent / Tool / Question / Approval / Swarm / Todo)
-              <b>share one card skeleton</b>, distinguished only by the head icon and semantic color; and collapse the Composer into a single rounded container.
+              <b>share one card skeleton</b>, distinguished only by the head icon; Question and Approval elevate to a floating neutral surface because they need a decision; and collapse the Composer into a single rounded container.
             </p>
 
             <h3 class="sub">Unified message stream</h3>
@@ -1108,28 +1109,25 @@ onUnmounted(() => {
                   <!-- question (needs a user decision → keep the full card) -->
                   <div class="p-action">
                     <div class="p-action-head">
-                      <svg class="p-ic" style="color:var(--p-accent)" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10s-4.477 10-10 10m0-2a8 8 0 1 0 0-16a8 8 0 0 0 0 16m-1-5h2v2h-2zm2-1.645V14h-2v-1.5a1 1 0 0 1 1-1a1.5 1.5 0 1 0-1.471-1.794l-1.962-.393A3.501 3.501 0 1 1 13 13.355"/></svg>
                       <span class="p-action-title">A decision needs your confirmation</span>
                     </div>
                     <div class="p-action-body">How long should the JWT expiry be? Default 7 days, refresh token 30 days.</div>
                     <div class="p-action-foot">
-                      <button class="p-btn secondary sm">Customize</button>
+                      <button class="p-btn ghost sm">Customize</button>
                       <button class="p-btn primary sm">Use default</button>
                     </div>
                   </div>
 
-                  <!-- approval (warning) -->
-                  <div class="p-action warn">
+                  <!-- approval (same floating neutral card) -->
+                  <div class="p-action">
                     <div class="p-action-head">
-                      <svg class="p-ic" style="color:var(--p-warning)" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m12.866 3l9.526 16.5a1 1 0 0 1-.866 1.5H2.474a1 1 0 0 1-.866-1.5L11.134 3a1 1 0 0 1 1.732 0m-8.66 16h15.588L12 5.5zM11 16h2v2h-2zm0-7h2v5h-2z"/></svg>
                       <span class="p-action-title">Write permission required</span>
-                      <span class="p-badge warning sm" style="margin-left:auto">write_file</span>
                     </div>
                     <div class="p-action-body">About to modify <code>src/auth/middleware.ts</code>, 42 lines changed. Allow?</div>
                     <div class="p-action-foot">
-                      <button class="p-btn secondary sm">Deny</button>
                       <button class="p-btn primary sm">Allow this time</button>
                       <button class="p-btn ghost sm">Always allow</button>
+                      <button class="p-btn ghost sm">Deny</button>
                     </div>
                   </div>
 
@@ -1171,9 +1169,9 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <span class="stage-label">③ Decision card · heavy (only question / approval, needs user input)</span>
-                <div class="p-action warn">
-                  <div class="p-action-head"><span class="p-action-title">Write permission required</span><span class="p-badge warning sm" style="margin-left:auto">write_file</span></div>
-                  <div class="p-action-body" style="padding:10px 14px;font-size:13px">About to modify <code>src/auth/middleware.ts</code>, 42 lines changed.</div>
+                <div class="p-action">
+                  <div class="p-action-head"><span class="p-action-title">Write permission required</span></div>
+                  <div class="p-action-body">About to modify <code>src/auth/middleware.ts</code>, 42 lines changed.</div>
                 </div>
               </div>
             </div>
@@ -1198,6 +1196,30 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+
+            <h3 class="sub">Decision cards · Question / Approval</h3>
+            <p>The two attention cards replace the composer in the dock and share one contract: a floating neutral shell (<code>--color-surface-raised</code> + hairline + <code>--radius-xl</code> + <code>--shadow-md</code>), a plain dark 16px title head, and a hairline footer whose actions read in number-key order with exactly one accent primary. There is no semantic colour band — the floating card itself is the "needs a decision" signal.</p>
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">Plan review · pinned option rows, second-line descriptions</span></div>
+              <div class="stage p col">
+                <div class="p-action" style="max-width:520px">
+                  <div class="p-action-head"><span class="p-action-title">按这份 plan 开始实现?</span></div>
+                  <div class="p-action-body">The plan markdown scrolls in a capped area; the approaches are pinned below it — label on the first line, full description always on the second. The number chip doubles as the keyboard hint.</div>
+                  <div class="p-opts">
+                    <div class="p-opt"><span class="n">1</span><span class="p-opt-text"><span class="l">方案 A：静态徽章</span><span class="d">零依赖、渲染稳定，升级时需手动同步版本号。</span></span></div>
+                    <div class="p-opt"><span class="n">2</span><span class="p-opt-text"><span class="l">方案 B：动态徽章</span><span class="d">版本自动同步免维护，但要求仓库公开可访问。</span></span></div>
+                  </div>
+                  <div class="p-action-foot"><button class="p-btn ghost sm">修改</button><button class="p-btn ghost sm">拒绝并退出</button></div>
+                </div>
+              </div>
+            </div>
+            <ul class="clean check">
+              <li><b>Footer contract</b>: actions are left-aligned in number-key order (1·2·3·4), each carrying a number chip — sized by <code>--p-chip-num</code> over <code>--color-inline-code-bg</code>, the same chip vocabulary as option rows and the multi-step chip; exactly one <code>primary</code> action, the rest are <code>ghost</code>. Feedback mode swaps the whole footer for submit / cancel.</li>
+              <li><b>Body by kind</b>: Write approvals preview the incoming content with <code>HighlightedCode</code> (syntax-highlighted, 24-row cap with scroll); Edit approvals render the before/after hunk as a highlighted line diff. Plan / diff / file kinds get a head expand toggle that lifts the cap so the block fills the card; the card itself never exceeds the pane (only the scroll area shrinks).</li>
+              <li><b>Danger hint</b>: destructive shell commands (rm -rf, sudo, force-push…) show a <code>danger-soft</code> filled hint row under the command — detection is a display-layer heuristic on the client.</li>
+              <li><b>Minimized</b>: the card collapses to a thin bar with a mono peek of the subject; the whole bar is the expand click target.</li>
+              <li><b>Question card</b>: the title is the question itself (2-line clamp), with a step chip for multi-question flows and a × dismiss button. Options use CSS radio/checkbox glyphs (accent when selected); keyboard: ↑↓ moves (Space toggles in multi), digits pick, Enter advances/submits, Esc dismisses.</li>
+            </ul>
 
             <h3 class="sub">Composer</h3>
             <p>Unified into a single rounded container: <code>--radius-xl</code> with a stable 0.5px border; focus changes it to blue and adds a soft ring without changing the container size. The textarea uses <code>text-autospace: normal</code> for mixed CJK and Latin input. Toolbar controls all use the Pill / IconButton primitives; the context ring drops horizontal inset so it sits close to the model switcher, and the send button is a 32px circle.</p>
@@ -2166,15 +2188,22 @@ onUnmounted(() => {
   .p-tool-body { padding: 12px 13px; }
   .p-code { font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); line-height: 1.65; background: var(--p-surface-sunken); border: 1px solid var(--p-line); border-radius: var(--p-r-md); padding: 11px 13px; color: var(--p-text); overflow-x: auto; }
 
-  /* ===== Chat: question / approval card ===== */
-  .p-action { border-radius: var(--p-r-md); overflow: hidden; border: 1px solid var(--p-accent-bd); background: var(--p-surface); }
-  .p-action.warn { border-color: var(--p-warning-bd); }
-  .p-action-head { display: flex; align-items: center; gap: 9px; padding: 10px 14px; background: var(--p-accent-soft); border-bottom: 1px solid var(--p-accent-bd); }
-  .p-action.warn .p-action-head { background: var(--p-warning-soft); border-bottom-color: var(--p-warning-bd); }
-  .p-action-title { font-size: var(--p-font-size-base); font-weight: 600; color: var(--p-accent-hover); }
-  .p-action.warn .p-action-title { color: var(--p-warning); }
-  .p-action-body { padding: 14px; font-size: var(--p-font-size-base); color: var(--p-text); line-height: var(--p-leading-normal); }
-  .p-action-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--p-line); background: var(--p-surface); }
+  /* ===== Chat: question / approval card (floating neutral attention card) ===== */
+  .p-action { border-radius: var(--p-r-xl); overflow: hidden; border: 1px solid var(--p-line); background: var(--p-surface-raised); box-shadow: var(--p-sh-md); }
+  .p-action-head { display: flex; align-items: center; gap: 9px; padding: 14px 16px 0; }
+  .p-action-title { font-size: var(--p-font-size-base); font-weight: 600; color: var(--p-text); }
+  .p-action-body { padding: 12px 16px 0; font-size: var(--p-font-size-base); color: var(--p-text); line-height: var(--p-leading-normal); }
+  .p-action-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; padding: 10px 16px; border-top: 1px solid var(--p-line); }
+
+  /* Decision-card option rows — plan approaches pinned below the plan scroll
+     area, or question options. Borderless rows: number chip + label on the
+     first line, full description always on the second. */
+  .p-opts { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; padding: 12px 16px; border-top: 1px solid var(--p-line); }
+  .p-opt { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--p-r-md); color: var(--p-text); font-size: var(--p-font-size-base); }
+  .p-opt .n { width: var(--p-chip-num); height: var(--p-chip-num); border-radius: var(--p-r-sm); background: var(--p-surface-sunken); color: var(--p-text); font-size: var(--p-font-size-xs); font-weight: 500; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .p-opt-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .p-opt-text .l { font-weight: 500; }
+  .p-opt-text .d { font-size: var(--p-font-size-xs); color: var(--p-text-muted); line-height: var(--p-leading-normal); }
 
   /* ===== Chat: Todo card ===== */
   .p-todo { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); padding: 6px; }

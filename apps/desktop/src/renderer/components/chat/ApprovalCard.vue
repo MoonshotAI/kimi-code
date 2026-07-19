@@ -2,10 +2,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ApprovalBlock } from '../../types';
+import type { ApprovalBlock, FilePreviewRequest } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
-import { Badge, Button, Card, Icon, IconButton, Kbd, Tooltip } from '@moonshot-ai/web-ui';
+import { Badge, Button, Icon, IconButton, Spinner } from '@moonshot-ai/web-ui';
+import HighlightedCode from '../HighlightedCode.vue';
 
 const props = defineProps<{
   block: ApprovalBlock;
@@ -13,6 +14,8 @@ const props = defineProps<{
   /** True while a decision for this approval is in flight. Drives the action
    *  buttons' loading/disabled state and blocks duplicate decisions. */
   busy?: boolean;
+  /** Open a file in the right-side preview panel (plan path, markdown paths). */
+  openFile?: (target: FilePreviewRequest) => void;
 }>();
 
 const emit = defineEmits<{
@@ -37,19 +40,61 @@ const planReview = computed<PlanReviewView | null>(() => {
 // while the user reads. The decision buttons + body return on expand.
 const minimized = ref(false);
 
+// Lift the content body's height cap so long plans / Write previews / Edit
+// diffs can be read in full ("expand to tallest"). Independent of `minimized`
+// (the whole-card bar). Only shown for the kinds that can grow tall.
+const expanded = ref(false);
+const expandable = computed(() => {
+  const k = props.block.kind;
+  return k === 'plan_review' || k === 'diff' || k === 'file';
+});
+
+// The whole minimized bar is a click target — not just the chevron icon.
+function expandFromBar(): void {
+  if (minimized.value) minimized.value = false;
+}
+
 // ---------------------------------------------------------------------------
-// Title by kind
+// Header: per-kind icon + title. The subject (command / path / url …) lives
+// only in the body — the head never repeats it. While minimized the body is
+// hidden, so a one-line `peek` summary keeps the bar identifiable.
 // ---------------------------------------------------------------------------
 
 const titleKinds = ['shell', 'diff', 'file', 'fileop', 'url', 'search', 'invocation', 'todo', 'plan_review', 'generic'];
 
-function title(): string {
-  const kind = titleKinds.includes(props.block.kind) ? props.block.kind : 'generic';
-  return t(`approval.title.${kind}`);
+function safeKind(): string {
+  return titleKinds.includes(props.block.kind) ? props.block.kind : 'generic';
 }
 
+function title(): string {
+  return t(`approval.title.${safeKind()}`);
+}
+
+const peek = computed<string>(() => {
+  const b = props.block;
+  switch (b.kind) {
+    case 'diff':
+    case 'file':
+    case 'fileop':
+      return b.path;
+    case 'shell':
+      return b.command;
+    case 'url':
+      return b.url;
+    case 'search':
+      return b.query;
+    case 'invocation':
+      return b.name;
+    case 'generic':
+      return b.summary;
+    default:
+      return '';
+  }
+});
+
 // ---------------------------------------------------------------------------
-// Inline feedback
+// Inline feedback — a rejection with an explanation. While open it owns the
+// footer (submit / cancel), so the decision buttons can't fire behind it.
 // ---------------------------------------------------------------------------
 
 const feedbackOpen = ref(false);
@@ -78,6 +123,7 @@ function submitFeedback(): void {
 }
 
 function cancelFeedback(): void {
+  if (props.busy) return;
   feedbackOpen.value = false;
   feedbackText.value = '';
 }
@@ -141,6 +187,13 @@ function rejectAndExitPlan(): void { act('rejectAndExit', { decision: 'rejected'
 function handleKeydown(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName ?? '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
+  // Esc anywhere outside the textarea also cancels the feedback mode.
+  if (feedbackOpen.value) {
+    if (e.key === 'Escape') { e.preventDefault(); cancelFeedback(); }
+    // The decision buttons are swapped out while feedback is open — don't let
+    // number keys fire actions the user can't see.
+    return;
+  }
   // While a decision is in flight, ignore number-key shortcuts so a stray key
   // can't fire a duplicate decide.
   if (props.busy) return;
@@ -170,253 +223,307 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 </script>
 
 <template>
-  <Card class="appr" :class="{ minimized }">
-    <!-- Header -->
-    <template #head>
-      <div class="ah">
-        <span class="ah-ic">!</span>
-        <span class="akind">{{ title() }}</span>
-        <span class="apath">
-          <template v-if="block.kind === 'diff' || block.kind === 'file' || block.kind === 'fileop'">{{ block.path }}</template>
-          <template v-else-if="block.kind === 'shell'">{{ block.command }}</template>
-          <template v-else-if="block.kind === 'url'">{{ block.url }}</template>
-          <template v-else-if="block.kind === 'search'">{{ block.query }}</template>
-          <template v-else-if="block.kind === 'invocation'">{{ block.name }}</template>
-          <template v-else-if="block.kind === 'generic'">{{ block.summary }}</template>
-        </span>
-        <Badge v-if="agentName && !minimized" variant="neutral" size="sm">{{ t('approval.subagentBadge', { name: agentName }) }}</Badge>
-        <Badge v-if="!minimized" variant="warning" size="sm" class="aw">{{ t('approval.required') }}</Badge>
-        <IconButton
-          class="amin"
-          size="sm"
-          :label="minimized ? t('question.expand') : t('question.minimize')"
-          @click="minimized = !minimized"
-        >
-          <Icon v-if="minimized" name="chevron-up" size="md" />
-          <Icon v-else name="minus" size="md" />
-        </IconButton>
-      </div>
-    </template>
+  <div class="appr" :class="{ minimized }">
+    <!-- Header: quiet neutral row — per-kind icon + title, optional subagent
+         badge, minimize pinned right. No status band; the card itself is the
+         "needs a decision" signal. -->
+    <div class="ah" :class="{ clickable: minimized }" @click="expandFromBar">
+      <span class="akind">{{ title() }}</span>
+      <Badge v-if="agentName && !minimized" variant="neutral" size="sm">{{ t('approval.subagentBadge', { name: agentName }) }}</Badge>
+      <span v-if="minimized && peek" class="apeek">{{ peek }}</span>
+      <IconButton
+        v-if="expandable && !minimized"
+        class="aexpand"
+        size="sm"
+        :label="expanded ? t('approval.collapsePlan') : t('approval.expandPlan')"
+        @click="expanded = !expanded"
+      >
+        <Icon :name="expanded ? 'collapse' : 'expand'" size="md" />
+      </IconButton>
+      <IconButton
+        class="amin"
+        size="sm"
+        :label="minimized ? t('question.expand') : t('question.minimize')"
+        @click.stop="minimized = !minimized"
+      >
+        <Icon v-if="minimized" name="chevron-up" size="md" />
+        <Icon v-else name="minus" size="md" />
+      </IconButton>
+    </div>
 
-    <!-- Body + actions collapse when minimized -->
-    <template v-if="!minimized" #default>
-      <!-- plan_review: plan file path on the body's first line -->
-      <Tooltip v-if="block.kind === 'plan_review' && block.path" :text="block.path">
-        <div class="ah-path">{{ block.path }}</div>
-      </Tooltip>
+    <template v-if="!minimized">
+      <div class="ab">
+        <!-- plan_review: plan file path as a link — opens the file preview in
+             the right-side panel (inline content: the plan file lives outside
+             the workspace root, so the preview renders the in-memory plan). -->
+        <button
+          v-if="block.kind === 'plan_review' && block.path"
+          type="button"
+          class="plan-path"
+          :title="block.path"
+          @click="props.openFile?.({ path: block.path!, content: block.plan })"
+        >{{ block.path }}</button>
 
-      <!-- Body by kind -->
+        <!-- Body by kind -->
 
-      <!-- diff -->
-      <div v-if="block.kind === 'diff'" class="diff">
-        <div v-for="(line, i) in block.diff" :key="i" class="dl" :class="line.kind === 'add' ? 'add' : line.kind === 'rem' ? 'del' : ''">
-          <span class="dg">{{ line.gutter }}</span><span class="dc">{{ line.text }}</span>
+        <!-- diff (Edit approval): mono path + syntax-highlighted line diff
+             (hunk-relative rows, no file line-number gutter) -->
+        <div v-if="block.kind === 'diff'" class="body-code" :class="{ expanded }">
+          <div class="code-path">{{ block.path }}</div>
+          <HighlightedCode v-if="block.diff.length > 0" :lines="block.diff" :path="block.path" />
         </div>
-      </div>
 
-      <!-- shell -->
-      <div v-else-if="block.kind === 'shell'" class="body-shell">
-        <div class="shell-cmd"><span class="shell-dollar">$</span> {{ block.command }}</div>
-        <div v-if="block.cwd" class="shell-cwd">cwd: {{ block.cwd }}</div>
-        <div v-if="block.danger" class="shell-danger">{{ t('approval.danger', { detail: block.danger }) }}</div>
-      </div>
-
-      <!-- file -->
-      <div v-else-if="block.kind === 'file'" class="body-file">
-        <div class="file-bar">
-          <span class="file-lang">{{ block.language ?? '' }}</span>
-        </div>
-        <div class="file-content">
-          <div v-for="(line, i) in block.content.split('\n')" :key="i" class="file-line">
-            <span class="file-ln">{{ i + 1 }}</span><span class="file-text">{{ line }}</span>
+        <!-- shell -->
+        <div v-else-if="block.kind === 'shell'" class="body-shell">
+          <div class="shell-cmd"><span class="shell-dollar">$</span> {{ block.command }}</div>
+          <div v-if="block.cwd" class="shell-cwd">cwd: {{ block.cwd }}</div>
+          <div v-if="block.danger" class="shell-danger">
+            <Icon name="alert-triangle" size="sm" class="shell-danger-ic" />
+            <span>{{ t('approval.danger', { detail: block.danger }) }}</span>
           </div>
         </div>
-      </div>
 
-      <!-- fileop -->
-      <div v-else-if="block.kind === 'fileop'" class="body-chip">
-        <span class="chip-label">{{ block.op }}</span>
-        <span class="chip-value">{{ block.path }}</span>
-        <span v-if="block.detail" class="chip-detail">{{ block.detail }}</span>
-      </div>
+        <!-- file (Write approval): mono path + syntax-highlighted preview of
+             the content about to land on disk -->
+        <div v-else-if="block.kind === 'file'" class="body-code" :class="{ expanded }">
+          <div class="code-path">{{ block.path }}</div>
+          <HighlightedCode :code="block.content" :path="block.path" />
+        </div>
 
-      <!-- url -->
-      <div v-else-if="block.kind === 'url'" class="body-chip">
-        <span v-if="block.method" class="chip-label">{{ block.method }}</span>
-        <span class="chip-value">{{ block.url }}</span>
-      </div>
+        <!-- fileop -->
+        <div v-else-if="block.kind === 'fileop'" class="body-chip">
+          <span class="chip-label">{{ block.op }}</span>
+          <span class="chip-value">{{ block.path }}</span>
+          <span v-if="block.detail" class="chip-detail">{{ block.detail }}</span>
+        </div>
 
-      <!-- search -->
-      <div v-else-if="block.kind === 'search'" class="body-chip">
-        <span class="chip-label">{{ t('approval.searchQueryLabel') }}</span>
-        <span class="chip-value">{{ block.query }}</span>
-        <span v-if="block.scope" class="chip-detail">{{ t('approval.searchScope', { scope: block.scope }) }}</span>
-      </div>
+        <!-- url -->
+        <div v-else-if="block.kind === 'url'" class="body-chip">
+          <span v-if="block.method" class="chip-label">{{ block.method }}</span>
+          <span class="chip-value">{{ block.url }}</span>
+        </div>
 
-      <!-- invocation -->
-      <div v-else-if="block.kind === 'invocation'" class="body-chip">
-        <span class="chip-label">{{ block.kind2 }}</span>
-        <span class="chip-value">{{ block.name }}</span>
-        <span v-if="block.description" class="chip-detail">{{ block.description }}</span>
-      </div>
+        <!-- search -->
+        <div v-else-if="block.kind === 'search'" class="body-chip">
+          <span class="chip-label">{{ t('approval.searchQueryLabel') }}</span>
+          <span class="chip-value">{{ block.query }}</span>
+          <span v-if="block.scope" class="chip-detail">{{ t('approval.searchScope', { scope: block.scope }) }}</span>
+        </div>
 
-      <!-- todo -->
-      <div v-else-if="block.kind === 'todo'" class="body-todo">
-        <div v-for="(item, i) in block.items" :key="i" class="todo-item">
-          <span class="todo-glyph">{{ item.status === 'done' || item.status === 'completed' ? '✓' : '○' }}</span>
-          <span class="todo-title" :class="{ 'todo-done': item.status === 'done' || item.status === 'completed' }">{{ item.title }}</span>
+        <!-- invocation -->
+        <div v-else-if="block.kind === 'invocation'" class="body-chip">
+          <span class="chip-label">{{ block.kind2 }}</span>
+          <span class="chip-value">{{ block.name }}</span>
+          <span v-if="block.description" class="chip-detail">{{ block.description }}</span>
+        </div>
+
+        <!-- todo -->
+        <div v-else-if="block.kind === 'todo'" class="body-todo">
+          <div v-for="(item, i) in block.items" :key="i" class="todo-item">
+            <span class="todo-glyph">{{ item.status === 'done' || item.status === 'completed' ? '✓' : '○' }}</span>
+            <span class="todo-title" :class="{ 'todo-done': item.status === 'done' || item.status === 'completed' }">{{ item.title }}</span>
+          </div>
+        </div>
+
+        <!-- plan_review: plan markdown in a capped scroll area, then the
+             offered approaches as numbered option rows PINNED below the
+             scroll area (always visible — the approve action must never be
+             buried at the end of a long plan) -->
+        <div v-else-if="block.kind === 'plan_review'" class="body-plan-wrap">
+          <div class="body-plan" :class="{ expanded }">
+            <Markdown :text="block.plan" :open-file="props.openFile" />
+          </div>
+          <div v-if="planReview && planReview.options.length > 0" class="plan-opts">
+            <button
+              v-for="(opt, i) in planReview.options"
+              :key="i"
+              type="button"
+              class="popt"
+              :disabled="busy"
+              @click="approveOption(opt.label)"
+            >
+              <span class="popt-key">{{ i + 1 }}</span>
+              <span class="popt-text">
+                <span class="popt-label">{{ opt.label }}</span>
+                <span v-if="opt.description" class="popt-desc">{{ opt.description }}</span>
+              </span>
+              <Spinner v-if="pendingAction === `option:${opt.label}`" size="sm" class="popt-spin" />
+            </button>
+          </div>
+        </div>
+
+        <!-- generic -->
+        <div v-else class="body-generic">
+          <span class="gen-text">{{ block.summary }}</span>
+        </div>
+
+        <!-- Inline feedback textarea -->
+        <div v-if="feedbackOpen" class="feedback-wrap">
+          <textarea
+            ref="feedbackRef"
+            v-model="feedbackText"
+            class="feedback-ta"
+            :placeholder="t('approval.feedbackPlaceholder')"
+            rows="2"
+            @keydown="onFeedbackKeydown"
+          />
+          <div class="feedback-hint">{{ t('approval.feedbackHint') }}</div>
         </div>
       </div>
 
-      <!-- plan_review -->
-      <div v-else-if="block.kind === 'plan_review'" class="body-plan">
-        <Markdown :text="block.plan" />
-      </div>
+      <!-- Footer: actions left-aligned in number-key order — the solid dark
+           primary decision first, quiet text buttons after. -->
+      <div class="af">
+        <div class="abtns">
+          <!-- feedback mode: the decision row is swapped for submit / cancel -->
+          <template v-if="feedbackOpen">
+            <Button size="md" variant="danger-soft" :loading="pendingAction === 'feedback'" :disabled="busy" @click="submitFeedback">{{ t('approval.feedbackSubmit') }}</Button>
+            <Button size="md" variant="ghost" :disabled="busy" @click="cancelFeedback">{{ t('approval.feedbackCancel') }}</Button>
+          </template>
 
-      <!-- generic -->
-      <div v-else class="body-generic">
-        <span class="gen-text">{{ block.summary }}</span>
-      </div>
+          <!-- plan_review actions -->
+          <template v-else-if="planReview">
+            <Button v-if="planReview.options.length === 0" class="amain" size="md" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan"><span class="knum">1</span>{{ t('approval.approvePlan') }}</Button>
+            <Button size="md" variant="ghost" :disabled="busy" @click="revisePlan"><span v-if="planReview.options.length === 0" class="knum">2</span>{{ t('approval.revise') }}</Button>
+            <Button size="md" variant="ghost" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan"><span v-if="planReview.options.length === 0" class="knum">3</span>{{ t('approval.rejectAndExit') }}</Button>
+          </template>
 
-      <!-- Inline feedback textarea -->
-      <div v-if="feedbackOpen" class="feedback-wrap">
-        <textarea
-          ref="feedbackRef"
-          v-model="feedbackText"
-          class="feedback-ta"
-          :placeholder="t('approval.feedbackPlaceholder')"
-          rows="2"
-          @keydown="onFeedbackKeydown"
-        />
-        <div class="feedback-hint">{{ t('approval.feedbackHint') }}</div>
+          <!-- default actions row -->
+          <template v-else>
+            <Button class="amain" size="md" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve"><span class="knum">1</span>{{ t('approval.approve') }}</Button>
+            <Button size="md" variant="ghost" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession"><span class="knum">2</span>{{ t('approval.approveSession') }}</Button>
+            <Button size="md" variant="ghost" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject"><span class="knum">3</span>{{ t('approval.reject') }}</Button>
+            <Button size="md" variant="ghost" :disabled="busy" @click="openFeedback"><span class="knum">4</span>{{ t('approval.feedback') }}</Button>
+          </template>
+        </div>
       </div>
     </template>
-
-    <!-- Actions -->
-    <template v-if="!minimized" #foot>
-      <!-- plan_review actions -->
-      <div v-if="planReview" class="plan-actions">
-        <template v-if="planReview.options.length > 0">
-          <Tooltip
-            v-for="(opt, i) in planReview.options"
-            :key="i"
-            :text="opt.description"
-          >
-            <Button
-              class="kbtn"
-              size="sm"
-              variant="primary"
-              :loading="pendingAction === `option:${opt.label}`"
-              :disabled="busy"
-              @click="approveOption(opt.label)"
-            >{{ opt.label }}<Kbd class="k" :keys="[String(i + 1)]" /></Button>
-          </Tooltip>
-        </template>
-        <Button v-else class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approvePlan'" :disabled="busy" @click="approvePlan">{{ t('approval.approvePlan') }}<Kbd class="k" :keys="['1']" /></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="revisePlan">{{ t('approval.revise') }}<Kbd v-if="planReview.options.length === 0" class="k" :keys="['2']" /></Button>
-        <Button class="kbtn" size="sm" variant="danger-soft" :loading="pendingAction === 'rejectAndExit'" :disabled="busy" @click="rejectAndExitPlan">{{ t('approval.rejectAndExit') }}<Kbd v-if="planReview.options.length === 0" class="k" :keys="['3']" /></Button>
-      </div>
-
-      <!-- default actions row -->
-      <div v-else class="abtn">
-        <Button class="kbtn" size="sm" variant="primary" :loading="pendingAction === 'approve'" :disabled="busy" @click="approve">{{ t('approval.approve') }}<Kbd class="k" :keys="['1']" /></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'approveSession'" :disabled="busy" @click="approveSession">{{ t('approval.approveSession') }}<Kbd class="k" :keys="['2']" /></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :loading="pendingAction === 'reject'" :disabled="busy" @click="reject">{{ t('approval.reject') }}<Kbd class="k" :keys="['3']" /></Button>
-        <Button class="kbtn" size="sm" variant="secondary" :disabled="busy" @click="openFeedback">{{ t('approval.feedback') }}<Kbd class="k" :keys="['4']" /></Button>
-      </div>
-    </template>
-  </Card>
+  </div>
 </template>
 
 <style scoped>
+/* Floating neutral card: white surface, hairline border, large radius and a
+   soft shadow — it hovers above the transcript in place of the composer.
+   The card is a flex column capped just below the chat header, so a tall
+   plan + options can never overflow past the pane: only the plan scroll
+   area shrinks; header / options / footer keep their natural height. */
 .appr {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 72px);
   margin: var(--space-2) 0;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  animation: kimi-card-in var(--duration-base) var(--ease-out);
 }
-/* Warning attention-card head band layered on top of the shared flat Card
-   primitive (Card supplies the border, radius and surface; no shadow). */
-.appr.ui-card { border-color: var(--color-warning-bd); }
-.appr :deep(.ui-card__head) {
-  background: var(--color-warning-soft);
-  border-bottom-color: var(--color-warning-bd);
-}
-/* When minimized the body/foot slots are not rendered; collapse the (always-
-   rendered) Card body and drop the head border so the card is a thin bar. */
-.appr.minimized :deep(.ui-card__body) { display: none; }
-.appr.minimized :deep(.ui-card__head) { border-bottom: none; }
+.appr > .ah,
+.appr > .af { flex: none; }
+/* Minimized bar: subtle hover fill as the click affordance. */
+.appr.minimized { transition: background var(--duration-fast) var(--ease-out); }
+.appr.minimized:hover { background: var(--color-hover); }
 
-/* Header — content row (Card provides the band padding/border). Single row:
-   title + truncating path on the left, "required" badge + minimize pinned to
-   the right. */
+/* Header — one quiet row: plain dark title. */
 .ah {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
-  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
+  padding: var(--space-3) var(--space-4) 0;
   flex-wrap: nowrap;
 }
-.ah-ic {
-  width: var(--p-ic-md);
-  height: var(--p-ic-md);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-warning);
-  font-weight: var(--weight-semibold);
-  font-size: 15px;
-  line-height: 1;
-  flex: none;
-}
+.appr.minimized .ah { padding-bottom: var(--space-3); }
+/* Minimized: the whole bar is the expand target. */
+.appr.minimized .ah.clickable { cursor: pointer; }
 .akind {
-  color: var(--color-warning);
-  font-size: var(--text-base);
+  color: var(--color-text);
+  font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   white-space: nowrap;
   flex: none;
 }
-.apath {
-  color: var(--color-text);
-  font: var(--text-sm) var(--font-ui);
+/* One-line subject preview, only rendered while minimized — truncated. */
+.apeek {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--color-text-muted);
+  font: var(--text-xs) var(--font-mono);
 }
-/* Body first line — full-width plan file path, below the title row. */
-.ah-path {
+.amin {
+  margin-left: auto;
+  flex: none;
+}
+.aexpand {
+  margin-left: auto;
+  flex: none;
+}
+/* When the plan expand toggle is present it owns the rightward push; the
+   minimize button follows it flush instead of splitting the free space. */
+.aexpand + .amin {
+  margin-left: 0;
+}
+
+/* Body */
+.ab {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-3) var(--space-4) 0;
+}
+.ab > * { flex: none; }
+.ab > .body-plan-wrap { flex: 1; }
+
+/* Body first line — plan file path, rendered as a link that opens the file
+   preview in the right-side panel. */
+.plan-path {
+  display: block;
+  width: 100%;
   margin-bottom: var(--space-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font: var(--text-xs) var(--font-mono);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.plan-path:hover { text-decoration: underline; }
+.plan-path:focus-visible {
+  outline: none;
+  text-decoration: underline;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--p-focus-ring);
+}
+
+/* Code previews (Write content / Edit diff): mono path above the highlighted
+   block (HighlightedCode owns the frame, its 24-row cap and scroll). The
+   expand header toggle lifts the cap so the block fills the whole card. */
+.body-code {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.body-code.expanded { flex: 1; }
+.body-code.expanded :deep(.hl-code) {
+  max-height: none;
+  flex: 1;
+}
+.code-path {
+  flex: none;
   color: var(--color-text-muted);
   font: var(--text-xs) var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.aw {
-  margin-left: auto;
-}
-
-/* Minimize toggle — when the "required" badge is hidden (minimized) it falls
-   to the right via its own margin. */
-.minimized .amin {
-  margin-left: auto;
-}
-
-/* Diff — sunken code panel. */
-.diff {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
-  overflow: hidden;
-  font: var(--text-sm)/1.85 var(--font-mono);
-}
-.dl { display: flex; padding: 0 var(--space-3); }
-.dg { width: 30px; color: var(--color-text-muted); text-align: right; padding-right: var(--space-3); user-select: none; }
-.dc { white-space: pre; font: inherit; }
-.del { background: var(--color-danger-soft); }
-.del .dc { color: var(--color-danger); }
-.add { background: var(--color-success-soft); }
-.add .dc { color: var(--color-success); }
 
 /* Shell */
 .shell-cmd {
@@ -433,40 +540,19 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .shell-dollar { color: var(--color-accent-hover); font-weight: var(--weight-medium); margin-right: var(--space-2); }
 .shell-cwd { font: var(--text-xs) var(--font-mono); color: var(--color-text-muted); margin-top: var(--space-1); }
+/* Danger callout — a filled row, not a framed box (surface over stroke). */
 .shell-danger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-top: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--color-danger-bd);
-  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
   color: var(--color-danger);
-  font: var(--text-sm) var(--font-ui);
+  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
   background: var(--color-danger-soft);
 }
-
-/* File — sunken code panel. */
-.body-file {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-.file-bar {
-  padding: var(--space-1) var(--space-3);
-  background: var(--color-surface);
-  border-bottom: 1px solid var(--color-line);
-  font: var(--text-xs) var(--font-mono);
-  color: var(--color-text-muted);
-}
-.file-lang { letter-spacing: 0.04em; }
-.file-content {
-  padding: var(--space-2) 0;
-  font: var(--text-sm)/1.7 var(--font-mono);
-  background: var(--color-surface-sunken);
-  max-height: 240px;
-  overflow-y: auto;
-}
-.file-line { display: flex; padding: 0 var(--space-3); }
-.file-ln { width: 30px; color: var(--color-text-muted); text-align: right; padding-right: var(--space-3); user-select: none; flex: none; }
-.file-text { white-space: pre; font: inherit; }
+.shell-danger-ic { flex: none; }
 
 /* Chip (fileop/url/search/invocation) */
 .body-chip {
@@ -478,8 +564,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   color: var(--color-text);
 }
 .chip-label {
-  background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
+  background: var(--color-inline-code-bg);
   border-radius: var(--radius-sm);
   padding: 2px var(--space-2);
   font: var(--weight-semibold) var(--text-xs) var(--font-mono);
@@ -513,9 +598,81 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   word-break: break-word;
 }
 
-/* Plan review — Markdown body, capped at half the viewport height with scroll
-   for longer plans. */
-.body-plan { max-height: 50vh; overflow-y: auto; }
+/* Plan review — the scroll area caps at half the viewport height and is the
+   only flexible region of the card: it shrinks first when the card hits its
+   height cap, and expands to fill the whole card in expanded mode. */
+.body-plan-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.body-plan-wrap > .plan-opts { flex: none; }
+.body-plan { max-height: 50vh; overflow-y: auto; min-height: 0; }
+.body-plan.expanded { max-height: none; flex: 1; }
+
+/* Plan approach options — borderless numbered rows PINNED below the scroll
+   area (hairline-separated from the plan); the number chip doubles as the
+   number-key hint. */
+.plan-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-line);
+}
+.popt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.popt:hover:not(:disabled) { background: var(--color-hover); }
+.popt:focus-visible {
+  outline: none;
+  background: var(--color-hover);
+  box-shadow: var(--p-focus-ring);
+}
+.popt:disabled { cursor: default; opacity: 0.6; }
+/* Number chip — small filled square, also the keyboard hint. */
+.popt-key {
+  width: var(--p-chip-num);
+  height: var(--p-chip-num);
+  border-radius: var(--radius-sm);
+  background: var(--color-inline-code-bg);
+  color: var(--color-text);
+  font: var(--weight-medium) var(--text-xs)/var(--p-chip-num) var(--font-ui);
+  text-align: center;
+  flex: none;
+}
+.popt-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.popt-label {
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+/* Description always takes its own second line — fully readable, no
+   truncation, no ragged inline wrap. */
+.popt-desc {
+  color: var(--color-text-muted);
+  font: var(--text-xs)/var(--leading-normal) var(--font-ui);
+}
+.popt-spin { flex: none; color: var(--color-text-muted); }
 
 /* Feedback */
 .feedback-wrap {
@@ -527,29 +684,50 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   font: var(--text-sm) var(--font-ui);
   padding: var(--space-2) var(--space-2);
   border: 1px solid var(--color-line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   resize: none;
   outline: none;
   color: var(--color-text);
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
 }
 .feedback-ta:focus-visible {
   border-color: var(--color-accent);
   box-shadow: var(--p-focus-ring);
 }
-
 .feedback-hint { font: var(--text-xs) var(--font-ui); color: var(--color-text-muted); margin-top: var(--space-1); }
 
-/* Actions row — right-aligned sm buttons (primary / secondary / ghost-danger). */
-.abtn,
-.plan-actions {
+/* Footer — hairline-separated action row: the solid dark primary decision
+   first, quiet text buttons after, in number-key order. */
+.af {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: var(--space-2);
-  width: 100%;
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-line);
 }
-.plan-actions { flex-wrap: wrap; }
-.k { opacity: .75; }
+.abtns {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+/* Number chip inside footer buttons — the visible number-key hint. Same
+   vocabulary as the option-row number chips. */
+.knum {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: var(--color-inline-code-bg);
+  color: var(--color-text);
+  font: var(--weight-medium) var(--text-xs)/16px var(--font-ui);
+  text-align: center;
+}
+/* On the solid primary: frosted chip, legible in both themes. */
+.abtns .ui-button--primary .knum {
+  background: color-mix(in srgb, var(--color-text-on-accent) 28%, transparent);
+  color: var(--color-text-on-accent);
+}
 
 /* =========================================================================
    MOBILE (≤640px): the card spans the full chat column, inner previews scroll
@@ -557,20 +735,19 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
    stack of ≥44px tall, easily-tappable targets.
    ========================================================================= */
 @media (max-width: 640px) {
-  /* Diff / file code blocks: scroll sideways for long lines (mono stays pre). */
-  .diff,
-  .file-content {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+  /* Plan options → taller, finger-friendly rows. */
+  .popt {
+    min-height: 44px;
+    padding: var(--space-3);
   }
-  .file-content { max-height: 50vh; }
 
-  /* Actions → full-width stacked rows, each a tall ≥44px tap target. */
-  .abtn,
-  .plan-actions { flex-direction: column; }
-  .kbtn {
+  /* Footer → buttons become full-width stacked rows with the primary on top. */
+  .af { flex-direction: column; align-items: stretch; }
+  .abtns { flex-direction: column; margin-left: 0; gap: var(--space-2); }
+  .abtns :deep(.ui-button) {
     width: 100%;
     min-height: 46px;
   }
+  .abtns .amain { order: -1; }
 }
 </style>

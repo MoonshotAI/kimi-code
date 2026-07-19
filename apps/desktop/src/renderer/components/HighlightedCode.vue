@@ -105,10 +105,14 @@ onMounted(highlight);
 watch([plainRows, diffTexts, language, isDark], highlight);
 
 /** Tokens for one diff row: deletions read the before text, additions and
-    context rows read the after text (same content either way for context). */
+    context rows read the after text (same content either way for context).
+    Rows without a line number (omission markers) render their text as-is —
+    mapping them to some token row would show the wrong content. */
 function rowTokens(line: DiffViewLine): ThemedToken[] | null {
-  if (line.type === 'del') return beforeTokens.value?.[(line.oldNo ?? 1) - 1] ?? null;
-  return afterTokens.value?.[(line.newNo ?? 1) - 1] ?? null;
+  if (line.type === 'del') {
+    return line.oldNo === undefined ? null : (beforeTokens.value?.[line.oldNo - 1] ?? null);
+  }
+  return line.newNo === undefined ? null : (afterTokens.value?.[line.newNo - 1] ?? null);
 }
 
 function tokenStyle(token: ThemedToken): Record<string, string> {
@@ -128,7 +132,7 @@ function sign(line: DiffViewLine): string {
 </script>
 
 <template>
-  <div class="hl-code" :class="{ gutter: showDiffGutter }">
+  <div class="hl-code" :class="{ gutter: showDiffGutter, 'plain-pad': !isDiff && !plainGutter }">
     <div class="hl-body">
       <template v-if="isDiff">
         <div v-for="(line, i) in lines ?? []" :key="i" class="hl-row" :class="`row-${line.type}`">
@@ -169,6 +173,12 @@ function sign(line: DiffViewLine): string {
   width: max-content;
   min-width: 100%;
   padding: var(--space-1) 0 var(--space-3);
+}
+/* Plain rows with no gutter column (Write previews): diff rows get their left
+   offset from the sign column and Read rows from the number gutter — plain
+   rows have neither, so give them the breathing room explicitly. */
+.hl-code.plain-pad .hl-body {
+  padding-left: var(--space-3);
 }
 .hl-row {
   display: flex;

@@ -5,7 +5,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ConversationStatus, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
@@ -52,6 +52,8 @@ const props = defineProps<{
   pendingApproval?: { approvalId: string; block: ApprovalBlock; agentName?: string };
   /** True while the visible approval has a respond in flight. */
   approvalBusy?: boolean;
+  /** Open a file in the right-side preview panel (plan path, markdown paths). */
+  openFile?: (target: FilePreviewRequest) => void;
   mobile?: boolean;
 }>();
 
@@ -260,6 +262,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       :block="pendingApproval.block"
       :agent-name="pendingApproval.agentName"
       :busy="approvalBusy"
+      :open-file="openFile"
       @decide="emit('approval', pendingApproval!.approvalId, $event)"
     />
     <Composer
