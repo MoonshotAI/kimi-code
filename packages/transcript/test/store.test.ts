@@ -253,6 +253,16 @@ describe('AgentTranscript', () => {
     expect(tx.getMeta().modes?.plan?.reviewPath).toBe('/p');
   });
 
+  it('meta.merge clears a mode badge on null and keeps absent keys', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([{ op: 'meta.merge', meta: { modes: { plan: {}, swarm: {} } } }]);
+    tx.apply([{ op: 'meta.merge', meta: { modes: { plan: null } } }]);
+    expect(tx.getMeta().modes).toEqual({ swarm: {} });
+    // Clearing the last badge normalizes `modes` away entirely.
+    tx.apply([{ op: 'meta.merge', meta: { modes: { swarm: null } } }]);
+    expect(tx.getMeta().modes).toBeUndefined();
+  });
+
   it('snapshot immutability: later applies do not mutate earlier reads', () => {
     const tx = new AgentTranscript('main');
     tx.apply(toolFrame('running'));

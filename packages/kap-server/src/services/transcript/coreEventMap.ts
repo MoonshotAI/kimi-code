@@ -765,11 +765,14 @@ export class AgentTranscriptProjector {
     swarmMode?: boolean;
   }): TranscriptOperation[] {
     // Only the exact `planMode` / `swarmMode` fields are projected (the status
-    // slices arrive independently — see `agent/usage/usageOps.ts`). Clearing
-    // (`false`) cannot be expressed by `meta.merge`; same limitation as goal.
-    const modes: { plan?: Record<string, never>; swarm?: Record<string, never> } = {};
+    // slices arrive independently — see `agent/usage/usageOps.ts`). A mode
+    // exit (`false`) clears the badge: `null` deletes the key in the reducer,
+    // so clients never keep showing a mode that already ended.
+    const modes: { plan?: Record<string, never> | null; swarm?: Record<string, never> | null } = {};
     if (event.planMode === true) modes.plan = {};
+    else if (event.planMode === false) modes.plan = null;
     if (event.swarmMode === true) modes.swarm = {};
+    else if (event.swarmMode === false) modes.swarm = null;
     if (modes.plan === undefined && modes.swarm === undefined) return [];
     return [{ op: 'meta.merge', meta: { modes } }];
   }

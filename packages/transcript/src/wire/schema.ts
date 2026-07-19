@@ -191,10 +191,20 @@ export const modesMetaSchema = z.object({
   swarm: z.object({ trigger: z.string().optional() }).optional(),
 });
 
+/** `meta.merge` wire shape: a mode key set to `null` clears that badge. */
+export const modesMetaMergeSchema = z.object({
+  plan: z.object({ reviewPath: z.string().optional() }).nullable().optional(),
+  swarm: z.object({ trigger: z.string().optional() }).nullable().optional(),
+});
+
 export const transcriptMetaSchema = z.object({
   goal: goalMetaSchema.optional(),
   modes: modesMetaSchema.optional(),
   activity: z.enum(['idle', 'turn', 'disposing', 'unknown']).optional(),
+});
+
+export const transcriptMetaMergeSchema = transcriptMetaSchema.extend({
+  modes: modesMetaMergeSchema.optional(),
 });
 
 // ---------------------------------------------------------------- ops
@@ -246,7 +256,7 @@ export const transcriptOperationSchema = z.discriminatedUnion('op', [
     beforeTurn: z.number().int().optional(),
   }),
   z.object({ op: z.literal('task.upsert'), task: transcriptTaskSchema }),
-  z.object({ op: z.literal('meta.merge'), meta: transcriptMetaSchema }),
+  z.object({ op: z.literal('meta.merge'), meta: transcriptMetaMergeSchema }),
   z.object({ op: z.literal('items.remove'), ids: z.array(z.string()) }),
 ]);
 

@@ -645,8 +645,11 @@ describe('AgentTranscriptProjector', () => {
 
     // Usage-only slice: nothing to project.
     expect(projector.map(ev({ type: 'agent.status.updated', usage: {} }))).toEqual([]);
-    // `false` does not clear (merge limitation).
-    expect(projector.map(ev({ type: 'agent.status.updated', planMode: false }))).toEqual([]);
+    // Mode exit clears the badge (`null` deletes the key in the reducer).
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
+    expect(tx.getMeta().modes).toEqual({ swarm: {} });
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: false })));
+    expect(tx.getMeta().modes).toBeUndefined();
   });
 
   it('projects skill / plugin-command / cron / compaction / undo markers', () => {

@@ -20,7 +20,7 @@ import type {
 } from '../model/ids';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
-import type { TranscriptMeta } from '../model/meta';
+import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 
@@ -90,7 +90,7 @@ export interface TaskUpsertOp {
 
 export interface MetaMergeOp {
   readonly op: 'meta.merge';
-  readonly meta: TranscriptMeta;
+  readonly meta: TranscriptMetaMerge;
 }
 
 /** Structural correction (undo / clear). Removes whole items by id; idempotent. */

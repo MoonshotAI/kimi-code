@@ -23,6 +23,16 @@ export interface ModesMeta {
   readonly swarm?: { readonly trigger?: string };
 }
 
+/**
+ * Wire shape of `modes` inside a `meta.merge` op: each key may be the mode
+ * object (set the badge) or `null` (the mode exited — clear it). An absent
+ * key keeps the prior state.
+ */
+export interface ModesMetaMerge {
+  readonly plan?: { readonly reviewPath?: string } | null;
+  readonly swarm?: { readonly trigger?: string } | null;
+}
+
 export type ActivityMeta = 'idle' | 'turn' | 'disposing' | 'unknown';
 
 export interface TranscriptMeta {
@@ -30,3 +40,8 @@ export interface TranscriptMeta {
   readonly modes?: ModesMeta;
   readonly activity?: ActivityMeta;
 }
+
+/** Wire shape of a `meta.merge` payload — like {@link TranscriptMeta}, but mode keys may be `null` to clear. */
+export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes'> & {
+  readonly modes?: ModesMetaMerge;
+};

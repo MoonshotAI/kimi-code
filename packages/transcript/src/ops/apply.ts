@@ -11,7 +11,7 @@ import type { InteractionId, TaskId, TurnId } from '../model/ids';
 import { turnOrdinal } from '../model/ids';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem } from '../model/item';
-import type { TranscriptMeta } from '../model/meta';
+import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 import type {
@@ -468,17 +468,19 @@ function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
   );
 }
 
-function applyMetaMerge(state: AgentState, meta: TranscriptMeta): ApplyResult {
+function applyMetaMerge(state: AgentState, meta: TranscriptMetaMerge): ApplyResult {
+  // `null` clears a mode badge (the mode exited); an absent key keeps it.
+  const modes =
+    meta.modes !== undefined
+      ? {
+          plan: meta.modes.plan === null ? undefined : (meta.modes.plan ?? state.meta.modes?.plan),
+          swarm: meta.modes.swarm === null ? undefined : (meta.modes.swarm ?? state.meta.modes?.swarm),
+        }
+      : state.meta.modes;
   const next: TranscriptMeta = {
     goal: meta.goal ?? state.meta.goal,
     activity: meta.activity ?? state.meta.activity,
-    modes:
-      meta.modes !== undefined
-        ? {
-            plan: meta.modes.plan ?? state.meta.modes?.plan,
-            swarm: meta.modes.swarm ?? state.meta.modes?.swarm,
-          }
-        : state.meta.modes,
+    modes: modes !== undefined && modes.plan === undefined && modes.swarm === undefined ? undefined : modes,
   };
   if (
     next.goal === state.meta.goal &&
