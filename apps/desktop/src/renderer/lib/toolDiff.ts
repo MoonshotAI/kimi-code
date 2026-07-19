@@ -2,7 +2,7 @@
 // Builds the line diff shown inline inside an expanded Edit tool card.
 
 import type { DiffViewLine } from '../types';
-import { buildDiffLines } from './diffLines';
+import { buildDiffLines, splitLines } from './diffLines';
 import { normalizeToolName } from './toolMeta';
 
 function parseArg(arg: string): Record<string, unknown> | null {
@@ -34,9 +34,11 @@ function filePath(d: Record<string, unknown>): string | undefined {
 const MAX_CONTENT_CHARS = 100 * 1024;
 
 /**
- * Build a line diff for an Edit tool call from its input. Returns null for any
- * other tool, for operations a from-args diff cannot represent (replace_all),
- * or when the inputs are too large to diff cheaply.
+ * Build a line diff for an Edit/MultiEdit tool call from its input. Returns
+ * null for any other tool, for operations a from-args diff cannot represent
+ * (replace_all), or when the inputs are too large to diff cheaply. MultiEdit
+ * is rendered as its edits concatenated with a hunk separator between
+ * segments.
  *
  * Write is deliberately excluded: it only reports the new content, and the
  * client cannot tell a new file from an overwrite of an existing one. A
@@ -46,7 +48,7 @@ const MAX_CONTENT_CHARS = 100 * 1024;
  */
 export function buildEditDiffLines(tool: { name: string; arg: string }): DiffViewLine[] | null {
   const kind = normalizeToolName(tool.name);
-  if (kind !== 'edit' && kind !== 'write') return null;
+  if (kind !== 'edit' && kind !== 'multi_edit') return null;
   const d = parseArg(tool.arg);
   if (!d) return null;
   if (kind === 'edit') {
@@ -57,7 +59,37 @@ export function buildEditDiffLines(tool: { name: string; arg: string }): DiffVie
     if (before.length > MAX_CONTENT_CHARS || after.length > MAX_CONTENT_CHARS) return null;
     return buildDiffLines(before, after);
   }
-  return null;
+  const edits = Array.isArray(d.edits) ? d.edits : undefined;
+  if (!edits || edits.length === 0) return null;
+  const out: DiffViewLine[] = [];
+  let oldOffset = 0;
+  let newOffset = 0;
+  for (const e of edits) {
+    if (!e || typeof e !== 'object') return null;
+    const edit = e as Record<string, unknown>;
+    if (edit.replace_all === true) return null;
+    const before = typeof edit.old_string === 'string' ? edit.old_string : undefined;
+    const after = typeof edit.new_string === 'string' ? edit.new_string : undefined;
+    if (before === undefined || after === undefined) return null;
+    if (before.length > MAX_CONTENT_CHARS || after.length > MAX_CONTENT_CHARS) return null;
+    const segment = buildDiffLines(before, after);
+    if (segment === null) return null;
+    if (out.length > 0) out.push({ type: 'hunk', text: '···' });
+    // Renumber across segments: buildDiffLines restarts oldNo/newNo at 1 per
+    // segment, but the highlighter indexes the concatenated before/after
+    // texts by those numbers — without the offset, later segments would
+    // display the FIRST segment's token content.
+    for (const line of segment) {
+      out.push({
+        ...line,
+        oldNo: line.oldNo !== undefined ? line.oldNo + oldOffset : undefined,
+        newNo: line.newNo !== undefined ? line.newNo + newOffset : undefined,
+      });
+    }
+    oldOffset += splitLines(before).length;
+    newOffset += splitLines(after).length;
+  }
+  return out;
 }
 
 /**

@@ -3,6 +3,7 @@
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
 import type { ChatTurn, TurnBlock } from '../types';
+import { normalizeToolName } from '../lib/toolMeta';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the
 // existing ChatPane import keeps working.
@@ -28,8 +29,6 @@ export function turnBlocks(turn: ChatTurn): TurnBlock[] {
   return blocks;
 }
 
-export type ToolStackPosition = 'single' | 'first' | 'middle' | 'last';
-
 export type ToolStackItem = {
   tool: Extract<TurnBlock, { kind: 'tool' }>['tool'];
   sourceIndex: number;
@@ -45,17 +44,28 @@ export function rendersToolCard(block: Extract<TurnBlock, { kind: 'tool' }>): bo
   return !(block.tool.status === 'ok' && block.tool.media);
 }
 
-export function toolStackPosition(index: number, count: number): ToolStackPosition {
-  if (count <= 1) return 'single';
-  if (index === 0) return 'first';
-  if (index === count - 1) return 'last';
-  return 'middle';
+// Grouping rule (§04): a tool group is a HOMOGENEOUS batch — consecutive
+// calls of ONE groupable kind. Query/execution kinds (read / grep / glob /
+// fetch / bash) merge; consequential kinds never do. Edits and writes must
+// stay individually visible (the diff stat is the most valuable information
+// in the stream), todos and goals narrate progress, a sub-agent delegation
+// keeps its own identity card, question and swarm are cards, and
+// unrecognized kinds stay standalone out of caution.
+const GROUPABLE_KINDS = new Set(['read', 'grep', 'search', 'glob', 'ls', 'web_fetch', 'bash']);
+
+/** The normalized group kind for a tool, or null when the call always
+    renders standalone (non-groupable kind, or a media tool without a card). */
+function toolGroupKind(tool: ToolStackItem['tool']): string | null {
+  if (tool.status === 'ok' && tool.media) return null;
+  const kind = normalizeToolName(tool.name);
+  return GROUPABLE_KINDS.has(kind) ? kind : null;
 }
 
 export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   const blocks = turnBlocks(turn);
   const rendered: AssistantRenderBlock[] = [];
   let toolRun: ToolStackItem[] = [];
+  let runKind: string | null = null;
 
   const flushToolRun = () => {
     if (toolRun.length === 1) {
@@ -65,16 +75,23 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
       rendered.push({ kind: 'tool-stack', tools: toolRun });
     }
     toolRun = [];
+    runKind = null;
   };
 
   blocks.forEach((block, sourceIndex) => {
     if (block.kind === 'tool') {
-      if (rendersToolCard(block)) {
-        toolRun.push({ tool: block.tool, sourceIndex });
+      const kind = rendersToolCard(block) ? toolGroupKind(block.tool) : null;
+      // Standalone: a media tool (no card) or a non-groupable kind — it
+      // breaks any homogeneous run on either side of it.
+      if (kind === null) {
+        flushToolRun();
+        rendered.push({ kind: 'tool', tool: block.tool, sourceIndex });
         return;
       }
-      flushToolRun();
-      rendered.push({ kind: 'tool', tool: block.tool, sourceIndex });
+      // A different groupable kind breaks the run: groups stay homogeneous.
+      if (runKind !== null && kind !== runKind) flushToolRun();
+      runKind = kind;
+      toolRun.push({ tool: block.tool, sourceIndex });
       return;
     }
 

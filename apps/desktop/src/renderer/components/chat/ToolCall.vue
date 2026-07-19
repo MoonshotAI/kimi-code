@@ -8,9 +8,8 @@ const props = withDefaults(
   defineProps<{
     tool: ToolCall;
     mobile?: boolean;
-    stackPosition?: 'single' | 'first' | 'middle' | 'last';
   }>(),
-  { mobile: false, stackPosition: 'single' },
+  { mobile: false },
 );
 
 const emit = defineEmits<{
@@ -27,7 +26,6 @@ const Renderer = computed(() => resolveToolRenderer(props.tool));
     :is="Renderer"
     :tool="tool"
     :mobile="mobile"
-    :stack-position="stackPosition"
     @open-media="emit('openMedia', $event)"
     @open-file="emit('openFile', $event)"
     @open-agent="emit('openAgent', $event)"

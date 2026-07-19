@@ -32,9 +32,18 @@ export default {
   chip: {
     lines: '{count} 行',
     results: '{count} 结果',
+    files: '{count} 个文件',
     edited: '已编辑',
     created: '已创建',
     todos: '{count} 项',
+  },
+  disclosure: {
+    expand: '展开详情',
+    collapse: '收起详情',
+  },
+  output: {
+    waiting: '等待输出…',
+    empty: '（无输出）',
   },
   summary: {
     inScope: '{value} 在 {scope} 中',
@@ -54,6 +63,15 @@ export default {
     title: '{count} 个工具调用',
     countOne: '{number}个工具调用',
     countOther: '{number}个工具调用',
+    typed: {
+      read: { doing: '正在读取 {count} 个文件', done: '读取了 {count} 个文件' },
+      bash: { doing: '正在运行 {count} 条命令', done: '运行了 {count} 条命令' },
+      grep: { doing: '正在搜索 {count} 个模式', done: '搜索了 {count} 个模式' },
+      search: { doing: '正在搜索 {count} 次', done: '网络搜索了 {count} 次' },
+      glob: { doing: '正在匹配 {count} 个模式', done: '匹配了 {count} 个模式' },
+      ls: { doing: '正在列出 {count} 个目录', done: '列出了 {count} 个目录' },
+      web_fetch: { doing: '正在抓取 {count} 个页面', done: '抓取了 {count} 个页面' },
+    },
     running: '运行中',
     error: '有失败',
     done: '已完成',

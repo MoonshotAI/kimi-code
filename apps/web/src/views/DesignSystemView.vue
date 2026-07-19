@@ -596,7 +596,7 @@ onUnmounted(() => {
             <h3 class="sub">Card / Surface</h3>
             <p>All cards across the site share <b>one structure</b> — <code>head / body / foot</code> — and come in two tiers by visual weight:</p>
             <ul class="clean">
-              <li><b>Operation card</b> —— "process" content such as tool calls, Agent, Todo. Flat shell: <code>1px</code> border, <code>--radius-md</code>, no shadow. The head is compact mono with no fill, low weight by default, not competing with the conversation.</li>
+              <li><b>Operation card</b> —— composite "process" content such as the Swarm overview. (Individual tool calls are NOT cards anymore: they render as quiet borderless lines, see §04.) Flat shell: <code>1px</code> border, <code>--radius-md</code>, no shadow. The head is compact mono with no fill, low weight by default, not competing with the conversation.</li>
               <li><b>Attention card</b> —— content that needs a user decision, such as Question / Approval. A floating neutral card: white raised surface, <code>--radius-xl</code>, soft shadow, a plain dark title head, and a hairline footer whose actions read in number-key order (chips on the buttons) leading to one solid primary action. No semantic color band.</li>
             </ul>
             <div class="stage-wrap">
@@ -607,7 +607,7 @@ onUnmounted(() => {
                     <span class="p-card-title">read_file</span>
                     <span class="p-badge info sm" style="margin-left:auto">session.ts</span>
                   </div>
-                  <div class="p-card-body">The head uses mono + a neutral background to emphasize its "code / process" nature; the body uses sans for readability. Flat, radius-md, same shape as the tool group and Agent group.</div>
+                  <div class="p-card-body">The head uses mono + a neutral background to emphasize its "code / process" nature; the body uses sans for readability. Flat, radius-md, same shape as the Swarm composite card.</div>
                 </div>
               </div>
             </div>
@@ -622,19 +622,19 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="stage-wrap">
-              <div class="stage-bar"><span class="st">Group · the container owns the border, rows are separated by hairlines</span></div>
+              <div class="stage-bar"><span class="st">Group · a caption row expands into the run of lines</span></div>
               <div class="stage p col">
                 <div class="p-tool-group open" style="max-width:460px">
-                  <div class="p-tool-group-head"><span class="p-dot done"></span><span class="tg-title">3 tool calls</span><span class="tg-meta">· completed</span></div>
-                  <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">read_file</span><span class="tr-arg">session.ts</span></div>
-                  <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">grep</span><span class="tr-arg">"jwt" · 4 hits</span></div>
+                  <div class="p-tool-group-head"><svg class="tg-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg><span class="tg-title">Read 2 files</span></div>
+                  <div class="p-tool-row"><span class="tr-name">Read</span><span class="tr-file">session.ts</span><span class="tr-faint">src/auth</span><span class="tr-chip">34 lines</span><span class="tr-ok">✓</span></div>
+                  <div class="p-tool-row"><span class="tr-name">Read</span><span class="tr-file">middleware.ts</span><span class="tr-faint">src/auth</span><span class="tr-chip">58 lines</span><span class="tr-ok">✓</span></div>
                 </div>
               </div>
             </div>
             <ul class="clean check">
               <li><b>One structure, two shells</b>: every card is <code>head / body / foot</code>; operation cards are flat + 1px border + radius-md with no shadow, while the attention card is the single exception — raised surface, radius-xl and a soft shadow, because it floats above the transcript in place of the composer.</li>
               <li><b>Differences are intentional</b>: operation cards keep a compact mono head; attention cards get a plain dark title head and footer actions.</li>
-              <li><b>Grouping</b>: the outer container owns the border and radius; inner rows are separated by <code>border-top</code> hairlines, rather than each row being its own card.</li>
+              <li><b>Grouping</b>: consecutive calls of one groupable kind merge into a homogeneous quiet group — a typed caption row expands into the run of lines; consequential kinds (Edit / Write, Todo, Goal, Question, Swarm) never merge and stay individually visible (see §04).</li>
               <li><b>Status dots</b>: running (pulsing blue) / done (green) / failed (red), sharing one color vocabulary (see §04 tool calls).</li>
             </ul>
 
@@ -1039,8 +1039,9 @@ onUnmounted(() => {
               <h2 class="sec-title">Chat Interface Overhaul</h2>
             </div>
             <p class="sec-desc">
-              The message stream is the core of Kimi Web. The goal of the overhaul: have the 6 card types (Agent / Tool / Question / Approval / Swarm / Todo)
-              <b>share one card skeleton</b>, distinguished only by the head icon; Question and Approval elevate to a floating neutral surface because they need a decision; and collapse the Composer into a single rounded container.
+              The message stream is the core of Kimi Web. Tool calls render as <b>quiet activity lines</b> — one borderless line per call,
+              bespoke per tool kind, auto-grouped, expanding on demand — while Question / Approval elevate to a <b>floating neutral surface</b>
+              because they need a decision, and the Swarm composite keeps a card; the Composer collapses into a single rounded container.
             </p>
 
             <h3 class="sub">Unified message stream</h3>
@@ -1060,45 +1061,60 @@ onUnmounted(() => {
                   <!-- thinking -->
                   <span class="p-thinking"><span style="font-size:15px;line-height:1">🌔</span>Analyzing the auth module…</span>
 
-                  <!-- compact tool group: multiple tool calls collapsed into a stack, low weight by default -->
+                  <!-- homogeneous tool group: consecutive calls of one kind
+                       collapse into a typed caption row; consequential kinds
+                       (edit/write…) never merge and stay individually visible -->
                   <div class="p-tool-group open">
                     <div class="p-tool-group-head">
-                      <span class="p-dot done"></span>
-                      <svg class="p-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M8 4h13v2H8zM4.5 6.5a1.5 1.5 0 1 1 0-3a1.5 1.5 0 0 1 0 3m0 7a1.5 1.5 0 1 1 0-3a1.5 1.5 0 0 1 0 3m0 6.9a1.5 1.5 0 1 1 0-3a1.5 1.5 0 0 1 0 3M8 11h13v2H8zm0 7h13v2H8z"/></svg>
-                      <span class="tg-title">3 tool calls</span>
-                      <span class="tg-meta">· completed · 0.8s</span>
+                      <svg class="tg-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg>
+                      <span class="tg-title">Read 2 files</span>
                       <svg class="tg-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
                     </div>
-                    <!-- row 1 · expanded (details disclosed on demand) -->
+                    <!-- row 1 · read: label + file button + dir + line range (expanded) -->
                     <div class="p-tool-row expanded">
-                      <span class="p-dot done"></span>
                       <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg>
-                      <span class="tr-name">read_file</span>
-                      <span class="tr-arg">src/auth/session.ts</span>
-                      <span class="tr-time">0.2s</span>
+                      <span class="tr-name">Read</span>
+                      <span class="tr-file">session.ts</span>
+                      <span class="tr-faint">src/auth · :12-45</span>
                       <svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
+                      <span class="tr-chip">34 lines</span>
+                      <span class="tr-ok">✓</span>
                     </div>
                     <div class="p-tool-detail">
                       <div class="p-code">12  export function verify(token: string) {<br/>13    return jwt.verify(token, getSecret());<br/>14  }</div>
                     </div>
-                    <!-- row 2 · collapsed -->
+                    <!-- row 2 · read: same kind, same group -->
                     <div class="p-tool-row">
-                      <span class="p-dot done"></span>
                       <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg>
-                      <span class="tr-name">read_file</span>
-                      <span class="tr-arg">src/auth/middleware.ts</span>
-                      <span class="tr-time">0.2s</span>
+                      <span class="tr-name">Read</span>
+                      <span class="tr-file">middleware.ts</span>
+                      <span class="tr-faint">src/auth</span>
                       <svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
+                      <span class="tr-chip">58 lines</span>
+                      <span class="tr-ok">✓</span>
                     </div>
-                    <!-- row 3 · collapsed -->
-                    <div class="p-tool-row">
-                      <span class="p-dot done"></span>
-                      <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m18.031 16.617l4.283 4.282l-1.415 1.415l-4.282-4.283A8.96 8.96 0 0 1 11 20c-4.968 0-9-4.032-9-9s4.032-9 9-9s9 4.032 9 9a8.96 8.96 0 0 1-1.969 5.617m-2.006-.742A6.98 6.98 0 0 0 18 11c0-3.867-3.133-7-7-7s-7 3.133-7 7s3.133 7 7 7a6.98 6.98 0 0 0 4.875-1.975z"/></svg>
-                      <span class="tr-name">grep</span>
-                      <span class="tr-arg">"jwt.verify" · 4 matches</span>
-                      <span class="tr-time">0.1s</span>
-                      <svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
-                    </div>
+                  </div>
+                  <!-- edits never merge: the diff stat stays individually visible -->
+                  <div class="p-tool-row">
+                    <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M15.728 9.686l-1.414-1.414L5 17.586V19h1.414l9.314-9.314zm1.414-1.414l1.414 1.414l1.414-1.414l-1.414-1.414l-1.414 1.414zM4 21h16v-2H4v2z"/></svg>
+                    <span class="tr-name">Edit</span>
+                    <span class="tr-file">middleware.ts</span>
+                    <span class="tr-faint">src/auth</span>
+                    <svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
+                    <span class="tr-add">+12</span>
+                    <span class="tr-del">−4</span>
+                    <span class="tr-bar" aria-hidden="true"><span style="flex:12;background:var(--p-success)"></span><span style="flex:4;background:var(--p-danger)"></span></span>
+                    <span class="tr-ok">✓</span>
+                  </div>
+                  <!-- a lone search call renders standalone — groups need ≥2 of one kind -->
+                  <div class="p-tool-row">
+                    <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m18.031 16.617l4.283 4.282l-1.415 1.415l-4.282-4.283A8.96 8.96 0 0 1 11 20c-4.968 0-9-4.032-9-9s4.032-9 9-9s9 4.032 9 9a8.96 8.96 0 0 1-1.969 5.617m-2.006-.742A6.98 6.98 0 0 0 18 11c0-3.867-3.133-7-7-7s-7 3.133-7 7s3.133 7 7 7a6.98 6.98 0 0 0 4.875-1.975z"/></svg>
+                    <span class="tr-name">Search</span>
+                    <span class="tr-mono">"jwt.verify"</span>
+                    <span class="tr-faint">src/auth</span>
+                    <svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
+                    <span class="tr-chip">4 results</span>
+                    <span class="tr-ok">✓</span>
                   </div>
 
                   <!-- assistant prose (conclusion) -->
@@ -1143,32 +1159,40 @@ onUnmounted(() => {
             </div>
             <p><b>Wide markdown tables (desktop):</b> regular chat prose stays within the 760px reading column (<code>--p-content-max</code>). On desktop a wide table may grow naturally with its content up to 1040px (<code>--p-table-max</code>), centred within the conversation pane; beyond that the excess scrolls horizontally inside the table's own wrapper — the page and the chat area never scroll sideways. A single column is capped at 700px (<code>--p-table-cell-max</code>), so long cell content wraps inside the cell instead of stretching the table. The conversation outline (TOC) keeps its usual position just outside the reading column; when a table grows past it and scrolls under the rail, the TOC is hidden temporarily and returns as soon as the table leaves, without touching the user's TOC setting. On mobile a table never breaks out of the reading column.</p>
 
-            <h3 class="sub">Tool calls: compact by default, grouped, expand on demand</h3>
-            <p>High-frequency calls like <code>read_file</code> / <code>bash</code> / <code>grep</code> are "operational noise" — if each one took a full card, parallel triggers would quickly drown out the conversation.
-            The new strategy splits tool calls into three tiers by <b>visual weight</b>, pushing them as light as possible:</p>
+            <h3 class="sub">Tool calls: quiet activity lines, bespoke per tool</h3>
+            <p>High-frequency calls like <code>read</code> / <code>bash</code> / <code>grep</code> are "operational noise" — boxed,
+            collapsible cards quickly drown out the conversation. Tool calls therefore render as <b>one quiet borderless line</b>
+            in the message stream — never a card — and each tool kind composes that line for its own content, so the stream reads
+            like an activity log rather than a pile of widgets. The three visual-weight tiers:</p>
 
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Three visual-weight tiers</span></div>
               <div class="stage p col">
-                <span class="stage-label">① Tool row · lightest (default)</span>
-                <div class="p-tool-row" style="border:0.5px solid var(--p-line);border-radius:8px">
-                  <span class="p-dot done"></span>
-                  <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg>
-                  <span class="tr-name">read_file</span>
-                  <span class="tr-arg">src/auth/session.ts</span>
-                  <span class="tr-time">0.2s</span>
+                <span class="stage-label">① Tool line · lightest (default) — bespoke content per tool, no card chrome</span>
+                <div class="p-tool-row" style="align-self:stretch">
+                  <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M3 3h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm1 2v14h16V5H4zm3 3h5v2H7V8zm0 4h8v2H7v-2z"/></svg>
+                  <span class="tr-name">Run</span>
+                  <span class="tr-mono">pnpm run build && pnpm lint</span>
+                  <svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
+                  <span class="tr-chip">0.8s</span>
+                  <span class="tr-ok">✓</span>
                 </div>
-                <span class="stage-label">② Tool group · medium (consecutive / parallel auto-merged; collapsed to one line)</span>
+                <span class="stage-label">② Tool group · medium (consecutive calls of ONE kind auto-merged; collapses to one typed caption row)</span>
                 <div class="p-tool-group">
                   <div class="p-tool-group-head">
-                    <span class="p-dot done"></span>
-                    <svg class="p-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M8 4h13v2H8zM4.5 6.5a1.5 1.5 0 1 1 0-3a1.5 1.5 0 0 1 0 3m0 7a1.5 1.5 0 1 1 0-3a1.5 1.5 0 0 1 0 3m0 6.9a1.5 1.5 0 1 1 0-3a1.5 1.5 0 0 1 0 3M8 11h13v2H8zm0 7h13v2H8z"/></svg>
-                    <span class="tg-title">3 tool calls</span>
-                    <span class="tg-meta">· completed · 0.8s</span>
+                    <svg class="tg-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg>
+                    <span class="tg-title">Read 3 files</span>
                     <svg class="tg-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg>
                   </div>
                 </div>
-                <span class="stage-label">③ Decision card · heavy (only question / approval, needs user input)</span>
+                <span class="stage-label">③ Sub Agent identity card · one per delegation — task title + agent type; the whole card opens the side panel (no in-stream expansion, never grouped)</span>
+                <div class="p-agent-card">
+                  <span class="pa-ic"><svg viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M13.5 2c0 .444-.193.843-.5 1.118V5h5a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h5V3.118A1.5 1.5 0 1 1 13.5 2M6 7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-4 3H0v6h2zm20 0h2v6h-2zM9 14.5a1.5 1.5 0 1 0 0-3a1.5 1.5 0 0 0 0 3m6 0a1.5 1.5 0 1 0 0-3a1.5 1.5 0 0 0 0 3"/></svg></span>
+                  <span class="pa-main"><span class="pa-task">分析双引擎架构</span><span class="pa-type">Explore</span></span>
+                  <span class="pa-ok">✓</span>
+                  <span class="pa-go">→</span>
+                </div>
+                <span class="stage-label">④ Decision card · heavy (only question / approval, needs user input)</span>
                 <div class="p-action">
                   <div class="p-action-head"><span class="p-action-title">Write permission required</span></div>
                   <div class="p-action-body">About to modify <code>src/auth/middleware.ts</code>, 42 lines changed.</div>
@@ -1177,23 +1201,26 @@ onUnmounted(() => {
             </div>
 
             <ul class="clean check">
-              <li>Tool calls <b>render as compact rows by default</b> (30px single-line UI text + status dot + key argument) with 0.5px <code>--color-line-strong</code> outer borders and dividers. The glyph, tool name, argument, and trailing status all align to the row's vertical centre. Tool names always use the 14px UI font; UI-row arguments also use 14px, while Bash and other mono arguments use 12px with ligatures disabled. Bash keeps the complete command in the text slot and lets CSS ellipsis follow the actual available width instead of pre-clipping by character count. Search and find summaries localize the full pattern-to-scope relationship rather than embedding an English <code>in</code>.</li>
-              <li>Consecutive or parallel calls <b>auto-merge into one tool group</b>; when collapsed, the whole group takes one line (<code>N tool calls · status</code>). Counts from one through ten use localized words; larger counts fall back to localized digits. An expanded group separates its header from the rows with a 1px strong hairline.</li>
-              <li>Clicking a row <b>expands it in place</b> to show details (code / output); click again to collapse — details don't grab attention by default. Expanded details show at most 10 lines and scroll internally when their content is longer.</li>
-              <li>Status is expressed with a <b>colored dot</b>: running (pulsing blue) / done (green) / failed (red), taking no extra space. Semantic hairlines retain 0.5px thickness but use a stronger 45% status-colour mix so errors remain legible in both themes.</li>
-              <li><b>Only two types keep a full card</b>: <code>Question</code> (needs an answer) and <code>Approval</code> (needs authorization) — they genuinely need the user's attention.</li>
+              <li>A tool call renders as <b>one quiet borderless line</b> (~24px, the thinking row's rhythm): leading glyph, tool-specific content, trailing meta + status. There is no card chrome and no hover wash — the chevron hugging the line's text (thinking-row style, never pushed to the far edge) is the only disclosure affordance, a real <code>&lt;button&gt;</code> carrying <code>aria-expanded</code> (keyboard path); the head itself is a plain click target (mouse path), so trailing slots may hold genuine buttons of their own (e.g. Agent's "open detail").</li>
+              <li><b>One type scale for the whole stream</b>: thinking rows, group captions and tool lines all set 13px UI text; in-line mono and trailing meta run one step down at 12px (a monospace x-height reads larger, so 12px sits level next to 13px). Hierarchy comes from colour, never from size jumps or bold — everything on the line is regular weight: the only dark object is the file-name button (<code>--color-text</code> — the one interactive place to go); the action label (Run / Read / Edit…), the mono command / pattern and secondary context all sit at <code>--color-text-muted</code>; auxiliary elements (glyphs, chevrons, trailing meta) stay <code>--color-text-faint</code>. The stream thus reads in three quiet tiers: prose in text, tool lines in muted, thinking / captions in faint. Line content is centre-aligned so mono-only rows (Bash) sit level with the icon and chevron.</li>
+              <li><b>Every tool kind composes its own line, leading with the tool's localized action label</b> (Run / Read / Edit / Write / Search / Find / Fetch…): Bash pairs its label with the full command in mono (CSS-truncated) plus a duration chip; Read / Edit / Write follow the label with the file name as a real button (opens the file preview) followed by the directory, a <code>:line-range</code> or a <code>+N −M</code> stat with a mini segmented bar; Grep shows the pattern in mono plus a match count; Glob / Ls list paths; Todo carries the active task with a done/total progress bar; goal tools show a coloured status pill. Unrecognized tools fall back to glyph + localized label + argument summary.</li>
+              <li>Clicking a line <b>expands it in place</b>; the detail hangs below at the line's own left edge (no inset), so it reads as part of the stream rather than as a separate card. Details are one of: the mono output panel (sunken surface, hairline edge, 12-line scroll cap), the inline diff, or clickable match / file lists (<code>path:line</code> opens the preview at that line). Code-bearing details — the Read content, the Edit diff, the Write content — are <b>syntax-highlighted by file type</b> (github-light / github-dark, following the colour scheme), with the Read output's real line numbers as the gutter; highlighting mounts lazily on first expand and degrades to plain text for unknown languages or oversized content.</li>
+              <li>Rows sit <b>flush with the message stream's left edge</b> (same alignment as prose and the thinking row): no inset, no hover wash, and the glyph rides the thinking row's 4px icon-to-text rhythm with no padded slot. Expanded rows inside a group stack directly on the shared rhythm — no dividers.</li>
+              <li>Consecutive calls of <b>one groupable kind</b> (Read / Grep / Search / Glob / Ls / Fetch / Bash) <b>auto-merge into a homogeneous group</b> that collapses to a single caption row narrating the batch as a natural sentence — <code>Running 2 commands</code> while live, <code>Ran 2 commands</code> once settled (the verb carries the tense; the meta suffix only stays for a failure). The caption shares the thinking row's exact language (borderless faint text row, text-colour hover only, one whole-row button with a rotating chevron); while any call is still running the group starts expanded, and once every call settles it folds itself back to the caption — even if the user expanded it mid-run (the thinking block's vocabulary). The caption leads with the batch's own glyph (the same icon its rows carry), so a command batch and a read batch are distinguishable at a scan without reading; status rides on the glyph — breathing while running, danger on failure. <b>Consequential kinds never merge</b>: Edit / Write / MultiEdit stay individually visible (their diff stats are the stream's most valuable information), Todo and Goal tools narrate progress standalone, a sub-agent delegation keeps its own identity card, Question / Swarm keep their cards, and unrecognized kinds stay standalone — any of these breaks a run on both sides, as does a kind switch within a run.</li>
+              <li><b>A sub-agent delegation is an identity card</b> — never a quiet line, never grouped: the card carries the TASK as its title and the agent type as a quiet meta line, while the orchestrator's full prompt stays out of the stream on purpose. The whole card is one action (the quiet shell vocabulary: raised surface, hairline edge, large radius, no shadow): click to open the subagent's live progress in the side panel — there is no in-stream expansion.</li>
+              <li>Status keeps the shared vocabulary: running (pulsing accent dot) / done (green ✓) / failed (red ✗), at the line's right edge. <b>Only two types keep a full card</b>: <code>Question</code> and <code>Approval</code> — they genuinely need the user's attention. The Swarm composite keeps one quiet card (raised surface, 0.5px hairline, large radius) for its phase overview + member accordion.</li>
             </ul>
 
             <div class="stage-wrap">
-              <div class="stage-bar"><span class="st">Tool Call · compact row (expand on demand)</span></div>
+              <div class="stage-bar"><span class="st">Tool Call · quiet lines (expand on demand)</span></div>
               <div class="stage p">
                 <div class="p-tool-group open">
-                  <div class="p-tool-group-head"><span class="p-dot done"></span><span class="tg-title">3 tool calls</span><span class="tg-meta">· completed</span></div>
-                  <div class="p-tool-row expanded"><span class="p-dot done"></span><span class="tr-name">read_file</span><span class="tr-arg">session.ts</span></div>
-                  <div class="p-tool-detail"><div class="p-code" style="font-size:11px;padding:7px 9px;margin-top:8px">12  export function verify(…</div></div>
-                  <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">read_file</span><span class="tr-arg">middleware.ts</span></div>
-                  <div class="p-tool-row"><span class="p-dot done"></span><span class="tr-name">grep</span><span class="tr-arg">"jwt" · 4 hits</span></div>
+                  <div class="p-tool-group-head"><svg class="tg-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg><span class="tg-title">Read 2 files</span></div>
+                  <div class="p-tool-row expanded"><svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg><span class="tr-name">Read</span><span class="tr-file">session.ts</span><span class="tr-faint">src/auth · :12-45</span><svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg><span class="tr-chip">34 lines</span><span class="tr-ok">✓</span></div>
+                  <div class="p-tool-detail"><div class="p-code" style="font-size:11px;padding:7px 9px">12  export function verify(…</div></div>
+                  <div class="p-tool-row"><svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg><span class="tr-name">Read</span><span class="tr-file">middleware.ts</span><span class="tr-faint">src/auth</span><svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg><span class="tr-chip">58 lines</span><span class="tr-ok">✓</span></div>
                 </div>
+                <div class="p-tool-row"><svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M15.728 9.686l-1.414-1.414L5 17.586V19h1.414l9.314-9.314zm1.414-1.414l1.414 1.414l1.414-1.414l-1.414-1.414l-1.414 1.414zM4 21h16v-2H4v2z"/></svg><span class="tr-name">Edit</span><span class="tr-file">middleware.ts</span><svg class="tr-car" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="m13.172 12l-4.95-4.95l1.414-1.413L16 12l-6.364 6.364l-1.414-1.415z"/></svg><span class="tr-add">+12</span><span class="tr-del">−4</span><span class="tr-bar" aria-hidden="true"><span style="flex:12;background:var(--p-success)"></span><span style="flex:4;background:var(--p-danger)"></span></span><span class="tr-ok">✓</span></div>
               </div>
             </div>
 
@@ -2172,20 +2199,7 @@ onUnmounted(() => {
   .p-msg p { margin: 0 0 10px; color: var(--p-text); }
   .p-msg code { font-family: var(--p-font-mono); background: var(--p-surface-sunken); border: 0; color: var(--p-accent-hover); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
 
-  /* ===== Chat: Agent card ===== */
-  .p-agent { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; }
-  .p-agent-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; }
-  .p-agent-av { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--p-surface-sunken); border: 1px solid var(--p-line); color: var(--p-text-muted); flex: none; }
-  .p-agent-name { font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
-  .p-agent-phase { font-size: var(--p-font-size-xs); color: var(--p-text-muted); }
-  .p-agent-body { padding: 0 14px 13px; }
-
-  /* ===== Chat: tool call card ===== */
-  .p-tool { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; }
-  .p-tool-head { display: flex; align-items: center; gap: 9px; padding: 9px 13px; background: var(--p-surface); border-bottom: 1px solid var(--p-line); }
-  .p-tool-ic { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; background: var(--p-accent-soft); color: var(--p-accent); flex: none; }
-  .p-tool-name { font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); font-weight: 600; color: var(--p-text); }
-  .p-tool-body { padding: 12px 13px; }
+  /* ===== Chat: mono output / code panel (expanded tool-line detail) ===== */
   .p-code { font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); line-height: 1.65; background: var(--p-surface-sunken); border: 1px solid var(--p-line); border-radius: var(--p-r-md); padding: 11px 13px; color: var(--p-text); overflow-x: auto; }
 
   /* ===== Chat: question / approval card (floating neutral attention card) ===== */
@@ -2214,7 +2228,7 @@ onUnmounted(() => {
   .p-todo-row.done .p-todo-check { color: var(--p-success); }
   .p-todo-row.active .p-todo-check { color: var(--p-accent); font-weight: 500; }
 
-  /* ===== Chat: compact tool calls (high-frequency, low-weight calls such as read_file / bash / grep) ===== */
+  /* ===== Chat: compact tool calls — quiet activity lines (read / bash / grep / edit / todo …) ===== */
   /* Status dot */
   .p-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--p-text-faint); }
   .p-dot.done { background: var(--p-success); }
@@ -2222,32 +2236,51 @@ onUnmounted(() => {
   .p-dot.running { background: var(--p-accent); box-shadow: 0 0 0 0 var(--p-accent-soft); animation: p-pulse 1.4s ease-out infinite; }
   @keyframes p-pulse { 0% { box-shadow: 0 0 0 0 rgba(23,131,255,.4); } 100% { box-shadow: 0 0 0 6px rgba(23,131,255,0); } }
 
-  /* Tool call group: collapses a run of consecutive / parallel calls into a stack;
-     overall visual weight is much lower than a card. */
-  .p-tool-group { border: 0.5px solid var(--p-line); border-radius: var(--p-r-md); background: var(--p-surface); overflow: hidden; }
-  .p-tool-group-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 11px; cursor: pointer; font-size: var(--p-font-size-sm); color: var(--p-text-muted); user-select: none; }
-  .p-tool-group-head:hover { background: var(--p-surface-sunken); color: var(--p-text); }
-  .p-tool-group.open .p-tool-group-head { border-bottom: 1px solid var(--p-line-strong); }
-  .p-tool-group-head .tg-title { font-weight: 600; color: var(--p-text); }
-  .p-tool-group-head .tg-meta { color: var(--p-text-faint); }
-  .p-tool-group-head .tg-car { margin-left: auto; width: 14px; height: 14px; color: var(--p-text-faint); transition: transform var(--p-dur) var(--p-ease); }
+  /* Tool call group: a quiet caption row that expands into the run of lines.
+     The caption shares the thinking row's language — a borderless faint text
+     row, text-colour hover only (no wash). */
+  .p-tool-group { overflow: hidden; }
+  .p-tool-group-head { display: flex; align-items: center; gap: 4px; padding: 4px 0; cursor: pointer; border-radius: 6px; font-size: var(--p-font-size-sm); line-height: 1; color: var(--p-text-faint); user-select: none; transition: color var(--p-dur) var(--p-ease); }
+  .p-tool-group-head .tg-ic { width: 14px; height: 14px; color: var(--p-text-faint); flex: none; }
+  .p-tool-group-head:hover { color: var(--p-text); }
+  .p-tool-group-head .tg-title { font-weight: 500; }
+  .p-tool-group-head .tg-meta { color: var(--p-text-faint); font-weight: 400; }
+  .p-tool-group-head .tg-car { width: 14px; height: 14px; color: var(--p-text-faint); transition: transform var(--p-dur) var(--p-ease); }
   .p-tool-group.open .p-tool-group-head .tg-car { transform: rotate(90deg); }
 
-  /* Single-line tool call: compact by default, fits on one line */
-  .p-tool-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px; border-top: 0.5px solid var(--p-line-2, var(--p-line)); cursor: pointer; font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); color: var(--p-text); }
-  .p-tool-row.monospace { font-family: var(--p-font-mono); font-feature-settings: "liga" 0, "calt" 0; font-variant-ligatures: none; }
-  .p-tool-row:hover { background: var(--p-surface-sunken); }
+  /* Single tool line: borderless, thinking-row rhythm (4px vertical padding,
+     ~24px), bespoke content per tool kind. No hover wash — the chevron
+     hugging the text is the only disclosure affordance. */
+  .p-tool-row { position: relative; display: flex; align-items: center; gap: 4px; padding: 4px 0; border-radius: 6px; cursor: pointer; font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); line-height: 1; color: var(--p-text); }
   .p-tool-row .tr-ic { width: 14px; height: 14px; color: var(--p-text-faint); flex: none; }
-  .p-tool-row .tr-name { font-weight: 600; color: var(--p-text); flex: none; }
-  .p-tool-row .tr-arg { color: var(--p-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .p-tool-row .tr-time { margin-left: auto; color: var(--p-text-faint); font-size: var(--p-font-size-xs); flex: none; }
+  .p-tool-row .tr-name { font-weight: 400; color: var(--p-text-muted); flex: none; }
+  .p-tool-row .tr-file { font-weight: 400; color: var(--p-text); flex: none; }
+  .p-tool-row .tr-file:hover { color: var(--p-accent); text-decoration: underline; text-underline-offset: 3px; }
+  .p-tool-row .tr-mono { font-family: var(--p-font-mono); font-size: var(--p-font-size-xs); font-feature-settings: "liga" 0, "calt" 0; font-variant-ligatures: none; color: var(--p-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .p-tool-row .tr-faint { color: var(--p-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .p-tool-row .tr-chip { margin-left: auto; color: var(--p-text-faint); font-size: var(--p-font-size-xs); flex: none; }
+  .p-tool-row .tr-add { margin-left: auto; color: var(--p-success); font-family: var(--p-font-mono); font-size: var(--p-font-size-xs); flex: none; }
+  .p-tool-row .tr-add ~ .tr-chip, .p-tool-row .tr-add ~ .tr-add { margin-left: 0; }
+  .p-tool-row .tr-del { color: var(--p-danger); font-family: var(--p-font-mono); font-size: var(--p-font-size-xs); flex: none; }
+  .p-tool-row .tr-bar { display: inline-flex; width: 36px; height: 3px; border-radius: 999px; overflow: hidden; gap: 1px; flex: none; }
+  .p-tool-row .tr-ok { color: var(--p-success); font-size: var(--p-font-size-xs); flex: none; }
   .p-tool-row .tr-car { width: 13px; height: 13px; color: var(--p-text-faint); flex: none; transition: transform var(--p-dur) var(--p-ease); }
-  .p-tool-row.expanded { background: var(--p-surface-sunken); }
+  /* Sub Agent identity card: one per delegation, whole card opens the side panel. */
+  .p-agent-card { display: flex; align-items: center; gap: 8px; align-self: stretch; padding: 8px 12px; background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-lg); cursor: pointer; }
+  .p-agent-card .pa-ic { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--p-surface-sunken); color: var(--p-text-muted); flex: none; }
+  .p-agent-card .pa-ic svg { width: 14px; height: 14px; }
+  .p-agent-card .pa-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .p-agent-card .pa-task { font-size: var(--p-font-size-sm); line-height: 1.4; color: var(--p-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .p-agent-card .pa-type { font-size: var(--p-font-size-xs); line-height: 1.4; color: var(--p-text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .p-agent-card .pa-ok { color: var(--p-success); font-size: var(--p-font-size-xs); flex: none; }
+  .p-agent-card .pa-go { color: var(--p-text-faint); flex: none; }
   .p-tool-row.expanded .tr-car { transform: rotate(90deg); }
+  /* Rows inside an open group stack directly on the shared rhythm — no
+     dividers. */
 
-  /* Detail after a row is expanded (code / output) */
-  .p-tool-detail { padding: 0 11px 11px; background: var(--p-surface-sunken); border-top: 0.5px solid var(--p-line); }
-  .p-tool-detail .p-code { margin-top: 10px; }
+  /* Expanded detail: hangs below the line at its own left edge (no inset). */
+  .p-tool-detail { padding: 2px 8px 4px 0; }
+  .p-tool-detail .p-code { margin-top: 4px; }
 
   /* ===== Chat: Composer ===== */
   .p-composer { background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-xl); box-shadow: var(--p-sh-md); overflow: hidden; }

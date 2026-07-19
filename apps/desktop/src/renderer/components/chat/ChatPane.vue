@@ -1039,7 +1039,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > :deep(.tool-group),
 .a-msg > :deep(.agent-card),
 .a-msg > :deep(.agent-group),
-.a-msg > :deep(.box),
+.a-msg > :deep(.tool-line),
 .a-msg > :deep(.swarm-card),
 .a-msg > :deep(.media-tool) {
   margin-top: var(--chat-block-gap);
@@ -1049,7 +1049,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > :deep(.tool-group:first-child),
 .a-msg > :deep(.agent-card:first-child),
 .a-msg > :deep(.agent-group:first-child),
-.a-msg > :deep(.box:first-child),
+.a-msg > :deep(.tool-line:first-child),
 .a-msg > :deep(.swarm-card:first-child),
 .a-msg > :deep(.media-tool:first-child) {
   margin-top: 0;

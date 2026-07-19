@@ -6,7 +6,6 @@ import {
   formatTokens,
   rendersToolCard,
   renderBlockKey,
-  toolStackPosition,
   turnBlocks,
   turnFinalText,
   turnToMarkdown,
@@ -95,18 +94,8 @@ describe('rendersToolCard', () => {
   });
 });
 
-describe('toolStackPosition', () => {
-  it('marks a lone tool single and otherwise reports first/middle/last', () => {
-    expect(toolStackPosition(0, 1)).toBe('single');
-    expect(toolStackPosition(0, 0)).toBe('single');
-    expect(toolStackPosition(0, 3)).toBe('first');
-    expect(toolStackPosition(1, 3)).toBe('middle');
-    expect(toolStackPosition(2, 3)).toBe('last');
-  });
-});
-
 describe('assistantRenderBlocks', () => {
-  it('groups consecutive renderable tools into one tool-stack', () => {
+  it('merges consecutive calls of one groupable kind into one tool-stack', () => {
     const rendered = assistantRenderBlocks(assistantTurn([toolBlock('a'), toolBlock('b')]));
     expect(rendered).toHaveLength(1);
     expect(rendered[0]).toMatchObject({ kind: 'tool-stack' });
@@ -119,6 +108,63 @@ describe('assistantRenderBlocks', () => {
   it('renders a lone tool as a standalone tool, not a stack', () => {
     const rendered = assistantRenderBlocks(assistantTurn([toolBlock('a')]));
     expect(rendered).toEqual([{ kind: 'tool', tool: tool('a'), sourceIndex: 0 }]);
+  });
+
+  it('keeps groups homogeneous: a kind switch splits the run into separate stacks', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([
+        toolBlock('a'),
+        toolBlock('b'),
+        toolBlock('c', { name: 'bash' }),
+        toolBlock('d', { name: 'bash' }),
+      ]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['tool-stack', 'tool-stack']);
+    if (rendered[0]?.kind === 'tool-stack' && rendered[1]?.kind === 'tool-stack') {
+      expect(rendered[0].tools.map((t) => t.tool.id)).toEqual(['a', 'b']);
+      expect(rendered[1].tools.map((t) => t.tool.id)).toEqual(['c', 'd']);
+    }
+  });
+
+  it('lays out mixed kinds flat — no catch-all group', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('a'), toolBlock('b', { name: 'bash' })]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['tool', 'tool']);
+  });
+
+  it('never merges consequential kinds (edits stay individually visible)', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('e1', { name: 'edit' }), toolBlock('e2', { name: 'edit' })]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['tool', 'tool']);
+  });
+
+  it('never merges sub-agent delegations (identity cards stand alone)', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('s1', { name: 'task' }), toolBlock('s2', { name: 'task' })]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['tool', 'tool']);
+  });
+
+  it('lets a non-groupable kind break a run on both sides', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([
+        toolBlock('a'),
+        toolBlock('b'),
+        toolBlock('e', { name: 'edit' }),
+        toolBlock('c'),
+        toolBlock('d'),
+      ]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['tool-stack', 'tool', 'tool-stack']);
+  });
+
+  it('keeps unrecognized kinds standalone', () => {
+    const rendered = assistantRenderBlocks(
+      assistantTurn([toolBlock('x1', { name: 'cronlist' }), toolBlock('x2', { name: 'cronlist' })]),
+    );
+    expect(rendered.map((b) => b.kind)).toEqual(['tool', 'tool']);
   });
 
   it('breaks the stack when a non-tool block interrupts the run', () => {

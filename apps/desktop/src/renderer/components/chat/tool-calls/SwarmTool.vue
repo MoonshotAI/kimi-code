@@ -21,14 +21,7 @@ import { Icon, StatusDot, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
-const props = withDefaults(
-  defineProps<{
-    tool: ToolCall;
-    mobile?: boolean;
-    stackPosition?: 'single' | 'first' | 'middle' | 'last';
-  }>(),
-  { mobile: false, stackPosition: 'single' },
-);
+const props = withDefaults(defineProps<{ tool: ToolCall; mobile?: boolean }>(), { mobile: false });
 
 defineEmits<{
   openMedia: [media: ToolMedia];
@@ -153,7 +146,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
 </script>
 
 <template>
-  <div class="swarm-card" :class="{ open, err: aggregateStatus === 'error', stacked: stackPosition !== 'single' }">
+  <div class="swarm-card" :class="{ open, err: aggregateStatus === 'error' }">
     <button class="head" type="button" :aria-expanded="open" @click="toggle">
       <Icon class="ic" name="git-pull-request" size="sm" />
       <span class="title">{{ label }}</span>
@@ -168,7 +161,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
         <span v-if="done > 0 || total > 0" class="chip">{{ done }} / {{ total }}</span>
         <span v-if="tool.timing" class="tm">{{ tool.timing }}</span>
       </span>
-      <Icon class="car" :name="open ? 'chevron-down' : 'chevron-right'" size="sm" />
+      <Icon class="car" name="chevron-right" size="sm" />
     </button>
 
     <div v-show="open" class="body">
@@ -214,7 +207,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
               <span class="mact">{{ row.activity }}</span>
             </Tooltip>
             <span class="mphase">{{ phaseLabel(row.phase) }}</span>
-            <Icon class="mcar" :name="isRowOpen(row.id) ? 'chevron-down' : 'chevron-right'" size="sm" />
+            <Icon class="mcar" name="chevron-right" size="sm" />
           </button>
           <div v-show="isRowOpen(row.id)" class="member-body">{{ row.body }}</div>
         </div>
@@ -228,44 +221,40 @@ function phaseLabel(phase: AppSubagentPhase): string {
 </template>
 
 <style scoped>
+/* The swarm is the one heavy composite card in the stream (phase overview +
+   member accordion), so it keeps a real container — but a quiet one: raised
+   surface, hairline edge, large radius, no fill on the head. */
 .swarm-card {
   margin: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-lg);
   overflow: hidden;
   transition: border-color var(--duration-base) var(--ease-out);
 }
 .swarm-card.err {
-  border-color: color-mix(in srgb, var(--color-danger) 25%, var(--bg));
+  border-color: color-mix(in srgb, var(--color-danger) 45%, var(--bg));
 }
 
 .head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
-  min-height: 32px;
-  padding: 0 11px;
+  min-height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-3);
   border: none;
   background: transparent;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--ui-font-size);
   text-align: left;
   cursor: pointer;
   user-select: none;
 }
-.head:hover,
-.swarm-card.open > .head {
-  background: var(--color-surface-sunken);
+.head:hover {
+  background: var(--color-hover);
   color: var(--color-text);
-}
-.swarm-card.err > .head {
-  background: color-mix(in srgb, var(--color-danger) 4%, var(--bg));
-}
-.swarm-card.err > .head:hover {
-  background: color-mix(in srgb, var(--color-danger) 7%, var(--bg));
 }
 .head:focus-visible {
   outline: none;
@@ -296,7 +285,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex: none;
   color: var(--color-text-muted);
   font-size: var(--text-xs);
@@ -324,22 +313,25 @@ function phaseLabel(phase: AppSubagentPhase): string {
   margin-left: 2px;
   color: var(--color-text-faint);
   flex: none;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.swarm-card.open .car {
+  transform: rotate(90deg);
 }
 
 .body {
-  border-top: 1px solid var(--color-line);
-  background: var(--color-surface-sunken);
+  border-top: 0.5px solid var(--color-line);
 }
 
 /* Overview strip: count + segmented phase bar + legend. */
 .overview {
-  padding: 9px 11px 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-line) 70%, transparent);
+  padding: 10px var(--space-3) var(--space-2);
+  border-bottom: 0.5px solid var(--color-line);
 }
 .overview-line {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .big {
   font-family: var(--font-mono);
@@ -356,7 +348,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
   height: 5px;
   border-radius: var(--radius-full);
   overflow: hidden;
-  margin: 8px 0 4px;
+  margin: var(--space-2) 0 var(--space-1);
   gap: 2px;
 }
 .seg > span {
@@ -378,7 +370,8 @@ function phaseLabel(phase: AppSubagentPhase): string {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: var(--text-xs) var(--font-mono);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
 }
 .lg-dot {
@@ -389,7 +382,7 @@ function phaseLabel(phase: AppSubagentPhase): string {
 
 /* Per-member accordion. */
 .member {
-  border-bottom: 1px solid color-mix(in srgb, var(--color-line) 70%, transparent);
+  border-bottom: 0.5px solid var(--color-line);
 }
 .member:last-child {
   border-bottom: none;
@@ -397,22 +390,21 @@ function phaseLabel(phase: AppSubagentPhase): string {
 .member-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
-  min-height: 32px;
-  padding: 0 11px;
+  min-height: 30px;
+  padding: 0 var(--space-2) 0 var(--space-3);
   border: none;
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
+  font-size: var(--ui-font-size);
   text-align: left;
   cursor: pointer;
   user-select: none;
 }
-.member-head:hover,
-.member.open .member-head {
-  background: color-mix(in srgb, var(--color-surface) 55%, var(--bg));
+.member-head:hover {
+  background: var(--color-hover);
 }
 .member-head:focus-visible {
   outline: none;
@@ -443,7 +435,8 @@ function phaseLabel(phase: AppSubagentPhase): string {
 .mphase {
   flex: none;
   margin-left: auto;
-  font: var(--text-xs) var(--font-mono);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
   color: var(--color-text-faint);
 }
 .phase-completed .mphase { color: var(--color-success); }
@@ -451,29 +444,35 @@ function phaseLabel(phase: AppSubagentPhase): string {
 .phase-working .mphase { color: var(--color-accent); }
 .phase-suspended .mphase { color: var(--color-warning); }
 .mcar {
-  margin-left: 4px;
+  margin-left: var(--space-1);
   color: var(--color-text-faint);
   flex: none;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.member.open .mcar {
+  transform: rotate(90deg);
 }
 .member-body {
-  padding: 4px 11px 10px 31px;
+  padding: var(--space-1) var(--space-3) 10px 31px;
   color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  font-size: calc(var(--content-font-size) - 2px);
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .waiting {
-  padding: 6px 11px 10px;
+  padding: 6px var(--space-3) 10px;
   color: var(--color-text-muted);
   font-size: var(--text-xs);
 }
 
 .fallback-output {
-  padding: 9px 11px 10px;
+  padding: 10px var(--space-3);
   color: var(--color-text);
-  font: var(--text-xs)/1.6 var(--font-mono);
+  font-family: var(--font-mono);
+  font-size: calc(var(--content-font-size) - 2px);
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
 }

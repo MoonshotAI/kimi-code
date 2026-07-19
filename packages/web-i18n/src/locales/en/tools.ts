@@ -32,9 +32,18 @@ export default {
   chip: {
     lines: '{count} lines',
     results: '{count} results',
+    files: '{count} files',
     edited: 'edited',
     created: 'created',
     todos: '{count} items',
+  },
+  disclosure: {
+    expand: 'Expand details',
+    collapse: 'Collapse details',
+  },
+  output: {
+    waiting: 'Waiting for output…',
+    empty: 'No output',
   },
   summary: {
     inScope: '{value} in {scope}',
@@ -54,6 +63,15 @@ export default {
     title: '{count} tool call | {count} tool calls',
     countOne: '{number} tool call',
     countOther: '{number} tool calls',
+    typed: {
+      read: { doing: 'Reading {count} files', done: 'Read {count} files' },
+      bash: { doing: 'Running {count} commands', done: 'Ran {count} commands' },
+      grep: { doing: 'Searching {count} patterns', done: 'Searched {count} patterns' },
+      search: { doing: 'Running {count} web searches', done: 'Ran {count} web searches' },
+      glob: { doing: 'Matching {count} patterns', done: 'Matched {count} patterns' },
+      ls: { doing: 'Listing {count} directories', done: 'Listed {count} directories' },
+      web_fetch: { doing: 'Fetching {count} pages', done: 'Fetched {count} pages' },
+    },
     running: 'running',
     error: 'failed',
     done: 'done',

@@ -30,6 +30,7 @@ import {
 import type { AppMessage, AppModel, AppTask } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
+import BashTool from '../src/components/chat/tool-calls/BashTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
 import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
 import ReadTool from '../src/components/chat/tool-calls/ReadTool.vue';
@@ -388,6 +389,53 @@ describe('buildEditDiffLines', () => {
     ).toBeNull();
   });
 
+  it('builds a concatenated diff for MultiEdit with hunk separators and continuous line numbers', () => {
+    const arg = JSON.stringify({
+      path: 'a.ts',
+      edits: [
+        { old_string: 'a\nb', new_string: 'a\nB' },
+        { old_string: 'x', new_string: 'y' },
+      ],
+    });
+    // Segments are renumbered continuously so the highlighter's token rows
+    // (indexed by oldNo/newNo against the concatenated texts) stay aligned.
+    expect(buildEditDiffLines({ name: 'MultiEdit', arg })).toEqual([
+      { type: 'context', text: 'a', oldNo: 1, newNo: 1 },
+      { type: 'del', text: 'b', oldNo: 2 },
+      { type: 'add', text: 'B', newNo: 2 },
+      { type: 'hunk', text: '···' },
+      { type: 'del', text: 'x', oldNo: 3 },
+      { type: 'add', text: 'y', newNo: 3 },
+    ]);
+  });
+
+  it('keeps continuous line numbers when a segment ends with a trailing newline', () => {
+    const arg = JSON.stringify({
+      path: 'a.ts',
+      edits: [
+        { old_string: 'a\n', new_string: 'A\n' },
+        { old_string: 'x', new_string: 'y' },
+      ],
+    });
+    // Offsets count displayed rows (splitLines drops the phantom trailing
+    // row), so the second segment still starts at 2 — not 3.
+    expect(buildEditDiffLines({ name: 'MultiEdit', arg })).toEqual([
+      { type: 'del', text: 'a', oldNo: 1 },
+      { type: 'add', text: 'A', newNo: 1 },
+      { type: 'hunk', text: '···' },
+      { type: 'del', text: 'x', oldNo: 2 },
+      { type: 'add', text: 'y', newNo: 2 },
+    ]);
+  });
+
+  it('falls back to output for MultiEdit with replace_all segments', () => {
+    const arg = JSON.stringify({
+      path: 'a.ts',
+      edits: [{ old_string: 'a', new_string: 'b', replace_all: true }],
+    });
+    expect(buildEditDiffLines({ name: 'MultiEdit', arg })).toBeNull();
+  });
+
   it('returns null for non-edit/write tools', () => {
     expect(buildEditDiffLines({ name: 'Bash', arg: JSON.stringify({ command: 'ls' }) })).toBeNull();
   });
@@ -566,14 +614,17 @@ describe('resolveToolRenderer', () => {
     expect(resolveToolRenderer(tool('multi_edit'))).toBe(EditTool);
   });
 
-  it('routes read calls to the Read renderer', () => {
+  it('routes bash / read calls to their bespoke renderers', () => {
+    expect(resolveToolRenderer(tool('bash'))).toBe(BashTool);
+    expect(resolveToolRenderer(tool('Bash'))).toBe(BashTool);
+    expect(resolveToolRenderer(tool('shell'))).toBe(BashTool);
     expect(resolveToolRenderer(tool('read'))).toBe(ReadTool);
     expect(resolveToolRenderer(tool('Read'))).toBe(ReadTool);
   });
 
   it('falls back to the Generic renderer for unknown tools', () => {
-    expect(resolveToolRenderer(tool('bash'))).toBe(GenericTool);
-    expect(resolveToolRenderer(tool('some_custom_tool'))).toBe(GenericTool);
+    expect(resolveToolRenderer(tool('croncreate'))).toBe(GenericTool);
+    expect(resolveToolRenderer(tool('some_future_tool'))).toBe(GenericTool);
   });
 });
 

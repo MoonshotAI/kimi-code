@@ -155,24 +155,29 @@ function sign(line: DiffViewLine): string {
 </template>
 
 <style scoped>
-/* Same viewport shape as the old inline diff (.diff-scroll in EditTool): caps
-   long content and scrolls horizontally for wide lines. */
+/* Same panel language as the shared OutputPanel: sunken surface, 0.5px
+   hairline edge (needed in dark, where sunken == page bg), radius-md. The
+   panel owns the scroll viewport — caps long content vertically and scrolls
+   horizontally for wide lines. */
 .hl-code {
-  margin-top: var(--space-2);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
   overflow: auto;
   max-height: calc(24 * 1.5 * var(--ui-font-size));
+  overscroll-behavior: contain;
   font-family: var(--font-mono);
-  font-size: var(--text-base);
+  font-size: calc(var(--content-font-size) - 2px);
   line-height: var(--leading-normal);
+  font-feature-settings: "liga" 0, "calt" 0;
+  font-variant-ligatures: none;
 }
 /* Grow to the longest row so add/del backgrounds paint edge-to-edge across the
    horizontal scroll (same trick as DiffLines). */
 .hl-body {
   width: max-content;
   min-width: 100%;
-  padding: var(--space-1) 0 var(--space-3);
+  padding: var(--space-1) 0 var(--space-2);
 }
 /* Plain rows with no gutter column (Write previews): diff rows get their left
    offset from the sign column and Read rows from the number gutter — plain
@@ -183,7 +188,7 @@ function sign(line: DiffViewLine): string {
 .hl-row {
   display: flex;
   align-items: flex-start;
-  min-height: calc(var(--text-base) * var(--leading-normal));
+  min-height: calc(1em * var(--leading-normal));
   white-space: pre;
   width: 100%;
 }
@@ -196,7 +201,7 @@ function sign(line: DiffViewLine): string {
   text-align: right;
   color: var(--color-text-faint);
   user-select: none;
-  border-right: 1px solid var(--color-line);
+  border-right: 0.5px solid var(--color-line);
   font-variant-numeric: tabular-nums;
 }
 .hl-sign {

@@ -390,7 +390,7 @@ body {
 /* ---- App shell ---- */
 /* ---- Sidebar: buttons, rename inputs, kebab menu, settings popover ---- */
 /* ---- Chat content: code blocks, inline code, thinking, tool chips ---- */
-/* ---- Approval & question cards (match the rounded .box tool cards) ---- */
+/* ---- Approval & question cards ---- */
 /* ---- Composer: permission pill, model menu, queue strip ---- */
 /* ---- Floating menus + status line ---- */
 /* ---- Entrance / micro keyframes (shared by component-scoped rules) ---- */
@@ -480,7 +480,6 @@ body {
 .u-bub,
 .u-bub .u-text,
 .a-msg .msg,
-.box .bb,
 .ph {
   font-size: var(--content-font-size);
 }
@@ -497,7 +496,6 @@ body {
 .md .markstream-pre,
 .md .code-block-container pre code,
 .md .diff-pre code,
-.box .bh,
 .queue-item,
 .queue-text,
 .ctx-num,

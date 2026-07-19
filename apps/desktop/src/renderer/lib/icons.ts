@@ -89,6 +89,7 @@ import RiPauseFill from '~icons/ri/pause-fill';
 import RiPencilLine from '~icons/ri/pencil-line';
 import RiPlayFill from '~icons/ri/play-fill';
 import RiQuestionLine from '~icons/ri/question-line';
+import RiRobot2Line from '~icons/ri/robot-2-line';
 import RiSortDesc from '~icons/ri/sort-desc';
 import RiSparklingLine from '~icons/ri/sparkling-line';
 import RiStarFill from '~icons/ri/star-fill';
@@ -165,6 +166,7 @@ import RawPauseFill from '~icons/ri/pause-fill?raw';
 import RawPencilLine from '~icons/ri/pencil-line?raw';
 import RawPlayFill from '~icons/ri/play-fill?raw';
 import RawQuestionLine from '~icons/ri/question-line?raw';
+import RawRobot2Line from '~icons/ri/robot-2-line?raw';
 import RawSortDesc from '~icons/ri/sort-desc?raw';
 import RawSparklingLine from '~icons/ri/sparkling-line?raw';
 import RawStarFill from '~icons/ri/star-fill?raw';
@@ -243,6 +245,7 @@ export type IconName =
   | 'help-circle'
   | 'alert-triangle'
   | 'clock'
+  | 'robot'
   | 'sparkles'
   | 'target'
   | 'pause'
@@ -334,6 +337,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'alert-triangle': entry(RiAlertLine, RawAlertLine),
   clock: entry(RiTimeLine, RawTimeLine),
   sparkles: entry(RiSparklingLine, RawSparklingLine),
+  robot: entry(RiRobot2Line, RawRobot2Line),
   target: entry(RiTargetLine, RawTargetLine),
   pause: entry(RiPauseFill, RawPauseFill),
   play: entry(RiPlayFill, RawPlayFill),
@@ -440,7 +444,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'calendar-close',
     ],
   ],
-  ['Communication', ['message', 'mail', 'user']],
+  ['Communication', ['message', 'mail', 'user', 'robot']],
   [
     'Status & media',
     [
