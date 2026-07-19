@@ -42,7 +42,7 @@ import {
   splitTokenFragment,
 } from './access-urls';
 import { ensureDaemon, findReusableDaemon, type EnsureDaemonResult } from './daemon';
-import { maybeLoadRustEngine } from '../../cli/rust-engine';
+import { maybeLoadRustEngine } from '#/cli/rust-engine';
 import { type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
