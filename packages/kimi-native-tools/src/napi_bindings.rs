@@ -15,11 +15,104 @@ use crate::permission;
 use crate::read::{self, ReadConfig, ReadResult, MAX_BYTES, MAX_LINE_LENGTH, MAX_LINES};
 use crate::tool_access::{self, ToolAccessMeta};
 use crate::tool_naming;
+use crate::translation::{self, CachedTranslator};
 use crate::write::{self, WriteMode, WriteResult};
 use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+
+// ============================================================================
+// Translation (i18n)
+// ============================================================================
+
+/// One resolved entry in a batch translation.
+#[napi(object)]
+pub struct NativeTranslateBatchResult {
+    pub key: String,
+    pub message: String,
+}
+
+/// Process-wide cached translator — parsed-JSON cache keyed by locale JSON
+/// string, shared across all `*_cached` calls so repeated translations skip
+/// re-parsing. The cache handles locale switching automatically (a different
+/// locale JSON string is simply a different cache key).
+static CACHED_TRANSLATOR: OnceLock<CachedTranslator> = OnceLock::new();
+
+fn cached_translator() -> &'static CachedTranslator {
+    CACHED_TRANSLATOR.get_or_init(CachedTranslator::new)
+}
+
+/// Resolve a dot-separated `key` against `locale_json`, falling back to
+/// `fallback_json`, then to the key itself; interpolate `{{param}}` tokens.
+#[napi]
+pub fn native_translate(
+    locale_json: String,
+    fallback_json: String,
+    key: String,
+    params: Option<HashMap<String, String>>,
+) -> String {
+    translation::translate(&locale_json, &fallback_json, &key, params.as_ref())
+}
+
+/// Same as `native_translate`, but uses the process-wide cached translator.
+#[napi]
+pub fn native_translate_cached(
+    locale_json: String,
+    fallback_json: String,
+    key: String,
+    params: Option<HashMap<String, String>>,
+) -> String {
+    cached_translator().translate(&locale_json, &fallback_json, &key, params.as_ref())
+}
+
+/// Clear the process-wide translator cache (call on locale reload).
+#[napi]
+pub fn native_translate_clear_cache() {
+    cached_translator().clear_cache();
+}
+
+fn to_batch_results(results: Vec<translation::BatchResult>) -> Vec<NativeTranslateBatchResult> {
+    results
+        .into_iter()
+        .map(|r| NativeTranslateBatchResult {
+            key: r.key,
+            message: r.message,
+        })
+        .collect()
+}
+
+/// Translate multiple keys in a single pass, parsing the JSON only once.
+#[napi]
+pub fn native_translate_batch(
+    locale_json: String,
+    fallback_json: String,
+    keys: Vec<String>,
+    params: Option<HashMap<String, String>>,
+) -> Vec<NativeTranslateBatchResult> {
+    to_batch_results(translation::translate_batch(
+        &locale_json,
+        &fallback_json,
+        &keys,
+        params.as_ref(),
+    ))
+}
+
+/// Same as `native_translate_batch`, but uses the process-wide cached translator.
+#[napi]
+pub fn native_translate_batch_cached(
+    locale_json: String,
+    fallback_json: String,
+    keys: Vec<String>,
+    params: Option<HashMap<String, String>>,
+) -> Vec<NativeTranslateBatchResult> {
+    to_batch_results(cached_translator().translate_batch(
+        &locale_json,
+        &fallback_json,
+        &keys,
+        params.as_ref(),
+    ))
+}
 
 // ============================================================================
 // Read tool

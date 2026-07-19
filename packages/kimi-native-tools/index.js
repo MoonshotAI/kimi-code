@@ -73,6 +73,13 @@ const BASH_DEFAULT_TIMEOUT = binding.BASH_DEFAULT_TIMEOUT;
 const BASH_MAX_TIMEOUT = binding.BASH_MAX_TIMEOUT;
 const nativeIsSensitiveFileBytes = binding.nativeIsSensitiveFileBytes;
 
+// Translation (i18n) — direct pass-throughs to the Rust engine.
+const nativeTranslate = binding.nativeTranslate;
+const nativeTranslateCached = binding.nativeTranslateCached;
+const nativeTranslateClearCache = binding.nativeTranslateClearCache;
+const nativeTranslateBatch = binding.nativeTranslateBatch;
+const nativeTranslateBatchCached = binding.nativeTranslateBatchCached;
+
 // ============================================================================
 // Read tool
 // ============================================================================
@@ -1037,4 +1044,11 @@ module.exports = {
 
   // Permission
   nativeParsePermissionPattern,
+
+  // Translation (i18n)
+  nativeTranslate,
+  nativeTranslateCached,
+  nativeTranslateClearCache,
+  nativeTranslateBatch,
+  nativeTranslateBatchCached,
 };
