@@ -8,12 +8,19 @@ import { ErrorCodes, KimiError } from '#/errors';
 const S_IFMT = 0o170000;
 const S_IFDIR = 0o040000;
 
+const SubagentBindingTomlSchema = z.object({
+  model: z.string().optional(),
+  thinking_effort: z.string().optional(),
+  inherit: z.boolean().optional(),
+});
+
 const WorkspaceLocalTomlSchema = z.object({
   workspace: z
     .object({
       additional_dir: z.array(z.string()),
     })
     .optional(),
+  subagent: z.record(z.string(), SubagentBindingTomlSchema).optional(),
 });
 
 type WorkspaceLocalToml = z.infer<typeof WorkspaceLocalTomlSchema>;
@@ -92,6 +99,89 @@ export async function appendWorkspaceAdditionalDir(
   await kaos.writeText(configPath, `${stringifyToml(file.raw)}\n`);
 
   return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
+}
+
+/**
+ * Per-workspace model/effort binding for one subagent type, stored in
+ * `<projectRoot>/.kimi-code/local.toml` under `[subagent.<type>]`.
+ *
+ * `inherit: true` is an explicit user choice to keep parent inheritance —
+ * recorded so the Agent tool does not re-ask on every spawn.
+ */
+export interface SubagentBinding {
+  readonly model?: string;
+  readonly thinkingEffort?: string;
+  readonly inherit?: boolean;
+}
+
+/** Read the binding for one subagent type; `undefined` means never configured. */
+export async function readSubagentBinding(
+  kaos: Kaos,
+  workDir: string,
+  agentType: string,
+): Promise<SubagentBinding | undefined> {
+  const projectRoot = await findProjectRoot(kaos, workDir);
+  const configPath = getWorkspaceLocalConfigPath(projectRoot);
+  const file = await readWorkspaceLocalToml(kaos, configPath);
+  const entry = file?.parsed.subagent?.[agentType];
+  if (entry === undefined) return undefined;
+  return {
+    model: entry.model,
+    thinkingEffort: entry.thinking_effort,
+    inherit: entry.inherit,
+  };
+}
+
+/** Read all subagent bindings for the workspace (for display/management). */
+export async function readSubagentBindings(
+  kaos: Kaos,
+  workDir: string,
+): Promise<Readonly<Record<string, SubagentBinding>>> {
+  const projectRoot = await findProjectRoot(kaos, workDir);
+  const configPath = getWorkspaceLocalConfigPath(projectRoot);
+  const file = await readWorkspaceLocalToml(kaos, configPath);
+  const entries = file?.parsed.subagent ?? {};
+  return Object.fromEntries(
+    Object.entries(entries).map(([type, entry]) => [
+      type,
+      { model: entry.model, thinkingEffort: entry.thinking_effort, inherit: entry.inherit },
+    ]),
+  );
+}
+
+/**
+ * Write (or clear, when `binding` is `undefined`) the binding for one
+ * subagent type, preserving unrelated TOML content.
+ */
+export async function writeSubagentBinding(
+  kaos: Kaos,
+  workDir: string,
+  agentType: string,
+  binding: SubagentBinding | undefined,
+): Promise<{ readonly configPath: string }> {
+  const projectRoot = await findProjectRoot(kaos, workDir);
+  const configPath = getWorkspaceLocalConfigPath(projectRoot);
+  const file = (await readWorkspaceLocalToml(kaos, configPath)) ?? { raw: {}, parsed: {} };
+
+  const subagent = cloneRecord(file.raw['subagent']);
+  if (binding === undefined) {
+    delete subagent[agentType];
+  } else {
+    const entry: Record<string, unknown> = {};
+    if (binding.model !== undefined) entry['model'] = binding.model;
+    if (binding.thinkingEffort !== undefined) entry['thinking_effort'] = binding.thinkingEffort;
+    if (binding.inherit !== undefined) entry['inherit'] = binding.inherit;
+    subagent[agentType] = entry;
+  }
+  if (Object.keys(subagent).length === 0) {
+    delete file.raw['subagent'];
+  } else {
+    file.raw['subagent'] = subagent;
+  }
+
+  await kaos.mkdir(dirname(configPath), { parents: true, existOk: true });
+  await kaos.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+  return { configPath };
 }
 
 export function normalizeAdditionalDirs(additionalDirs: readonly string[]): string[] {

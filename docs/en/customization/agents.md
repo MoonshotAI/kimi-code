@@ -22,6 +22,31 @@ Each dispatch is presented in the terminal as an approval request (unless it mat
 
 Sub-agents support running in the background: results are automatically returned to the main Agent upon completion, with no manual polling needed. You can also call back an existing sub-agent instance to continue the same task.
 
+Binding a model or thinking effort to a sub-agent type is experimental and disabled by default. Enable it persistently in `config.toml`:
+
+```toml
+[experimental]
+subagent-model-selection = true
+```
+
+To enable it only for the current process, set the dedicated environment variable instead:
+
+```sh
+export KIMI_CODE_EXPERIMENTAL_SUBAGENT_MODEL_SELECTION=1
+```
+
+Bindings are **yours, not the model's**: each workspace keeps its own bindings in `.kimi-code/local.toml` (in the project root) under `[subagent.<type>]`:
+
+```toml
+[subagent.coder]
+model = "kimi-code/kimi-for-coding"
+thinking_effort = "high"
+```
+
+The first time an unbound sub-agent type is spawned in a workspace, you are asked once whether to bind a model (answering "keep inheriting" is remembered too). Afterwards the binding is applied mechanically to every new sub-agent of that type — the calling Agent cannot see or override it. Manage bindings anytime with the `/subagent-model` command (`list` / `set <type>` / `clear <type>`). Precedence: workspace binding > profile binding (for profiles shipped with the app) > inherit the calling Agent's current model and effort.
+
+Bound values are fixed at spawn: resuming a sub-agent always keeps the model and effort it was configured with, mid-conversation switches are not possible, and both are restored after a session restart. A bound alias is validated against your models configuration — if it no longer resolves (for example after being removed from `config.toml`), spawning or resuming fails with a configuration error until you update or clear the binding.
+
 ## Context Isolation and Resource Cost
 
 Each sub-agent has a fully independent context window. It can only see the task description explicitly passed by the main Agent and cannot see the main Agent's conversation history. The sub-agent's own intermediate reasoning and tool call records do not flow back; only the final result appears in the main Agent's context.

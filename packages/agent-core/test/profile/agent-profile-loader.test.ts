@@ -145,6 +145,30 @@ tools:
     ).toThrow(/agent -> coder -> agent/);
   });
 
+  it('applies subagent model and thinking-effort bindings to the linked profile', () => {
+    const profiles = resolveAgentProfiles([
+      {
+        name: 'agent',
+        subagents: {
+          coder: {
+            description: 'Coder child subagent',
+            modelAlias: 'cheap-model',
+            thinkingEffort: 'high',
+          },
+          explore: { description: 'Plain subagent' },
+        },
+      },
+      { name: 'coder', systemPromptTemplate: 'coder prompt' },
+      { name: 'explore', systemPromptTemplate: 'explore prompt' },
+    ]);
+
+    expect(profiles['coder']?.modelAlias).toBe('cheap-model');
+    expect(profiles['coder']?.thinkingEffort).toBe('high');
+    expect(profiles['agent']?.subagents?.['coder']).toBe(profiles['coder']);
+    expect(profiles['explore']?.modelAlias).toBeUndefined();
+    expect(profiles['explore']?.thinkingEffort).toBeUndefined();
+  });
+
   it('fails loudly when an embedded system prompt source is missing', () => {
     expect(() =>
       loadAgentProfilesFromSources(['profile/default/agent.yaml'], {

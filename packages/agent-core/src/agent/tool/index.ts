@@ -10,6 +10,7 @@ import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool, ToolUpdate } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
+import { createSubagentBindingCallbacks } from './subagent-binding';
 import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
@@ -756,6 +757,9 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+              modelSelectionEnabled: () =>
+                this.agent.experimentalFlags.enabled('subagent-model-selection'),
+              ...createSubagentBindingCallbacks(this.agent, kaos, cwd),
             },
           ),
         this.agent.subagentHost &&

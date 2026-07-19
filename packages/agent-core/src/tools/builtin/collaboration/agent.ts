@@ -18,6 +18,10 @@
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
+import type {
+  AskSubagentBindingCallback,
+  ReadSubagentBindingCallback,
+} from '../../../agent/tool/subagent-binding';
 import type { Logger } from '../../../logging';
 import { ToolAccesses } from '../../../loop/tool-access';
 import { isAbortError } from '../../../loop/errors';
@@ -116,6 +120,9 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       log?: Logger;
       allowBackground?: boolean | undefined;
       subagentTimeoutMs?: number | undefined;
+      modelSelectionEnabled?: boolean | (() => boolean);
+      readBinding?: ReadSubagentBindingCallback;
+      askBinding?: AskSubagentBindingCallback;
     },
   ) {
     const log = options?.log;
@@ -123,6 +130,13 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     // `0` is preserved (not normalized): `0 ?? DEFAULT_SUBAGENT_TIMEOUT_MS`
     // stays `0`, and the BackgroundManager arms no timer for it.
     this.subagentTimeoutMs = options?.subagentTimeoutMs;
+    const modelSelectionEnabled = options?.modelSelectionEnabled ?? false;
+    this.isModelSelectionEnabled =
+      typeof modelSelectionEnabled === 'function'
+        ? modelSelectionEnabled
+        : () => modelSelectionEnabled;
+    this.readBinding = options?.readBinding;
+    this.askBinding = options?.askBinding;
     const typeLines = buildSubagentDescriptions(subagents);
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${
       this.allowBackground ? AGENT_BACKGROUND_DESCRIPTION : AGENT_BACKGROUND_DISABLED_DESCRIPTION
@@ -136,20 +150,49 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   private readonly log?: Logger;
   private readonly allowBackground: boolean;
   private readonly subagentTimeoutMs?: number;
+  private readonly isModelSelectionEnabled: () => boolean;
+  private readonly readBinding?: ReadSubagentBindingCallback;
+  private readonly askBinding?: AskSubagentBindingCallback;
+
+  /**
+   * Effective workspace binding for a spawn: read the stored binding; when
+   * absent, asking is enabled, and an interactive ask callback exists, ask
+   * the user once and persist the answer. Returns `undefined` for resume,
+   * when the experiment is disabled, or when no binding applies (plain
+   * inheritance).
+   */
+  private async resolveSpawnBinding(
+    profileName: string,
+    operation: 'spawn' | 'resume',
+    allowAsk: boolean,
+  ): Promise<{ readonly modelAlias?: string; readonly thinkingEffort?: string } | undefined> {
+    if (operation !== 'spawn' || !this.isModelSelectionEnabled()) return undefined;
+    let binding = await this.readBinding?.(profileName);
+    if (binding === undefined && allowAsk && this.askBinding !== undefined) {
+      binding = await this.askBinding(profileName);
+    }
+    if (binding === undefined || binding.inherit === true) return undefined;
+    if (binding.model === undefined && binding.thinkingEffort === undefined) return undefined;
+    return { modelAlias: binding.model, thinkingEffort: binding.thinkingEffort };
+  }
 
   async resolveExecution(args: AgentToolInput): Promise<ToolExecution> {
     let profileName = args.subagent_type?.length ? args.subagent_type : 'coder';
     const resumeAgentId = args.resume?.trim();
+    const operation = resumeAgentId !== undefined && resumeAgentId.length > 0 ? 'resume' : 'spawn';
     if (resumeAgentId !== undefined && resumeAgentId.length > 0) {
       profileName = (await this.subagentHost.getProfileName?.(resumeAgentId)) ?? 'subagent';
     }
+    // Read-only binding lookup for the approval label; the interactive
+    // first-use ask happens later in execute().
+    const binding = await this.resolveSpawnBinding(profileName, operation, false);
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     return {
       description: `${prefix} ${profileName} agent: ${args.description}`,
       accesses: ToolAccesses.none(),
       display: {
         kind: 'agent_call',
-        agent_name: profileName,
+        agent_name: subagentApprovalAgentName(profileName, binding?.modelAlias),
         prompt: args.prompt,
         background: args.run_in_background,
       },
@@ -198,10 +241,15 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
 
       const operation = resumeAgentId !== undefined && resumeAgentId.length > 0 ? 'resume' : 'spawn';
+      // Workspace model binding (experiment-gated): applied mechanically at
+      // spawn; the first unbound spawn may ask the user once interactively.
+      const binding = await this.resolveSpawnBinding(requestedProfileName ?? 'coder', operation, true);
       const runOptions = {
         parentToolCallId: toolCallId,
         prompt: args.prompt,
         description: args.description,
+        modelAlias: binding?.modelAlias,
+        thinkingEffort: binding?.thinkingEffort,
         runInBackground,
         signal: controller.signal,
       };
@@ -314,6 +362,13 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
 const USER_INTERRUPTED_SUBAGENT_MESSAGE =
   'The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user\'s next instruction.';
 
+function handleModelLines(handle: SubagentHandle): string[] {
+  const lines: string[] = [];
+  if (handle.modelAlias !== undefined) lines.push(`model: ${handle.modelAlias}`);
+  if (handle.thinkingEffort !== undefined) lines.push(`thinking_effort: ${handle.thinkingEffort}`);
+  return lines;
+}
+
 function formatBackgroundAgentResult(
   taskId: string,
   handle: SubagentHandle,
@@ -325,6 +380,7 @@ function formatBackgroundAgentResult(
     'status: running',
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
+    ...handleModelLines(handle),
     'automatic_notification: true',
     '',
     `description: ${description}`,
@@ -340,6 +396,7 @@ function formatForegroundAgentSuccess(handle: SubagentHandle, result: string): s
   return [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
+    ...handleModelLines(handle),
     'status: completed',
     '',
     '[summary]',
@@ -355,6 +412,7 @@ function formatForegroundAgentFailure(
   const lines = [
     `agent_id: ${handle.agentId}`,
     `actual_subagent_type: ${handle.profileName}`,
+    ...handleModelLines(handle),
     'status: failed',
     '',
     `subagent error: ${message}`,
@@ -385,4 +443,18 @@ function buildSubagentDescriptions(subagents: ResolvedAgentProfile['subagents'])
       return `${header}\n  Tools: ${subagent.tools.join(', ')}`;
     })
     .join('\n');
+}
+
+// ── Approval-display helpers ─────────────────────────────────────────
+
+/** Alias characters considered safe to render in the approval UI. */
+const SAFE_ALIAS = /^[A-Za-z0-9_][A-Za-z0-9._+/@:-]*$/;
+const MAX_ALIAS_LENGTH = 160;
+
+function subagentApprovalAgentName(agentName: string, modelAlias?: string): string {
+  if (modelAlias === undefined) return agentName;
+  const isSafe =
+    modelAlias.length > 0 && modelAlias.length <= MAX_ALIAS_LENGTH && SAFE_ALIAS.test(modelAlias);
+  const modelLabel = isSafe ? `model ${modelAlias}` : 'model inherited (alias hidden)';
+  return `${agentName} · ${modelLabel}`;
 }

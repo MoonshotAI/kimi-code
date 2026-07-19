@@ -16,6 +16,7 @@ import type {
   EnterSwarmPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  GetSubagentBindingsResult,
   ImportContextPayload,
   McpServerInfo,
   McpStartupMetrics,
@@ -28,6 +29,8 @@ import type {
   SetActiveToolsPayload,
   SetModelPayload,
   SetPermissionPayload,
+  SetSubagentBindingPayload,
+  SetSubagentBindingResult,
   SetThinkingPayload,
   SkillSummary,
   PluginCommandDef,
@@ -118,6 +121,14 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   addAdditionalDir(payload: AddAdditionalDirPayload): Promise<AddAdditionalDirResult> {
     return this.session.addAdditionalDir(payload.path, payload.persist);
+  }
+
+  getSubagentBindings(): Promise<GetSubagentBindingsResult> {
+    return this.session.getSubagentBindings();
+  }
+
+  setSubagentBinding(payload: SetSubagentBindingPayload): Promise<SetSubagentBindingResult> {
+    return this.session.setSubagentBinding(payload.agentType, payload.binding);
   }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {

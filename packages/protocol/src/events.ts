@@ -771,6 +771,10 @@ export interface SubagentSpawnedEvent {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
+  /** Effective model alias the subagent will run with (after override resolution). */
+  readonly modelAlias?: string;
+  /** Effective thinking effort the subagent will run with (after override resolution). */
+  readonly thinkingEffort?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -1632,6 +1636,8 @@ export const subagentSpawnedEventSchema = z.object({
   description: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
+  modelAlias: z.string().optional(),
+  thinkingEffort: z.string().optional(),
 }) satisfies z.ZodType<SubagentSpawnedEvent>;
 
 export const subagentStartedEventSchema = z.object({

@@ -46,7 +46,7 @@ export function resolveAgentProfiles(
     resolvedCache.set(profile.name, toResolvedProfile(merged));
   }
 
-  applySubagentDescriptions(mergedCache, resolvedCache);
+  applySubagentOverrides(mergedCache, resolvedCache);
   linkResolvedSubagents(mergedCache, resolvedCache);
 
   const result: Record<string, ResolvedAgentProfile> = {};
@@ -166,7 +166,7 @@ function buildTemplateVars(
   };
 }
 
-function applySubagentDescriptions(
+function applySubagentOverrides(
   mergedProfiles: Map<string, MergedAgentProfile>,
   resolvedProfiles: Map<string, ResolvedAgentProfile>,
 ): void {
@@ -179,6 +179,12 @@ function applySubagentDescriptions(
       }
       if (target.description === undefined && subagent.description !== undefined) {
         target.description = subagent.description;
+      }
+      if (target.modelAlias === undefined && subagent.modelAlias !== undefined) {
+        target.modelAlias = subagent.modelAlias;
+      }
+      if (target.thinkingEffort === undefined && subagent.thinkingEffort !== undefined) {
+        target.thinkingEffort = subagent.thinkingEffort;
       }
     }
   }

@@ -10,7 +10,10 @@ import {
   appendWorkspaceAdditionalDir,
   loadWorkspaceLocalConfig,
   normalizeAdditionalDirs,
+  readSubagentBinding,
+  readSubagentBindings,
   readWorkspaceAdditionalDirs,
+  writeSubagentBinding,
 } from '../../src/config/workspace-local';
 
 const tempDirs: string[] = [];
@@ -200,5 +203,83 @@ describe('workspace local config', () => {
     expect(
       normalizeAdditionalDirs(['shared', './shared', 'nested//dir', 'nested/dir/../final']),
     ).toEqual(['shared', 'nested/dir', 'nested/final']);
+  });
+});
+
+describe('subagent bindings', () => {
+  it('returns undefined when no binding exists for the type', async () => {
+    const root = await makeProject();
+
+    await expect(
+      readSubagentBinding(testKaos, join(root, 'packages', 'app'), 'coder'),
+    ).resolves.toBeUndefined();
+    await expect(readSubagentBindings(testKaos, root)).resolves.toEqual({});
+  });
+
+  it('writes and reads back a model/effort binding', async () => {
+    const root = await makeProject();
+    const workDir = join(root, 'packages', 'app');
+
+    const { configPath } = await writeSubagentBinding(testKaos, workDir, 'coder', {
+      model: 'kimi-code/kimi-for-coding',
+      thinkingEffort: 'high',
+    });
+
+    expect(configPath).toBe(join(root, '.kimi-code', 'local.toml'));
+    await expect(readSubagentBinding(testKaos, workDir, 'coder')).resolves.toEqual({
+      model: 'kimi-code/kimi-for-coding',
+      thinkingEffort: 'high',
+      inherit: undefined,
+    });
+    await expect(readSubagentBinding(testKaos, workDir, 'explore')).resolves.toBeUndefined();
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('[subagent.coder]');
+    expect(text).toContain('model = "kimi-code/kimi-for-coding"');
+    expect(text).toContain('thinking_effort = "high"');
+  });
+
+  it('records an explicit inherit choice', async () => {
+    const root = await makeProject();
+
+    await writeSubagentBinding(testKaos, root, 'explore', { inherit: true });
+
+    await expect(readSubagentBinding(testKaos, root, 'explore')).resolves.toEqual({
+      model: undefined,
+      thinkingEffort: undefined,
+      inherit: true,
+    });
+  });
+
+  it('preserves unrelated local.toml content and other type bindings', async () => {
+    const root = await makeProject();
+    const sharedDir = join(root, 'shared');
+    await mkdir(sharedDir, { recursive: true });
+    const configPath = join(root, '.kimi-code', 'local.toml');
+    await mkdir(join(root, '.kimi-code'), { recursive: true });
+    await writeFile(configPath, '[workspace]\nadditional_dir = ["shared"]\n', 'utf-8');
+    await writeSubagentBinding(testKaos, root, 'explore', { model: 'sub2/glm-5.2-x' });
+
+    await writeSubagentBinding(testKaos, root, 'coder', { model: 'kimi-code/k3' });
+
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('[workspace]');
+    expect(text).toContain('"shared"');
+    expect(text).toContain('[subagent.explore]');
+    expect(text).toContain('[subagent.coder]');
+    await expect(readSubagentBindings(testKaos, root)).resolves.toEqual({
+      explore: { model: 'sub2/glm-5.2-x', thinkingEffort: undefined, inherit: undefined },
+      coder: { model: 'kimi-code/k3', thinkingEffort: undefined, inherit: undefined },
+    });
+  });
+
+  it('clears a binding and drops the empty subagent table', async () => {
+    const root = await makeProject();
+    await writeSubagentBinding(testKaos, root, 'coder', { model: 'kimi-code/k3' });
+
+    await writeSubagentBinding(testKaos, root, 'coder', undefined);
+
+    await expect(readSubagentBinding(testKaos, root, 'coder')).resolves.toBeUndefined();
+    const text = await readFile(join(root, '.kimi-code', 'local.toml'), 'utf-8');
+    expect(text).not.toContain('subagent');
   });
 });

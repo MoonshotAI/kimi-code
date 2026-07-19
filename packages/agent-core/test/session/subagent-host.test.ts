@@ -15,6 +15,7 @@ import { collectGitContext } from '../../src/session/git-context';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SessionSubagentHost,
+  SUBAGENT_MODEL_UNAVAILABLE_MESSAGE,
   formatSubagentTimeoutDescription,
   resolveSubagentTimeoutMs,
   type QueuedSubagentTask,
@@ -1128,16 +1129,26 @@ describe('SessionSubagentHost', () => {
     expect(userTextMessages(histories[1] ?? [])).toEqual(['Implement the retry-safe change']);
   });
 
-  it('realigns a resumed subagent to the parent agent current model', async () => {
-    const parent = testAgent();
+  it('keeps a resumed subagent on its configured model (sticky)', async () => {
+    const twoModelConfig = {
+      providers: {},
+      models: {
+        'subagent-model': {
+          provider: 'test-provider',
+          model: 'subagent-model',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const parent = testAgent({ initialConfig: twoModelConfig });
     parent.configure();
     parent.agent.permission.setMode('yolo');
 
-    const child = testAgent();
+    const child = testAgent({ initialConfig: twoModelConfig });
     child.configure({ tools: ['Read'] });
-    // The child was originally spawned with a model that no longer matches the
-    // parent agent's current model (as if the parent ran setModel afterwards).
-    child.agent.config.update({ modelAlias: 'stale-model-from-initial-spawn' });
+    // The child was originally spawned with a different model than the
+    // parent's current one. Sticky semantics: resume keeps it.
+    child.agent.config.update({ modelAlias: 'subagent-model' });
     child.agent.useProfile(
       profile({ name: 'explore', tools: ['Read'], systemPrompt: 'explore prompt' }),
     );
@@ -1165,10 +1176,99 @@ describe('SessionSubagentHost', () => {
     });
 
     await handle.completion;
-    // resume must realign the child to the parent agent's current model rather
-    // than leave it on the stale model from its initial spawn.
-    expect(child.agent.config.modelAlias).toBe(parent.agent.config.modelAlias);
-    expect(child.agent.config.modelAlias).not.toBe('stale-model-from-initial-spawn');
+    expect(child.agent.config.modelAlias).toBe('subagent-model');
+    expect(child.agent.config.modelAlias).not.toBe(parent.agent.config.modelAlias);
+    expect(handle.modelAlias).toBe('subagent-model');
+  });
+
+  it('fails to resume a subagent whose configured model is no longer resolvable', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.agent.permission.setMode('yolo');
+
+    const child = testAgent();
+    child.configure({ tools: ['Read'] });
+    // The child was originally spawned with a model that is no longer present
+    // in the current configuration.
+    child.agent.config.update({ modelAlias: 'stale-model-from-initial-spawn' });
+    child.agent.useProfile(
+      profile({ name: 'explore', tools: ['Read'], systemPrompt: 'explore prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': {
+        homedir: '/tmp/kimi-session/agents/agent-0',
+        type: 'sub',
+        parentAgentId: 'main',
+      },
+    });
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(
+      host.resume('agent-0', {
+        parentToolCallId: 'call_agent',
+        prompt: 'Continue from context',
+        description: 'Continue work',
+        runInBackground: false,
+        signal,
+      }),
+    ).rejects.toThrow(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+  });
+
+  it('passes an explicit model alias and thinking effort to a spawned child', async () => {
+    const twoModelConfig = {
+      providers: {},
+      models: {
+        'subagent-model': {
+          provider: 'test-provider',
+          model: 'subagent-model',
+          maxContextSize: 1_000_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        },
+      },
+    };
+    const parent = testAgent({ initialConfig: twoModelConfig });
+    parent.configure();
+    parent.newEvents();
+
+    const child = testAgent({ type: 'sub', initialConfig: twoModelConfig });
+    child.configure();
+    const summary =
+      'Completed the delegated work on the explicitly selected model and effort, returning a detailed implementation and verification summary so the parent can continue without repeating the work. '.repeat(
+        2,
+      );
+    child.mockNextResponse({ type: 'text', text: summary });
+    const host = new SessionSubagentHost(fakeSession(parent.agent, child.agent), 'main');
+
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the fix',
+      description: 'Fix bug',
+      runInBackground: false,
+      signal,
+      modelAlias: 'subagent-model',
+      thinkingEffort: 'high',
+    });
+    await handle.completion;
+
+    expect(child.agent.config.modelAlias).toBe('subagent-model');
+    expect(child.agent.config.thinkingEffort).toBe('high');
+    expect(handle.modelAlias).toBe('subagent-model');
+    expect(handle.thinkingEffort).toBe('high');
+    expect(parent.allEvents).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'subagent.spawned',
+        args: expect.objectContaining({
+          subagentId: 'agent-0',
+          modelAlias: 'subagent-model',
+          thinkingEffort: 'high',
+        }),
+      }),
+    );
   });
 });
 

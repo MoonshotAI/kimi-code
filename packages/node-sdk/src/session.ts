@@ -15,6 +15,7 @@ import type {
   CompactOptions,
   CreateGoalInput,
   GetCronTasksResult,
+  GetSubagentBindingsResult,
   GoalSnapshot,
   GoalToolResult,
   JsonObject,
@@ -32,8 +33,10 @@ import type {
   SessionStatus,
   SessionSummary,
   SessionUsage,
+  SetSubagentBindingResult,
   SkillSummary,
   PluginCommandDef,
+  SubagentBinding,
   ThinkingEffort,
   Unsubscribe,
 } from '#/types';
@@ -180,6 +183,24 @@ export class Session {
   async startBtw(): Promise<string> {
     this.ensureOpen();
     return this.rpc.startBtw({ sessionId: this.id });
+  }
+
+  async getSubagentBindings(): Promise<GetSubagentBindingsResult> {
+    this.ensureOpen();
+    return this.rpc.getSubagentBindings({ sessionId: this.id });
+  }
+
+  async setSubagentBinding(
+    agentType: string,
+    binding?: SubagentBinding,
+  ): Promise<SetSubagentBindingResult> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      agentType,
+      'Subagent type cannot be empty',
+      ErrorCodes.REQUEST_INVALID,
+    );
+    return this.rpc.setSubagentBinding({ id: this.id, agentType: normalized, binding });
   }
 
   async cancel(): Promise<void> {
