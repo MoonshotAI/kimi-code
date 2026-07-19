@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectShellDanger } from './shellDanger';
+import { detectShellDanger } from '../../src/renderer/lib/shellDanger';
 
 describe('detectShellDanger', () => {
   it('flags recursive forced deletes, including combined and long flags', () => {

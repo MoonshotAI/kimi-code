@@ -323,6 +323,47 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 .chat-dock.align-left { margin-left: 0; margin-right: auto; }
 .chat-dock.align-mobile { max-width: none; }
 
+/* Bottom veil — the dock floats over the scrolling transcript, so without a
+   backdrop the text underneath bleeds through around the composer card, the
+   toolbar, the workbar pills, and the goal strip. The layer extends --fade
+   above the dock (its top edge is anchored there) and reaches full opacity
+   --veil below its own top edge — deliberately past the dock's top edge, so
+   the ramp stays long and soft instead of snapping to solid at the content
+   boundary; from there down everything sits on an opaque veil. The fade is a
+   plain eased opacity ramp, deliberately WITHOUT a live backdrop blur: one
+   re-samples the scrolling transcript every frame, which flickers and janks
+   in Chromium mid-scroll — and where the veil is fully opaque the blur would
+   be painted over and invisible anyway.
+   Keep --fade in sync with DOCK_VEIL_FADE_PX in ConversationPane.vue, which
+   reserves this band in the transcript's scroll padding. */
+.chat-dock::before {
+  --fade: 48px;
+  --veil: 72px;
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--fade));
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--color-bg) 0%, transparent),
+    color-mix(in srgb, var(--color-bg) 30%, transparent) 21px,
+    color-mix(in srgb, var(--color-bg) 70%, transparent) 45px,
+    var(--color-bg) var(--veil)
+  );
+}
+
+/* Chromium can momentarily composite a negative-stacking layer above in-flow
+   content mid-scroll; the veil sits at layer 0 and every direct child stays
+   pinned one step above it, keeping the paint order deterministic. */
+.chat-dock > * {
+  position: relative;
+  z-index: 1;
+}
+
 .dock-work-panel {
   position: absolute;
   left: 16px;

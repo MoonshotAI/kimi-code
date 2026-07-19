@@ -52,6 +52,12 @@ const ICON_EXEMPT = new Set([
 // apply to it.
 const FILE_EXEMPT = new Set(['views/DesignSystemView.vue']);
 
+// Files exempt from no-gradient-text. The rule targets gradient TEXT, but the
+// line regex matches any gradient — these use background opacity ramps as
+// edge-fade veils over scrolling content, an accepted design primitive (the
+// Sidebar column fades in the baseline are the same pattern).
+const GRADIENT_EXEMPT = new Set(['components/chat/ChatDock.vue']);
+
 const RADIUS_SCALE = new Set([4, 6, 8, 12, 16, 20, 999]);
 const WEIGHT_OK = new Set([
   '400', '500',
@@ -115,6 +121,7 @@ function checkFile(abs) {
   const isCss = abs.endsWith('.css');
   const blocks = isCss ? [{ text: content, baseLine: 1 }] : extractStyleBlocks(content);
   const domainExempt = DOMAIN_HEX_EXEMPT.has(file);
+  const gradientExempt = GRADIENT_EXEMPT.has(file);
 
   for (const { text, baseLine } of blocks) {
     const lines = text.split('\n');
@@ -127,7 +134,7 @@ function checkFile(abs) {
       if (/^@font-face\b/i.test(trimmed)) inFontFace = true;
 
       // no-gradient-text
-      if (/\b(?:linear|radial|conic)-gradient\s*\(/i.test(raw)) {
+      if (!gradientExempt && /\b(?:linear|radial|conic)-gradient\s*\(/i.test(raw)) {
         add('no-gradient-text', file, line, trimmed.slice(0, 80));
       }
 

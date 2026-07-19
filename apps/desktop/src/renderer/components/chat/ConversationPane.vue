@@ -427,8 +427,13 @@ const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
+// The dock paints a --fade veil band above its own box (see .chat-dock::before
+// in ChatDock.vue), which offsetHeight does not include. Reserve it in the
+// transcript's scroll padding too, or the last rows end up under the veil with
+// no room to scroll clear. Must match ChatDock's --fade.
+const DOCK_VEIL_FADE_PX = 48;
 const chatLayoutStyle = computed(() => ({
-  '--chat-dock-height': `${dockHeight.value}px`,
+  '--chat-dock-height': `${dockHeight.value + DOCK_VEIL_FADE_PX}px`,
 }));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
@@ -1879,9 +1884,11 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-weight: var(--weight-ui-strong);
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  /* Positioned after the message flow, so base z-index is enough to float above
-     content while staying below composer dropdowns. */
-  z-index: var(--z-base);
+  /* Sits just above the dock, which now owns a veil over the transcript — so
+     the pill joins the dock's sticky layer and, coming after the dock in DOM
+     order, paints above the veil. Trade-off: an open composer dropdown stacks
+     below the pill too, but a dropdown closes on the next interaction anyway. */
+  z-index: var(--z-sticky);
 }
 .newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {
