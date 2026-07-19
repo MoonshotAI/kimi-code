@@ -27,6 +27,11 @@ import { ModelService } from '#/kosong/model/modelService';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import { ProviderService } from '#/kosong/provider/providerService';
 
+// Side-effect registration: the "trait-driven (Kimi) vendor" verdict that
+// gates the Anthropic effort-profile inference answers through the
+// provider-definition registry.
+import '#/kosong/provider/providers/kimi/kimi.contrib';
+
 interface Backing {
   providers: Record<string, ProviderConfig>;
   models: Record<string, ModelRecord>;

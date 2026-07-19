@@ -1,12 +1,11 @@
 /**
  * `kosong/catalog` domain (L3) — catalog error codes.
  *
- * The codes are intentionally identical to the legacy `app/modelCatalog`
- * domain's (the wire contract branches on them). The error registry keys on
- * the contributing `codes` OBJECT, so both domains may exist on disk but must
- * never be loaded in the same process — during the transition production
- * imports the legacy module and tests import this one. Phase 5 deletes the
- * legacy module when the switch lands.
+ * The codes are intentionally identical to the deleted legacy
+ * `app/modelCatalog` domain's (the wire contract branches on them). The
+ * error registry keys on the contributing `codes` OBJECT, so the legacy
+ * module could never be loaded together with this one — with it deleted in
+ * Phase 5, this domain is the sole owner of the codes.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';

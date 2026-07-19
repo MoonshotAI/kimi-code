@@ -96,10 +96,9 @@ export interface IModelCatalogService {
   ): Promise<RefreshProviderModelsResponse>;
 }
 
-// The decorator name is shared with the legacy `app/modelCatalog` contract on
-// purpose (`createDecorator` caches by name): the two implementations are
-// drop-in interchangeable and are never both loaded — production imports the
-// legacy one, tests import this one.
+// The decorator name matches the deleted legacy `app/modelCatalog` contract
+// (`createDecorator` caches by name): keeping the legacy name preserves the
+// service identity every caller already resolves by.
 export const IModelCatalogService: ServiceIdentifier<IModelCatalogService> =
   createDecorator<IModelCatalogService>('modelCatalogService');
 

@@ -565,13 +565,7 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     });
   });
 
-  // TODO(phase6): the cache-key intent is dialect-free now — the profile
-  // resolves `cacheKey` for every protocol; how each protocol encodes it
-  // (Kimi `prompt_cache_key` vs Anthropic `metadata.user_id` vs dropped) moved
-  // to the dialect hooks. Re-assert the per-protocol routing at the
-  // dialect/requester level by capturing the GenerateOptions each composed
-  // provider receives.
-  it.skip('does not apply the Kimi prompt cache hint to other protocols', () => {
+  it('resolves the session cache-key intent for non-Kimi protocols too', () => {
     modelCatalog = createModelCatalogStub({
       'claude-sonnet': createTestModel({ id: 'claude-sonnet', protocol: 'anthropic' }),
     });
@@ -580,8 +574,10 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'claude-sonnet', thinkingLevel: 'high' });
 
-    // The dialect-free intent still carries the cache key for every protocol;
-    // the per-protocol encoding assertions belong to the dialect layer now.
+    // The cache-key intent is dialect-free now: the profile resolves it for
+    // every protocol. How each dialect encodes it (Kimi `prompt_cache_key`
+    // vs Anthropic `metadata.user_id` vs silently dropped) is the dialect
+    // hook's own decision, asserted at the kosong/provider composition layer.
     expect(host.svc.resolveRequestParams().cacheKey).toBe('session-test');
   });
 });

@@ -43,6 +43,7 @@ import { OP_REGISTRY } from '#/wire/op';
 import { IOAuthService } from '#/app/auth/auth';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
+import { getProviderDefinition } from '#/kosong/provider/providerDefinition';
 import type { SkillCatalog } from '#/app/skillCatalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
@@ -1270,6 +1271,15 @@ export class AgentTestContext {
     profile.update({ modelAlias: provider.model });
   }
 
+  /**
+   * The manual cache-drop for tests that mutate `kimiConfig` behind the
+   * config services' backs (no change events fire): the ModelCatalog keeps
+   * serving the previously assembled Model until this is called.
+   */
+  notifyModelConfigChanged(): void {
+    (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
+  }
+
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
     const context = this.get(IAgentContextMemoryService);
     const contextSize = this.get(IAgentContextSizeService);
@@ -2330,13 +2340,20 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
 /**
  * The harness protocol registry: identity/capability resolution delegates to
  * the real `ProtocolAdapterRegistry` (so vendor verdicts like Kimi thinking
- * semantics stay truthful), while `createChatProvider` always returns a
- * generate-backed provider driven by the scripted `GenerateFn`.
+ * semantics stay truthful), while `createChatProvider` returns a provider
+ * driven by the scripted `GenerateFn`.
  *
- * TODO(phase6): for `providerType === 'kimi'` compose the real provider and
- * replace only its `generate` (appendix B item 10), and forward the per-turn
- * `GenerateOptions` intent fields (cacheKey / sampling / thinking / budget)
- * into the `GenerateFn` so tests can assert them.
+ * For a registered vendor (`providerType` with a provider definition — today
+ * only `kimi`) `createChatProvider` composes the REAL provider through the
+ * registry and replaces only its `generate` (appendix B item 10), so the
+ * test-visible provider has the production shape: the base's `name`
+ * (`'openai'`, never `'kimi'`), trait-bound capabilities (`uploadVideo`),
+ * and no vendor subclass. Unregistered provider types keep the generic
+ * generate-backed provider.
+ *
+ * Either way the per-turn `GenerateOptions` intent fields (cacheKey /
+ * sampling / thinking / budget) are forwarded into the `GenerateFn` so tests
+ * assert them as request parameters instead of morph-era provider state.
  */
 function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAdapterRegistry {
   const real = new ProtocolAdapterRegistry();
@@ -2349,9 +2366,42 @@ function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAd
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
-    createChatProvider: (input: ProtocolAdapterConfig) =>
-      new GenerateBackedChatProvider(input, generate),
+    createChatProvider: (input: ProtocolAdapterConfig) => {
+      if (input.providerType !== undefined && getProviderDefinition(input.providerType) !== undefined) {
+        return replaceProviderGenerate(real.createChatProvider(input), generate);
+      }
+      return new GenerateBackedChatProvider(input, generate);
+    },
   } as IProtocolAdapterRegistry;
+}
+
+/**
+ * The real composed provider with only `generate` swapped for the scripted
+ * driver. Everything else — `name`, `thinkingEffort`, `maxCompletionTokens`,
+ * the trait-bound `uploadVideo` — delegates to the composed provider, and the
+ * scripted `GenerateFn` receives the composed provider as its `chat` argument.
+ */
+function replaceProviderGenerate(provider: ChatProvider, generate: GenerateFn): ChatProvider {
+  const replaced: ChatProvider = {
+    get name() {
+      return provider.name;
+    },
+    get modelName() {
+      return provider.modelName;
+    },
+    get thinkingEffort() {
+      return provider.thinkingEffort;
+    },
+    get maxCompletionTokens() {
+      return provider.maxCompletionTokens;
+    },
+    generate: (systemPrompt, tools, history, options) =>
+      generateBackedResponse(provider, generate, systemPrompt, tools, history, options),
+  };
+  if (provider.uploadVideo !== undefined) {
+    replaced.uploadVideo = (input, options) => provider.uploadVideo!(input, options);
+  }
+  return replaced;
 }
 
 class GenerateBackedChatProvider implements ChatProvider {
@@ -2401,6 +2451,16 @@ async function generateBackedResponse(
     {
       signal: options?.signal,
       auth: options?.auth,
+      // Forward the per-turn intent fields so tests assert them as request
+      // parameters — the replacement for morph-era provider state
+      // (`_generationKwargs` / `modelParameters` / baked `thinkingEffort`).
+      cacheKey: options?.cacheKey,
+      sampling: options?.sampling,
+      thinking: options?.thinking,
+      maxCompletionTokens: options?.maxCompletionTokens,
+      usedContextTokens: options?.usedContextTokens,
+      maxContextTokens: options?.maxContextTokens,
+      responseFormat: options?.responseFormat,
       // Forward the early-capture hook so a GenerateFn can fire the trace id
       // as soon as its (simulated) response headers arrive — e.g. before a
       // mid-stream failure — mirroring real kosong generate() behavior.

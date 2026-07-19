@@ -41,7 +41,7 @@ import {
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
   THINKING_SECTION,
-  usesKimiThinkingSemantics,
+  usesNativeKimiThinkingSemantics,
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -502,13 +502,20 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   /**
-   * The registry-driven "Kimi thinking semantics" verdict for one model: the
-   * resolved adapter for its (protocol, providerType) pair drives thinking
-   * through traits. No protocol/vendor string is hardcoded here.
+   * The registry-driven "Kimi thinking semantics" verdict for one model — the
+   * NATIVE-transport gate (v1 `provider.type === 'kimi'` parity): strict
+   * effort validation and Kimi normalization apply only when the vendor's own
+   * transport drives thinking through traits. Over a foreign transport (the
+   * `dialects` slice, e.g. Kimi-managed models on protocol `anthropic`) the
+   * profile stays lenient and warns instead of rejecting unlisted efforts.
    */
   private kimiThinkingSemantics(model: Model | undefined): boolean {
     if (model === undefined) return false;
-    return usesKimiThinkingSemantics(this.protocolAdapters, model.protocol, model.providerType);
+    return usesNativeKimiThinkingSemantics(
+      this.protocolAdapters,
+      model.protocol,
+      model.providerType,
+    );
   }
 
   private resolveThinkingEffort(

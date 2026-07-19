@@ -2294,10 +2294,12 @@ describe('FullCompaction', () => {
   it('preserves thinking effort when compacting after provider context overflow', async () => {
     let callCount = 0;
     const records: TelemetryRecord[] = [];
-    const providerThinkingEfforts: Array<Parameters<GenerateFn>[0]['thinkingEffort']> = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    // The per-turn thinking intent captured from each generate call — the
+    // replacement for the morph-era provider `thinkingEffort` field.
+    const thinkingEfforts: unknown[] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
-      providerThinkingEfforts.push(provider.thinkingEffort);
+      thinkingEfforts.push(options?.thinking?.effort);
       if (callCount === 1) {
         throw new APIContextOverflowError(
           400,
@@ -2330,7 +2332,7 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
-    expect(providerThinkingEfforts).toEqual(['on', 'on', 'on']);
+    expect(thinkingEfforts).toEqual(['on', 'on', 'on']);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
@@ -2343,13 +2345,13 @@ describe('FullCompaction', () => {
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-unknown-context');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Unknown window compacted summary.');
       }
       if (callCount === 3) {
@@ -2412,13 +2414,13 @@ describe('FullCompaction', () => {
     vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '8192');
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-hard-cap');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Hard cap compacted summary.');
       }
       await callbacks?.onMessagePart?.({
@@ -2448,13 +2450,13 @@ describe('FullCompaction', () => {
       vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', maxCompletionTokens);
       let callCount = 0;
       const compactionMaxCompletionTokens: unknown[] = [];
-      const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
         callCount += 1;
         if (callCount === 1) {
           throw new APIContextOverflowError(400, 'Context length exceeded', 'req-opt-out');
         }
         if (callCount === 2) {
-          compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+          compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
           return textResult('Opt-out compacted summary.');
         }
         await callbacks?.onMessagePart?.({
@@ -2482,13 +2484,13 @@ describe('FullCompaction', () => {
   it('honors maxOutputSize from model config during compaction', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-max-output');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Max output compacted summary.');
       }
       await callbacks?.onMessagePart?.({
@@ -2507,6 +2509,9 @@ describe('FullCompaction', () => {
       ...models![CATALOGUED_PROVIDER.model]!,
       maxOutputSize: 64_000,
     };
+    // The config was mutated behind the services' backs — drop the assembled
+    // Model cache by hand or the request keeps the previous maxOutputSize.
+    ctx.notifyModelConfigChanged();
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -2520,13 +2525,13 @@ describe('FullCompaction', () => {
   it('uses default 128k hardCap when maxOutputSize is not configured', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];
-    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks, options) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-default-cap');
       }
       if (callCount === 2) {
-        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        compactionMaxCompletionTokens.push(options?.maxCompletionTokens);
         return textResult('Default cap compacted summary.');
       }
       await callbacks?.onMessagePart?.({
@@ -2790,14 +2795,6 @@ type MutableKimiConfig = {
     models?: Record<string, { maxOutputSize?: number }>;
   };
 };
-
-function providerMaxCompletionTokens(provider: Parameters<GenerateFn>[0]): unknown {
-  return (
-    provider as {
-      readonly modelParameters?: Record<string, unknown>;
-    }
-  ).modelParameters?.['max_completion_tokens'];
-}
 
 function textResult(text: string, traceId: string | null = null): Awaited<ReturnType<GenerateFn>> {
   return {

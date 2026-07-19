@@ -5,10 +5,10 @@
  *
  *  1. The `thinking` config section (`[thinking]`: enabled / effort / keep,
  *     plus the env-only `KIMI_MODEL_THINKING_EFFORT` force override). The
- *     section self-registers at module load — a side effect, so during the
- *     transition only tests may import this module (the legacy
- *     `agent/profile/configSection` still owns the section in production;
- *     both registering `thinking` into one ConfigRegistry throws).
+ *     section self-registers at module load — a side effect; production gets
+ *     it from the `src/index.ts` side-effect block and tests import this
+ *     module on demand. This module is the sole owner of the section — the
+ *     legacy `agent/profile/configSection` is gone.
  *  2. Effort/keep resolution: pure helpers that fold a requested effort, the
  *     config defaults, and the model's declared thinking metadata into the
  *     effective `ThinkingEffort`, and that resolve the thinking-keep value.
@@ -90,6 +90,35 @@ export function usesKimiThinkingSemantics(
   return registry
     .resolveAdapterIdentity(protocol, providerType)
     .traits.some(({ trait }) => trait.withThinking !== undefined);
+}
+
+/**
+ * ⚠ PHASE 6 PARITY PATCH — v1 `provider.type === 'kimi'` gate restored.
+ *
+ * Whether the vendor drives thinking through its native traits ON ITS OWN
+ * TRANSPORT: `usesKimiThinkingSemantics` restricted to the native branch of
+ * adapter resolution (the definition's declared base IS the wire protocol).
+ *
+ * This is the gate for client-side effort strictness (validation, the
+ * always-on clamp, and Kimi `'on'` projection). On a FOREIGN transport the
+ * vendor contributes only its `dialects` slice and the backend is an
+ * Anthropic-compatible endpoint that may accept efforts the local catalog
+ * metadata does not list — so the profile must stay lenient there
+ * (warn-and-send, with the `anthropic-thinking-*` warnings) instead of
+ * rejecting or rewriting the effort. Gating on plain
+ * `usesKimiThinkingSemantics` (true for the dialects slice too) made
+ * `setThinking` throw for Kimi-managed Anthropic models and left the warning
+ * path unreachable — a v1 behavioral regression.
+ */
+export function usesNativeKimiThinkingSemantics(
+  registry: IProtocolAdapterRegistry,
+  protocol: Protocol,
+  providerType?: string,
+): boolean {
+  if (providerType === undefined) return false;
+  const definition = getProviderDefinition(providerType);
+  if (definition?.base !== protocol) return false;
+  return usesKimiThinkingSemantics(registry, protocol, providerType);
 }
 
 // ---------------------------------------------------------------------------

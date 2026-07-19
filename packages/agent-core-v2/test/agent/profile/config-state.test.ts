@@ -166,10 +166,10 @@ describe('ConfigState model capabilities', () => {
         },
       },
     };
-    generate = async (provider) => {
-      requestMaxTokens = (
-        provider as unknown as { readonly modelParameters: Record<string, unknown> }
-      ).modelParameters['max_tokens'];
+    generate = async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+      // The per-turn completion budget arrives as a GenerateOptions intent
+      // (the morph-era baked `modelParameters.max_tokens` is gone).
+      requestMaxTokens = options?.maxCompletionTokens;
       return {
         id: 'response-1',
         message: { role: 'assistant', content: [], toolCalls: [] },
@@ -244,7 +244,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   let profile: IAgentProfileService;
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
-  let capturedProvider: unknown;
+  let capturedThinking: unknown;
 
   beforeEach(() => {
     kimiConfig = {
@@ -290,11 +290,13 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         } as TestProtocolModelConfig,
       },
     };
-    capturedProvider = undefined;
+    capturedThinking = undefined;
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (provider) => {
-        capturedProvider = provider;
+      llmGenerateServices(async (_provider, _systemPrompt, _tools, _history, _callbacks, options) => {
+        // The per-turn thinking intent (effort + keep) — the replacement for
+        // the morph-era baked `_generationKwargs.extra_body.thinking`.
+        capturedThinking = options?.thinking;
         return {
           id: 'response-1',
           message: { role: 'assistant', content: [], toolCalls: [] },
@@ -322,15 +324,15 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('high');
   });
 
-  it('builds the provider with thinking enabled even after thinking was set off', async () => {
+  it('sends the clamped thinking effort in the per-turn intent after thinking was set off', async () => {
     profile.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
 
     await requester.request({}, undefined, new AbortController().signal);
 
-    const gen = Reflect.get(capturedProvider as object, '_generationKwargs') as {
-      extra_body?: { thinking?: { type?: unknown } };
-    };
-    expect(gen.extra_body?.thinking?.type).toBe('enabled');
+    // The always-thinking clamp turns 'off' into the model default ('high');
+    // encoding it as `extra_body.thinking: {type:'enabled'}` is the Kimi
+    // dialect trait's job (`kimiParamsTrait.withThinking`).
+    expect(capturedThinking).toMatchObject({ effort: 'high' });
   });
 
   it('keeps thinking off working for toggleable models', () => {
@@ -437,6 +439,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   let requester: IAgentLLMRequesterService;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
+  let capturedOptions: Parameters<GenerateFn>[5];
 
   beforeEach(() => {
     kimiConfig = {
@@ -474,8 +477,9 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
   function createAgentWithEnv(): void {
     ctx = createTestAgent(
       configServices(() => kimiConfig),
-      llmGenerateServices(async (provider) => {
+      llmGenerateServices(async (provider, _systemPrompt, _tools, _history, _callbacks, options) => {
         capturedProvider = provider;
+        capturedOptions = options;
         return {
           id: 'response-1',
           message: { role: 'assistant', content: [], toolCalls: [] },
@@ -489,46 +493,43 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     requester = ctx.get(IAgentLLMRequesterService);
   }
 
-  function generationKwargs(): Record<string, unknown> {
-    return Reflect.get(capturedProvider as object, '_generationKwargs') as Record<string, unknown>;
-  }
-
-  it('injects KIMI_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', async () => {
+  it('injects KIMI_MODEL_TEMPERATURE into the per-turn sampling intent (the compaction request also uses)', async () => {
     vi.stubEnv('KIMI_MODEL_TEMPERATURE', '0.3');
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    expect(generationKwargs()).toMatchObject({
+    // The env override lands in `modelOverrides.temperature`, which the
+    // profile folds into the dialect-free sampling intent (the morph-era
+    // baked `_generationKwargs.temperature` is gone); the Kimi dialect encodes
+    // it as the wire `temperature` field.
+    expect(capturedOptions?.sampling).toMatchObject({
       temperature: 0.3,
     });
   });
 
-  it('injects KIMI_MODEL_THINKING_KEEP into config.provider when thinking is on (so compaction keeps it)', async () => {
+  it('injects KIMI_MODEL_THINKING_KEEP into the per-turn thinking intent when thinking is on (so compaction keeps it)', async () => {
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    const gen = generationKwargs() as {
-      extra_body?: { thinking?: { keep?: unknown } };
-    };
-    expect(gen.extra_body?.thinking?.keep).toBe('all');
+    // The model is boolean-thinking (no supportEfforts), so 'high' resolves
+    // to 'on'; the env keep override rides the same thinking intent.
+    expect(capturedOptions?.thinking).toMatchObject({ effort: 'on', keep: 'all' });
   });
 
-  it('does NOT inject thinking.keep into config.provider when thinking is off', async () => {
+  it('does NOT inject thinking.keep into the per-turn intent when thinking is off', async () => {
     vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
     createAgentWithEnv();
 
     profile.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
     await requester.request({}, undefined, new AbortController().signal);
 
-    const gen = generationKwargs() as {
-      extra_body?: { thinking?: { keep?: unknown } };
-    };
-    expect(gen.extra_body?.thinking?.keep).toBeUndefined();
+    expect(capturedOptions?.thinking?.effort).toBe('off');
+    expect(capturedOptions?.thinking?.keep).toBeUndefined();
   });
 
   it('injects forced effort through the Anthropic protocol for a Kimi provider', async () => {
@@ -550,9 +551,11 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
 
     await requester.request({}, undefined, new AbortController().signal);
 
-    expect(capturedProvider).toMatchObject({
-      name: 'anthropic',
-      thinkingEffort: 'max',
-    });
+    // The harness composes the real provider for a registered vendor: a Kimi
+    // model on the Anthropic transport resolves to the anthropic base, and
+    // the forced effort arrives as the per-turn thinking intent (the
+    // morph-era baked `thinkingEffort` on the provider is gone).
+    expect(capturedProvider).toMatchObject({ name: 'anthropic' });
+    expect(capturedOptions?.thinking?.effort).toBe('max');
   });
 });

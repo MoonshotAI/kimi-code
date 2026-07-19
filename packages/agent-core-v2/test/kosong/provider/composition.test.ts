@@ -16,19 +16,46 @@
  * composed-provider shape (`name` is the base's, `uploadVideo` is bound only
  * when a trait declares it).
  *
+ * The final sections drive `generate` with mocked SDK clients and assert the
+ * exact request params on the wire (the morph era asserted baked provider
+ * state instead):
+ *
+ *  - the behavior probes for per-turn intent encoding (cacheKey / thinking /
+ *     budget) on the Kimi, OpenAI, and Anthropic wires;
+ *  - the per-base `responseFormat` encodings (re-added from the deleted
+ *     llmProtocol structured-output suite; morph-seeded kwargs cases that no
+ *     longer have a channel are noted where they dropped);
+ *  - the Anthropic thinking-keep context-management overlay and max-tokens
+ *     profile, and the OpenAI `reasoning_effort` auto-enable with its
+ *     load-bearing kill switch (a `withThinking` hook disables it).
+ *
  * Note: base/definition registries are module-level state shared across this
  * file, so the contribs and test-vendor definitions are imported/registered
  * exactly once here.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isUnknownCapability, UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
 import { APIConnectionError } from '#/kosong/contract/errors';
+import type { Message } from '#/kosong/contract/message';
+import type {
+  ChatProvider,
+  GenerateOptions,
+  ResponseFormat,
+  StreamedMessage,
+} from '#/kosong/contract/provider';
 import '#/kosong/provider/bases/anthropic.contrib';
+import {
+  AnthropicChatProvider,
+  resolveDefaultMaxTokens,
+} from '#/kosong/provider/bases/anthropic';
 import '#/kosong/provider/bases/google-genai.contrib';
+import { GoogleGenAIChatProvider } from '#/kosong/provider/bases/google-genai';
 import '#/kosong/provider/bases/openai-responses.contrib';
+import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai-responses';
 import '#/kosong/provider/bases/openai.contrib';
+import { OpenAILegacyChatProvider } from '#/kosong/provider/bases/openai-legacy';
 import '#/kosong/provider/bases/vertexai.contrib';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import {
@@ -307,5 +334,579 @@ describe('kimi provider definition', () => {
     expect(definition?.hostHeaders).toBe('full');
     expect(definition?.modelSource).toBe('oauth-catalog');
     expect(definition?.capability).toBe(UNKNOWN_CAPABILITY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wire-body probes: drive `generate` with a mocked SDK client and assert the
+// exact params the base would send. Registry-composed providers always
+// stream, so the mocks answer minimal valid streams; directly constructed
+// bases use `stream: false` and answer plain responses.
+// ---------------------------------------------------------------------------
+
+const PROBE_HISTORY: Message[] = [
+  { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+];
+
+const THINK_HISTORY: Message[] = [
+  {
+    role: 'assistant',
+    content: [{ type: 'think', think: 'earlier reasoning' }],
+    toolCalls: [],
+  },
+  { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+];
+
+async function drain(stream: StreamedMessage): Promise<void> {
+  for await (const part of stream) void part;
+}
+
+function sdkClient(provider: ChatProvider): unknown {
+  return Reflect.get(provider, '_client');
+}
+
+function isStreaming(provider: ChatProvider): boolean {
+  return (Reflect.get(provider, '_stream') as boolean | undefined) !== false;
+}
+
+async function* openAIChunkStream(): AsyncIterable<unknown> {
+  yield {
+    id: 'chatcmpl-probe',
+    choices: [{ index: 0, delta: { content: 'Hello' }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+  };
+}
+
+function chatCompletionResponse(): Record<string, unknown> {
+  return {
+    id: 'chatcmpl-probe',
+    object: 'chat.completion',
+    created: 1,
+    model: 'probe',
+    choices: [
+      { index: 0, message: { role: 'assistant', content: 'Hello' }, finish_reason: 'stop' },
+    ],
+    usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+  };
+}
+
+async function* anthropicEventStream(): AsyncIterable<unknown> {
+  yield {
+    type: 'message_start',
+    message: { id: 'msg_probe', usage: { input_tokens: 3, output_tokens: 1 } },
+  };
+  yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } };
+  yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } };
+  yield { type: 'content_block_stop', index: 0 };
+  yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } };
+}
+
+function anthropicMessageResponse(): Record<string, unknown> {
+  return {
+    id: 'msg_probe',
+    type: 'message',
+    role: 'assistant',
+    model: 'probe',
+    content: [{ type: 'text', text: 'Hello' }],
+    stop_reason: 'end_turn',
+    usage: { input_tokens: 3, output_tokens: 1 },
+  };
+}
+
+async function* responsesEventStream(): AsyncIterable<unknown> {
+  yield { type: 'response.created', response: { id: 'resp_probe' } };
+  yield { type: 'response.output_text.delta', delta: 'Hello' };
+  yield {
+    type: 'response.completed',
+    response: {
+      id: 'resp_probe',
+      status: 'completed',
+      usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+    },
+  };
+}
+
+async function captureOpenAIBody(
+  provider: ChatProvider,
+  options?: GenerateOptions,
+  history: Message[] = PROBE_HISTORY,
+): Promise<Record<string, unknown>> {
+  let captured: Record<string, unknown> | undefined;
+  const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
+  client.chat.completions.create = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return {
+      withResponse: () =>
+        Promise.resolve({
+          data: isStreaming(provider) ? openAIChunkStream() : chatCompletionResponse(),
+          response: { headers: new Headers() },
+        }),
+    };
+  });
+  await drain(await provider.generate('', [], history, options));
+  if (captured === undefined) throw new Error('expected chat.completions.create to be called');
+  return captured;
+}
+
+async function captureAnthropicBody(
+  provider: ChatProvider,
+  options?: GenerateOptions,
+): Promise<{
+  readonly params: Record<string, unknown>;
+  readonly requestOptions: Record<string, unknown> | undefined;
+  readonly via: 'beta' | 'standard';
+}> {
+  let capturedParams: Record<string, unknown> | undefined;
+  let capturedRequestOptions: Record<string, unknown> | undefined;
+  let via: 'beta' | 'standard' | undefined;
+  const client = sdkClient(provider) as {
+    messages: { create: unknown };
+    beta: { messages: { create: unknown } };
+  };
+  const create = (channel: 'beta' | 'standard') =>
+    vi.fn().mockImplementation((params: unknown, requestOptions: unknown) => {
+      via = channel;
+      capturedParams = params as Record<string, unknown>;
+      capturedRequestOptions = requestOptions as Record<string, unknown> | undefined;
+      return Promise.resolve(
+        isStreaming(provider) ? anthropicEventStream() : anthropicMessageResponse(),
+      );
+    });
+  client.messages.create = create('standard');
+  client.beta.messages.create = create('beta');
+  await drain(await provider.generate('', [], PROBE_HISTORY, options));
+  if (capturedParams === undefined || via === undefined) {
+    throw new Error('expected messages.create to be called');
+  }
+  return { params: capturedParams, requestOptions: capturedRequestOptions, via };
+}
+
+async function captureGoogleBody(
+  provider: ChatProvider,
+  options?: GenerateOptions,
+): Promise<Record<string, unknown>> {
+  let captured: Record<string, unknown> | undefined;
+  const client = sdkClient(provider) as { models: { generateContent: unknown } };
+  client.models.generateContent = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return Promise.resolve({
+      candidates: [
+        { content: { parts: [{ text: 'Hello' }], role: 'model' }, finishReason: 'STOP' },
+      ],
+      usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1, totalTokenCount: 4 },
+      modelVersion: 'probe',
+    });
+  });
+  await drain(await provider.generate('', [], PROBE_HISTORY, options));
+  if (captured === undefined) throw new Error('expected models.generateContent to be called');
+  return captured;
+}
+
+async function captureResponsesBody(
+  provider: ChatProvider,
+  options?: GenerateOptions,
+): Promise<Record<string, unknown>> {
+  let captured: Record<string, unknown> | undefined;
+  const client = sdkClient(provider) as { responses: { create: unknown } };
+  client.responses.create = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return Promise.resolve(responsesEventStream());
+  });
+  await drain(await provider.generate('', [], PROBE_HISTORY, options));
+  if (captured === undefined) throw new Error('expected responses.create to be called');
+  return captured;
+}
+
+describe('per-turn intent wire encoding (behavior probes)', () => {
+  it('encodes cacheKey + thinking + budget on the Kimi wire as prompt_cache_key + expanded thinking, never reasoning_effort', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+    });
+
+    const body = await captureOpenAIBody(provider, {
+      cacheKey: 'session-probe',
+      thinking: { effort: 'high', keep: 'all' },
+      maxCompletionTokens: 5000,
+    });
+
+    expect(body['prompt_cache_key']).toBe('session-probe');
+    // kimiParamsTrait.buildParams expands extra_body into the top-level params.
+    expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high', keep: 'all' });
+    expect(body).not.toHaveProperty('extra_body');
+    // The Kimi trait takes over the token field (no max_tokens backfill left).
+    expect(body['max_completion_tokens']).toBe(5000);
+    expect(body).not.toHaveProperty('max_tokens');
+    // A trait took thinking over — the base must not add reasoning_effort.
+    expect(body).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('encodes cacheKey on plain OpenAI as the native prompt_cache_key', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      modelName: 'gpt-4o',
+      apiKey: 'sk-probe',
+    });
+
+    const body = await captureOpenAIBody(provider, { cacheKey: 'session-probe' });
+
+    expect(body['prompt_cache_key']).toBe('session-probe');
+  });
+
+  it('encodes cacheKey on Anthropic as metadata.user_id', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      modelName: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+    });
+
+    const { params, via } = await captureAnthropicBody(provider, { cacheKey: 'session-probe' });
+
+    expect(via).toBe('standard');
+    expect(params['metadata']).toEqual({ user_id: 'session-probe' });
+  });
+
+  it('encodes thinking for Kimi over the Anthropic transport through the dialect trait only', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'anthropic',
+      providerType: 'kimi',
+      modelName: 'kimi-for-coding',
+      apiKey: 'sk-probe',
+    });
+
+    const { params, requestOptions, via } = await captureAnthropicBody(provider, {
+      thinking: { effort: 'high' },
+    });
+
+    expect(via).toBe('standard');
+    expect(params['thinking']).toEqual({ type: 'enabled' });
+    expect(params['output_config']).toEqual({ effort: 'high' });
+    // The dialect trait strips the interleaved-thinking beta and adds nothing
+    // else: no beta header reaches the wire at all.
+    expect(requestOptions).toBeUndefined();
+  });
+});
+
+const CONTACT_SCHEMA = {
+  type: 'object',
+  properties: { name: { type: 'string' } },
+  required: ['name'],
+  additionalProperties: false,
+};
+
+const JSON_SCHEMA_FORMAT: ResponseFormat = {
+  type: 'json_schema',
+  jsonSchema: { name: 'contact', schema: CONTACT_SCHEMA, strict: true },
+};
+
+describe('responseFormat wire encoding (per base)', () => {
+  it('maps json_schema to the OpenAI Chat Completions response_format', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const body = await captureOpenAIBody(provider, { responseFormat: JSON_SCHEMA_FORMAT });
+
+    expect(body['response_format']).toEqual({
+      type: 'json_schema',
+      json_schema: {
+        name: 'contact',
+        schema: CONTACT_SCHEMA,
+        strict: true,
+        description: undefined,
+      },
+    });
+  });
+
+  it('keeps response_format intact through the Kimi buildParams pipeline', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+    });
+
+    const body = await captureOpenAIBody(provider, { responseFormat: JSON_SCHEMA_FORMAT });
+
+    expect(body['response_format']).toEqual({
+      type: 'json_schema',
+      json_schema: {
+        name: 'contact',
+        schema: CONTACT_SCHEMA,
+        strict: true,
+        description: undefined,
+      },
+    });
+  });
+
+  it('maps json_schema to Anthropic output_config.format, merged over the per-turn effort', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const { params } = await captureAnthropicBody(provider, {
+      thinking: { effort: 'medium' },
+      responseFormat: JSON_SCHEMA_FORMAT,
+    });
+
+    // The morph era seeded `output_config.effort` via withGenerationKwargs;
+    // the per-turn thinking intent is the channel now, and the format merges
+    // into the same output_config object.
+    expect(params['output_config']).toEqual({
+      effort: 'medium',
+      format: { type: 'json_schema', schema: CONTACT_SCHEMA },
+    });
+  });
+
+  it('rejects json_object for Anthropic because the provider requires a schema', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    await expect(
+      provider.generate('', [], PROBE_HISTORY, { responseFormat: { type: 'json_object' } }),
+    ).rejects.toThrow('Anthropic provider requires a JSON schema for structured response output.');
+  });
+
+  it('maps json_schema to the Google GenAI response config', async () => {
+    const provider = new GoogleGenAIChatProvider({
+      model: 'gemini-2.5-flash',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const body = await captureGoogleBody(provider, { responseFormat: JSON_SCHEMA_FORMAT });
+    const config = body['config'] as Record<string, unknown>;
+
+    expect(config['responseMimeType']).toBe('application/json');
+    expect(config['responseJsonSchema']).toEqual(CONTACT_SCHEMA);
+    // The deleted suite's "replaces conflicting native schema config" case is
+    // unreachable now: the morph kwargs channel is gone, so a conflicting
+    // `responseSchema` can never be seeded (the base still deletes both keys
+    // defensively before applying the format).
+  });
+
+  it('maps json_schema to the OpenAI Responses text.format', async () => {
+    const provider = new OpenAIResponsesChatProvider({ model: 'gpt-4.1', apiKey: 'sk-probe' });
+
+    const body = await captureResponsesBody(provider, { responseFormat: JSON_SCHEMA_FORMAT });
+
+    expect(body['text']).toEqual({
+      format: {
+        type: 'json_schema',
+        name: 'contact',
+        schema: CONTACT_SCHEMA,
+        strict: true,
+        description: undefined,
+      },
+    });
+    // The deleted suite's "preserves existing text options" case is
+    // unreachable now: no channel seeds `text.verbosity` (the per-request
+    // merge in the base still stands, but only per-turn formats reach it).
+  });
+});
+
+describe('Anthropic thinking keep (context-management overlay)', () => {
+  it('overlays the clear-thinking edit and forces the beta endpoint when keep is set', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const { params, via } = await captureAnthropicBody(provider, {
+      thinking: { effort: 'high', keep: 'all' },
+    });
+
+    expect(via).toBe('beta');
+    expect(params['context_management']).toEqual({
+      edits: [{ type: 'clear_thinking_20251015', keep: 'all' }],
+    });
+    expect(params['betas']).toContain('context-management-2025-06-27');
+  });
+
+  it('never duplicates the edit or the beta across turns on the same provider', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+    const keepAll: GenerateOptions = { thinking: { effort: 'high', keep: 'all' } };
+
+    const first = await captureAnthropicBody(provider, keepAll);
+    const second = await captureAnthropicBody(provider, keepAll);
+
+    for (const { params } of [first, second]) {
+      const edits = (params['context_management'] as { edits: unknown[] }).edits;
+      expect(edits).toEqual([{ type: 'clear_thinking_20251015', keep: 'all' }]);
+      const betas = params['betas'] as string[];
+      expect(betas.filter((beta) => beta === 'context-management-2025-06-27')).toHaveLength(1);
+    }
+  });
+
+  it('sends no context-management and stays on the standard endpoint without keep', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-6',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const { params, via } = await captureAnthropicBody(provider, {
+      thinking: { effort: 'high' },
+    });
+
+    expect(via).toBe('standard');
+    expect(params).not.toHaveProperty('context_management');
+    expect(params).not.toHaveProperty('betas');
+  });
+});
+
+describe('Anthropic max-tokens profile', () => {
+  it('returns per-version Messages-API caps for known Claude models', () => {
+    expect(resolveDefaultMaxTokens('claude-fable-5')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-8')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-7')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-6')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-5-20251101')).toBe(64000);
+    expect(resolveDefaultMaxTokens('claude-sonnet-4-6')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-haiku-4-5')).toBe(64000);
+  });
+
+  it('matches dotted version separators', () => {
+    expect(resolveDefaultMaxTokens('claude-opus-4.8')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4.7')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-sonnet-4.6')).toBe(128000);
+  });
+
+  it('falls back to the nearest lower catalogued minor for unknown minors', () => {
+    // Uncatalogued minors inherit at least their predecessor's cap.
+    expect(resolveDefaultMaxTokens('claude-opus-4-9')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-opus-4-10')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-sonnet-4-9')).toBe(128000);
+    expect(resolveDefaultMaxTokens('claude-haiku-4-9')).toBe(64000);
+    // A gap between catalogued minors resolves to the nearest lower one.
+    expect(resolveDefaultMaxTokens('claude-opus-4-3')).toBe(32000);
+  });
+
+  it('honors a lower override, clamps an override above the ceiling, and defaults unknown models to 128000', () => {
+    expect(resolveDefaultMaxTokens('claude-opus-4-7', 200)).toBe(200);
+    expect(resolveDefaultMaxTokens('claude-opus-4-7', 999999)).toBe(128000);
+    expect(resolveDefaultMaxTokens('unknown-model', 12345)).toBe(12345);
+    expect(resolveDefaultMaxTokens('totally-unknown-model')).toBe(128000);
+  });
+
+  it('sends the profile default as max_tokens when no explicit defaultMaxTokens is set', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const { params } = await captureAnthropicBody(provider);
+
+    expect(params['max_tokens']).toBe(128000);
+  });
+
+  it('sends an explicit defaultMaxTokens unclamped, even above the model ceiling', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'sk-probe',
+      stream: false,
+      defaultMaxTokens: 999999,
+    });
+
+    const { params } = await captureAnthropicBody(provider);
+
+    expect(params['max_tokens']).toBe(999999);
+  });
+
+  it('clamps the per-turn budget against the model ceiling', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const within = await captureAnthropicBody(provider, { maxCompletionTokens: 5000 });
+    expect(within.params['max_tokens']).toBe(5000);
+    const above = await captureAnthropicBody(provider, { maxCompletionTokens: 999999 });
+    expect(above.params['max_tokens']).toBe(128000);
+  });
+
+  it('lets an explicit constructor defaultMaxTokens win over the per-turn budget', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'sk-probe',
+      stream: false,
+      defaultMaxTokens: 999999,
+    });
+
+    const { params } = await captureAnthropicBody(provider, { maxCompletionTokens: 5000 });
+
+    expect(params['max_tokens']).toBe(999999);
+  });
+});
+
+describe('OpenAI reasoning_effort path (issue #1616)', () => {
+  it('auto-enables reasoning_effort=medium from think-part history when no withThinking hook exists', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const body = await captureOpenAIBody(provider, undefined, THINK_HISTORY);
+
+    expect(body['reasoning_effort']).toBe('medium');
+  });
+
+  it('maps an explicit concrete effort to reasoning_effort', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const body = await captureOpenAIBody(provider, { thinking: { effort: 'high' } });
+
+    expect(body['reasoning_effort']).toBe('high');
+  });
+
+  it('suppresses the auto-enable on an explicit off, even with think-part history', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+    });
+
+    const body = await captureOpenAIBody(provider, { thinking: { effort: 'off' } }, THINK_HISTORY);
+
+    expect(body).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('disables the auto-enable entirely once a withThinking hook exists (load-bearing)', async () => {
+    // A hook that defers (returns undefined) still counts as "a trait took
+    // thinking over": the base's history scan must not fire, but an explicit
+    // effort still falls through to the base's own reasoning_effort encoding.
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+      hooks: { withThinking: () => undefined },
+    });
+
+    const scanned = await captureOpenAIBody(provider, undefined, THINK_HISTORY);
+    expect(scanned).not.toHaveProperty('reasoning_effort');
+
+    const explicit = await captureOpenAIBody(provider, { thinking: { effort: 'low' } });
+    expect(explicit['reasoning_effort']).toBe('low');
   });
 });

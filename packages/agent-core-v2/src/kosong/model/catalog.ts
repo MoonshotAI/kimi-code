@@ -94,9 +94,9 @@ export interface IModelCatalog {
   findByName(name: string): readonly string[];
 }
 
-// The decorator name is shared with the legacy `IModelResolver` contract on
-// purpose (`createDecorator` caches by name): `IModelCatalog` is the drop-in
-// replacement and the two are never both loaded — production imports the
-// legacy one, tests import this one.
+// The decorator name matches the deleted legacy `IModelResolver` contract
+// (`createDecorator` caches by name): `IModelCatalog` is the drop-in
+// replacement, and keeping the legacy name preserves the service identity
+// every caller already resolves by.
 export const IModelCatalog: ServiceIdentifier<IModelCatalog> =
   createDecorator<IModelCatalog>('modelResolver');

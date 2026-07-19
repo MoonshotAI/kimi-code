@@ -22,6 +22,11 @@ import { ModelService } from '#/kosong/model/modelService';
 import { ENV_MODEL_PROVIDER_KEY } from '#/kosong/provider/provider';
 import { effectiveModelConfig } from '#/kosong/model/modelAuth';
 
+// Side-effect registrations: endpoint defaults and the trait-driven-thinking
+// verdict (`isKimiProvider`) answer through the provider-definition registry.
+import '#/kosong/provider/providers/kimi/kimi.contrib';
+import '#/kosong/provider/providers/standard.contrib';
+
 describe('effectiveModelConfig', () => {
   it('derives the official effort metadata from a Claude model name', () => {
     expect(
@@ -336,14 +341,17 @@ describe('kimiModelEnvOverlay', () => {
     });
   });
 
-  it('synthesizes the openai default baseUrl when KIMI_MODEL_BASE_URL is unset', () => {
+  it('omits baseUrl for openai so the base SDK default applies at construction', () => {
     const { effective } = applyKimiModelEnvOverlay(
       { KIMI_MODEL_NAME: 'env-model' },
       { providers: { [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' } } },
     );
 
+    // The registry declares no `defaultBaseUrl` for the canonical vendors
+    // (standard.contrib): construction-time defaults stay inside the bases /
+    // their SDKs, so the overlay leaves baseUrl out — exactly like anthropic.
     expect(effective['providers']).toEqual({
-      [ENV_MODEL_PROVIDER_KEY]: { type: 'openai', baseUrl: 'https://api.openai.com/v1' },
+      [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' },
     });
   });
 

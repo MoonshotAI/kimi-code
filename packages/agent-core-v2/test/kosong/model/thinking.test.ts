@@ -8,6 +8,9 @@
  *  - `usesKimiThinkingSemantics` answers through the adapter registry's one
  *    resolution point — true for kimi on its native transport AND for kimi
  *    over anthropic (the `dialects.anthropic` slice), false for plain openai;
+ *  - `usesNativeKimiThinkingSemantics` narrows that verdict to the native
+ *    transport only — the strict effort-validation gate (v1
+ *    `provider.type === 'kimi'` parity), false for kimi over anthropic;
  *  - effort resolution folds request/config/model metadata with the kimi
  *    normalization rules; keep resolution honors off-values and precedence.
  */
@@ -25,6 +28,7 @@ import {
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
   usesKimiThinkingSemantics,
+  usesNativeKimiThinkingSemantics,
 } from '#/kosong/model/thinking';
 
 const registry = new ProtocolAdapterRegistry();
@@ -44,6 +48,18 @@ describe('registry-driven vendor verdicts', () => {
     expect(usesKimiThinkingSemantics(registry, 'openai', 'openai')).toBe(false);
     expect(usesKimiThinkingSemantics(registry, 'openai', undefined)).toBe(false);
     expect(usesKimiThinkingSemantics(registry, 'anthropic', 'anthropic')).toBe(false);
+  });
+
+  it('usesNativeKimiThinkingSemantics: only the vendor on its own transport', () => {
+    // The strict effort gate (v1 `provider.type === 'kimi'` parity): kimi on
+    // its native openai transport qualifies; kimi over anthropic does NOT —
+    // the foreign backend may accept unlisted efforts, so the profile stays
+    // lenient there and warns instead of rejecting.
+    expect(usesNativeKimiThinkingSemantics(registry, 'openai', 'kimi')).toBe(true);
+    expect(usesNativeKimiThinkingSemantics(registry, 'anthropic', 'kimi')).toBe(false);
+    expect(usesNativeKimiThinkingSemantics(registry, 'openai', 'openai')).toBe(false);
+    expect(usesNativeKimiThinkingSemantics(registry, 'openai', undefined)).toBe(false);
+    expect(usesNativeKimiThinkingSemantics(registry, 'anthropic', 'anthropic')).toBe(false);
   });
 });
 

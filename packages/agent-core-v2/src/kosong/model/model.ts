@@ -102,9 +102,8 @@ export interface IModelService {
   delete(id: string): Promise<void>;
 }
 
-// The decorator name is shared with the legacy `app/model` contract on
-// purpose (`createDecorator` caches by name): during the transition the two
-// implementations are drop-in interchangeable, and they are never both loaded
-// — production imports the legacy one, tests import this one.
+// The decorator name matches the deleted legacy `app/model` contract
+// (`createDecorator` caches by name): keeping the legacy name preserves the
+// service identity every caller already resolves by.
 export const IModelService: ServiceIdentifier<IModelService> =
   createDecorator<IModelService>('modelService');

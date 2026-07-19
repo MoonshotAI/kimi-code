@@ -6,9 +6,9 @@
  * load via `registerConfigSection`, so the `config` domain never imports this
  * domain's types.
  *
- * Side-effect module: production code must NOT import this yet (the legacy
- * `app/model/configSection` still owns the section in production); tests
- * import it on demand.
+ * Side-effect module: production gets it from the `src/index.ts`
+ * side-effect block; tests import it on demand. This module is the sole
+ * owner of the section — the legacy `app/model/configSection` is gone.
  *
  * Note: the `app/config` imports below are deliberately RELATIVE paths — see
  * `modelService.ts` for the rationale.
