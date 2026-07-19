@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { trayIconPath } from '../../src/main/tray';
+import {
+  asTrayAttention,
+  trayAttentionItemLabel,
+  trayAttentionSummary,
+  trayAttentionTitle,
+  trayIconPath,
+  type TrayAttention,
+} from '../../src/main/tray';
+
+function attention(partial: Partial<TrayAttention> = {}): TrayAttention {
+  return { unread: 0, approvals: 0, questions: 0, items: [], ...partial };
+}
 
 describe('trayIconPath', () => {
   it('uses the .ico asset on Windows', () => {
@@ -25,5 +36,139 @@ describe('trayIconPath', () => {
     expect(
       trayIconPath({ platform: 'darwin', isPackaged: true, resourcesPath: '/res', appPath: '/repo' }),
     ).toBe(join('/res', 'build', 'trayTemplate.png'));
+  });
+});
+
+describe('asTrayAttention', () => {
+  it('accepts a well-formed payload with attention items', () => {
+    expect(
+      asTrayAttention({
+        unread: 3,
+        approvals: 2,
+        questions: 1,
+        items: [
+          { sessionId: 's1', title: '设计新的打包方案', unread: true, approvals: 0, questions: 0 },
+          { sessionId: 's2', title: '修复测试', unread: false, approvals: 2, questions: 0 },
+        ],
+      }),
+    ).toEqual({
+      unread: 3,
+      approvals: 2,
+      questions: 1,
+      items: [
+        { sessionId: 's1', title: '设计新的打包方案', unread: true, approvals: 0, questions: 0 },
+        { sessionId: 's2', title: '修复测试', unread: false, approvals: 2, questions: 0 },
+      ],
+    });
+  });
+
+  it('floors fractional counts and caps runaway values', () => {
+    expect(
+      asTrayAttention({
+        unread: 2.9,
+        approvals: 10000,
+        questions: 0,
+        items: [
+          { sessionId: 's1', title: 't', unread: true, approvals: 1.9, questions: 0 },
+        ],
+      }),
+    ).toEqual({
+      unread: 2,
+      approvals: 999,
+      questions: 0,
+      items: [{ sessionId: 's1', title: 't', unread: true, approvals: 1, questions: 0 }],
+    });
+  });
+
+  it('drops malformed payloads (non-object, missing/wrong/negative fields)', () => {
+    expect(asTrayAttention(null)).toBeNull();
+    expect(asTrayAttention('3')).toBeNull();
+    expect(asTrayAttention({ unread: 1, approvals: 0, questions: 0 })).toBeNull(); // no items
+    expect(asTrayAttention({ unread: 1, approvals: 0, questions: 0, items: 'x' })).toBeNull();
+    expect(asTrayAttention({ unread: 1, approvals: '2', questions: 0, items: [] })).toBeNull();
+    expect(asTrayAttention({ unread: -1, approvals: 0, questions: 0, items: [] })).toBeNull();
+    expect(asTrayAttention({ unread: Number.NaN, approvals: 0, questions: 0, items: [] })).toBeNull();
+  });
+
+  it('drops payloads with malformed items', () => {
+    const base = { unread: 1, approvals: 0, questions: 0 };
+    expect(asTrayAttention({ ...base, items: [{ title: 't', unread: true, approvals: 0, questions: 0 }] })).toBeNull();
+    expect(
+      asTrayAttention({ ...base, items: [{ sessionId: '', title: 't', unread: true, approvals: 0, questions: 0 }] }),
+    ).toBeNull();
+    expect(
+      asTrayAttention({ ...base, items: [{ sessionId: 's1', title: 't', unread: 'yes', approvals: 0, questions: 0 }] }),
+    ).toBeNull();
+    expect(
+      asTrayAttention({ ...base, items: [{ sessionId: 's1', title: 't', unread: true, approvals: -1, questions: 0 }] }),
+    ).toBeNull();
+    expect(asTrayAttention({ ...base, items: ['s1'] })).toBeNull();
+  });
+});
+
+describe('trayAttentionTitle', () => {
+  it('is the bare grand total', () => {
+    expect(trayAttentionTitle(attention({ unread: 3, approvals: 2, questions: 1 }))).toBe('6');
+    expect(trayAttentionTitle(attention({ questions: 1 }))).toBe('1');
+  });
+
+  it('is empty when nothing pends (icon-only menu bar)', () => {
+    expect(trayAttentionTitle(attention())).toBe('');
+  });
+});
+
+describe('trayAttentionSummary', () => {
+  it('joins the per-kind breakdown in a stable order (zh)', () => {
+    expect(trayAttentionSummary(attention({ unread: 3, approvals: 2, questions: 1 }), 'zh')).toBe(
+      '3 条未读 · 2 个待审批 · 1 个待回答',
+    );
+  });
+
+  it('joins the per-kind breakdown in English', () => {
+    expect(trayAttentionSummary(attention({ unread: 3, approvals: 2, questions: 1 }), 'en')).toBe(
+      '3 unread · 2 to approve · 1 to answer',
+    );
+  });
+
+  it('omits kinds with a zero count', () => {
+    expect(trayAttentionSummary(attention({ approvals: 2 }), 'zh')).toBe('2 个待审批');
+    expect(trayAttentionSummary(attention({ approvals: 2 }), 'en')).toBe('2 to approve');
+  });
+
+  it('is empty when nothing pends (no menu header, plain tooltip)', () => {
+    expect(trayAttentionSummary(attention(), 'zh')).toBe('');
+  });
+});
+
+describe('trayAttentionItemLabel', () => {
+  it('is the bare title for unread-only sessions', () => {
+    expect(
+      trayAttentionItemLabel({ sessionId: 's1', title: '设计新的打包方案', unread: true, approvals: 0, questions: 0 }, 'zh'),
+    ).toBe('设计新的打包方案');
+  });
+
+  it('appends the actionable kinds after the title (zh and en)', () => {
+    const item = { sessionId: 's1', title: '评估计划', unread: true, approvals: 1, questions: 3 };
+    expect(trayAttentionItemLabel(item, 'zh')).toBe('评估计划 · 1 待审批 · 3 待回答');
+    expect(trayAttentionItemLabel(item, 'en')).toBe('评估计划 · 1 to approve · 3 to answer');
+    expect(
+      trayAttentionItemLabel({ sessionId: 's1', title: '评估计划', unread: false, approvals: 2, questions: 0 }, 'zh'),
+    ).toBe('评估计划 · 2 待审批');
+  });
+
+  it('collapses whitespace/newlines and truncates long titles', () => {
+    expect(
+      trayAttentionItemLabel({ sessionId: 's1', title: '  多行\n标题\t整理 ', unread: true, approvals: 0, questions: 0 }, 'zh'),
+    ).toBe('多行 标题 整理');
+    const title = '这是一个非常长的会话标题'.repeat(4); // 48 chars > 32-char cap
+    const long = trayAttentionItemLabel({ sessionId: 's1', title, unread: true, approvals: 0, questions: 0 }, 'zh');
+    expect(long).toBe(`${title.slice(0, 32)}…`);
+    expect(long.length).toBe(33);
+  });
+
+  it('falls back to a localized unnamed-session placeholder for an empty title', () => {
+    const item = { sessionId: 's1', title: '   ', unread: true, approvals: 0, questions: 0 };
+    expect(trayAttentionItemLabel(item, 'zh')).toBe('未命名会话');
+    expect(trayAttentionItemLabel(item, 'en')).toBe('Untitled session');
   });
 });

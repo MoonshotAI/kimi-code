@@ -15,6 +15,27 @@ export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
+// --- tray "jump to session" routing -------------------------------------------
+//
+// Tray menu clicks target a renderer that may not exist (macOS keeps the app
+// running windowless), may still be booting, or may be mid-reload (the View
+// menu exposes Reload/Force Reload). Pushes are only safe once the page
+// finished loading — by then the Vue app's `onTraySelectSession` subscription
+// is in place (module scripts run before the load event) — so clicks before
+// that queue up and flush on did-finish-load.
+let rendererReady = false;
+let pendingTraySessionSelect: string | null = null;
+
+/** Tray menu "jump to this session": push straight to a live, loaded renderer;
+    queue while the window is closed or still loading (flushed on load). */
+export function selectSessionInRenderer(sessionId: string): void {
+  if (mainWindow !== null && !mainWindow.isDestroyed() && rendererReady) {
+    sendToRenderer(IPC.traySelectSession, sessionId);
+  } else {
+    pendingTraySessionSelect = sessionId;
+  }
+}
+
 // --- renderer event channels (menu / shortcut) -------------------------------
 //
 // Native menu items and global shortcuts forward to the renderer over the
@@ -105,6 +126,9 @@ export function createWindow(): void {
     },
   });
   mainWindow = win;
+  // The fresh renderer boot is not subscribed yet — tray session-select clicks
+  // queue until did-finish-load below flips this back on.
+  rendererReady = false;
   // External http(s) links (PR pages, OAuth, Markdown anchors) open in the
   // system browser, not in frameless Electron windows; cross-origin
   // navigation of the main window is intercepted the same way.
@@ -166,12 +190,29 @@ export function createWindow(): void {
     if (mainWindow === win) {
       mainWindow = null;
     }
+    // The tray badge keeps its last-known state while windowless (macOS keeps
+    // the app running): unread flags are durable (localStorage) and pending
+    // approvals/questions live server-side, so the entries stay meaningful —
+    // and clickable, thanks to the queue above — until the next window's
+    // renderer re-pushes fresh totals on load (useTrayAttention.ts).
   });
   if (!app.isPackaged) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
+  win.webContents.on('did-start-loading', () => {
+    // A reload replaces the renderer and its tray-select subscription; queue
+    // clicks again until did-finish-load re-marks the new page ready.
+    rendererReady = false;
+  });
   win.webContents.on('did-finish-load', () => {
     if (win.isDestroyed()) return;
+    // The renderer is up and its tray-select subscription is in place: direct
+    // pushes are safe now, and anything queued during the boot can flush.
+    rendererReady = true;
+    if (pendingTraySessionSelect !== null) {
+      sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
+      pendingTraySessionSelect = null;
+    }
     const factor = win.webContents.getZoomFactor();
     const level = win.webContents.getZoomLevel();
     void win.webContents

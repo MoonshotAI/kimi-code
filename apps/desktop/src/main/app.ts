@@ -1,22 +1,17 @@
 import { join } from 'node:path';
 
 import { app, BrowserWindow, nativeImage } from 'electron';
-import type { Tray } from 'electron';
 
 import { registerRendererScheme, registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
-import { createWindow } from './window';
-import { createTray } from './tray';
+import { createWindow, selectSessionInRenderer } from './window';
+import { createTray, destroyTray } from './tray';
 import { buildMenu } from './menu';
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
 
 // --- app lifecycle ------------------------------------------------------------
-
-// A Tray with no live JS reference gets garbage-collected and its OS icon
-// silently disappears — keep it module-scoped for the app's lifetime.
-let tray: Tray | null = null;
 
 function showMainWindow(): void {
   const win = BrowserWindow.getAllWindows()[0];
@@ -34,8 +29,7 @@ export function main(): void {
   registerIpcHandlers();
 
   app.on('before-quit', () => {
-    tray?.destroy();
-    tray = null;
+    destroyTray();
     unregisterGlobalShortcuts();
     closeServerHandle();
   });
@@ -57,7 +51,16 @@ export function main(): void {
     registerGlobalShortcuts();
     buildMenu();
     createWindow();
-    tray = createTray({ showMainWindow, quit: () => app.quit() });
+    createTray({
+      showMainWindow,
+      // Tray attention item click: surface the window, then hand the session
+      // id to the renderer (queued while the window bootstraps, window.ts).
+      openSession: (sessionId) => {
+        showMainWindow();
+        selectSessionInRenderer(sessionId);
+      },
+      quit: () => app.quit(),
+    });
     // After the window exists: update statuses push to the renderer. No-op in
     // dev (unpackaged); the packaged app checks on a delay + 4h cadence.
     initAutoUpdater();

@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 16 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 19 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意两点：
 
@@ -65,6 +65,11 @@
   - **web 无对应物**：浏览器没有托盘面，`apps/web` 不涉及（非共享文件分叉）。
   - 测试：`tests/main/tray.test.ts`（`trayIconPath` 纯函数 3 用例：win32 取 .ico、mac/linux 取 png、packaged 走 resourcesPath）。
 
+- [x] **macOS 菜单栏未读/待办计数 + 按会话跳转**（已完成，desktop 专属，扩展系统托盘）
+  - 实现：renderer 新增 `composables/useTrayAttention.ts`——`buildTrayAttention` 纯函数从**侧栏可见会话**投影：可见集取 `sessionsForView`（排除已移除工作区与 side-chat 子会话，与侧栏渲染口径一致），顺序与列表级事实取 `sessions`（updatedAt 倒序 + `pendingInteraction`）；未加载详情的会话没有 `pendingBySession` 条目，用 `pendingInteraction` 按 1 条兜底（SessionRow 徽章同款事实），详情加载后真实计数接管；**三类总数全部由条目推导**——`forgetSession` 不清 `unreadBySession` 残留的幻影未读（已归档会话）无法污染计数。`watch(..., {immediate:true})` 经新桥 `setTrayAttention`（IPC `kimi:tray-attention`）推给主进程；**首推与点击都等 `client.initialized`**（首轮 `load()` 落定才为 true）——setup 阶段会话列表为空，此时首推会把主进程保留的 last-known 状态抹成全零熬过整个加载窗口；同理，加载中收到的托盘点击由 `runWhenInitialized` 挂起，否则 `selectSession` 在列表填充前设下 active 会话、首轮 load 的 deep-link/自动选择（均以"无 active 会话"为前提）被跳过、工作区停在旧值。`trayAttentionEqual` 结构去重——`sessions` computed 依赖 30s 滴答的 `sessionTimeClock`（刷新相对时间），每 tick 都会产出内容相同的新对象，不去重则每 30s 白推一次并重建原生菜单（2026-07 真机调试发现：注入的测试数据就是被 tick 触发的真实状态重推覆盖的）。主进程 `tray.ts` 的 `setTrayAttention`：macOS 上 `tray.setTitle(总数, {fontType:'monospacedDigit'})`——菜单栏图标右侧纯数字（"图标 + N"；明细文字放菜单栏太挤且刘海屏会被系统隐藏），tooltip 放分类汇总（"3 条未读 · 2 个待审批 · 1 个待回答"），下拉菜单顶部列出会话条目（"待处理"禁用头 + 最多 8 条可点项，标签为 `标题 · N 待审批 · N 待回答`（未读-only 裸标题；标题折叠空白、截 32 字符 + …），溢出补"还有 N 条待处理…"）；Windows/Linux `setTitle` 无效，tooltip/菜单明细照常。点击会话项 = `openSession` action（app.ts 注入）→ `showMainWindow` + `selectSessionInRenderer`（window.ts）：renderer 就绪（`did-finish-load` 后，此时 Vue 订阅已就位）直接经 `kimi:tray-select-session` 推送，窗口关闭/启动中/ reload 中（`did-start-loading` 复位就绪位）则排队、加载完成时冲刷；renderer 侧 `createTraySessionSelector` 收推送调 `client.selectSession`（自带跨工作区切换 + 清该会话未读）。payload 主进程 `asTrayAttention` 校验 + 钳制（计数非负整数上限 999，items 逐条校验、上限 50 条，任何畸形整体丢弃），preload 侧同构校验先行。窗口 `closed` 时**保留**最后已知状态（未读有 localStorage 持久化、待办在 server 侧，条目依旧有效且可点——点击经队列在窗口重建后跳转），下个 renderer 加载后用真实状态覆盖。**菜单/tooltip 语言跟随应用语言**：主进程无 i18n runtime，`tray.ts` 自带 en/zh 字符串表（计数无关措辞规避复数规则），renderer 经 `createTrayLocaleSync`（watch `i18n.global.locale`，immediate 首推）由 preload `setLocale`（IPC `kimi:locale`）推送应用内语言，未推送前按 OS 语言兜底；切换语言即重渲染菜单与 tooltip。
+  - **web 无对应物**：浏览器没有菜单栏/托盘，桥缺方法即整体 no-op（`setTrayAttention` / `onTraySelectSession` 缺一即退，兼容旧桥）。composable 不同步 apps/web（同 useFullscreen 先例）；`App.vue` 分叉块再添一块（import + `useTrayAttention(client)`），整目录 re-copy 时需保留。
+  - 测试：`tests/main/tray.test.ts`（`asTrayAttention` 含 items 校验、`trayAttentionTitle` / `trayAttentionSummary` / `trayAttentionItemLabel` 纯函数，en/zh 双语言断言）；`tests/main/preload.test.ts` 白名单 + 通道/畸形丢弃/转发断言；`tests/renderer/useTrayAttention.test.ts`（items 构建、可见集过滤、幻影未读排除、`pendingInteraction` 兜底与详情接管、locale 映射推送、无桥 no-op、首推 + 变更推、stop 后停推、相同 payload 去重不重复推、点击路由 + 退订）。真机验证（dev:desktop:debug + CDP 驱动 + 读菜单栏 AX 树）：菜单栏数字随推送 5→1→0 增减、清零后图标复原、托盘菜单按会话列出、点击跳转会话，均通过。
+
 - [x] **自动更新（electron-updater + CDN generic feed）**（已完成，desktop 专属）
   - 实现：新增 `src/main/updater.ts`——electron-updater generic provider 轮询 `https://code.kimi.com/kimi-code/desktop/` 的 latest*.yml（feed 在 `electron-builder.config.cjs` 的 `publish` 配置里）；`autoDownload=false`（用户点击才下载）、`autoInstallOnAppQuit=true`（自然退出时静默装）；启动 10s 首查、之后每 4h；状态机 idle→available→downloading→downloaded/error 经 `kimi:update-status` 推送 renderer，status 含 version/percent/releaseDate。只打扰用户该知道的：后台检查失败仅 `console.warn` 保持 idle，仅用户发起的下载失败进 error 态（可重试）；feed 回滚（`update-not-available`）时清掉未开始下载的 available / 失败待重试的 error 态，进行中的下载/安装不动。dev（未打包）整体 no-op。IPC：renderer 初值走 `kimi:update-get-status`，动作走 `kimi:update-download` / `kimi:update-install`（`quitAndInstall(true, true)`）。
   - 桥：preload 新增 `getUpdateStatus` / `onUpdateStatus` / `downloadUpdate` / `installUpdate`（payload 经 `asUpdateStatus` 结构校验，畸形丢弃）；renderer `composables/useUpdateStatus.ts` 单例（照 useFullscreen 模式），无桥恒 idle；`visible` 计算属性实现"本次跳过"（localStorage `kimi-web.update-skipped-version` 持久化，仅作用于 available 态，出现更高版本自动解除）。
@@ -82,5 +87,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（15 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（18 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

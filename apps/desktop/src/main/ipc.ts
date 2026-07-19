@@ -5,6 +5,7 @@ import { getMainWindow } from './window';
 import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
 import { getUpdateStatus, requestUpdateDownload, requestUpdateInstall } from './updater';
+import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -56,4 +57,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.updateGetStatus, () => getUpdateStatus());
   ipcMain.handle(IPC.updateDownload, () => requestUpdateDownload());
   ipcMain.handle(IPC.updateInstall, () => requestUpdateInstall());
+  // Tray attention badge: the renderer pushes {unread, approvals, questions}
+  // totals whenever they change (useTrayAttention.ts); tray.ts renders them as
+  // the macOS menu-bar count + tooltip/menu breakdown. Malformed payloads drop.
+  ipcMain.on(IPC.trayAttention, (_event, payload: unknown) => {
+    const attention = asTrayAttention(payload);
+    if (attention !== null) {
+      setTrayAttention(attention);
+    }
+  });
+  // The renderer's in-app language drives the tray's strings (menu labels,
+  // tooltip). Until the first push the OS language is the fallback.
+  ipcMain.on(IPC.locale, (_event, locale: unknown) => {
+    if (locale === 'en' || locale === 'zh') {
+      setTrayLocale(locale);
+    }
+  });
 }

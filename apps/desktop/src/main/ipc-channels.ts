@@ -18,6 +18,9 @@ export const IPC = {
   updateGetStatus: 'kimi:update-get-status',
   updateDownload: 'kimi:update-download',
   updateInstall: 'kimi:update-install',
+  trayAttention: 'kimi:tray-attention',
+  traySelectSession: 'kimi:tray-select-session',
+  locale: 'kimi:locale',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -27,4 +30,5 @@ export type RendererEventChannel =
   | typeof IPC.menuAction
   | typeof IPC.shortcut
   | typeof IPC.fullscreenChanged
-  | typeof IPC.updateStatus;
+  | typeof IPC.updateStatus
+  | typeof IPC.traySelectSession;

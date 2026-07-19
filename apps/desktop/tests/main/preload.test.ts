@@ -28,10 +28,13 @@ const WHITELIST = [
   'onMenu',
   'onMenuAction',
   'onShortcut',
+  'onTraySelectSession',
   'onUpdateStatus',
   'openExternal',
   'openInApp',
+  'setLocale',
   'setTheme',
+  'setTrayAttention',
   'showOpenDialog',
   'showSaveDialog',
 ];
@@ -75,6 +78,26 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setTheme('bogus');
     expect(send).toHaveBeenCalledTimes(1); // invalid scheme ignored
 
+    const attention = {
+      unread: 3,
+      approvals: 2,
+      questions: 1,
+      items: [{ sessionId: 's1', title: 't', unread: true, approvals: 0, questions: 0 }],
+    };
+    exposed.setTrayAttention(attention);
+    expect(send).toHaveBeenCalledWith('kimi:tray-attention', attention);
+    // Malformed attention payloads never reach the main process.
+    exposed.setTrayAttention({ unread: -1, approvals: 0, questions: 0, items: [] });
+    exposed.setTrayAttention({ unread: 1, approvals: 0, questions: 0 }); // no items
+    exposed.setTrayAttention({ unread: 1, approvals: 0, questions: 0, items: [{ sessionId: '' }] });
+    exposed.setTrayAttention('3');
+    expect(send).toHaveBeenCalledTimes(2);
+
+    exposed.setLocale('zh');
+    expect(send).toHaveBeenCalledWith('kimi:locale', 'zh');
+    exposed.setLocale('fr'); // unsupported locale ignored
+    expect(send).toHaveBeenCalledTimes(3);
+
     const offMenu = exposed.onMenu(() => {});
     expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));
     offMenu();
@@ -99,6 +122,11 @@ describe('kimiDesktop preload bridge', () => {
     expect(on).toHaveBeenCalledWith('kimi:update-status', expect.any(Function));
     offUpdate();
     expect(removeListener).toHaveBeenCalledWith('kimi:update-status', expect.any(Function));
+
+    const offTraySelect = exposed.onTraySelectSession(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:tray-select-session', expect.any(Function));
+    offTraySelect();
+    expect(removeListener).toHaveBeenCalledWith('kimi:tray-select-session', expect.any(Function));
 
     await exposed.openExternal('https://example.com');
     expect(invoke).toHaveBeenCalledWith('kimi:open-external', 'https://example.com');
@@ -155,6 +183,15 @@ describe('kimiDesktop preload bridge', () => {
     // accidental truthy strings leaking into the renderer state).
     listeners.get('kimi:fullscreen-changed')?.({}, 'yes');
     expect(fullscreenCb).toHaveBeenLastCalledWith(false);
+
+    // Tray session-select: non-empty session ids forward; junk is dropped.
+    const traySelectCb = vi.fn();
+    exposed.onTraySelectSession(traySelectCb);
+    listeners.get('kimi:tray-select-session')?.({}, 'session-123');
+    expect(traySelectCb).toHaveBeenCalledWith('session-123');
+    listeners.get('kimi:tray-select-session')?.({}, '');
+    listeners.get('kimi:tray-select-session')?.({}, 42);
+    expect(traySelectCb).toHaveBeenCalledTimes(1);
 
     // Update statuses pass through after structural validation; malformed
     // payloads (wrong state, non-object) are dropped.

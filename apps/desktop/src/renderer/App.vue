@@ -50,6 +50,7 @@ import { stripSkillPrefix } from './lib/slashCommands';
 import { Button, Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop } from './lib/desktopFlag';
 import { useFullscreen } from './composables/useFullscreen';
+import { useTrayAttention } from './composables/useTrayAttention';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -90,6 +91,11 @@ const isMobile = useIsMobile();
 // On macOS fullscreen the traffic lights hide, so the resident sidebar toggle
 // drops their slot and hugs the left edge (see the fullscreen CSS below).
 const isFullscreen = useFullscreen();
+
+// Push the global pending-attention totals (unread sessions + awaiting
+// approvals + awaiting questions) to the native tray: macOS menu-bar count +
+// tray tooltip/menu breakdown. No-op without the desktop bridge (web).
+useTrayAttention(client);
 
 // Mobile sheet visibility
 const showMobileSwitcher = ref(false);

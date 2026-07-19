@@ -34,6 +34,9 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
   token 读取、server 日志路径也在这里。
 - `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。
 - `src/main/menu.ts` / `shortcuts.ts` / `screens.ts` — 原生菜单、全局快捷键、启动失败页。
+- `src/main/tray.ts` — 系统托盘（macOS 菜单栏 / Windows 通知区）：图标、上下文菜单、待处理
+  badge（菜单栏计数 + 托盘菜单按会话跳转）；主进程原生界面文案的 en/zh 字符串表与
+  `kimi:locale` 语言同步也在这里。
 - `src/main/ipc.ts` / `ipc-channels.ts` — IPC handler 注册、channel 常量与 payload 类型。
 - `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist。
 - `src/main/protocol.ts` — `app://renderer` scheme/protocol 注册与 `rendererUrl` 拼接。

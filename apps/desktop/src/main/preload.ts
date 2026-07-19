@@ -23,6 +23,66 @@ export type UpdateStatus = {
 
 const UPDATE_STATES = new Set(['idle', 'available', 'downloading', 'downloaded', 'error']);
 
+/** Pending-attention totals for the tray badge (main/tray.ts TrayAttention,
+    structurally duplicated — preload keeps its own literal surface). */
+export type TrayAttentionItem = {
+  sessionId: string;
+  title: string;
+  unread: boolean;
+  approvals: number;
+  questions: number;
+};
+export type TrayAttention = {
+  unread: number;
+  approvals: number;
+  questions: number;
+  items: TrayAttentionItem[];
+};
+
+function asCount(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function asTrayAttentionItem(value: unknown): value is TrayAttentionItem {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as {
+    sessionId?: unknown;
+    title?: unknown;
+    unread?: unknown;
+    approvals?: unknown;
+    questions?: unknown;
+  };
+  return (
+    typeof candidate.sessionId === 'string' &&
+    candidate.sessionId !== '' &&
+    typeof candidate.title === 'string' &&
+    typeof candidate.unread === 'boolean' &&
+    asCount(candidate.approvals) &&
+    asCount(candidate.questions)
+  );
+}
+
+function asTrayAttention(value: unknown): value is TrayAttention {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as {
+    unread?: unknown;
+    approvals?: unknown;
+    questions?: unknown;
+    items?: unknown;
+  };
+  return (
+    asCount(candidate.unread) &&
+    asCount(candidate.approvals) &&
+    asCount(candidate.questions) &&
+    Array.isArray(candidate.items) &&
+    candidate.items.every(asTrayAttentionItem)
+  );
+}
+
 function asUpdateStatus(value: unknown): UpdateStatus | null {
   if (typeof value !== 'object' || value === null) {
     return null;
@@ -72,6 +132,16 @@ export type KimiDesktopApi = {
   downloadUpdate: () => Promise<void>;
   /** Quit and install the downloaded update. */
   installUpdate: () => Promise<void>;
+  /** Push the pending-attention totals (unread sessions + awaiting approvals +
+   *  awaiting questions) and the per-session attention list so the tray can
+   *  render the macOS menu-bar count and the clickable session menu
+   *  (see main/tray.ts). */
+  setTrayAttention: (attention: TrayAttention) => void;
+  /** Main → renderer push when a tray attention entry is clicked. */
+  onTraySelectSession: (cb: (sessionId: string) => void) => () => void;
+  /** Sync the in-app language so native surfaces (today: the tray menu and
+   *  tooltip) follow it instead of only the OS language. */
+  setLocale: (locale: 'en' | 'zh') => void;
 };
 
 export const api: KimiDesktopApi = {
@@ -123,6 +193,25 @@ export const api: KimiDesktopApi = {
   },
   downloadUpdate: () => ipcRenderer.invoke('kimi:update-download'),
   installUpdate: () => ipcRenderer.invoke('kimi:update-install'),
+  setTrayAttention: (attention) => {
+    if (asTrayAttention(attention)) {
+      ipcRenderer.send('kimi:tray-attention', attention);
+    }
+  },
+  onTraySelectSession: (cb) => {
+    const listener = (_event: unknown, sessionId: unknown) => {
+      if (typeof sessionId === 'string' && sessionId !== '') {
+        cb(sessionId);
+      }
+    };
+    ipcRenderer.on('kimi:tray-select-session', listener);
+    return () => ipcRenderer.removeListener('kimi:tray-select-session', listener);
+  },
+  setLocale: (locale) => {
+    if (locale === 'en' || locale === 'zh') {
+      ipcRenderer.send('kimi:locale', locale);
+    }
+  },
 };
 
 contextBridge.exposeInMainWorld('kimiDesktop', api);
