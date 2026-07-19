@@ -4,8 +4,6 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { MiniDb } from '@moonshot-ai/minidb';
-
 import { InstantiationType } from '#/_base/di/extensions';
 import {
   LifecycleScope,
@@ -24,7 +22,7 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore } from '#/persistence/interface/queryStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubFlag } from '../flag/stubs';
@@ -398,33 +396,36 @@ describe('FileSessionIndex (read model)', () => {
   it('falls back to the legacy disk path when the query store is locked', async () => {
     await seedSession('active', { title: 'from disk', createdAt: 1, updatedAt: 2 });
 
-    const lockHolder = await MiniDb.open({
-      dir: join(homeDir, 'cache', 'query-store'),
-      valueCodec: 'json',
-    });
+    // The minidb cluster backend shares the store across processes and no
+    // longer produces storage.locked itself; stub it here so the
+    // disable-and-fall-back wiring stays under test.
+    const locked = new StorageError(StorageErrors.codes.STORAGE_LOCKED, 'locked by test');
+    const lockedStore: IQueryStore = {
+      ...stubQueryStore(),
+      ensureIndex: async () => { throw locked; },
+      get: async () => { throw locked; },
+      query: () => { throw locked; },
+    };
     const warnings: string[] = [];
     const log = { ...stubLog(), warn: (msg: string) => { warnings.push(msg); } };
-    try {
-      const fileStorage = new FileStorageService(homeDir);
-      const host = createScopedTestHost([
-        stubPair(IFileSystemStorageService, fileStorage),
-        stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
-        stubPair(IBootstrapService, stubBootstrap(homeDir)),
-        stubPair(ILogService, log),
-        stubPair(IFlagService, stubFlag(true)),
-      ]);
-      disposeHost = () => { host.dispose(); };
-      const store = host.app.accessor.get(ISessionIndex);
-      // The read model throws storage.locked; the index serves from disk.
-      const page = await store.list({ workspaceIds: [workspaceId] });
-      expect(page.items.map((s) => s.id)).toEqual(['active']);
-      expect(page.items[0]?.title).toBe('from disk');
-      expect(await store.get('active')).toMatchObject({ id: 'active', title: 'from disk' });
-      expect(await store.countActive([workspaceId])).toBe(1);
-      // The lock is warned about once, then the read model stays disabled.
-      expect(warnings).toEqual(['query-store locked by another process; disabling read model']);
-    } finally {
-      await lockHolder.close();
-    }
+    const fileStorage = new FileStorageService(homeDir);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(IQueryStore, lockedStore),
+      stubPair(ILogService, log),
+      stubPair(IFlagService, stubFlag(true)),
+    ]);
+    disposeHost = () => { host.dispose(); };
+    const store = host.app.accessor.get(ISessionIndex);
+    // The read model throws storage.locked; the index serves from disk.
+    const page = await store.list({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['active']);
+    expect(page.items[0]?.title).toBe('from disk');
+    expect(await store.get('active')).toMatchObject({ id: 'active', title: 'from disk' });
+    expect(await store.countActive([workspaceId])).toBe(1);
+    // The lock is warned about once, then the read model stays disabled.
+    expect(warnings).toEqual(['query-store locked by another process; disabling read model']);
   });
 });
