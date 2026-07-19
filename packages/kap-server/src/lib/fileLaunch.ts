@@ -186,6 +186,15 @@ function openInMacApp(
   return openFileCommandFor(absolutePath, undefined, process.env, platform);
 }
 
+/** True when the spawned child is console-subsystem on Windows (a shell or
+ * cmd.exe itself), so its console window should be hidden. GUI binaries
+ * (explorer.exe, editors) keep their windows visible. */
+function launchesConsole(cmd: LaunchCommand): boolean {
+  if (cmd.shell === true) return true;
+  const base = cmd.command.split(/[\\/]/).pop()?.toLowerCase();
+  return base === 'cmd' || base === 'cmd.exe';
+}
+
 export async function launchDetached(cmd: LaunchCommand): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -193,10 +202,11 @@ export async function launchDetached(cmd: LaunchCommand): Promise<void> {
       detached: true,
       stdio: 'ignore',
       shell: cmd.shell,
-      // On Windows a detached child gets its own console window; hide it so
-      // "open file" from the web UI does not flash a console (see also the
-      // background updater's identical guard in cli/update/preflight.ts).
-      windowsHide: true,
+      // Hide the console window Windows allocates for console-subsystem
+      // children (shell shims / cmd.exe). GUI targets (explorer.exe,
+      // editors) must stay visible — SW_HIDE would hide their first
+      // window too.
+      windowsHide: launchesConsole(cmd),
     });
     child.once('error', (err) => {
       if (settled) return;
