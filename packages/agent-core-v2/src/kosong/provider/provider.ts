@@ -45,7 +45,6 @@ export const ModelSourceSchema = z.enum(['static', 'discover', 'oauth-catalog'])
 export type ModelSource = z.infer<typeof ModelSourceSchema>;
 
 export const ProviderConfigSchema = z.object({
-  platformId: z.string().optional(),
   modelSource: ModelSourceSchema.optional(),
 
   baseUrl: z.string().optional(),

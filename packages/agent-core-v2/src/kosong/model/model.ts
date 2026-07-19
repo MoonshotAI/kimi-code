@@ -6,16 +6,13 @@
  * scoped — model configuration is global and shared across sessions.
  *
  * Two configuration paths are supported:
- *   - **Structured**: `providerId` references an entry in `[providers.*]`,
- *     and that Provider references a `platformId` in `[platforms.*]` for
- *     shared auth. Multiple Models can share a Provider (and thus its base
- *     URL) and share a Platform (and thus its auth).
+ *   - **Structured**: `providerId` references an entry in `[providers.*]`.
+ *     Multiple Models can share a Provider (and thus its base URL and auth).
  *   - **Flat**: `baseUrl` (+ optional inline `apiKey` / `oauth`) is set
- *     directly on the Model — no `providerId` or Platform required. The
- *     catalog synthesizes a Provider from the baseUrl's origin so multiple
- *     Models targeting the same host converge on one Provider record at
- *     runtime, and treats the Platform as unknown (auth comes from the
- *     Model itself).
+ *     directly on the Model — no `providerId` required. The catalog
+ *     synthesizes a Provider from the baseUrl's origin so multiple Models
+ *     targeting the same host converge on one Provider record at runtime
+ *     (auth comes from the Model itself).
  *
  * `name` is the wire-facing model identifier sent to the endpoint; `model` is
  * the legacy spelling of the same field (at least one is required at resolve

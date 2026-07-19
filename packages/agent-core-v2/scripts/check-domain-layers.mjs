@@ -123,7 +123,6 @@ const DOMAIN_LAYER = new Map([
   ['hostFolderBrowser', 2],
   ['auth', 2],
   ['provider', 2],
-  ['platform', 2],
   ['model', 2],
   ['sessionIndex', 2],
   ['sessionStore', 2],
