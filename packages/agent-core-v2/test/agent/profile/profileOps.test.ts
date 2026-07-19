@@ -26,8 +26,8 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-// Side-effect registration: `isKimiProvider('kimi')` (used by the forced-effort
-// override) answers through the provider-definition registry.
+// Side-effect registration: `drivesThinkingThroughTraits('kimi')` (used by
+// the forced-effort override) answers through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
@@ -477,9 +477,9 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
 
     // "Without Kimi generation kwargs" is no longer decidable at the profile:
-    // the durable record's kimi-only field gating (`providerType === 'kimi'`)
-    // lives in `llmRequester.recordRequest`, and the Anthropic dialect encodes
-    // the thinking intent itself.
+    // the durable record in `llmRequester.recordRequest` carries the
+    // thinking/sampling knobs unconditionally, and the Anthropic dialect
+    // encodes the thinking intent itself.
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
     expect(host.svc.resolveRequestParams()).toEqual({
       cacheKey: 'session-test',

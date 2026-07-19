@@ -1,7 +1,7 @@
 /**
  * `kosong/model` domain (L2) — per-request override knobs.
  *
- * `KimiModelOverrides` is the resolved value of the `modelOverrides` effective
+ * `ModelOverrides` is the resolved value of the `modelOverrides` effective
  * config section (populated by the `KIMI_MODEL_*` env overlay). Consumers fold
  * these into `LLMCallParams` — `temperature`/`topP` into `sampling`,
  * `thinkingKeep` into the thinking intent, `maxCompletionTokens` into the
@@ -13,7 +13,7 @@
  * applies the completion cap, without dragging in the full model schema.
  */
 
-export interface KimiModelOverrides {
+export interface ModelOverrides {
   readonly temperature?: number;
   readonly topP?: number;
   readonly thinkingKeep?: string;

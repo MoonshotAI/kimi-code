@@ -10,10 +10,10 @@
  *    endpoint resolution goes through the provider-definition registry
  *    (`resolveProviderEndpoint` against the config env bag).
  *  - The inferred Anthropic effort profile is reserved for providers whose
- *    thinking is NOT trait-driven; trait-driven (Kimi) providers — including
+ *    thinking is NOT trait-driven; trait-driven providers — including
  *    managed models routed through protocol `anthropic` — keep only
  *    catalog-declared effort metadata. The verdict comes from the registry
- *    (`isKimiProvider`), not from a vendor string compare.
+ *    (`drivesThinkingThroughTraits`), not from a vendor string compare.
  */
 
 import { Error2 } from '#/_base/errors/errors';
@@ -29,7 +29,7 @@ import type { OAuthRef, ProviderConfig } from '../provider/provider';
 import { resolveProviderEndpoint } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
-import { isKimiProvider } from './thinking';
+import { drivesThinkingThroughTraits } from './thinking';
 
 export interface ResolvedModelAuthMaterial {
   readonly apiKey?: string;
@@ -110,7 +110,7 @@ function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelR
   const profile =
     wireName === undefined
       ? undefined
-      : providerType !== undefined && !isKimiProvider(providerType) && protocol === 'anthropic'
+      : providerType !== undefined && !drivesThinkingThroughTraits(providerType) && protocol === 'anthropic'
         ? inferAnthropicModelProfile(wireName)
         : matchKnownAnthropicModelProfile(wireName);
   if (profile === undefined) return model;

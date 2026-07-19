@@ -31,17 +31,17 @@ import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capa
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { type LLMCallParams } from '#/kosong/model/modelRequester';
-import { type KimiModelOverrides } from '#/kosong/model/modelOverrides';
+import { type ModelOverrides } from '#/kosong/model/modelOverrides';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import {
-  isKimiProvider,
+  drivesThinkingThroughTraits,
   modelSupportsThinkingEffort,
   normalizeRequestedThinkingEffort,
-  resolveKimiThinkingEffortOverride,
+  resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
   THINKING_SECTION,
-  usesNativeKimiThinkingSemantics,
+  requiresStrictThinkingValidation,
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -295,7 +295,7 @@ export class AgentProfileService implements IAgentProfileService {
     const model = this.tryResolveRawModel();
     const thinking = this.resolveThinkingState(model);
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
-    const overrides = this.config.get<KimiModelOverrides>('modelOverrides');
+    const overrides = this.config.get<ModelOverrides>('modelOverrides');
     const sampling: SamplingOptions = {
       temperature: overrides?.temperature,
       topP: overrides?.topP,
@@ -493,27 +493,26 @@ export class AgentProfileService implements IAgentProfileService {
     readonly forced: ThinkingEffort | undefined;
   } {
     const base = this.thinkingLevel;
-    const forced = resolveKimiThinkingEffortOverride(
+    const forced = resolveForcedThinkingEffort(
       this.config.get<ThinkingConfig>(THINKING_SECTION)?.forcedEffort,
       base,
-      isKimiProvider(model?.providerType),
+      drivesThinkingThroughTraits(model?.providerType),
     );
     return { effective: forced ?? base, forced };
   }
 
   /**
-   * The registry-driven "Kimi thinking semantics" verdict for one model —
-   * the STRICT-validation gate (v1 `provider.type === 'kimi'` parity):
-   * strict effort validation and Kimi normalization apply only when the
-   * (protocol, providerType) pair's thinking driver marks
-   * `strictThinkingValidation` (Kimi's native openai transport). Over a
-   * foreign transport (the `(kimi, anthropic)` registration, e.g.
-   * Kimi-managed models on protocol `anthropic`) the profile stays lenient
-   * and warns instead of rejecting unlisted efforts.
+   * The registry-driven strict-validation verdict for one model (v1
+   * `provider.type === 'kimi'` parity): strict effort validation and
+   * trait-driven normalization apply only when the (protocol, providerType)
+   * pair's thinking driver marks `strictThinkingValidation`. Over a foreign
+   * transport (the `(kimi, anthropic)` registration, e.g. managed models on
+   * protocol `anthropic`) the profile stays lenient and warns instead of
+   * rejecting unlisted efforts.
    */
-  private kimiThinkingSemantics(model: Model | undefined): boolean {
+  private strictThinkingValidation(model: Model | undefined): boolean {
     if (model === undefined) return false;
-    return usesNativeKimiThinkingSemantics(
+    return requiresStrictThinkingValidation(
       this.protocolAdapters,
       model.protocol,
       model.providerType,
@@ -528,12 +527,12 @@ export class AgentProfileService implements IAgentProfileService {
       requested,
       this.config.get<ThinkingConfig>(THINKING_SECTION),
       model,
-      this.kimiThinkingSemantics(model),
+      this.strictThinkingValidation(model),
     );
   }
 
   private supportsThinkingEffort(effort: ThinkingEffort, model: Model | undefined): boolean {
-    return modelSupportsThinkingEffort(effort, model, this.kimiThinkingSemantics(model));
+    return modelSupportsThinkingEffort(effort, model, this.strictThinkingValidation(model));
   }
 
   private get alwaysThinkingModel(): boolean {

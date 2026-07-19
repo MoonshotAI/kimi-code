@@ -106,6 +106,19 @@ export function hasProviderDefinition(id: string): boolean {
   return providerDefinitions.has(id);
 }
 
+/**
+ * Whether any registration of the vendor declares `modelSource:
+ * 'oauth-catalog'` — the registry answer to "is this vendor backed by the
+ * managed OAuth model catalog", so callers never compare the vendor id
+ * string.
+ */
+export function isOAuthCatalogVendor(id: string | undefined): boolean {
+  if (id === undefined) return false;
+  return getProviderDefinitions(id).some(
+    (definition) => definition.modelSource === 'oauth-catalog',
+  );
+}
+
 export function listProviderDefinitions(): readonly ProviderDefinition[] {
   return [...providerDefinitions.values()].flatMap((byProtocol) => [...byProtocol.values()]);
 }

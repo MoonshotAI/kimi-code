@@ -61,7 +61,7 @@ import {
   type LLMEvent as ModelRequestEvent,
   type ModelRequester,
 } from '#/kosong/model/modelRequester';
-import type { KimiModelOverrides } from '#/kosong/model/modelOverrides';
+import type { ModelOverrides } from '#/kosong/model/modelOverrides';
 import { MODELS_SECTION, type ModelsSection } from '#/kosong/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/completionBudget';
 import { resolveThinkingKeep, THINKING_SECTION, type ThinkingConfig } from '#/kosong/model/thinking';
@@ -526,7 +526,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
         reservedContextSize: resolved.reservedContextSize,
         maxCompletionTokensCap:
-          this.config.get<KimiModelOverrides>('modelOverrides')?.maxCompletionTokens,
+          this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
       }),
       capability: resolved.modelCapabilities,
       usedContextTokens:
@@ -609,7 +609,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
 
     const systemPromptHash = fingerprint(input.systemPrompt);
-    const overrides = this.config.get<KimiModelOverrides>('modelOverrides');
+    const overrides = this.config.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
     const models = this.config.get<ModelsSection>(MODELS_SECTION);
     const modelConfig =
@@ -620,17 +620,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       model: input.modelName,
       modelAlias: input.modelAlias,
       thinkingEffort: input.thinkingEffort ?? undefined,
-      // The one remaining vendor gate: the durable llm.request record only
-      // carries Kimi's thinking/sampling knobs (other vendors don't have them).
-      thinkingKeep: input.providerType === 'kimi'
-        ? resolveThinkingKeep(
-            overrides?.thinkingKeep,
-            thinkingConfig?.keep,
-            input.thinkingEffort ?? 'off',
-          )
-        : undefined,
-      temperature: input.providerType === 'kimi' ? overrides?.temperature : undefined,
-      topP: input.providerType === 'kimi' ? overrides?.topP : undefined,
+      thinkingKeep: resolveThinkingKeep(
+        overrides?.thinkingKeep,
+        thinkingConfig?.keep,
+        input.thinkingEffort ?? 'off',
+      ),
+      temperature: overrides?.temperature,
+      topP: overrides?.topP,
       maxTokens: input.maxTokens,
       betaApi: modelConfig?.betaApi,
       toolSelect: this.toolSelect.enabled(),

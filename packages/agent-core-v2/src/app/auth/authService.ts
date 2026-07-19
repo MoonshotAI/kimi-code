@@ -63,6 +63,7 @@ import {
   type ProvidersChangedEvent,
   PROVIDERS_SECTION,
 } from '#/kosong/provider/provider';
+import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import {
@@ -278,7 +279,7 @@ export class OAuthService extends Disposable implements IOAuthService {
     await this.config.reload();
     const current = this.readUserConfigShape();
     const provider = current.providers[KIMI_CODE_PROVIDER_NAME];
-    if (!isKimiOAuthProvider(provider)) {
+    if (!isOAuthCatalogProvider(provider)) {
       return { changed, unchanged, failed };
     }
 
@@ -669,12 +670,19 @@ interface ManagedModel {
   readonly displayName?: string;
 }
 
-function isKimiOAuthProvider(
+/**
+ * Whether the provider is backed by the OAuth model catalog: the vendor's
+ * provider definitions declare `modelSource: 'oauth-catalog'` (a registry
+ * answer, not a vendor string compare) and the provider config carries an
+ * OAuth ref.
+ */
+function isOAuthCatalogProvider(
   provider: ProviderConfig | Record<string, unknown> | undefined,
 ): provider is ProviderConfig & { oauth: OAuthRef } {
+  const type = (provider as ProviderConfig | undefined)?.type;
   return (
     provider !== undefined &&
-    (provider as ProviderConfig).type === 'kimi' &&
+    isOAuthCatalogVendor(type) &&
     (provider as ProviderConfig).oauth !== undefined
   );
 }

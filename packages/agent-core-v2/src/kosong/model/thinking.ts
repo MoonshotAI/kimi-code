@@ -12,11 +12,11 @@
  *  2. Effort/keep resolution: pure helpers that fold a requested effort, the
  *     config defaults, and the model's declared thinking metadata into the
  *     effective `ThinkingEffort`, and that resolve the thinking-keep value.
- *  3. The registry-driven vendor verdicts: `isKimiProvider` (definition
- *     lookup: the vendor's traits take over thinking encoding) and
- *     `usesKimiThinkingSemantics` (the resolved adapter identity for the
+ *  3. The registry-driven vendor verdicts: `drivesThinkingThroughTraits`
+ *     (definition lookup: the vendor's traits take over thinking encoding)
+ *     and `usesTraitDrivenThinking` (the resolved adapter identity for the
  *     (protocol, providerType) pair contains a `withThinking` hook). Neither
- *     hardcodes a vendor or protocol string — "Kimi thinking semantics" means
+ *     hardcodes a vendor or protocol string — trait-driven thinking means
  *     "thinking is driven by traits", which the registry answers.
  */
 
@@ -65,12 +65,12 @@ registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
 // ---------------------------------------------------------------------------
 
 /**
- * Whether the vendor drives thinking through its traits ("Kimi thinking
- * semantics"): a definition-lookup answer — the vendor is registered and at
- * least one of its registrations declares `withThinking`. Unregistered
- * vendors (fully compatible, no definition) answer `false`.
+ * Whether the vendor drives thinking through its traits: a definition-lookup
+ * answer — the vendor is registered and at least one of its registrations
+ * declares `withThinking`. Unregistered vendors (fully compatible, no
+ * definition) answer `false`.
  */
-export function isKimiProvider(providerType: string | undefined): boolean {
+export function drivesThinkingThroughTraits(providerType: string | undefined): boolean {
   if (providerType === undefined) return false;
   return getProviderDefinitions(providerType).some((definition) =>
     definition.traits.some((trait) => trait.withThinking !== undefined),
@@ -83,7 +83,7 @@ export function isKimiProvider(providerType: string | undefined): boolean {
  * native transport, or via its pair registration on a foreign one. Answered
  * through the registry's one resolution point, `resolveAdapterIdentity`.
  */
-export function usesKimiThinkingSemantics(
+export function usesTraitDrivenThinking(
   registry: IProtocolAdapterRegistry,
   protocol: Protocol,
   providerType?: string,
@@ -101,18 +101,18 @@ export function usesKimiThinkingSemantics(
  * the last `withThinking` declarer marks `strictThinkingValidation`.
  *
  * This is the gate for client-side effort strictness (validation, the
- * always-on clamp, and Kimi `'on'` projection). The strict flag is declared
+ * always-on clamp, and the `'on'` projection). The strict flag is declared
  * by `kimiParamsTrait` — Kimi's native API rejects unlisted efforts — and
  * deliberately NOT by `kimiAnthropicThinkingTrait`: over the Anthropic
  * transport the backend may accept efforts the local catalog metadata does
  * not list, so the profile must stay lenient there (warn-and-send, with the
  * `anthropic-thinking-*` warnings) instead of rejecting or rewriting the
- * effort. Gating on plain `usesKimiThinkingSemantics` (true for the
+ * effort. Gating on plain `usesTraitDrivenThinking` (true for the
  * anthropic pair registration too) made `setThinking` throw for Kimi-managed
  * Anthropic models and left the warning path unreachable — a v1 behavioral
  * regression.
  */
-export function usesNativeKimiThinkingSemantics(
+export function requiresStrictThinkingValidation(
   registry: IProtocolAdapterRegistry,
   protocol: Protocol,
   providerType?: string,
@@ -161,12 +161,12 @@ export function normalizeRequestedThinkingEffort(
  * the vendor drives thinking through traits and the effective effort is not
  * `'off'`.
  */
-export function resolveKimiThinkingEffortOverride(
+export function resolveForcedThinkingEffort(
   forced: string | undefined,
   effective: ThinkingEffort,
-  kimiProvider: boolean,
+  traitDriven: boolean,
 ): ThinkingEffort | undefined {
-  if (!kimiProvider || effective === 'off') return undefined;
+  if (!traitDriven || effective === 'off') return undefined;
   return nonEmpty(forced) as ThinkingEffort | undefined;
 }
 
@@ -229,9 +229,9 @@ export function defaultThinkingEffortForModel(
 export function modelSupportsThinkingEffort(
   effort: ThinkingEffort,
   model: ModelThinkingMetadata | undefined,
-  kimiSemantics: boolean,
+  strictValidation: boolean,
 ): boolean {
-  if (!kimiSemantics || effort === 'off') return true;
+  if (!strictValidation || effort === 'off') return true;
   if (!modelSupportsThinking(model)) return false;
   const efforts = effortsFor(model);
   return efforts.length === 0 || effort === 'on' || efforts.includes(effort);
@@ -240,11 +240,11 @@ export function modelSupportsThinkingEffort(
 function normalizeThinkingEffortForModel(
   effort: ThinkingEffort,
   model: ModelThinkingMetadata | undefined,
-  kimiSemantics: boolean,
+  strictValidation: boolean,
 ): ThinkingEffort {
   if (effort === 'off' && model?.alwaysThinking !== true) return 'off';
   const efforts = effortsFor(model);
-  if (!kimiSemantics) {
+  if (!strictValidation) {
     return effort === 'on' && efforts.length > 0
       ? defaultThinkingEffortForModel(model)
       : effort;
@@ -260,14 +260,14 @@ function normalizeThinkingEffortForModel(
 /**
  * Resolve the effective thinking effort from a requested effort, the
  * `thinking` config defaults, and the model's declared thinking metadata.
- * `kimiSemantics` is the registry-driven verdict of
- * `usesKimiThinkingSemantics` for the model's (protocol, providerType) pair.
+ * `strictValidation` is the registry-driven strict-validation verdict for
+ * the model's (protocol, providerType) pair.
  */
 export function resolveThinkingEffortForModel(
   requested: string | undefined,
   defaults: ThinkingDefaults | undefined,
   model: ModelThinkingMetadata | undefined,
-  kimiSemantics = false,
+  strictValidation = false,
 ): ThinkingEffort {
   const configured = nonEmpty(defaults?.effort) as ThinkingEffort | undefined;
   const normalized = normalizeRequestedThinkingEffort(requested);
@@ -280,10 +280,10 @@ export function resolveThinkingEffortForModel(
     effort = configured ?? defaultThinkingEffortForModel(model);
   }
 
-  if (kimiSemantics && effort === 'off' && model?.alwaysThinking === true) {
+  if (strictValidation && effort === 'off' && model?.alwaysThinking === true) {
     effort = configured ?? defaultThinkingEffortForModel(model);
   }
-  return normalizeThinkingEffortForModel(effort, model, kimiSemantics);
+  return normalizeThinkingEffortForModel(effort, model, strictValidation);
 }
 
 // ---------------------------------------------------------------------------

@@ -142,9 +142,7 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests[0]?.args).toMatchObject({
         kind: 'loop',
         // The durable record's `provider` field carries the wire protocol:
-        // Kimi is a vendor over the openai base, not a protocol. The only
-        // remaining `providerType === 'kimi'` gate in this payload is the
-        // thinking/sampling knob projection below.
+        // Kimi is a vendor over the openai base, not a protocol.
         provider: 'openai',
         model: 'mock-model',
         modelAlias: 'mock-model',

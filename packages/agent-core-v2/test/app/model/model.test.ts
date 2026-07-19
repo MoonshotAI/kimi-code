@@ -23,7 +23,7 @@ import { ENV_MODEL_PROVIDER_KEY } from '#/kosong/provider/provider';
 import { effectiveModelConfig } from '#/kosong/model/modelAuth';
 
 // Side-effect registrations: endpoint defaults and the trait-driven-thinking
-// verdict (`isKimiProvider`) answer through the provider-definition registry.
+// verdict (`drivesThinkingThroughTraits`) answer through the provider-definition registry.
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 
