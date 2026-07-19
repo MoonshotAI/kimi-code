@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type { ModelConfig } from '#/app/model/model';
 import {
   configServices,
@@ -118,38 +117,6 @@ describe('ConfigState model capabilities', () => {
       event: 'thinking_toggle',
       properties: { enabled: true, effort: 'low', from: 'off' },
     });
-  });
-
-  it('mirrors the effective thinking effort into the ambient telemetry context', () => {
-    kimiConfig = {
-      providers: {
-        kimi: {
-          type: 'kimi',
-          apiKey: 'test-key',
-          baseUrl: 'https://api.example.test/v1',
-        },
-      },
-      models: {
-        'kimi-code/kimi-for-coding': {
-          provider: 'kimi',
-          model: 'kimi-for-coding',
-          maxContextSize: 1_000_000,
-          capabilities: ['thinking'],
-          supportEfforts: ['low', 'high'],
-        },
-      },
-    };
-    const telemetryContext = ctx.get(IAgentTelemetryContextService);
-
-    profile.update({ modelAlias: 'kimi-code/kimi-for-coding', thinkingLevel: 'on' });
-    // 'on' is not a declared effort, so the model default takes over.
-    expect(telemetryContext.get().thinking_effort).toBe('high');
-
-    profile.setThinking('low');
-    expect(telemetryContext.get().thinking_effort).toBe('low');
-
-    profile.setThinking('off');
-    expect(telemetryContext.get().thinking_effort).toBe('off');
   });
 
   it('does not infer Kimi capabilities from the provider catalogue', () => {

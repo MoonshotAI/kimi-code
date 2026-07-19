@@ -655,6 +655,50 @@ describe('turn telemetry', () => {
     }
   });
 
+  it('keeps turn telemetry aligned with the request config across pre-step changes', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      const localLoop = local.get(IAgentLoopService);
+      const localProfile = local.get(IAgentProfileService);
+      local.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
+      localProfile.update({ activeToolNames: [] });
+      localProfile.setThinking('on');
+      localLoop.hooks.onWillBeginStep.register('test-change-thinking', async (_ctx, next) => {
+        localProfile.setThinking('off');
+        await next();
+      });
+      local.mockNextResponse({ type: 'text', text: 'hi' });
+
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      const request = local.allEvents.find(
+        (event) => event.type === '[wire]' && event.event === 'llm.request',
+      );
+      expect(request?.args).toMatchObject({ thinkingEffort: 'on' });
+      expect(records).toContainEqual({
+        event: 'turn_started',
+        properties: expect.objectContaining({ turn_id: 0, thinking_effort: 'on' }),
+      });
+      expect(records).toContainEqual({
+        event: 'turn_ended',
+        properties: expect.objectContaining({ turn_id: 0, thinking_effort: 'on' }),
+      });
+    } finally {
+      await local.dispose();
+    }
+  });
+
   it('attaches the latest request trace id to turn_ended', async () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
@@ -927,6 +971,7 @@ function createTimingRequester(): IAgentLLMRequesterService {
 
   const requester: IAgentLLMRequesterService = {
     _serviceBrand: undefined,
+    prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
     async request(_overrides, onPart = () => {}) {
       await onPart({ type: 'text', text: 'answer' });
       return {

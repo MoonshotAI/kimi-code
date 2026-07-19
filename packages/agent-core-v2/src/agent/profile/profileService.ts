@@ -19,14 +19,11 @@
  * `emitStatusUpdated` run live-only after the dispatch, so `wire.replay`
  * rebuilds the Models silently; the same live-only path mirrors the resolved
  * model protocol into the ambient telemetry context (`provider_type` /
- * `protocol`) whenever the model alias changes, and mirrors the effective
- * thinking effort (`thinking_effort`) whenever the model alias or thinking
- * level changes; an `onDidRestore` hook re-mirrors the effort after replay.
+ * `protocol`) whenever the model alias changes.
  * Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
-import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/app/llmProtocol/capability';
 import { type GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
@@ -95,7 +92,7 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export class AgentProfileService extends Disposable implements IAgentProfileService {
+export class AgentProfileService implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
   private optionsValue: ProfileServiceOptions = {};
@@ -127,14 +124,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
   ) {
-    super();
     this.configure({});
-    this._register(
-      this.wire.hooks.onDidRestore.register('profile', async (_ctx, next) => {
-        this.mirrorTelemetryThinkingEffort();
-        await next();
-      }),
-    );
   }
 
   configure(options: ProfileServiceOptions): void {
@@ -436,16 +426,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       this.telemetryContext.set({ provider_type: protocol, protocol });
     }
     if (changed.modelAlias !== undefined || changed.thinkingLevel !== undefined) {
-      this.mirrorTelemetryThinkingEffort();
       this.warnAboutAnthropicThinkingEffort();
     }
     this.emitStatusUpdated(
       changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
     );
-  }
-
-  private mirrorTelemetryThinkingEffort(): void {
-    this.telemetryContext.set({ thinking_effort: this.getEffectiveThinkingLevel() });
   }
 
   private warnAboutAnthropicThinkingEffort(): void {
