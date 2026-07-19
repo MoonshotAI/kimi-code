@@ -12,7 +12,7 @@ import {
   type UnexpectedCloseListener,
   type UnexpectedCloseReason,
 } from './client-shared';
-import { buildMcpRemoteHeaders } from './client-remote';
+import { buildMcpRemoteHeaders, createMcpFetch } from './client-remote';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export interface HttpMcpClientOptions {
@@ -69,7 +69,8 @@ export class HttpMcpClient implements MCPClient {
 
     this.transport = new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headers !== undefined ? { headers } : undefined,
-      fetch: options.fetch,
+      // Default fetch pins HTTP/1.1 (see client-remote.ts); tests inject their own.
+      fetch: options.fetch ?? createMcpFetch(),
       authProvider: options.oauthProvider,
     });
     this.client = new Client({
