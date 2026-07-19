@@ -1,4 +1,4 @@
-import { copyFile, mkdir, stat } from 'node:fs/promises';
+import { copyFile, mkdir, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { fail, run, tryRun } from './exec.mjs';
@@ -27,6 +27,10 @@ async function ensureBlobExists() {
 async function copyNodeExecutable(target) {
   await mkdir(nativeBinDir(target), { recursive: true });
   const out = nativeBinPath(target);
+  // Unlink first: overwriting a currently-running binary fails with ETXTBSY on
+  // Linux. Removing the path detaches the running process from it (it keeps
+  // the old inode), so the fresh copy can be written.
+  await rm(out, { force: true });
   await copyFile(process.execPath, out);
   if (process.platform !== 'win32') {
     await run('chmod', ['755', out]);
