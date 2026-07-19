@@ -43,7 +43,7 @@ import { OP_REGISTRY } from '#/wire/op';
 import { IOAuthService } from '#/app/auth/auth';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
-import { getProviderDefinition } from '#/kosong/provider/providerDefinition';
+import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
 import type { SkillCatalog } from '#/app/skillCatalog/types';
 import { type ModelCapability } from '#/kosong/contract/capability';
 import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
@@ -2367,7 +2367,7 @@ function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAd
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
     createChatProvider: (input: ProtocolAdapterConfig) => {
-      if (input.providerType !== undefined && getProviderDefinition(input.providerType) !== undefined) {
+      if (input.providerType !== undefined && hasProviderDefinition(input.providerType)) {
         return replaceProviderGenerate(real.createChatProvider(input), generate);
       }
       return new GenerateBackedChatProvider(input, generate);

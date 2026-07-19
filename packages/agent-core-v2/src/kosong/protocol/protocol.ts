@@ -4,8 +4,9 @@
  *
  * A Protocol names a real wire encoding. There are exactly five: every
  * vendor-specific behavior that used to pose as a protocol is now expressed
- * as a provider definition (a base plus declarative traits) registered with
- * the L2 provider domain, so this enum can never grow a vendor entry again.
+ * as per-transport provider definitions (a base protocol plus declarative
+ * traits) registered with the L2 provider domain, so this enum can never
+ * grow a vendor entry again.
  *
  * `IProtocolAdapterRegistry` is the single resolution point for
  * "(protocol, providerType) → which base + which traits" and the single
@@ -27,8 +28,9 @@ import type { ProtocolBaseId, ResolvedAdapterIdentity } from './protocolBase';
 
 /**
  * The five real wire formats. Vendor names are deliberately absent: a vendor
- * is `{ base, traits }`, not a protocol. `supportedProtocols()` is derived
- * from the registered bases, so this enum is the ceiling, not the roster.
+ * is a set of `(baseProtocol, traits)` registrations, not a protocol.
+ * `supportedProtocols()` is derived from the registered bases, so this enum
+ * is the ceiling, not the roster.
  */
 export const ProtocolSchema = z.enum([
   'anthropic',
@@ -86,24 +88,27 @@ export interface IProtocolAdapterRegistry {
 
   /**
    * The one resolution of "which base + which traits serve this
-   * (protocol, providerType) pair". A vendor definition contributes its
-   * native traits when the protocol matches its base, its `dialects` slice
-   * when running over a foreign transport, and nothing when the vendor is
-   * unregistered (fully compatible vendors need no definition). The returned
-   * traits are context-bound (`ResolvedTrait`) and include the trailing
-   * synthetic trait that lets config `defaultHeaders` win.
+   * (protocol, providerType) pair". A `(providerType, protocol)` pair
+   * registration contributes its traits; anything else — an unregistered
+   * vendor (fully compatible vendors need no definition), no providerType,
+   * or a vendor that simply does not run over this protocol — contributes
+   * nothing and the protocol itself serves as the base. The returned traits
+   * are context-bound (`ResolvedTrait`) and include the trailing synthetic
+   * trait that lets config `defaultHeaders` win.
    */
   resolveAdapterIdentity(protocol: Protocol, providerType?: string): ResolvedAdapterIdentity;
 
   /**
    * The base component of `resolveAdapterIdentity` without materializing
-   * traits: the vendor definition's base when one is registered and matches
-   * the protocol, otherwise the protocol itself.
+   * traits: the pair registration's `baseProtocol` when one is registered —
+   * which IS the protocol by construction — otherwise the protocol itself.
+   * Kept on the interface for stability; today the answer is always the
+   * protocol.
    */
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId;
 
   /**
-   * Capability resolution with the fixed fallback chain: vendor definition's
+   * Capability resolution with the fixed fallback chain: pair definition's
    * declared capability → trait `capability` hooks (last declarer wins) →
    * the base's own catalog. `UNKNOWN_CAPABILITY` when nothing knows the
    * model.

@@ -4,6 +4,13 @@
  * `kimiParamsTrait` carries the endpoint declaration and the request-kwargs
  * encodings:
  *
+ *  - `strictThinkingValidation`: metadata marker (not a hook) — the v1
+ *    parity contract. Kimi's native API rejects thinking efforts the model
+ *    metadata does not list, so client-side validation must be strict
+ *    (throw on unlisted efforts) when this trait drives thinking. The
+ *    `(kimi, anthropic)` registration's trait deliberately does NOT declare
+ *    it: over the Anthropic transport the backend may accept unlisted
+ *    efforts, so validation there stays lenient (warning + pass-through);
  *  - `endpoint`: the `KIMI_API_KEY` / `KIMI_BASE_URL` env fallback chain and
  *    the default base URL;
  *  - `cacheKey` → `prompt_cache_key`;
@@ -49,6 +56,10 @@ export interface ExtraBody {
 }
 
 export const kimiParamsTrait: ProtocolTrait = {
+  // v1 parity contract: Kimi's native API rejects unlisted thinking efforts,
+  // so the profile validates strictly when this trait drives thinking.
+  strictThinkingValidation: true,
+
   endpoint: () => ({
     apiKeyEnv: KIMI_API_KEY_ENV,
     baseUrlEnv: KIMI_BASE_URL_ENV,

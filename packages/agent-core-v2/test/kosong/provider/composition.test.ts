@@ -60,6 +60,8 @@ import '#/kosong/provider/bases/vertexai.contrib';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import {
   getProviderDefinition,
+  getProviderDefinitions,
+  hasProviderDefinition,
   registerProviderDefinition,
   resolveProviderEndpoint,
 } from '#/kosong/provider/providerDefinition';
@@ -67,7 +69,7 @@ import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 registerProviderDefinition({
   id: 'header-vendor',
-  base: 'openai',
+  baseProtocol: 'openai',
   traits: [
     {
       defaultHeaders: () => ({ 'x-shared': 'trait', 'x-trait-only': 'trait' }),
@@ -77,7 +79,7 @@ registerProviderDefinition({
 
 registerProviderDefinition({
   id: 'cap-vendor',
-  base: 'openai',
+  baseProtocol: 'openai',
   traits: [
     {
       capability: (modelName) =>
@@ -227,16 +229,23 @@ describe('config defaultHeaders win (probe 2)', () => {
 });
 
 describe('resolveAdapterIdentity', () => {
-  it('resolves the native branch: definition traits plus the trailing synthetic trait', () => {
+  it('resolves the (kimi, openai) pair registration: its traits plus the trailing synthetic trait', () => {
     const identity = registry.resolveAdapterIdentity('openai', 'kimi');
     expect(identity.baseId).toBe('openai');
     expect(identity.traits).toHaveLength(7); // 6 vendor traits + synthetic
   });
 
-  it('resolves the cross-transport branch: only the dialects slice', () => {
+  it('resolves the (kimi, anthropic) pair registration: only its own traits', () => {
     const identity = registry.resolveAdapterIdentity('anthropic', 'kimi');
     expect(identity.baseId).toBe('anthropic');
-    expect(identity.traits).toHaveLength(2); // 1 dialect trait + synthetic
+    expect(identity.traits).toHaveLength(2); // 1 pair trait + synthetic
+  });
+
+  it('resolves an unregistered (vendor, protocol) pair to no vendor traits', () => {
+    // Kimi registers no google-genai definition — the pair contributes nothing.
+    const identity = registry.resolveAdapterIdentity('google-genai', 'kimi');
+    expect(identity.baseId).toBe('google-genai');
+    expect(identity.traits).toHaveLength(1); // synthetic only
   });
 
   it('resolves the unregistered-vendor branch: protocol itself as base, no vendor traits', () => {
@@ -253,12 +262,13 @@ describe('resolveAdapterIdentity', () => {
 });
 
 describe('resolveProviderBaseId', () => {
-  it('returns the definition base when it matches the protocol', () => {
+  it('returns the pair registration’s baseProtocol — the protocol itself by construction', () => {
     expect(registry.resolveProviderBaseId('openai', 'kimi')).toBe('openai');
+    expect(registry.resolveProviderBaseId('anthropic', 'kimi')).toBe('anthropic');
   });
 
   it('returns the protocol itself otherwise', () => {
-    expect(registry.resolveProviderBaseId('anthropic', 'kimi')).toBe('anthropic');
+    expect(registry.resolveProviderBaseId('google-genai', 'kimi')).toBe('google-genai');
     expect(registry.resolveProviderBaseId('openai', 'no-such-vendor')).toBe('openai');
     expect(registry.resolveProviderBaseId('openai')).toBe('openai');
   });
@@ -324,16 +334,47 @@ describe('resolveProviderEndpoint', () => {
   });
 });
 
-describe('kimi provider definition', () => {
-  it('registers the declarative shape of appendix A', () => {
-    const definition = getProviderDefinition('kimi');
-    expect(definition).toBeDefined();
-    expect(definition?.base).toBe('openai');
-    expect(definition?.traits).toHaveLength(6);
-    expect(definition?.dialects?.['anthropic']).toHaveLength(1);
-    expect(definition?.hostHeaders).toBe('full');
-    expect(definition?.modelSource).toBe('oauth-catalog');
-    expect(definition?.capability).toBe(UNKNOWN_CAPABILITY);
+describe('kimi provider definitions', () => {
+  it('registers one definition per transport, with shared vendor-level facts', () => {
+    const native = getProviderDefinition('kimi', 'openai');
+    const anthropic = getProviderDefinition('kimi', 'anthropic');
+    expect(native?.baseProtocol).toBe('openai');
+    expect(native?.traits).toHaveLength(6);
+    expect(anthropic?.baseProtocol).toBe('anthropic');
+    expect(anthropic?.traits).toHaveLength(1);
+    for (const definition of [native, anthropic]) {
+      expect(definition?.endpoint).toEqual({
+        apiKeyEnv: 'KIMI_API_KEY',
+        baseUrlEnv: 'KIMI_BASE_URL',
+        defaultBaseUrl: 'https://api.moonshot.ai/v1',
+      });
+      expect(definition?.hostHeaders).toBe('full');
+      expect(definition?.modelSource).toBe('oauth-catalog');
+      expect(definition?.capability).toBe(UNKNOWN_CAPABILITY);
+    }
+  });
+
+  it('answers id-level queries and reports unregistered pairs', () => {
+    // The id-level view is the first registration; vendor-level facts are
+    // identical on both, so any of them answers an id-level query.
+    expect(getProviderDefinition('kimi')?.baseProtocol).toBe('openai');
+    expect(getProviderDefinitions('kimi')).toHaveLength(2);
+    expect(hasProviderDefinition('kimi')).toBe(true);
+    expect(hasProviderDefinition('no-such-vendor')).toBe(false);
+    expect(getProviderDefinition('kimi', 'google-genai')).toBeUndefined();
+  });
+
+  it('allows the same id on several protocols but rejects a duplicate (id, baseProtocol) pair', () => {
+    registerProviderDefinition({ id: 'pair-vendor', baseProtocol: 'openai', traits: [] });
+    registerProviderDefinition({ id: 'pair-vendor', baseProtocol: 'anthropic', traits: [] });
+    expect(getProviderDefinition('pair-vendor', 'openai')).toBeDefined();
+    expect(getProviderDefinition('pair-vendor', 'anthropic')).toBeDefined();
+    expect(() =>
+      registerProviderDefinition({ id: 'pair-vendor', baseProtocol: 'openai', traits: [] }),
+    ).toThrow(/already registered/);
+    expect(() =>
+      registerProviderDefinition({ id: 'kimi', baseProtocol: 'openai', traits: [] }),
+    ).toThrow(/already registered/);
   });
 });
 
@@ -568,7 +609,7 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     expect(params['metadata']).toEqual({ user_id: 'session-probe' });
   });
 
-  it('encodes thinking for Kimi over the Anthropic transport through the dialect trait only', async () => {
+  it('encodes thinking for Kimi over the Anthropic transport through the pair trait only', async () => {
     const provider = registry.createChatProvider({
       protocol: 'anthropic',
       providerType: 'kimi',
@@ -583,8 +624,8 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     expect(via).toBe('standard');
     expect(params['thinking']).toEqual({ type: 'enabled' });
     expect(params['output_config']).toEqual({ effort: 'high' });
-    // The dialect trait strips the interleaved-thinking beta and adds nothing
-    // else: no beta header reaches the wire at all.
+    // The (kimi, anthropic) trait strips the interleaved-thinking beta and
+    // adds nothing else: no beta header reaches the wire at all.
     expect(requestOptions).toBeUndefined();
   });
 });

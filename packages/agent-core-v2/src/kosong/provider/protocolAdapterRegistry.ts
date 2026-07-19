@@ -6,18 +6,19 @@
  * + which traits" and the single construction point for composed
  * ChatProviders:
  *
- *  - `resolveAdapterIdentity` — the three branches: unregistered vendor (or
- *    none) → the protocol itself as base with no vendor traits; a definition
- *    whose base matches the protocol → its native traits; a definition running
- *    over a foreign transport → only its `dialects[protocol]` slice. The
- *    config `defaultHeaders` synthetic trait is ALWAYS appended last, so
- *    config headers win header aggregation; it declares no per-request hooks,
- *    so it can never shadow a real dialect hook in composition.
+ *  - `resolveAdapterIdentity` — the two branches: a `(providerType,
+ *    protocol)` pair registration → the protocol as base with that
+ *    registration's traits; no pair registration (unregistered vendor, no
+ *    providerType, or the vendor does not run over this protocol) → the
+ *    protocol itself as base with no vendor traits. The config
+ *    `defaultHeaders` synthetic trait is ALWAYS appended last, so config
+ *    headers win header aggregation; it declares no per-request hooks, so it
+ *    can never shadow a real trait hook in composition.
  *  - `createChatProvider` — re-binds every resolved trait's context to the
  *    full adapter config (identity resolution knows only
  *    `(protocol, providerType)`; composition needs the real config) and
  *    delegates to the registered base's contrib factory.
- *  - `resolveCapability` — the fixed fallback chain: definition → trait
+ *  - `resolveCapability` — the fixed fallback chain: pair definition → trait
  *    capability hooks (last declarer wins) → the base's own catalog →
  *    `UNKNOWN_CAPABILITY`.
  *
@@ -64,19 +65,10 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   }
 
   resolveAdapterIdentity(protocol: Protocol, providerType?: string): ResolvedAdapterIdentity {
-    const definition = providerType === undefined ? undefined : getProviderDefinition(providerType);
-    let baseId: ProtocolBaseId;
-    let traits: readonly ProtocolTrait[];
-    if (definition === undefined) {
-      baseId = protocol;
-      traits = [];
-    } else if (definition.base === protocol) {
-      baseId = definition.base;
-      traits = definition.traits;
-    } else {
-      baseId = protocol;
-      traits = definition.dialects?.[protocol] ?? [];
-    }
+    const definition =
+      providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
+    const baseId: ProtocolBaseId = protocol;
+    const traits: readonly ProtocolTrait[] = definition?.traits ?? [];
 
     // Identity resolution has no live adapter config, so contexts are bound
     // to a stub here; `createChatProvider` re-binds them to the real config
@@ -90,16 +82,23 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     return { baseId, traits: resolved };
   }
 
+  /**
+   * Kept for interface stability. A pair registration composes with the
+   * protocol it registered for, so its `baseProtocol` IS the protocol — this
+   * currently always answers the protocol itself.
+   */
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
-    const definition = providerType === undefined ? undefined : getProviderDefinition(providerType);
-    if (definition !== undefined && definition.base === protocol) {
-      return definition.base;
+    const definition =
+      providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
+    if (definition !== undefined) {
+      return definition.baseProtocol;
     }
     return protocol;
   }
 
   resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
-    const definition = providerType === undefined ? undefined : getProviderDefinition(providerType);
+    const definition =
+      providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     if (definition?.capability !== undefined) {
       return definition.capability;
     }

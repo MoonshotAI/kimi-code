@@ -12,9 +12,9 @@
  * through the definition registry — hardcoded per-protocol env tables are
  * abolished — so the five canonical vendors each need a definition that
  * declares their env chain. These declarations change nothing else: each
- * vendor's `base` equals its protocol id and the trait list is empty, so
- * adapter identity, hook composition, and capability resolution are exactly
- * as they were for an unregistered vendor.
+ * vendor's `baseProtocol` equals its protocol id and the trait list is empty,
+ * so adapter identity, hook composition, and capability resolution are
+ * exactly as they were for an unregistered vendor.
  *
  * No `defaultBaseUrl` is declared: construction-time defaults stay where they
  * always were (inside the bases / their SDKs), matching the legacy env-only
@@ -31,35 +31,35 @@ import { registerProviderDefinition } from '../providerDefinition';
 
 registerProviderDefinition({
   id: 'anthropic',
-  base: 'anthropic',
+  baseProtocol: 'anthropic',
   traits: [],
   endpoint: { apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrlEnv: 'ANTHROPIC_BASE_URL' },
 });
 
 registerProviderDefinition({
   id: 'openai',
-  base: 'openai',
+  baseProtocol: 'openai',
   traits: [],
   endpoint: { apiKeyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' },
 });
 
 registerProviderDefinition({
   id: 'openai_responses',
-  base: 'openai_responses',
+  baseProtocol: 'openai_responses',
   traits: [],
   endpoint: { apiKeyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' },
 });
 
 registerProviderDefinition({
   id: 'google-genai',
-  base: 'google-genai',
+  baseProtocol: 'google-genai',
   traits: [],
   endpoint: { apiKeyEnv: 'GOOGLE_API_KEY', baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL' },
 });
 
 registerProviderDefinition({
   id: 'vertexai',
-  base: 'vertexai',
+  baseProtocol: 'vertexai',
   traits: [
     // Two one-line endpoint traits so the aggregated apiKey fallback chain is
     // `VERTEXAI_API_KEY` → `GOOGLE_API_KEY` (legacy precedence preserved).

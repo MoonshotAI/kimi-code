@@ -502,12 +502,14 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   /**
-   * The registry-driven "Kimi thinking semantics" verdict for one model — the
-   * NATIVE-transport gate (v1 `provider.type === 'kimi'` parity): strict
-   * effort validation and Kimi normalization apply only when the vendor's own
-   * transport drives thinking through traits. Over a foreign transport (the
-   * `dialects` slice, e.g. Kimi-managed models on protocol `anthropic`) the
-   * profile stays lenient and warns instead of rejecting unlisted efforts.
+   * The registry-driven "Kimi thinking semantics" verdict for one model —
+   * the STRICT-validation gate (v1 `provider.type === 'kimi'` parity):
+   * strict effort validation and Kimi normalization apply only when the
+   * (protocol, providerType) pair's thinking driver marks
+   * `strictThinkingValidation` (Kimi's native openai transport). Over a
+   * foreign transport (the `(kimi, anthropic)` registration, e.g.
+   * Kimi-managed models on protocol `anthropic`) the profile stays lenient
+   * and warns instead of rejecting unlisted efforts.
    */
   private kimiThinkingSemantics(model: Model | undefined): boolean {
     if (model === undefined) return false;

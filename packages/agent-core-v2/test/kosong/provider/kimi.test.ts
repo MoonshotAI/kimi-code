@@ -13,9 +13,9 @@
  *  - `kimiUsageTrait`: usage at the top level or `choices[0].usage`;
  *  - `kimiParamsTrait`: endpoint chain, `max_tokens` → `max_completion_tokens`
  *    with `extra_body` expansion, `extra_body.thinking` encoding, no 128k
- *    ceiling, `prompt_cache_key`;
- *  - `kimiAnthropicThinkingTrait` (dialects.anthropic): thinking encoding and
- *    interleaved-thinking beta stripping.
+ *    ceiling, `prompt_cache_key`, and the `strictThinkingValidation` marker;
+ *  - `kimiAnthropicThinkingTrait` (the `(kimi, anthropic)` registration):
+ *    thinking encoding and interleaved-thinking beta stripping.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -254,7 +254,7 @@ describe('kimiParamsTrait', () => {
   });
 });
 
-describe('kimiAnthropicThinkingTrait (dialects.anthropic)', () => {
+describe('kimiAnthropicThinkingTrait (the (kimi, anthropic) registration)', () => {
   const seeded = { betaFeatures: ['interleaved-thinking-2025-05-14', 'other-beta'] };
 
   it('encodes thinking:{type:enabled} + output_config.effort and strips the interleaved beta', () => {
@@ -284,7 +284,7 @@ describe('kimiAnthropicThinkingTrait (dialects.anthropic)', () => {
 });
 
 describe('trait objects are plain declarations', () => {
-  it('exposes exactly the hooks appendix A assigns to them', () => {
+  it('exposes exactly the hooks appendix A assigns to them, plus metadata markers', () => {
     const hookNames = (trait: ProtocolTrait): string[] => Object.keys(trait);
     expect(hookNames(kimiToolSchemaTrait)).toEqual(['convertTool']);
     expect(hookNames(kimiMessageShapeTrait)).toEqual(['convertMessage']);
@@ -294,9 +294,17 @@ describe('trait objects are plain declarations', () => {
       'buildParams',
       'cacheKey',
       'endpoint',
+      'strictThinkingValidation',
       'withMaxCompletionTokens',
       'withThinking',
     ]);
     expect(hookNames(kimiAnthropicThinkingTrait)).toEqual(['withThinking']);
+  });
+
+  it('marks only the native-transport thinking trait as strict-validation (v1 parity)', () => {
+    // Kimi's native API rejects unlisted efforts → strict; over the Anthropic
+    // transport the backend may accept them → lenient (warning + pass-through).
+    expect(kimiParamsTrait.strictThinkingValidation).toBe(true);
+    expect(kimiAnthropicThinkingTrait.strictThinkingValidation).toBeUndefined();
   });
 });

@@ -8,10 +8,10 @@ import {
 
 // The old `#/agent/profile/thinking` helpers derived "Kimi thinking
 // semantics" from `protocol: 'kimi'` on the model fixture. The kosong layer
-// has no Kimi protocol (Kimi is `{ base: 'openai', traits }`, so fixtures use
-// `providerType: 'kimi'` + a legal protocol); the semantics verdict is now an
-// explicit `kimiSemantics` argument resolved by the caller through the
-// adapter registry (`usesKimiThinkingSemantics`).
+// has no Kimi protocol (Kimi is a set of `(baseProtocol, traits)`
+// registrations, so fixtures use `providerType: 'kimi'` + a legal protocol);
+// the semantics verdict is now an explicit `kimiSemantics` argument resolved
+// by the caller through the adapter registry (`usesKimiThinkingSemantics`).
 const booleanModel = { capabilities: ['thinking'] };
 const effortModel = {
   capabilities: ['thinking'],

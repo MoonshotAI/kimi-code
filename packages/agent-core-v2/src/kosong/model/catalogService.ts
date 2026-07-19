@@ -18,10 +18,11 @@
  *
  * Everything vendor-shaped goes through the registries, never a hardcoded
  * switch: the wire protocol falls back from an explicit `protocol` to the
- * referenced provider vendor's declared base; endpoint and credential env
- * fallbacks resolve through `resolveProviderEndpoint` against the config env
- * bag; host-header forwarding follows the vendor definition's `hostHeaders`;
- * capability detection is `resolveCapability(protocol, name, providerType)`.
+ * referenced provider vendor's declared `baseProtocol`; endpoint and
+ * credential env fallbacks resolve through `resolveProviderEndpoint` against
+ * the config env bag; host-header forwarding follows the vendor definition's
+ * `hostHeaders`; capability detection is `resolveCapability(protocol, name,
+ * providerType)`.
  *
  * Caching (load-bearing): assembled entries are invalidated ONLY by the
  * model/provider/platform config-change events. Tests that mutate config
@@ -270,8 +271,8 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   /**
    * The wire protocol: the Model's explicit `protocol` wins; otherwise the
    * referenced provider's vendor identity resolves it — directly when the
-   * vendor type IS one of the five protocols, or through the vendor
-   * definition's declared base (e.g. `kimi` → `openai`).
+   * vendor type IS one of the five protocols, or through the vendor's first
+   * registration's `baseProtocol` (e.g. `kimi` → `openai`).
    */
   private resolveProtocol(
     id: string,
@@ -284,7 +285,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       const asProtocol = ProtocolSchema.safeParse(providerType);
       if (asProtocol.success) return asProtocol.data;
       const definition = getProviderDefinition(providerType);
-      if (definition !== undefined) return definition.base;
+      if (definition !== undefined) return definition.baseProtocol;
     }
     throw new Error2(
       ConfigErrors.codes.CONFIG_INVALID,

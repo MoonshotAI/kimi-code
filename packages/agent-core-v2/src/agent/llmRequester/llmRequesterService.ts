@@ -621,7 +621,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       modelAlias: input.modelAlias,
       thinkingEffort: input.thinkingEffort ?? undefined,
       // The one remaining vendor gate: the durable llm.request record only
-      // carries Kimi's thinking/sampling knobs (other dialects don't have them).
+      // carries Kimi's thinking/sampling knobs (other vendors don't have them).
       thinkingKeep: input.providerType === 'kimi'
         ? resolveThinkingKeep(
             overrides?.thinkingKeep,

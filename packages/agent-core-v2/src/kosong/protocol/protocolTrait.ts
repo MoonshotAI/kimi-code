@@ -2,9 +2,11 @@
  * `kosong/protocol` domain (L1) — the declarative trait surface.
  *
  * A `ProtocolTrait` is a stateless declaration of how one vendor deviates
- * from a wire base: sixteen fully optional hooks, nothing else. A trait
- * declares a deviation only where one exists; a hook returning `undefined`
- * always means "keep the base default".
+ * from a wire base: sixteen fully optional hooks plus rare metadata markers
+ * (non-function fields like `strictThinkingValidation` that qualify how a
+ * hook's behavior is governed, without adding a code path). A trait declares
+ * a deviation only where one exists; a hook returning `undefined` always
+ * means "keep the base default".
  *
  * Composition rules (the L2 compositors implement them; they are restated
  * here because they are part of the trait contract):
@@ -58,6 +60,18 @@ export interface ProtocolEndpoint {
 }
 
 export interface ProtocolTrait {
+  /**
+   * Metadata marker (NOT a hook): when this trait is the one driving thinking
+   * encoding for a `(protocol, providerType)` pair — i.e. it is the last
+   * resolved declarer of `withThinking` — whether client-side
+   * thinking-effort validation must be strict (reject efforts the model
+   * metadata does not list) rather than lenient (warn-and-send). Declare it
+   * only on traits whose backend is the vendor's own API with closed effort
+   * semantics; foreign transports stay lenient because their backend may
+   * accept efforts the local catalog does not list. Absent means lenient.
+   */
+  readonly strictThinkingValidation?: boolean;
+
   /**
    * Construction-time: extra options the trait provides to the base adapter
    * (e.g. stream mode or transport-specific knobs a base understands).

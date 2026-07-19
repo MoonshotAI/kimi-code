@@ -13,7 +13,7 @@
  *     config defaults, and the model's declared thinking metadata into the
  *     effective `ThinkingEffort`, and that resolve the thinking-keep value.
  *  3. The registry-driven vendor verdicts: `isKimiProvider` (definition
- *     lookup: the vendor's native traits take over thinking encoding) and
+ *     lookup: the vendor's traits take over thinking encoding) and
  *     `usesKimiThinkingSemantics` (the resolved adapter identity for the
  *     (protocol, providerType) pair contains a `withThinking` hook). Neither
  *     hardcodes a vendor or protocol string — "Kimi thinking semantics" means
@@ -28,7 +28,7 @@ import type { IProtocolAdapterRegistry, Protocol } from '#/kosong/protocol/proto
 
 import { type ConfigStripEnv, envBindings } from '../../app/config/config';
 import { registerConfigSection } from '../../app/config/configSectionContributions';
-import { getProviderDefinition } from '../provider/providerDefinition';
+import { getProviderDefinitions } from '../provider/providerDefinition';
 
 // ---------------------------------------------------------------------------
 // `thinking` config section (side-effect registration)
@@ -65,21 +65,22 @@ registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
 // ---------------------------------------------------------------------------
 
 /**
- * Whether the vendor drives thinking through its native traits ("Kimi
- * thinking semantics"): a definition-lookup answer — the vendor is registered
- * and its native-trait set declares `withThinking`. Unregistered vendors
- * (fully compatible, no definition) answer `false`.
+ * Whether the vendor drives thinking through its traits ("Kimi thinking
+ * semantics"): a definition-lookup answer — the vendor is registered and at
+ * least one of its registrations declares `withThinking`. Unregistered
+ * vendors (fully compatible, no definition) answer `false`.
  */
 export function isKimiProvider(providerType: string | undefined): boolean {
   if (providerType === undefined) return false;
-  const definition = getProviderDefinition(providerType);
-  return definition?.traits.some((trait) => trait.withThinking !== undefined) ?? false;
+  return getProviderDefinitions(providerType).some((definition) =>
+    definition.traits.some((trait) => trait.withThinking !== undefined),
+  );
 }
 
 /**
  * Whether the (protocol, providerType) pair resolves to an adapter whose
- * traits take over thinking encoding — via the vendor's native traits on its
- * own transport, or via its `dialects` slice on a foreign one. Answered
+ * traits take over thinking encoding — via the vendor's registration on its
+ * native transport, or via its pair registration on a foreign one. Answered
  * through the registry's one resolution point, `resolveAdapterIdentity`.
  */
 export function usesKimiThinkingSemantics(
@@ -95,20 +96,21 @@ export function usesKimiThinkingSemantics(
 /**
  * ⚠ PHASE 6 PARITY PATCH — v1 `provider.type === 'kimi'` gate restored.
  *
- * Whether the vendor drives thinking through its native traits ON ITS OWN
- * TRANSPORT: `usesKimiThinkingSemantics` restricted to the native branch of
- * adapter resolution (the definition's declared base IS the wire protocol).
+ * Whether client-side thinking-effort validation must be STRICT for the
+ * (protocol, providerType) pair: the resolved traits take thinking over and
+ * the last `withThinking` declarer marks `strictThinkingValidation`.
  *
  * This is the gate for client-side effort strictness (validation, the
- * always-on clamp, and Kimi `'on'` projection). On a FOREIGN transport the
- * vendor contributes only its `dialects` slice and the backend is an
- * Anthropic-compatible endpoint that may accept efforts the local catalog
- * metadata does not list — so the profile must stay lenient there
- * (warn-and-send, with the `anthropic-thinking-*` warnings) instead of
- * rejecting or rewriting the effort. Gating on plain
- * `usesKimiThinkingSemantics` (true for the dialects slice too) made
- * `setThinking` throw for Kimi-managed Anthropic models and left the warning
- * path unreachable — a v1 behavioral regression.
+ * always-on clamp, and Kimi `'on'` projection). The strict flag is declared
+ * by `kimiParamsTrait` — Kimi's native API rejects unlisted efforts — and
+ * deliberately NOT by `kimiAnthropicThinkingTrait`: over the Anthropic
+ * transport the backend may accept efforts the local catalog metadata does
+ * not list, so the profile must stay lenient there (warn-and-send, with the
+ * `anthropic-thinking-*` warnings) instead of rejecting or rewriting the
+ * effort. Gating on plain `usesKimiThinkingSemantics` (true for the
+ * anthropic pair registration too) made `setThinking` throw for Kimi-managed
+ * Anthropic models and left the warning path unreachable — a v1 behavioral
+ * regression.
  */
 export function usesNativeKimiThinkingSemantics(
   registry: IProtocolAdapterRegistry,
@@ -116,9 +118,14 @@ export function usesNativeKimiThinkingSemantics(
   providerType?: string,
 ): boolean {
   if (providerType === undefined) return false;
-  const definition = getProviderDefinition(providerType);
-  if (definition?.base !== protocol) return false;
-  return usesKimiThinkingSemantics(registry, protocol, providerType);
+  const traits = registry.resolveAdapterIdentity(protocol, providerType).traits;
+  let strict = false;
+  for (const { trait } of traits) {
+    if (trait.withThinking !== undefined) {
+      strict = trait.strictThinkingValidation === true;
+    }
+  }
+  return strict;
 }
 
 // ---------------------------------------------------------------------------

@@ -106,9 +106,10 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
 
 /**
  * The one registry answer the profile reads: whether the (protocol,
- * providerType) pair drives thinking through traits ("Kimi thinking
- * semantics"). Mirrored here as "providerType === 'kimi'", matching the real
- * registry's verdict for the Kimi definition (native traits + dialects).
+ * providerType) pair drives thinking through traits, and whether that driver
+ * demands strict effort validation (`strictThinkingValidation`). Mirrored
+ * here from the real Kimi definitions: strict on the native openai
+ * transport, lenient over anthropic, nothing on other protocols.
  */
 function createProtocolRegistryStub(): IProtocolAdapterRegistry {
   return {
@@ -117,9 +118,16 @@ function createProtocolRegistryStub(): IProtocolAdapterRegistry {
     resolveAdapterIdentity: (protocol: Protocol, providerType?: string) => ({
       baseId: protocol,
       traits:
-        providerType === 'kimi'
-          ? [{ trait: { withThinking: () => undefined }, context: {} }]
-          : [],
+        providerType === 'kimi' && protocol === 'openai'
+          ? [
+              {
+                trait: { withThinking: () => undefined, strictThinkingValidation: true },
+                context: {},
+              },
+            ]
+          : providerType === 'kimi' && protocol === 'anthropic'
+            ? [{ trait: { withThinking: () => undefined }, context: {} }]
+            : [],
     }),
     resolveProviderBaseId: (protocol: Protocol) => protocol,
     resolveCapability: () => {

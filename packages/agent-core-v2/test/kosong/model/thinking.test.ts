@@ -3,14 +3,16 @@
  * registry-driven vendor verdicts:
  *
  *  - `isKimiProvider` answers through the definition registry: true once the
- *    kimi definition is registered (its native traits declare `withThinking`),
+ *    kimi definitions are registered (their traits declare `withThinking`),
  *    false for the endpoint-only canonical vendors and for unregistered ones;
  *  - `usesKimiThinkingSemantics` answers through the adapter registry's one
  *    resolution point — true for kimi on its native transport AND for kimi
- *    over anthropic (the `dialects.anthropic` slice), false for plain openai;
- *  - `usesNativeKimiThinkingSemantics` narrows that verdict to the native
- *    transport only — the strict effort-validation gate (v1
- *    `provider.type === 'kimi'` parity), false for kimi over anthropic;
+ *    over anthropic (the `(kimi, anthropic)` pair registration), false for
+ *    plain openai and for pairs kimi never registered;
+ *  - `usesNativeKimiThinkingSemantics` narrows that verdict to the strict
+ *    effort-validation gate (v1 `provider.type === 'kimi'` parity): true only
+ *    when the pair's thinking driver marks `strictThinkingValidation`, false
+ *    for kimi over anthropic;
  *  - effort resolution folds request/config/model metadata with the kimi
  *    normalization rules; keep resolution honors off-values and precedence.
  */
@@ -42,19 +44,22 @@ describe('registry-driven vendor verdicts', () => {
     expect(isKimiProvider(undefined)).toBe(false);
   });
 
-  it('usesKimiThinkingSemantics: native traits and the anthropic dialect slice', () => {
+  it('usesKimiThinkingSemantics: native traits and the (kimi, anthropic) pair registration', () => {
     expect(usesKimiThinkingSemantics(registry, 'openai', 'kimi')).toBe(true);
     expect(usesKimiThinkingSemantics(registry, 'anthropic', 'kimi')).toBe(true);
     expect(usesKimiThinkingSemantics(registry, 'openai', 'openai')).toBe(false);
     expect(usesKimiThinkingSemantics(registry, 'openai', undefined)).toBe(false);
     expect(usesKimiThinkingSemantics(registry, 'anthropic', 'anthropic')).toBe(false);
+    // Kimi registers no google-genai definition — the pair contributes nothing.
+    expect(usesKimiThinkingSemantics(registry, 'google-genai', 'kimi')).toBe(false);
   });
 
-  it('usesNativeKimiThinkingSemantics: only the vendor on its own transport', () => {
+  it('usesNativeKimiThinkingSemantics: only the strict-validation thinking driver', () => {
     // The strict effort gate (v1 `provider.type === 'kimi'` parity): kimi on
-    // its native openai transport qualifies; kimi over anthropic does NOT —
-    // the foreign backend may accept unlisted efforts, so the profile stays
-    // lenient there and warns instead of rejecting.
+    // its native openai transport qualifies (kimiParamsTrait marks
+    // `strictThinkingValidation`); kimi over anthropic does NOT — the foreign
+    // backend may accept unlisted efforts, so the profile stays lenient there
+    // and warns instead of rejecting.
     expect(usesNativeKimiThinkingSemantics(registry, 'openai', 'kimi')).toBe(true);
     expect(usesNativeKimiThinkingSemantics(registry, 'anthropic', 'kimi')).toBe(false);
     expect(usesNativeKimiThinkingSemantics(registry, 'openai', 'openai')).toBe(false);
