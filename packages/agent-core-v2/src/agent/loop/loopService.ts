@@ -376,7 +376,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     let thinkingEffort: string | undefined;
     let result: TurnResult | undefined;
     try {
-      thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id).thinkingEffort;
+      thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id)?.thinkingEffort;
       const started: TurnStartedTelemetryEvent = {
         turn_id: turn.id,
         mode,

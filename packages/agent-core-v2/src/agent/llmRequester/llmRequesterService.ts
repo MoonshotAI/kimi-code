@@ -8,9 +8,10 @@
  * completion-token budget, then drives a bounded request chain: one primary
  * `model.request(input, signal)` attempt plus projection rebuilds for request
  * structure or media compatibility; general retry policy remains in the
- * loop's `stepRetry` plugin. `prepareTurnConfig` snapshots the model, effective
- * thinking effort, and system prompt at the turn boundary so loop telemetry
- * and every request in that turn share one configuration.
+ * loop's `stepRetry` plugin. When a model is configured, `prepareTurnConfig`
+ * snapshots the model, effective thinking effort, and system prompt at the turn
+ * boundary so loop telemetry and every request in that turn share one
+ * configuration.
  * Forwards streamed `part` events to the caller's `onPart`
  * handler, records `usage` through `IAgentUsageService`, resolves to an
  * `LLMRequestFinish` on the `finish` event, logs the request lifecycle
@@ -155,7 +156,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IEventBus private readonly eventBus: IEventBus,
   ) {}
 
-  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig {
+  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined {
+    if (!this.profile.hasProvider()) return undefined;
     const config = this.getOrCreateTurnConfig(turnId);
     return { thinkingEffort: config.resolved.thinkingLevel };
   }

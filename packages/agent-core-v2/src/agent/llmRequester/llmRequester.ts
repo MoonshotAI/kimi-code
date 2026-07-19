@@ -72,7 +72,7 @@ export interface PreparedTurnRequestConfig {
 export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
 
-  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig;
+  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
 
   request(
     overrides?: LLMRequestOverrides,
