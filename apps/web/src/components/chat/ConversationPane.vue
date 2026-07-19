@@ -332,7 +332,8 @@ function updateActiveTocQuery(): void {
 }
 
 // --- TOC occlusion by wide tables -------------------------------------------
-// Wide markdown tables (up to --p-table-max) can extend past the TOC rail,
+// Manually widened markdown tables (via the toggle injected by web-markdown's
+// tableWide.ts, up to --p-table-max) can extend past the TOC rail,
 // which stays anchored to the reading-column edge. While a table actually
 // covers the rail we hide the TOC temporarily so the table stays fully
 // interactive (clicks, text selection, horizontal scroll). The user's TOC
@@ -1248,6 +1249,10 @@ onMounted(() => {
     rebindScrollObservers();
     scheduleStableFollow(48);
     updateActiveTocQuery();
+    // Table widen/restore toggles change table geometry without a scroll —
+    // re-run the TOC occlusion hit test when they fire (event bubbles up from
+    // the table wrapper; see web-markdown's tableWide.ts).
+    panesRef.value?.addEventListener('kimi-table-layout', scheduleTocTableHitTest);
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
@@ -1257,6 +1262,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  panesRef.value?.removeEventListener('kimi-table-layout', scheduleTocTableHitTest);
   if (contentObserver) contentObserver.disconnect();
   if (resizeObserver) resizeObserver.disconnect();
   if (scrollRaf) cancelRaf(scrollRaf);

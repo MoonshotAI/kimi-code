@@ -22,6 +22,8 @@ export default {
   yesterday: 'Yesterday',
   loadOlder: 'Load earlier messages',
   loadingOlder: 'Loading earlier messages…',
+  widenTable: 'Widen table',
+  restoreTableWidth: 'Restore default width',
   cron: {
     fired: 'Scheduled reminder fired',
     missed: 'Missed scheduled reminders',

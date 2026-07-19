@@ -22,6 +22,8 @@ export default {
   yesterday: '昨天',
   loadOlder: '加载更早的消息',
   loadingOlder: '正在加载更早的消息…',
+  widenTable: '加宽表格',
+  restoreTableWidth: '恢复默认宽度',
   cron: {
     fired: '定时任务已触发',
     missed: '错过的定时提醒',

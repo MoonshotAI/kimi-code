@@ -1067,20 +1067,25 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 }
 
 /* ===================== Wide tables (desktop) ===================== */
-/* 760px corresponds to --p-content-max. Container-query conditions cannot
-   reference CSS custom properties directly. */
+/* Tables stay inside the reading column by default (overflowing content
+   scrolls inside the table's own wrapper); the user widens an individual
+   table via the toggle injected by web-markdown's tableWide.ts, which adds
+   the `md-table-wide` class. 760px corresponds to --p-content-max.
+   Container-query conditions cannot reference CSS custom properties
+   directly. */
 @container (min-width: 760px) {
   /* markstream's content-visibility:auto implies paint containment, which can
      clip a table that breaks out of the normal Markdown width. Disable it only
-     for renderers that actually contain a table. Keep contain:layout intact. */
-  .a-msg .msg :deep(.markstream-vue.markdown-renderer:has(.table-node-wrapper)) {
+     for renderers containing a manually widened table. Keep contain:layout
+     intact. */
+  .a-msg .msg :deep(.markstream-vue.markdown-renderer:has(.table-node-wrapper.md-table-wide)) {
     content-visibility: visible;
   }
 
-  /* Let a table grow naturally beyond the reading column, centred within the
-     conversation pane. The first-stage overflow-x:auto continues to handle
+  /* A widened table grows naturally beyond the reading column, centred within
+     the conversation pane. The first-stage overflow-x:auto continues to handle
      content wider than this wrapper. */
-  .a-msg .msg :deep(.table-node-wrapper) {
+  .a-msg .msg :deep(.table-node-wrapper.md-table-wide) {
     position: relative;
     left: 50%;
     width: max-content;
@@ -1090,6 +1095,15 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
       calc(100cqi - var(--space-5) - var(--space-5))
     ) !important;
     transform: translateX(-50%);
+  }
+
+  /* Narrow (default-width) chat tables get a tighter cell cap so simple
+     tables are more likely to fit the reading column without scrolling;
+     widened tables keep the full --p-table-cell-max. Scoped to the chat host
+     so other Markdown consumers (file preview, narrow/mobile containers)
+     keep the package default. */
+  .a-msg .msg :deep(.table-node-wrapper:not(.md-table-wide)) {
+    --table-cell-cap: min(var(--p-table-cell-max), 36cqi);
   }
 }
 

@@ -17,6 +17,11 @@ import type { ResolveImage } from '@moonshot-ai/web-core/contracts';
 import { collectFilePathAliases, findFilePathLinks } from './lib/filePathLinks';
 import { markdownRenderPlan } from './lib/markdownPerformance';
 import { copyTextToClipboard } from './lib/clipboard';
+import {
+  ensureTableWideToggle,
+  updateTableWideToggle,
+  type TableWideToggleLabels,
+} from './lib/tableWide';
 
 // Shape of the `openFile` prop payload. Declared locally so the package has no
 // reverse dependency on the host app's types; structurally compatible with the
@@ -295,10 +300,40 @@ function processMarkdownLinks(): void {
   }
 }
 
+// Widen-table toggles — injected into each `.table-node-wrapper` (only inside
+// the ChatPane assistant-message host, see tableWide.ts). Same lifecycle as
+// the file-link processing above: skip while streaming (markstream keeps
+// rebuilding the table DOM mid-stream), then settle once the turn ends.
+function tableWideLabels(): TableWideToggleLabels {
+  return {
+    widen: t('conversation.widenTable'),
+    restore: t('conversation.restoreTableWidth'),
+  };
+}
+
+function processTableWideToggles(): void {
+  if (!mdRef.value || props.streaming) return;
+  const labels = tableWideLabels();
+  for (const wrapper of mdRef.value.querySelectorAll<HTMLElement>('.table-node-wrapper')) {
+    ensureTableWideToggle(wrapper, labels);
+  }
+}
+
+function updateTableWideToggles(): void {
+  // Skip while streaming: the .md root resizes constantly mid-stream and each
+  // update measures header rects (forced reflow) — pointless, because toggle
+  // injection itself is deferred until the turn settles.
+  if (!mdRef.value || props.streaming) return;
+  for (const wrapper of mdRef.value.querySelectorAll<HTMLElement>('.table-node-wrapper')) {
+    updateTableWideToggle(wrapper);
+  }
+}
+
 function scheduleFileLinkProcessing(): void {
   void nextTick().then(() => {
     processFileLinks();
     processMarkdownLinks();
+    processTableWideToggles();
   });
 }
 
@@ -306,15 +341,21 @@ watch(() => props.text, scheduleFileLinkProcessing);
 watch(() => props.streaming, scheduleFileLinkProcessing);
 
 let observer: MutationObserver | null = null;
+// Column-width changes alter whether each table overflows its wrapper, so the
+// toggle's visibility is re-evaluated whenever the markdown root resizes.
+let tableWideResizeObserver: ResizeObserver | null = null;
 onMounted(() => {
   scheduleFileLinkProcessing();
   if (mdRef.value) {
     observer = new MutationObserver(scheduleFileLinkProcessing);
     observer.observe(mdRef.value, { childList: true, subtree: true });
+    tableWideResizeObserver = new ResizeObserver(updateTableWideToggles);
+    tableWideResizeObserver.observe(mdRef.value);
   }
 });
 onUnmounted(() => {
   observer?.disconnect();
+  tableWideResizeObserver?.disconnect();
 });
 
 // Shiki themes for code blocks: github-light on the light surface,
@@ -763,6 +804,19 @@ function copyDiff(code: string, idx: number) {
   max-width: 100% !important;
   min-width: 0;
   overflow-x: auto !important;
+  /* markstream ships `scrollbar-gutter: stable` on the wrapper, which
+     reserves a dead 6px strip on the right (macOS always-on scrollbars) —
+     table content paints into it but our pinned fade/chip anchor outside it,
+     leaving a sliver of clipped text visible past the fade. The wrapper is a
+     horizontal-only scroller and never needs the gutter. */
+  scrollbar-gutter: auto !important;
+  /* Anchor for the widen chip + edge fade overlays (see below). */
+  position: relative;
+  /* Default cell cap. Chat tables in a wide container get a tighter cap
+     (36cqi) from ChatPane.vue so simple tables are more likely to fit the
+     reading column; everywhere else (file preview, narrow/mobile chat) the
+     full --p-table-cell-max applies. */
+  --table-cell-cap: var(--p-table-cell-max);
 }
 
 .md :deep(.table-node) {
@@ -780,25 +834,115 @@ function copyDiff(code: string, idx: number) {
   text-align: left;
   vertical-align: top;
   /* Cap runaway columns: a single cell with long prose should stop stretching
-     its column at --p-table-cell-max and wrap inside the cell instead.
+     its column at --table-cell-cap and wrap inside the cell instead. The cap
+     defaults to --p-table-cell-max; ChatPane narrows it for default-width
+     chat tables (36cqi) in wide containers.
      max-width on the cell itself only works in Firefox — Chromium ignores it
      under table-layout:auto — so the clamp is reinforced on the content box
      below. Wider tables made of many columns still scroll inside the
      wrapper. */
-  max-width: var(--p-table-cell-max);
+  max-width: var(--table-cell-cap);
 }
 /* Chromium honors max-width on this inner box even under table-layout:auto:
    markstream wraps plain-text cell content in a .text-node span, and as an
    inline-block its max-content contribution to the column is clamped to
-   --p-table-cell-max, so the column stops there and the text wraps inside
+   --table-cell-cap, so the column stops there and the text wraps inside
    (the span is already white-space:pre-wrap + overflow-wrap:break-word).
    Cells mixing several inline children can still exceed the cap by the sum
    of those children — acceptable; the runaway single-prose-cell case is the
    one that matters. */
 .md :deep(.table-node .text-node) {
   display: inline-block;
-  max-width: var(--p-table-cell-max);
+  max-width: var(--table-cell-cap);
   vertical-align: top;
+}
+
+/* Widen-table affordance — two overlays injected by tableWide.ts into each
+   chat table's wrapper, both pinned to the visible right edge via a
+   scrollLeft transform (see pinTableWideToggle):
+
+   1. `.md-table-fade` — a gradient at the table's right edge signalling
+      "more content" while clipped. Shown whenever the table overflows
+      (carries --show), hidden again once scrolled to the end (.md-table-at-end).
+   2. `.md-table-toggle` — a Notion-style 26px icon chip in the table's
+      header row (the ⤢/⤡ feather pair). Its top/right insets are measured
+      in JS (alignTableWideToggle) so it sits vertically centred on the
+      header row with a matching right inset; the 6px values below are only
+      pre-measurement fallbacks. Carries --show when the table overflows
+      or is widened, but only becomes VISIBLE on wrapper hover/focus-within,
+      or persistently while the table is widened (so it can be restored).
+
+   Both render only in a container wide enough for the ChatPane breakout
+   (≥760px, matching the breakout `@container` there); with no container
+   ancestor (FilePreview and other Markdown hosts) or on mobile-width
+   containers they never appear. */
+.md :deep(.md-table-fade) {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 36px;
+  z-index: 1;
+  /* The tail must be FULLY opaque — a translucent tail lets the clipped
+     text ghost through as faint slivers past the fade. */
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--color-bg) 65%, transparent) 55%,
+    var(--color-bg)
+  );
+  pointer-events: none;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.md :deep(.md-table-at-end) .md-table-fade {
+  opacity: 0;
+}
+.md :deep(.md-table-toggle) {
+  display: none;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out),
+    background var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+@container (min-width: 760px) {
+  .md :deep(.md-table-fade.md-table-toggle--show),
+  .md :deep(.md-table-toggle.md-table-toggle--show) {
+    display: block;
+  }
+  .md :deep(.md-table-toggle.md-table-toggle--show) {
+    display: inline-flex;
+  }
+}
+.md :deep(.table-node-wrapper:hover) .md-table-toggle.md-table-toggle--show,
+.md :deep(.table-node-wrapper:focus-within) .md-table-toggle.md-table-toggle--show,
+.md :deep(.table-node-wrapper.md-table-wide) .md-table-toggle.md-table-toggle--show {
+  opacity: 1;
+}
+.md :deep(.md-table-toggle:hover) {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+.md :deep(.md-table-toggle:focus-visible) {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.md :deep(.md-table-toggle) svg {
+  display: block;
 }
 
 /* Drop markstream-vue's default table-row hover background — the conversation
