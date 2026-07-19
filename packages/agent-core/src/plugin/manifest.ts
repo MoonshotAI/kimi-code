@@ -301,7 +301,7 @@ function readHooks(
   }
   const out: HookDefConfig[] = [];
   raw.forEach((entry, i) => {
-    const parsed = HookDefSchema.safeParse(entry);
+    const parsed = HookDefSchema.safeParse(normalizeHookFailMode(entry));
     if (!parsed.success) {
       diagnostics.push({
         severity: 'warn',
@@ -312,6 +312,20 @@ function readHooks(
     }
   });
   return out.length === 0 ? undefined : out;
+}
+
+// The same kimi.plugin.json is read by both agent cores, whose hook schemas
+// canonicalize the fail-mode field differently (failMode in agent-core-v2,
+// fail_mode here). Accept either spelling (exactly one) so a manifest written
+// for one core is not silently dropped by the other; an entry carrying both
+// spellings falls through to the strict schema and is rejected like any other
+// unrecognized-key entry.
+function normalizeHookFailMode(entry: unknown): unknown {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return entry;
+  const record = entry as Record<string, unknown>;
+  if (!('failMode' in record) || 'fail_mode' in record) return entry;
+  const { failMode, ...rest } = record;
+  return { ...rest, fail_mode: failMode };
 }
 
 async function readCommands(

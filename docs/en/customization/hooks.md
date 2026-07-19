@@ -17,10 +17,12 @@ The script's response is determined by two things:
 - **Exit code**: `0` means allow, `2` means block, other non-zero values default to allow
 - **Standard output** (stdout): can include explanatory text
 
-Even if the script errors or times out, the CLI **will not interrupt your work** as a result — this "allow on failure" design is called fail-open, preventing hook errors from becoming blockers.
+By default, even if the script errors or times out, the CLI **will not interrupt your work** as a result — this "allow on failure" design is called fail-open, preventing hook errors from becoming blockers.
+
+For hooks that act as security gates, this default can be inverted per hook with `fail_mode = "closed"`: if the hook cannot deliver a verdict (spawn failure, crash, timeout, or any exit code other than `0` or `2`), the operation is **blocked** instead of allowed. A user interrupt (Esc) still resolves to allow in both modes, since the turn is being cancelled anyway.
 
 ::: warning Note
-Precisely because of fail-open, Hooks are suitable for alerts and lightweight interception, but **should not be used as the sole security barrier**. For truly high-risk operations, rely on permission approvals and manual confirmation.
+With the default fail-open behavior, Hooks are suitable for alerts and lightweight interception, but **should not be used as the sole security barrier**. For truly high-risk operations, use `fail_mode = "closed"` on the hook, or rely on permission approvals and manual confirmation. Note that fail-closed means a broken or slow hook script will block every matching operation until fixed — that is the point, but it makes the hook script's reliability your responsibility.
 :::
 
 ## Quick Start: A Minimal Hook
@@ -47,10 +49,11 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 | `matcher` | `string` | No | A regular expression to filter event targets; if omitted, matches all |
 | `command` | `string` | Yes | The shell command to run when triggered |
 | `timeout` | `integer` | No | Timeout in seconds, range 1–600; defaults to 30 seconds |
+| `fail_mode` | `string` | No | `"open"` (default) or `"closed"`. Controls what happens when the hook itself fails; see [How Hooks Work](#how-hooks-work) |
 
-`[[hooks]]` only allows these four fields; extra fields will cause the config file to fail to load.
+`[[hooks]]` only allows these five fields; extra fields will cause the config file to fail to load.
 
-**When multiple rules match the same event**, all matching hooks run in parallel; multiple rules with identical `command` values run only once.
+**When multiple rules match the same event**, all matching hooks run in parallel; multiple rules with identical `command` values run only once. If any of the collapsed duplicates sets `fail_mode = "closed"`, the single run is fail-closed.
 
 The working directory for hook commands is the current session's project directory. On non-Windows platforms, hook processes are placed in a separate process group; on timeout, a signal is sent first to give the process a chance to clean up, then it is forcibly terminated.
 
@@ -76,8 +79,8 @@ After the script exits, the CLI determines the hook's intent based on the exit c
 | --- | --- | --- |
 | `0` | Normal exit, allow | Continue execution; stdout content (if any) may be appended to context |
 | `2` | Intentional block | Stop the current operation; stderr content (printed via `console.error`) is used as the reason for blocking |
-| Other non-zero | Script error | Default allow (fail-open) |
-| Timeout or crash | Script exception | Default allow (fail-open) |
+| Other non-zero | Script error | Default allow (fail-open); blocks when the hook sets `fail_mode = "closed"` |
+| Timeout or crash | Script exception | Default allow (fail-open); blocks when the hook sets `fail_mode = "closed"` |
 
 You can also return a JSON object via stdout to block:
 

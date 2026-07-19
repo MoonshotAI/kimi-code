@@ -703,6 +703,21 @@ describe('IExternalHooksRunnerService integration', () => {
     expect(hooksToToml(parsed, undefined)).toEqual(raw);
   });
 
+  it('round-trips fail_mode through the externalHooks config transforms', () => {
+    const raw = [{ event: 'PreToolUse', matcher: 'Bash', command: 'echo ok', fail_mode: 'closed' }];
+
+    const parsed = (hooksFromToml(raw) as unknown[]).map((hook) => HookDefSchema.parse(hook));
+
+    expect(parsed[0]).toMatchObject({ failMode: 'closed' });
+    expect(hooksToToml(parsed, undefined)).toEqual(raw);
+  });
+
+  it('rejects an invalid fail_mode value', () => {
+    const raw = [{ event: 'PreToolUse', command: 'echo ok', fail_mode: 'sometimes' }];
+    const transformed = hooksFromToml(raw) as unknown[];
+    expect(() => HookDefSchema.parse(transformed[0])).toThrow();
+  });
+
   it('exposes a summary map of event name to registered hook count', async () => {
     const engine = makeHookRunner([
       { event: 'PreToolUse', matcher: 'Bash', command: 'echo 1' },

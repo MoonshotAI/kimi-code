@@ -381,6 +381,24 @@ describe('parseManifest', () => {
     ]);
   });
 
+  it('accepts hook fail_mode in either spelling and normalizes to fail_mode', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        hooks: [
+          { event: 'PreToolUse', matcher: 'Bash', command: 'echo a', fail_mode: 'closed' },
+          { event: 'PreToolUse', matcher: 'Write', command: 'echo b', failMode: 'closed' },
+        ],
+      }),
+    });
+    const result = await parseManifest(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.manifest?.hooks).toEqual([
+      { event: 'PreToolUse', matcher: 'Bash', command: 'echo a', fail_mode: 'closed' },
+      { event: 'PreToolUse', matcher: 'Write', command: 'echo b', fail_mode: 'closed' },
+    ]);
+  });
+
   it('warns and skips a hook entry that is missing required fields', async () => {
     const root = await makePlugin({
       'kimi.plugin.json': JSON.stringify({

@@ -196,6 +196,9 @@ export const HookDefSchema = z
     matcher: z.string().optional(),
     command: z.string().min(1),
     timeout: z.number().int().min(1).max(600).optional(),
+    // Hook entries are TOML arrays of tables, which transformTomlData passes
+    // through without key camelization — so this field stays snake_case.
+    fail_mode: z.enum(['open', 'closed']).optional(),
   })
   .strict();
 

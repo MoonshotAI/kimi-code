@@ -304,7 +304,8 @@ export async function migrateConfigStep(input: ConfigStepInput): Promise<ConfigS
   //     and kimi-code share an identical hook shape, so a valid legacy hook
   //     passes straight through; the per-entry filter only guards against
   //     future schema drift (an event type / field kimi-code does not know).
-  //     Hook fields are all single lowercase words, so — unlike providers /
+  //     Hook fields are snake_case or single lowercase words (matching the
+  //     schema's own field names, e.g. `fail_mode`), so — unlike providers /
   //     models — no `transformTomlData` snake→camel pass is needed first.
   let droppedHooks = 0;
   const keptHooks: unknown[] = [];

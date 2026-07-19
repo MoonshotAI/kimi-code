@@ -470,6 +470,35 @@ timeout = 5
     ]);
   });
 
+  it('parses hooks fail_mode from TOML and rejects invalid values', () => {
+    const config = parseConfigString(
+      `
+[[hooks]]
+event = "PreToolUse"
+matcher = "Shell"
+command = "echo hi"
+fail_mode = "closed"
+`,
+      'hooks.toml',
+    );
+
+    expect(config.hooks?.[0]?.fail_mode).toBe('closed');
+
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[[hooks]]
+event = "PreToolUse"
+command = "echo hi"
+fail_mode = "sometimes"
+`,
+          'hooks.toml',
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
   it('rejects invalid hooks config', () => {
     expectKimiErrorCode(
       () =>

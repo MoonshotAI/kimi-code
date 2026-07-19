@@ -285,7 +285,7 @@ Plugin MCP servers start after `/reload` or in new sessions. To enable or disabl
 
 ## Hooks in Plugins
 
-A plugin can declare hook rules in its manifest that run on lifecycle events while the plugin is enabled. Each entry uses the same fields as a [`[[hooks]]` rule in `config.toml`](./hooks.md#configuration) (`event`, `matcher`, `command`, `timeout`):
+A plugin can declare hook rules in its manifest that run on lifecycle events while the plugin is enabled. Each entry uses the same fields as a [`[[hooks]]` rule in `config.toml`](./hooks.md#configuration) (`event`, `matcher`, `command`, `timeout`, `fail_mode`):
 
 ```json
 {
