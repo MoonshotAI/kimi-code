@@ -424,4 +424,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     const cronTurn = snapshot.items[1];
     expect(cronTurn?.kind === 'turn' && cronTurn.origin.kind).toBe('cron');
   });
+
+  it('maps legacy background_task origins to task turns, preserving the taskId', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'task done' }],
+        toolCalls: [],
+        origin: { kind: 'background_task', taskId: 'b83rhswvs' } as { kind: string },
+      },
+    ]);
+    const taskTurn = snapshot.items[1];
+    if (taskTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(taskTurn.origin).toMatchObject({ kind: 'task', taskId: 'b83rhswvs' });
+  });
 });

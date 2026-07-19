@@ -234,7 +234,11 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
       const jobId = (origin as { jobId?: unknown }).jobId;
       return { kind: 'cron', taskId: typeof jobId === 'string' ? jobId : undefined, payload: origin };
     }
-    case 'task': {
+    case 'task':
+    case 'background_task': {
+      // Legacy/v1 sessions persist background-task notifications under the
+      // 'background_task' spelling (the live mapper already handles it) —
+      // same shape, same taskId, so the turn keeps its task link.
       const taskId = (origin as { taskId?: unknown }).taskId;
       return taskId !== undefined && typeof taskId === 'string'
         ? { kind: 'task', taskId, payload: origin }
