@@ -1,20 +1,21 @@
 /**
- * `kimi server ps` — list clients currently connected to the running server.
+ * `kimi web ps` — list clients currently connected to the running servers.
  *
- * Talks to the running server over HTTP (`GET /api/v1/connections`) using the
- * single-instance lock (`~/.kimi-code/server/lock`) to discover its origin —
- * the same way `kimi web` locates the daemon.
+ * Talks to every live server over HTTP (`GET /api/v1/connections`) using the
+ * instance registry (`~/.kimi-code/server/instances/`) to discover origins,
+ * and prints one section per server id. The bearer token is home-wide, so one
+ * token reaches every instance. An unreachable instance degrades to a
+ * per-server note instead of failing the whole listing.
  */
 
 import chalk from 'chalk';
 import type { Command } from 'commander';
 
-import { getLiveLock } from '@moonshot-ai/kap-server';
+import { listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
 
 import { getDataDir } from '#/utils/paths';
 
-import { lockConnectHost } from './daemon';
-import { authHeaders, isServerHealthy, resolveServerToken, serverOrigin } from './shared';
+import { authHeaders, instanceConnectHost, isServerHealthy, resolveServerToken, serverOrigin } from './shared';
 
 /** Wire shape of a single connection returned by `GET /api/v1/connections`. */
 interface ConnectionInfo {
@@ -39,8 +40,8 @@ const USER_AGENT_MAX_WIDTH = 40;
 export function registerPsCommand(server: Command): void {
   server
     .command('ps')
-    .description('List clients currently connected to the running Kimi server.')
-    .option('--json', 'Print the raw connection list as JSON.')
+    .description('List clients currently connected to each running Kimi server.')
+    .option('--json', 'Print the raw per-server connection lists as JSON.')
     .action(async (opts: { json?: boolean }) => {
       try {
         await handlePsCommand(opts);
@@ -51,30 +52,79 @@ export function registerPsCommand(server: Command): void {
     });
 }
 
+/** One instance's listing outcome: its connections, or why they could not be fetched. */
+interface ServerConnections {
+  instance: ServerInstanceInfo;
+  origin: string;
+  connections?: ConnectionInfo[];
+  error?: string;
+}
+
 async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
-  const lock = getLiveLock();
-  if (!lock) {
+  const instances = await listLiveServerInstances();
+  if (instances.length === 0) {
     throw new Error(
-      'No running Kimi server. Start one with `kimi server run` or `kimi web`.',
+      'No running Kimi server. Start one with `kimi web`.',
     );
   }
 
-  const origin = serverOrigin(lockConnectHost(lock), lock.port);
-  if (!(await isServerHealthy(origin, HEALTH_TIMEOUT_MS))) {
-    throw new Error(`Kimi server at ${origin} is not responding.`);
-  }
-
-  // The `/api/v1/connections` route is gated by bearer auth (M5.1). Read the
-  // persistent token; a clear error here means the server has never been
-  // started (no token file yet) or the token file was removed.
+  // The `/api/v1/connections` route is gated by bearer auth (M5.1); the
+  // persistent token is home-wide, so one read reaches every instance. A clear
+  // error here means the server has never been started (no token file yet) or
+  // the token file was removed.
   const token = resolveServerToken(getDataDir());
-  const connections = await fetchConnections(origin, token);
+
+  const sections: ServerConnections[] = [];
+  for (const instance of instances) {
+    const origin = serverOrigin(instanceConnectHost(instance), instance.port);
+    if (!(await isServerHealthy(origin, HEALTH_TIMEOUT_MS))) {
+      sections.push({ instance, origin, error: 'server is not responding' });
+      continue;
+    }
+    try {
+      sections.push({ instance, origin, connections: await fetchConnections(origin, token) });
+    } catch (error) {
+      sections.push({
+        instance,
+        origin,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   if (opts.json) {
-    process.stdout.write(`${JSON.stringify(connections, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ servers: sections.map(toJsonSection) }, null, 2)}\n`);
     return;
   }
-  process.stdout.write(formatTable(connections));
+  process.stdout.write(formatSections(sections));
+}
+
+function toJsonSection(section: ServerConnections): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    server_id: section.instance.serverId,
+    pid: section.instance.pid,
+    host: section.instance.host,
+    port: section.instance.port,
+    origin: section.origin,
+  };
+  if (section.error !== undefined) {
+    return { ...base, error: section.error };
+  }
+  return { ...base, connections: section.connections ?? [] };
+}
+
+function formatSections(sections: ServerConnections[]): string {
+  return (
+    sections
+      .map((section) => {
+        const header = `server ${section.instance.serverId} (pid ${String(section.instance.pid)}, ${section.origin})`;
+        if (section.error !== undefined) {
+          return `${header}\n${section.error}\n`;
+        }
+        return `${header}\n${formatTable(section.connections ?? [])}`;
+      })
+      .join('\n')
+  );
 }
 
 async function fetchConnections(origin: string, token: string): Promise<ConnectionInfo[]> {

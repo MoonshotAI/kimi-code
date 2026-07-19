@@ -1,14 +1,11 @@
 /**
- * `kimi server run` — starts the local server.
+ * `kimi web` — run the local server in the foreground and open the web UI.
  *
- * By default this ensures a single background daemon is running (spawning a
- * detached `kimi server run --daemon` child when needed) and returns once it is
- * healthy. Pass `--foreground` to run the server in-process and keep this
- * terminal attached until SIGINT/SIGTERM. OS-managed background operation
- * (launchd / systemd / schtasks) lives in `kimi server install` + `kimi server start`.
- *
- * `kimi web` is an alias of this command with `--open` defaulted to `true`,
- * registered in `./web-alias.ts`.
+ * The server always runs in the current process, attached to the terminal,
+ * and shuts down cleanly on SIGINT/SIGTERM. `--no-open` skips the browser.
+ * Multiple instances can share the home directory: each registers itself in
+ * the instance registry and takes the next free port (see kap-server's
+ * `startServer`).
  */
 
 import { join } from 'node:path';
@@ -17,7 +14,7 @@ import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
 import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
-import { Option, type Command } from 'commander';
+import { type Command } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
@@ -37,7 +34,6 @@ import {
   isLoopbackHost,
   splitTokenFragment,
 } from './access-urls';
-import { ensureDaemon, type EnsureDaemonResult } from './daemon';
 import { type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -64,10 +60,8 @@ interface RoutedServer {
   close(): Promise<void>;
 }
 
-export interface RunCliOptions extends ServerCliOptions {
+export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
-  /** Run the server in-process instead of spawning a background daemon. */
-  foreground?: boolean;
 }
 
 export interface StartForegroundHooks {
@@ -75,16 +69,7 @@ export interface StartForegroundHooks {
   onReady?: (origin: string) => void;
 }
 
-export interface RunCommandDeps {
-  startServerBackground(options: ParsedServerOptions): Promise<{
-    origin: string;
-    /** True when an already-running daemon was reused (no new server started). */
-    reused?: boolean;
-    /** Bind host the running daemon is actually listening on (from the lock). */
-    host?: string;
-    /** Port the running daemon is actually listening on (from the lock). */
-    port?: number;
-  }>;
+export interface WebCommandDeps {
   /** Foreground runner; defaults to the real in-process runner when omitted. */
   startServerForeground?: (
     options: ParsedServerOptions,
@@ -119,8 +104,8 @@ export function buildWebUrl(origin: string, token: string): string {
   return buildOpenableUrl(origin, token);
 }
 
-/** Build the `run` subcommand, mounted under a parent (`server` or top-level). */
-export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean }): Command {
+/** Build the `web` command, mounting the runner action on `cmd` itself. */
+export function buildWebCommand(cmd: Command): Command {
   return cmd
     .option(
       '--port <port>',
@@ -134,11 +119,6 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     .option(
       '--allowed-host <host...>',
       'Extra Host header value to allow through the DNS-rebinding check. Repeat or comma-separate; a leading dot matches a domain suffix (e.g. .example.com).',
-    )
-    .option(
-      '--keep-alive',
-      'Keep the server running instead of exiting after 60s with no connected clients. Implied automatically by --host / --allowed-host, and always on in --foreground mode.',
-      false,
     )
     .option(
       '--insecure-no-tls',
@@ -169,30 +149,10 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
       'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
       false,
     )
-    .option(
-      '--foreground',
-      'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (do not daemonize).',
-      false,
-    )
-    .option(
-      options.defaultOpen ? '--no-open' : '--open',
-      options.defaultOpen
-        ? 'Do not open the web UI in the default browser.'
-        : 'Open the web UI in the default browser once the server is healthy.',
-      options.defaultOpen,
-    )
-    .addOption(
-      new Option('--daemon', 'Run as an idle-exiting background daemon (internal).').hideHelp(),
-    )
-    .addOption(
-      new Option(
-        '--idle-grace-ms <ms>',
-        'Idle-shutdown grace in ms (daemon mode, internal).',
-      ).hideHelp(),
-    )
-    .action(async (opts: RunCliOptions) => {
+    .option('--no-open', 'Do not open the web UI in the default browser.', true)
+    .action(async (opts: WebCliOptions) => {
       try {
-        await handleRunCommand(opts);
+        await handleWebCommand(opts);
       } catch (error) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exit(1);
@@ -200,75 +160,36 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
     });
 }
 
-export async function handleRunCommand(
-  opts: RunCliOptions,
-  deps: RunCommandDeps = DEFAULT_RUN_COMMAND_DEPS,
+export async function handleWebCommand(
+  opts: WebCliOptions,
+  deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
-  if (parsed.daemon) {
-    await startServerDaemon(parsed);
-    return;
-  }
-  // Foreground is always keep-alive: a server attached to the operator's
-  // terminal must never idle-kill itself. Background daemons respect the
-  // derived `--keep-alive` flag.
-  const runOptions: ParsedServerOptions =
-    opts.foreground === true ? { ...parsed, keepAlive: true } : parsed;
-  // Resolve the persistent token once: it is printed in the ready banner and
-  // rides in the opened Web UI URL's `#token=` fragment (M5.5). Falls back to
-  // the plain origin / no token line when unavailable. When auth is bypassed,
-  // the token is meaningless and is intentionally NOT shown or carried in the
-  // opened URL.
-  const writeReady = (result: { origin: string; reused?: boolean; host?: string }): void => {
-    const { origin } = result;
-    const host = result.host ?? parsed.host;
-    // When a daemon is reused, this command's flags were NOT applied to the
-    // already-running server. Don't trust the requested `--dangerous-bypass-auth`
-    // for display/open: treat the server as token-protected so we never hide a
-    // token the user actually needs, nor claim bypass for a server that is
-    // authenticating. (Probing the running server's `/meta` would give its real
-    // mode; we conservatively assume non-bypass on reuse.)
-    const effectiveBypass = result.reused === true ? false : parsed.dangerousBypassAuth;
-    const token = effectiveBypass ? undefined : deps.resolveToken?.();
-    let output = '';
-    if (result.reused === true) {
-      // A daemon was already running, so this command's --host/--port/etc. did
-      // not start a new one. Say so loudly, then print the actual running
-      // server's URLs (using its real bind host, not the requested one).
-      output += formatReuseNotice(origin);
-    }
-    output +=
-      parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
-        ? formatReadyBanner(origin, host, {
-            token,
-            networkAddresses: deps.networkAddresses,
-            dangerousBypassAuth: effectiveBypass,
-          })
-        : formatReadyLine(origin, token, effectiveBypass);
-    deps.stdout.write(output);
-    if (opts.open === true) {
-      deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
-    }
-  };
-  if (opts.foreground === true) {
-    const run = deps.startServerForeground ?? startServerForeground;
-    await run(runOptions, {
-      onReady: (origin) => {
-        writeReady({ origin, reused: false, host: parsed.host });
-      },
-    });
-    return;
-  }
-  const result = await deps.startServerBackground(runOptions);
-  writeReady(result);
-}
-
-function formatReuseNotice(origin: string): string {
-  return (
-    `${chalk.hex(darkColors.warning)('A server is already running')} at ${origin} — ` +
-    `the options from this command were not applied. ` +
-    `Run ${chalk.bold('kimi server kill')} first to bind a new host/port.\n`
-  );
+  const run = deps.startServerForeground ?? startServerForeground;
+  await run(parsed, {
+    onReady: (origin) => {
+      // Resolve the persistent token only once the server is up: a fresh
+      // server writes `server.token` on first boot, so reading it beforehand
+      // would miss first-time starts and the browser would hit the auth gate.
+      // It is printed in the ready banner and rides in the opened Web UI
+      // URL's `#token=` fragment (M5.5); falls back to the plain origin / no
+      // token line when unavailable. When auth is bypassed, the token is
+      // meaningless and is intentionally NOT shown or carried in the URL.
+      const token = parsed.dangerousBypassAuth ? undefined : deps.resolveToken?.();
+      deps.stdout.write(
+        parsed.logLevel === DEFAULT_FOREGROUND_LOG_LEVEL
+          ? formatReadyBanner(origin, parsed.host, {
+              token,
+              networkAddresses: deps.networkAddresses,
+              dangerousBypassAuth: parsed.dangerousBypassAuth,
+            })
+          : formatReadyLine(origin, token, parsed.dangerousBypassAuth),
+      );
+      if (opts.open === true) {
+        deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
+      }
+    },
+  });
 }
 
 function formatReadyLine(
@@ -293,66 +214,27 @@ function formatDangerNoticeLines(): string[] {
   return [
     `  ${dangerBold('⚠ DANGER: authentication is DISABLED (--dangerous-bypass-auth).')}`,
     `  ${danger('Anyone who can reach this port gets full access. Only continue if you understand the risk.')}`,
-    `  ${danger(`If you are unsure, run `)}${dangerBold('kimi server kill')}${danger(' now to stop this process.')}`,
+    `  ${danger(`If you are unsure, run `)}${dangerBold('kimi web kill')}${danger(' now to stop this process.')}`,
   ];
 }
 
 /**
- * `kimi server run` (non-daemon) — ensures a background daemon is running
- * (spawning a detached `kimi server run --daemon` child if needed), then
- * returns its origin so the caller can print the ready banner and exit. The
- * server keeps running in the background after this returns.
- */
-export async function startServerBackground(
-  options: ParsedServerOptions,
-): Promise<EnsureDaemonResult> {
-  return ensureDaemon({
-    host: options.host,
-    port: options.port,
-    logLevel: options.logLevel,
-    debugEndpoints: options.debugEndpoints,
-    insecureNoTls: options.insecureNoTls,
-    allowRemoteShutdown: options.allowRemoteShutdown,
-    allowRemoteTerminals: options.allowRemoteTerminals,
-    dangerousBypassAuth: options.dangerousBypassAuth,
-    keepAlive: options.keepAlive,
-    allowedHosts: options.allowedHosts,
-    idleGraceMs: options.idleGraceMs,
-  });
-}
-
-/**
- * `kimi server run --daemon` — runs the local server as a background daemon.
- *
- * Spawned as a detached child by {@link startServerBackground}. The process is
- * expected to be detached (no controlling terminal) and self-terminates after
- * the last web client disconnects and a grace period elapses. The grace timer
- * is driven by the WS connection count reported through `wsGatewayOptions`.
- * Resolves only via `process.exit`.
- */
-export async function startServerDaemon(options: ParsedServerOptions): Promise<never> {
-  return runServerInProcess(options, { daemon: true });
-}
-
-/**
- * `kimi server run --foreground` — runs the local server in-process, attached
- * to the current terminal. Resolves only via `process.exit` (SIGINT/SIGTERM).
+ * `kimi web` — runs the local server in-process, attached to the current
+ * terminal. Resolves only via `process.exit` (SIGINT/SIGTERM).
  */
 export async function startServerForeground(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks = {},
 ): Promise<never> {
-  return runServerInProcess(options, { daemon: false }, hooks.onReady);
+  return runServerInProcess(options, hooks.onReady);
 }
 
 /**
- * Start the server in the current process and block until shutdown. Shared by
- * the detached daemon (`daemon: true`, with idle-exit) and the foreground
- * runner (`daemon: false`). `onReady` fires once the server is listening.
+ * Start the server in the current process and block until shutdown.
+ * `onReady` fires once the server is listening.
  */
 async function runServerInProcess(
   options: ParsedServerOptions,
-  mode: { daemon: boolean },
   onReady?: (origin: string) => void,
 ): Promise<never> {
   const version = getVersion();
@@ -363,23 +245,9 @@ async function runServerInProcess(
   let running: RoutedServer | undefined;
   let stopping = false;
 
-  // Idle auto-shutdown is only for the on-demand personal daemon. It is skipped
-  // in foreground mode (`mode.daemon` is false) and whenever `--keep-alive` is
-  // set — explicitly, or implied by `--host` / `--allowed-host`.
-  const idle =
-    mode.daemon && !options.keepAlive
-      ? createIdleShutdownHandler({
-          graceMs: options.idleGraceMs,
-          onIdle: () => {
-            void shutdown('idle');
-          },
-        })
-      : undefined;
-
   async function shutdown(reason: string): Promise<void> {
     if (stopping) return;
     stopping = true;
-    idle?.cancel();
     running?.logger.info({ reason }, 'server shutting down');
     try {
       await running?.close();
@@ -418,22 +286,6 @@ async function runServerInProcess(
     seeds: hostRequestHeadersSeed(buildKimiDefaultHeaders(version)),
     webAssetsDir: serverWebAssetsDir(),
   });
-  // The connection registry exposes no count-change hook, so forward
-  // add/remove to the daemon's idle-shutdown handler (a no-op when `idle`
-  // is undefined, e.g. foreground or --keep-alive).
-  if (idle !== undefined) {
-    const registry = v2.connectionRegistry;
-    const add = registry.add.bind(registry);
-    const remove = registry.remove.bind(registry);
-    registry.add = (conn) => {
-      add(conn);
-      idle.onConnectionCountChange(registry.size());
-    };
-    registry.remove = (connId) => {
-      remove(connId);
-      idle.onConnectionCountChange(registry.size());
-    };
-  }
   logger.info('serving the REST/WS API and the bundled web UI');
   running = {
     address: `http://${v2.host}:${v2.port}`,
@@ -441,7 +293,7 @@ async function runServerInProcess(
     close: () => v2.close(),
   };
 
-  track('server_started', { daemon: mode.daemon });
+  track('server_started', { daemon: false });
 
   process.once('SIGINT', () => {
     void shutdown('SIGINT');
@@ -450,57 +302,13 @@ async function runServerInProcess(
     void shutdown('SIGTERM');
   });
 
-  const readyFields = mode.daemon
-    ? options.keepAlive
-      ? { address: running.address, idleShutdown: 'disabled' as const }
-      : { address: running.address, idleGraceMs: options.idleGraceMs }
-    : { address: running.address };
-  running.logger.info(readyFields, mode.daemon ? 'daemon ready' : 'server ready');
+  running.logger.info({ address: running.address }, 'server ready');
 
   onReady?.(running.address);
 
   return new Promise<never>(() => {
     // Keeps the event loop alive; the process ends via shutdown()/process.exit.
   });
-}
-
-/**
- * Pure idle-shutdown state machine, exported for tests.
- *
- * Watches the live WS connection count and fires `onIdle` exactly once, after
- * the count has dropped back to zero for `graceMs` ms *and* at least one
- * client had connected since startup. A reconnect before the grace elapses
- * cancels the pending exit. The initial "no clients yet" state never arms the
- * timer (so a freshly-spawned daemon is not killed before anyone connects).
- */
-export function createIdleShutdownHandler(opts: { graceMs: number; onIdle: () => void }): {
-  onConnectionCountChange(size: number): void;
-  cancel(): void;
-} {
-  let timer: NodeJS.Timeout | undefined;
-  let seenClient = false;
-
-  const cancel = (): void => {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
-
-  return {
-    onConnectionCountChange(size: number): void {
-      if (size > 0) {
-        seenClient = true;
-        cancel();
-        return;
-      }
-      if (seenClient) {
-        cancel();
-        timer = setTimeout(opts.onIdle, opts.graceMs);
-      }
-    },
-    cancel,
-  };
 }
 
 function serverWebAssetsDir(): string {
@@ -520,9 +328,11 @@ interface FormatReadyBannerOptions {
   networkAddresses?: NetworkAddress[];
   /** When true, render a red danger notice (auth is disabled). */
   dangerousBypassAuth?: boolean;
+  /** When true, the server is attached to this terminal — Stop hint is Ctrl+C. */
+  foreground?: boolean;
 }
 
-function formatReadyBanner(
+export function formatReadyBanner(
   origin: string,
   host: string,
   opts: FormatReadyBannerOptions = {},
@@ -580,13 +390,13 @@ function formatReadyBanner(
 
   // Auxiliary controls last.
   lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
-  lines.push(`  ${label('Stop:     ')}${muted('kimi server kill')}`);
+  const stopHint = opts.foreground === true ? 'Ctrl+C' : 'kimi web kill';
+  lines.push(`  ${label('Stop:     ')}${muted(stopHint)}`);
   lines.push('');
   return lines.join('\n');
 }
 
-const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
-  startServerBackground,
+const DEFAULT_WEB_COMMAND_DEPS: WebCommandDeps = {
   startServerForeground,
   openUrl: defaultOpenUrl,
   resolveToken: () => {

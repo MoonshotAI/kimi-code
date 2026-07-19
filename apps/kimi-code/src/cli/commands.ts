@@ -8,8 +8,8 @@ import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
-import { registerServerCommand } from './sub/server';
 import { registerVisCommand } from './sub/vis';
+import { registerWebCommand } from './sub/web';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
@@ -46,8 +46,8 @@ export function createProgram(
     )
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
-    .option('-y, --yolo', 'Automatically approve all actions.', false)
-    .option('--auto', 'Start in auto permission mode.', false)
+    .option('-y, --yolo', 'Auto-approve regular tool calls; the agent may still ask questions.', false)
+    .option('--auto', 'Start in auto permission mode: fully autonomous, the agent will not ask questions.', false)
     .addOption(
       new Option(
         '-m, --model <model>',
@@ -95,7 +95,7 @@ export function createProgram(
   registerExportCommand(program);
   registerProviderCommand(program);
   registerAcpCommand(program);
-  registerServerCommand(program);
+  registerWebCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);
