@@ -25,14 +25,17 @@ const emit = defineEmits<{
   openAgent: [toolCallId: string];
 }>();
 
-const open = ref(true);
-
 const count = computed(() => props.tools.length);
 const aggregateStatus = computed<'running' | 'error' | 'done'>(() => {
   if (props.tools.some((t) => t.tool.status === 'running')) return 'running';
   if (props.tools.some((t) => t.tool.status === 'error')) return 'error';
   return 'done';
 });
+
+// kimi-ui: groups default to collapsed (they used to default open, mounting
+// every tool call body of every past turn). A group with tools still running
+// opens itself so live execution stays visible.
+const open = ref(aggregateStatus.value === 'running');
 const { t } = useI18n();
 
 const statusLabel = computed(() => {
@@ -70,7 +73,8 @@ function onHeadClick(): void {
       <Icon class="tg-car" name="chevron-right" size="sm" />
     </button>
     <div class="tool-group-body" :class="{ open }" :inert="!open">
-      <div class="tool-group-body-inner">
+      <!-- kimi-ui: unmount when collapsed (same DOM-bloat fix as ToolRow). -->
+      <div v-if="open" class="tool-group-body-inner">
         <ToolCall
           v-for="(item, si) in tools"
           :key="toolStackKey(item)"

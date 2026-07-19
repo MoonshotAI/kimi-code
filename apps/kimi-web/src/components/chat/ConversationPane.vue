@@ -805,7 +805,14 @@ const scrollKey = computed<ScrollKey>(() => {
   const thinkingLen = last?.thinking?.length ?? 0;
   const toolsLen =
     last?.tools?.reduce(
-      (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
+      // Track output growth via line count + tail-line length instead of
+      // joining every tool output on each change.
+      (n, tool) =>
+        n +
+        tool.name.length +
+        (tool.arg?.length ?? 0) +
+        (tool.output?.length ?? 0) +
+        (tool.output?.at(-1)?.length ?? 0),
       0,
     ) ?? 0;
   return {
@@ -1126,7 +1133,10 @@ function rebindScrollObservers(): void {
   updatePanesScrollbarWidth();
   if (contentObserver) {
     contentObserver.disconnect();
-    if (el) contentObserver.observe(el, { childList: true, subtree: true, characterData: true });
+    // Drop characterData: per-token text updates during streaming fired
+    // this observer at delta rate; structural changes are enough, and the
+    // scroll follow is driven by the reactive scrollKey watcher anyway.
+    if (el) contentObserver.observe(el, { childList: true, subtree: true });
   }
   if (resizeObserver) {
     resizeObserver.disconnect();

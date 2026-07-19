@@ -74,7 +74,9 @@ function onHeadClick(): void {
       <Icon v-if="expandable" class="car" :name="open ? 'chevron-down' : 'chevron-right'" size="sm" />
     </div>
     <div class="bb" :class="{ open }" :inert="!open">
-      <div class="bb-pad">
+      <!-- kimi-ui: unmount the body when closed — collapsed tool rows used to
+           keep every output line in the DOM (grid 0fr only hid them visually). -->
+      <div v-if="open" class="bb-pad">
         <slot />
       </div>
     </div>
