@@ -25,6 +25,7 @@ import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ModelCapability } from '#/kosong/contract/capability';
+import type { InspectionSource } from '#/kosong/contract/inspection';
 import type { ChatProvider } from '#/kosong/contract/provider';
 
 import type { ProtocolBaseId, ResolvedAdapterIdentity } from './protocolBase';
@@ -80,6 +81,12 @@ export interface ProtocolAdapterConfig {
   readonly providerOptions?: ProtocolProviderOptions;
 }
 
+/** The capability answer plus which level of the fallback chain produced it. */
+export interface ExplainedCapability {
+  readonly capability: ModelCapability;
+  readonly source: InspectionSource;
+}
+
 export interface IProtocolAdapterRegistry {
   readonly _serviceBrand: undefined;
 
@@ -122,6 +129,18 @@ export interface IProtocolAdapterRegistry {
     modelName: string,
     providerType?: string,
   ): ModelCapability;
+
+  /**
+   * The provenance-preserving twin of `resolveCapability` — the same chain,
+   * but reports which level answered (definition / trait / base / none), so
+   * inspection views can attribute a detected capability instead of just
+   * serving it.
+   */
+  explainCapability(
+    protocol: Protocol,
+    modelName: string,
+    providerType?: string,
+  ): ExplainedCapability;
 
   /**
    * Resolve (protocol, providerType) from `config` and construct the

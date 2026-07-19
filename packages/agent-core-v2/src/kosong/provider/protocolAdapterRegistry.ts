@@ -33,6 +33,7 @@ import { ChatProviderError } from '#/kosong/contract/errors';
 import type { ChatProvider } from '#/kosong/contract/provider';
 import {
   IProtocolAdapterRegistry,
+  type ExplainedCapability,
   type Protocol,
   type ProtocolAdapterConfig,
 } from '#/kosong/protocol/protocol';
@@ -97,10 +98,24 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   }
 
   resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
+    return this.explainCapability(protocol, modelName, providerType).capability;
+  }
+
+  explainCapability(
+    protocol: Protocol,
+    modelName: string,
+    providerType?: string,
+  ): ExplainedCapability {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     if (definition?.capability !== undefined) {
-      return definition.capability;
+      return {
+        capability: definition.capability,
+        source: {
+          kind: 'builtin',
+          detail: `provider definition '${providerType}' (pair with protocol '${protocol}')`,
+        },
+      };
     }
 
     const identity = this.resolveAdapterIdentity(protocol, providerType);
@@ -113,10 +128,26 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
       }
     }
     if (traitCapability !== undefined) {
-      return traitCapability;
+      return {
+        capability: traitCapability,
+        source: {
+          kind: 'builtin',
+          detail: `trait capability hook (provider '${providerType ?? 'unregistered'}')`,
+        },
+      };
     }
 
-    return getProtocolBase(identity.baseId)?.capability?.(modelName) ?? UNKNOWN_CAPABILITY;
+    const baseCapability = getProtocolBase(identity.baseId)?.capability?.(modelName);
+    if (baseCapability !== undefined) {
+      return {
+        capability: baseCapability,
+        source: { kind: 'builtin', detail: `protocol base '${identity.baseId}' catalog` },
+      };
+    }
+    return {
+      capability: UNKNOWN_CAPABILITY,
+      source: { kind: 'none', detail: 'no capability source knew this model' },
+    };
   }
 
   createChatProvider(config: ProtocolAdapterConfig): ChatProvider {

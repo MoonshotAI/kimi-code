@@ -128,6 +128,46 @@ export interface ResolvedProviderEndpoint {
   readonly baseUrl?: string;
 }
 
+export interface ExplainedProviderEndpoint {
+  readonly apiKey?: string;
+  /** The env-bag name that supplied the apiKey (absent when it did not). */
+  readonly apiKeyEnvName?: string;
+  readonly baseUrl?: string;
+  /** The env-bag name that supplied the baseUrl (absent when it did not). */
+  readonly baseUrlEnvName?: string;
+  /** True when the baseUrl is the definition's `defaultBaseUrl`, not env. */
+  readonly baseUrlIsDefault?: boolean;
+}
+
+/**
+ * The provenance-preserving twin of `resolveProviderEndpoint` — same chain,
+ * but reports WHICH env-bag name supplied each value (and whether the baseUrl
+ * is the definition's built-in default), so inspection views can attribute
+ * endpoints without re-walking the declaration.
+ */
+export function explainProviderEndpoint(
+  providerType: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): ExplainedProviderEndpoint {
+  const definition = getProviderDefinition(providerType);
+  if (definition === undefined) return {};
+  const endpoint =
+    normalizeEndpointDeclaration(definition.endpoint) ?? aggregateTraitEndpoints(definition);
+  if (endpoint === undefined) return {};
+  const apiKeyHit = firstEnvHit(endpoint.apiKeyEnv, env);
+  const baseUrlHit = firstEnvHit(endpoint.baseUrlEnv, env);
+  return {
+    ...(apiKeyHit !== undefined
+      ? { apiKey: apiKeyHit.value, apiKeyEnvName: apiKeyHit.name }
+      : undefined),
+    ...(baseUrlHit !== undefined
+      ? { baseUrl: baseUrlHit.value, baseUrlEnvName: baseUrlHit.name }
+      : endpoint.defaultBaseUrl !== undefined
+        ? { baseUrl: endpoint.defaultBaseUrl, baseUrlIsDefault: true }
+        : undefined),
+  };
+}
+
 /**
  * Resolve a vendor's endpoint from its definition: the env fallback chain
  * declared at the definition level or aggregated from its traits, read from
@@ -140,13 +180,7 @@ export function resolveProviderEndpoint(
   providerType: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): ResolvedProviderEndpoint {
-  const definition = getProviderDefinition(providerType);
-  if (definition === undefined) return {};
-  const endpoint =
-    normalizeEndpointDeclaration(definition.endpoint) ?? aggregateTraitEndpoints(definition);
-  if (endpoint === undefined) return {};
-  const apiKey = firstEnvValue(endpoint.apiKeyEnv, env);
-  const baseUrl = firstEnvValue(endpoint.baseUrlEnv, env) ?? endpoint.defaultBaseUrl;
+  const { apiKey, baseUrl } = explainProviderEndpoint(providerType, env);
   return {
     ...(apiKey !== undefined ? { apiKey } : undefined),
     ...(baseUrl !== undefined ? { baseUrl } : undefined),
@@ -197,13 +231,13 @@ function aggregateTraitEndpoints(
   return declared ? { apiKeyEnv, baseUrlEnv, defaultBaseUrl } : undefined;
 }
 
-function firstEnvValue(
+function firstEnvHit(
   names: readonly string[],
   env: Readonly<Record<string, string | undefined>>,
-): string | undefined {
+): { readonly name: string; readonly value: string } | undefined {
   for (const name of names) {
     const value = env[name];
-    if (value !== undefined && value.length > 0) return value;
+    if (value !== undefined && value.length > 0) return { name, value };
   }
   return undefined;
 }

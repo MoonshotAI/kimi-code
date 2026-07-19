@@ -124,7 +124,6 @@ import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
 import type { LLMCallParams, ModelRequester } from '#/kosong/model/modelRequester';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
-import { IPlatformService } from '#/app/platform/platform';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import {
@@ -832,13 +831,12 @@ class ConfigBackedModelCatalog extends ModelCatalog {
     private readonly options: TestModelProviderOptions = {},
     @IConfigService config: IConfigService,
     @IProviderService providers: IProviderService,
-    @IPlatformService platforms: IPlatformService,
     @IModelService models: IModelService,
     @IOAuthService oauth: IOAuthService,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
   ) {
-    super(config, providers, platforms, models, oauth, protocolRegistry, hostRequestHeaders);
+    super(config, providers, models, oauth, protocolRegistry, hostRequestHeaders);
   }
 
   override getRequester(id: string): ModelRequester {
@@ -2366,6 +2364,8 @@ function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAd
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
+    explainCapability: (protocol, modelName, providerType) =>
+      real.explainCapability(protocol, modelName, providerType),
     createChatProvider: (input: ProtocolAdapterConfig) => {
       if (input.providerType !== undefined && hasProviderDefinition(input.providerType)) {
         return replaceProviderGenerate(real.createChatProvider(input), generate);

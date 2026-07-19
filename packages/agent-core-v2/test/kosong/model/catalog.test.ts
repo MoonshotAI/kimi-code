@@ -1,7 +1,7 @@
 /**
  * `kosong/model` ModelCatalog tests — Model assembly, caching, and
  * config-event invalidation, exercised through the real DI graph (real
- * model/provider/platform services + the real protocol-adapter registry with
+ * model/provider services + the real protocol-adapter registry with
  * every base contrib and the kimi + endpoint definitions registered):
  *
  *  - the assembled Model is PURE DATA: no `with*` morphs, no request driver —
@@ -13,7 +13,7 @@
  *    definition's `hostHeaders`, and the Anthropic effort profile is inferred
  *    only for vendors whose thinking is not trait-driven;
  *  - `get`/`getRequester` cache per id; the cache drops on the
- *    model/provider/platform change events — and ONLY there: a config write
+ *    model/provider change events — and ONLY there: a config write
  *    that bypasses the events keeps serving the stale Model until
  *    `notifyConfigChanged()` (the load-bearing test-harness contract).
  */
@@ -24,8 +24,10 @@ import { createScopedTestHost } from '#/_base/di/test';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
-import { IPlatformService } from '#/app/platform/platform';
-import '#/app/platform/platformService';
+import { UNKNOWN_CAPABILITY } from '#/kosong/contract/capability';
+import type { ChatProvider } from '#/kosong/contract/provider';
+import { emptyUsage } from '#/kosong/contract/usage';
+import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import '#/kosong/provider/bases/anthropic.contrib';
 import '#/kosong/provider/bases/google-genai.contrib';
 import '#/kosong/provider/bases/openai-responses.contrib';
@@ -435,6 +437,280 @@ describe('headers merge order', () => {
         'X-Msh-Device-Id': 'device-1',
         'X-Custom': 'c',
       });
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
+describe('ModelCatalog inspect', () => {
+  it('builds the god object with per-field provenance (kimi structured model)', () => {
+    const { host, catalog } = createHost(kimiSections);
+    try {
+      const view = catalog.inspect('k1');
+      expect(view.id).toBe('k1');
+      expect(view.provider).toMatchObject({ id: 'kimi', synthesized: false });
+      expect(view.provider.definition?.registered).toBe(true);
+      expect(view.provider.definition?.baseProtocol).toBe('openai');
+      expect(view.resolved.protocol).toBe('openai');
+      expect(view.resolved.auth).toEqual({ kind: 'apiKey', apiKey: '••••test' });
+      expect(view.sources['resolved.protocol']).toMatchObject({ kind: 'builtin' });
+      expect(view.sources['resolved.baseUrl']).toMatchObject({ kind: 'config' });
+      expect(view.sources['resolved.auth']).toMatchObject({ kind: 'config' });
+      expect(view.sources['provider']).toMatchObject({ kind: 'config' });
+      expect(view.sources['model']).toMatchObject({ kind: 'config' });
+      expect(view.sources['model.id']).toMatchObject({ kind: 'config' });
+      expect(view.sources['resolved.capabilities.max_context_tokens']).toMatchObject({
+        kind: 'synthesized',
+      });
+      expect(view.sources['resolved']).toMatchObject({ kind: 'synthesized' });
+      // Kimi's definition capability is UNKNOWN — nothing is detected.
+      expect(view.sources['resolved.capabilities.tool_use']).toMatchObject({ kind: 'none' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('serves the same resolution as get (chain consistency, same cache generation)', () => {
+    const { host, catalog, config } = createHost(kimiSections);
+    try {
+      const model = catalog.get('k1');
+      const view = catalog.inspect('k1');
+      const { authProvider: _auth, id: _id, name, ...rest } = model;
+      expect(view.resolved).toMatchObject({ ...rest, wireName: name });
+
+      // A silent config write keeps the stale generation: inspect reflects
+      // THAT generation (what get keeps serving), never a re-resolution.
+      config.setSilent('models', {
+        k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 262144, displayName: 'silent' },
+      });
+      expect(catalog.inspect('k1').resolved.displayName).toBeUndefined();
+      expect(catalog.get('k1').displayName).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('attributes profile-filled efforts and capabilities to builtin', () => {
+    const { host, catalog } = createHost({
+      providers: { claude: { type: 'anthropic', apiKey: 'sk-a' } },
+      models: {
+        sonnet: { provider: 'claude', model: 'claude-sonnet-4-5', maxContextSize: 200000 },
+      },
+    });
+    try {
+      const view = catalog.inspect('sonnet');
+      expect(view.resolved.supportEfforts).toEqual(['low', 'medium', 'high']);
+      expect(view.sources['model.effective.supportEfforts']).toMatchObject({
+        kind: 'builtin',
+        detail: expect.stringContaining('anthropic profile'),
+      });
+      expect(view.sources['model.effective.defaultEffort']).toMatchObject({ kind: 'builtin' });
+      expect(view.sources['resolved.supportEfforts']).toMatchObject({ kind: 'builtin' });
+      expect(view.sources['resolved.capabilities.thinking']).toMatchObject({ kind: 'builtin' });
+      expect(view.sources['resolved.providerOptions.supportEfforts']).toMatchObject({
+        kind: 'builtin',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('attributes override fields to the overrides block', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        kimi: { type: 'kimi', apiKey: 'sk', baseUrl: 'https://api.example.test/v1' },
+      },
+      models: {
+        m: {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 100,
+          overrides: { maxContextSize: 200 },
+        },
+      },
+    });
+    try {
+      const view = catalog.inspect('m');
+      expect(view.resolved.maxContextSize).toBe(200);
+      expect(view.sources['model.effective.maxContextSize']).toMatchObject({ kind: 'override' });
+      expect(view.sources['resolved.maxContextSize']).toMatchObject({ kind: 'override' });
+      expect(view.sources['model.effective.model']).toMatchObject({ kind: 'config' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('attributes env-bag credentials and endpoints by env-var name', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        kimi: {
+          type: 'kimi',
+          env: { KIMI_API_KEY: 'env-token', KIMI_BASE_URL: 'https://kimi-env.example.test/v1' },
+        },
+      },
+      models: { k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 1000 } },
+    });
+    try {
+      const view = catalog.inspect('k1');
+      expect(view.resolved.baseUrl).toBe('https://kimi-env.example.test/v1');
+      expect(view.resolved.auth.kind).toBe('apiKey');
+      expect(view.sources['resolved.auth']).toMatchObject({
+        kind: 'env',
+        detail: expect.stringContaining('KIMI_API_KEY'),
+      });
+      expect(view.sources['resolved.baseUrl']).toMatchObject({
+        kind: 'env',
+        detail: expect.stringContaining('KIMI_BASE_URL'),
+      });
+      expect(JSON.stringify(view)).not.toContain('env-token');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('attributes the definition defaultBaseUrl to builtin and reports missing credentials', () => {
+    const { host, catalog } = createHost({
+      providers: { kimi: { type: 'kimi' } },
+      models: { k1: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 1 } },
+    });
+    try {
+      const view = catalog.inspect('k1');
+      expect(view.resolved.baseUrl).toBe('https://api.moonshot.ai/v1');
+      expect(view.sources['resolved.baseUrl']).toMatchObject({
+        kind: 'builtin',
+        detail: expect.stringContaining('defaultBaseUrl'),
+      });
+      expect(view.resolved.auth).toEqual({ kind: 'none' });
+      expect(view.sources['resolved.auth']).toMatchObject({ kind: 'none' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('marks flat-model providers as synthesized', () => {
+    const { host, catalog } = createHost({
+      models: {
+        flat: {
+          protocol: 'openai',
+          name: 'my-model',
+          baseUrl: 'https://flat.example.test/v1',
+          apiKey: 'sk-flat',
+          maxContextSize: 4096,
+        },
+      },
+    });
+    try {
+      const view = catalog.inspect('flat');
+      expect(view.provider.synthesized).toBe(true);
+      expect(view.provider.id).toBe('flat.example.test');
+      expect(view.provider.config).toBeUndefined();
+      expect(view.sources['provider']).toMatchObject({ kind: 'synthesized' });
+      expect(view.resolved.auth).toEqual({ kind: 'apiKey', apiKey: '••••flat' });
+      expect(JSON.stringify(view)).not.toContain('sk-flat');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('throws config.invalid for unknown models, same as get', () => {
+    const { host, catalog } = createHost(kimiSections);
+    try {
+      expect(() => catalog.inspect('nope')).toThrowError(
+        expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
+      );
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
+describe('ModelCatalog ping', () => {
+  it('returns the streamed text and usage on a live success', async () => {
+    const config = new StubConfigService(kimiSections);
+    const host = createScopedTestHost([
+      [IConfigService, config],
+      [IOAuthService, stubOAuthService()],
+      [IHostRequestHeaders, new HostRequestHeaders({})],
+    ]);
+    try {
+      const fakeProvider: ChatProvider = {
+        name: 'fake-base',
+        modelName: 'fake-model',
+        thinkingEffort: null,
+        async generate() {
+          return {
+            id: 'msg-1',
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+            traceId: null,
+            async *[Symbol.asyncIterator]() {
+              yield { type: 'text', text: 'pong' };
+            },
+          };
+        },
+      };
+      const registry = {
+        _serviceBrand: undefined,
+        supportedProtocols: () => [],
+        resolveAdapterIdentity: () => {
+          throw new Error('not exercised');
+        },
+        resolveProviderBaseId: () => {
+          throw new Error('not exercised');
+        },
+        resolveCapability: () => UNKNOWN_CAPABILITY,
+        explainCapability: () => ({
+          capability: UNKNOWN_CAPABILITY,
+          source: { kind: 'none' as const },
+        }),
+        createChatProvider: () => fakeProvider,
+      } as unknown as IProtocolAdapterRegistry;
+      const catalog = new ModelCatalog(
+        config,
+        host.app.accessor.get(IProviderService),
+        host.app.accessor.get(IModelService),
+        host.app.accessor.get(IOAuthService),
+        registry,
+        new HostRequestHeaders({}),
+      );
+      const result = await catalog.ping('k1');
+      expect(result).toMatchObject({ ok: true, text: 'pong', finishReason: 'completed' });
+      expect(result.usage).toEqual(emptyUsage());
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('returns ok:false with the translated error when the wire fails', async () => {
+    const { host, catalog } = createHost({
+      models: {
+        flat: {
+          protocol: 'openai',
+          name: 'my-model',
+          baseUrl: 'http://127.0.0.1:1/',
+          apiKey: 'sk-x',
+          maxContextSize: 4096,
+        },
+      },
+    });
+    try {
+      const result = await catalog.ping('flat');
+      expect(result.ok).toBe(false);
+      expect(result.error).toBeTruthy();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('rejects with config.invalid for unknown models', async () => {
+    const { host, catalog } = createHost(kimiSections);
+    try {
+      await expect(catalog.ping('nope')).rejects.toThrowError(
+        expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
+      );
     } finally {
       host.dispose();
     }

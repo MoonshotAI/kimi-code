@@ -6,7 +6,7 @@
  * writes provider configuration through `provider`, refreshes the managed
  * OAuth provider's server-side model configuration through `config`, publishes
  * model-catalog changes through `event`, reports through `telemetry`,
- * logs through `log`, resolves shared auth through `platform`, and delegates
+ * logs through `log`, and delegates
  * the device-code protocol, token storage, and token refresh to `IOAuthToolkit`
  * (provided by `OAuthToolkitService` over `@moonshot-ai/kimi-code-oauth`,
  * which locates token storage through `bootstrap`). Bound at App scope.
@@ -55,7 +55,6 @@ import {
   resolveModelAuthMaterial,
 } from '#/kosong/model/modelAuth';
 import { type ModelRecord, MODELS_SECTION } from '#/kosong/model/model';
-import { IPlatformService } from '#/app/platform/platform';
 import {
   IProviderService,
   type OAuthRef,
@@ -565,7 +564,6 @@ export class AuthSummaryService implements IAuthSummaryService {
   constructor(
     @IProviderService private readonly providerService: IProviderService,
     @IConfigService private readonly config: IConfigService,
-    @IPlatformService private readonly platforms: IPlatformService,
     @IOAuthService private readonly oauth: IOAuthService,
     @ILogService private readonly log: ILogService,
   ) {}
@@ -626,7 +624,6 @@ export class AuthSummaryService implements IAuthSummaryService {
       model,
       provider,
       providerName,
-      getPlatform: (platformId) => this.platforms.get(platformId),
     });
     if (auth.apiKey !== undefined) return;
     if (auth.oauth !== undefined) {

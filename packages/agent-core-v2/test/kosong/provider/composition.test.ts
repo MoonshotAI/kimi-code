@@ -301,6 +301,35 @@ describe('resolveCapability', () => {
   });
 });
 
+describe('explainCapability', () => {
+  it('reports the definition level when the pair declares a capability', () => {
+    const { capability, source } = registry.explainCapability('openai', 'gpt-4o', 'kimi');
+    expect(capability).toBe(UNKNOWN_CAPABILITY);
+    expect(source.kind).toBe('builtin');
+    expect(source.detail).toContain("'kimi'");
+  });
+
+  it('reports the trait level when a trait hook answers', () => {
+    const { capability, source } = registry.explainCapability('openai', 'special-model', 'cap-vendor');
+    expect(capability.image_in).toBe(true);
+    expect(source.kind).toBe('builtin');
+    expect(source.detail).toContain('trait');
+  });
+
+  it('reports the base catalog level', () => {
+    const { capability, source } = registry.explainCapability('openai', 'gpt-4o');
+    expect(capability.image_in).toBe(true);
+    expect(source.kind).toBe('builtin');
+    expect(source.detail).toContain('base');
+  });
+
+  it('reports none when nothing knows the model', () => {
+    const { capability, source } = registry.explainCapability('openai', 'mystery-model');
+    expect(isUnknownCapability(capability)).toBe(true);
+    expect(source.kind).toBe('none');
+  });
+});
+
 describe('createChatProvider', () => {
   it('composes kimi as the openai base with the upload capability bound', () => {
     const provider = registry.createChatProvider({

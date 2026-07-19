@@ -1,9 +1,9 @@
 /**
  * `kosong/model` domain (L2) — shared auth-material resolution.
  *
- * Resolves Model / Provider / Platform credential precedence for runtime
- * model resolution and auth-readiness probes. Pure computation; callers
- * supply the Platform lookup so this file stays outside the service graph.
+ * Resolves Model / Provider credential precedence for runtime model
+ * resolution and auth-readiness probes. Pure computation, outside the
+ * service graph.
  *
  * Two deliberate differences from the legacy implementation:
  *  - The per-protocol env-var fallback table is gone: env-bag credential and
@@ -17,7 +17,7 @@
  */
 
 import { Error2 } from '#/_base/errors/errors';
-import { type PlatformConfig, UNKNOWN_PLATFORM_KEY } from '#/app/platform/platform';
+import type { ResolutionTrace } from '#/kosong/contract/inspection';
 
 import { ConfigErrors } from '../../app/config/errors';
 import {
@@ -26,7 +26,7 @@ import {
   matchKnownAnthropicModelProfile,
 } from '../provider/bases/anthropic-profile';
 import type { OAuthRef, ProviderConfig } from '../provider/provider';
-import { resolveProviderEndpoint } from '../provider/providerDefinition';
+import { explainProviderEndpoint } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
 import { drivesThinkingThroughTraits } from './thinking';
@@ -37,53 +37,72 @@ export interface ResolvedModelAuthMaterial {
   readonly oauthProviderKey?: string;
 }
 
-export function resolveModelAuthMaterial(args: {
-  readonly modelId: string;
-  readonly model: ModelRecord;
-  readonly provider: ProviderConfig | undefined;
-  readonly providerName: string;
-  readonly getPlatform: (platformId: string) => PlatformConfig | undefined;
-}): ResolvedModelAuthMaterial {
+/**
+ * The Model → Provider credential precedence chain. When `trace` is given,
+ * the winning layer (and any env-bag hit, by env-var name) is recorded at
+ * `resolved.auth`; without a trace the function is the pure chain it always
+ * was.
+ */
+export function resolveModelAuthMaterial(
+  args: {
+    readonly modelId: string;
+    readonly model: ModelRecord;
+    readonly provider: ProviderConfig | undefined;
+    readonly providerName: string;
+  },
+  trace?: ResolutionTrace,
+): ResolvedModelAuthMaterial {
   const modelApiKey = nonEmpty(args.model.apiKey);
   if (modelApiKey !== undefined && args.model.oauth !== undefined) {
     throw authConflictError('Model', args.modelId);
   }
-  if (modelApiKey !== undefined) return { apiKey: modelApiKey };
+  if (modelApiKey !== undefined) {
+    trace?.record('resolved.auth', { kind: 'config', detail: 'model.apiKey' });
+    return { apiKey: modelApiKey };
+  }
   if (args.model.oauth !== undefined) {
+    trace?.record('resolved.auth', { kind: 'config', detail: 'model.oauth' });
     return {
       oauth: args.model.oauth,
       oauthProviderKey: args.model.providerId ?? args.model.provider,
     };
   }
 
-  const platformId = args.provider?.platformId;
-  if (platformId !== undefined && platformId !== UNKNOWN_PLATFORM_KEY) {
-    const platform = args.getPlatform(platformId);
-    const authType = args.provider?.type ?? args.model.protocol;
-    const platformApiKey =
-      nonEmpty(platform?.auth?.apiKey) ?? envApiKeyFallback(authType, platform?.auth?.env);
-    if (platformApiKey !== undefined && platform?.auth?.oauth !== undefined) {
-      throw authConflictError('Platform', platformId);
-    }
-    if (platformApiKey !== undefined) return { apiKey: platformApiKey };
-    if (platform?.auth?.oauth !== undefined) {
-      return { oauth: platform.auth.oauth, oauthProviderKey: platformId };
-    }
-  }
-
-  const providerApiKey =
-    nonEmpty(args.provider?.apiKey) ??
-    envApiKeyFallback(args.provider?.type ?? args.model.protocol, args.provider?.env);
+  const providerAuthType = args.provider?.type ?? args.model.protocol;
+  const providerEndpoint =
+    providerAuthType === undefined
+      ? {}
+      : explainProviderEndpoint(providerAuthType, args.provider?.env ?? {});
+  const providerApiKey = nonEmpty(args.provider?.apiKey) ?? nonEmpty(providerEndpoint.apiKey);
   if (providerApiKey !== undefined && args.provider?.oauth !== undefined) {
     throw authConflictError('Provider', args.providerName);
   }
-  if (providerApiKey !== undefined) return { apiKey: providerApiKey };
+  if (providerApiKey !== undefined) {
+    trace?.record(
+      'resolved.auth',
+      nonEmpty(args.provider?.apiKey) !== undefined
+        ? { kind: 'config', detail: `provider '${args.providerName}' apiKey` }
+        : {
+            kind: 'env',
+            detail: `${providerEndpoint.apiKeyEnvName ?? '?'} (provider '${args.providerName}' env bag)`,
+          },
+    );
+    return { apiKey: providerApiKey };
+  }
   if (args.provider?.oauth !== undefined) {
+    trace?.record('resolved.auth', {
+      kind: 'config',
+      detail: `provider '${args.providerName}' oauth`,
+    });
     return {
       oauth: args.provider.oauth,
       oauthProviderKey: args.model.providerId ?? args.model.provider,
     };
   }
+  trace?.record('resolved.auth', {
+    kind: 'none',
+    detail: 'no credential resolved at any layer (adapter construction may still read process.env)',
+  });
   return {};
 }
 
@@ -143,20 +162,6 @@ export function deriveProviderId(baseUrl: string): string {
 export function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
-/**
- * Env-bag credential fallback through the provider-definition registry: the
- * vendor's declared `apiKeyEnv` chain, read from the config env bag. Returns
- * `undefined` for unregistered vendors and for vendors without an endpoint
- * declaration (their bases fall back to `process.env` at construction).
- */
-function envApiKeyFallback(
-  authType: string | undefined,
-  env: Record<string, string> | undefined,
-): string | undefined {
-  if (authType === undefined) return undefined;
-  return nonEmpty(resolveProviderEndpoint(authType, env ?? {}).apiKey);
 }
 
 function authConflictError(kind: string, name: string): Error2 {

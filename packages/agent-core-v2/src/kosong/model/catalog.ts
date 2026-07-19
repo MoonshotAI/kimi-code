@@ -19,7 +19,7 @@
  * `findByName` is the reverse map for many-to-many name/alias routing.
  *
  * The catalog caches assembled Models by id and invalidates on the
- * model/provider/platform config-change events. Tests that mutate config
+ * model/provider config-change events. Tests that mutate config
  * BEHIND the service's back (bypassing those events) must call
  * `ModelCatalog.notifyConfigChanged()` to drop the cache — see
  * `catalogService.ts`.
@@ -28,8 +28,10 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderRequestAuth } from '#/kosong/contract/provider';
+import type { TokenUsage } from '#/kosong/contract/usage';
 import type { Protocol, ProtocolProviderOptions } from '#/kosong/protocol/protocol';
 
+import type { ModelInspection } from './inspection';
 import type { ModelRequester } from './modelRequester';
 
 /**
@@ -83,6 +85,22 @@ export interface Model {
   readonly providerOptions?: ProtocolProviderOptions;
 }
 
+/**
+ * The outcome of one live connectivity probe (`ping`) against a configured
+ * model: a real generate through the resolved requester — endpoint, auth,
+ * and wire adapter exercised end-to-end. Wire failures come back as
+ * `ok: false` with the translated provider error message; resolution
+ * failures (unknown model) throw like `get` does.
+ */
+export interface ModelPingResult {
+  readonly ok: boolean;
+  readonly durationMs: number;
+  readonly text?: string;
+  readonly finishReason?: string;
+  readonly usage?: TokenUsage;
+  readonly error?: string;
+}
+
 export interface IModelCatalog {
   readonly _serviceBrand: undefined;
 
@@ -90,6 +108,15 @@ export interface IModelCatalog {
   get(id: string): Model;
   /** The request path: the cached request executor for the same id. */
   getRequester(id: string): ModelRequester;
+  /**
+   * The debug path: the god object of the SAME resolution `get` serves —
+   * the three raw config layers, the resolved runtime view, and the
+   * per-field provenance. Assembled on demand from the cached resolution
+   * trace; never cached itself.
+   */
+  inspect(id: string): ModelInspection;
+  /** The probe path: one live "pong" round-trip through `getRequester(id)`. */
+  ping(id: string): Promise<ModelPingResult>;
   /** Reverse map: every Model id whose `name`/`model`/`aliases` match. */
   findByName(name: string): readonly string[];
 }

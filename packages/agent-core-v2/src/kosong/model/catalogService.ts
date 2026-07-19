@@ -2,19 +2,19 @@
  * `kosong/model` domain (L2) — `ModelCatalog`, the single place that builds
  * Models.
  *
- * Reads Model / Provider / Platform config, resolves the auth closure
- * (Platform.auth or Model-inline override), and assembles the pure-data
+ * Reads Model / Provider config, resolves the auth closure (provider-level
+ * credential or Model-inline override), and assembles the pure-data
  * `Model` plus its `ModelRequester` — cached together by model id. Bound at
  * App scope; resolution is shared across sessions.
  *
  * Two config-driven paths (unchanged from the legacy resolver):
- *   - **Structured** — `Model.providerId` points at a `[providers.*]` entry,
- *     which may point at a `[platforms.*]` entry. Auth comes from the
- *     Platform unless the Model carries an override (`apiKey` / `oauth`).
+ *   - **Structured** — `Model.providerId` points at a `[providers.*]` entry.
+ *     Auth comes from the Provider unless the Model carries an override
+ *     (`apiKey` / `oauth`).
  *   - **Flat** — `Model.baseUrl` is inline; the catalog synthesizes a
  *     Provider record keyed by the URL's origin so multiple Models on the
  *     same host converge on the same Provider metadata. Auth comes from the
- *     Model itself; no Platform is required.
+ *     Model itself.
  *
  * Everything vendor-shaped goes through the registries, never a hardcoded
  * switch: the wire protocol falls back from an explicit `protocol` to the
@@ -25,10 +25,15 @@
  * providerType)`.
  *
  * Caching (load-bearing): assembled entries are invalidated ONLY by the
- * model/provider/platform config-change events. Tests that mutate config
+ * model/provider config-change events. Tests that mutate config
  * behind the services' backs (bypassing those events) must call
  * `notifyConfigChanged()` to drop the cache — otherwise `get` keeps serving
  * the previous generation's Model.
+ *
+ * Inspection: every assembly also captures a `ResolutionTraceCollector`
+ * (provenance records + intermediate artifacts, reference-only) alongside the
+ * Model in the same cache entry. `inspect(id)` assembles the god object from
+ * that trace on demand — same pass, same generation, never a re-resolution.
  */
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -39,9 +44,9 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
-import { IPlatformService } from '#/app/platform/platform';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderRequestAuth } from '#/kosong/contract/provider';
+import type { TokenUsage } from '#/kosong/contract/usage';
 import {
   IProtocolAdapterRegistry,
   ProtocolSchema,
@@ -51,19 +56,32 @@ import {
 
 import { IConfigService } from '../../app/config/config';
 import { ConfigErrors } from '../../app/config/errors';
+import {
+  LATEST_OPUS_PROFILE,
+  matchKnownAnthropicModelProfile,
+} from '../provider/bases/anthropic-profile';
 import { IProviderService, type ProviderConfig } from '../provider/provider';
 import {
+  explainProviderEndpoint,
   getProviderDefinition,
-  resolveProviderEndpoint,
 } from '../provider/providerDefinition';
 
 import {
   type AuthProvider,
   IModelCatalog,
   type Model,
+  type ModelPingResult,
   StaticAuthProvider,
 } from './catalog';
 import { IHostRequestHeaders } from './hostRequestHeaders';
+import {
+  assembleModelInspection,
+  attributeEffectiveFields,
+  attributeProviderOptions,
+  type ModelInspection,
+  ResolutionTraceCollector,
+  TRACE,
+} from './inspection';
 import { IModelService, type ModelRecord } from './model';
 import {
   deriveProviderId,
@@ -74,6 +92,7 @@ import {
 } from './modelAuth';
 import type { ModelRequester } from './modelRequester';
 import { ModelRequesterImpl } from './modelRequesterImpl';
+import { drivesThinkingThroughTraits } from './thinking';
 
 type MutableProtocolProviderOptions = {
   -readonly [K in keyof ProtocolProviderOptions]: ProtocolProviderOptions[K];
@@ -82,6 +101,8 @@ type MutableProtocolProviderOptions = {
 interface CatalogEntry {
   readonly model: Model;
   readonly requester: ModelRequester;
+  /** The provenance trace of the resolution that produced `model` (same pass). */
+  readonly trace: ResolutionTraceCollector;
 }
 
 export class ModelCatalog extends Disposable implements IModelCatalog {
@@ -92,7 +113,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   constructor(
     @IConfigService private readonly config: IConfigService,
     @IProviderService private readonly providers: IProviderService,
-    @IPlatformService private readonly platforms: IPlatformService,
     @IModelService private readonly models: IModelService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IProtocolAdapterRegistry
@@ -100,11 +120,10 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
   ) {
     super();
-    // Cache invalidation rides the three config-change events; any change in
-    // any of them can alter an assembled Model, so the whole cache drops.
+    // Cache invalidation rides the two config-change events; any change in
+    // either of them can alter an assembled Model, so the whole cache drops.
     this._register(this.models.onDidChangeModels(() => this.notifyConfigChanged()));
     this._register(this.providers.onDidChangeProviders(() => this.notifyConfigChanged()));
-    this._register(this.platforms.onDidChangePlatforms(() => this.notifyConfigChanged()));
   }
 
   /**
@@ -136,16 +155,60 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private entry(id: string): CatalogEntry {
     const cached = this.cache.get(id);
     if (cached !== undefined) return cached;
-    const model = this.buildModel(id);
+    const trace = new ResolutionTraceCollector();
+    const model = this.buildModel(id, trace);
     const entry: CatalogEntry = {
       model,
       requester: new ModelRequesterImpl(model, this.protocolRegistry),
+      trace,
     };
     this.cache.set(id, entry);
     return entry;
   }
 
-  private buildModel(id: string): Model {
+  inspect(id: string): ModelInspection {
+    // The god object of the SAME resolution `get`/`getRequester` serve: the
+    // entry's trace was captured by that very pass, and the assembly (incl.
+    // secret redaction) re-runs on every call — inspect is never cached.
+    const { model, trace } = this.entry(id);
+    return assembleModelInspection({ id, model, trace });
+  }
+
+  async ping(id: string): Promise<ModelPingResult> {
+    const { requester } = this.entry(id);
+    const startedAt = Date.now();
+    try {
+      let text = '';
+      let usage: TokenUsage | undefined;
+      let finishReason: string | undefined;
+      for await (const event of requester.request(
+        {
+          systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
+          tools: [],
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], toolCalls: [] }],
+        },
+        undefined,
+        { maxCompletionTokens: 512 },
+      )) {
+        if (event.type === 'part' && event.part.type === 'text') {
+          text += event.part.text;
+        } else if (event.type === 'usage') {
+          usage = event.usage;
+        } else if (event.type === 'finish') {
+          finishReason = event.providerFinishReason ?? event.rawFinishReason;
+        }
+      }
+      return { ok: true, durationMs: Date.now() - startedAt, text: text.trim(), finishReason, usage };
+    } catch (error) {
+      return {
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private buildModel(id: string, trace: ResolutionTraceCollector): Model {
     const configuredModel = this.models.get(id);
     if (configuredModel === undefined) {
       throw new Error2(
@@ -153,21 +216,42 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         `Model "${id}" is not configured in config.toml.`,
       );
     }
+    trace.capture(TRACE.configuredModel, configuredModel);
+    trace.record('model.record', { kind: 'config', detail: '[models.*] section' });
+
     const routingModel = effectiveModelConfig(configuredModel);
     const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } =
-      this.resolveProviderContext(id, routingModel);
-    const protocol = this.resolveProtocol(id, routingModel, providerConfig);
+      this.resolveProviderContext(id, routingModel, trace);
+    trace.capture(TRACE.providerConfig, providerConfig);
+    trace.capture(TRACE.providerName, providerName);
+    trace.capture(TRACE.rawBaseUrl, rawBaseUrl);
+
+    const protocol = this.resolveProtocol(id, routingModel, providerConfig, trace);
     const model = effectiveModelConfig(
       configuredModel,
       providerConfig?.type ?? configuredModel.protocol,
     );
-    const auth = resolveModelAuthMaterial({
-      modelId: id,
+    trace.capture(TRACE.effectiveModel, model);
+    const wireName = model.name ?? model.model;
+    const profileAttribution = profileForAttribution(configuredModel, providerConfig, wireName);
+    attributeEffectiveFields(
+      trace,
+      configuredModel,
       model,
-      provider: providerConfig,
-      providerName,
-      getPlatform: (platformId) => this.platforms.get(platformId),
-    });
+      profileAttribution.profile,
+      profileAttribution.inferred,
+    );
+
+    const auth = resolveModelAuthMaterial(
+      {
+        modelId: id,
+        model,
+        provider: providerConfig,
+        providerName,
+      },
+      trace,
+    );
+    trace.capture(TRACE.authMaterial, auth);
     const authProvider = this.buildAuthProvider(providerName, auth);
 
     const providerType = providerConfig?.type ?? protocol;
@@ -175,7 +259,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       protocol === 'anthropic' && rawBaseUrl !== undefined
         ? stripTrailingV1(rawBaseUrl)
         : rawBaseUrl;
-    const wireName = model.name ?? model.model;
     if (wireName === undefined) {
       throw new Error2(
         ConfigErrors.codes.CONFIG_INVALID,
@@ -189,9 +272,16 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       );
     }
 
+    const explainedCapability = this.protocolRegistry.explainCapability(
+      protocol,
+      wireName,
+      providerType,
+    );
+    trace.capture(TRACE.detectedCapability, explainedCapability.capability);
+    trace.capture(TRACE.capabilitySource, explainedCapability.source);
     const capabilities = resolveModelCapabilities(
       model.capabilities,
-      this.protocolRegistry.resolveCapability(protocol, wireName, providerType),
+      explainedCapability.capability,
       model.maxContextSize,
     );
     const providerOptions = buildProtocolProviderOptions(
@@ -200,8 +290,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       providerConfig,
       resolvedBaseUrl,
     );
+    if (providerOptions !== undefined) {
+      attributeProviderOptions(trace, providerOptions, providerConfig?.env);
+    }
     const declared = new Set((model.capabilities ?? []).map((c) => c.trim().toLowerCase()));
 
+    trace.capture(TRACE.hostHeaders, this.hostRequestHeaders.headers);
     return {
       id,
       name: wireName,
@@ -231,6 +325,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private resolveProviderContext(
     id: string,
     model: ModelRecord,
+    trace: ResolutionTraceCollector,
   ): {
     readonly providerConfig: ProviderConfig | undefined;
     readonly providerName: string;
@@ -239,6 +334,16 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const providerId =
       model.providerId ?? model.provider ?? this.config.get<string>('defaultProvider');
     if (providerId !== undefined) {
+      trace.record('provider', {
+        kind: 'config',
+        detail:
+          model.providerId !== undefined
+            ? `model.providerId '${providerId}'`
+            : model.provider !== undefined
+              ? `model.provider '${providerId}'`
+              : `[defaultProvider] '${providerId}'`,
+      });
+      trace.capture(TRACE.providerSynthesized, false);
       const providerConfig = this.providers.get(providerId);
       if (providerConfig === undefined) {
         throw new Error2(
@@ -246,10 +351,37 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
           `Provider "${providerId}" referenced by model "${id}" is not configured.`,
         );
       }
-      const baseUrl =
-        nonEmpty(model.baseUrl) ??
-        nonEmpty(providerConfig.baseUrl) ??
-        providerBaseUrlEnvFallback(providerConfig.type ?? model.protocol, providerConfig.env);
+      const fromModel = nonEmpty(model.baseUrl);
+      const fromProvider = nonEmpty(providerConfig.baseUrl);
+      let baseUrl: string | undefined;
+      if (fromModel !== undefined) {
+        baseUrl = fromModel;
+        trace.record('resolved.baseUrl', { kind: 'config', detail: 'model.baseUrl' });
+      } else if (fromProvider !== undefined) {
+        baseUrl = fromProvider;
+        trace.record('resolved.baseUrl', {
+          kind: 'config',
+          detail: `provider '${providerId}' baseUrl`,
+        });
+      } else {
+        const endpointType = providerConfig.type ?? model.protocol;
+        const endpoint =
+          endpointType === undefined
+            ? {}
+            : explainProviderEndpoint(endpointType, providerConfig.env ?? {});
+        baseUrl = nonEmpty(endpoint.baseUrl);
+        if (endpoint.baseUrlEnvName !== undefined) {
+          trace.record('resolved.baseUrl', {
+            kind: 'env',
+            detail: `${endpoint.baseUrlEnvName} (provider '${providerId}' env bag)`,
+          });
+        } else if (endpoint.baseUrlIsDefault === true) {
+          trace.record('resolved.baseUrl', {
+            kind: 'builtin',
+            detail: `provider definition '${endpointType}' defaultBaseUrl`,
+          });
+        }
+      }
       return { providerConfig, providerName: providerId, resolvedBaseUrl: baseUrl };
     }
 
@@ -260,6 +392,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         `Model "${id}" must set either providerId or baseUrl in config.toml.`,
       );
     }
+    trace.record('provider', {
+      kind: 'synthesized',
+      detail: 'flat model — provider synthesized from the baseUrl host',
+    });
+    trace.capture(TRACE.providerSynthesized, true);
+    trace.record('resolved.baseUrl', { kind: 'config', detail: 'model.baseUrl (flat)' });
     const originName = deriveProviderId(modelBaseUrl);
     return {
       providerConfig: undefined,
@@ -278,14 +416,30 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     id: string,
     model: ModelRecord,
     provider: ProviderConfig | undefined,
+    trace: ResolutionTraceCollector,
   ): Protocol {
-    if (model.protocol !== undefined) return model.protocol;
+    if (model.protocol !== undefined) {
+      trace.record('resolved.protocol', { kind: 'config', detail: 'model.protocol' });
+      return model.protocol;
+    }
     const providerType = provider?.type;
     if (providerType !== undefined) {
       const asProtocol = ProtocolSchema.safeParse(providerType);
-      if (asProtocol.success) return asProtocol.data;
+      if (asProtocol.success) {
+        trace.record('resolved.protocol', {
+          kind: 'config',
+          detail: `provider type '${providerType}' is itself a wire protocol`,
+        });
+        return asProtocol.data;
+      }
       const definition = getProviderDefinition(providerType);
-      if (definition !== undefined) return definition.baseProtocol;
+      if (definition !== undefined) {
+        trace.record('resolved.protocol', {
+          kind: 'builtin',
+          detail: `vendor '${providerType}' declared baseProtocol`,
+        });
+        return definition.baseProtocol;
+      }
     }
     throw new Error2(
       ConfigErrors.codes.CONFIG_INVALID,
@@ -414,17 +568,26 @@ function buildProtocolProviderOptions(
 }
 
 /**
- * Env-bag baseUrl fallback through the provider-definition registry (the
- * vendor's declared `baseUrlEnv` → `defaultBaseUrl` chain). Unregistered
- * vendors get no config-level fallback; their bases fall back to
- * `process.env` at construction.
+ * The Anthropic effort profile the effective pass applies, recomputed for
+ * attribution only — mirrors `withAnthropicProfile`'s gate exactly (the
+ * trait-driven vendor check routes through the registry, never a string
+ * compare). `inferred` marks the unknown-name fallback to LATEST_OPUS_PROFILE.
  */
-function providerBaseUrlEnvFallback(
-  providerType: string | undefined,
-  env: Record<string, string> | undefined,
-): string | undefined {
-  if (providerType === undefined) return undefined;
-  return nonEmpty(resolveProviderEndpoint(providerType, env ?? {}).baseUrl);
+function profileForAttribution(
+  configuredModel: ModelRecord,
+  providerConfig: ProviderConfig | undefined,
+  wireName: string | undefined,
+): { readonly profile: typeof LATEST_OPUS_PROFILE | undefined; readonly inferred: boolean } {
+  if (wireName === undefined) return { profile: undefined, inferred: false };
+  const profileArg = providerConfig?.type ?? configuredModel.protocol;
+  const gateProtocol = configuredModel.protocol ?? profileArg;
+  const known = matchKnownAnthropicModelProfile(wireName);
+  const infer =
+    profileArg !== undefined &&
+    !drivesThinkingThroughTraits(profileArg) &&
+    gateProtocol === 'anthropic';
+  if (infer) return { profile: known ?? LATEST_OPUS_PROFILE, inferred: known === undefined };
+  return { profile: known, inferred: false };
 }
 
 function vertexAIProject(provider: ProviderConfig | undefined): string | undefined {

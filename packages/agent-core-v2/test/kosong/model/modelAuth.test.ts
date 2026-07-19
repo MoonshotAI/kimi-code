@@ -2,8 +2,8 @@
  * `kosong/model` modelAuth tests — credential precedence, env-bag resolution
  * through the provider-definition registry, and the effective-config fold:
  *
- *  - precedence: model apiKey > model oauth > platform apiKey/env > platform
- *    oauth > provider apiKey/env > provider oauth; apiKey+oauth on the same
+ *  - precedence: model apiKey > model oauth > provider apiKey/env > provider
+ *    oauth; apiKey+oauth on the same
  *    level is a config error;
  *  - the env-bag fallback reads the vendor's declared `apiKeyEnv` chain via
  *    `resolveProviderEndpoint` (kimi / anthropic / openai / google-genai
@@ -15,7 +15,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { ConfigErrors } from '#/app/config/errors';
-import type { PlatformConfig } from '#/app/platform/platform';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 import type { ProviderConfig } from '#/kosong/provider/provider';
@@ -26,19 +25,15 @@ import {
   resolveModelAuthMaterial,
 } from '#/kosong/model/modelAuth';
 
-const noPlatforms = (): PlatformConfig | undefined => undefined;
-
 function authMaterial(args: {
   model: ModelRecord;
   provider?: ProviderConfig;
-  platforms?: Record<string, PlatformConfig>;
 }): ReturnType<typeof resolveModelAuthMaterial> {
   return resolveModelAuthMaterial({
     modelId: 'm1',
     model: args.model,
     provider: args.provider,
     providerName: 'p1',
-    getPlatform: (id) => args.platforms?.[id] ?? noPlatforms(),
   });
 }
 
@@ -68,23 +63,6 @@ describe('resolveModelAuthMaterial', () => {
         provider: { type: 'openai', apiKey: 'k', oauth: { storage: 'file', key: 'k' } },
       }),
     ).toThrowError(expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }));
-  });
-
-  it('resolves the platform before the provider', () => {
-    expect(
-      authMaterial({
-        model: { model: 'm' },
-        provider: { type: 'openai', platformId: 'shared', apiKey: 'provider-key' },
-        platforms: { shared: { auth: { apiKey: 'platform-key' } } },
-      }),
-    ).toEqual({ apiKey: 'platform-key' });
-    expect(
-      authMaterial({
-        model: { model: 'm' },
-        provider: { type: 'openai', platformId: 'shared' },
-        platforms: { shared: { auth: { oauth: { storage: 'keyring', key: 'p' } } } },
-      }),
-    ).toEqual({ oauth: { storage: 'keyring', key: 'p' }, oauthProviderKey: 'shared' });
   });
 
   it('reads env-bag credentials through the vendor endpoint declarations', () => {
@@ -123,14 +101,6 @@ describe('resolveModelAuthMaterial', () => {
         },
       }),
     ).toEqual({ apiKey: 'vertex-env-key' });
-    // Platform env bags resolve through the same registry chain.
-    expect(
-      authMaterial({
-        model: { model: 'm' },
-        provider: { type: 'openai', platformId: 'shared', env: { OPENAI_API_KEY: 'provider-key' } },
-        platforms: { shared: { auth: { env: { OPENAI_API_KEY: 'platform-env-key' } } } },
-      }),
-    ).toEqual({ apiKey: 'platform-env-key' });
   });
 
   it('returns empty material when nothing is configured', () => {
