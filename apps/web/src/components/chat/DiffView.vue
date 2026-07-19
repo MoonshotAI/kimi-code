@@ -615,6 +615,13 @@ function treeRowStyle(depth: number): Record<string, string> {
   text-align: left;
   min-width: 0;
 }
+/* In the rtl context above, the bidi algorithm moves boundary punctuation to
+   the opposite end (".test" → "test.", ".config/" → "/config."). Sandwich the
+   path in invisible LTR marks so boundary neutrals resolve as LTR. */
+.fpath::before,
+.fpath::after {
+  content: '\200E';
+}
 
 /* ---- Empty state ---- */
 .empty-state {
