@@ -358,8 +358,8 @@ export class KimiTUI {
 
   /**
    * Task that takes over the process after the TUI shuts down, instead of
-   * exiting (`/web` foreground mode: the server keeps this terminal attached
-   * until Ctrl+C). Set via {@link setExitForegroundTask}.
+   * exiting (`/web` starting a new server: the server keeps this terminal
+   * attached until Ctrl+C). Set via {@link setExitForegroundTask}.
    */
   public exitForegroundTask: ((exitCode: number) => Promise<void>) | undefined;
 

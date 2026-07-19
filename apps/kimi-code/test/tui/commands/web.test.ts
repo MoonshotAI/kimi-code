@@ -1,36 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { StartForegroundHooks } from '#/cli/sub/server/run';
+import { getVersion } from '#/cli/version';
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { handleWebCommand, webSessionUrl } from '#/tui/commands/web';
 
 const mocks = vi.hoisted(() => ({
-  ensureDaemon: vi.fn(),
-  findReusableDaemon: vi.fn(),
+  listLiveServerInstances: vi.fn(),
   startServerForeground: vi.fn(),
+  isServerHealthy: vi.fn(),
   tryResolveServerToken: vi.fn(),
   getDataDir: vi.fn(() => '/tmp/kimi-home'),
   openUrl: vi.fn(),
 }));
 
-vi.mock('#/cli/sub/server/daemon', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('#/cli/sub/server/daemon')>();
-  return {
-    ...actual,
-    ensureDaemon: mocks.ensureDaemon,
-    findReusableDaemon: mocks.findReusableDaemon,
-  };
+vi.mock('@moonshot-ai/kap-server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/kap-server')>();
+  return { ...actual, listLiveServerInstances: mocks.listLiveServerInstances };
 });
 
-vi.mock('#/cli/sub/server/run', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('#/cli/sub/server/run')>();
+vi.mock('#/cli/sub/web/run', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/cli/sub/web/run')>();
   return { ...actual, startServerForeground: mocks.startServerForeground };
 });
 
-vi.mock('#/cli/sub/server/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('#/cli/sub/server/shared')>();
-  return { ...actual, tryResolveServerToken: mocks.tryResolveServerToken };
+vi.mock('#/cli/sub/web/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/cli/sub/web/shared')>();
+  return {
+    ...actual,
+    isServerHealthy: mocks.isServerHealthy,
+    tryResolveServerToken: mocks.tryResolveServerToken,
+  };
 });
 
 vi.mock('#/utils/open-url', async (importOriginal) => {
@@ -48,9 +48,14 @@ type MountedPanel = {
   render: (width: number) => string[];
 };
 
-function stripAnsi(text: string): string {
-  return text.replaceAll(/\[([0-9;]*)m/g, '');
-}
+const INSTANCE_SRV_1 = {
+  serverId: 'srv-1',
+  pid: 1234,
+  host: '127.0.0.1',
+  port: 58627,
+  startedAt: 1,
+  heartbeatAt: 1,
+};
 
 function makeHost() {
   let mountedPanel: MountedPanel | null = null;
@@ -89,247 +94,179 @@ describe('handleWebCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getDataDir.mockReturnValue('/tmp/kimi-home');
-    mocks.ensureDaemon.mockResolvedValue({
-      origin: 'http://127.0.0.1:58627',
-      reused: false,
-      host: '127.0.0.1',
-      port: 58627,
-    });
-    mocks.findReusableDaemon.mockResolvedValue(undefined);
+    mocks.listLiveServerInstances.mockResolvedValue([INSTANCE_SRV_1]);
+    mocks.isServerHealthy.mockResolvedValue(true);
   });
 
-  describe('--background', () => {
-    it('shows the token in green and opens the deep link carrying the token fragment', async () => {
-      mocks.tryResolveServerToken.mockReturnValue('tok-1');
-      const { host, getMountedPanel } = makeHost();
+  it('shows the token in green and opens the deep link carrying the token fragment', async () => {
+    mocks.tryResolveServerToken.mockReturnValue('tok-1');
+    const { host, getMountedPanel } = makeHost();
 
-      const pending = handleWebCommand(host, '--background');
-      getMountedPanel()?.handleInput('\r');
-      await pending;
-
-      expect(host.showStatus).toHaveBeenCalledWith('Starting Kimi server and opening web UI…');
-      expect(host.showStatus).toHaveBeenCalledWith(
-        'open http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-        'success',
-      );
-      expect(host.showStatus).toHaveBeenCalledWith('Token:    tok-1', 'success');
-      expect(mocks.openUrl).toHaveBeenCalledWith(
-        'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-      );
-      expect(host.setExitOpenUrl).toHaveBeenCalledWith(
-        'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-      );
-      expect(mocks.ensureDaemon).toHaveBeenCalledOnce();
-      expect(mocks.startServerForeground).not.toHaveBeenCalled();
-      expect(host.setExitForegroundTask).not.toHaveBeenCalled();
-      expect(host.stop).toHaveBeenCalledOnce();
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
     });
+    getMountedPanel()?.handleInput('\r');
+    await pending;
 
-    it('resolves the token after the daemon is up so first-time starts carry it', async () => {
-      // A fresh server writes `server.token` during startup; resolving any
-      // earlier (e.g. right after the confirm dialog) would miss it.
-      const callOrder: string[] = [];
-      mocks.ensureDaemon.mockImplementation(async () => {
-        callOrder.push('ensureDaemon');
-        return { origin: 'http://127.0.0.1:58627', reused: false, host: '127.0.0.1', port: 58627 };
-      });
-      mocks.tryResolveServerToken.mockImplementation(() => {
-        callOrder.push('resolveToken');
-        return 'tok-1';
-      });
-      const { host, getMountedPanel } = makeHost();
-
-      const pending = handleWebCommand(host, '--background');
-      getMountedPanel()?.handleInput('\r');
-      await pending;
-
-      expect(callOrder).toEqual(['ensureDaemon', 'resolveToken']);
-      expect(mocks.openUrl).toHaveBeenCalledWith(
-        'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-      );
-    });
-
-    it('skips the token line and fragment when no token is available', async () => {
-      mocks.tryResolveServerToken.mockReturnValue(undefined);
-      const { host, getMountedPanel } = makeHost();
-
-      const pending = handleWebCommand(host, '--background');
-      getMountedPanel()?.handleInput('\r');
-      await pending;
-
-      expect(host.showStatus).toHaveBeenCalledWith('Starting Kimi server and opening web UI…');
-      expect(host.showStatus).toHaveBeenCalledWith(
-        'open http://127.0.0.1:58627/sessions/ses-1',
-        'success',
-      );
-      expect(host.showStatus).not.toHaveBeenCalledWith(
-        expect.stringContaining('Token:'),
-        'success',
-      );
-      expect(mocks.openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/sessions/ses-1');
-      expect(host.setExitOpenUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/sessions/ses-1');
-    });
-
-    it('warns about a version mismatch when the reused daemon is from another CLI version', async () => {
-      mocks.tryResolveServerToken.mockReturnValue('tok-1');
-      mocks.ensureDaemon.mockResolvedValue({
-        origin: 'http://127.0.0.1:58627',
-        reused: true,
-        host: '127.0.0.1',
-        port: 58627,
-        hostVersion: '9.9.9-test-old',
-      });
-      const { host, getMountedPanel } = makeHost();
-
-      const pending = handleWebCommand(host, '--background');
-      getMountedPanel()?.handleInput('\r');
-      await pending;
-
-      expect(host.showStatus).toHaveBeenCalledWith(
-        expect.stringContaining('Running server is version 9.9.9-test-old'),
-        'warning',
-      );
-    });
-
-    it('describes the background daemon in the confirmation step', async () => {
-      const { host, getMountedPanel } = makeHost();
-
-      const pending = handleWebCommand(host, '--background');
-      const rendered = getMountedPanel()?.render(120).join('\n') ?? '';
-      getMountedPanel()?.handleInput('\r');
-      await pending;
-
-      expect(rendered).toContain('background daemon');
-    });
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'open http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
+      'success',
+    );
+    expect(host.showStatus).toHaveBeenCalledWith('Token:    tok-1', 'success');
+    expect(mocks.openUrl).toHaveBeenCalledWith(
+      'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
+    );
+    expect(host.setExitOpenUrl).toHaveBeenCalledWith(
+      'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
+    );
+    expect(host.stop).toHaveBeenCalledOnce();
   });
 
-  describe('default (foreground)', () => {
-    it('reuses an already-running server instead of starting a foreground one', async () => {
-      mocks.tryResolveServerToken.mockReturnValue('tok-1');
-      mocks.findReusableDaemon.mockResolvedValue({
-        origin: 'http://127.0.0.1:58627',
-        reused: true,
-        host: '127.0.0.1',
-        port: 58627,
-      });
-      const { host, getMountedPanel } = makeHost();
+  it('skips the token line and fragment when no token is available', async () => {
+    mocks.tryResolveServerToken.mockReturnValue(undefined);
+    const { host, getMountedPanel } = makeHost();
 
-      const pending = handleWebCommand(host, '');
-      getMountedPanel()?.handleInput('\r');
-      await pending;
-
-      expect(mocks.openUrl).toHaveBeenCalledWith(
-        'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-      );
-      expect(host.setExitOpenUrl).toHaveBeenCalledWith(
-        'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-      );
-      expect(host.stop).toHaveBeenCalledOnce();
-      expect(host.setExitForegroundTask).not.toHaveBeenCalled();
-      expect(mocks.startServerForeground).not.toHaveBeenCalled();
-      expect(mocks.ensureDaemon).not.toHaveBeenCalled();
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
     });
+    getMountedPanel()?.handleInput('\r');
+    await pending;
 
-    it('warns about a version mismatch when the reused server is from another CLI version', async () => {
-      mocks.tryResolveServerToken.mockReturnValue('tok-1');
-      mocks.findReusableDaemon.mockResolvedValue({
-        origin: 'http://127.0.0.1:58627',
-        reused: true,
-        host: '127.0.0.1',
-        port: 58627,
-        hostVersion: '9.9.9-test-old',
-      });
-      const { host, getMountedPanel } = makeHost();
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'open http://127.0.0.1:58627/sessions/ses-1',
+      'success',
+    );
+    expect(host.showStatus).not.toHaveBeenCalledWith(expect.stringContaining('Token:'), 'success');
+    expect(mocks.openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/sessions/ses-1');
+    expect(host.setExitOpenUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/sessions/ses-1');
+  });
 
-      const pending = handleWebCommand(host, '');
-      getMountedPanel()?.handleInput('\r');
-      await pending;
+  it('opens the second instance when the user moves the cursor to it', async () => {
+    mocks.tryResolveServerToken.mockReturnValue(undefined);
+    mocks.listLiveServerInstances.mockResolvedValue([
+      INSTANCE_SRV_1,
+      { ...INSTANCE_SRV_1, serverId: 'srv-2', port: 58628 },
+    ]);
+    const { host, getMountedPanel } = makeHost();
 
-      expect(host.showStatus).toHaveBeenCalledWith(
-        expect.stringContaining('Running server is version 9.9.9-test-old'),
-        'warning',
-      );
-      expect(mocks.openUrl).toHaveBeenCalledWith(
-        'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-      );
-      expect(host.setExitForegroundTask).not.toHaveBeenCalled();
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
     });
+    getMountedPanel()?.handleInput('\u001B[B');
+    getMountedPanel()?.handleInput('\r');
+    await pending;
 
-    it('registers a foreground exit task that starts the server and opens the deep link', async () => {
-      mocks.tryResolveServerToken.mockReturnValue('tok-1');
-      let readyHooks: StartForegroundHooks | undefined;
-      mocks.startServerForeground.mockImplementation(
-        (_options: unknown, hooks?: StartForegroundHooks) => {
-          readyHooks = hooks;
-          return new Promise<never>(() => {});
-        },
-      );
-      const { host, getMountedPanel } = makeHost();
+    expect(mocks.isServerHealthy).toHaveBeenCalledWith('http://127.0.0.1:58628', expect.any(Number));
+    expect(mocks.openUrl).toHaveBeenCalledWith('http://127.0.0.1:58628/sessions/ses-1');
+    expect(host.stop).toHaveBeenCalledOnce();
+  });
 
-      const pending = handleWebCommand(host, '');
-      getMountedPanel()?.handleInput('\r');
-      await pending;
+  it('lists each instance with its version, flagging a CLI mismatch', async () => {
+    mocks.listLiveServerInstances.mockResolvedValue([
+      { ...INSTANCE_SRV_1, hostVersion: '0.0.1-outdated' },
+    ]);
+    const { host, getMountedPanel } = makeHost();
 
-      expect(mocks.startServerForeground).not.toHaveBeenCalled();
-      expect(host.setExitOpenUrl).not.toHaveBeenCalled();
-      expect(mocks.openUrl).not.toHaveBeenCalled();
-      expect(mocks.ensureDaemon).not.toHaveBeenCalled();
-      expect(mocks.tryResolveServerToken).not.toHaveBeenCalled();
-      expect(host.stop).toHaveBeenCalledOnce();
-      expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
-
-      // Run the exit task the way run-shell's onExit would: it starts the
-      // foreground server; the ready hook prints and opens the deep link.
-      const task = host.setExitForegroundTask.mock.calls[0]?.[0] as (
-        exitCode: number,
-      ) => Promise<void>;
-      const taskPending = task(0);
-      expect(mocks.startServerForeground).toHaveBeenCalledOnce();
-      const runOptions = mocks.startServerForeground.mock.calls[0]?.[0] as {
-        keepAlive: boolean;
-        host: string;
-        port: number;
-      };
-      expect(runOptions.keepAlive).toBe(true);
-      expect(runOptions.host).toBe('127.0.0.1');
-      expect(runOptions.port).toBe(58627);
-
-      const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-      try {
-        readyHooks?.onReady?.('http://127.0.0.1:58627');
-        // The token is resolved inside the ready hook — after the server has
-        // written `server.token` on first boot — never during the TUI phase.
-        expect(mocks.tryResolveServerToken).toHaveBeenCalledOnce();
-        expect(mocks.openUrl).toHaveBeenCalledWith(
-          'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-        );
-        const written = stripAnsi(stdoutSpy.mock.calls.map((call) => String(call[0])).join(''));
-        // Same ready banner as `kimi web`, plus the session deep link.
-        expect(written).toContain('Kimi server ready');
-        expect(written).toContain('http://127.0.0.1:58627/');
-        expect(written).toContain('Token:    tok-1');
-        expect(written).toContain('Session:  http://127.0.0.1:58627/sessions/ses-1#token=tok-1');
-        // Foreground servers stop with Ctrl+C, not `kimi server kill`.
-        expect(written).toContain('Stop:     Ctrl+C');
-        expect(written).not.toContain('kimi server kill');
-      } finally {
-        stdoutSpy.mockRestore();
-      }
-      // Keep the never-resolving task from outliving the test.
-      void taskPending;
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
     });
+    const lines = getMountedPanel()!.render(80).join('\n');
+    getMountedPanel()?.handleInput('\u001B');
+    await pending;
 
-    it('describes the foreground behavior in the confirmation step', async () => {
-      const { host, getMountedPanel } = makeHost();
+    expect(lines).toContain('http://127.0.0.1:58627');
+    expect(lines).toContain(`version 0.0.1-outdated (this CLI: ${getVersion()})`);
+    expect(lines).toContain('Start a new server');
+  });
 
-      const pending = handleWebCommand(host, '');
-      const rendered = getMountedPanel()?.render(120).join('\n') ?? '';
-      getMountedPanel()?.handleInput('\r');
-      await pending;
+  it('shows an error and does not exit when the chosen server is unhealthy', async () => {
+    mocks.isServerHealthy.mockResolvedValue(false);
+    const { host, getMountedPanel } = makeHost();
 
-      expect(rendered).toContain('foreground');
-      expect(rendered).toContain('Ctrl+C');
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
     });
+    getMountedPanel()?.handleInput('\r');
+    await pending;
+
+    expect(host.showError).toHaveBeenCalledWith(
+      'Kimi server at http://127.0.0.1:58627 is not responding.',
+    );
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+    expect(host.stop).not.toHaveBeenCalled();
+  });
+
+  it('does nothing on cancel', async () => {
+    const { host, getMountedPanel } = makeHost();
+
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
+    getMountedPanel()?.handleInput('\u001B');
+    await pending;
+
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+    expect(host.setExitForegroundTask).not.toHaveBeenCalled();
+    expect(host.stop).not.toHaveBeenCalled();
+  });
+
+  it('registers a foreground takeover when the user picks "Start a new server"', async () => {
+    const { host, getMountedPanel } = makeHost();
+
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
+    // One instance row, then "Start a new server".
+    getMountedPanel()?.handleInput('\u001B[B');
+    getMountedPanel()?.handleInput('\r');
+    await pending;
+
+    expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+    expect(mocks.isServerHealthy).not.toHaveBeenCalled();
+  });
+
+  it('starts a new server directly when no instance is running, opening the deep link on ready', async () => {
+    mocks.listLiveServerInstances.mockResolvedValue([]);
+    mocks.tryResolveServerToken.mockReturnValue('tok-1');
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    mocks.startServerForeground.mockImplementation(
+      async (_options: unknown, hooks: { onReady?: (origin: string) => void }) => {
+        hooks.onReady?.('http://127.0.0.1:58627');
+      },
+    );
+    const { host, getMountedPanel } = makeHost();
+
+    await handleWebCommand(host);
+
+    // No picker: the takeover is registered and the TUI stops right away.
+    expect(getMountedPanel()).toBeNull();
+    expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+
+    const task = host.setExitForegroundTask.mock.calls[0]![0] as (
+      exitCode: number,
+    ) => Promise<void>;
+    await task(0);
+
+    expect(mocks.startServerForeground).toHaveBeenCalledOnce();
+    expect(mocks.openUrl).toHaveBeenCalledWith(
+      'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
+    );
+    const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
+    expect(written).toContain('Kimi server ready');
+    expect(written).toContain('Ctrl+C');
+    expect(written).toContain('/sessions/ses-1');
+    writeSpy.mockRestore();
   });
 });
 

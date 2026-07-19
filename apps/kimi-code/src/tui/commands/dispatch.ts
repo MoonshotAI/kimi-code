@@ -140,8 +140,8 @@ export interface SlashCommandHost {
   /**
    * Register a task that takes over the process after the TUI has shut down
    * (instead of exiting): the runner awaits it and only exits when it returns.
-   * Used by `/web` foreground mode to keep the server attached to this
-   * terminal until Ctrl+C.
+   * Used by `/web` to keep a freshly started server attached to this terminal
+   * until Ctrl+C.
    */
   setExitForegroundTask(task: (exitCode: number) => Promise<void>): void;
   showHelpPanel(): void;
@@ -373,7 +373,7 @@ async function handleBuiltInSlashCommand(
       await handleUndoCommand(host, args);
       return;
     case 'web':
-      await handleWebCommand(host, args);
+      await handleWebCommand(host);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

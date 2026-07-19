@@ -1,14 +1,13 @@
 /**
- * Shared helpers for `kimi server …` subcommands.
+ * Shared helpers for `kimi web` and its subcommands.
  *
- * Owns the default host/port, option parsers, and health/readiness probes that
- * `run`, `web`, and `status` all use.
+ * Owns the default host/port, option parsers, and health/readiness probes.
  */
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ServerLogLevel } from '@moonshot-ai/kap-server';
+import type { ServerInstanceInfo, ServerLogLevel } from '@moonshot-ai/kap-server';
 
 export const LOCAL_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_LAN_HOST = '0.0.0.0';
@@ -22,13 +21,6 @@ export const SERVER_TOKEN_FILE = 'server.token';
 export const DEFAULT_LOG_LEVEL: ServerLogLevel = 'info';
 export const DEFAULT_FOREGROUND_LOG_LEVEL: ServerLogLevel = 'silent';
 
-/**
- * Default idle-shutdown grace for the background daemon: once the last web
- * client disconnects, the daemon waits this long before exiting. Overridable
- * via the internal `--idle-grace-ms` flag (used by tests).
- */
-export const DEFAULT_IDLE_GRACE_MS = 60_000;
-
 export const VALID_LOG_LEVELS: readonly ServerLogLevel[] = [
   'fatal',
   'error',
@@ -38,6 +30,14 @@ export const VALID_LOG_LEVELS: readonly ServerLogLevel[] = [
   'trace',
   'silent',
 ];
+
+/**
+ * Browser-reachable host for a registry instance: a wildcard bind
+ * (`0.0.0.0`) is not a connectable address, so advertise loopback instead.
+ */
+export function instanceConnectHost(instance: ServerInstanceInfo): string {
+  return instance.host === '0.0.0.0' ? LOCAL_SERVER_HOST : instance.host;
+}
 
 export interface ParsedServerOptions {
   host: string;
@@ -54,18 +54,6 @@ export interface ParsedServerOptions {
   dangerousBypassAuth: boolean;
   /** Extra `Host` header values to allow through the DNS-rebinding check. */
   allowedHosts: readonly string[];
-  /**
-   * Keep the server running instead of idle-killing it after 60s with no
-   * connected clients (`--keep-alive`). Also implied automatically by a
-   * non-default bind (`--host`) or a proxy/tunnel setup (`--allowed-host`),
-   * and always on in `--foreground` mode. Only the daemon mode consults this —
-   * foreground never idle-kills regardless.
-   */
-  keepAlive: boolean;
-  /** Internal: run as an idle-exiting background daemon instead of foreground. */
-  daemon: boolean;
-  /** Internal: idle-shutdown grace in ms (daemon mode only). */
-  idleGraceMs: number;
 }
 
 export interface ServerCliOptions {
@@ -83,24 +71,11 @@ export interface ServerCliOptions {
   dangerousBypassAuth?: boolean;
   /** Extra `Host` header values to allow (`--allowed-host`). */
   allowedHost?: string[];
-  /** Keep the server running instead of idle-killing it (`--keep-alive`). */
-  keepAlive?: boolean;
-  /** Internal flag set by the daemon spawner (`kimi web`). */
-  daemon?: boolean;
-  /** Internal flag set by the daemon spawner / tests. */
-  idleGraceMs?: string;
 }
 
 export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions {
-  const host = parseHost(opts.host);
-  const allowedHosts = parseAllowedHostArgs(opts.allowedHost);
-  // `--keep-alive` is explicit, but also implied by a non-default bind
-  // (`--host`) or a proxy/tunnel setup (`--allowed-host`). Foreground mode is
-  // forced keep-alive later in `handleRunCommand`.
-  const keepAlive =
-    opts.keepAlive === true || host !== DEFAULT_SERVER_HOST || allowedHosts.length > 0;
   return {
-    host,
+    host: parseHost(opts.host),
     port: parsePort(opts.port, '--port', DEFAULT_SERVER_PORT),
     logLevel: parseLogLevel(opts.logLevel ?? DEFAULT_FOREGROUND_LOG_LEVEL),
     debugEndpoints: opts.debugEndpoints === true,
@@ -108,10 +83,7 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     allowRemoteShutdown: opts.allowRemoteShutdown === true,
     allowRemoteTerminals: opts.allowRemoteTerminals === true,
     dangerousBypassAuth: opts.dangerousBypassAuth === true,
-    allowedHosts,
-    keepAlive,
-    daemon: opts.daemon === true,
-    idleGraceMs: parseIdleGraceMs(opts.idleGraceMs),
+    allowedHosts: parseAllowedHostArgs(opts.allowedHost),
   };
 }
 
@@ -127,15 +99,6 @@ function parseHost(raw: string | boolean | undefined): string {
   if (raw === undefined || raw === false) return DEFAULT_SERVER_HOST;
   if (raw === true || raw === '') return DEFAULT_LAN_HOST;
   return raw;
-}
-
-function parseIdleGraceMs(raw: string | undefined): number {
-  if (raw === undefined) return DEFAULT_IDLE_GRACE_MS;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`error: invalid --idle-grace-ms value: ${raw}`);
-  }
-  return n;
 }
 
 export function parsePort(raw: string | undefined, label: string, fallback: number): number {
@@ -202,42 +165,6 @@ export async function waitForServerHealthy(origin: string, timeoutMs: number): P
     });
   } while (Date.now() < deadline);
   return false;
-}
-
-/**
- * Probe `/` and confirm the bundled web UI is being served.
- *
- * A different build that runs on the same port serves its own bundle — opening
- * a browser at that origin lands on stale code. Catching that here lets the
- * caller surface a clear "stop the running server" message instead of silently
- * handing the user the wrong UI.
- */
-export async function ensureServerWebReady(origin: string): Promise<void> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, 3000);
-  try {
-    const response = await fetch(`${origin}/`, {
-      headers: { accept: 'text/html' },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const body = await response.text();
-    if (!body.includes('<div id="app"')) {
-      throw new Error('missing app root');
-    }
-  } catch (error) {
-    const reason = error instanceof Error ? ` (${error.message})` : '';
-    throw new Error(
-      `Server at ${origin} does not serve the Kimi web UI${reason}. Stop the existing server and rerun \`kimi server run\`.`,
-      { cause: error },
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 /**
