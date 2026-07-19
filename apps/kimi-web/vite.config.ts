@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import Icons from 'unplugin-icons/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 import { FileSystemIconLoader } from 'unplugin-icons/loaders';
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -122,6 +123,23 @@ export default defineConfig({
   plugins: [
     vue(),
     backendSwitcherPlugin(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
+      workbox: {
+        // Cache the static build assets so the installed PWA launches offline
+        // or on slow connections. API calls under /api/v1 are runtime routes
+        // and are left to the network (default NetworkOnly strategy).
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff,ttf}'],
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+        navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+      },
+      // The manifests are served from public/manifest-{light,dark}.json so they
+      // are reachable at the root and editable without rebuilding the plugin
+      // config. The app switches the active link based on the user's theme.
+      manifest: false,
+    }),
     Icons({
       compiler: 'vue3',
       // Local Kimi Design System icons (24×24 outlined, fill="currentColor"),

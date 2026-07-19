@@ -148,6 +148,7 @@ When the server is running, `GET /openapi.json` returns the REST OpenAPI documen
 
 ```sh
 kimi web                 # run the server in the foreground and open the browser
+kimi web --pwa           # open the PWA-enabled web UI
 kimi web --no-open       # don't open the browser
 kimi web --port 58628    # pick a specific bind port
 ```
@@ -163,6 +164,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
 | `--no-open` | Do not open the browser once the server is ready |
+| `--pwa` | Open the PWA-enabled web UI in the default browser |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 

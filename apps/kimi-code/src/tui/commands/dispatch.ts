@@ -373,7 +373,7 @@ async function handleBuiltInSlashCommand(
       await handleUndoCommand(host, args);
       return;
     case 'web':
-      await handleWebCommand(host);
+      await handleWebCommand(host, args);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

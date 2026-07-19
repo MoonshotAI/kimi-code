@@ -38,7 +38,10 @@ const HEALTH_TIMEOUT_MS = 1500;
  * directly. Either way the TUI shuts down once the session deep link is
  * opened.
  */
-export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
+export async function handleWebCommand(
+  host: SlashCommandHost,
+  args = '',
+): Promise<void> {
   const session = host.session;
   if (session === undefined) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);

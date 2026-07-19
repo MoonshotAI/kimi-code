@@ -42,13 +42,34 @@ function applyColorScheme(c: ColorScheme): void {
 
   // Mobile browser chrome (status/address bar) follows <meta name=theme-color>.
   const metas = document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]');
-  if (metas.length === 0) return;
   const pinned = c === 'dark' ? '#0d1117' : c === 'light' ? '#ffffff' : null;
   metas.forEach((meta) => {
     const media = meta.getAttribute('media') ?? '';
     const systemValue = media.includes('dark') ? '#0d1117' : '#ffffff';
     meta.setAttribute('content', pinned ?? systemValue);
   });
+
+  // PWA installed apps use <link rel="manifest">. Switch the active manifest
+  // when the user pins a theme; leave both media-query links alive for 'system'.
+  applyManifest(c);
+}
+
+function applyManifest(c: ColorScheme): void {
+  if (typeof document === 'undefined') return;
+  const light = document.querySelector<HTMLLinkElement>('link[rel="manifest"][href="/manifest-light.json"]');
+  const dark = document.querySelector<HTMLLinkElement>('link[rel="manifest"][href="/manifest-dark.json"]');
+  if (light === null || dark === null) return;
+
+  if (c === 'system') {
+    light.media = '(prefers-color-scheme: light)';
+    dark.media = '(prefers-color-scheme: dark)';
+  } else if (c === 'light') {
+    light.media = '';
+    dark.media = 'not all';
+  } else {
+    light.media = 'not all';
+    dark.media = '';
+  }
 }
 
 function clampUiFontSize(value: number): number {

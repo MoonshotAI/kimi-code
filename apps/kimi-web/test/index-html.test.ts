@@ -30,4 +30,9 @@ describe('index.html CSP hygiene', () => {
     expect(indexHtml).toContain('<script src="/boot.js"></script>');
     expect(existsSync(bootJsPath)).toBe(true);
   });
+
+  it('declares light and dark PWA manifests with media queries', () => {
+    expect(indexHtml).toContain('<link rel="manifest" href="/manifest-light.json" media="(prefers-color-scheme: light)"');
+    expect(indexHtml).toContain('<link rel="manifest" href="/manifest-dark.json" media="(prefers-color-scheme: dark)"');
+  });
 });

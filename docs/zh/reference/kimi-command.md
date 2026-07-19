@@ -148,6 +148,7 @@ kimi acp
 
 ```sh
 kimi web                 # 前台运行服务并打开浏览器
+kimi web --pwa           # 打开支持 PWA 的 web UI
 kimi web --no-open       # 不打开浏览器
 kimi web --port 58628    # 指定绑定端口
 ```

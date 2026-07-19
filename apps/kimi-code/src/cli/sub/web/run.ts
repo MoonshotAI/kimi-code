@@ -62,6 +62,7 @@ interface RoutedServer {
 
 export interface WebCliOptions extends ServerCliOptions {
   open?: boolean;
+  pwa?: boolean;
 }
 
 export interface StartForegroundHooks {
@@ -150,6 +151,11 @@ export function buildWebCommand(cmd: Command): Command {
       false,
     )
     .option('--no-open', 'Do not open the web UI in the default browser.', true)
+    .option(
+      '--pwa',
+      'Open the Web UI in an app window when a Chromium-based browser is available (no address bar, full height).',
+      false,
+    )
     .action(async (opts: WebCliOptions) => {
       try {
         await handleWebCommand(opts);

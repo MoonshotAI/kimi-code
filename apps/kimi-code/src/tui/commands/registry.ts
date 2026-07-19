@@ -394,9 +394,10 @@ export const BUILTIN_SLASH_COMMANDS = [
     name: 'web',
     aliases: [],
     description:
-      'Open the current session in the Web UI — pick a running server or start a new one',
+      'Open the current session in the Web UI — pick a running server or start a new one. Add "pwa" to open the PWA-enabled web UI.',
     priority: 40,
     availability: 'always',
+    argumentHint: '[pwa]',
   },
   {
     name: 'exit',
