@@ -33,8 +33,10 @@ const HEALTH_TIMEOUT_MS = 1500;
  * Lists the live server instances from the registry (with their versions) and
  * lets the user pick one to open the session on, or start a new server — the
  * new one runs in the foreground attached to this terminal after the TUI
- * exits, taking the next free port alongside the running ones. Either way the
- * TUI shuts down once the session deep link is opened.
+ * exits, taking the next free port alongside the running ones. With no
+ * instance running there is nothing to pick, so it starts a new server
+ * directly. Either way the TUI shuts down once the session deep link is
+ * opened.
  */
 export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
@@ -45,6 +47,13 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   const sessionId = session.id;
 
   const instances = await listLiveServerInstances();
+  if (instances.length === 0) {
+    // Nothing to pick: become the server right away, no picker needed.
+    startNewServerAfterExit(host, sessionId);
+    await host.stop();
+    return;
+  }
+
   const options: ChoiceOption[] = instances.map((instance) => ({
     value: instance.serverId,
     label: serverOrigin(instanceConnectHost(instance), instance.port),

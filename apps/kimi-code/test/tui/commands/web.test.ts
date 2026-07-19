@@ -216,7 +216,25 @@ describe('handleWebCommand', () => {
     expect(host.stop).not.toHaveBeenCalled();
   });
 
-  it('registers a foreground takeover when starting a new server, opening the deep link on ready', async () => {
+  it('registers a foreground takeover when the user picks "Start a new server"', async () => {
+    const { host, getMountedPanel } = makeHost();
+
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
+    // One instance row, then "Start a new server".
+    getMountedPanel()?.handleInput('\u001B[B');
+    getMountedPanel()?.handleInput('\r');
+    await pending;
+
+    expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+    expect(mocks.isServerHealthy).not.toHaveBeenCalled();
+  });
+
+  it('starts a new server directly when no instance is running, opening the deep link on ready', async () => {
     mocks.listLiveServerInstances.mockResolvedValue([]);
     mocks.tryResolveServerToken.mockReturnValue('tok-1');
     const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -227,14 +245,10 @@ describe('handleWebCommand', () => {
     );
     const { host, getMountedPanel } = makeHost();
 
-    const pending = handleWebCommand(host);
-    await vi.waitFor(() => {
-      expect(getMountedPanel()).not.toBeNull();
-    });
-    // With no running instances the only row is "Start a new server".
-    getMountedPanel()?.handleInput('\r');
-    await pending;
+    await handleWebCommand(host);
 
+    // No picker: the takeover is registered and the TUI stops right away.
+    expect(getMountedPanel()).toBeNull();
     expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
     expect(host.stop).toHaveBeenCalledOnce();
     expect(mocks.openUrl).not.toHaveBeenCalled();
