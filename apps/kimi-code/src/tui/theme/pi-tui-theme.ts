@@ -40,7 +40,19 @@ export function createMarkdownTheme(options?: { transient?: boolean }): Markdown
     // prefix. Ordered lists arrive as "1. " / "2. " and are left
     // untouched by the leading-dash anchor.
     listBullet: (text) => chalk.hex(currentTheme.color('text'))(text.replace(/^-/, '•')),
+    // Structural bold — used by pi-tui's heading composition and inline style
+    // contexts. This carries the SGR bold code only; a caller wrapping other
+    // themed elements around it (e.g. `heading`) then supplies the fg colour.
+    // Do NOT pin a foreground here — an outer `heading` wraps its own text
+    // colour, and pinning here would let the inner bold's fg override the
+    // heading colour. See #1872 for the split between structural bold and
+    // emphasised strong spans.
     bold: (text) => chalk.bold(text),
+    // Emphasised markdown text (`**text**`). Route through `textStrong` so
+    // theme-driven bold is actually visible on dark backgrounds — before the
+    // split, this path shared `bold` above and inherited only the SGR bold
+    // code, which most terminals render as a dim gray. Fixes #1872.
+    strong: (text) => chalk.bold.hex(currentTheme.color('textStrong'))(text),
     italic: (text) => chalk.italic(text),
     strikethrough: (text) => chalk.strikethrough(text),
     underline: (text) => chalk.underline(text),

@@ -86,7 +86,18 @@ export interface MarkdownTheme {
 	quoteBorder: (text: string) => string;
 	hr: (text: string) => string;
 	listBullet: (text: string) => string;
+	/** Structural bold wrapper — used by headings and inline style contexts to
+	 * carry the SGR bold code, and by the "strong" span path when `strong` is
+	 * not provided. Callers wrapping other themed elements (e.g. `heading`)
+	 * around this expect it to *not* pin a foreground colour, so the outer
+	 * wrapper's fg can win. Use `strong` for emphasised text spans. */
 	bold: (text: string) => string;
+	/** Optional emphasised-text handler for markdown `**strong**` spans. When
+	 * absent, the renderer falls back to `bold`. Separating the two lets a
+	 * theme give strong spans a distinct colour (e.g. `textStrong`) without
+	 * bleeding that colour into headings, which compose `bold` inside
+	 * `heading` and would otherwise inherit the strong fg. */
+	strong?: (text: string) => string;
 	italic: (text: string) => string;
 	strikethrough: (text: string) => string;
 	underline: (text: string) => string;
@@ -520,7 +531,12 @@ export class Markdown implements Component {
 
 				case "strong": {
 					const boldContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
-					result += this.theme.bold(boldContent) + stylePrefix;
+					// Prefer `theme.strong` for emphasised spans; fall back to
+					// `theme.bold` so themes without a dedicated strong handler keep
+					// working. Structural bold (headings, inline style contexts)
+					// deliberately keeps `theme.bold` so an outer wrapper's fg can win.
+					const strongFn = this.theme.strong ?? this.theme.bold;
+					result += strongFn(boldContent) + stylePrefix;
 					break;
 				}
 
