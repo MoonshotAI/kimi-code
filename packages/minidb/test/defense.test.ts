@@ -1,8 +1,8 @@
 // Exercises defensive input/state-validation branches that are reachable
 // through the public/direct API but were not covered by the functional tests.
 // Fault-injection-only branches (writev short-write, fsync failure, >64MB
-// RESP payload, cross-user EPERM, process-exit hook) are intentionally not
-// covered here — see the coverage summary in the commit message.
+// RESP payload, cross-user EPERM, process-exit hook) are intentionally not covered here — see
+// the coverage summary in the commit message.
 import { expect, test } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -12,7 +12,7 @@ import net from 'node:net';
 import { WAL } from '../src/wal.js';
 import { encodeFrame, decodeBatchOps, TYPE_SET } from '../src/codec.js';
 import { MiniDb } from '../src/index.js';
-import { LockFile } from '../src/lockfile.js';
+import { LockFile, LOCK_CREATION_WINDOW_MS } from '../src/lockfile.js';
 import { startServer } from '../src/server.js';
 
 async function tmpDir() {
@@ -120,18 +120,35 @@ test('LockFile.acquire returns false when a live process holds the lock', async 
   const p = path.join(dir, 'db.lock');
   const a = new LockFile(p);
   assert.equal(await a.acquire(), true);
-  const b = new LockFile(p);
-  assert.equal(await b.acquire(), false); // same PID is alive -> not stale
+  // A live owner whose identity cannot be cross-checked is never taken over.
+  const b = new LockFile(p, { probeProcess: () => ({ alive: true, processStartedAt: undefined }) });
+  assert.equal(await b.acquire(), false);
   await a.release();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('a corrupt lock file is treated as stale and taken over', async () => {
+test('an unparseable lock file inside the creation window counts as held', async () => {
   const dir = await tmpDir();
-  await fs.writeFile(path.join(dir, 'db.lock'), 'not-json');
+  const p = path.join(dir, 'db.lock');
+  await fs.writeFile(p, 'not-json');
+  // Fresh garbage may be a live creator mid-write: treated as held, so this
+  // second writer is refused rather than taking over.
+  const b = new LockFile(p);
+  assert.equal(await b.acquire(), false);
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('an unparseable lock file past the creation window is taken over', async () => {
+  const dir = await tmpDir();
+  const p = path.join(dir, 'db.lock');
+  await fs.writeFile(p, 'not-json');
+  const past = new Date(Date.now() - LOCK_CREATION_WINDOW_MS - 1000);
+  await fs.utimes(p, past, past);
   const db = await MiniDb.open({ dir, valueCodec: 'string' });
   await db.set('a', '1');
   assert.equal(db.get('a'), '1');
+  // The takeover quarantined the garbage file instead of deleting it.
+  assert.ok((await fs.readdir(dir)).includes('db.lock.stale.unknown'));
   await db.close();
   await fs.rm(dir, { recursive: true, force: true });
 });

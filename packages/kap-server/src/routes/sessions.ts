@@ -69,6 +69,13 @@
  * their original cwd and stay listed / gettable (matching v1, which stores
  * `workDir` on the session). `IWorkspaceService` is consulted only as a
  * back-compat fallback for sessions written before `cwd` was persisted.
+ *
+ * **Ownership join (multi-instance, design §3.8)**: `GET /sessions` rows also
+ * carry an additive `ownership` field joined from the shared
+ * `session-leases/` tree — `held_by` is 'self' when this instance holds the
+ * session's write lease, 'peer' (with the holder's `address`, when
+ * advertised) when another instance does, and 'none' when no instance does.
+ * See {@link resolveSessionOwnership}.
  */
 
 import {
@@ -81,10 +88,13 @@ import {
   IAgentRPCService,
   IAgentActivityView,
   IAuthSummaryService,
+  IBootstrapService,
+  ICrossProcessLockService,
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
   ISessionInteractionService,
+  ISessionLeaseService,
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
@@ -93,6 +103,7 @@ import {
   IWorkspaceService,
   isError2,
   Error2,
+  sessionLeasePath,
   toProtocolMessage,
   type ContextMessage,
   type IAgentScopeHandle,
@@ -121,6 +132,7 @@ import {
   emptySessionUsage,
   sessionSchema,
   type Session,
+  type SessionOwnership,
   type SessionPendingInteraction,
 } from '../protocol/session';
 import { workspaceIdSchema } from '../protocol/workspace';
@@ -443,11 +455,16 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         ? (pageSize ?? DEFAULT_SESSION_LIST_PAGE_SIZE)
         : (pageSize ?? visible.length);
       const hasMore = visible.length > limit;
-      const projected: Session[] = visible
-        .slice(0, limit)
-        .map(({ summary, cwd, facts }) =>
-          toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
-        );
+      // Owner annotation is joined from the shared `session-leases/` tree per
+      // row (design §3.8): 'self' when this instance materialized the session,
+      // the holder's address for a routable 'peer', 'none' for a session
+      // materialized nowhere. Read-only per row; a vanished holder races at
+      // worst a 'peer' that resolves to 'none' on the next list.
+      const homeDir = core.accessor.get(IBootstrapService).homeDir;
+      const projected: Session[] = visible.slice(0, limit).map(({ summary, cwd, facts }) => ({
+        ...toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
+        ownership: resolveSessionOwnership(core, homeDir, summary.id),
+      }));
       // v1 filters ordinary lists by the busy fact post-page; `archived_only`
       // already applied it before pagination above so it can drain to a full page.
       const items =
@@ -1125,6 +1142,42 @@ function resolvePendingInteraction(
 }
 
 /**
+ * Join one session's holder annotation from the shared `session-leases/` tree
+ * (design §3.8 layer 2). Classification:
+ *
+ *   - 'self': this instance materialized the session and still holds its write
+ *     lease (`ISessionLeaseService.info` survives only while held).
+ *   - 'peer': a lease is on disk and held (or mid-creation) by someone else;
+ *     `address` rides along when the holder advertised one — the redirect
+ *     target. An unresponsive holder still counts as 'peer' (it is never
+ *     auto-taken over).
+ *   - 'none': no lease on disk, or a stale husk a dead holder left behind —
+ *     the session is materialized nowhere and any instance may acquire it.
+ *
+ * Advisory only: the sync `inspect` read can observe a holder that died the
+ * next millisecond; the lease's own acquisition protocol stays the authority.
+ */
+function resolveSessionOwnership(
+  core: Scope,
+  homeDir: string,
+  sessionId: string,
+): SessionOwnership {
+  const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
+  if (handle !== undefined) {
+    const lease = handle.accessor.get(ISessionLeaseService);
+    if (lease.info !== undefined) return { held_by: 'self' };
+  }
+  const inspection = core
+    .accessor.get(ICrossProcessLockService)
+    .inspect(sessionLeasePath(homeDir, sessionId));
+  if (inspection.state === 'held' || inspection.state === 'creating') {
+    const address = inspection.payload?.address;
+    return address !== undefined ? { held_by: 'peer', address } : { held_by: 'peer' };
+  }
+  return { held_by: 'none' };
+}
+
+/**
  * Resume the session (cold-load if needed) and resolve its main agent, throwing
  * `session.not_found` when the session is unknown or its workspace is gone.
  * Shared by the `compact` / `abort` actions, which both operate on the main
@@ -1241,6 +1294,20 @@ function sendMappedError(
           request_id: requestId,
           stack: err.stack,
         });
+        return;
+      case ErrorCodes.SESSION_HELD_BY_PEER:
+        // Ownership redirect: the details payload (`held-by-peer` phase /
+        // address) is the actionable part, so it rides the envelope and the
+        // stack stays server-side.
+        reply.send(
+          errEnvelope(
+            ErrorCode.SESSION_HELD_BY_PEER,
+            err.message,
+            requestId,
+            undefined,
+            err.details,
+          ),
+        );
         return;
       case ErrorCodes.GOAL_ALREADY_EXISTS:
         reply.send(errEnvelope(ErrorCode.GOAL_ALREADY_EXISTS, err.message, requestId, err.stack));

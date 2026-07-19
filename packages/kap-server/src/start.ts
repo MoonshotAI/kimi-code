@@ -11,15 +11,20 @@ import {
   bootstrap,
   hostRequestHeadersSeed,
   IConfigService,
+  IEventService,
+  IHostFsWatchService,
   IProviderDiscoveryService,
+  ISessionLifecycleService,
   IWorkspaceService,
   logSeed,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
+  sessionLeaseContactSeed,
   skillCatalogRuntimeOptionsSeed,
   type Scope,
   type ScopeSeed,
+  type SessionLeaseContact,
 } from '@moonshot-ai/agent-core-v2';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -48,6 +53,7 @@ import {
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
+import { SkillCatalogBridge } from './transport/ws/v1/skillCatalogBridge';
 import { registerWsV1, WS_PATH as WS_PATH_V1 } from './transport/ws/v1/registerWsV1';
 import { getServerVersion } from './version';
 import { classify } from './security/bindClassify';
@@ -60,6 +66,7 @@ import { createOriginHook, isOriginAllowed, parseCorsOrigins } from './middlewar
 import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
+import { SessionListWatchService } from './services/sessionListWatch/sessionListWatchService';
 import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
 import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
@@ -119,7 +126,7 @@ export interface ServerStartOptions {
   readonly webAssetsDir?: string;
   /**
    * Host product version, reported as `server_version` (GET /api/v1/meta), in
-   * the OpenAPI document, session exports, the lock / instance registry, and
+   * the OpenAPI document, session exports, the instance registry, and
    * the default User-Agent. Defaults to kap-server's own package version;
    * embedding hosts (the CLI) should pass their own version.
    */
@@ -138,6 +145,22 @@ export interface RunningServer {
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
+
+/**
+ * Env gate for the multi-server session-list sync below
+ * (`KIMI_CODE_EXPERIMENTAL_MULTI_SERVER`). Resolved directly from the
+ * environment *before* bootstrap, and deliberately NOT via the flag service /
+ * master `KIMI_CODE_EXPERIMENTAL_FLAG`: that switch already enables the v2
+ * engine itself, and coupling multi-instance behavior to it would change the
+ * watch surface of every v2 server before the feature is ready. Keeping the
+ * gate specific makes multi-server strictly opt-in.
+ */
+const MULTI_SERVER_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_MULTI_SERVER';
+
+function isMultiServerEnabled(env: NodeJS.ProcessEnv): boolean {
+  const raw = (env[MULTI_SERVER_FLAG_ENV] ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
 
 export async function startServer(opts: ServerStartOptions = {}): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
@@ -198,6 +221,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // route that creates a session (e.g. POST /sessions) would otherwise fail to
   // instantiate the Session scope. Resolve it from env + homeDir like the CLI.
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
+  // The lease contact is read through a thunk at session-materialize time, so
+  // it can start as `local` and be swapped for the real address once the bound
+  // port is known (leases are only acquired by requests, never during boot).
+  const leaseContact: { current: SessionLeaseContact } = { current: { type: 'local' } };
   // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
   // rooted at `homeDir`, so the Store facades above it (append-log, atomic
   // document, blob) — and in turn session metadata, wire records, blobs, and
@@ -210,6 +237,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     // through `opts.seeds`, which override this entry (last seed wins).
     ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
     ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
+    ...sessionLeaseContactSeed(() => leaseContact.current),
     ...(opts.seeds ?? []),
   ]);
 
@@ -288,7 +316,40 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     app.addHook('onSend', createSecurityHeadersHook({ tls: false }));
   }
 
-  const close = async (): Promise<void> => {
+  // Shutdown is re-entrant at two points: the remote /api/v1/shutdown route
+  // and the CLI signal handler both converge on this `close`, and the boot
+  // failure path below uses it as cleanup. The in-flight promise guard makes
+  // it idempotent — concurrent and repeat callers share one execution.
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closePromise ??= doClose();
+    return closePromise;
+  };
+  const doClose = async (): Promise<void> => {
+    // Stop the sessions-tree watcher first: a debounced hint firing mid-close
+    // would publish into an event bus whose subscribers are already unwinding.
+    sessionListWatch?.dispose();
+    // Release-order contract: sessions close FIRST (each runs the
+    // onWillCloseSession hooks and drains agents while the transport is still
+    // alive, so teardown events still fan out and land in the journal), the
+    // transport/app next (its onClose hook closes connections, stops the WS
+    // servers and flushes every journal — including the tail events queued
+    // during session teardown), and only then the core scope, the failure
+    // limiter/scheduler, and the registration handle.
+    //
+    // Before any session scope is disposed, settle the broadcaster's in-flight
+    // dispatches: an `ensureState` resumed after its session's scope died
+    // would abandon its event (e.g. `event.session.created` for a session
+    // created right before shutdown), and its journal entry with it.
+    await broadcaster.drainDispatches();
+    const lifecycle = core.accessor.get(ISessionLifecycleService);
+    for (const handle of lifecycle.list()) {
+      try {
+        await lifecycle.close(handle.id);
+      } catch (error) {
+        logger.error({ err: error, sessionId: handle.id }, 'session close failed during shutdown');
+      }
+    }
     await app.close();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
@@ -305,6 +366,24 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     transcriptService,
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
+  const skillCatalogBridge = new SkillCatalogBridge({ core, logger });
+
+  // Multi-instance session-list sync, event plane (design §3.8): watches the
+  // shared sessions tree for peer-created/removed workspace & session dirs
+  // and hints `session.list_changed` so this instance's clients re-pull.
+  // Gated by the dedicated `multi_server` env flag (see isMultiServerEnabled)
+  // — flag off is the single-instance shape where peers cannot exist.
+  const sessionListWatch = isMultiServerEnabled(process.env)
+    ? new SessionListWatchService({
+        sessionsDir: join(homeDir, 'sessions'),
+        fsWatch: core.accessor.get(IHostFsWatchService),
+        events: core.accessor.get(IEventService),
+        logger,
+      })
+    : undefined;
+  sessionListWatch?.start().catch((error: unknown) =>
+    logger.error({ err: error }, 'session list watch failed to start'),
+  );
 
   const snapshotReader = new SnapshotReader({
     homeDir,
@@ -379,6 +458,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     registry: connectionRegistry,
     broadcaster,
     fsWatchBridge,
+    skillCatalogBridge,
     logger,
   });
 
@@ -528,6 +608,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // `port + 1` retry winner) so a status/kill lookup against the instance
   // registry finds the real listener.
   await registration.update({ port: boundPort });
+  // Wildcard binds (`0.0.0.0` / `::`) advertise loopback: session-lease
+  // contacts are only ever dialed by sibling instances on this host.
+  const advertiseHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
+  leaseContact.current = { type: 'address', address: `http://${advertiseHost}:${boundPort}` };
 
   void modelCatalogRefreshScheduler.start().catch((error) => {
     logger.warn(

@@ -32,6 +32,19 @@
  * kicked fire-and-forget). The session-level eager services whose
  * subscriptions must exist before the first agent / turn (external hooks,
  * cron) are force-instantiated at the same point.
+ *
+ * Every materialization (create/resume/fork-target) first takes the session's
+ * cross-process write lease under `session-leases/` and registers its
+ * `ISessionWriteAuthority` with the `writeAuthorityRegistry`, so the
+ * journal/state fencing gates have exactly one authority per live session
+ * (design: `.tmp/refactor-watch-design-v2.md` §3.4 — always on, no flag).
+ * Contended acquisitions are answered with `session.held_by_peer` carrying
+ * the structured ownership details; the multi_server flag gates only the
+ * address emission (`routable` phase) and the unregistered-writer freshness
+ * probe. Materialize failure arms unregister and release immediately, and
+ * close/archive finish the session tail (final journal flush) before
+ * unregistering the authority and releasing the lease. A lease lost under a
+ * live session (payload token mismatch) tears the whole session down.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -41,7 +54,7 @@ import { ulid } from 'ulid';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import {
   createScopedChildHandle,
   type ISessionScopeHandle,
@@ -50,6 +63,7 @@ import {
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -57,6 +71,8 @@ import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
+import { MULTI_SERVER_FLAG_ID } from '#/app/multiServer/flag';
 import {
   CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
@@ -72,6 +88,12 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
+import {
+  type CrossProcessLockInspection,
+  ICrossProcessLockService,
+  OsLockErrors,
+} from '#/os/interface/crossProcessLock';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
@@ -79,6 +101,19 @@ import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import {
+  type HeldByPeerDetails,
+  HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
+  LEASE_CREATING_RETRY_AFTER_MS,
+  SessionLease,
+  sessionLeasePath,
+  sessionLeaseSeed,
+  SESSION_LEASE_HEARTBEAT_INTERVAL_MS,
+  SESSION_LEASE_TTL_MS,
+  UNREGISTERED_WRITER_RECHECK_DELAY_MS,
+  UNREGISTERED_WRITER_WINDOW_MS,
+} from '#/session/sessionLease/sessionLease';
+import { ISessionLeaseContactProvider } from '#/session/sessionLease/sessionLeaseContactProvider';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -125,6 +160,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     'onWillCloseSession',
   ]);
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
+  private readonly leases = new Map<
+    string,
+    { readonly lease: SessionLease; readonly registration: IDisposable }
+  >();
 
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -141,6 +180,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     private readonly projectLocalConfig: IProjectLocalConfigService,
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @ILogService private readonly log: ILogService,
+    @IFlagService private readonly flags: IFlagService,
+    @ICrossProcessLockService private readonly locks: ICrossProcessLockService,
+    @IWriteAuthorityRegistry private readonly authorityRegistry: IWriteAuthorityRegistry,
+    @ISessionLeaseContactProvider
+    private readonly leaseContact: ISessionLeaseContactProvider,
   ) {
     super();
   }
@@ -203,31 +248,42 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     );
     const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
     await this.hostEnv.ready;
-    const handle = createScopedChildHandle(
-      this.instantiation,
-      LifecycleScope.Session,
-      opts.sessionId,
-      {
-        extra: [...sessionContextSeed(ctx)],
-      },
-    ) as ISessionScopeHandle;
-    if (additionalDirs.length > 0) {
-      handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
-    }
+    await this.assertNoActiveUnregisteredWriter(sessionDir, opts.sessionId);
+    const lease = this.acquireSessionLease(opts.sessionId);
+    const registration = this.authorityRegistry.register(lease);
+    this.leases.set(opts.sessionId, { lease, registration });
     try {
-      await handle.accessor.get(ISessionMetadata).ready;
-      await handle.accessor.get(ISessionToolPolicy).ready;
-      void handle.accessor.get(ISessionSkillCatalog).ready;
-      await handle.accessor.get(ISessionAgentProfileCatalog).ready;
-      await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
-      handle.accessor.get(ISessionExternalHooksService);
-      handle.accessor.get(ISessionCronService);
+      const handle = createScopedChildHandle(
+        this.instantiation,
+        LifecycleScope.Session,
+        opts.sessionId,
+        {
+          extra: [...sessionContextSeed(ctx), ...sessionLeaseSeed(lease)],
+        },
+      ) as ISessionScopeHandle;
+      if (additionalDirs.length > 0) {
+        handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
+      }
+      try {
+        await handle.accessor.get(ISessionMetadata).ready;
+        await handle.accessor.get(ISessionToolPolicy).ready;
+        void handle.accessor.get(ISessionSkillCatalog).ready;
+        await handle.accessor.get(ISessionAgentProfileCatalog).ready;
+        await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
+        // Force-instantiate the session-level eager services whose subscriptions
+        // must exist before the first agent / turn (external hooks, cron).
+        handle.accessor.get(ISessionExternalHooksService);
+        handle.accessor.get(ISessionCronService);
+      } catch (error) {
+        handle.dispose();
+        throw error;
+      }
+      this.sessions.set(opts.sessionId, handle);
+      return handle;
     } catch (error) {
-      handle.dispose();
+      this.teardownLease(opts.sessionId);
       throw error;
     }
-    this.sessions.set(opts.sessionId, handle);
-    return handle;
   }
 
   /**
@@ -320,6 +376,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
     handle.dispose();
+    await this.flushSessionTail(sessionId);
+    this.teardownLease(sessionId);
     this._onDidCloseSession.fire({ sessionId });
   }
 
@@ -336,6 +394,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.announceWillClose({ sessionId, handle, reason: 'exit' });
     this.sessions.delete(sessionId);
     handle.dispose();
+    await this.flushSessionTail(sessionId);
+    this.teardownLease(sessionId);
     this._onDidArchiveSession.fire({ sessionId });
   }
 
@@ -463,6 +523,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           target.dispose();
         } catch {
         }
+      }
+      if (targetId !== undefined) {
+        this.teardownLease(targetId);
       }
       if (targetSessionDir !== undefined) {
         await this.hostFs.remove(targetSessionDir).catch(() => {});
@@ -601,6 +664,134 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
+  override dispose(): void {
+    for (const sessionId of this.leases.keys()) {
+      this.teardownLease(sessionId);
+    }
+    super.dispose();
+  }
+
+  private onLeaseLost(sessionId: string): void {
+    this.log.error('session lease lost; tearing the session down', { sessionId });
+    void this.close(sessionId).catch(() => {});
+  }
+
+  private async assertNoActiveUnregisteredWriter(
+    sessionDir: string,
+    sessionId: string,
+  ): Promise<void> {
+    if (!this.flags.enabled(MULTI_SERVER_FLAG_ID)) return;
+    const first = await this.hostFs.stat(sessionDir).catch(() => undefined);
+    if (first?.mtimeMs === undefined) return;
+    if (Date.now() - first.mtimeMs >= UNREGISTERED_WRITER_WINDOW_MS) return;
+    await sleep(UNREGISTERED_WRITER_RECHECK_DELAY_MS);
+    const second = await this.hostFs.stat(sessionDir).catch(() => undefined);
+    if (second?.mtimeMs === undefined) return;
+    if (second.mtimeMs > first.mtimeMs) {
+      throw new Error2(
+        ErrorCodes.SESSION_HELD_BY_PEER,
+        `session ${sessionId} directory is being written by an external writer; refusing to materialize it here`,
+        { details: { kind: 'unregistered-writer' } },
+      );
+    }
+  }
+
+  private acquireSessionLease(sessionId: string): SessionLease {
+    const leasePath = sessionLeasePath(this.bootstrap.homeDir, sessionId);
+    const contact = this.leaseContact.contact();
+    let lease: SessionLease | undefined;
+    try {
+      const prior = this.locks.inspect(leasePath);
+      const handle = this.locks.acquire(leasePath, {
+        heartbeat: {
+          intervalMs: SESSION_LEASE_HEARTBEAT_INTERVAL_MS,
+          ttlMs: SESSION_LEASE_TTL_MS,
+        },
+        address: contact.type === 'address' ? contact.address : undefined,
+        onLost: () => {
+          lease?.markLost();
+        },
+      });
+      lease = new SessionLease(sessionId, handle, (id) => {
+        this.onLeaseLost(id);
+      });
+      this.telemetry.track2('session_lease_acquired', { session_id: sessionId });
+      if (prior.state === 'stale') {
+        this.telemetry.track2('session_lease_takeover', {
+          session_id: sessionId,
+          previous: prior.staleReason ?? 'unknown',
+        });
+      }
+      return lease;
+    } catch (error) {
+      if (
+        isError2(error) &&
+        (error.code === OsLockErrors.codes.OS_LOCK_HELD ||
+          error.code === OsLockErrors.codes.OS_LOCK_WAIT_TIMEOUT)
+      ) {
+        this.throwHeldByPeer(sessionId, error);
+      }
+      throw error;
+    }
+  }
+
+  private throwHeldByPeer(sessionId: string, cause: unknown): never {
+    const inspection = this.locks.inspect(sessionLeasePath(this.bootstrap.homeDir, sessionId));
+    const details = this.heldByPeerDetails(inspection);
+    this.telemetry.track2('session_held_by_peer_returned', {
+      session_id: sessionId,
+      phase: details.phase,
+    });
+    if (details.phase === 'holder-unresponsive') {
+      this.telemetry.track2('session_lease_holder_unresponsive', { session_id: sessionId });
+    }
+    throw new Error2(
+      ErrorCodes.SESSION_HELD_BY_PEER,
+      `session ${sessionId} is held by another instance (${details.phase})`,
+      { details, cause },
+    );
+  }
+
+  private heldByPeerDetails(inspection: CrossProcessLockInspection): HeldByPeerDetails {
+    if (inspection.state === 'held' && inspection.payload !== undefined) {
+      const payload = inspection.payload;
+      const heartbeatAt = payload.heartbeatAt;
+      if (heartbeatAt !== undefined && Date.now() - heartbeatAt > SESSION_LEASE_TTL_MS) {
+        return {
+          kind: 'held-by-peer',
+          phase: 'holder-unresponsive',
+          retry_after_ms: HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
+        };
+      }
+      if (payload.address !== undefined && this.flags.enabled(MULTI_SERVER_FLAG_ID)) {
+        return { kind: 'held-by-peer', phase: 'routable', address: payload.address };
+      }
+      return { kind: 'held-by-peer', phase: 'held-by-local-instance' };
+    }
+    // 'creating' mid-creation, and races where the holder vanished between the
+    // failed acquire and this probe, both converge by retrying shortly.
+    return { kind: 'held-by-peer', phase: 'creating', retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS };
+  }
+
+  private async flushSessionTail(sessionId: string): Promise<void> {
+    try {
+      await this.appendLogStore.flush();
+    } catch (error) {
+      this.log.warn('final journal flush failed while closing session', {
+        sessionId,
+        error: String(error),
+      });
+    }
+  }
+
+  private teardownLease(sessionId: string): void {
+    const entry = this.leases.get(sessionId);
+    if (entry === undefined) return;
+    this.leases.delete(sessionId);
+    entry.registration.dispose();
+    entry.lease.release();
+  }
+
   private async readMetaFromDisk(
     workspaceId: string,
     sessionId: string,
@@ -631,6 +822,13 @@ function isMissingFileError(error: unknown): boolean {
   if (unwrapped === null || typeof unwrapped !== 'object') return false;
   const code = (unwrapped as { readonly code?: unknown }).code;
   return code === 'ENOENT';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => {
+    const timer = setTimeout(resolvePromise, ms);
+    timer.unref?.();
+  });
 }
 
 function createSessionId(): string {

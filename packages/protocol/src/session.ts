@@ -78,6 +78,22 @@ export type SessionMetadata = z.infer<typeof sessionMetadataSchema>;
 export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question']);
 export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
 
+/**
+ * Per-session holder annotation joined from `session-leases/<id>.json` by the
+ * session list route (multi-instance shared home). `self` = this instance
+ * holds the write lease (the session is materialized here), `peer` = another
+ * instance holds it (`address` is its reachable base URL when the holder
+ * advertised one — the redirect target), `none` = no lease on disk (the
+ * session is materialized nowhere). Purely display/redirect metadata: the
+ * lease file stays the authority and is re-checked on every materialization.
+ */
+export const sessionOwnershipSchema = z.object({
+  held_by: z.enum(['self', 'peer', 'none']),
+  address: z.string().min(1).optional(),
+});
+
+export type SessionOwnership = z.infer<typeof sessionOwnershipSchema>;
+
 export const sessionSchema = z.object({
   id: z.string().min(1),
   workspace_id: workspaceIdSchema,
@@ -102,6 +118,7 @@ export const sessionSchema = z.object({
    *  reason is cancelled/failed). */
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
   archived: z.boolean().optional(),
+  ownership: sessionOwnershipSchema.optional(),
   current_prompt_id: z.string().min(1).optional(),
   /** Text of the most recent user prompt, for search/preview. Absent for empty sessions. */
   last_prompt: z.string().optional(),

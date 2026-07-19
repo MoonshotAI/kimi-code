@@ -7,6 +7,8 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
+import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -63,6 +65,7 @@ function setup(logKey: string): {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   const log = ix.get(IAppendLogStore);
   const eventBus = ix.get(IEventBus);

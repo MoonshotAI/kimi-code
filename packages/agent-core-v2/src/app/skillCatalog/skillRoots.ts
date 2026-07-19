@@ -5,9 +5,11 @@
  * user (home) and project (workspace) skill locations. Brand directories are
  * preferred over generic ones (`.kimi-code/skills` before `.agents/skills`),
  * and the project root is found by walking up to `.git`. Plugin roots are no
- * longer folded in here — plugins are a separate `ISkillSource`. These helpers
- * are exported so the edge can compose a workspace's skills without a Session.
- * Pure path/fs probes; no scoped state.
+ * longer folded in here — plugins are a separate `ISkillSource`. The
+ * `*Candidates` helpers return the same locations WITHOUT the existence filter
+ * or realpath resolution, for file watchers that must observe roots appearing
+ * later. These helpers are exported so the edge can compose a workspace's
+ * skills without a Session. Pure path/fs probes; no scoped state.
  */
 
 import { promises as fs } from 'node:fs';
@@ -60,6 +62,30 @@ export async function configuredRoots(
     await pushExistingRoot(roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
   }
   return roots;
+}
+
+export function userRootCandidates(homeDir: string, osHomeDir: string): readonly string[] {
+  return [
+    ...USER_BRAND_DIRS.map((dir) => path.join(homeDir, dir)),
+    ...USER_GENERIC_DIRS.map((dir) => path.join(osHomeDir, dir)),
+  ];
+}
+
+export async function projectRootCandidates(workDir: string): Promise<readonly string[]> {
+  const projectRoot = await findProjectRoot(workDir);
+  return [
+    ...PROJECT_BRAND_DIRS.map((dir) => path.join(projectRoot, dir)),
+    ...PROJECT_GENERIC_DIRS.map((dir) => path.join(projectRoot, dir)),
+  ];
+}
+
+export async function configuredRootCandidates(
+  dirs: readonly string[],
+  workDir: string,
+  osHomeDir: string,
+): Promise<readonly string[]> {
+  const projectRoot = await findProjectRoot(workDir);
+  return dirs.map((dir) => resolveConfiguredDir(dir, projectRoot, osHomeDir));
 }
 
 async function findProjectRoot(workDir: string): Promise<string> {

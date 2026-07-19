@@ -6,8 +6,10 @@
  * (`<homeDir>/workspaces.json`, via `scope = ''`) through the
  * `IAtomicDocumentStore` access-pattern Store. The `deleted_workspace_ids`
  * tombstone list round-trips with the catalog so soft deletions survive
- * regardless of which engine (v1 or v2) last wrote the file. Bound at App
- * scope.
+ * regardless of which engine (v1 or v2) last wrote the file, and the parsed
+ * document rides along in `WorkspaceCatalog.raw` so `save` re-applies the
+ * semantic view onto it — unknown top-level and entry fields written by other
+ * engine versions are preserved. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -18,7 +20,6 @@ import type { Workspace } from './workspace';
 import {
   IWorkspacePersistence,
   type PersistedWorkspaceEntry,
-  type PersistedWorkspaceFile,
   type WorkspaceCatalog,
 } from './workspacePersistence';
 
@@ -32,22 +33,16 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
   constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {}
 
   async load(): Promise<WorkspaceCatalog | undefined> {
-    const file = await this.docs.get<PersistedWorkspaceFile>(
+    const file = await this.docs.get<Record<string, unknown>>(
       WORKSPACE_CATALOG_SCOPE,
       WORKSPACE_CATALOG_KEY,
     );
-    if (file === undefined) return undefined;
-    if (
-      typeof file !== 'object' ||
-      file === null ||
-      typeof (file as { workspaces?: unknown }).workspaces !== 'object' ||
-      (file as { workspaces?: unknown }).workspaces === null
-    ) {
-      return undefined;
-    }
+    if (!isRecord(file)) return undefined;
+    const rawWorkspaces = file['workspaces'];
+    if (!isRecord(rawWorkspaces)) return undefined;
     const now = Date.now();
     const workspaces: Workspace[] = [];
-    for (const [id, raw] of Object.entries(file.workspaces)) {
+    for (const [id, raw] of Object.entries(rawWorkspaces)) {
       const entry = sanitizeEntry(raw);
       if (entry === null) continue;
       workspaces.push({
@@ -58,30 +53,43 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
         lastOpenedAt: parseTime(entry.last_opened_at, now),
       });
     }
-    const rawDeleted = (file as { deleted_workspace_ids?: unknown }).deleted_workspace_ids;
+    const rawDeleted = file['deleted_workspace_ids'];
     const deletedIds = Array.isArray(rawDeleted)
       ? rawDeleted.filter((id): id is string => typeof id === 'string')
       : [];
-    return { workspaces, deletedIds };
+    return { workspaces, deletedIds, raw: file };
   }
 
   async save(catalog: WorkspaceCatalog): Promise<void> {
-    const record: Record<string, PersistedWorkspaceEntry> = {};
+    const rawWorkspaces = catalog.raw['workspaces'];
+    const previousWorkspaces = isRecord(rawWorkspaces) ? rawWorkspaces : {};
+    const record: Record<string, unknown> = {};
     for (const ws of catalog.workspaces) {
+      const previous = previousWorkspaces[ws.id];
       record[ws.id] = {
+        ...(isPlainRecord(previous) ? previous : {}),
         root: ws.root,
         name: ws.name,
         created_at: new Date(ws.createdAt).toISOString(),
         last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
       };
     }
-    const file: PersistedWorkspaceFile = {
+    const file = {
+      ...catalog.raw,
       version: WORKSPACE_CATALOG_VERSION,
       workspaces: record,
       deleted_workspace_ids: [...catalog.deletedIds],
     };
     await this.docs.set(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY, file);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && !Array.isArray(value);
 }
 
 function sanitizeEntry(value: unknown): PersistedWorkspaceEntry | null {

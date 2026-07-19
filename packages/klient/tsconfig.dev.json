@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  // tsx (esbuild transform) applies a custom `--tsconfig` per file via its
+  // `include` globs. The `include` must therefore cover every workspace
+  // package the spawned server imports (mirrors
+  // `apps/kimi-code/tsconfig.dev.json`): otherwise files outside the globs
+  // get no tsconfig at all and DI parameter decorators in the agent-core
+  // graph fail with "Parameter decorators only work when experimental
+  // decorators are enabled".
+  "include": [
+    "src",
+    "test",
+    "../../packages/*/src/**/*.ts",
+    "../../packages/*/src/**/*.tsx"
+  ]
+}

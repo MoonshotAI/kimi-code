@@ -28,6 +28,7 @@ import type { CredentialValidator } from '../../../services/auth/credentials';
 import type { IConnectionRegistry } from '../connectionRegistry';
 import {
   type EventEnvelope,
+  JournalStorageError,
   type JournalLogger,
 } from './sessionEventJournal';
 import {
@@ -43,6 +44,7 @@ import {
   type TargetSubscription,
 } from './sessionEventBroadcaster';
 import { FsWatchBridge } from './fsWatchBridge';
+import { SkillCatalogBridge } from './skillCatalogBridge';
 
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
 
@@ -68,6 +70,7 @@ export interface WsConnectionV1Options {
   readonly socket: WebSocket;
   readonly broadcaster: SessionEventBroadcaster;
   readonly fsWatchBridge?: FsWatchBridge;
+  readonly skillCatalogBridge?: SkillCatalogBridge;
   readonly connectionRegistry: IConnectionRegistry;
   /**
    * Present-only credential check for the post-connect `client_hello`
@@ -98,6 +101,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly socket: WebSocket;
   private readonly broadcaster: SessionEventBroadcaster;
   private readonly fsWatchBridge?: FsWatchBridge;
+  private readonly skillCatalogBridge?: SkillCatalogBridge;
   private readonly validateCredential?: CredentialValidator;
   private readonly maxBufferSize: number;
   private readonly flushIntervalMs: number;
@@ -125,6 +129,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.socket = opts.socket;
     this.broadcaster = opts.broadcaster;
     this.fsWatchBridge = opts.fsWatchBridge;
+    this.skillCatalogBridge = opts.skillCatalogBridge;
     this.validateCredential = opts.validateCredential;
     this.logger = opts.logger;
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
@@ -258,6 +263,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         continue;
       }
       this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
+      this.skillCatalogBridge?.attachSession(this, sid);
       accepted.push(sid);
       if (cursor !== undefined) {
         await this.replay(sid, cursor, filter, grades, resyncRequired, serverCursors);
@@ -284,6 +290,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     for (const sid of sessionIds) {
       this.broadcaster.unsubscribe(sid, this);
       this.subscriptions.delete(sid);
+      this.skillCatalogBridge?.detachSession(this, sid);
     }
     this.sendFrame(
       buildAck(frame.id ?? '', 0, 'success', {
@@ -344,6 +351,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
+    this.skillCatalogBridge?.attachSession(this, sid);
     accepted.push(sid);
     if (cursor !== undefined) {
       await this.replay(sid, cursor, filter, transcriptGrades, resyncRequired, serverCursors);
@@ -362,7 +370,24 @@ export class WsConnectionV1 implements BroadcastTarget {
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
+    let result;
+    try {
+      result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
+    } catch (error) {
+      if (error instanceof JournalStorageError) {
+        // The journal cannot serve the gap (sticky storage failure): answering
+        // with an empty page would be a lie — "not served" must stay
+        // distinguishable from "nothing to serve". Force a resync so the
+        // client rebuilds from the snapshot and re-subscribes. The protocol
+        // reason enum has no storage-failure entry, so this rides the
+        // existing `epoch_changed` branch; the client behavior (rebuild from
+        // snapshot) is identical for every reason.
+        this.sendFrame(buildResyncRequired(sid, 'epoch_changed', cursor.seq, cursor.epoch));
+        resyncRequired.push(sid);
+        return;
+      }
+      throw error;
+    }
     if (result.resyncRequired !== false) {
       this.sendFrame(
         buildResyncRequired(sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
@@ -491,6 +516,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.outbound = [];
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     this.fsWatchBridge?.detachConnection(this);
+    this.skillCatalogBridge?.detachConnection(this);
     // registry removal is handled by registerWsV1 on the socket 'close' event.
   }
 }

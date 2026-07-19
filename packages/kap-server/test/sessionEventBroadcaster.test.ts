@@ -2,7 +2,7 @@
  * `SessionEventBroadcaster` — seq stamping, volatile vs durable, fan-out, replay.
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,8 +29,49 @@ import {
   type BroadcastTarget,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
-import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
+import {
+  type EventEnvelope,
+  JournalStorageError,
+} from '../src/transport/ws/v1/sessionEventJournal';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
+
+/**
+ * Controllable deferred-failure injection for the journal under test. The
+ * journal opens its file via `fs/promises.open(path, 'a')` per flush batch;
+ * while `active` is set, opens of journal paths in this file's tmp dirs are
+ * parked until the test rejects them (precise per-round failure control).
+ * Everything else passes through to the real module.
+ */
+const journalFs = vi.hoisted(() => ({
+  active: false,
+  rejecters: [] as Array<(error: Error) => void>,
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    open: (path: Parameters<typeof actual.open>[0], flags?: string, mode?: number) => {
+      if (
+        journalFs.active &&
+        typeof path === 'string' &&
+        path.includes('kimi-broadcaster-test-') &&
+        path.endsWith('.jsonl')
+      ) {
+        return new Promise((_resolve, reject) => {
+          journalFs.rejecters.push(reject);
+        });
+      }
+      return actual.open(path, flags, mode);
+    },
+  };
+});
+
+function injectWriteFailure(): Error {
+  const error = new Error('injected journal write failure') as NodeJS.ErrnoException;
+  error.code = 'EACCES';
+  return error;
+}
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -231,6 +272,8 @@ describe('SessionEventBroadcaster', () => {
   let bc: SessionEventBroadcaster;
 
   beforeEach(async () => {
+    journalFs.active = false;
+    journalFs.rejecters = [];
     dir = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-test-'));
     sessions = new Map();
     eventBus = new FakeEventBus();
@@ -242,6 +285,8 @@ describe('SessionEventBroadcaster', () => {
   });
 
   afterEach(async () => {
+    journalFs.active = false;
+    journalFs.rejecters = [];
     await bc.close();
     await rm(dir, { recursive: true, force: true });
   });
@@ -275,7 +320,14 @@ describe('SessionEventBroadcaster', () => {
       type: 'event.session.work_changed',
       payload: { busy: false, last_turn_reason: 'completed' },
     });
-    expect(envelopes.every((e) => e.epoch === envelopes[0]!.epoch)).toBe(true);
+    // The epoch is born lazily with the first durable append (`nextSeq`), so
+    // the pre-baseline volatile phase frame carries none. Every envelope that
+    // HAS an epoch shares the journal's single incarnation — no mid-stream
+    // epoch flip-flop.
+    expect(durable[0]!.epoch).toMatch(/^ep_/);
+    expect(envelopes.every((e) => e.epoch === undefined || e.epoch === durable[0]!.epoch)).toBe(
+      true,
+    );
     expect(durable[0]!.volatile).toBeUndefined();
   });
 
@@ -608,6 +660,98 @@ describe('SessionEventBroadcaster', () => {
     main.bus.emit(agentEvent('turn.started', { turnId: 2 }));
     const next = await bc.getSnapshotState('s1');
     expect(next.subagents).toEqual([]);
+  });
+
+  it('fans core model-catalog changes out live without journaling __global__', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    eventBus.emit({
+      type: 'event.model_catalog.changed',
+      payload: {
+        changed: [{ provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 }],
+        unchanged: [],
+        failed: [],
+      },
+    });
+
+    await vi.waitFor(() => expect(envelopes).toHaveLength(1));
+    expect(envelopes[0]).toMatchObject({
+      type: 'event.model_catalog.changed',
+      session_id: '__global__',
+      volatile: true,
+      payload: {
+        type: 'event.model_catalog.changed',
+        agentId: 'main',
+        sessionId: '__global__',
+      },
+    });
+    // Advisory-only now: fanned out live with a process-local seq and never
+    // journaled — no __global__.jsonl garbage file appears under the events
+    // dir (the old durable file was multi-writer by nature and had no reader).
+    await expect(stat(join(dir, '__global__.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('fans session.list_changed out live as a volatile payload-less global hint', async () => {
+    // The multi-instance sessions-tree watcher publishes this core event when
+    // a workspace/session directory appears or disappears (possibly created
+    // by a peer instance). It must reach every connection as a volatile,
+    // payload-less, unjournaled go-refetch hint — same delivery class as
+    // event.model_catalog.changed, with nothing to replay.
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    eventBus.emit({ type: 'session.list_changed', payload: {} });
+
+    await vi.waitFor(() => expect(envelopes).toHaveLength(1));
+    expect(envelopes[0]).toMatchObject({
+      type: 'session.list_changed',
+      session_id: '__global__',
+      volatile: true,
+      payload: {
+        type: 'session.list_changed',
+        agentId: 'main',
+        sessionId: '__global__',
+      },
+    });
+    await expect(stat(join(dir, '__global__.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('never serves replay from the in-memory tail while the journal has write failures', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    // Force batch 1 durable on disk (replay flushes first): the durable
+    // status_changed + turn.started.
+    const warm = await bc.getBufferedSince('s1', { seq: 0 });
+    expect(warm.events).toHaveLength(2);
+
+    // Storage starts failing: the next flush round parks on a deferred open.
+    journalFs.active = true;
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
+    await bc.getCursor('s1'); // drain the queue — the append is queued to the journal
+    await vi.waitFor(() => expect(journalFs.rejecters).toHaveLength(1));
+    journalFs.rejecters.shift()!(injectWriteFailure());
+    await new Promise((resolve) => setImmediate(resolve)); // settle the failure state
+
+    // The memory tail still holds the undurable turn.ended, but replay must
+    // not be served from it: the journal-side retry fails again → sticky →
+    // the explicit storage error surfaces to the replay edge. (Cursor seq 1
+    // keeps the gap inside the maxBufferSize=3 cap.)
+    const replay = bc.getBufferedSince('s1', { seq: 1 });
+    await vi.waitFor(() => expect(journalFs.rejecters).toHaveLength(1));
+    journalFs.rejecters.shift()!(injectWriteFailure());
+    await expect(replay).rejects.toBeInstanceOf(JournalStorageError);
   });
 
   it('subscribe returns false for an unknown session', async () => {

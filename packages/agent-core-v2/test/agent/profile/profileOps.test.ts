@@ -19,6 +19,8 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
+import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -197,6 +199,7 @@ function buildHost(key: string): {
   const host = disposables.add(new TestInstantiationService());
   host.stub(IFileSystemStorageService, new InMemoryStorageService());
   host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+  host.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   host.stub(ITelemetryService, createTelemetryStub());
   host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
   host.stub(

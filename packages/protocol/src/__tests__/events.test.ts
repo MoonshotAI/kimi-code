@@ -194,6 +194,31 @@ describe('events / display re-exports', () => {
     expect((parsed as { session: { id: string } }).session.id).toBe('sess_1');
   });
 
+  it('validates session.list_changed events (volatile, payload-less)', () => {
+    const parsed = eventSchema.parse({
+      type: 'session.list_changed',
+      agentId: 'main',
+      sessionId: '__global__',
+    });
+    expect(parsed.type).toBe('session.list_changed');
+    expect(
+      agentEventSchema.safeParse({ type: 'session.list_changed', unexpected: 1 }).success,
+    ).toBe(true);
+  });
+
+  it('validates skill_catalog.changed events (volatile, source-id hint)', () => {
+    const parsed = eventSchema.parse({
+      type: 'skill_catalog.changed',
+      sourceId: 'workspace-files',
+      agentId: 'main',
+      sessionId: 'sess_1',
+    });
+    expect(parsed.type).toBe('skill_catalog.changed');
+    expect(
+      agentEventSchema.safeParse({ type: 'skill_catalog.changed', unexpected: 1 }).success,
+    ).toBe(false);
+  });
+
   it('validates workspace lifecycle events', () => {
     const workspace = {
       id: 'wd_project_123456abcdef',

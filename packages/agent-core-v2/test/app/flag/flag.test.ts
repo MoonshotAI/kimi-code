@@ -18,9 +18,11 @@ import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocument
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { ICrossProcessLockService } from '#/os/interface/crossProcessLock';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubCrossProcessLock } from '../../os/stubs';
 
 const exampleFlag: FlagDefinitionInput = {
   id: 'example_flag',
@@ -75,6 +77,7 @@ describe('FlagService', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     ix.set(IFlagRegistry, new SyncDescriptor(FlagRegistryService));
     ix.set(IFlagService, new SyncDescriptor(FlagService));

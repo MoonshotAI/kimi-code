@@ -173,6 +173,11 @@ export class FileStorageService implements IFileSystemStorageService {
           ignoreInitial: true,
           awaitWriteFinish: false,
           depth: 0,
+          // chokidar attaches fs.watch to every scanned entry; special files
+          // (unix sockets, fifos, devices — e.g. an ipc `klient.sock` sharing
+          // the home root) make that call throw UNKNOWN. Skip them up front.
+          ignored: (_path, stats) =>
+            stats !== undefined && !stats.isFile() && !stats.isDirectory() && !stats.isSymbolicLink(),
         });
         watcher.on('all', (_event, changedPath) => {
           if (normalize(changedPath) === normalizedTarget) schedule();

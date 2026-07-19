@@ -20,6 +20,7 @@ describe('/api/v1/debug transport mapError', () => {
     [ErrorCodes.STORAGE_IO_FAILED, ErrorCode.PERSISTENCE_FAILURE],
     [ErrorCodes.STORAGE_LOCKED, ErrorCode.PERSISTENCE_FAILURE],
     [ErrorCodes.GOAL_UNSUPPORTED_AGENT, ErrorCode.GOAL_UNSUPPORTED_AGENT],
+    [ErrorCodes.SESSION_HELD_BY_PEER, ErrorCode.SESSION_HELD_BY_PEER],
   ])('maps domain code %s to its wire equivalent', (code, wire) => {
     const env = mapError(new Error2(code, 'boom'), 'req-1');
     expect(env.code).toBe(wire);
@@ -27,6 +28,34 @@ describe('/api/v1/debug transport mapError', () => {
 
   it('falls back to INTERNAL_ERROR for coded errors without a wire equivalent', () => {
     const env = mapError(new Error2(ErrorCodes.OS_FS_UNKNOWN, 'boom'), 'req-1');
+    expect(env.code).toBe(ErrorCode.INTERNAL_ERROR);
+  });
+
+  it('forwards Error2 details onto the mapped envelope verbatim', () => {
+    const details = { kind: 'held-by-peer', phase: 'routable', address: 'http://127.0.0.1:58628' };
+    const env = mapError(
+      new Error2(ErrorCodes.SESSION_HELD_BY_PEER, 'session is owned by another instance', {
+        details,
+      }),
+      'req-1',
+    );
+    expect(env.code).toBe(ErrorCode.SESSION_HELD_BY_PEER);
+    expect(env.details).toEqual(details);
+  });
+
+  it('omits details when the error carries none — wire shape unchanged', () => {
+    const env = mapError(new Error2(ErrorCodes.SESSION_NOT_FOUND, 'boom'), 'req-1');
+    expect(env.details).toBeUndefined();
+    expect(JSON.stringify(env)).not.toContain('"details"');
+  });
+
+  it('session.lease_lost falls through to the internal-error envelope', () => {
+    const env = mapError(
+      new Error2(ErrorCodes.SESSION_LEASE_LOST, 'write lease lost', {
+        details: { sessionId: 's1' },
+      }),
+      'req-1',
+    );
     expect(env.code).toBe(ErrorCode.INTERNAL_ERROR);
   });
 });

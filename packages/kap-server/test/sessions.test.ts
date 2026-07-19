@@ -49,6 +49,7 @@ interface SessionWire {
   pending_interaction: 'none' | 'approval' | 'question';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived?: boolean;
+  ownership?: { held_by: 'self' | 'peer' | 'none'; address?: string };
   metadata: { cwd: string } & Record<string, unknown>;
   agent_config: { model: string };
   usage: { input_tokens: number };
@@ -352,6 +353,26 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(0);
     expect(body.data.items.some((s) => s.id === created.body.data.id)).toBe(true);
     expect(typeof body.data.has_more).toBe('boolean');
+  });
+
+  it('joins the lease into ownership: self while materialized, none after close', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+
+    const listed = await getJson<PageWire>('/api/v1/sessions');
+    expect(listed.body.data.items.find((s) => s.id === id)?.ownership).toEqual({
+      held_by: 'self',
+    });
+
+    // Releasing the materialized scope drops the lease: the session is now
+    // owned by NO instance, and the join must show it.
+    await (server as RunningServer).core.accessor.get(ISessionLifecycleService).close(id);
+
+    const after = await getJson<PageWire>('/api/v1/sessions');
+    expect(after.body.data.items.find((s) => s.id === id)?.ownership).toEqual({
+      held_by: 'none',
+    });
   });
 
   it('supports exclude_empty when listing sessions', async () => {

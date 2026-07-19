@@ -144,3 +144,149 @@ describe('DaemonEventSocket reconnect + staleness', () => {
     expect(socket.health().open).toBe(false);
   });
 });
+
+describe('DaemonEventSocket frame dispatch (multi-instance surface)', () => {
+  let originalWebSocket: typeof globalThis.WebSocket;
+
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    originalWebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    globalThis.WebSocket = originalWebSocket;
+    vi.useRealTimers();
+  });
+
+  it('consumes session.list_changed (bare and event.-prefixed) via onSessionListChanged only', () => {
+    let wireEvents = 0;
+    let listChanged = 0;
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {
+        wireEvents += 1;
+      },
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: () => {},
+      onSessionListChanged: () => {
+        listChanged += 1;
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    ws.emitMessage({ type: 'session.list_changed', payload: {} });
+    ws.emitMessage({ type: 'event.session.list_changed', payload: {} });
+
+    expect(listChanged).toBe(2);
+    expect(wireEvents).toBe(0);
+  });
+
+  it('consumes skill_catalog.changed (bare and event.-prefixed) via onSkillCatalogChanged only', () => {
+    let wireEvents = 0;
+    let rawAgentEvents = 0;
+    const changed: string[] = [];
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {
+        wireEvents += 1;
+      },
+      onRawAgentEvent: () => {
+        rawAgentEvents += 1;
+      },
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: () => {},
+      onSkillCatalogChanged: (sessionId) => {
+        changed.push(sessionId);
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    ws.emitMessage({
+      type: 'skill_catalog.changed',
+      seq: 1,
+      session_id: 'sess_1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      volatile: true,
+      payload: { type: 'skill_catalog.changed', sourceId: 'workspace-file' },
+    });
+    ws.emitMessage({
+      type: 'event.skill_catalog.changed',
+      seq: 2,
+      session_id: 'sess_2',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      volatile: true,
+      payload: { type: 'skill_catalog.changed', sourceId: 'plugin' },
+    });
+
+    expect(changed).toEqual(['sess_1', 'sess_2']);
+    expect(wireEvents).toBe(0);
+    expect(rawAgentEvents).toBe(0);
+  });
+
+  it('passes connection-level error-frame details through to onError', () => {
+    const errors: Array<{ code: number; msg: string; fatal: boolean; details: unknown }> = [];
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {},
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: (code, msg, fatal, details) => {
+        errors.push({ code, msg, fatal, details });
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    const ownership = { kind: 'held-by-peer', phase: 'routable', address: 'http://127.0.0.1:58628' };
+    ws.emitMessage({ type: 'error', payload: { code: 40921, msg: 'session held by peer', fatal: false, details: ownership } });
+
+    expect(errors).toEqual([{ code: 40921, msg: 'session held by peer', fatal: false, details: ownership }]);
+  });
+
+  it('keeps session-scoped error frames on the agent-event path (no details leak to onError)', () => {
+    const errors: unknown[] = [];
+    const raw: Array<{ type: string; session_id: string; payload: unknown }> = [];
+    const handlers: DaemonEventSocketHandlers = {
+      onWireEvent: () => {},
+      onResync: () => {},
+      onConnectionState: () => {},
+      onError: (...args) => {
+        errors.push(args);
+      },
+      onRawAgentEvent: (frame) => {
+        raw.push(frame);
+      },
+    };
+    const socket = new DaemonEventSocket(WS_URL, CLIENT_ID, handlers);
+    socket.connect();
+    const ws = FakeWebSocket.instances[0]!;
+    ws.emitMessage(SERVER_HELLO);
+
+    ws.emitMessage({
+      type: 'error',
+      session_id: 'sess_1',
+      seq: 7,
+      timestamp: 't',
+      payload: { code: 40300, msg: 'provider denied' },
+    });
+
+    expect(errors).toEqual([]);
+    expect(raw).toEqual([
+      {
+        type: 'error',
+        seq: 7,
+        session_id: 'sess_1',
+        timestamp: 't',
+        payload: { code: 40300, msg: 'provider denied' },
+      },
+    ]);
+  });
+});

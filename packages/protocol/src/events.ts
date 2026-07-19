@@ -235,6 +235,8 @@ export type KimiErrorCode =
   | 'session.approval_handler_error'
   | 'session.question_handler_error'
   | 'session.init_failed'
+  | 'session.held_by_peer'
+  | 'session.lease_lost'
   | 'agent.not_found'
   | 'turn.agent_busy'
   | 'goal.already_exists'
@@ -312,6 +314,10 @@ export type KimiErrorCode =
   | 'os.fs.unknown'
   | 'os.process.spawn_failed'
   | 'os.process.kill_failed'
+  | 'os.lock.held'
+  | 'os.lock.wait_timeout'
+  | 'os.lock.lost'
+  | 'os.lock.io'
   | 'storage.not_found'
   | 'storage.decode_failed'
   | 'storage.corrupted'
@@ -503,6 +509,32 @@ export interface SessionMetaUpdatedEvent {
 export interface SessionCreatedEvent {
   readonly type: 'event.session.created';
   readonly session: Session;
+}
+
+/**
+ * Volatile, payload-less hint that the set of sessions on disk changed
+ * (design `.tmp/refactor-watch-design-v2.md` §3.8): a workspace or session
+ * directory appeared or vanished under the shared `<home>/sessions` tree,
+ * possibly created by ANOTHER server instance sharing the home. Clients
+ * should re-pull `GET /sessions` instead of reading anything into the event
+ * itself — it is fanned out live only (never journaled, never replayed).
+ */
+export interface SessionListChangedEvent {
+  readonly type: 'session.list_changed';
+}
+
+/**
+ * Volatile per-session hint that the session's skill catalog changed: a skill
+ * file or directory under one of the watched sources appeared, changed, or
+ * vanished (mirrors the core `ISessionSkillCatalog.onDidChange` feed, whose
+ * payload is the changed source id). Fanned out live only (never journaled,
+ * never replayed) to connections subscribed to that session — clients should
+ * re-pull `GET /sessions/{sid}/skills` instead of reading anything into the
+ * hint itself.
+ */
+export interface SkillCatalogChangedEvent {
+  readonly type: 'skill_catalog.changed';
+  readonly sourceId: string;
 }
 
 export interface WorkspaceCreatedEvent {
@@ -907,6 +939,8 @@ export type AgentEvent =
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | SessionListChangedEvent
+  | SkillCatalogChangedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
@@ -1405,6 +1439,15 @@ export const sessionCreatedEventSchema = z.object({
   session: sessionSchema,
 }) satisfies z.ZodType<SessionCreatedEvent>;
 
+export const sessionListChangedEventSchema = z.object({
+  type: z.literal('session.list_changed'),
+}) satisfies z.ZodType<SessionListChangedEvent>;
+
+export const skillCatalogChangedEventSchema = z.object({
+  type: z.literal('skill_catalog.changed'),
+  sourceId: z.string().min(1),
+}) satisfies z.ZodType<SkillCatalogChangedEvent>;
+
 export const workspaceCreatedEventSchema = z.object({
   type: z.literal('event.workspace.created'),
   workspace: workspaceSchema,
@@ -1766,6 +1809,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   agentStatusUpdatedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
+  sessionListChangedEventSchema,
+  skillCatalogChangedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,

@@ -435,6 +435,24 @@ export interface SessionLoadFailedEvent {
   reason: string;
 }
 
+export interface SessionLeaseAcquiredEvent {
+  session_id: string;
+}
+
+export interface SessionLeaseTakeoverEvent {
+  session_id: string;
+  previous: string;
+}
+
+export interface SessionHeldByPeerReturnedEvent {
+  session_id: string;
+  phase: 'creating' | 'routable' | 'holder-unresponsive' | 'held-by-local-instance';
+}
+
+export interface SessionLeaseHolderUnresponsiveEvent {
+  session_id: string;
+}
+
 export interface FirstLaunchEvent {}
 
 export interface ExitEvent {
@@ -923,6 +941,32 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A session resume fails.',
     properties: { reason: 'Error code, error name, or unknown' },
+  }),
+  session_lease_acquired: defineTelemetryEvent<SessionLeaseAcquiredEvent>({
+    owner: 'kimi-code',
+    comment: "This instance takes a session's write lease.",
+    properties: { session_id: 'Session the lease covers' },
+  }),
+  session_lease_takeover: defineTelemetryEvent<SessionLeaseTakeoverEvent>({
+    owner: 'kimi-code',
+    comment: "A session's write lease is taken over from a stale (dead) holder.",
+    properties: {
+      session_id: 'Session the lease covers',
+      previous: 'Stale reason observed before takeover (holder-dead, pid-reused, …)',
+    },
+  }),
+  session_held_by_peer_returned: defineTelemetryEvent<SessionHeldByPeerReturnedEvent>({
+    owner: 'kimi-code',
+    comment: 'A session materialization is refused because a peer instance holds the lease.',
+    properties: {
+      session_id: 'Session that was refused',
+      phase: 'Ownership phase reported to the client (routable, creating, …)',
+    },
+  }),
+  session_lease_holder_unresponsive: defineTelemetryEvent<SessionLeaseHolderUnresponsiveEvent>({
+    owner: 'kimi-code',
+    comment: "A session's lease holder is alive but its heartbeat is past TTL (frozen).",
+    properties: { session_id: 'Session whose holder is unresponsive' },
   }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',

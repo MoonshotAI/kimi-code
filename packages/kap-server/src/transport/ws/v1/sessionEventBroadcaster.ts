@@ -62,7 +62,12 @@ import {
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { SessionCreatedEvent, SessionMetaUpdatedEvent, Event } from './events';
+import type {
+  ModelCatalogChangedEvent,
+  SessionCreatedEvent,
+  SessionMetaUpdatedEvent,
+  Event,
+} from './events';
 import { isVolatileEventType } from './events';
 import type { SessionCursor } from '../../../protocol/ws-control';
 import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
@@ -101,12 +106,17 @@ export interface BufferedSinceResult {
   /** When set, the client must rebuild from the snapshot and re-subscribe. */
   resyncRequired: ResyncReason | false;
   currentSeq: number;
-  epoch: string;
+  /**
+   * Current journal epoch, if the journal has a baseline. `undefined` (absent
+   * on the wire) means "no baseline yet" — distinct from a changed baseline.
+   */
+  epoch: string | undefined;
 }
 
 export interface SessionSnapshotState {
   seq: number;
-  epoch: string;
+  /** Current journal epoch, or `undefined` while the journal has no baseline. */
+  epoch: string | undefined;
   inFlightTurn: InFlightTurn | null;
   subagents: SnapshotSubagent[];
 }
@@ -198,6 +208,9 @@ const TRANSCRIPT_RESET_TAIL_TURNS = 0;
 async function disposeSessionState(state: SessionState): Promise<void> {
   for (const d of state.lifecycleDisposables) d.dispose();
   for (const d of state.agentDisposables.values()) d.dispose();
+  // Drain every queued dispatch (the journal append happens inside the queue)
+  // before the final flush — otherwise close() drops the dispatch tail.
+  await state.queue;
   await state.journal.close();
 }
 
@@ -217,7 +230,11 @@ export class SessionEventBroadcaster {
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
+  /** Fire-and-forget dispatches still in flight (possibly inside `ensureState`). */
+  private readonly inFlightDispatches = new Set<Promise<void>>();
   private closed = false;
+  /** Process-local monotonic seq for volatile global events (never journaled). */
+  private globalSeq = 0;
 
   constructor(
     private readonly opts: {
@@ -590,7 +607,7 @@ export class SessionEventBroadcaster {
   ): Promise<BufferedSinceResult> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) {
-      return { events: [], resyncRequired: 'session_recreated', currentSeq: 0, epoch: '' };
+      return { events: [], resyncRequired: 'session_recreated', currentSeq: 0, epoch: undefined };
     }
     // Drain so the cursor reflects everything dispatched so far.
     await state.queue;
@@ -630,20 +647,27 @@ export class SessionEventBroadcaster {
           );
 
     // Serve from the memory tail when it fully covers the gap; else the journal.
-    const tailStart = tail[0]?.seq;
-    if (tailStart !== undefined && tailStart <= cursor.seq + 1) {
-      const events = applyFilter(tail.filter((e) => e.seq > cursor.seq));
-      return { events, resyncRequired: false, currentSeq, epoch };
+    // While the journal has unrecovered write failures, never serve from the
+    // tail: those events are not durable, and replaying them as if they were
+    // would resurrect the "fake durable" hole after a restart. `readSince`
+    // retries the pending flush and throws the sticky JournalStorageError
+    // instead — the replay edge maps that to a client-visible resync.
+    if (!journal.writeFailure) {
+      const tailStart = tail[0]?.seq;
+      if (tailStart !== undefined && tailStart <= cursor.seq + 1) {
+        const events = applyFilter(tail.filter((e) => e.seq > cursor.seq));
+        return { events, resyncRequired: false, currentSeq, epoch };
+      }
     }
     const fromDisk = await journal.readSince(cursor.seq, this.maxBufferSize);
     return { events: applyFilter(fromDisk), resyncRequired: false, currentSeq, epoch };
   }
 
-  async getCursor(sessionId: string): Promise<{ seq: number; epoch: string }> {
+  async getCursor(sessionId: string): Promise<{ seq: number; epoch: string | undefined }> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) {
       const cold = await this.readColdWatermark(sessionId);
-      return cold ?? { seq: 0, epoch: '' };
+      return cold ?? { seq: 0, epoch: undefined };
     }
     await state.queue;
     return { seq: state.journal.seq, epoch: state.journal.epoch };
@@ -656,7 +680,7 @@ export class SessionEventBroadcaster {
       const cold = await this.readColdWatermark(sessionId);
       return cold !== undefined
         ? { ...cold, inFlightTurn: null, subagents: [] }
-        : { seq: 0, epoch: '', inFlightTurn: null, subagents: [] };
+        : { seq: 0, epoch: undefined, inFlightTurn: null, subagents: [] };
     }
     await state.queue;
     return {
@@ -672,11 +696,12 @@ export class SessionEventBroadcaster {
    * (carried over from a prior process, or created by v1). Opens the journal
    * transiently — no agent/interaction listeners and not cached in
    * `this.sessions` — so a later live activation still attaches subscriptions.
+   * The open is read-only (zero bytes written, no fabricated epoch).
    * Returns `undefined` when the session is unknown to the index (truly absent).
    */
   private async readColdWatermark(
     sessionId: string,
-  ): Promise<{ seq: number; epoch: string } | undefined> {
+  ): Promise<{ seq: number; epoch: string | undefined } | undefined> {
     const summary = await this.opts.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
     const journal = await SessionEventJournal.open(
@@ -690,6 +715,10 @@ export class SessionEventBroadcaster {
 
   async close(): Promise<void> {
     if (this.closed) return;
+    // Settle dispatches already in flight before flagging closed — a dispatch
+    // still inside `ensureState` would otherwise see `closed` and abandon its
+    // event (and its journal state).
+    await this.drainDispatches();
     this.closed = true;
     this.coreEventSubscription.dispose();
     for (const [sessionId, state] of this.sessions) {
@@ -699,6 +728,19 @@ export class SessionEventBroadcaster {
       this.opts.transcriptService?.dropSession(sessionId);
     }
     this.sessions.clear();
+  }
+
+  /**
+   * Settle every fire-and-forget dispatch currently in flight. start.ts calls
+   * this BEFORE disposing session scopes (an `ensureState` resumed after its
+   * session's scope died would abandon the dispatch, losing e.g. the
+   * `event.session.created` journal entry for a short-lived session); close()
+   * calls it before flipping `closed` for the same reason.
+   */
+  async drainDispatches(): Promise<void> {
+    while (this.inFlightDispatches.size > 0) {
+      await Promise.all(this.inFlightDispatches);
+    }
   }
 
   private ensureState(sessionId: string): Promise<SessionState | undefined> {
@@ -815,6 +857,32 @@ export class SessionEventBroadcaster {
   }
 
   private onCoreEvent(event: GlobalEvent): void {
+    if (event.type === 'session.list_changed') {
+      // Published by `SessionListWatchService` when a workspace/session
+      // directory appears or disappears under the shared sessions tree
+      // (possibly by a peer instance). Payload-less go-refetch advice: fanned
+      // out volatile under the global watermark, never journaled.
+      this.dispatchGlobal({
+        type: 'session.list_changed',
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      });
+      return;
+    }
+    if (event.type === 'event.model_catalog.changed') {
+      const payload = modelCatalogChangedPayload(event.payload);
+      if (payload === undefined) return;
+      const modelEvent: ModelCatalogChangedEvent = {
+        type: 'event.model_catalog.changed',
+        ...payload,
+      };
+      this.dispatchGlobal({
+        ...modelEvent,
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      });
+      return;
+    }
     if (event.type === 'event.session.created') {
       const payload = sessionCreatedPayload(event.payload);
       if (payload === undefined) return;
@@ -826,13 +894,15 @@ export class SessionEventBroadcaster {
       // `sessionStatusChanged` reducer is a no-op for the unknown session and
       // kimi-web's Stop button (gated on session.status === 'running') never
       // renders. Mirrors v1's `isGlobalSessionEvent` broadcast of creation.
-      void this.dispatchSessionEvent(payload.sessionId, {
-        type: 'event.session.created',
-        session: payload.session,
-        agentId: 'main',
-        sessionId: payload.sessionId,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(payload.sessionId, 'event.session.created', error),
+      this.trackDispatch(
+        this.dispatchSessionEvent(payload.sessionId, {
+          type: 'event.session.created',
+          session: payload.session,
+          agentId: 'main',
+          sessionId: payload.sessionId,
+        } as Event),
+        payload.sessionId,
+        'event.session.created',
       );
       return;
     }
@@ -849,22 +919,54 @@ export class SessionEventBroadcaster {
       // exactly like v1.
       const sessionId = sessionMetaUpdatedSessionId(event.payload);
       if (sessionId === undefined) return;
-      void this.dispatchSessionEvent(sessionId, {
-        type: 'session.meta.updated',
-        ...payload,
-        agentId: 'main',
+      this.trackDispatch(
+        this.dispatchSessionEvent(sessionId, {
+          type: 'session.meta.updated',
+          ...payload,
+          agentId: 'main',
+          sessionId,
+        } as Event),
         sessionId,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(sessionId, 'session.meta.updated', error),
+        'session.meta.updated',
       );
     }
   }
 
-  private async dispatchGlobal(event: Event): Promise<void> {
-    const state = await this.ensureGlobalState();
-    state.queue = state.queue
-      .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
-      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
+  /**
+   * Fire a dispatch without awaiting it, but keep it drainable: errors are
+   * logged exactly once here, and `drainDispatches()` / `close()` can settle
+   * the still-running dispatch before session scopes are disposed.
+   */
+  private trackDispatch(promise: Promise<void>, sessionId: string, eventType: string): void {
+    const tracked = promise.catch((error: unknown) =>
+      this.logDispatchError(sessionId, eventType, error),
+    );
+    this.inFlightDispatches.add(tracked);
+    void tracked.finally(() => this.inFlightDispatches.delete(tracked));
+  }
+
+  /**
+   * Fan a global advisory event out to every live connection. Deliberately
+   * volatile: never journaled and never replayed — the old `__global__.jsonl`
+   * was a multi-writer artifact with no read path (pure disk garbage), and its
+   * only payload (`event.model_catalog.changed`) is cache-refresh advice.
+   * `seq` is a process-local monotonic counter, NOT a durable watermark, and
+   * the envelope carries no epoch.
+   */
+  private dispatchGlobal(event: Event): void {
+    this.globalSeq += 1;
+    const envelope = this.buildEnvelope(this.globalSeq, GLOBAL_SESSION_ID, event, {
+      volatile: true,
+    });
+    // Global events bypass the agent allowlist entirely (isGlobalEvent), same
+    // fan-out rule as `dispatch` — only transport is direct, not per-session.
+    for (const target of this.allTargets()) {
+      try {
+        target.send(envelope);
+      } catch {
+        // best-effort fan-out; a broken target is dropped, not fatal
+      }
+    }
   }
 
   /**
@@ -1169,13 +1271,17 @@ export class SessionEventBroadcaster {
   }
 
   /**
-   * A queued dispatch rejected: the event is permanently lost (and, for durable
-   * events, the seq is skipped). Warn instead of swallowing it silently.
+   * A queued dispatch rejected: the event is permanently lost. For a durable
+   * event the seq is skipped, leaving an on-disk seq gap — that gap is itself
+   * the resync boundary: clients detect it and rebuild via resync, so the
+   * loss stays observable instead of silent. Journal storage failures also
+   * land here (`nextSeq()`/`append()` throw once the journal is sticky).
+   * Warn, never swallow.
    */
   private logDispatchDropped(sessionId: string, eventType: string, error: unknown): void {
     this.opts.logger?.warn(
       { sessionId, eventType, err: error },
-      'session event dispatch failed; event dropped',
+      'session event dispatch failed; event dropped (durable seq gap → client resyncs)',
     );
   }
 
@@ -1609,4 +1715,28 @@ function sessionCreatedPayload(
       : undefined;
   if (sessionId === undefined || session === undefined) return undefined;
   return { sessionId, session };
+}
+
+/**
+ * Validate the `event.model_catalog.changed` payload published on the core
+ * `IEventService` (`IModelCatalogService` refresh / auth change): the three
+ * per-provider diff arrays are all the v1 frame carries.
+ */
+function modelCatalogChangedPayload(
+  payload: unknown,
+): Pick<ModelCatalogChangedEvent, 'changed' | 'unchanged' | 'failed'> | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as Partial<ModelCatalogChangedEvent>;
+  if (
+    !Array.isArray(candidate.changed) ||
+    !Array.isArray(candidate.unchanged) ||
+    !Array.isArray(candidate.failed)
+  ) {
+    return undefined;
+  }
+  return {
+    changed: candidate.changed,
+    unchanged: candidate.unchanged,
+    failed: candidate.failed,
+  };
 }

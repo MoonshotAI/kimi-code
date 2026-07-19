@@ -336,11 +336,12 @@ function makeSession(
   symlinks: readonly string[] = [],
   runner?: ISessionProcessRunner,
   symlinkTargets: Record<string, string> = {},
+  hostFs?: IHostFileSystem,
 ): ISessionFsService {
   host = createScopedTestHost();
   const session = host.child(LifecycleScope.Session, 's1', [
     stubPair(ISessionWorkspaceContext, stubWorkspace()),
-    stubPair(IHostFileSystem, fakeFs(files, symlinks, symlinkTargets)),
+    stubPair(IHostFileSystem, hostFs ?? fakeFs(files, symlinks, symlinkTargets)),
     stubPair(ISessionProcessRunner, runner ?? fakeRunner(handler)),
     stubPair(ITelemetryService, telemetryStub(events)),
     stubPair(IGitService, git),
@@ -622,6 +623,97 @@ describe('SessionFsService.list', () => {
         include_git_status: false,
       }),
     ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+});
+
+describe('SessionFsService gitignore cache invalidation', () => {
+  interface GitignoreState {
+    content: string | undefined;
+    mtimeMs: number;
+  }
+
+  function gitignoreFs(state: GitignoreState, files: Record<string, string>): IHostFileSystem {
+    const base = fakeFs(files);
+    const enoent = (p: string): NodeJS.ErrnoException => {
+      const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      return err;
+    };
+    const gitignorePath = join(WORK_DIR, '.gitignore');
+    return {
+      ...base,
+      readText: async (p) => {
+        if (p === gitignorePath) {
+          if (state.content === undefined) throw enoent(p);
+          return state.content;
+        }
+        return base.readText(p);
+      },
+      stat: async (p) => {
+        if (p === gitignorePath) {
+          if (state.content === undefined) throw enoent(p);
+          return {
+            isFile: true,
+            isDirectory: false,
+            size: state.content.length,
+            mtimeMs: state.mtimeMs,
+            ino: 1,
+          };
+        }
+        return base.stat(p);
+      },
+    };
+  }
+
+  it('list() picks up `.gitignore` edits without rebuilding the service', async () => {
+    const state: GitignoreState = { content: 'dist/\n', mtimeMs: 1000 };
+    const fs = makeSession(
+      {},
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      gitignoreFs(state, { 'src/keep.ts': '', 'dist/x.js': '' }),
+    );
+    const baseReq = {
+      path: '.',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: true,
+      sort: 'name_asc' as const,
+      include_git_status: false,
+    };
+    const before = await fs.list(baseReq);
+    expect(before.items.map((i) => i.name).sort()).toEqual(['src']);
+
+    state.content = '';
+    state.mtimeMs = 2000;
+    const after = await fs.list(baseReq);
+    expect(after.items.map((i) => i.name).sort()).toEqual(['dist', 'src']);
+  });
+
+  it('search() rebuilds the matcher when `.gitignore` is removed', async () => {
+    const state: GitignoreState = { content: 'dist/\n', mtimeMs: 1000 };
+    const fs = makeSession(
+      {},
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      gitignoreFs(state, { 'dist/x.js': '' }),
+    );
+    const before = await fs.search({ query: 'x.js', limit: 50, follow_gitignore: true });
+    expect(before.items).toHaveLength(0);
+
+    state.content = undefined;
+    state.mtimeMs = 2000;
+    const after = await fs.search({ query: 'x.js', limit: 50, follow_gitignore: true });
+    expect(after.items.map((i) => i.path)).toEqual(['dist/x.js']);
   });
 });
 

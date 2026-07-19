@@ -3,8 +3,10 @@
  *
  * Discovers project skills from the session's current `workDir`
  * (`workspaceContext`) through `ISkillDiscovery`, contributing them at priority
- * 30 (above user / extra / plugin / builtin). Bound at Session scope so each session reads
- * its own workspace root.
+ * 30 (above user / extra / plugin / builtin). Hot-reloads on both its config
+ * section and filesystem changes in the project skill roots (watched through
+ * `hostFsWatch` via `SkillRootWatcher`). Bound at Session scope so each
+ * session reads its own workspace root.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -19,8 +21,10 @@ import {
 } from '#/app/skillCatalog/configSection';
 import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
-import { projectRoots } from '#/app/skillCatalog/skillRoots';
+import { SkillRootWatcher } from '#/app/skillCatalog/skillRootWatcher';
+import { projectRootCandidates, projectRoots } from '#/app/skillCatalog/skillRoots';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 export interface IWorkspaceFileSkillSource extends ISkillSource {
@@ -43,6 +47,7 @@ export class WorkspaceFileSkillSource extends Disposable implements IWorkspaceFi
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IConfigService private readonly config: IConfigService,
     @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
+    @IHostFsWatchService hostFsWatch: IHostFsWatchService,
   ) {
     super();
     this._register(
@@ -50,6 +55,15 @@ export class WorkspaceFileSkillSource extends Disposable implements IWorkspaceFi
         if (event.domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) this.onDidChangeEmitter.fire();
       }),
     );
+    if ((this.runtimeOptions.explicitDirs?.length ?? 0) === 0) {
+      this._register(
+        new SkillRootWatcher(
+          hostFsWatch,
+          async () => projectRootCandidates(this.workspace.workDir),
+          () => this.onDidChangeEmitter.fire(),
+        ),
+      );
+    }
   }
 
   async load(): Promise<SkillContribution> {

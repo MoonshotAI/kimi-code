@@ -13,7 +13,10 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { ICrossProcessLockService } from '#/os/interface/crossProcessLock';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -23,6 +26,7 @@ import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
 import { IWorkspacePersistence, type PersistedWorkspaceEntry } from '#/app/workspace/workspacePersistence';
+import { stubBootstrap } from '../bootstrap/stubs';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -32,7 +36,7 @@ interface SessionIndexLine {
 
 describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
-  let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
+  const hosts: ReturnType<typeof createScopedTestHost>[] = [];
 
   beforeEach(async () => {
     _clearScopedRegistryForTests();
@@ -54,8 +58,7 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   afterEach(async () => {
-    currentHost?.dispose();
-    currentHost = undefined;
+    for (const host of hosts.splice(0)) host.dispose();
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
@@ -65,14 +68,15 @@ describe('WorkspaceService (file-backed)', () => {
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ICrossProcessLockService, new CrossProcessLockService()),
     ]);
-    currentHost = host;
+    hosts.push(host);
     return host.app.accessor.get(IWorkspaceService);
   }
 
   function restart(): IWorkspaceService {
-    currentHost?.dispose();
-    currentHost = undefined;
+    hosts.pop()?.dispose();
     return build();
   }
 
@@ -563,6 +567,101 @@ describe('WorkspaceService (file-backed)', () => {
     expect(relisted).toEqual([]);
     const afterMerge = await readWorkspacesJson();
     expect(Object.keys(afterMerge.workspaces)).toEqual([unrelatedId]);
+  });
+
+  it('two registries interleave createOrTouch without losing entries', async () => {
+    const a = build();
+    const b = build();
+    const dirsA: string[] = [];
+    const dirsB: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const da = join(homeDir, `side-a-${i}`);
+      const db = join(homeDir, `side-b-${i}`);
+      await fsp.mkdir(da);
+      await fsp.mkdir(db);
+      dirsA.push(da);
+      dirsB.push(db);
+    }
+    for (let i = 0; i < 4; i++) {
+      await Promise.all([a.createOrTouch(dirsA[i]!), b.createOrTouch(dirsB[i]!)]);
+    }
+
+    const onDisk = await readWorkspacesJson();
+    const expectedIds = [...dirsA, ...dirsB].map((dir) => encodeWorkDirKey(dir)).toSorted();
+    expect(Object.keys(onDisk.workspaces).toSorted()).toEqual(expectedIds);
+    expect(onDisk.deleted_workspace_ids).toEqual([]);
+    for (const entry of Object.values(onDisk.workspaces)) {
+      expect(Object.keys(entry).toSorted()).toEqual([
+        'created_at',
+        'last_opened_at',
+        'name',
+        'root',
+      ]);
+    }
+  });
+
+  it('interleaved delete and createOrTouch keep both the new entry and the tombstone', async () => {
+    const dirKeep = join(homeDir, 'keep');
+    const dirDrop = join(homeDir, 'drop');
+    const dirNew = join(homeDir, 'new');
+    await fsp.mkdir(dirKeep);
+    await fsp.mkdir(dirDrop);
+    await fsp.mkdir(dirNew);
+    const a = build();
+    await a.createOrTouch(dirKeep);
+    const drop = await a.createOrTouch(dirDrop);
+    const b = build();
+
+    await Promise.all([a.delete(drop.id), b.createOrTouch(dirNew)]);
+
+    const onDisk = await readWorkspacesJson();
+    expect(Object.keys(onDisk.workspaces).toSorted()).toEqual(
+      [encodeWorkDirKey(dirKeep), encodeWorkDirKey(dirNew)].toSorted(),
+    );
+    expect(onDisk.deleted_workspace_ids).toEqual([drop.id]);
+  });
+
+  it('preserves unknown top-level and entry fields of an older-format file', async () => {
+    const dirA = join(homeDir, 'dir-a');
+    const dirB = join(homeDir, 'dir-b');
+    await fsp.mkdir(dirA);
+    await fsp.mkdir(dirB);
+    const idA = encodeWorkDirKey(dirA);
+    await fsp.writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          [idA]: {
+            root: dirA,
+            name: 'a',
+            created_at: '2024-01-01T00:00:00.000Z',
+            last_opened_at: '2024-01-02T00:00:00.000Z',
+            legacy_extra: { nested: true },
+          },
+        },
+        deleted_workspace_ids: ['wd_gone'],
+        future_top_level: { since: 2 },
+      }),
+      'utf8',
+    );
+
+    const registry = build();
+    await registry.createOrTouch(dirB);
+
+    const onDisk = JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
+      version: number;
+      workspaces: Record<string, Record<string, unknown>>;
+      deleted_workspace_ids: unknown;
+      future_top_level?: unknown;
+    };
+    expect(onDisk.future_top_level).toEqual({ since: 2 });
+    expect(onDisk.workspaces[idA]?.['legacy_extra']).toEqual({ nested: true });
+    expect(onDisk.workspaces[idA]?.['name']).toBe('a');
+    expect(onDisk.workspaces[idA]?.['last_opened_at']).toBe('2024-01-02T00:00:00.000Z');
+    expect(onDisk.deleted_workspace_ids).toEqual(['wd_gone']);
+    expect(onDisk.version).toBe(1);
+    expect(onDisk.workspaces[encodeWorkDirKey(dirB)]).toBeDefined();
   });
 });
 

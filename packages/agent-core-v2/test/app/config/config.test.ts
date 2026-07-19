@@ -68,8 +68,10 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { ICrossProcessLockService } from '#/os/interface/crossProcessLock';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubCrossProcessLock } from '../../os/stubs';
 
 const TEST_OS_ENV = {
   osKind: 'Linux',
@@ -382,6 +384,7 @@ describe('ConfigService env overlay (live)', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
@@ -404,6 +407,7 @@ describe('ConfigService env overlay (live)', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
@@ -425,6 +429,7 @@ describe('ConfigService env overlay (live)', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
@@ -446,6 +451,7 @@ describe('ConfigService env overlay (live)', () => {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(ILogService, stubLog());
     ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg'));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
@@ -515,6 +521,7 @@ describe('image config section', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
@@ -861,6 +868,7 @@ describe('task config section', () => {
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
@@ -895,6 +903,7 @@ describe('task config section', () => {
     ix.stub(IFileSystemStorageService, storage);
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
@@ -1000,6 +1009,7 @@ describe('task config section', () => {
     ix.stub(IFileSystemStorageService, storage);
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
@@ -1170,6 +1180,7 @@ describe('subagent config section', () => {
     ix.stub(IFileSystemStorageService, storage);
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.stub(ICrossProcessLockService, stubCrossProcessLock());
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;

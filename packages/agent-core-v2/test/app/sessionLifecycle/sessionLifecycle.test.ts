@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -14,12 +15,14 @@ import {
 } from '#/_base/di/scope';
 import { type ScopedTestHost, createScopedTestHost, stubPair } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IEventService } from '#/app/event/event';
+import { IFlagService } from '#/app/flag/flag';
 import {
   IAgentLifecycleService,
   MAIN_AGENT_ID,
@@ -41,13 +44,27 @@ import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIn
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
+import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionLeaseService } from '#/session/sessionLease/sessionLease';
+import {
+  ISessionLeaseContactProvider,
+  SessionLeaseContactProvider,
+} from '#/session/sessionLease/sessionLeaseContactProvider';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
+import { ICrossProcessLockService } from '#/os/interface/crossProcessLock';
+import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
+import { stubCrossProcessLock } from '../../os/stubs';
+import { stubFlag } from '../flag/stubs';
+import { stubLog } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 function bootstrapStub(): IBootstrapService {
@@ -387,6 +404,15 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function waitFor(cond: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (cond()) return;
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 class NoopSessionExternalHooksService implements ISessionExternalHooksService {
   declare readonly _serviceBrand: undefined;
 }
@@ -475,6 +501,11 @@ describe('SessionLifecycleService', () => {
       stubPair(IProjectLocalConfigService, projectLocalConfigStub()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       stubPair(ICronTaskPersistence, cronStoreStub()),
+      stubPair(ILogService, stubLog()),
+      stubPair(IFlagService, stubFlag(false)),
+      stubPair(ICrossProcessLockService, stubCrossProcessLock()),
+      stubPair(IWriteAuthorityRegistry, new WriteAuthorityRegistryService()),
+      stubPair(ISessionLeaseContactProvider, new SessionLeaseContactProvider()),
       ...extra,
     ]);
     return host.app.accessor.get(ISessionLifecycleService);
@@ -1282,6 +1313,325 @@ describe('SessionLifecycleService', () => {
       expect(clone).toMatchObject({ cron: '0 9 * * *', prompt: 'standup', createdAt: 1 });
       expect(clone!.id).not.toBe('task-src');
       expect(cron.docs.get('task-src')!.tags![CRON_SESSION_TAG]).toBe('src');
+    });
+  });
+
+  describe('session lease', () => {
+    function realInstanceSeeds(
+      root: string,
+      over: ReturnType<typeof stubPair>[] = [],
+    ): ReturnType<typeof stubPair>[] {
+      return [
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        stubPair(ICrossProcessLockService, new CrossProcessLockService()),
+        stubPair(IWriteAuthorityRegistry, new WriteAuthorityRegistryService()),
+        ...over,
+      ];
+    }
+
+    function realAlsSeeds(root: string): {
+      seeds: ReturnType<typeof stubPair>[];
+      appendLog: AppendLogStore;
+      registry: WriteAuthorityRegistryService;
+    } {
+      const registry = new WriteAuthorityRegistryService();
+      const appendLog = new AppendLogStore(new FileStorageService(root), registry);
+      return {
+        seeds: [
+          stubPair(IBootstrapService, tmpBootstrapStub(root)),
+          stubPair(ICrossProcessLockService, new CrossProcessLockService()),
+          stubPair(IWriteAuthorityRegistry, registry),
+          stubPair(IAppendLogStore, appendLog),
+        ],
+        appendLog,
+        registry,
+      };
+    }
+
+    function leaseFile(root: string, sessionId: string): string {
+      return join(root, 'session-leases', `${sessionId}.json`);
+    }
+
+    async function createError(
+      svc: ISessionLifecycleService,
+      sessionId: string,
+    ): Promise<Error2> {
+      return svc
+        .create({ sessionId, workDir: '/tmp/proj' })
+        .then(() => {
+          throw new Error('expected create to fail');
+        }, (error: unknown) => error as Error2);
+    }
+
+    it('acquires the lease on materialize and seeds it into the session scope', async () => {
+      const root = await makeTmpRoot();
+      const svc = build(realInstanceSeeds(root));
+      const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+      const payload = JSON.parse(await readFile(leaseFile(root, 's1'), 'utf8'));
+      const lease = h.accessor.get(ISessionLeaseService);
+      expect(lease.info).toEqual({ sessionId: 's1', lockId: payload.lock_id });
+      expect(() => lease.assertWritable()).not.toThrow();
+      expect(telemetryRecords).toContainEqual({
+        event: 'session_lease_acquired',
+        properties: { session_id: 's1' },
+      });
+    });
+
+    it('refuses to materialize a session live-held by another instance', async () => {
+      const root = await makeTmpRoot();
+      const first = build(realInstanceSeeds(root));
+      const firstHost = host!;
+      await first.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      try {
+        const second = build(realInstanceSeeds(root));
+        const error = await createError(second, 's1');
+        expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
+        expect(error.details).toEqual({ kind: 'held-by-peer', phase: 'held-by-local-instance' });
+        expect(telemetryRecords).toContainEqual({
+          event: 'session_held_by_peer_returned',
+          properties: { session_id: 's1', phase: 'held-by-local-instance' },
+        });
+      } finally {
+        firstHost.dispose();
+      }
+    });
+
+    it('reports the routable phase with the holder address when multi_server is on', async () => {
+      const root = await makeTmpRoot();
+      const first = build(
+        realInstanceSeeds(root, [
+          stubPair(IFlagService, stubFlag(true)),
+          stubPair(
+            ISessionLeaseContactProvider,
+            new SessionLeaseContactProvider(() => ({
+              type: 'address',
+              address: 'http://127.0.0.1:5555',
+            })),
+          ),
+        ]),
+      );
+      const firstHost = host!;
+      await first.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      try {
+        const second = build(
+          realInstanceSeeds(root, [stubPair(IFlagService, stubFlag(true))]),
+        );
+        const error = await createError(second, 's1');
+        expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
+        expect(error.details).toEqual({
+          kind: 'held-by-peer',
+          phase: 'routable',
+          address: 'http://127.0.0.1:5555',
+        });
+      } finally {
+        firstHost.dispose();
+      }
+    });
+
+    it('never emits the holder address when multi_server is off', async () => {
+      const root = await makeTmpRoot();
+      const first = build(
+        realInstanceSeeds(root, [
+          stubPair(
+            ISessionLeaseContactProvider,
+            new SessionLeaseContactProvider(() => ({
+              type: 'address',
+              address: 'http://127.0.0.1:5555',
+            })),
+          ),
+        ]),
+      );
+      const firstHost = host!;
+      await first.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      try {
+        const second = build(realInstanceSeeds(root));
+        const error = await createError(second, 's1');
+        expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
+        expect(error.details).toEqual({ kind: 'held-by-peer', phase: 'held-by-local-instance' });
+      } finally {
+        firstHost.dispose();
+      }
+    });
+
+    it('reports holder-unresponsive for a live holder with a stale heartbeat', async () => {
+      const root = await makeTmpRoot();
+      await mkdir(join(root, 'session-leases'), { recursive: true });
+      await writeFile(
+        leaseFile(root, 's1'),
+        JSON.stringify({
+          lock_id: 'old-token',
+          instance_id: 'inst-old',
+          pid: process.pid,
+          heartbeat_at: Date.now() - 60_000,
+        }),
+      );
+      const svc = build(realInstanceSeeds(root));
+      const error = await createError(svc, 's1');
+      expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
+      expect(error.details).toEqual({
+        kind: 'held-by-peer',
+        phase: 'holder-unresponsive',
+        retry_after_ms: 2000,
+      });
+      expect(telemetryRecords).toContainEqual({
+        event: 'session_lease_holder_unresponsive',
+        properties: { session_id: 's1' },
+      });
+    });
+
+    it('reports the creating phase for a lease file inside its creation window', async () => {
+      const root = await makeTmpRoot();
+      await mkdir(join(root, 'session-leases'), { recursive: true });
+      await writeFile(leaseFile(root, 's1'), '');
+      const svc = build(realInstanceSeeds(root));
+      const error = await createError(svc, 's1');
+      expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
+      expect(error.details).toEqual({ kind: 'held-by-peer', phase: 'creating', retry_after_ms: 1000 });
+    });
+
+    it('takes over the lease of a dead holder and reports session_lease_takeover', async () => {
+      const root = await makeTmpRoot();
+      await mkdir(join(root, 'session-leases'), { recursive: true });
+      await writeFile(
+        leaseFile(root, 's1'),
+        JSON.stringify({
+          lock_id: 'dead-token',
+          instance_id: 'inst-dead',
+          pid: 0x7fffffff,
+          heartbeat_at: 1,
+        }),
+      );
+      const svc = build(realInstanceSeeds(root));
+      const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      expect(h.id).toBe('s1');
+      expect(telemetryRecords).toContainEqual({
+        event: 'session_lease_takeover',
+        properties: { session_id: 's1', previous: 'holder-dead' },
+      });
+      const payload = JSON.parse(await readFile(leaseFile(root, 's1'), 'utf8'));
+      expect(payload.lock_id).not.toBe('dead-token');
+    });
+
+    it('tears the session down when a peer takes over its lease', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog } = realAlsSeeds(root);
+      const svc = build(seeds);
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+      const leasePath = leaseFile(root, 's1');
+      const payload = JSON.parse(await readFile(leasePath, 'utf8'));
+      await writeFile(leasePath, JSON.stringify({ ...payload, lock_id: 'peer-token' }));
+
+      const agentScopeStr = 'sessions/wd_stub/s1/agents/main';
+      appendLog.append(agentScopeStr, 'wire.jsonl', { type: 'metadata' });
+      await expect(appendLog.flush()).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_LEASE_LOST,
+      });
+
+      await waitFor(() => svc.get('s1') === undefined);
+
+      appendLog.append(agentScopeStr, 'wire.jsonl', { type: 'metadata' });
+      await expect(appendLog.flush()).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_LEASE_LOST,
+      });
+      await expect(stat(join(root, agentScopeStr))).rejects.toThrow();
+      // The token-guarded release never unlinks the peer's lease file.
+      const remaining = JSON.parse(await readFile(leasePath, 'utf8'));
+      expect(remaining.lock_id).toBe('peer-token');
+    });
+
+    it('refuses to materialize a session directory an unregistered writer keeps writing', async () => {
+      const root = await makeTmpRoot();
+      const sessionDir = join(root, 'sessions', 'wd_stub', 's1');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, 'marker'), '1');
+      const writer = setInterval(() => {
+        void writeFile(join(sessionDir, `tick-${randomUUID()}`), 'x').catch(() => {});
+      }, 150);
+      writer.unref();
+      try {
+        const svc = build(
+          realInstanceSeeds(root, [stubPair(IFlagService, stubFlag(true))]),
+        );
+        const error = await createError(svc, 's1');
+        expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
+        expect(error.details).toEqual({ kind: 'unregistered-writer' });
+        await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      } finally {
+        clearInterval(writer);
+      }
+    });
+
+    it('materializes when the session directory stops being written between the two checks', async () => {
+      const root = await makeTmpRoot();
+      const sessionDir = join(root, 'sessions', 'wd_stub', 's1');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, 'marker'), '1');
+      const svc = build(
+        realInstanceSeeds(root, [stubPair(IFlagService, stubFlag(true))]),
+      );
+      const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      expect(h.id).toBe('s1');
+    });
+
+    it('fork acquires a distinct target lease; releasing the source does not fence the target', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog } = realAlsSeeds(root);
+      const svc = build([
+        ...seeds,
+        stubPair(IWorkspaceRegistry, {
+          ...workspaceRegistryStub(),
+          get: () =>
+            Promise.resolve({
+              id: 'wd_stub',
+              root: '/tmp/proj',
+              name: 'stub',
+              createdAt: 0,
+              lastOpenedAt: 0,
+            }),
+        }),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+      expect(target.id).toBe('dst');
+
+      const srcPayload = JSON.parse(await readFile(leaseFile(root, 'src'), 'utf8'));
+      const dstPayload = JSON.parse(await readFile(leaseFile(root, 'dst'), 'utf8'));
+      expect(dstPayload.lock_id).not.toBe(srcPayload.lock_id);
+
+      appendLog.append('sessions/wd_stub/src/agents/main', 'wire.jsonl', { n: 1 });
+      appendLog.append('sessions/wd_stub/dst/agents/main', 'wire.jsonl', { n: 2 });
+      await appendLog.flush();
+
+      await svc.close('src');
+      appendLog.append('sessions/wd_stub/dst/agents/main', 'wire.jsonl', { n: 3 });
+      await appendLog.flush();
+
+      const disk = await readFile(
+        join(root, 'sessions', 'wd_stub', 'dst', 'agents', 'main', 'wire.jsonl'),
+        'utf8',
+      );
+      expect(disk).toBe('{"n":2}\n{"n":3}\n');
+    });
+
+    it('close returns with the just-appended journal tail durable and the lease released', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog } = realAlsSeeds(root);
+      const svc = build(seeds);
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      const agentScopeStr = 'sessions/wd_stub/s1/agents/main';
+      // Mirror the wire handle lifecycle: release retires the buffer and its
+      // final flush is fire-and-forget — close must still await it.
+      const released = appendLog.acquire(agentScopeStr, 'wire.jsonl');
+      appendLog.append(agentScopeStr, 'wire.jsonl', { tail: true });
+      released.dispose();
+
+      await svc.close('s1');
+
+      const disk = await readFile(join(root, agentScopeStr, 'wire.jsonl'), 'utf8');
+      expect(disk).toBe('{"tail":true}\n');
+      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
     });
   });
 

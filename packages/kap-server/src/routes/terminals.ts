@@ -241,6 +241,20 @@ function sendMappedError(
       case ErrorCodes.TERMINAL_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.TERMINAL_NOT_FOUND, err.message, requestId, err.stack));
         return;
+      case ErrorCodes.SESSION_HELD_BY_PEER:
+        // Ownership redirect: the details payload (`held-by-peer` phase /
+        // address) is the actionable part, so it rides the envelope and the
+        // stack stays server-side.
+        reply.send(
+          errEnvelope(
+            ErrorCode.SESSION_HELD_BY_PEER,
+            err.message,
+            requestId,
+            undefined,
+            err.details,
+          ),
+        );
+        return;
     }
   }
   // `ISessionWorkspaceContext.assertAllowed` throws a plain (uncoded) Error when a cwd

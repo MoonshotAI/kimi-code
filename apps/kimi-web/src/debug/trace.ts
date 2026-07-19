@@ -55,6 +55,8 @@ const EXPORT_TRACE_EVENTS = [
   'session:snapshot:start',
   'session:snapshot:accepted',
   'session:snapshot:failed',
+  'session:ownership',
+  'session:ownership-creating-retry',
   'operation:failed',
   'window:error',
   'window:unhandled-rejection',
@@ -72,6 +74,14 @@ export interface ExportTraceMetadata {
   busy?: boolean;
   /** Client operation name (e.g. 'archiveSession') for operation:failed. */
   operation?: string;
+  /** Ownership decision outcome ('redirect' | 'retry' | 'notify'). */
+  action?: string;
+  /** Ownership details kind ('held-by-peer' | 'unregistered-writer'). */
+  kind?: string;
+  /** 'creating' retry attempt number. */
+  attempt?: number;
+  /** Scheduled delay before the next attempt, ms. */
+  delayMs?: number;
   seq?: number;
   durationMs?: number;
   messageCount?: number;

@@ -2105,3 +2105,68 @@ describe('useWorkspaceState — upsertWorkspacePreserveOrder hidden roots', () =
     expect(state.hiddenWorkspaceRoots).toEqual(['/home/Foo']);
   });
 });
+
+// Volatile `skill_catalog.changed` hint: a burst of frames for one session
+// must coalesce into a single skills re-pull (mirrors the
+// session.list_changed sidebar refresh debounce).
+describe('useWorkspaceState — scheduleSkillsRefresh', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function skillsRefreshDeps(loadSkillsForSession: ReturnType<typeof vi.fn>): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      modelProvider: {
+        draftModel: ref(null),
+        skillsBySession: ref({}),
+        loadSkillsForSession,
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
+    };
+  }
+
+  it('coalesces a burst of hints into one skills re-pull per session', () => {
+    const loadSkillsForSession = vi.fn().mockResolvedValue(undefined);
+    const ws = useWorkspaceState(createState(), skillsRefreshDeps(loadSkillsForSession));
+
+    ws.scheduleSkillsRefresh('sess_1');
+    ws.scheduleSkillsRefresh('sess_1');
+    ws.scheduleSkillsRefresh('sess_1');
+    expect(loadSkillsForSession).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(400);
+    expect(loadSkillsForSession).toHaveBeenCalledTimes(1);
+    expect(loadSkillsForSession).toHaveBeenCalledWith('sess_1');
+  });
+
+  it('trailing-refresh: a hint inside the debounce window re-arms it', () => {
+    const loadSkillsForSession = vi.fn().mockResolvedValue(undefined);
+    const ws = useWorkspaceState(createState(), skillsRefreshDeps(loadSkillsForSession));
+
+    ws.scheduleSkillsRefresh('sess_1');
+    vi.advanceTimersByTime(300);
+    ws.scheduleSkillsRefresh('sess_1');
+    vi.advanceTimersByTime(300);
+    expect(loadSkillsForSession).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100);
+    expect(loadSkillsForSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('debounces per session, not globally', () => {
+    const loadSkillsForSession = vi.fn().mockResolvedValue(undefined);
+    const ws = useWorkspaceState(createState(), skillsRefreshDeps(loadSkillsForSession));
+
+    ws.scheduleSkillsRefresh('sess_1');
+    ws.scheduleSkillsRefresh('sess_2');
+    vi.advanceTimersByTime(400);
+
+    expect(loadSkillsForSession).toHaveBeenCalledTimes(2);
+    expect(loadSkillsForSession).toHaveBeenCalledWith('sess_1');
+    expect(loadSkillsForSession).toHaveBeenCalledWith('sess_2');
+  });
+});

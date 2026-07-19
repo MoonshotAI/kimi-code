@@ -18,6 +18,8 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
+import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -99,6 +101,7 @@ describe('v1 wire vocabulary', () => {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     log = ix.get(IAppendLogStore);
     wire = registerTestAgentWire(ix, SCOPE, { log });
   });
@@ -157,6 +160,7 @@ describe('v1 wire vocabulary', () => {
     const ix2 = store.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix2.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     const log2 = ix2.get(IAppendLogStore);
     const fresh = registerTestAgentWire(ix2, SCOPE, { log: log2 });
 

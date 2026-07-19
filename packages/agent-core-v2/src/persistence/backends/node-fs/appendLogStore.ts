@@ -11,14 +11,26 @@
  * rewrite failures sticky, keeps the shared flush pending until the
  * post-rewrite drain is durable, waits every key before a global flush reports
  * an error, and preserves per-key storage ordering while acquired buffers
- * retire and hand off to replacement owners. Bound at App scope.
+ * retire and hand off to replacement owners. Session-scoped writes (journal
+ * bytes under `sessions/<wsId>/<sessionId>`) are fenced: `drain` and `rewrite`
+ * re-verify the session's registered `ISessionWriteAuthority` through
+ * `IWriteAuthorityRegistry` immediately before bytes hit storage, a session
+ * scope with no registered authority fails closed, and a fencing failure
+ * sticks the buffer like any ambiguous storage failure (the session teardown
+ * follows). The root scope and scopes outside the sessions tree carry no
+ * authority and pass untouched. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { Error2, ErrorCodes } from '#/errors';
 
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import {
+  sessionIdFromScope,
+  IWriteAuthorityRegistry,
+} from '#/persistence/interface/writeAuthority';
 import {
   AppendLogCorruptedError,
   IAppendLogStore,
@@ -45,7 +57,10 @@ export class AppendLogStore implements IAppendLogStore {
 
   private readonly logs = new Map<string, LogState>();
 
-  constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {}
+  constructor(
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IWriteAuthorityRegistry private readonly authorityRegistry: IWriteAuthorityRegistry,
+  ) {}
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void {
     const state = this.state(scope, key);
@@ -109,6 +124,7 @@ export class AppendLogStore implements IAppendLogStore {
     );
     const rewrite = priorSettled.then(async () => {
       try {
+        this.assertScopeWritable(scope);
         await this.storage.write(scope, key, encoded, { atomic: true });
         state.storageFailure = undefined;
       } catch (error) {
@@ -120,10 +136,15 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   async flush(): Promise<void> {
-    const inFlight = [...this.logs.entries()].map(([id, state]) => {
+    const inFlight: Promise<void>[] = [];
+    for (const [id, state] of this.logs) {
       const { scope, key } = fromLogId(id);
-      return this.flushState(scope, key, state);
-    });
+      inFlight.push(this.flushState(scope, key, state));
+      // A retired buffer's fire-and-forget final flush must settle before a
+      // global flush reports, or the close path can return with the session
+      // tail still in flight. Its errors stay swallowed per the release path.
+      if (state.retirement !== undefined) inFlight.push(state.retirement);
+    }
     const settled = await Promise.allSettled(inFlight);
     for (const result of settled) {
       if (result.status === 'rejected') throw result.reason;
@@ -248,6 +269,7 @@ export class AppendLogStore implements IAppendLogStore {
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
       try {
+        this.assertScopeWritable(scope);
         await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
       } catch (error) {
         const failure = (state.storageFailure ??= { error });
@@ -256,6 +278,18 @@ export class AppendLogStore implements IAppendLogStore {
       if (state.cutoverEpoch !== cutoverEpoch) return;
       state.pending.splice(0, batch.length);
     }
+  }
+
+  private assertScopeWritable(scope: string): void {
+    const sessionId = sessionIdFromScope(scope);
+    if (sessionId === undefined) return;
+    const authority = this.authorityRegistry.resolve(sessionId);
+    if (authority === undefined) {
+      throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session has no registered write authority', {
+        details: { sessionId },
+      });
+    }
+    authority.assertWritable();
   }
 }
 

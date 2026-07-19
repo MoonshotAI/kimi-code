@@ -314,6 +314,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     fileDiffLoading,
   } = deps;
   let exportInFlight = false;
+  // Re-entrancy guard for volatile session.list_changed refreshes — a burst of
+  // events must not stack overlapping re-pulls.
+  let sessionsListRefreshInFlight = false;
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
@@ -817,6 +820,57 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const cleared: Record<string, boolean> = {};
     for (const w of rawState.workspaces) cleared[w.id] = false;
     rawState.sessionsHasMoreByWorkspace = cleared;
+  }
+
+  // Volatile per-session `skill_catalog.changed` hint: coalesce a burst of
+  // frames for one session into a single skills re-pull.
+  const SKILLS_REFRESH_DEBOUNCE_MS = 400;
+  const skillRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Re-pull a session's skills after a volatile `skill_catalog.changed` WS
+   *  hint (a skill file was added/edited/removed on the daemon). Failing
+   *  silently is correct — the event is a bare hint, so a lost refresh is
+   *  indistinguishable from a lost event and the next hint or session reload
+   *  converges the slash menu. Same rationale as refreshSessionsList. */
+  function scheduleSkillsRefresh(sessionId: string): void {
+    const existing = skillRefreshTimers.get(sessionId);
+    if (existing !== undefined) clearTimeout(existing);
+    skillRefreshTimers.set(
+      sessionId,
+      setTimeout(() => {
+        skillRefreshTimers.delete(sessionId);
+        void modelProvider.loadSkillsForSession(sessionId);
+      }, SKILLS_REFRESH_DEBOUNCE_MS),
+    );
+  }
+
+  /** Re-pull the first session pages after a volatile `session.list_changed`
+   *  WS hint (multi-instance home: another instance created/archived/deleted a
+   *  session). Failing silently (log only) is correct — the event carries no
+   *  payload, so a lost refresh is indistinguishable from a lost event and the
+   *  next hint or manual reload converges the list. */
+  async function refreshSessionsList(): Promise<void> {
+    if (sessionsListRefreshInFlight) return;
+    sessionsListRefreshInFlight = true;
+    try {
+      const sessions = await loadInitialSessionsByWorkspace();
+      // undefined = every workspace request failed: keep the current list
+      // rather than committing a false empty one (same contract as loadAll).
+      if (sessions === undefined) return;
+      // Keep the active session even when it falls outside the re-fetched
+      // first pages (deep link into an old session): dropping it would cut its
+      // snapshot/status sync and sidebar highlight mid-use.
+      const activeId = rawState.activeSessionId;
+      if (activeId !== undefined && !sessions.some((s) => s.id === activeId)) {
+        const current = rawState.sessions.find((s) => s.id === activeId);
+        if (current) sessions.push(current);
+      }
+      setSessionsPreservingLiveUsage(sessions);
+    } catch (err) {
+      console.warn('[kimi-web] sessions list refresh failed', err);
+    } finally {
+      sessionsListRefreshInFlight = false;
+    }
   }
 
   /**
@@ -2761,6 +2815,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     loadWorkspaces,
     loadMoreSessions,
     loadAllSessions,
+    refreshSessionsList,
+    scheduleSkillsRefresh,
     selectWorkspace,
     openWorkspace,
     upsertWorkspacePreserveOrder,

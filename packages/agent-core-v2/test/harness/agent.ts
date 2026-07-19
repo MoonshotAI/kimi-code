@@ -110,6 +110,7 @@ import {
   IHostFileSystem,
   ISessionBtwService,
   ISessionContext,
+  ISessionLeaseService,
   ISessionProcessRunner,
   IAgentScopeContext,
   IAgentShellCommandService,
@@ -167,6 +168,7 @@ import type { PathAccessOperation } from '#/session/workspaceContext/workspaceCo
 
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+import { stubSessionLeaseService } from '../session/sessionLease/stubs';
 import { createScriptedGenerate } from './scripted-generate';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -1080,6 +1082,7 @@ export class AgentTestContext {
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
+            reg.defineInstance(ISessionLeaseService, stubSessionLeaseService());
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());

@@ -35,12 +35,24 @@ for (let r = 0; r < rounds; r++) {
   const got = await lf.acquire();
   process.stdout.write(`R${r} ${process.pid} ${got ? 1 : 0}\n`);
   if (got) {
-    // Hold the lock briefly so every loser resolves its acquire() while the
-    // winner still holds (an immediate release makes sequential re-acquisters
-    // indistinguishable from simultaneous holders). Sized generously for
-    // heavily loaded machines, where a racer can be descheduled for tens of
-    // milliseconds inside its own call.
-    await sleep(50);
+    // Hold until the parent has collected every racer's line for this round
+    // (it plants release-<r> once all RACERS lines are in). No fixed hold
+    // duration survives per-round wake-up stagger: on a loaded runner a racer
+    // can be descheduled past any hold+release window and then acquire
+    // SEQUENTIALLY, truthfully reporting 1 — which the parent would misread
+    // as two simultaneous holders. The gate makes every late racer see a
+    // live, held lock and resolve as a loser deterministically. The timeout
+    // is only a safety net for a dead parent.
+    const releaseGate = `${gateDir}/release-${r}`;
+    for (let waited = 0; ; waited += 1) {
+      try {
+        fs.statSync(releaseGate);
+        break;
+      } catch {
+        if (waited >= 30_000) break;
+        await sleep(1);
+      }
+    }
     await lf.release();
   }
 }

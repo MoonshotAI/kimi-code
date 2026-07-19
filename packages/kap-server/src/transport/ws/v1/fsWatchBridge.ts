@@ -14,9 +14,16 @@
  * {@link SessionEventBroadcaster}); it is **not** DI-registered and carries no
  * `_serviceBrand`. It owns the per-`(connection, session)` subscription sets,
  * fans the core feed out to each connection filtered by that connection's
- * paths, and assigns a per-session monotonic `seq`. Frames are sent straight
- * to the socket — they never enter the broadcaster / journal (fs changes are
- * volatile: on overflow the client sees `truncated` and re-syncs).
+ * paths, and assigns a **per-connection monotonic `seq`**: each connection
+ * numbers only the frames actually delivered to it — matched change frames and
+ * `truncated` frames alike — starting at 1 with no gaps; a frame the
+ * connection never receives consumes nothing. A `seq` gap, a `truncated: true`
+ * payload, or an epoch change each invalidate the incremental stream: the
+ * client must fall back to a full baseline re-pull (snapshot + incremental +
+ * resync), per the wire contract pinned on `fsChangeEventSchema`
+ * (`@moonshot-ai/protocol` `fs.ts`). Frames are sent straight to the socket —
+ * they never enter the broadcaster / journal (fs changes are volatile: on
+ * overflow the client sees `truncated` and re-syncs).
  *
  * The core `ISessionFsWatchService` keeps a single subscription set per
  * session; the bridge drives it with the **union** of every connection's
@@ -70,6 +77,8 @@ export interface FsWatchAck {
 interface ConnEntry {
   readonly conn: FsWatchConnection;
   readonly paths: Set<string>;
+  /** Per-connection monotonic frame counter; starts at 0, pre-incremented per delivery. */
+  seq: number;
 }
 
 interface SessionWatch {
@@ -79,7 +88,6 @@ interface SessionWatch {
   readonly workspace: ISessionWorkspaceContext;
   readonly conns: Map<string, ConnEntry>;
   union: Set<string>;
-  seq: number;
   sub: IDisposable | undefined;
 }
 
@@ -126,7 +134,7 @@ export class FsWatchBridge {
     }
 
     if (entry === undefined) {
-      entry = { conn, paths: new Set() };
+      entry = { conn, paths: new Set(), seq: 0 };
       sw.conns.set(conn.id, entry);
     }
     for (const rel of toAdd) entry.paths.add(rel);
@@ -185,7 +193,6 @@ export class FsWatchBridge {
       workspace: session.accessor.get(ISessionWorkspaceContext),
       conns: new Map(),
       union: new Set(),
-      seq: 0,
       sub: undefined,
     };
     this.bySession.set(sessionId, sw);
@@ -214,18 +221,23 @@ export class FsWatchBridge {
   private onSessionEvent(sessionId: string, ev: FsChangeEvent): void {
     const sw = this.bySession.get(sessionId);
     if (sw === undefined) return;
-    for (const { conn, paths } of sw.conns.values()) {
+    for (const entry of sw.conns.values()) {
+      const { conn, paths } = entry;
       let changes: FsChangeEntry[];
       if (ev.truncated === true) {
+        // A truncated window is broadcast to every connection of the session
+        // watch, even one whose path set matches nothing: after it, no
+        // incremental state can be trusted, so every client must resync.
         changes = [];
       } else {
         changes = ev.changes.filter((c) => isUnderAny(c.path, paths));
+        // No frame for this connection → its seq does not advance.
         if (changes.length === 0) continue;
       }
-      sw.seq += 1;
+      entry.seq += 1;
       const frame: FsChangedFrame = {
         type: 'event.fs.changed',
-        seq: sw.seq,
+        seq: entry.seq,
         session_id: sessionId,
         timestamp: new Date().toISOString(),
         payload: {

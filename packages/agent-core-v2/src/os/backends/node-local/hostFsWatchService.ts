@@ -6,6 +6,8 @@
  * handle closes it. Bound at App scope.
  */
 
+import type { Stats } from 'node:fs';
+
 import { FSWatcher } from 'chokidar';
 
 import { Emitter, type Event } from '#/_base/event';
@@ -24,6 +26,17 @@ import {
 
 const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.test(p);
 
+/**
+ * chokidar attaches `fs.watch` to every scanned entry; special files (unix
+ * sockets, fifos, devices) make that call throw UNKNOWN — e.g. a depth-0
+ * sentinel landing on a shared temp root that contains sockets, or a project
+ * tree with a socket in it. Filter them up front so one such entry can never
+ * poison the whole watcher.
+ */
+function isSpecialEntry(stats: Stats | undefined): boolean {
+  return stats !== undefined && !stats.isFile() && !stats.isDirectory() && !stats.isSymbolicLink();
+}
+
 class HostFsWatchHandle implements IHostFsWatchHandle {
   readonly onDidChange: Event<HostFsChange>;
 
@@ -39,7 +52,8 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       persistent: false,
       followSymlinks: false,
       depth: options?.recursive === false ? 0 : undefined,
-      ignored: options?.ignored ?? DEFAULT_IGNORED,
+      ignored: (path, stats) =>
+        isSpecialEntry(stats) || (options?.ignored?.(path) ?? DEFAULT_IGNORED(path)),
     });
     this.watcher.on('all', (eventName: string, absPath: string) => {
       const mapped = mapChokidarEvent(eventName, absPath);

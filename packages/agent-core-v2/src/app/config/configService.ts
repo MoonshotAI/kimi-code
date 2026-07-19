@@ -17,9 +17,13 @@
  * — plus a `delivered` snapshot per domain used as the diff base for
  * `onDidSectionChange`. Reads config paths and the environment overlay through
  * `bootstrap`, persists the TOML document through the `storage` TOML
- * atomic-document store (reloading when the document changes on disk), and logs
- * through `log`. Late section / overlay registration re-validates the
- * already-loaded raw value and re-runs overlays. Bound at App scope.
+ * atomic-document store (reloading when the document changes on disk),
+ * serializes every persist as a cross-process lock-in read-modify-write
+ * through `crossProcessLock` (re-reading the file inside the lock and applying
+ * only the touched section, so sections written by other processes survive —
+ * design: `.tmp/refactor-watch-design-v2.md` §3.6), and logs through `log`.
+ * Late section / overlay registration re-validates the already-loaded raw
+ * value and re-runs overlays. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -32,7 +36,9 @@ import {
   IAtomicTomlDocumentStore,
   type IAtomicDocumentStore,
 } from '#/persistence/interface/atomicDocumentStore';
+import { ICrossProcessLockService } from '#/os/interface/crossProcessLock';
 
+import { configFileMutexTarget } from './configFileMutex';
 import {
   type AnyEnvBindings,
   type ConfigChangedEvent,
@@ -243,6 +249,7 @@ export class ConfigService extends Disposable implements IConfigService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
     @IAtomicTomlDocumentStore private readonly documentStore: IAtomicDocumentStore,
+    @ICrossProcessLockService private readonly lock: ICrossProcessLockService,
   ) {
     super();
     this.configKey = this.bootstrap.configKey;
@@ -323,8 +330,10 @@ export class ConfigService extends Disposable implements IConfigService {
         this.registry.validate(domain, stripped);
         this.raw[domain] = stripped;
       }
+      const previousRaw = this.raw;
       await this.persist(domain);
       this.rebuildEffective('set', [domain]);
+      this.commitAbsorbed(previousRaw);
     });
   }
 
@@ -350,8 +359,10 @@ export class ConfigService extends Disposable implements IConfigService {
       } else {
         this.raw[domain] = this.registry.validate(domain, stripped);
       }
+      const previousRaw = this.raw;
       await this.persist(domain);
       this.rebuildEffective('set', [domain]);
+      this.commitAbsorbed(previousRaw);
     });
   }
 
@@ -556,8 +567,31 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   private async persist(domain: string): Promise<void> {
-    applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
-    await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
+    const { lockPath, options } = configFileMutexTarget(this.bootstrap.configPath);
+    // Two exclusion layers: `enqueueStateTransition` serializes transitions
+    // inside this process; the cross-process lock makes the re-read → apply →
+    // atomic-write burst mutually exclusive with other processes sharing this
+    // config file. Lock-acquisition and write failures propagate to the set()
+    // caller as-is (no retry here).
+    await this.lock.withLock(lockPath, options, async () => {
+      const data = await this.documentStore.get<ResolvedConfig>(CONFIG_SCOPE, this.configKey);
+      const freshBase = data !== undefined && isPlainObject(data) ? cloneRecord(data) : {};
+      applySectionToToml(freshBase, domain, this.raw[domain], this.registry);
+      await this.documentStore.set(CONFIG_SCOPE, this.configKey, freshBase);
+      this.rawSnake = freshBase;
+      // Re-derive the camelCase view too: the fresh base may carry sections
+      // written by other processes, and both views must match what we wrote
+      // (rawSnake equality is how the watch-triggered load() skips our own
+      // echo instead of double-reporting it).
+      this.raw = transformTomlData(freshBase, this.registry);
+    });
+  }
+
+  private commitAbsorbed(previousRaw: ResolvedConfig): void {
+    const absorbed = [...new Set([...Object.keys(previousRaw), ...Object.keys(this.raw)])].filter(
+      (domain) => !deepEqual(previousRaw[domain], this.raw[domain]),
+    );
+    if (absorbed.length > 0) this.commit('reload', absorbed);
   }
 }
 

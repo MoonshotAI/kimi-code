@@ -34,12 +34,23 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { IPluginSkillSource } from '#/session/sessionSkillCatalog/pluginSkillSource';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
+import { IHostFsWatchService, type IHostFsWatchHandle } from '#/os/interface/hostFsWatch';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubSkill } from '../../app/skillCatalog/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
 
 const bootstrapStub = stubBootstrap('/home');
+
+function hostFsWatchStub(): IHostFsWatchService {
+  return {
+    _serviceBrand: undefined,
+    watch: (): IHostFsWatchHandle => ({
+      onDidChange: (): { dispose(): void } => ({ dispose: () => {} }),
+      dispose: () => {},
+    }),
+  };
+}
 
 function configStub(): IConfigService & {
   setExtraSkillDirs(dirs: readonly string[]): void;
@@ -153,6 +164,7 @@ function makeHost(
     stubPair(IConfigService, config),
     stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
     stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
+    stubPair(IHostFsWatchService, hostFsWatchStub()),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
   return { host, session, config };
@@ -328,6 +340,7 @@ describe('SessionSkillCatalogService', () => {
       stubPair(IConfigService, config),
       stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFsWatchService, hostFsWatchStub()),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
 
@@ -367,6 +380,7 @@ describe('SessionSkillCatalogService', () => {
       stubPair(IConfigService, config),
       stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFsWatchService, hostFsWatchStub()),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
 
@@ -584,6 +598,7 @@ describe('SessionSkillCatalogService', () => {
         _serviceBrand: undefined,
       } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IPluginService, pluginStub()),
+      stubPair(IHostFsWatchService, hostFsWatchStub()),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [
       stubPair(ISessionWorkspaceContext, ws),
@@ -643,6 +658,7 @@ describe('SessionSkillCatalogService', () => {
         _serviceBrand: undefined,
       } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IPluginService, pluginService),
+      stubPair(IHostFsWatchService, hostFsWatchStub()),
     ]);
     const session = host.child(LifecycleScope.Session, 's1', [
       stubPair(ISessionWorkspaceContext, ws),
@@ -701,6 +717,7 @@ describe('SessionSkillCatalogService', () => {
         _serviceBrand: undefined,
       } as unknown as ISkillCatalogRuntimeOptions),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(IHostFsWatchService, hostFsWatchStub()),
     ]);
     const { stub: ws } = workspaceStub('/work');
     const session = host.child(LifecycleScope.Session, 's1', [

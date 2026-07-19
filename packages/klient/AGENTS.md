@@ -40,9 +40,58 @@ terminal surface are v1-only and live in the legacy suites.
   suites (moved from server-e2e). They skip unless `KIMI_SERVER_URL` points
   at a running server and **must keep running unchanged**; the v1 surface
   has no in-memory equivalent, so these stay live-server-only — do not try
-  to run them against the in-process transports.
+  to run them against the in-process transports. Exception: the
+  dual-instance / session-ownership suites (`legacy/dual-instance.test.ts`,
+  `legacy/session-ownership.test.ts`) boot their own kap-server instances
+  via the helpers below and run without `KIMI_SERVER_URL`.
 - The retired `scenarios/` scripts were rewritten as suites: image-upload
   and terminal (v1-only surfaces) live in `test/e2e/legacy/`.
+
+## Dual-instance helpers
+
+Multi-server e2e cases boot two `kap-server` instances on ONE shared home via
+`test/e2e/harness/testing/` (re-exported from `test/e2e/harness/index.js`).
+Pick the helper by what the case needs:
+
+- **`startServerPair(options?)`** — default. Two in-process instances on one
+  shared `mkdtemp` home (or caller-provided `home`), each with `port: 0`,
+  `logLevel: 'silent'`, and `disableAuth: true` by default. Returns
+  `{ a, b, home, cwd, urlA, urlB, baseUrl(server), connectClient(server), dispose() }`;
+  `connectClient` returns an authed `HttpClient` (bearer from
+  `server.authTokenService.getToken()` when `disableAuth: false`). `cwd` is
+  the shared workspace cwd — pass it as `metadata.cwd` in `createSession` on
+  both instances ("same cwd" is session-level, never a server flag).
+  `dispose()` closes both instances (best-effort), restores env, and removes
+  the home only if the helper created it.
+- **`spawnServerProcess(options?)` / `spawnServerProcessPair(options?)`** —
+  subprocess mode for signal-sensitive cases (SIGSTOP / SIGCONT / SIGKILL,
+  kill -9 lease takeover) that need real, distinct pids. Each child is
+  `node --import <tsx loader> --import build/register-raw-text-loader.mjs
+  test/e2e/harness/testing/serverProcessMain.ts` with
+  `TSX_TSCONFIG_PATH=tsconfig.dev.json` (the dev tsconfig's `include` covers
+  every package's `src`, which tsx's per-file tsconfig mapping needs for
+  `experimentalDecorators` in the agent-core graph). Do NOT switch the
+  incantation to the tsx CLI: it is a hub/spoke wrapper that forks the server
+  as a grandchild, so `child.pid` — and every signal sent to it — would miss
+  the actual server. The helper asserts the pid the child reports in its
+  `{type:'ready'}` stdout line equals `child.pid` to catch exactly this.
+  `stop()` is SIGTERM + await exit, escalating to SIGKILL after ~10s.
+
+Hard rules:
+
+- Same-home dual boot requires `KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1` at
+  boot time or the second boot fails with `ServerLockedError`. The helpers
+  set/restore it themselves (child env for spawned pairs) — do not export it
+  globally.
+- Always `port: 0`. A fixed busy port silently walks to `port + 1`, which
+  breaks registry/port assertions and cross-test isolation.
+- One pair per test file/worker; never share a `RunningServer` or
+  `SpawnedServer` across files — vitest runs files in parallel workers.
+- Readiness when NOT using these helpers: poll `GET /api/v1/healthz`
+  (auth-exempt) until 200 — not `/api/v1/meta` (token-gated).
+- The helpers import `@moonshot-ai/kap-server` lazily at call time so the
+  harness barrel stays loadable under plain `tsx` without the raw-text
+  loader; keep that pattern when extending them.
 
 ## Observability (inherited from server-e2e)
 
@@ -61,6 +110,10 @@ terminal surface are v1-only and live in the legacy suites.
   conformance + e2e; live cases skip without their env).
 - `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/klient test`
   — include the live legacy cases against a running server.
+- `pnpm --filter @moonshot-ai/klient exec vitest run test/e2e/legacy/dual-instance.test.ts`
+  — dual-instance helper self-tests (boot their own in-process + subprocess
+  servers; no external server needed). Same for
+  `test/e2e/legacy/session-ownership.test.ts`.
 - `pnpm --filter @moonshot-ai/klient docker:e2e` — docker e2e; the run
   derives its runner name/namespace from the current workspace to avoid
   cross-workspace conflicts.

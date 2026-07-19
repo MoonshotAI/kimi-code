@@ -7,15 +7,27 @@
  * test/persistence/backends/node-fs/appendLogStore.test.ts`.
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { ErrorCodes } from '#/errors';
 import { AppendLogCorruptedError, IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
+import {
+  sessionIdFromScope,
+  IWriteAuthorityRegistry,
+} from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
+import { SessionLease, sessionLeasePath } from '#/session/sessionLease/sessionLease';
 
 const enc = new TextEncoder();
 
@@ -54,6 +66,7 @@ describe('AppendLogStore', () => {
     storage = new InMemoryStorageService();
     ix.stub(IFileSystemStorageService, storage);
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     record = ix.get(IAppendLogStore);
   });
 
@@ -612,6 +625,7 @@ describe('AppendLogStore', () => {
     const localIx = disposables.add(new TestInstantiationService());
     localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
     localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    localIx.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     const log = localIx.get(IAppendLogStore);
 
     const out: Rec[] = [];
@@ -628,6 +642,7 @@ describe('AppendLogStore', () => {
     const localIx = disposables.add(new TestInstantiationService());
     localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
     localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    localIx.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     const log = localIx.get(IAppendLogStore);
 
     const first: Array<{ type: string }> = [];
@@ -652,6 +667,7 @@ describe('AppendLogStore', () => {
     const localIx = disposables.add(new TestInstantiationService());
     localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
     localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    localIx.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     const log = localIx.get(IAppendLogStore);
 
     const readAll = async (): Promise<Array<{ s: string }>> => {
@@ -671,6 +687,7 @@ describe('AppendLogStore', () => {
     const localIx = disposables.add(new TestInstantiationService());
     localIx.stub(IFileSystemStorageService, chunkedStorage(chunks));
     localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    localIx.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     const log = localIx.get(IAppendLogStore);
 
     const out: Array<Rec & { s?: string }> = [];
@@ -679,5 +696,151 @@ describe('AppendLogStore', () => {
       { n: 1, s: '中文' },
       { n: 2, s: '日本語' },
     ]);
+  });
+
+  describe('write fencing', () => {
+    const SESSION_SCOPE = 'sessions/wd_test/s1';
+    let tmpDir: string;
+    let locks: CrossProcessLockService;
+    let registry: WriteAuthorityRegistryService;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'kimi-als-fence-'));
+      locks = new CrossProcessLockService();
+      registry = new WriteAuthorityRegistryService();
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function makeStore(): { store: IAppendLogStore; storage: InMemoryStorageService } {
+      const storage = new InMemoryStorageService();
+      const localIx = disposables.add(new TestInstantiationService());
+      localIx.stub(IFileSystemStorageService, storage);
+      localIx.stub(IWriteAuthorityRegistry, registry);
+      localIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+      return { store: localIx.get(IAppendLogStore), storage };
+    }
+
+    function leaseFor(sessionId: string): SessionLease {
+      return new SessionLease(
+        sessionId,
+        locks.acquire(sessionLeasePath(tmpDir, sessionId)),
+        () => {},
+      );
+    }
+
+    function foreignPayload(tmp: string, sessionId: string): void {
+      writeFileSync(
+        sessionLeasePath(tmp, sessionId),
+        JSON.stringify({ lock_id: 'peer-token', pid: process.pid }),
+      );
+    }
+
+    it('parses the session id out of session and agent scopes only', () => {
+      expect(sessionIdFromScope('')).toBeUndefined();
+      expect(sessionIdFromScope('sessions')).toBeUndefined();
+      expect(sessionIdFromScope('sessions/wd_test')).toBeUndefined();
+      expect(sessionIdFromScope('sessions//s1')).toBeUndefined();
+      expect(sessionIdFromScope('wire')).toBeUndefined();
+      expect(sessionIdFromScope('agents/main')).toBeUndefined();
+      expect(sessionIdFromScope('credentials/x')).toBeUndefined();
+      expect(sessionIdFromScope('sessions/wd_test/s1')).toBe('s1');
+      expect(sessionIdFromScope('sessions/wd_test/s1/agents/main')).toBe('s1');
+    });
+
+    it('flush rejects with session.lease_lost when the lease is gone and writes no bytes', async () => {
+      const lease = leaseFor('s1');
+      registry.register(lease);
+      const { store, storage } = makeStore();
+      let appendAttempts = 0;
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        appendAttempts++;
+        return originalAppend(...args);
+      };
+      foreignPayload(tmpDir, 's1');
+
+      store.append(SESSION_SCOPE, KEY, { n: 1 });
+      await expect(store.flush()).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_LEASE_LOST,
+      });
+      // Sticky like any ambiguous storage failure: the buffer does not retry.
+      await expect(store.flush()).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_LEASE_LOST,
+      });
+      expect(appendAttempts).toBe(0);
+      expect(await storage.read(SESSION_SCOPE, KEY)).toBeUndefined();
+    });
+
+    it('rewrite is fenced by the same hard gate', async () => {
+      const lease = leaseFor('s1');
+      registry.register(lease);
+      const { store, storage } = makeStore();
+      let writeAttempts = 0;
+      const originalWrite = storage.write.bind(storage);
+      storage.write = async (...args) => {
+        writeAttempts++;
+        return originalWrite(...args);
+      };
+      foreignPayload(tmpDir, 's1');
+
+      await expect(store.rewrite(SESSION_SCOPE, KEY, [{ n: 1 }])).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_LEASE_LOST,
+      });
+      expect(writeAttempts).toBe(0);
+      expect(await storage.read(SESSION_SCOPE, KEY)).toBeUndefined();
+    });
+
+    it('root-scope appends bypass the gate with zero authorities registered', async () => {
+      const { store, storage } = makeStore();
+      store.append('', 'session_index.jsonl', { sessionId: 's1' });
+      await store.flush();
+      const bytes = await storage.read('', 'session_index.jsonl');
+      expect(new TextDecoder().decode(bytes)).toBe('{"sessionId":"s1"}\n');
+    });
+
+    it('session-scoped writes without a registered authority fail closed', async () => {
+      const { store, storage } = makeStore();
+      store.append(SESSION_SCOPE, KEY, { n: 1 });
+      await expect(store.flush()).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_LEASE_LOST,
+        message: 'session has no registered write authority',
+        details: { sessionId: 's1' },
+      });
+      expect(await storage.read(SESSION_SCOPE, KEY)).toBeUndefined();
+    });
+
+    it('writes pass while the registered lease is held', async () => {
+      const lease = leaseFor('s1');
+      registry.register(lease);
+      const { store, storage } = makeStore();
+      store.append(SESSION_SCOPE, KEY, { n: 1 });
+      await store.flush();
+      const bytes = await storage.read(SESSION_SCOPE, KEY);
+      expect(new TextDecoder().decode(bytes)).toBe('{"n":1}\n');
+    });
+
+    it('flush awaits the retired buffer final flush before returning', async () => {
+      const lease = leaseFor('s1');
+      registry.register(lease);
+      const { store, storage } = makeStore();
+      const handle = store.acquire(SESSION_SCOPE, KEY);
+      store.append(SESSION_SCOPE, KEY, { n: 1 });
+      handle.dispose();
+      await store.flush();
+      const bytes = await storage.read(SESSION_SCOPE, KEY);
+      expect(new TextDecoder().decode(bytes)).toBe('{"n":1}\n');
+    });
+
+    it('double registration for a session is rejected and dispose unregisters', () => {
+      const registration = registry.register({ sessionId: 's1', assertWritable: () => {} });
+      expect(() => registry.register({ sessionId: 's1', assertWritable: () => {} })).toThrow(
+        /already registered/,
+      );
+      registration.dispose();
+      expect(registry.resolve('s1')).toBeUndefined();
+    });
   });
 });

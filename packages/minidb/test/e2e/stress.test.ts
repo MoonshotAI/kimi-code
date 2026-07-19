@@ -241,6 +241,11 @@ test(
           if (lines.length >= RACERS) {
             const holders = lines.filter((l) => l.endsWith(' 1'));
             if (holders.length !== 1) violations.push(`round ${r}: ${holders.length} holders (${holders.join(', ')})`);
+            // Every racer has resolved this round: let the winner release.
+            // Without the gate a racer descheduled past the winner's hold
+            // could acquire sequentially afterwards and report a truthful
+            // second "1" (see lock-racer.ts).
+            await fs.writeFile(`${dir}/release-${r}`, '1');
             break;
           }
           await new Promise((res) => setTimeout(res, 1));

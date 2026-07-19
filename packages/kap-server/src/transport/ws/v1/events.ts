@@ -14,6 +14,10 @@ import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus'
 import type { MessageContent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
+import type {
+  ProviderRefreshChange,
+  ProviderRefreshFailure,
+} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
@@ -50,6 +54,32 @@ export interface SessionMetaUpdatedEvent {
 export interface SessionCreatedEvent {
   readonly type: 'event.session.created';
   readonly session: Session;
+}
+
+/**
+ * Volatile, payload-less hint that the set of sessions on disk changed
+ * (design §3.8): a workspace or session directory appeared or vanished under
+ * the shared `<home>/sessions` tree, possibly created by ANOTHER server
+ * instance sharing the home. Clients should re-pull `GET /sessions` instead
+ * of reading anything into the event itself — it is fanned out live only
+ * (never journaled, never replayed).
+ */
+export interface SessionListChangedEvent {
+  readonly type: 'session.list_changed';
+}
+
+/**
+ * Volatile per-session hint that the session's skill catalog changed: a skill
+ * file or directory under one of the watched sources appeared, changed, or
+ * vanished (mirrors the core `ISessionSkillCatalog.onDidChange` feed, whose
+ * payload is the changed source id). Fanned out live only (never journaled,
+ * never replayed) to connections subscribed to that session — clients should
+ * re-pull `GET /sessions/{sid}/skills` instead of reading anything into the
+ * hint itself.
+ */
+export interface SkillCatalogChangedEvent {
+  readonly type: 'skill_catalog.changed';
+  readonly sourceId: string;
 }
 
 export interface WorkspaceCreatedEvent {
@@ -94,6 +124,20 @@ export interface ConfigChangedEvent {
   readonly type: 'event.config.changed';
   readonly changedFields: string[];
   readonly config: ConfigResponse;
+}
+
+/**
+ * Published (core event bus) when the provider/model catalog refreshes (auth
+ * change, config edit, scheduled) and the effective catalog changed. Carries
+ * the per-provider diff so clients can both refresh their model/provider
+ * caches and surface a summary ("3 models added") without re-diffing the
+ * whole config.
+ */
+export interface ModelCatalogChangedEvent {
+  readonly type: 'event.model_catalog.changed';
+  readonly changed: readonly ProviderRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly ProviderRefreshFailure[];
 }
 
 export interface PromptSubmittedEvent {
@@ -172,12 +216,15 @@ export type AgentEvent =
   | AgentDisposedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | SessionListChangedEvent
+  | SkillCatalogChangedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
   | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
+  | ModelCatalogChangedEvent
   | PromptSubmittedEvent
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent;

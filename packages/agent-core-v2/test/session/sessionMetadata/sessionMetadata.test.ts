@@ -5,7 +5,9 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IFlagService } from '#/app/flag/flag';
 import { ILogService } from '#/_base/log/log';
+import { Error2, ErrorCodes } from '#/errors';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionLeaseService } from '#/session/sessionLease/sessionLease';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -17,6 +19,7 @@ import { IQueryStore } from '#/persistence/interface/queryStore';
 import { stubFlag } from '../../app/flag/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubQueryStore } from '../../persistence/interface/stubs';
+import { stubSessionLeaseService } from '../sessionLease/stubs';
 
 const META_SCOPE = 'sessions/wd_test/s1/session-meta';
 
@@ -42,6 +45,7 @@ describe('SessionMetadata', () => {
     ix.stub(ISessionContext, makeContext());
     ix.stub(IQueryStore, stubQueryStore());
     ix.stub(IFlagService, stubFlag(false));
+    ix.stub(ISessionLeaseService, stubSessionLeaseService());
     ix.set(IFileSystemStorageService, new SyncDescriptor(InMemoryStorageService));
     ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
     ix.set(ISessionMetadata, new SyncDescriptor(SessionMetadata));
@@ -246,5 +250,62 @@ describe('SessionMetadata', () => {
     const next = await meta.read();
     expect(next.agents?.['main']?.labels).toEqual({ swarmItem: 'src/a.ts' });
     expect(next.updatedAt).toBeGreaterThan(before);
+  });
+
+  it('gates updates behind the lease and leaves state.json untouched when it fails', async () => {
+    let leaseLost = false;
+    ix.stub(
+      ISessionLeaseService,
+      stubSessionLeaseService({
+        assertWritable: () => {
+          if (leaseLost) {
+            throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'lease lost', {
+              details: { sessionId: 's1' },
+            });
+          }
+        },
+      }),
+    );
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+
+    leaseLost = true;
+    await expect(meta.update({ title: 'x' })).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
+
+    const raw = await ix
+      .get(IAtomicDocumentStore)
+      .get<{ title?: string }>(META_SCOPE, 'state.json');
+    expect(raw?.title).toBeUndefined();
+  });
+
+  it('gates the load-time heal write behind the lease', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+    });
+    ix.stub(
+      ISessionLeaseService,
+      stubSessionLeaseService({
+        assertWritable: () => {
+          throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'lease lost', {
+            details: { sessionId: 's1' },
+          });
+        },
+      }),
+    );
+
+    const meta = ix.get(ISessionMetadata);
+    await expect(meta.ready).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
+
+    const raw = await store.get<{ agents?: unknown }>(META_SCOPE, 'state.json');
+    expect(raw?.agents).toBeUndefined();
   });
 });

@@ -53,4 +53,16 @@ export default {
     notResumable: '这个目标无法恢复（可能已取消或已完成）。',
     objectiveTooLong: '目标描述太长了，请精简后重试。',
   },
+  ownership: {
+    title: '会话由其他实例持有',
+    redirecting: '该会话正由另一个 Kimi 实例持有，正在跳转到 {origin}…',
+    creating: '会话正在另一个实例上创建，稍后自动重试…',
+    creatingTimeout: '会话仍在另一个实例上创建中，请稍后再试。',
+    holderUnresponsive: '持有该会话的实例无响应（可能已卡死）。请稍后重试，或到该实例上处理。',
+    heldByLocalInstance: '会话被本机另一个无网络地址的实例（如 CLI/TUI）持有。请到该实例继续，或先关闭它。',
+    unregisteredWriter: '会话目录正被未注册的外部进程写入，已拒绝打开以保护数据。',
+    redirectSameHost: '该会话的持有者就是当前实例。请刷新页面后重试。',
+    redirectLoopGuard: '多次跳转仍未到达持有会话的实例。请直接打开该实例后重试。',
+    redirectUnavailable: '该会话由另一个实例持有，但该实例未发布可跳转的地址。',
+  },
 };

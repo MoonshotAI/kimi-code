@@ -420,8 +420,12 @@ source-code study behind each choice.
 
 minidb is **single-writer**. Opening a directory for writing acquires an exclusive
 lock file (`db.lock`); a second writer is rejected with a `LockError`. A lock is
-taken over only when its owner PID is dead (stale-lock recovery), never merely
-because it is old.
+taken over only when its owner PID is dead — or when the PID has been recycled by
+an unrelated process (detected via the recorded process start time) — never
+merely because it is old. Takeover renames the stale file aside
+(`db.lock.stale.<lock_id>`) instead of deleting it, and every acquire/release
+re-reads the file and compares its unique token, so a superseded owner that
+wakes up late can never delete the new holder's lock.
 
 ```js
 // second process: throws LockError

@@ -8,6 +8,22 @@ import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
+  SESSION_HELD_BY_PEER_CODE,
+  getSessionOwnershipDetails,
+  narrowSessionOwnershipDetails,
+  type HeldByPeerDetails,
+  type SessionOwnershipDetails,
+} from '../api/daemon/sessionOwnership';
+import {
+  bumpRedirectBudget,
+  decideSessionOwnershipAction,
+  readRedirectBudget,
+  serializeRedirectBudget,
+  type OwnershipDecisionContext,
+  type OwnershipNotifyKey,
+  type RedirectBudget,
+} from '../lib/sessionOwnershipDecision';
+import {
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
   sortWorkspacesByRecent,
@@ -1067,12 +1083,21 @@ function connectEventsIfNeeded(): void {
       snapshotSyncRunner.request(sessionId);
     },
 
-    onError(code: number, msg: string, fatal: boolean) {
+    onError(code: number, msg: string, fatal: boolean, details?: unknown) {
       traceKeyEvent('ws:error', {
         status: 'failed',
         errorCode: code,
         fatal,
       });
+      // A connection-level 40921 frame (multi-instance surfaces) carries the
+      // same ownership details as the REST envelope — same decision path.
+      if (code === SESSION_HELD_BY_PEER_CODE) {
+        const ownership = narrowSessionOwnershipDetails(details);
+        if (ownership !== undefined) {
+          handleSessionOwnership(ownership, { operation: 'ws' });
+          return;
+        }
+      }
       pushWarning({
         severity: 'error',
         title: i18n.global.t('warnings.wsTitle'),
@@ -1081,6 +1106,19 @@ function connectEventsIfNeeded(): void {
           (detail): detail is AppNoticeDetail => detail !== undefined,
         ),
       });
+    },
+
+    // Volatile multi-instance hint: some instance sharing this home changed
+    // the session list — re-pull it (debounced, bursts coalesce).
+    onSessionListChanged() {
+      scheduleSessionsListRefresh();
+    },
+
+    // Volatile per-session hint: this session's skill catalog changed on the
+    // daemon (e.g. a skill file edited on disk) — re-pull the skills list so
+    // the composer's `/` menu picks it up (debounced, bursts coalesce).
+    onSkillCatalogChanged(sessionId: string) {
+      workspaceState.scheduleSkillsRefresh(sessionId);
     },
 
     onConnectionChange(connected: boolean) {
@@ -1107,7 +1145,7 @@ function connectEventsIfNeeded(): void {
 
 // Journal epoch per session, learned from snapshots / resync frames. Not
 // reactive — only consulted when building the subscribe cursor.
-const epochBySession: Record<string, string> = {};
+const epochBySession: Record<string, string | undefined> = {};
 // onResync resets the event projector, so that path must apply a snapshot even
 // if a newer global event advances the local cursor while the GET is in flight.
 const sessionsRequiringSnapshot = new Set<string>();
@@ -1306,6 +1344,10 @@ function pushOperationFailure(
     phase: network ? err.phase : undefined,
     httpStatus: network ? err.status : undefined,
   });
+  // Session-ownership contention (40921) is an expected multi-instance outcome
+  // with its own UX — redirect / auto-retry / targeted message — so it never
+  // reaches the generic failure toast.
+  if (handleSessionOwnershipError(err, { operation })) return;
   pushWarning(operationFailureNotice(operation, err, opts));
 }
 
@@ -1324,6 +1366,159 @@ function goalErrorMessage(err: unknown): string | undefined {
   if (!isDaemonApiError(err)) return undefined;
   const key = GOAL_ERROR_KEYS[err.code];
   return key ? i18n.global.t(key) : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Session ownership (multi-instance, envelope code 40921)
+// ---------------------------------------------------------------------------
+//
+// Several kap-server instances can share one home. Opening (or writing to) a
+// session whose lease is held by a sibling instance is rejected with
+// SESSION_HELD_BY_PEER + structured details. The client-facing decision
+// (redirect to the holder / auto-retry while it is mid-creation / targeted
+// terminal message) is pure and lives in lib/sessionOwnershipDecision; this
+// cluster owns the side effects: sessionStorage loop guard, toasts, the
+// full-page navigation, and the creating retry timer.
+
+/** Loop-guard persistence: redirects started inside this window count towards
+ *  PEER_MAX_REDIRECT_ATTEMPTS; older attempts expire so legitimate future
+ *  redirects are never blocked by ancient history. */
+const PEER_REDIRECT_STORAGE_KEY = 'kimi.peerRedirectBudget';
+const PEER_REDIRECT_WINDOW_MS = 5 * 60_000;
+const PEER_MAX_REDIRECT_ATTEMPTS = 3;
+const OWNERSHIP_MAX_CREATING_ATTEMPTS = 3;
+const OWNERSHIP_DEFAULT_RETRY_DELAY_MS = 1_000;
+
+/** 'creating' retries already fired per session (counts towards the cap). */
+const ownershipCreatingAttempts = new Map<string, number>();
+
+function readPeerRedirectBudgetSafe(now: number): RedirectBudget {
+  if (typeof window === 'undefined') return { count: 0, windowStart: now };
+  try {
+    return readRedirectBudget(
+      window.sessionStorage.getItem(PEER_REDIRECT_STORAGE_KEY),
+      now,
+      PEER_REDIRECT_WINDOW_MS,
+    );
+  } catch {
+    return { count: 0, windowStart: now };
+  }
+}
+
+function persistPeerRedirectBudgetSafe(budget: RedirectBudget): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(PEER_REDIRECT_STORAGE_KEY, serializeRedirectBudget(budget));
+  } catch {
+    // Storage unavailable (private mode…): the loop guard degrades to
+    // per-page-load only, which is still safe.
+  }
+}
+
+type OwnershipNoticeMessageKey = OwnershipNotifyKey | 'redirecting' | 'creating';
+
+function ownershipNotice(key: OwnershipNoticeMessageKey, params?: Record<string, string>): AppNotice {
+  return {
+    // redirecting/creating are transient progress, the rest are terminal states.
+    severity: key === 'redirecting' || key === 'creating' ? 'info' : 'error',
+    title: i18n.global.t('warnings.ownership.title'),
+    message:
+      params === undefined
+        ? i18n.global.t(`warnings.ownership.${key}`)
+        : i18n.global.t(`warnings.ownership.${key}`, params),
+  };
+}
+
+function ownershipDecisionContext(overrides?: Partial<OwnershipDecisionContext>): OwnershipDecisionContext {
+  const loc = typeof window === 'undefined' ? undefined : window.location;
+  return {
+    currentHost: loc?.host ?? '',
+    currentPath: loc === undefined ? '/' : `${loc.pathname}${loc.search}${loc.hash}`,
+    redirectAttempts: readPeerRedirectBudgetSafe(Date.now()).count,
+    maxRedirectAttempts: PEER_MAX_REDIRECT_ATTEMPTS,
+    creatingAttempts: 0,
+    maxCreatingAttempts: OWNERSHIP_MAX_CREATING_ATTEMPTS,
+    defaultRetryDelayMs: OWNERSHIP_DEFAULT_RETRY_DELAY_MS,
+    ...overrides,
+  };
+}
+
+/** Run the ownership decision for an already-narrowed details payload and
+ *  apply its side effects (redirect / notice). Auto-retry for 'creating' only
+ *  exists on the snapshot open path (scheduleOwnershipCreatingRetry); at this
+ *  blanket level a 'retry' decision degrades to the informational notice. */
+function handleSessionOwnership(details: SessionOwnershipDetails, ctx: { operation: string }): void {
+  const action = decideSessionOwnershipAction(details, ownershipDecisionContext());
+  traceKeyEvent('session:ownership', {
+    operation: ctx.operation,
+    action: action.type,
+    kind: details.kind,
+    phase: details.kind === 'held-by-peer' ? details.phase : undefined,
+  });
+  switch (action.type) {
+    case 'redirect': {
+      pushWarning(ownershipNotice('redirecting', { origin: action.origin }));
+      persistPeerRedirectBudgetSafe(bumpRedirectBudget(readPeerRedirectBudgetSafe(Date.now())));
+      if (typeof window !== 'undefined') {
+        window.location.assign(action.url);
+      }
+      return;
+    }
+    case 'retry':
+      pushWarning(ownershipNotice('creating'));
+      return;
+    case 'notify':
+      pushWarning(ownershipNotice(action.key));
+      return;
+  }
+}
+
+/** Intercept an operation failure: when it carries ownership details (40921)
+ *  run the ownership UX and report the error as handled — the caller must NOT
+ *  additionally surface its generic failure toast. */
+function handleSessionOwnershipError(err: unknown, ctx: { operation: string }): boolean {
+  const details = getSessionOwnershipDetails(err);
+  if (details === undefined) return false;
+  handleSessionOwnership(details, ctx);
+  return true;
+}
+
+/** Re-fire the snapshot sync after a 'creating' rejection, honouring the
+ *  server-provided retry_after_ms and capping the attempts. The first attempt
+ *  surfaces a transient notice; exhausting the cap surfaces the timeout one. */
+function scheduleOwnershipCreatingRetry(sessionId: string, details: HeldByPeerDetails): void {
+  const attempts = ownershipCreatingAttempts.get(sessionId) ?? 0;
+  const action = decideSessionOwnershipAction(
+    details,
+    ownershipDecisionContext({ creatingAttempts: attempts }),
+  );
+  if (action.type === 'retry') {
+    ownershipCreatingAttempts.set(sessionId, attempts + 1);
+    if (attempts === 0) pushWarning(ownershipNotice('creating'));
+    traceKeyEvent('session:ownership-creating-retry', {
+      sessionId,
+      attempt: attempts + 1,
+      delayMs: action.delayMs,
+    });
+    setTimeout(() => {
+      snapshotSyncRunner.request(sessionId);
+    }, action.delayMs);
+    return;
+  }
+  ownershipCreatingAttempts.delete(sessionId);
+  if (action.type === 'notify') pushWarning(ownershipNotice(action.key));
+}
+
+// The volatile session.list_changed event only says "something changed somewhere"
+// — coalesce a burst into a single sidebar list re-pull.
+const SESSIONS_LIST_REFRESH_DEBOUNCE_MS = 400;
+let sessionsListRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleSessionsListRefresh(): void {
+  if (sessionsListRefreshTimer !== null) clearTimeout(sessionsListRefreshTimer);
+  sessionsListRefreshTimer = setTimeout(() => {
+    sessionsListRefreshTimer = null;
+    void workspaceState.refreshSessionsList();
+  }, SESSIONS_LIST_REFRESH_DEBOUNCE_MS);
 }
 
 async function handleSessionNotFound(sessionId: string): Promise<void> {
@@ -1460,6 +1655,7 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     epochBySession[sessionId] = snap.epoch;
     sessionsRequiringSnapshot.delete(sessionId);
     sessionsRetryingStaleSnapshot.delete(sessionId);
+    ownershipCreatingAttempts.delete(sessionId);
 
     // Resync replaces the missed event stream, so a terminal snapshot must
     // also clear the local in-flight flag that normally ends with the turn.
@@ -1504,6 +1700,14 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     if (isSessionNotFoundError(err)) {
       await handleSessionNotFound(sessionId);
       return 'not-found';
+    }
+    const ownership = getSessionOwnershipDetails(err);
+    if (ownership?.kind === 'held-by-peer' && ownership.phase === 'creating') {
+      // The holder instance is mid-create: retry shortly with the server's
+      // hint instead of surfacing an error. Any other ownership outcome falls
+      // through to the blanket ownership handling in pushOperationFailure.
+      scheduleOwnershipCreatingRetry(sessionId, ownership);
+      return 'failed';
     }
     pushOperationFailure('getSessionSnapshot', err, {
       title: i18n.global.t('warnings.sessionSnapshotTitle'),

@@ -79,6 +79,27 @@ export const fsChangeEntrySchema = z.object({
 });
 export type FsChangeEntry = z.infer<typeof fsChangeEntrySchema>;
 
+/**
+ * Payload of the volatile `event.fs.changed` frame on `/api/v1/ws`:
+ *
+ *   { type: 'event.fs.changed', seq, session_id, timestamp, payload: FsChangeEvent }
+ *
+ * The frames never enter the journal — the stream is volatile and there is no
+ * catch-up cursor. `seq` is **per-connection monotonic**: each WebSocket
+ * connection numbers only the frames actually delivered to it (matched change
+ * frames and `truncated` frames alike), starting at 1 with no gaps; a frame
+ * dispatched only to other connections does not advance yours.
+ *
+ * `truncated: true` (with `count`; `changes` empty) means the coalescing
+ * window overflowed server-side and that window's entries were dropped
+ * wholesale — the incremental stream after the previously received `seq` is
+ * no longer trustworthy. On `truncated`, on a `seq` gap, or on an epoch
+ * change, the client MUST rebuild its baseline with a full REST listing
+ * (`POST /sessions/{sid}/fs:list`) and resume applying increments on top;
+ * partial continuation after a truncation is not defined. Truncated frames
+ * are broadcast to every connection watching the session, regardless of each
+ * connection's path set.
+ */
 export const fsChangeEventSchema = z.object({
   changes: z.array(fsChangeEntrySchema),
   coalesced_window_ms: z.number().int().positive(),

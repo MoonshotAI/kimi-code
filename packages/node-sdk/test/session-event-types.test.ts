@@ -68,6 +68,7 @@ describe('Event public types', () => {
       switch (event.type) {
         case 'agent.status.updated':
         case 'session.meta.updated':
+        case 'session.list_changed':
         case 'event.session.created':
         case 'event.session.status_changed':
         case 'event.session.work_changed':
@@ -78,6 +79,7 @@ describe('Event public types', () => {
         case 'event.model_catalog.changed':
         case 'goal.updated':
         case 'skill.activated':
+        case 'skill_catalog.changed':
         case 'plugin_command.activated':
         case 'error':
         case 'warning':
