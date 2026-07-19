@@ -328,9 +328,11 @@ interface FormatReadyBannerOptions {
   networkAddresses?: NetworkAddress[];
   /** When true, render a red danger notice (auth is disabled). */
   dangerousBypassAuth?: boolean;
+  /** When true, the server is attached to this terminal — Stop hint is Ctrl+C. */
+  foreground?: boolean;
 }
 
-function formatReadyBanner(
+export function formatReadyBanner(
   origin: string,
   host: string,
   opts: FormatReadyBannerOptions = {},
@@ -388,7 +390,8 @@ function formatReadyBanner(
 
   // Auxiliary controls last.
   lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
-  lines.push(`  ${label('Stop:     ')}${muted('kimi web kill')}`);
+  const stopHint = opts.foreground === true ? 'Ctrl+C' : 'kimi web kill';
+  lines.push(`  ${label('Stop:     ')}${muted(stopHint)}`);
   lines.push('');
   return lines.join('\n');
 }

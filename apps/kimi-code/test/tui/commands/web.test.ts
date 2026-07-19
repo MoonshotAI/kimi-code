@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getVersion } from '#/cli/version';
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { handleWebCommand, webSessionUrl } from '#/tui/commands/web';
 
 const mocks = vi.hoisted(() => ({
-  getLiveServerInstance: vi.fn(),
+  listLiveServerInstances: vi.fn(),
+  startServerForeground: vi.fn(),
   isServerHealthy: vi.fn(),
   tryResolveServerToken: vi.fn(),
   getDataDir: vi.fn(() => '/tmp/kimi-home'),
@@ -14,7 +16,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@moonshot-ai/kap-server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kap-server')>();
-  return { ...actual, getLiveServerInstance: mocks.getLiveServerInstance };
+  return { ...actual, listLiveServerInstances: mocks.listLiveServerInstances };
+});
+
+vi.mock('#/cli/sub/web/run', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/cli/sub/web/run')>();
+  return { ...actual, startServerForeground: mocks.startServerForeground };
 });
 
 vi.mock('#/cli/sub/web/shared', async (importOriginal) => {
@@ -41,6 +48,15 @@ type MountedPanel = {
   render: (width: number) => string[];
 };
 
+const INSTANCE_SRV_1 = {
+  serverId: 'srv-1',
+  pid: 1234,
+  host: '127.0.0.1',
+  port: 58627,
+  startedAt: 1,
+  heartbeatAt: 1,
+};
+
 function makeHost() {
   let mountedPanel: MountedPanel | null = null;
   const host = {
@@ -52,6 +68,7 @@ function makeHost() {
     }),
     restoreEditor: vi.fn(),
     setExitOpenUrl: vi.fn(),
+    setExitForegroundTask: vi.fn(),
     stop: vi.fn(async () => {}),
   } as unknown as SlashCommandHost & {
     showStatus: ReturnType<typeof vi.fn>;
@@ -59,6 +76,7 @@ function makeHost() {
     mountEditorReplacement: ReturnType<typeof vi.fn>;
     restoreEditor: ReturnType<typeof vi.fn>;
     setExitOpenUrl: ReturnType<typeof vi.fn>;
+    setExitForegroundTask: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
   };
   return { host, getMountedPanel: () => mountedPanel };
@@ -76,14 +94,7 @@ describe('handleWebCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getDataDir.mockReturnValue('/tmp/kimi-home');
-    mocks.getLiveServerInstance.mockResolvedValue({
-      serverId: 'srv-1',
-      pid: 1234,
-      host: '127.0.0.1',
-      port: 58627,
-      startedAt: 1,
-      heartbeatAt: 1,
-    });
+    mocks.listLiveServerInstances.mockResolvedValue([INSTANCE_SRV_1]);
     mocks.isServerHealthy.mockResolvedValue(true);
   });
 
@@ -92,6 +103,9 @@ describe('handleWebCommand', () => {
     const { host, getMountedPanel } = makeHost();
 
     const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
     getMountedPanel()?.handleInput('\r');
     await pending;
 
@@ -114,6 +128,9 @@ describe('handleWebCommand', () => {
     const { host, getMountedPanel } = makeHost();
 
     const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
     getMountedPanel()?.handleInput('\r');
     await pending;
 
@@ -126,26 +143,54 @@ describe('handleWebCommand', () => {
     expect(host.setExitOpenUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/sessions/ses-1');
   });
 
-  it('shows an error and does not exit when no server is running', async () => {
-    mocks.getLiveServerInstance.mockResolvedValue(undefined);
+  it('opens the second instance when the user moves the cursor to it', async () => {
+    mocks.tryResolveServerToken.mockReturnValue(undefined);
+    mocks.listLiveServerInstances.mockResolvedValue([
+      INSTANCE_SRV_1,
+      { ...INSTANCE_SRV_1, serverId: 'srv-2', port: 58628 },
+    ]);
     const { host, getMountedPanel } = makeHost();
 
     const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
+    getMountedPanel()?.handleInput('\u001B[B');
     getMountedPanel()?.handleInput('\r');
     await pending;
 
-    expect(host.showError).toHaveBeenCalledWith(
-      'No running Kimi server. Start one with `kimi web` in another terminal first.',
-    );
-    expect(mocks.openUrl).not.toHaveBeenCalled();
-    expect(host.stop).not.toHaveBeenCalled();
+    expect(mocks.isServerHealthy).toHaveBeenCalledWith('http://127.0.0.1:58628', expect.any(Number));
+    expect(mocks.openUrl).toHaveBeenCalledWith('http://127.0.0.1:58628/sessions/ses-1');
+    expect(host.stop).toHaveBeenCalledOnce();
   });
 
-  it('shows an error and does not exit when the running server is unhealthy', async () => {
+  it('lists each instance with its version, flagging a CLI mismatch', async () => {
+    mocks.listLiveServerInstances.mockResolvedValue([
+      { ...INSTANCE_SRV_1, hostVersion: '0.0.1-outdated' },
+    ]);
+    const { host, getMountedPanel } = makeHost();
+
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
+    const lines = getMountedPanel()!.render(80).join('\n');
+    getMountedPanel()?.handleInput('\u001B');
+    await pending;
+
+    expect(lines).toContain('http://127.0.0.1:58627');
+    expect(lines).toContain(`version 0.0.1-outdated (this CLI: ${getVersion()})`);
+    expect(lines).toContain('Start a new server');
+  });
+
+  it('shows an error and does not exit when the chosen server is unhealthy', async () => {
     mocks.isServerHealthy.mockResolvedValue(false);
     const { host, getMountedPanel } = makeHost();
 
     const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
     getMountedPanel()?.handleInput('\r');
     await pending;
 
@@ -154,6 +199,60 @@ describe('handleWebCommand', () => {
     );
     expect(mocks.openUrl).not.toHaveBeenCalled();
     expect(host.stop).not.toHaveBeenCalled();
+  });
+
+  it('does nothing on cancel', async () => {
+    const { host, getMountedPanel } = makeHost();
+
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
+    getMountedPanel()?.handleInput('\u001B');
+    await pending;
+
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+    expect(host.setExitForegroundTask).not.toHaveBeenCalled();
+    expect(host.stop).not.toHaveBeenCalled();
+  });
+
+  it('registers a foreground takeover when starting a new server, opening the deep link on ready', async () => {
+    mocks.listLiveServerInstances.mockResolvedValue([]);
+    mocks.tryResolveServerToken.mockReturnValue('tok-1');
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    mocks.startServerForeground.mockImplementation(
+      async (_options: unknown, hooks: { onReady?: (origin: string) => void }) => {
+        hooks.onReady?.('http://127.0.0.1:58627');
+      },
+    );
+    const { host, getMountedPanel } = makeHost();
+
+    const pending = handleWebCommand(host);
+    await vi.waitFor(() => {
+      expect(getMountedPanel()).not.toBeNull();
+    });
+    // With no running instances the only row is "Start a new server".
+    getMountedPanel()?.handleInput('\r');
+    await pending;
+
+    expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+
+    const task = host.setExitForegroundTask.mock.calls[0]![0] as (
+      exitCode: number,
+    ) => Promise<void>;
+    await task(0);
+
+    expect(mocks.startServerForeground).toHaveBeenCalledOnce();
+    expect(mocks.openUrl).toHaveBeenCalledWith(
+      'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
+    );
+    const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
+    expect(written).toContain('Kimi server ready');
+    expect(written).toContain('Ctrl+C');
+    expect(written).toContain('/sessions/ses-1');
+    writeSpy.mockRestore();
   });
 });
 
