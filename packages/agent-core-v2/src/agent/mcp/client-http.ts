@@ -43,7 +43,6 @@ export class HttpMcpClient implements MCPClient {
 
     this.transport = new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headers !== undefined ? { headers } : undefined,
-      // Default fetch pins HTTP/1.1 (see client-remote.ts); tests inject their own.
       fetch: options.fetch ?? createMcpFetch(),
       authProvider: options.oauthProvider,
     });

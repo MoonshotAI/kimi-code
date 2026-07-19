@@ -1,7 +1,7 @@
 import type { McpRemoteServerConfig, McpServerConfig } from '#/config/schema';
 import { ErrorCodes, KimiError } from '#/errors';
 import { createProxyDispatcher } from '#/utils/proxy';
-import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import { Agent, EnvHttpProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
 export function buildMcpRemoteHeaders(
   config: McpRemoteServerConfig,
@@ -35,21 +35,26 @@ export function isRemoteMcpConfig(config: McpServerConfig): config is McpRemoteS
 
 // Node's global fetch negotiates HTTP/2 (undici `allowH2` defaults to true).
 // When the MCP SDK's streamable-HTTP transport then opens its standalone SSE
-// GET stream and sends POSTs over that one H2 connection, Cloudflare-hosted
-// MCP servers (including Cloudflare's own docs endpoint) stall the POST
-// indefinitely while the GET stream is open — the startup handshake times out
-// before `tools/list` ever resolves. Pinning remote MCP traffic to HTTP/1.1
-// puts the stream and the POSTs on separate connections, which every
-// spec-compliant server handles.
+// GET stream on that H2 connection, undici queues every later stream-bodied
+// POST behind the in-flight GET and never dispatches it (undici client-h2
+// `busy()` guard; nodejs/undici#5524, fixed but not yet released). The GET
+// stream never ends, so `tools/list` hangs until the startup handshake times
+// out. Pinning remote MCP traffic to HTTP/1.1 puts the stream and the POSTs
+// on separate connections, which every spec-compliant server handles.
 //
-// When a proxy is configured the proxy dispatcher is used as-is: undici's
-// CONNECT tunnels already speak HTTP/1.1 to the origin, so proxied traffic
-// never hits the H2 stall.
+// The pin must also reach proxy dispatchers: undici's EnvHttpProxyAgent /
+// ProxyAgent negotiate H2 to the origin after the CONNECT tunnel as well.
+// (The SOCKS path builds its own Agent with a plain connector — HTTP/1.1 by
+// construction — so only the HTTP-proxy factory needs the flag.)
 let sharedMcpDispatcher: Dispatcher | undefined;
 
 function getMcpDispatcher(): Dispatcher {
   if (sharedMcpDispatcher === undefined) {
-    sharedMcpDispatcher = createProxyDispatcher() ?? new Agent({ allowH2: false });
+    sharedMcpDispatcher =
+      createProxyDispatcher(process.env, {
+        makeHttpAgent: ({ httpProxy, httpsProxy, noProxy }) =>
+          new EnvHttpProxyAgent({ httpProxy, httpsProxy, noProxy, allowH2: false }),
+      }) ?? new Agent({ allowH2: false });
   }
   return sharedMcpDispatcher;
 }

@@ -253,13 +253,6 @@ al9H7C0WYMmTbMeDrJa0/UgHBkuxkCua2W8Z69x0g14vR4ni21DaGXomNQXS9R8k
 pN9iHuSv+UDZLidheNnLqOY=
 -----END PRIVATE KEY-----`;
 
-/**
- * Mimics the wire behavior of Cloudflare-hosted MCP servers that broke
- * remote MCP startup: over a single HTTP/2 connection, `initialize` is
- * answered and the standalone GET SSE stream is held open, but a POST
- * (e.g. `tools/list`) sent while that GET stream is open is never answered.
- * HTTP/1.1 requests are always answered.
- */
 export async function startStallingH2McpServer(): Promise<{ url: string; close: () => Promise<void> }> {
   const initializeResult = (id: unknown) =>
     `event: message\ndata: ${JSON.stringify({
@@ -292,11 +285,9 @@ export async function startStallingH2McpServer(): Promise<{ url: string; close: 
     key: H2_STALL_TEST_KEY,
   });
 
-  // HTTP/2 requests arrive on the 'stream' event.
   server.on('stream', (stream, headers) => {
     const method = headers[':method'];
     if (method === 'GET') {
-      // Standalone SSE stream: respond and hold it open, never writing.
       stream.respond({ ':status': 200, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
       return;
     }
@@ -314,22 +305,14 @@ export async function startStallingH2McpServer(): Promise<{ url: string; close: 
         stream.end();
         return;
       }
-      // The stall: over H2, post-handshake POSTs (tools/list, tools/call)
-      // are never answered. The real-world trigger is the standalone GET
-      // stream being open on the same connection; because the SDK opens it
-      // asynchronously, keying on the stream directly would make this mimic
-      // racy, so it stalls all post-handshake H2 POSTs deterministically.
       return;
     });
   });
 
-  // HTTP/1.1 requests also arrive on the compat 'request' event (H2 requests
-  // fire both 'stream' and 'request'; only handle 1.x here). Always answered.
   server.on('request', (req, res) => {
     if (req.httpVersionMajor !== 1 || res.headersSent) return;
     if (req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-      // Hold the stream open; an empty write flushes headers without a body chunk.
       res.write('');
       return;
     }
@@ -352,7 +335,7 @@ export async function startStallingH2McpServer(): Promise<{ url: string; close: 
   const port = (server.address() as AddressInfo).port;
 
   return {
-    url: `https://localhost:${port}/mcp`,
+    url: `https://127.0.0.1:${port}/mcp`,
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

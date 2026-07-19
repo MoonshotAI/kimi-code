@@ -459,7 +459,7 @@ async function startStallingH2McpServer(): Promise<{ url: string; close: () => P
   const port = (server.address() as AddressInfo).port;
 
   return {
-    url: `https://localhost:${port}/mcp`,
+    url: `https://127.0.0.1:${port}/mcp`,
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

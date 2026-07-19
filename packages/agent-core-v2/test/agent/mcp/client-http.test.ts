@@ -202,19 +202,12 @@ describe('HttpMcpClient', () => {
 });
 
 describe('HTTP/1.1 pinning (createMcpFetch)', () => {
-  // Reproduces the failure mode of Cloudflare-hosted MCP servers (observed
-  // with Cloudflare's own docs endpoint): an HTTP/2 server that answers
-  // `initialize` and holds the standalone SSE GET stream open, but never
-  // answers POSTs that arrive while that GET stream is open on the same H2
-  // connection. Over H2 the handshake connects but `listTools` hangs; the
-  // H1.1-pinned fetch puts the requests on separate connections and succeeds.
   it('hangs over HTTP/2 and succeeds over the pinned HTTP/1.1 fetch', async () => {
     const server = await startStallingH2McpServer();
     cleanups.push(server.close);
 
     const config = { transport: 'http' as const, url: server.url };
 
-    // Baseline: an H2-capable agent hits the same stall as Node's global fetch.
     const h2Agent = new Agent({ allowH2: true, connect: { rejectUnauthorized: false } });
     cleanups.push(() => h2Agent.destroy());
     const h2Client = new HttpMcpClient(config, { fetch: createMcpFetch(h2Agent) });
@@ -229,7 +222,6 @@ describe('HTTP/1.1 pinning (createMcpFetch)', () => {
       await h2Client.close();
     }
 
-    // The H1.1-pinned default fetch avoids the stall.
     const h1Agent = new Agent({ allowH2: false, connect: { rejectUnauthorized: false } });
     cleanups.push(() => h1Agent.destroy());
     const h1Client = new HttpMcpClient(config, { fetch: createMcpFetch(h1Agent) });
