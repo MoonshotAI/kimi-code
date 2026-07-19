@@ -137,6 +137,13 @@ export interface SlashCommandHost {
   // Dispatch
   stop(exitCode?: number): Promise<void>;
   setExitOpenUrl(url: string): void;
+  /**
+   * Register a task that takes over the process after the TUI has shut down
+   * (instead of exiting): the runner awaits it and only exits when it returns.
+   * Used by `/web` to keep a freshly started server attached to this terminal
+   * until Ctrl+C.
+   */
+  setExitForegroundTask(task: (exitCode: number) => Promise<void>): void;
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;

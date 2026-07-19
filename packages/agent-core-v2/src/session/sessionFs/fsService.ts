@@ -168,7 +168,7 @@ export class SessionFsService implements ISessionFsService {
           continue;
         }
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
-        const st = await this.hostFs.stat(this.absOf(childRel)).catch(() => undefined);
+        const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
         if (st === undefined) continue;
         visible.push({ name, relPath: childRel, stat: st });
       }
@@ -309,7 +309,7 @@ export class SessionFsService implements ISessionFsService {
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
-      st = await this.hostFs.stat(abs);
+      st = await this.hostFs.lstat(abs);
     } catch (err) {
       throw mapFsError(err, req.path);
     }
@@ -329,7 +329,7 @@ export class SessionFsService implements ISessionFsService {
     await Promise.all(
       resolved.map(async ({ raw, rel, abs }) => {
         try {
-          const st = await this.hostFs.stat(abs);
+          const st = await this.hostFs.lstat(abs);
           const name = rel === '.' ? basename(this.workspace.workDir) : basename(abs);
           entries[raw] = buildFsEntry(rel, name, st, false);
         } catch {
@@ -359,7 +359,7 @@ export class SessionFsService implements ISessionFsService {
       }
       throw err;
     }
-    const st = await this.hostFs.stat(abs);
+    const st = await this.hostFs.lstat(abs);
     return buildFsEntry(rel, basename(abs), st, false);
   }
 
@@ -368,7 +368,7 @@ export class SessionFsService implements ISessionFsService {
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
-      st = await this.hostFs.stat(abs);
+      st = await this.hostFs.lstat(abs);
     } catch (err) {
       throw mapFsError(err, relPath);
     }

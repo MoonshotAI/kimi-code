@@ -35,19 +35,19 @@ interface HomeWire {
 describe('server-v2 /api/v1 fs folder picker', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
-  let lockDir: string | undefined;
+  let instancesDir: string | undefined;
   let base: string;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-'));
-    // Keep the single-instance lock OUTSIDE the browsed homeDir (mirrors v1's
-    // isolated-lock harness) so the folder picker only sees the test fixtures.
-    lockDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-lock-'));
+    // Keep the instance registry OUTSIDE the browsed homeDir so the folder
+    // picker only sees the test fixtures.
+    instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-instances-'));
     server = await startServer({
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
-      lockPath: join(lockDir, 'lock'),
+      instancesDir,
       logLevel: 'silent',
     });
     base = `http://127.0.0.1:${server.port}`;
@@ -62,9 +62,9 @@ describe('server-v2 /api/v1 fs folder picker', () => {
       await rm(home, { recursive: true, force: true });
       home = undefined;
     }
-    if (lockDir !== undefined) {
-      await rm(lockDir, { recursive: true, force: true });
-      lockDir = undefined;
+    if (instancesDir !== undefined) {
+      await rm(instancesDir, { recursive: true, force: true });
+      instancesDir = undefined;
     }
   });
 
