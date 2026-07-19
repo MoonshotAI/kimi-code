@@ -1245,6 +1245,29 @@ describe('bindSessionTranscript', () => {
     return home;
   }
 
+  it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
+    const agents = new FakeAgents();
+    const interactions = new SessionInteractionService();
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+    const store = new TranscriptStore('s1');
+    const byAgent = new Map<string, TranscriptOperation[]>();
+    const binding = bindSessionTranscript(store, fakeSession(interactions, agents), undefined, (event) => {
+      byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
+    });
+
+    // Seeding creates the projector WITHOUT a lifecycle handle — no bus
+    // subscription can exist yet.
+    binding.seedPendingInteractions('sub-1');
+    expect(byAgent.get('sub-1')).toHaveLength(1);
+
+    // The agent materializes later: it must still get its live subscription
+    // (guarding on the projector's existence would drop every live event).
+    const sub = agents.add('sub-1');
+    sub.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    expect(byAgent.get('sub-1')!.length).toBeGreaterThan(1);
+    binding.dispose();
+  });
+
   it('overlays the in-flight turn as running after a backfill', async () => {
     const home = await seedWireHome();
     try {

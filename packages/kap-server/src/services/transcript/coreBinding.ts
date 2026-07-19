@@ -77,6 +77,8 @@ export function bindSessionTranscript(
   const disposables: IDisposable[] = [];
   /** Per-agent subscriptions (bus listeners capturing the agent's projector) — disposed with the agent. */
   const agentDisposables = new Map<string, IDisposable[]>();
+  /** Agents with a live bus subscription (a projector may exist before its handle does — see seedPendingInteractions). */
+  const subscribedAgents = new Set<string>();
   const projectors = new Map<string, AgentTranscriptProjector>();
   /** interaction id → owning projector agent id (for resolve routing). */
   const interactionAgents = new Map<string, string>();
@@ -141,7 +143,11 @@ export function bindSessionTranscript(
   };
 
   const subscribeAgent = (handle: IAgentScopeHandle): void => {
-    if (projectors.has(handle.id)) return;
+    // Guard on the subscription, not the projector: seeding can create the
+    // projector before the agent's handle exists, and it still needs its bus
+    // subscription once the handle appears.
+    if (subscribedAgents.has(handle.id)) return;
+    subscribedAgents.add(handle.id);
     const projector = projectorFor(handle.id);
     store.ensureAgent(handle.id, { agentId: handle.id });
     // Every domain emits live events via the per-agent `IEventBus`; the bus is
@@ -216,6 +222,7 @@ export function bindSessionTranscript(
       // would rebuild an empty shell instead of replaying persisted records.
       for (const d of agentDisposables.get(agentId) ?? []) d.dispose();
       agentDisposables.delete(agentId);
+      subscribedAgents.delete(agentId);
       projectors.delete(agentId);
     }),
   );
