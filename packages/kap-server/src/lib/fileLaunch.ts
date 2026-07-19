@@ -122,6 +122,8 @@ function commandExists(command: string, platform: NodeJS.Platform): boolean {
     if (platform === 'win32') {
       const result = spawnSync('cmd', ['/c', 'where', command], {
         stdio: 'ignore',
+        // Hide the transient cmd.exe console window on Windows.
+        windowsHide: true,
       });
       return result.status === 0;
     }
@@ -191,6 +193,10 @@ export async function launchDetached(cmd: LaunchCommand): Promise<void> {
       detached: true,
       stdio: 'ignore',
       shell: cmd.shell,
+      // On Windows a detached child gets its own console window; hide it so
+      // "open file" from the web UI does not flash a console (see also the
+      // background updater's identical guard in cli/update/preflight.ts).
+      windowsHide: true,
     });
     child.once('error', (err) => {
       if (settled) return;
