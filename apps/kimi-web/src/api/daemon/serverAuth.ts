@@ -13,7 +13,7 @@
 // days so it survives tab close and browser restarts without becoming a
 // permanent browser-profile secret. The token is already persisted server-side
 // at <KIMI_CODE_HOME>/server.token and handed to the browser in the launch URL.
-// `kimi server rotate-token` invalidates a stale copy, and the next 401 clears
+// `kimi web rotate-token` invalidates a stale copy, and the next 401 clears
 // it here.
 
 const STORAGE_KEY = 'kimi-web.server-credential';
@@ -241,7 +241,7 @@ export function clearCredential(): void {
     // Only clear the persisted copy when it still holds the credential this
     // tab was using. localStorage is shared across tabs, so an unconditional
     // removal would let a stale tab erase a newer token another tab stored
-    // (e.g. right after `kimi server rotate-token`).
+    // (e.g. right after `kimi web rotate-token`).
     const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
     const stored = raw === null || raw === undefined
       ? undefined

@@ -11,7 +11,7 @@ Gates not-yet-public features behind `IFlagService.enabled(id)`, per the reposit
 - `src/flag/flag.ts` — `IFlagService` token + resolver types (`ExperimentalFlagMap`, `ExperimentalFlagConfig`, `ExperimentalFlagSource`, `ExperimentalFeatureState`) + `ExperimentalConfigSchema` / `ExperimentalConfig` (zod).
 - `src/flag/flagService.ts` — `FlagService` impl + `MASTER_ENV` (`KIMI_CODE_EXPERIMENTAL_FLAG`) + `EXPERIMENTAL_SECTION` (`experimental`); reads definitions from `IFlagRegistry`; self-registers at App scope.
 - `src/flag/index.ts` — barrel; re-exported by `src/index.ts` at the L3 block.
-- `src/<domain>/flag.ts` — each domain that owns a flag declares it here and calls `registerFlagDefinition` at the module top level (e.g. `src/multiServer/flag.ts`). The directory already names the domain, so the file is just `flag.ts`.
+- `src/<domain>/flag.ts` — each domain that owns a flag declares it here and calls `registerFlagDefinition` at the module top level (e.g. `src/agent/toolSelect/flag.ts`). The directory already names the domain, so the file is just `flag.ts`.
 
 ## Public surface
 
@@ -103,7 +103,7 @@ if (!this.flags.enabled('my_feature')) return;
 ## References
 
 - `packages/agent-core-v2/src/flag/` — implementation (`IFlagRegistry` + `IFlagService`).
-- `packages/agent-core-v2/src/app/multiServer/flag.ts` — example per-domain flag contribution.
+- `packages/agent-core-v2/src/agent/toolSelect/flag.ts` — example per-domain flag contribution.
 - `packages/agent-core-v2/test/flag/flag.test.ts` — precedence + config subscription tests.
 - `packages/agent-core/src/flags/` — v1 source this was ported from.
 - `plan/PLAN.md` §2/§3 — domain placement (`flag` at L3, not `_base/flags`).

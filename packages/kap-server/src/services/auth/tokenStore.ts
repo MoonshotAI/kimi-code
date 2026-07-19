@@ -15,7 +15,7 @@ export interface TokenStore {
  *
  * The token is loaded (or generated) once at boot and reused across restarts.
  * `getToken()`/`isValid()` re-read the file whenever its mtime changes, so a
- * `kimi server rotate-token` (which rewrites the file) takes effect on a
+ * `kimi web rotate-token` (which rewrites the file) takes effect on a
  * running server immediately — no restart, no extra API. The file is small
  * (43 bytes) and the common path is a single `statSync` per check.
  *

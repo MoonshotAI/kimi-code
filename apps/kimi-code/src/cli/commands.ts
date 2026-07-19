@@ -9,8 +9,8 @@ import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 import { registerSearchCommand } from './sub/search';
-import { registerServerCommand } from './sub/server';
 import { registerVisCommand } from './sub/vis';
+import { registerWebCommand } from './sub/web';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
@@ -91,7 +91,7 @@ export function createProgram(
   registerProviderCommand(program);
   registerSearchCommand(program);
   registerAcpCommand(program);
-  registerServerCommand(program);
+  registerWebCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);

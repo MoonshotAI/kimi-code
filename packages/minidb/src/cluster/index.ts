@@ -16,6 +16,9 @@
 //  - Index definitions live in a cluster-wide registry (cluster.indexes.json)
 //    as the source of truth; every shard writer applies missing definitions
 //    right after opening, and create/drop operations fan out to all shards.
+//  - query() fans MiniDb's unified query out to every shard (each shard runs
+//    it with skip=0 and limit=skip+limit, index pruning included), re-sorts
+//    the merged result globally, and applies skip/limit at the end.
 //
 // Consistency: single-key and same-shard batch ops are strongly consistent
 // (single writer per shard, atomic WAL frames). Cross-shard mset/mdel/batch
@@ -25,8 +28,10 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { BatchInputOp, IndexDef, IndexInfo, MiniDb, ScanEntry, SetOptions } from '../index.js';
+import type { BatchInputOp, IndexDef, IndexInfo, MiniDb, QueryOptions, ScanEntry, SetOptions } from '../index.js';
+import type { CompoundIndexDef, CompoundIndexInfo } from '../compound-index.js';
 import { LockError } from '../lockfile.js';
+import { getPath } from '../query.js';
 import { Coordinator } from './coordinator.js';
 import { ShardLockPool } from './lock-pool.js';
 import { Router } from './router.js';
@@ -111,6 +116,9 @@ export class ClusterDb<V = unknown> {
         const reg = await ClusterDb.loadRegistry(indexPath);
         for (const { name, def } of reg.indexes) {
           if (!db.listIndexes().some((i) => i.name === name)) await db.createIndex(name, def);
+        }
+        for (const { name, def } of reg.compoundIndexes) {
+          if (!db.listCompoundIndexes().some((i) => i.name === name)) await db.createCompoundIndex(name, def);
         }
         for (const { name, fields } of reg.textIndexes) {
           try {
@@ -255,14 +263,50 @@ export class ClusterDb<V = unknown> {
     return this.scan({ prefix: p, limit });
   }
 
+  /** Merged query over all shards. Every shard runs the full query locally
+   *  (index-assisted candidate pruning included) with skip=0 and a limit of
+   *  skip+limit — the global top-(skip+limit) under any total order is
+   *  contained in each shard's local top-(skip+limit). The merged result is
+   *  then re-sorted globally (by the explicit sort, else by key bytes to
+   *  match scan's global order) and skip/limit applies at the end. Text
+   *  scores are computed per shard (per-shard idf), so a text query's
+   *  global ranking is approximate; use search() when the score matters. */
+  async query(q: QueryOptions = {}): Promise<ScanEntry<V>[]> {
+    this.ensureOpen();
+    const skip = q.skip ?? 0;
+    const limit = q.limit === undefined ? Infinity : q.limit;
+    const needed = skip + limit;
+    const all: ScanEntry<V>[] = [];
+    for (const id of this.router.shardIds()) {
+      const rows = await this.reader(id, (db) => db.query({ ...q, skip: 0, limit: needed }));
+      for (const r of rows) all.push(r);
+    }
+    if (q.sort) {
+      // The same comparator MiniDb.query applies, re-run on the merged set.
+      const entries = Object.entries(q.sort);
+      all.sort((a, b) => {
+        for (const [p, dir] of entries) {
+          const av = getPath(a.value, p) as number | string;
+          const bv = getPath(b.value, p) as number | string;
+          const c = av < bv ? -1 : av > bv ? 1 : 0;
+          if (c !== 0) return dir < 0 ? -c : c;
+        }
+        return 0;
+      });
+    } else {
+      all.sort(compareEntries);
+    }
+    return skip > 0 || limit !== Infinity ? all.slice(skip, skip + limit) : all;
+  }
+
   // ---- secondary indexes ------------------------------------------------------
 
   private static async loadRegistry(file: string): Promise<ClusterIndexRegistry> {
     try {
       const raw = JSON.parse(await fs.readFile(file, 'utf8')) as Partial<ClusterIndexRegistry>;
-      return { indexes: raw.indexes ?? [], textIndexes: raw.textIndexes ?? [] };
+      return { indexes: raw.indexes ?? [], compoundIndexes: raw.compoundIndexes ?? [], textIndexes: raw.textIndexes ?? [] };
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { indexes: [], textIndexes: [] };
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { indexes: [], compoundIndexes: [], textIndexes: [] };
       throw e;
     }
   }
@@ -467,6 +511,76 @@ export class ClusterDb<V = unknown> {
   private async requireIndex(name: string): Promise<void> {
     const reg = await ClusterDb.loadRegistry(this.indexPath);
     if (!reg.indexes.some((i) => i.name === name)) throw new Error(`no such index: ${name}`);
+  }
+
+  // ---- compound indexes (groupBy + orderBy) ------------------------------------
+
+  private static sameCompoundIndexDef(a: CompoundIndexDef, b: CompoundIndexDef): boolean {
+    return a.groupBy === b.groupBy && a.orderBy === b.orderBy && (a.orderType ?? 'number') === (b.orderType ?? 'number');
+  }
+
+  /** Create a compound index on every shard and record it in the cluster
+   *  registry, with the same fan-out / rollback / catch-up model as
+   *  createIndex. Definition management only: a merged compoundRange query
+   *  is a follow-up for when a consumer needs one. */
+  async createCompoundIndex(name: string, def: CompoundIndexDef): Promise<void> {
+    this.ensureOpen();
+    this.requireJsonCodec('compound indexes');
+    const reg = await ClusterDb.loadRegistry(this.indexPath);
+    if (reg.compoundIndexes.some((i) => i.name === name)) throw new Error(`compound index "${name}" already exists`);
+    const createdOn: number[] = [];
+    try {
+      await this.forEachShardWriter(async (db, shardId) => {
+        if (!db.listCompoundIndexes().some((i) => i.name === name)) {
+          await db.createCompoundIndex(name, def);
+          createdOn.push(shardId);
+        }
+      });
+    } catch (e) {
+      // Roll back the partial fan-out (see createIndex).
+      await this.rollbackShards(createdOn, async (db) => {
+        await db.dropCompoundIndex(name);
+      });
+      throw e;
+    }
+    await this.mutateRegistry((current) => {
+      const existing = current.compoundIndexes.find((i) => i.name === name);
+      if (existing) {
+        // A raced create of the same definition already published.
+        if (ClusterDb.sameCompoundIndexDef(existing.def, def)) return false;
+        throw new Error(`compound index "${name}" already exists`);
+      }
+      current.compoundIndexes.push({ name, def });
+      return true;
+    });
+  }
+
+  async dropCompoundIndex(name: string): Promise<boolean> {
+    this.ensureOpen();
+    const reg = await ClusterDb.loadRegistry(this.indexPath);
+    const existed = reg.compoundIndexes.some((i) => i.name === name);
+    await this.forEachShardWriter(async (db) => {
+      if (db.listCompoundIndexes().some((i) => i.name === name)) await db.dropCompoundIndex(name);
+    });
+    if (!existed) return false;
+    await this.mutateRegistry((current) => {
+      if (!current.compoundIndexes.some((i) => i.name === name)) return false;
+      current.compoundIndexes = current.compoundIndexes.filter((i) => i.name !== name);
+      return true;
+    });
+    return true;
+  }
+
+  /** Cluster-wide compound index definitions from the registry (source of truth). */
+  async listCompoundIndexes(): Promise<CompoundIndexInfo[]> {
+    this.ensureOpen();
+    const reg = await ClusterDb.loadRegistry(this.indexPath);
+    return reg.compoundIndexes.map(({ name, def }) => ({
+      name,
+      groupBy: def.groupBy,
+      orderBy: def.orderBy,
+      orderType: def.orderType ?? 'number',
+    }));
   }
 
   // ---- full-text search -------------------------------------------------------

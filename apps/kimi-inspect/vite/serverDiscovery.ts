@@ -5,8 +5,8 @@
  *
  * kap-server already self-registers for peer discovery
  * (`packages/kap-server/src/instanceRegistry.ts`):
- *   multi_server  `<kimi home>/server/instances/<serverId>.json`
- *   single-server `<kimi home>/server/lock`
+ *   current builds  `<kimi home>/server/instances/<serverId>.json`
+ *   pre-registry builds  `<kimi home>/server/lock`
  * and persists the bearer token at `<kimi home>/server.token` (one token per
  * home, shared by every instance). The browser cannot read those files, but
  * this Vite process can, so `GET /__inspect/servers` answers with the live
@@ -57,7 +57,7 @@ interface ServerInstanceDisk {
   host_version?: string;
 }
 
-/** Mirror of `LockContents` (`packages/kap-server/src/lock.ts`). */
+/** Mirror of the legacy single-server lock written by pre-registry builds. */
 interface ServerLockDisk {
   pid?: number;
   host?: string;
@@ -146,7 +146,8 @@ export async function readLiveInstances(homeDir: string): Promise<readonly Disco
   return live.map((entry) => entry.info);
 }
 
-/** The legacy single-server lock (`<home>/server/lock`), when its pid is alive. */
+/** The legacy single-server lock (`<home>/server/lock`) written by pre-registry
+ * builds, when its pid is alive. Current builds never write it. */
 export async function readLiveLock(homeDir: string): Promise<DiscoveredServerInfo | undefined> {
   const disk = await readJson<ServerLockDisk>(join(homeDir, 'server', 'lock'));
   if (disk === undefined || typeof disk.pid !== 'number' || typeof disk.port !== 'number') {

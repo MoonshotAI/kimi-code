@@ -1,27 +1,30 @@
 /**
- * `kimi server kill` — terminate the running server.
+ * `kimi web kill [serverId|all]` — terminate running servers.
  *
  * Combines two independent mechanisms so the server dies even if one path
  * fails:
  *
  *   1. API path  — `POST /api/v1/shutdown` for a graceful, in-process shutdown
  *                  (best-effort; older builds or a wedged server may not answer).
- *   2. PID path  — signal the pid recorded in the lock (SIGTERM → wait →
- *                  SIGKILL). SIGKILL / TerminateProcess is the hard guarantee:
- *                  it cannot be caught or ignored.
+ *   2. PID path  — signal the pid recorded in the instance registry (SIGTERM →
+ *                  wait → SIGKILL). SIGKILL / TerminateProcess is the hard
+ *                  guarantee: it cannot be caught or ignored.
  *
- * The only honest failure mode is insufficient permissions (a process owned by
+ * With multiple servers sharing the home directory, the optional argument
+ * picks the target: a `serverId` kills that one instance, the reserved
+ * keyword `all` kills every live instance (a ULID can never collide with
+ * it), and no argument kills the longest-running live instance. The only
+ * honest failure mode is insufficient permissions (a process owned by
  * another user), which surfaces as an error rather than a silent miss.
  */
 
 import type { Command } from 'commander';
 
-import { getLiveLock, type LockContents } from '@moonshot-ai/kap-server';
+import { listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
 
 import { getDataDir } from '#/utils/paths';
 
-import { lockConnectHost } from './daemon';
-import { authHeaders, serverOrigin, tryResolveServerToken } from './shared';
+import { authHeaders, instanceConnectHost, serverOrigin, tryResolveServerToken } from './shared';
 
 /** How long to wait for the graceful API shutdown request. */
 const API_TIMEOUT_MS = 2000;
@@ -32,8 +35,14 @@ const KILL_GRACE_MS = 2000;
 /** Poll cadence while waiting for the pid to exit. */
 const POLL_INTERVAL_MS = 100;
 
+/**
+ * Reserved positional that targets every live instance. Server ids are ULIDs
+ * (26-char Crockford base32), so the keyword can never shadow a real id.
+ */
+export const KILL_ALL_KEYWORD = 'all';
+
 export interface KillCommandDeps {
-  getLiveLock(): LockContents | undefined;
+  getLiveInstances(): Promise<readonly ServerInstanceInfo[]>;
   requestShutdown(origin: string, token: string | undefined): Promise<void>;
   /** Best-effort read of the persistent bearer token; undefined on miss. */
   resolveToken(): string | undefined;
@@ -47,10 +56,14 @@ export interface KillCommandDeps {
 export function registerKillCommand(server: Command): void {
   server
     .command('kill')
-    .description('Stop the running Kimi server (graceful API + forced PID kill).')
-    .action(async () => {
+    .description('Stop a running Kimi server (graceful API + forced PID kill).')
+    .argument(
+      '[serverId]',
+      'Stop only the instance with this server id, or `all` for every instance (default: the longest-running one).',
+    )
+    .action(async (serverId?: string) => {
       try {
-        await handleKillCommand(DEFAULT_KILL_DEPS);
+        await handleKillCommand(DEFAULT_KILL_DEPS, serverId);
       } catch (error) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exit(1);
@@ -58,15 +71,64 @@ export function registerKillCommand(server: Command): void {
     });
 }
 
-export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
-  const lock = deps.getLiveLock();
-  if (!lock) {
+export async function handleKillCommand(
+  deps: KillCommandDeps,
+  serverId?: string,
+): Promise<void> {
+  const instances = await deps.getLiveInstances();
+  // The registry sorts by startedAt ascending — the first entry is the
+  // longest-running instance, the default target.
+  const [longestRunning] = instances;
+  if (longestRunning === undefined) {
     deps.stdout.write('No running Kimi server.\n');
     return;
   }
 
-  const { pid } = lock;
-  const origin = serverOrigin(lockConnectHost(lock), lock.port);
+  if (serverId === KILL_ALL_KEYWORD) {
+    const failures: string[] = [];
+    for (const instance of instances) {
+      try {
+        const outcome = await killInstance(instance, deps);
+        deps.stdout.write(
+          `Kimi server ${instance.serverId} (pid ${String(instance.pid)}) ${outcome}.\n`,
+        );
+      } catch (error) {
+        failures.push(
+          `server ${instance.serverId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(failures.join('\n'));
+    }
+    return;
+  }
+
+  let instance = longestRunning;
+  if (serverId !== undefined) {
+    const found = instances.find((i) => i.serverId === serverId);
+    if (found === undefined) {
+      const live = instances.map((i) => i.serverId).join(', ');
+      throw new Error(`No running Kimi server with id ${serverId}. Live servers: ${live}.`);
+    }
+    instance = found;
+  }
+
+  const outcome = await killInstance(instance, deps);
+  deps.stdout.write(`Kimi server (pid ${String(instance.pid)}) ${outcome}.\n`);
+}
+
+/**
+ * Kill one instance via the API path (best-effort graceful shutdown) followed
+ * by the PID path (SIGTERM → wait → SIGKILL). Resolves with how the process
+ * went down; throws when the pid survives SIGKILL.
+ */
+async function killInstance(
+  instance: ServerInstanceInfo,
+  deps: KillCommandDeps,
+): Promise<'stopped' | 'killed'> {
+  const { pid } = instance;
+  const origin = serverOrigin(instanceConnectHost(instance), instance.port);
 
   // 1. API path — best-effort graceful shutdown. Ignore every outcome: the
   //    server may be an older build without the route, already wedged, or may
@@ -80,15 +142,13 @@ export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
   deps.signalPid(pid, 'SIGTERM');
 
   if (await waitForExit(pid, TERM_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) stopped.\n`);
-    return;
+    return 'stopped';
   }
 
   deps.signalPid(pid, 'SIGKILL');
 
   if (await waitForExit(pid, KILL_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) killed.\n`);
-    return;
+    return 'killed';
   }
 
   throw new Error(
@@ -153,7 +213,7 @@ export async function requestShutdownViaApi(
 }
 
 const DEFAULT_KILL_DEPS: KillCommandDeps = {
-  getLiveLock,
+  getLiveInstances: listLiveServerInstances,
   requestShutdown: requestShutdownViaApi,
   resolveToken: () => tryResolveServerToken(getDataDir()),
   signalPid,

@@ -30,10 +30,11 @@
  * backfill on a cold miss. Writes (create / archive / metadata update) keep the
  * read model warm via `SessionMetadata`; new sessions that have not been
  * mirrored yet are simply a cold miss and backfilled on first read. The legacy
- * N+1 path remains as the flag-off fallback — and as the runtime fallback when
- * the query store reports `storage.locked` (another process holds the writer
- * lock): the first lock warns once and disables the read model for the rest of
- * the process lifetime.
+ * N+1 path remains as the flag-off fallback — and as the runtime fallback if
+ * the query store ever reports `storage.locked`: the first lock warns once and
+ * disables the read model for the rest of the process lifetime. (The minidb
+ * backend is a multi-process `ClusterDb` and no longer produces that error;
+ * the wiring stays as defense in depth.)
  *
  * This is the local-deployment backend of `ISessionIndex`; a server deployment
  * would substitute a database-backed `DbSessionIndex`. Bound at App scope.
