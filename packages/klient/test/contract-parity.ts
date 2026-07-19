@@ -71,10 +71,10 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelConfig } from '@moonshot-ai/agent-core-v2/app/model/model';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 import type {
   IModelCatalogService,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
+} from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
 import type {
   GetPluginInfoInput,
   InstallPluginInput,
@@ -93,7 +93,7 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import type {
   SessionListQuery,
   SessionSummary,
@@ -345,7 +345,7 @@ const _refreshProviderModelsResponse: AssertWire<
 > = true;
 
 // models.ts
-const _modelConfig: AssertWire<typeof modelConfigSchema, ModelConfig> = true;
+const _modelConfig: AssertWire<typeof modelConfigSchema, ModelRecord> = true;
 
 // plugins.ts
 const _pluginSummary: AssertWire<typeof pluginSummarySchema, PluginSummary> = true;

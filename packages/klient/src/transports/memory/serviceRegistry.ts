@@ -9,9 +9,9 @@ import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/inst
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import { IWorkspaceRegistry } from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
-import { IModelService } from '@moonshot-ai/agent-core-v2/app/model/model';
-import { IModelCatalogService } from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
-import { IProviderService } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+import { IModelCatalogService } from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
+import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import {
   IAuthSummaryService,
   IOAuthService,

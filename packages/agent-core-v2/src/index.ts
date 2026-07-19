@@ -109,6 +109,10 @@ export * from '#/kosong/model/catalogService';
 export * from '#/kosong/model/modelRequester';
 export type { LLMEvent as ModelRequestEvent } from '#/kosong/model/modelRequester';
 import '#/kosong/catalog/configSection';
+// Phase-7 export-surface backfill: `ModelCatalogConfig` / `MODEL_CATALOG_SECTION`
+// live in the configSection side-effect module but the edge (kap-server's
+// refresh scheduler) consumes them from the package root — re-export here.
+export * from '#/kosong/catalog/configSection';
 import '#/kosong/catalog/errors';
 export * from '#/kosong/catalog/modelCatalog';
 export * from '#/kosong/catalog/modelCatalogService';

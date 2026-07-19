@@ -30,7 +30,7 @@ import {
 import {
   refreshProviderModelsResponseSchema,
   setDefaultModelResponseSchema,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
+} from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

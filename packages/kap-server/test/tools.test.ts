@@ -21,7 +21,7 @@ import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
   ISessionLifecycleService,
-  IModelResolver,
+  IModelCatalog,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -55,10 +55,13 @@ describe('server-v2 /api/v1 tools + mcp', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tools-'));
-    const modelResolver: IModelResolver = {
+    const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('modelResolver.resolve not exercised in this test');
+      get: () => {
+        throw new Error('modelCatalog.get not exercised in this test');
+      },
+      getRequester: () => {
+        throw new Error('modelCatalog.getRequester not exercised in this test');
       },
       findByName: () => [],
     };
@@ -67,7 +70,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelResolver, modelResolver]],
+      seeds: [[IModelCatalog, modelCatalog]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });

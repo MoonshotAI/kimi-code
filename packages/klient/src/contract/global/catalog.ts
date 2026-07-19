@@ -1,7 +1,7 @@
 /**
  * `modelCatalogService` — read-only catalog over configured providers and
  * model aliases, plus the global default-model selection. Mirrors
- * `agent-core-v2/app/modelCatalog/modelCatalog.ts`; wire shapes mirror
+ * `agent-core-v2/kosong/catalog/modelCatalog.ts`; wire shapes mirror
  * `protocol/src/modelCatalog.ts` and `protocol/src/rest/modelCatalog.ts`
  * (snake_case fields).
  */

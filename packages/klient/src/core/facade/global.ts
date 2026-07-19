@@ -21,7 +21,7 @@ import type {
   ConfigInspectValue,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import type {
   AuthStatus,
   IOAuthService,
@@ -31,10 +31,10 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelConfig } from '@moonshot-ai/agent-core-v2/app/model/model';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 import type {
   IModelCatalogService,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
+} from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
 import type {
   PluginCommandDef,
   PluginInfo,
@@ -131,9 +131,9 @@ export interface GlobalProvidersFacade {
 }
 
 export interface GlobalModelsFacade {
-  list(): Promise<Readonly<Record<string, ModelConfig>>>;
-  get(id: string): Promise<ModelConfig | undefined>;
-  set(input: { id: string; config: ModelConfig }): Promise<void>;
+  list(): Promise<Readonly<Record<string, ModelRecord>>>;
+  get(id: string): Promise<ModelRecord | undefined>;
+  set(input: { id: string; config: ModelRecord }): Promise<void>;
   delete(id: string): Promise<void>;
 }
 
@@ -304,8 +304,8 @@ export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
 
     models: {
       list: () =>
-        call('modelService', 'list', []) as Promise<Readonly<Record<string, ModelConfig>>>,
-      get: (id) => call('modelService', 'get', [id]) as Promise<ModelConfig | undefined>,
+        call('modelService', 'list', []) as Promise<Readonly<Record<string, ModelRecord>>>,
+      get: (id) => call('modelService', 'get', [id]) as Promise<ModelRecord | undefined>,
       set: ({ id, config }) => call('modelService', 'set', [id, config]) as Promise<void>,
       delete: (id) => call('modelService', 'delete', [id]) as Promise<void>,
     },

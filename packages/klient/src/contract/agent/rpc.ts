@@ -3,7 +3,7 @@
  * subset of `agent-core-v2/agent/rpc/core-api.ts`; every method takes one
  * payload object. `PromptPayload.input` mirrors the `PromptPart` subset of
  * `ContentPart` (text / image_url / video_url) from
- * `agent-core-v2/app/llmProtocol/message.ts`. Task wire shapes mirror the
+ * `agent-core-v2/kosong/contract/message.ts`. Task wire shapes mirror the
  * `TaskInfo` union in `protocol/src/events.ts`.
  */
 

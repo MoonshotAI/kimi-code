@@ -1,8 +1,10 @@
 /**
  * `modelService` — model configuration registry. Mirrors
- * `agent-core-v2/app/model/model.ts` (`ModelSchema`, including its
- * passthrough of unknown keys) and `agent-core-v2/app/protocol/protocol.ts`
- * (`ProtocolSchema`).
+ * `agent-core-v2/kosong/model/model.ts` (`ModelRecordSchema`, including its
+ * passthrough of unknown keys) and `agent-core-v2/kosong/protocol/protocol.ts`
+ * (`ProtocolSchema` — the five real wire protocols; `kimi` is a provider
+ * `type`, not a protocol). The schema name stays `modelConfigSchema` while the
+ * engine type is `ModelRecord` — the contract-parity test pins that pairing.
  */
 
 import { z } from 'zod';
@@ -11,7 +13,6 @@ import { maybe, noResult } from '../helpers.js';
 import type { ServiceContract } from '../types.js';
 
 const protocolSchema = z.enum([
-  'kimi',
   'anthropic',
   'openai',
   'openai_responses',

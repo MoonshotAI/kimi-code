@@ -159,6 +159,6 @@ function providerTypeOf(
     providerName === undefined ? undefined : config.providers?.[providerName]?.type;
   // Flat models (inline base_url, no named provider) have no provider entry to
   // look up; their own protocol declaration plays the provider-identity role,
-  // mirroring the v2 ModelResolverService.
+  // mirroring the v2 ModelCatalog.
   return providerType ?? alias.protocol;
 }
