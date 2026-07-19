@@ -4,9 +4,17 @@
  * Runs user-initiated `!` commands through the builtin `Bash` tool from
  * `toolRegistry`, records the command and output as `shell_command`-origin
  * context messages via `contextMemory`, streams live `shell.output` /
- * `shell.started` events through `eventBus`, and steers the model through
- * `promptService` when a command is detached to background. Bound at Agent
- * scope.
+ * `shell.started` / `shell.completed` events through `eventBus`, and steers
+ * the model through `promptService` when a command is detached to background.
+ * Bound at Agent scope.
+ *
+ * `shell.completed` fires once when a foreground command settles (success or
+ * failure); runs detached to background do NOT fire it — they report through
+ * the task lifecycle instead. `shell.output` / `shell.completed` carry the
+ * foreground process `taskId` once that task is registered, so consumers that
+ * missed `shell.started` can still route the chunk. A failure text that was
+ * never streamed (empty stdout/stderr) is emitted as a `shell.output` chunk
+ * before `shell.completed`, so live consumers see the output too.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -35,7 +43,6 @@ export interface ShellOutputEvent {
   readonly type: 'shell.output';
   readonly commandId: string;
   readonly update: ToolUpdate;
-  /** Present once the foreground task is registered — lets consumers that missed `shell.started` route the chunk. */
   readonly taskId?: string;
 }
 
@@ -49,16 +56,10 @@ export interface ShellStartedEvent {
   readonly taskId: string;
 }
 
-/**
- * Fired once when a foreground `!` shell command settles (success or
- * failure). Runs detached to background do NOT fire it — they report through
- * the task lifecycle instead. Transient, like the other `shell.*` events.
- */
 export interface ShellCompletedEvent {
   readonly type: 'shell.completed';
   readonly commandId: string;
   readonly isError: boolean;
-  /** Present once the foreground task is registered (see `shell.output`). */
   readonly taskId?: string;
 }
 
@@ -75,7 +76,6 @@ const SHELL_FOREGROUND_TIMEOUT_S = 2 * 60;
 export class AgentShellCommandService implements IAgentShellCommandService {
   declare readonly _serviceBrand: undefined;
   private readonly shellCommandControllers = new Map<string, AbortController>();
-  /** `commandId` → foreground process task id (registered via `onForegroundTaskStart`). */
   private readonly shellCommandTasks = new Map<string, string>();
 
   constructor(
@@ -139,8 +139,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       }
       if (isError && stdout.length === 0 && stderr.length === 0) {
         stderr = typeof result.output === 'string' ? result.output : 'Command failed.';
-        // The failure text was never streamed — emit it before completing,
-        // so live consumers (transcript tasks) see the output too.
         if (input.commandId !== undefined && stderr.length > 0) {
           this.eventBus.publish({
             type: 'shell.output',
@@ -164,7 +162,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       const message = error instanceof Error ? error.message : String(error);
       stderr += message;
       if (input.commandId !== undefined) {
-        // The error message was never streamed — emit it before completing.
         if (message.length > 0) {
           this.eventBus.publish({
             type: 'shell.output',

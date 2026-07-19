@@ -165,14 +165,7 @@ interface SessionState {
   /** Connections whose transcript baseline reset has landed — the ops fan-out is gated on it. */
   readonly transcriptSeeded: Set<BroadcastTarget>;
   /** Resets deferred until the connection's cursor replay completes (ordering: backlog before baseline). */
-  readonly deferredTranscriptSeeds: Map<
-    BroadcastTarget,
-    {
-      readonly spec: TranscriptGradeSpec;
-      readonly prevGrades?: TranscriptGradeSpec;
-      readonly prevFilter?: AgentFilter;
-    }
-  >;
+  readonly deferredTranscriptSeeds: Map<BroadcastTarget, { readonly spec: TranscriptGradeSpec }>;
 }
 
 /** The aggregate-relevant slice of one agent's activity state. */
@@ -259,11 +252,7 @@ export class SessionEventBroadcaster {
         // The baseline rides `flushTranscriptSeed` (after the caller's cursor
         // replay), so the reset's seq always follows the replayed backlog.
         state.transcriptSeeded.delete(target);
-        state.deferredTranscriptSeeds.set(target, {
-          spec: transcriptGrades,
-          prevGrades: prev?.transcriptGrades,
-          prevFilter: prev?.agentFilter,
-        });
+        state.deferredTranscriptSeeds.set(target, { spec: transcriptGrades });
       } else {
         state.deferredTranscriptSeeds.delete(target);
         // Gate the ops fan-out only while a replacement baseline is actually
@@ -317,7 +306,10 @@ export class SessionEventBroadcaster {
   /**
    * Send the transcript baseline deferred by `subscribe(deferTranscriptReset)`
    * — callers run it after their cursor replay so the reset never lands ahead
-   * of the replayed (lower-seq) backlog.
+   * of the replayed (lower-seq) backlog. The baseline is forced for every
+   * admitted agent (no previous grades): volatile ops fanned out while the
+   * target sat unseeded were dropped, so only a full reset closes that gap,
+   * even when the grade/filter did not change.
    */
   async flushTranscriptSeed(sessionId: string, target: BroadcastTarget): Promise<void> {
     const state = this.sessions.get(sessionId);
@@ -325,7 +317,7 @@ export class SessionEventBroadcaster {
     const deferred = state.deferredTranscriptSeeds.get(target);
     if (deferred === undefined) return;
     state.deferredTranscriptSeeds.delete(target);
-    await this.subscribeTranscript(state, target, deferred.spec, deferred.prevGrades, deferred.prevFilter);
+    await this.subscribeTranscript(state, target, deferred.spec, undefined);
     if (state.targets.has(target)) state.transcriptSeeded.add(target);
   }
 

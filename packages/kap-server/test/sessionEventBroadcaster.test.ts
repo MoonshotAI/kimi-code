@@ -1465,6 +1465,29 @@ describe('SessionEventBroadcaster', () => {
       expect(after.some((e) => e.type === 'transcript.ops')).toBe(true);
     });
 
+    it('forces a baseline reset when a cursor-based resubscribe flushes at the same grade', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { main: 'delta' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // baseline
+
+      // Cursor-based resubscribe at the same grade defers the baseline until
+      // the caller's replay completes; ops fanned out meanwhile are dropped.
+      await bc.subscribe('s1', view.target, undefined, { main: 'delta' }, { deferTranscriptReset: true });
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'x' }));
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1);
+
+      // The flush owes a full baseline even without a grade/filter change —
+      // only a reset closes the gap left by the dropped ops.
+      await bc.flushTranscriptSeed('s1', view.target);
+      const resets = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.reset');
+      expect(resets).toHaveLength(2);
+    });
+
     it('delivers no transcript.ops before the baseline reset has landed', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
