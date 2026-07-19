@@ -63,13 +63,15 @@ interface StepDraft {
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
 /**
  * Hidden origins that nonetheless OPEN a real engine turn
- * (`MessageStepRequest` with `admission: 'newTurn'`, e.g. goal continuation).
- * Other hidden origins are mid-turn context (reminders, injections, retries)
- * and stay folded away; skipping a turn-opening one would fold the
- * continuation's assistant output into the prior visible turn and break the
- * 0-based ordinal alignment with the engine's live turn numbering.
+ * (`MessageStepRequest` with `admission: 'newTurn'`, e.g. goal continuation;
+ * a subagent's run prompt goes through `promptService.enqueue`, which always
+ * launches a new turn). Other hidden origins are mid-turn context
+ * (reminders, injections, retries) and stay folded away; skipping a
+ * turn-opening one would fold the continuation's assistant output into the
+ * prior visible turn and break the 0-based ordinal alignment with the
+ * engine's live turn numbering.
  */
-const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation']);
+const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation', 'subagent']);
 /** Origins rendered as timeline markers rather than turns. */
 const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',

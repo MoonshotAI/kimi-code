@@ -308,6 +308,30 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(doneTool?.kind === 'tool' && doneTool.output).toBe('done.txt');
   });
 
+  it('opens a turn for subagent run prompts recorded as system triggers', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'scan the repo' }],
+        toolCalls: [],
+        origin: { kind: 'system_trigger', name: 'subagent' } as { kind: string },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'scanning' }], toolCalls: [] },
+    ]);
+
+    // A subagent's run prompt launches its own engine turn — the response
+    // must not fold into the previous turn, and the prompt is preserved.
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'turn']);
+    const subTurn = snapshot.items[1];
+    if (subTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(subTurn.ordinal).toBe(1);
+    expect(subTurn.origin.kind).toBe('other');
+    expect(subTurn.prompt).toBe('scan the repo');
+    expect(subTurn.steps).toHaveLength(1);
+  });
+
   it('starts a new turn for user-slash skill activations, keeps other triggers as markers only', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
