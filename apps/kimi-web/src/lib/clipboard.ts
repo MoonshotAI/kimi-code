@@ -10,6 +10,17 @@
 // first and fall back to a temporary <textarea> + `document.execCommand`.
 
 /**
+ * Normalize payloads from markstream `@copy` (and similar) handlers.
+ *
+ * Some renderers emit a native `ClipboardEvent` on the same channel as the
+ * code-string payload. Coercing that object to a string yields the useless
+ * clipboard value `[object ClipboardEvent]`, so callers must reject non-strings.
+ */
+export function asCopyableText(payload: unknown): string | null {
+  return typeof payload === 'string' && payload.length > 0 ? payload : null;
+}
+
+/**
  * Copy `text` to the system clipboard.
  *
  * Resolves to `true` when the copy succeeded and `false` otherwise. Never
