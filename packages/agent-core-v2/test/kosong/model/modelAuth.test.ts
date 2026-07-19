@@ -6,8 +6,8 @@
  *    oauth > provider apiKey/env > provider oauth; apiKey+oauth on the same
  *    level is a config error;
  *  - the env-bag fallback reads the vendor's declared `apiKeyEnv` chain via
- *    `resolveProviderEndpoint` (kimi / anthropic / openai / vertexai chain) —
- *    no per-protocol table;
+ *    `resolveProviderEndpoint` (kimi / anthropic / openai / google-genai
+ *    chain) — no per-protocol table;
  *  - `effectiveModelConfig` applies `overrides` and the Anthropic effort
  *    profile — inferred only for vendors whose thinking is not trait-driven.
  */
@@ -106,13 +106,23 @@ describe('resolveModelAuthMaterial', () => {
         provider: { type: 'openai', env: { OPENAI_API_KEY: 'openai-env-key' } },
       }),
     ).toEqual({ apiKey: 'openai-env-key' });
-    // The vertexai chain falls back from VERTEXAI_API_KEY to GOOGLE_API_KEY.
+    // The google-genai chain keeps the legacy vertex precedence: VERTEXAI_API_KEY
+    // first, GOOGLE_API_KEY as fallback.
     expect(
       authMaterial({
         model: { model: 'm' },
-        provider: { type: 'vertexai', env: { GOOGLE_API_KEY: 'google-env-key' } },
+        provider: { type: 'google-genai', env: { GOOGLE_API_KEY: 'google-env-key' } },
       }),
     ).toEqual({ apiKey: 'google-env-key' });
+    expect(
+      authMaterial({
+        model: { model: 'm' },
+        provider: {
+          type: 'google-genai',
+          env: { VERTEXAI_API_KEY: 'vertex-env-key', GOOGLE_API_KEY: 'google-env-key' },
+        },
+      }),
+    ).toEqual({ apiKey: 'vertex-env-key' });
     // Platform env bags resolve through the same registry chain.
     expect(
       authMaterial({

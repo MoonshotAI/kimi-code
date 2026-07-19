@@ -7,8 +7,8 @@
  * preserves registration order so `supportedProtocols()` can be derived.
  *
  * Note: the registry is module-level state shared across this file, so each
- * test registers a distinct base id and `openai_responses` is deliberately
- * never registered here.
+ * test registers a distinct base id; `openai_responses` stays unregistered
+ * until the final test so the early negative lookups hold.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -77,7 +77,7 @@ describe('ProtocolBaseDefinition.createChatProvider', () => {
   it('receives the base context as resolved by the adapter registry', () => {
     const seen: ProtocolBaseContext[] = [];
     const base: ProtocolBaseDefinition = {
-      id: 'vertexai',
+      id: 'openai_responses',
       capability: () => undefined,
       createChatProvider: (context) => {
         seen.push(context);
@@ -87,7 +87,7 @@ describe('ProtocolBaseDefinition.createChatProvider', () => {
     registerProtocolBase(base);
 
     const context: ProtocolBaseContext = { config, traits: [] };
-    const provider = getProtocolBase('vertexai')?.createChatProvider(context);
+    const provider = getProtocolBase('openai_responses')?.createChatProvider(context);
     expect(provider).toBe(fakeChatProvider);
     expect(seen).toEqual([context]);
   });

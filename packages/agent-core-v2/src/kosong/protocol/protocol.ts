@@ -2,11 +2,14 @@
  * `kosong/protocol` domain (L1) — wire protocol identity and the adapter
  * registry contract.
  *
- * A Protocol names a real wire encoding. There are exactly five: every
+ * A Protocol names a real wire encoding. There are exactly four: every
  * vendor-specific behavior that used to pose as a protocol is now expressed
  * as per-transport provider definitions (a base protocol plus declarative
  * traits) registered with the L2 provider domain, so this enum can never
- * grow a vendor entry again.
+ * grow a vendor entry again. (Vertex AI used to be the fifth entry; it is a
+ * mode of the `google-genai` base now, enabled through
+ * `ProtocolProviderOptions` — same wire encoding, different SDK client
+ * options.)
  *
  * `IProtocolAdapterRegistry` is the single resolution point for
  * "(protocol, providerType) → which base + which traits" and the single
@@ -27,7 +30,7 @@ import type { ChatProvider } from '#/kosong/contract/provider';
 import type { ProtocolBaseId, ResolvedAdapterIdentity } from './protocolBase';
 
 /**
- * The five real wire formats. Vendor names are deliberately absent: a vendor
+ * The four real wire formats. Vendor names are deliberately absent: a vendor
  * is a set of `(baseProtocol, traits)` registrations, not a protocol.
  * `supportedProtocols()` is derived from the registered bases, so this enum
  * is the ceiling, not the roster.
@@ -37,7 +40,6 @@ export const ProtocolSchema = z.enum([
   'openai',
   'openai_responses',
   'google-genai',
-  'vertexai',
 ]);
 
 export type Protocol = z.infer<typeof ProtocolSchema>;
@@ -46,7 +48,9 @@ export type Protocol = z.infer<typeof ProtocolSchema>;
  * Construction knobs carried by adapter configuration. Vendor-specific
  * request shaping does NOT live here (no vendor-thinking-style flags): those
  * differences are trait hooks. What remains are knobs the bases themselves
- * understand.
+ * understand. The `vertexai` / `project` / `location` trio is how Vertex AI
+ * is reached now that it is no longer a protocol: `vertexai: true` switches
+ * the google-genai base's SDK client into vertex (ADC) mode.
  */
 export interface ProtocolProviderOptions {
   readonly reasoningKey?: string;

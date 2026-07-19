@@ -1,7 +1,7 @@
 /**
  * `kosong/provider` composition probes — the runtime invariants of the L2
  * layer, exercised through the real registry path with every base contrib and
- * the Kimi definition registered:
+ * the Kimi + canonical-vendor endpoint definitions registered:
  *
  *  1. Composing Kimi without a config apiKey and without env vars must NOT
  *     silently pick up `OPENAI_API_KEY` (the `apiKey ?? ''` suppression in
@@ -9,7 +9,11 @@
  *  2. Config `defaultHeaders` always win over trait-declared headers (the
  *     trailing synthetic trait).
  *  4. `supportedProtocols()` is derived from the registered bases and never
- *     contains `kimi` — a vendor is not a protocol.
+ *     contains `kimi` — a vendor is not a protocol. It does not contain
+ *     `vertexai` either: Vertex AI is a `providerOptions` mode of the
+ *     google-genai base, exercised below (flag forwarding, and the
+ *     `VERTEXAI_API_KEY` → `GOOGLE_API_KEY` endpoint chain the google-genai
+ *     definition declares).
  *
  * Plus the registry resolution contract: `resolveAdapterIdentity` branches,
  * `resolveProviderBaseId`, the `resolveCapability` fallback chain, and the
@@ -56,7 +60,6 @@ import '#/kosong/provider/bases/openai-responses.contrib';
 import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai-responses';
 import '#/kosong/provider/bases/openai.contrib';
 import { OpenAILegacyChatProvider } from '#/kosong/provider/bases/openai-legacy';
-import '#/kosong/provider/bases/vertexai.contrib';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import {
   getProviderDefinition,
@@ -66,6 +69,7 @@ import {
   resolveProviderEndpoint,
 } from '#/kosong/provider/providerDefinition';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
+import '#/kosong/provider/providers/standard.contrib';
 
 registerProviderDefinition({
   id: 'header-vendor',
@@ -103,6 +107,7 @@ const ENV_KEYS = [
   'KIMI_API_KEY',
   'KIMI_BASE_URL',
   'GOOGLE_API_KEY',
+  'VERTEXAI_API_KEY',
 ] as const;
 
 let envSnapshot: Record<string, string | undefined>;
@@ -129,13 +134,16 @@ afterEach(() => {
 const registry = new ProtocolAdapterRegistry();
 
 describe('supportedProtocols (probe 4)', () => {
-  it('is derived from the registered bases and never contains kimi', () => {
+  it('is derived from the registered bases and contains neither kimi nor vertexai', () => {
     const protocols = registry.supportedProtocols();
-    expect(protocols).toHaveLength(5);
+    expect(protocols).toHaveLength(4);
     expect([...protocols].toSorted()).toEqual(
-      ['anthropic', 'google-genai', 'openai', 'openai_responses', 'vertexai'].toSorted(),
+      ['anthropic', 'google-genai', 'openai', 'openai_responses'].toSorted(),
     );
+    // A vendor is not a protocol, and Vertex AI is a providerOptions mode of
+    // the google-genai base — neither may appear here.
     expect(protocols).not.toContain('kimi');
+    expect(protocols).not.toContain('vertexai');
   });
 });
 
@@ -313,6 +321,52 @@ describe('createChatProvider', () => {
   });
 });
 
+describe('google-genai vertex mode (providerOptions)', () => {
+  it('forwards vertexai + project + location from providerOptions to the base', () => {
+    const provider = registry.createChatProvider({
+      protocol: 'google-genai',
+      modelName: 'gemini-2.5-flash',
+      providerOptions: { vertexai: true, project: 'my-project', location: 'us-central1' },
+    });
+    expect(provider.name).toBe('google_genai');
+    expect(Reflect.get(provider, '_vertexai')).toBe(true);
+    expect(Reflect.get(provider, '_project')).toBe('my-project');
+    expect(Reflect.get(provider, '_location')).toBe('us-central1');
+  });
+
+  it('stays in plain Gemini mode without the providerOptions flag', () => {
+    const provider = registry.createChatProvider({
+      protocol: 'google-genai',
+      modelName: 'gemini-2.5-flash',
+      apiKey: 'sk-probe',
+    });
+    expect(Reflect.get(provider, '_vertexai')).toBe(false);
+    expect(Reflect.get(provider, '_project')).toBeUndefined();
+    expect(Reflect.get(provider, '_location')).toBeUndefined();
+  });
+
+  it('prefers VERTEXAI_API_KEY over GOOGLE_API_KEY through the definition endpoint chain', () => {
+    process.env['VERTEXAI_API_KEY'] = 'vertex-env-key';
+    process.env['GOOGLE_API_KEY'] = 'google-env-key';
+    const provider = registry.createChatProvider({
+      protocol: 'google-genai',
+      providerType: 'google-genai',
+      modelName: 'gemini-2.5-flash',
+    });
+    expect(Reflect.get(provider, '_apiKey')).toBe('vertex-env-key');
+  });
+
+  it('falls back to GOOGLE_API_KEY when no vertex key is set', () => {
+    process.env['GOOGLE_API_KEY'] = 'google-env-key';
+    const provider = registry.createChatProvider({
+      protocol: 'google-genai',
+      providerType: 'google-genai',
+      modelName: 'gemini-2.5-flash',
+    });
+    expect(Reflect.get(provider, '_apiKey')).toBe('google-env-key');
+  });
+});
+
 describe('resolveProviderEndpoint', () => {
   it('resolves the kimi endpoint chain from process.env', () => {
     process.env['KIMI_API_KEY'] = 'sk-kimi-env';
@@ -327,6 +381,29 @@ describe('resolveProviderEndpoint', () => {
     expect(resolveProviderEndpoint('kimi', { KIMI_BASE_URL: 'https://example.com/v1' })).toEqual({
       baseUrl: 'https://example.com/v1',
     });
+  });
+
+  it('aggregates the google-genai chain with the legacy vertex precedence', () => {
+    expect(
+      resolveProviderEndpoint('google-genai', {
+        VERTEXAI_API_KEY: 'vertex-env-key',
+        GOOGLE_API_KEY: 'google-env-key',
+      }),
+    ).toEqual({ apiKey: 'vertex-env-key' });
+    expect(resolveProviderEndpoint('google-genai', { GOOGLE_API_KEY: 'google-env-key' })).toEqual({
+      apiKey: 'google-env-key',
+    });
+    expect(
+      resolveProviderEndpoint('google-genai', {
+        GOOGLE_VERTEX_BASE_URL: 'https://vertex.example.test',
+        GOOGLE_GEMINI_BASE_URL: 'https://gemini.example.test',
+      }),
+    ).toEqual({ baseUrl: 'https://vertex.example.test' });
+    expect(
+      resolveProviderEndpoint('google-genai', {
+        GOOGLE_GEMINI_BASE_URL: 'https://gemini.example.test',
+      }),
+    ).toEqual({ baseUrl: 'https://gemini.example.test' });
   });
 
   it('returns {} for unregistered vendors', () => {

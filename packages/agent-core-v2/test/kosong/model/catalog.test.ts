@@ -30,7 +30,6 @@ import '#/kosong/provider/bases/anthropic.contrib';
 import '#/kosong/provider/bases/google-genai.contrib';
 import '#/kosong/provider/bases/openai-responses.contrib';
 import '#/kosong/provider/bases/openai.contrib';
-import '#/kosong/provider/bases/vertexai.contrib';
 import '#/kosong/provider/protocolAdapterRegistry';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
@@ -197,6 +196,47 @@ describe('Model assembly (pure data)', () => {
       const kimi = catalog.get('k1');
       expect(kimi.baseUrl).toBe('https://kimi-env.example.test/v1');
       return expect(kimi.authProvider.getAuth()).resolves.toEqual({ apiKey: 'env-token' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('enables google-genai vertex mode through providerOptions when project and location resolve', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        vertex: {
+          type: 'google-genai',
+          env: { GOOGLE_CLOUD_PROJECT: 'my-project', GOOGLE_CLOUD_LOCATION: 'us-central1' },
+        },
+        vertexUrl: {
+          type: 'google-genai',
+          baseUrl: 'https://us-east4-aiplatform.googleapis.com',
+          env: { GOOGLE_CLOUD_PROJECT: 'my-project' },
+        },
+        plain: { type: 'google-genai', apiKey: 'sk-g' },
+      },
+      models: {
+        v: { provider: 'vertex', model: 'gemini-2.5-flash', maxContextSize: 1000 },
+        v2: { provider: 'vertexUrl', model: 'gemini-2.5-flash', maxContextSize: 1000 },
+        g: { provider: 'plain', model: 'gemini-2.5-flash', maxContextSize: 1000 },
+      },
+    });
+    try {
+      const vertexModel = catalog.get('v');
+      expect(vertexModel.protocol).toBe('google-genai');
+      expect(vertexModel.providerOptions).toEqual({
+        vertexai: true,
+        project: 'my-project',
+        location: 'us-central1',
+      });
+      // The location is also discovered from a vertex-style baseUrl host.
+      expect(catalog.get('v2').providerOptions).toEqual({
+        vertexai: true,
+        project: 'my-project',
+        location: 'us-east4',
+      });
+      // Without both coordinates there is no vertex mode and no options bag.
+      expect(catalog.get('g').providerOptions).toBeUndefined();
     } finally {
       host.dispose();
     }

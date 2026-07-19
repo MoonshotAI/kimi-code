@@ -271,7 +271,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   /**
    * The wire protocol: the Model's explicit `protocol` wins; otherwise the
    * referenced provider's vendor identity resolves it — directly when the
-   * vendor type IS one of the five protocols, or through the vendor's first
+   * vendor type IS one of the four protocols, or through the vendor's first
    * registration's `baseProtocol` (e.g. `kimi` → `openai`).
    */
   private resolveProtocol(
@@ -387,15 +387,19 @@ function buildProtocolProviderOptions(
       if (reasoningKey !== undefined) options.reasoningKey = reasoningKey;
       break;
     }
-    case 'vertexai': {
+    case 'google-genai': {
+      // Vertex AI is a `providerOptions` mode of this base, not a protocol:
+      // enable it when the provider env bag supplies both coordinates — the
+      // same discovery legacy `protocol: 'vertexai'` configs relied on.
       const project = vertexAIProject(provider);
       const location = vertexAILocation(provider, baseUrl);
-      options.vertexai = project !== undefined && location !== undefined;
-      if (project !== undefined) options.project = project;
-      if (location !== undefined) options.location = location;
+      if (project !== undefined && location !== undefined) {
+        options.vertexai = true;
+        options.project = project;
+        options.location = location;
+      }
       break;
     }
-    case 'google-genai':
     case 'openai_responses':
       break;
     default: {

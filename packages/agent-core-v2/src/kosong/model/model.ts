@@ -23,7 +23,7 @@
  * "claude-sonnet-4" and the router picks any Model whose name or aliases
  * match (many-to-many).
  *
- * `protocol` names one of the five real wire protocols (no vendor entries —
+ * `protocol` names one of the four real wire protocols (no vendor entries —
  * a vendor such as `kimi` is expressed as the referenced provider's free-form
  * `type`, never as a protocol).
  */

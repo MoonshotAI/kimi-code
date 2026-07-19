@@ -2,8 +2,9 @@
  * `modelService` — model configuration registry. Mirrors
  * `agent-core-v2/kosong/model/model.ts` (`ModelRecordSchema`, including its
  * passthrough of unknown keys) and `agent-core-v2/kosong/protocol/protocol.ts`
- * (`ProtocolSchema` — the five real wire protocols; `kimi` is a provider
- * `type`, not a protocol). The schema name stays `modelConfigSchema` while the
+ * (`ProtocolSchema` — the four real wire protocols; `kimi` is a provider
+ * `type`, not a protocol, and Vertex AI is a `providerOptions` mode of
+ * `google-genai`). The schema name stays `modelConfigSchema` while the
  * engine type is `ModelRecord` — the contract-parity test pins that pairing.
  */
 
@@ -17,7 +18,6 @@ const protocolSchema = z.enum([
   'openai',
   'openai_responses',
   'google-genai',
-  'vertexai',
 ]);
 
 const oAuthRefSchema = z.object({

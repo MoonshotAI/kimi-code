@@ -116,14 +116,13 @@ export * from '#/kosong/catalog/configSection';
 import '#/kosong/catalog/errors';
 export * from '#/kosong/catalog/modelCatalog';
 export * from '#/kosong/catalog/modelCatalogService';
-// kosong wire composition roots — importing these modules registers the five
+// kosong wire composition roots — importing these modules registers the four
 // protocol bases and every provider definition (kimi + the canonical vendor
 // endpoints); without them the adapter registry stays empty.
 import '#/kosong/provider/bases/anthropic.contrib';
 import '#/kosong/provider/bases/google-genai.contrib';
 import '#/kosong/provider/bases/openai.contrib';
 import '#/kosong/provider/bases/openai-responses.contrib';
-import '#/kosong/provider/bases/vertexai.contrib';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 export * from '#/app/agentProfileCatalog/agentProfileCatalog';

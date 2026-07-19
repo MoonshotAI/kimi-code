@@ -114,7 +114,7 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
 function createProtocolRegistryStub(): IProtocolAdapterRegistry {
   return {
     _serviceBrand: undefined,
-    supportedProtocols: () => ['anthropic', 'openai', 'openai_responses', 'google-genai', 'vertexai'],
+    supportedProtocols: () => ['anthropic', 'openai', 'openai_responses', 'google-genai'],
     resolveAdapterIdentity: (protocol: Protocol, providerType?: string) => ({
       baseId: protocol,
       traits:

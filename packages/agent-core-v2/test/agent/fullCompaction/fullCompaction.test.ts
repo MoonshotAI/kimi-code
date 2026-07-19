@@ -2769,7 +2769,7 @@ function oauthTestAgentOptions(
       defaultModel: 'kimi-code',
       providers: {
         'managed:kimi-code': {
-          type: 'vertexai',
+          type: 'google-genai',
           baseUrl: 'https://api.example/v1',
           oauth: { storage: 'file', key: 'oauth/kimi-code' },
         },
