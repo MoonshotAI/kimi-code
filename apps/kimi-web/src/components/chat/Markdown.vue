@@ -575,6 +575,11 @@ function copyDiff(code: string, idx: number) {
   padding-left: 1.4em;
   margin: 0.6em 0;
 }
+/* Ordered lists need a wider gutter: 1.4em clips double-digit numbers
+   ("10." loses its "1"); unordered bullet markers are narrow. */
+.md :deep(ol) {
+  padding-left: 2em;
+}
 .md :deep(li) {
   margin: 0.3em 0;
 }
