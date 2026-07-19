@@ -1353,7 +1353,13 @@ export class TUI extends Container {
 			if (!debugRedraw) return;
 			const logPath = path.join(os.homedir(), ".pi", "agent", "pi-debug.log");
 			const msg = `[${new Date().toISOString()}] fullRender: ${reason} (prev=${this.previousLines.length}, new=${newLines.length}, height=${height})\n`;
-			fs.appendFileSync(logPath, msg);
+
+			try {
+				fs.mkdirSync(path.dirname(logPath), { recursive: true });
+				fs.appendFileSync(logPath, msg);
+			} catch {
+				// never let debug logging break rendering
+			}
 		};
 
 		// First render - just output everything without clearing (assumes clean screen)

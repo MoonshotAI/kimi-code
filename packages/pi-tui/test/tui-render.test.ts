@@ -1,4 +1,7 @@
 import assert from "node:assert";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
@@ -399,6 +402,43 @@ describe("TUI resize handling", () => {
 		assert.ok(tui.fullRedraws > initialRedraws, "Width change should trigger full redraw");
 
 		tui.stop();
+	});
+});
+
+describe("TUI debug redraw logging", () => {
+	it("does not crash the render loop when the debug-redraw log directory is missing", async () => {
+		const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), "pi-tui-debug-redraw-"));
+		try {
+			// `fakeHome` exists but `fakeHome/.pi/agent` does not — this mirrors a
+			// fresh machine that has never written to ~/.pi/agent before.
+			await withEnv({ PI_DEBUG_REDRAW: "1", HOME: fakeHome, USERPROFILE: fakeHome }, async () => {
+				const terminal = new VirtualTerminal(40, 10);
+				const tui = new TUI(terminal);
+				const component = new TestComponent();
+				tui.addChild(component);
+
+				component.lines = ["Line 0", "Line 1"];
+				tui.start();
+				await terminal.waitForRender();
+
+				// A width change forces `logRedraw` to run, which previously threw
+				// ENOENT (missing parent directory) and crashed the whole TUI as an
+				// uncaughtException.
+				terminal.resize(60, 10);
+				await terminal.waitForRender();
+
+				const viewport = terminal.getViewport();
+				assert.ok(viewport[0]?.includes("Line 0"), "TUI keeps rendering after the debug log write");
+
+				tui.stop();
+			});
+
+			const logPath = path.join(fakeHome, ".pi", "agent", "pi-debug.log");
+			const contents = await fs.readFile(logPath, "utf8");
+			assert.ok(contents.includes("terminal width changed"), "the debug log should still be written");
+		} finally {
+			await fs.rm(fakeHome, { recursive: true, force: true });
+		}
 	});
 });
 
