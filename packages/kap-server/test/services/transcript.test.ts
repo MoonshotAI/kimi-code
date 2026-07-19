@@ -540,6 +540,23 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'task-1' }));
   });
 
+  it('projects no-taskId shell failures under a synthetic per-command task id', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    // The command failed before its foreground task was registered (Bash
+    // validation/spawn error): every shell.* event arrives taskId-less. The
+    // stderr and the terminal state must still land, under a synthetic id.
+    tx.apply(
+      projector.map(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stderr', text: 'boom' } })),
+    );
+    expect(tx.getTask('shell-c1')).toMatchObject({ kind: 'shell', state: 'running', outputTail: 'boom' });
+
+    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: true })));
+    expect(tx.getTask('shell-c1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
+    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'shell-c1' }));
+  });
+
   it('marks a foreground shell task terminal on shell.completed', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');

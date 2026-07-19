@@ -555,16 +555,26 @@ export class AgentTranscriptProjector {
     ];
   }
 
+  /**
+   * Resolve the transcript task for a `shell.*` event: the id learned at
+   * `shell.started`, else the id the event carries (mid-command attach), else
+   * a synthetic per-command id. The fallback matters for commands that fail
+   * before `onForegroundTaskStart` runs (Bash validation/spawn errors): their
+   * events all arrive taskId-less, and dropping them would lose the stderr
+   * and the terminal state of a command that did run.
+   */
+  private shellTaskId(event: { commandId: string; taskId?: string }): string {
+    const taskId = this.shellTasks.get(event.commandId) ?? event.taskId ?? `shell-${event.commandId}`;
+    this.shellTasks.set(event.commandId, taskId);
+    return taskId;
+  }
+
   private onShellOutput(event: {
     commandId: string;
     taskId?: string;
     update: { kind: string; text?: string };
   }): TranscriptOperation[] {
-    // `shell.started` may have been missed (mid-command attach) — later
-    // events carry the task id themselves.
-    const taskId = this.shellTasks.get(event.commandId) ?? event.taskId;
-    if (taskId === undefined) return [];
-    this.shellTasks.set(event.commandId, taskId);
+    const taskId = this.shellTaskId(event);
     // progress/status/custom updates carry no transcript text; only
     // stdout/stderr chunks append (see `toolUpdateSchema`).
     const text = event.update.text;
@@ -612,10 +622,7 @@ export class AgentTranscriptProjector {
     taskId?: string;
     isError: boolean;
   }): TranscriptOperation[] {
-    // Same mid-command-attach fallback as `onShellOutput`.
-    const taskId = this.shellTasks.get(event.commandId) ?? event.taskId;
-    if (taskId === undefined) return [];
-    this.shellTasks.set(event.commandId, taskId);
+    const taskId = this.shellTaskId(event);
     const hadTask = this.tasks.has(taskId);
     const task = this.upsertTask(taskId, (prev) => ({
       taskId,
