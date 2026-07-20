@@ -62,7 +62,17 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'llm.request',
   'mcp.tools_discovered',
 ]);
-const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set(['tools.reset_active_tools']);
+// `profile.bind` is deliberately classified v2-only: v1's replay switch has no
+// case for it and silently skips the record, so a v1 resume of a v2-bound
+// session loses the binding (model / prompt / tool policy), and v1's
+// empty-prompt fallback then writes builtin defaults back into the shared
+// wire, overwriting the binding for later v2 resumes too. Accepted tradeoff
+// for the custom-agent rollout; revisit by teaching v1 to replay the record
+// rather than by dual-writing v1-shaped companions from v2.
+const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'tools.reset_active_tools',
+  'profile.bind',
+]);
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
