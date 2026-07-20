@@ -561,16 +561,6 @@ describe('useModelProviderState thinking on model selection', () => {
     expect(apiMock.setConfig).toHaveBeenCalledWith({ thinking: { enabled: true } });
   });
 
-  it('does not write the global thinking config when re-confirming the current level', async () => {
-    const state = createState({ defaultModel: effortAppModel.id });
-    state.thinking = 'max';
-    const provider = createModelProvider(state);
-
-    provider.setThinking('max');
-
-    expect(apiMock.setConfig).not.toHaveBeenCalled();
-  });
-
   it('persists the thinking pick as the global default on a model switch', async () => {
     const state = createState({ defaultModel: booleanAppModel.id });
     const provider = createModelProvider(state);

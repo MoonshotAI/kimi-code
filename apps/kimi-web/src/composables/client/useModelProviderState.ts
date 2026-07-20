@@ -543,14 +543,11 @@ export function useModelProviderState(
   }
 
   /** Persist and apply a new extended-thinking level (also pushed to the active
-   *  session profile so the daemon's /status reflects it; still sent per-prompt).
-   *  Re-confirming the level already shown is not an explicit choice, so the
-   *  daemon-wide default is left untouched in that case. */
+   *  session profile so the daemon's /status reflects it; still sent per-prompt). */
   function setThinking(level: ThinkingLevel): void {
-    const prev = rawState.thinking;
     const next = applyThinkingLevel(level);
     void persistSessionProfile({ thinking: next });
-    if (next !== undefined && next !== prev) persistGlobalThinking(next);
+    if (next !== undefined) persistGlobalThinking(next);
   }
 
   return {
