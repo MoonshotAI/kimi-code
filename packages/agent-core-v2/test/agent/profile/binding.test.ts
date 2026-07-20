@@ -10,7 +10,7 @@ import { TOOLS_SECTION } from '#/agent/profile/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#/app/llmProtocol/message';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -67,6 +67,14 @@ function createAtomicDocumentStore(): AtomicDocumentStore {
 describe('AgentProfileService.bind', () => {
   let ctx: TestAgentContext;
   let homeDir: string;
+
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'delegates-explore',
+      subagents: ['explore'],
+      systemPrompt: () => 'delegate test',
+    });
+  });
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'kimi-bind-home-'));
@@ -143,6 +151,49 @@ describe('AgentProfileService.bind', () => {
       systemPrompt: expect.stringContaining('Kimi Code CLI'),
       activeToolNames: expect.arrayContaining(['Read', 'Write', 'Bash']),
       disallowedTools: [],
+    });
+  });
+
+  it('restores the subagent allowlist from the binding record without catalog resolution', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+
+    await ctx.get(IAgentProfileService).bind({
+      profile: 'delegates-explore',
+      model: MOCK_MODEL,
+    });
+    await ctx.get(IWireService).flush();
+
+    expect(persistence.records.find((record) => record.type === 'profile.bind')).toMatchObject({
+      profileName: 'delegates-explore',
+      subagents: ['explore'],
+    });
+
+    await ctx.dispose();
+    const emptyCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      get: () => undefined,
+      getDefault: () => ({
+        name: DEFAULT_AGENT_PROFILE_NAME,
+        tools: undefined,
+        systemPrompt: () => '',
+      }),
+      list: () => [],
+      load: async () => {},
+      reload: async () => {},
+    } as unknown as ISessionAgentProfileCatalog;
+    ctx = createTestAgent(
+      { persistence },
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionAgentProfileCatalog, emptyCatalog),
+    );
+
+    await ctx.restorePersisted();
+
+    expect(ctx.get(IAgentProfileService).data()).toMatchObject({
+      profileName: 'delegates-explore',
+      subagents: ['explore'],
     });
   });
 
@@ -806,6 +857,106 @@ describe('AgentToolPolicyService executor enforcement', () => {
       output: `Tool "${SELECT_TOOLS_TOOL_NAME}" is disabled by the active tool policy`,
     });
     expect(probe.calls).toBe(0);
+  });
+
+});
+
+describe('AgentProfileService tool-pattern warnings', () => {
+  let ctx: TestAgentContext;
+  let homeDir: string;
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-tool-pattern-home-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  function toolPatternWarnings(): readonly { code?: string; message?: string }[] {
+    const events = ctx.newEvents() as readonly {
+      event: string;
+      args?: { code?: string; message?: string };
+    }[];
+    return events
+      .filter((entry) => entry.event === 'warning')
+      .map((entry) => entry.args ?? {})
+      .filter((args) => args.code === 'tool-pattern-no-match');
+  }
+
+  // A file-defined agent, as far as the warning path is concerned: inline so
+  // its typo stays out of the builtin-profile known-name vocabulary (a
+  // registerAgentProfile contribution would legitimize its own entries).
+  const fileProfile: ResolvedAgentProfile = {
+    name: 'bad-patterns',
+    tools: ['Bashh', 'mcp__github'],
+    disallowedTools: ['*'],
+    systemPrompt: () => 'tool pattern warning test',
+  };
+
+  it('warns about profile entries that can never activate anything', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).applyProfile(fileProfile);
+
+    const messages = toolPatternWarnings().map((warning) => warning.message ?? '');
+    expect(
+      messages.some((m) => m.includes('"Bashh"') && m.includes('profile "bad-patterns"')),
+    ).toBe(true);
+    expect(messages.some((m) => m.includes('"mcp__github"') && m.includes('mcp__github__*'))).toBe(
+      true,
+    );
+    expect(messages.some((m) => m.includes('"*"') && m.includes('disallowedTools'))).toBe(true);
+  });
+
+  it('warns once per pattern across repeated applications of the same profile', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+    await svc.applyProfile(fileProfile);
+    await svc.applyProfile(fileProfile);
+
+    const messages = toolPatternWarnings().map((warning) => warning.message ?? '');
+    expect(messages.filter((m) => m.includes('"Bashh"'))).toHaveLength(1);
+  });
+
+  it('warns about global [tools] config entries that can never activate anything', async () => {
+    ctx = createTestAgent(
+      { initialConfig: { tools: { enabled: ['*'] } } },
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    const messages = toolPatternWarnings().map((warning) => warning.message ?? '');
+    expect(
+      messages.some(
+        (m) =>
+          m.includes('"*"') && m.includes('the global [tools] config') && m.includes('enabled'),
+      ),
+    ).toBe(true);
+  });
+
+  it('stays silent for the default profile and an empty [tools] config', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(toolPatternWarnings()).toEqual([]);
+  });
+
+  it('bind also publishes the warnings', async () => {
+    registerAgentProfile({
+      name: 'bind-bad-patterns',
+      tools: ['mcp__github'],
+      disallowedTools: ['*'],
+      systemPrompt: () => 'bind warning test',
+    });
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).bind({ profile: 'bind-bad-patterns', model: MOCK_MODEL });
+
+    const messages = toolPatternWarnings().map((warning) => warning.message ?? '');
+    expect(messages.some((m) => m.includes('"mcp__github"') && m.includes('mcp__github__*'))).toBe(
+      true,
+    );
+    expect(messages.some((m) => m.includes('"*"') && m.includes('disallowedTools'))).toBe(true);
   });
 
 });

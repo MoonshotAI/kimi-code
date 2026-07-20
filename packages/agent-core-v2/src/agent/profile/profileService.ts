@@ -5,7 +5,8 @@
  * active-tool set; resolves the runnable god-object Model through the App-
  * scope `IModelResolver`, persists the persistent config slice (`cwd` /
  * `modelAlias` / `profileName` / resolved base `thinkingLevel` /
- * `systemPrompt` / profile `disallowedTools`) in the `wire` `ProfileModel`
+ * `systemPrompt` / profile `disallowedTools` / profile `subagents`) in the
+ * `wire` `ProfileModel`
  * through the `config.update` Op
  * and the persisted active-tool set in the `wire` `ActiveToolsModel` through the
  * `tools.set_active_tools` Op (`wire.dispatch`), and reads both through
@@ -31,7 +32,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/app/llmProtocol/capability';
 import { type GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
 import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { type Model } from '#/app/model/modelInstance';
 import { type KimiModelOverrides } from '#/app/model/modelOverrides';
 import { IModelResolver } from '#/app/model/modelResolver';
@@ -77,7 +78,8 @@ import {
   type ThinkingConfig,
   type ToolsConfig,
 } from './configSection';
-import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
+import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type InactiveToolPattern } from '#/agent/toolPolicy/evaluate';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import {
   ActiveToolsModel,
   configUpdate,
@@ -101,6 +103,21 @@ declare module '#/app/event/eventBus' {
   }
 }
 
+function describeInactiveToolPattern(
+  context: string,
+  field: string,
+  issue: InactiveToolPattern,
+): string {
+  switch (issue.kind) {
+    case 'unknown-tool':
+      return `Tool pattern "${issue.pattern}" in ${context} ${field} does not match any registered or built-in tool; it will never activate anything.`;
+    case 'wildcard-not-mcp':
+      return `Tool pattern "${issue.pattern}" in ${context} ${field} uses wildcards, which only match MCP tools (names starting with "mcp__"); it will never activate anything.`;
+    case 'incomplete-mcp-name':
+      return `Tool pattern "${issue.pattern}" in ${context} ${field} matches no tool; use "${issue.pattern}__*" to match the whole MCP server.`;
+  }
+}
+
 export class AgentProfileService extends Disposable implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
@@ -108,6 +125,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private activeToolNamesOverlay: readonly string[] | undefined;
   private agentsMdWarning: string | undefined;
   private readonly emittedThinkingEffortWarnings = new Set<string>();
+  private readonly emittedToolPatternWarnings = new Set<string>();
 
   private get activeToolNames(): ActiveToolsState {
     return (
@@ -133,6 +151,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @IAgentProfileCatalogService private readonly builtinProfiles: IAgentProfileCatalogService,
   ) {
     super();
     this.configure({});
@@ -143,7 +163,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     );
     this._register(
       this.config.onDidSectionChange(({ domain }) => {
-        if (domain === TOOLS_SECTION) void this.refreshSystemPrompt();
+        if (domain === TOOLS_SECTION) {
+          this.publishToolPatternWarnings();
+          void this.refreshSystemPrompt();
+        }
       }),
     );
   }
@@ -185,6 +208,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         systemPrompt: snapshot.systemPrompt,
         activeToolNames: snapshot.activeToolNames,
         disallowedTools: snapshot.disallowedTools ?? [],
+        subagents: snapshot.subagents,
       }),
     );
     this.afterConfigDispatch({
@@ -262,6 +286,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       systemPrompt,
       activeToolNames: profile.tools,
       disallowedTools: profile.disallowedTools ?? [],
+      subagents: profile.subagents,
     }));
     this.afterConfigDispatch({
       cwd: input.cwd,
@@ -273,6 +298,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     });
 
     this.publishAgentsMdWarning();
+    this.publishToolPatternWarnings(profile);
   }
 
   async setModel(alias: string): Promise<ProfileSetModelResult> {
@@ -339,6 +365,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.useProfile(profile, context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
+    this.publishToolPatternWarnings(profile);
   }
 
   async refreshSystemPrompt(): Promise<void> {
@@ -386,6 +413,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       systemPrompt: this.systemPrompt,
       activeToolNames: this.activeToolNames === undefined ? undefined : [...this.activeToolNames],
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
+      subagents:
+        this.profileState.subagents === undefined ? undefined : [...this.profileState.subagents],
     };
   }
 
@@ -702,6 +731,65 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       message: warning,
       code: 'agents-md-oversized',
     });
+  }
+
+  /**
+   * Surface tool-policy entries that can never activate anything (typo'd
+   * names, wildcards without the `mcp__` prefix, incomplete `mcp__` literals)
+   * as warnings instead of letting the tool set silently shrink. Checked for
+   * the bound profile's lists and the global `[tools]` config; each
+   * context/field/pattern triple warns once per agent.
+   *
+   * The known-name vocabulary is the live registry plus the literal names
+   * referenced by the builtin profiles — deliberately not the session
+   * catalog, so a typo in one agent file cannot legitimize the same typo in
+   * another, and flag-gated tools (which every builtin profile lists) stay
+   * "known" even when unregistered.
+   */
+  private publishToolPatternWarnings(profile?: ResolvedAgentProfile): void {
+    const known = new Set<string>();
+    for (const ref of this.toolRegistry.listReferences()) known.add(ref.name);
+    for (const builtin of this.builtinProfiles.list()) {
+      for (const name of literalToolNames([
+        ...(builtin.tools ?? []),
+        ...(builtin.disallowedTools ?? []),
+      ])) {
+        known.add(name);
+      }
+    }
+    const checks: {
+      context: string;
+      field: string;
+      patterns: readonly string[] | undefined;
+    }[] = [];
+    if (profile !== undefined) {
+      checks.push(
+        { context: `profile "${profile.name}"`, field: 'tools', patterns: profile.tools },
+        {
+          context: `profile "${profile.name}"`,
+          field: 'disallowedTools',
+          patterns: profile.disallowedTools,
+        },
+      );
+    }
+    const global = this.config.get<ToolsConfig>(TOOLS_SECTION);
+    checks.push(
+      { context: 'the global [tools] config', field: 'enabled', patterns: global?.enabled },
+      { context: 'the global [tools] config', field: 'disabled', patterns: global?.disabled },
+    );
+    for (const { context, field, patterns } of checks) {
+      if (patterns === undefined) continue;
+      for (const issue of findInactiveToolPatterns(patterns, (name) => known.has(name))) {
+        const key = `${context}|${field}|${issue.pattern}`;
+        if (this.emittedToolPatternWarnings.has(key)) continue;
+        this.emittedToolPatternWarnings.add(key);
+        this.eventBus.publish({
+          type: 'warning',
+          code: 'tool-pattern-no-match',
+          message: describeInactiveToolPattern(context, field, issue),
+        });
+      }
+    }
   }
 
   private async buildSystemPromptContext(

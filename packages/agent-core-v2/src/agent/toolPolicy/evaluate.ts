@@ -82,3 +82,58 @@ export function resolveActiveToolNames(
     isToolActive(policy, name, isMcpToolName(name) ? 'mcp' : 'builtin'),
   );
 }
+
+/**
+ * Static inspection of tool-policy entries, so misconfigurations surface as
+ * warnings instead of silently shrinking the active tool set.
+ *
+ * The matching semantics of `isToolActive` make three entry shapes dead on
+ * arrival:
+ *
+ * - `wildcard-not-mcp` — non-MCP entries match builtin/user tools by exact
+ *   name only, and the MCP branch filters entries without the `mcp__`
+ *   prefix, so a wildcard outside `mcp__…` patterns can never match (a bare
+ *   `*` in an allowlist therefore disables everything, in a denylist it is a
+ *   no-op).
+ * - `incomplete-mcp-name` — an `mcp__…` literal without glob magic must be a
+ *   full `mcp__<server>__<tool>` name; `mcp__github` alone equals no real
+ *   MCP tool name (`mcp__github__*` is the working form).
+ * - `unknown-tool` — a literal entry that names no registered tool and no
+ *   tool referenced by the builtin profiles is almost always a typo.
+ */
+export type InactiveToolPatternKind = 'wildcard-not-mcp' | 'incomplete-mcp-name' | 'unknown-tool';
+
+export interface InactiveToolPattern {
+  readonly pattern: string;
+  readonly kind: InactiveToolPatternKind;
+}
+
+const GLOB_MAGIC = /[*?[\]{}]/;
+
+/** Extract the literal (non-glob, non-MCP) tool names from a policy list. */
+export function literalToolNames(patterns: readonly string[]): string[] {
+  return patterns.filter((pattern) => !isMcpToolName(pattern) && !GLOB_MAGIC.test(pattern));
+}
+
+export function findInactiveToolPatterns(
+  patterns: readonly string[],
+  isKnownToolName?: (name: string) => boolean,
+): InactiveToolPattern[] {
+  const issues: InactiveToolPattern[] = [];
+  for (const pattern of patterns) {
+    if (isMcpToolName(pattern)) {
+      if (!GLOB_MAGIC.test(pattern) && !pattern.slice('mcp__'.length).includes('__')) {
+        issues.push({ pattern, kind: 'incomplete-mcp-name' });
+      }
+      continue;
+    }
+    if (GLOB_MAGIC.test(pattern)) {
+      issues.push({ pattern, kind: 'wildcard-not-mcp' });
+      continue;
+    }
+    if (isKnownToolName !== undefined && !isKnownToolName(pattern)) {
+      issues.push({ pattern, kind: 'unknown-tool' });
+    }
+  }
+  return issues;
+}
