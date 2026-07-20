@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LifecycleScope } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
@@ -62,6 +63,7 @@ function countingHostFs(poisonedPaths: Set<string>): {
 interface World {
   readonly workDir: string;
   readonly outsideDir: string;
+  readonly fs: IHostFileSystem;
   readonly ledger: ISessionFileLedger;
   readonly watch: ISessionFsWatchService;
   readonly workspace: ISessionWorkspaceContext;
@@ -97,6 +99,7 @@ function makeWorld(): World {
   return {
     workDir,
     outsideDir,
+    fs,
     ledger: session.accessor.get(ISessionFileLedger),
     watch: session.accessor.get(ISessionFsWatchService),
     workspace: session.accessor.get(ISessionWorkspaceContext),
@@ -104,6 +107,22 @@ function makeWorld(): World {
     statCalls,
     poisonedPaths,
   };
+}
+
+async function recordCurrentBaseline(world: World, path: string): Promise<void> {
+  try {
+    const stat = await world.fs.stat(path);
+    world.ledger.recordBaseline(path, {
+      exists: true,
+      ino: stat.ino,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+    });
+  } catch (error) {
+    const code = (unwrapErrorCause(error) as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+    world.ledger.recordBaseline(path, { exists: false });
+  }
 }
 
 function foldJunkEvents(world: World, count: number = JUNK_EVENT_COUNT): void {
@@ -129,7 +148,7 @@ describe('SessionFileLedger', () => {
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
 
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
     expect(await world.ledger.compare(file)).toBe('clean');
   });
 
@@ -161,7 +180,7 @@ describe('SessionFileLedger', () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
 
     writeFileSync(file, 'hello world');
     world.fake.fire('a.txt', 'modified');
@@ -174,7 +193,7 @@ describe('SessionFileLedger', () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
 
     writeFileSync(file, 'hello world');
     world.fake.fire('a.txt', 'modified');
@@ -186,7 +205,7 @@ describe('SessionFileLedger', () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
     expect(world.statCalls()).toBe(1);
 
     world.fake.fire('a.txt', 'modified');
@@ -203,7 +222,7 @@ describe('SessionFileLedger', () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
 
     foldJunkEvents(world);
     expect(world.watch.rootDirtyTickFor(world.workDir)).toBeGreaterThan(0);
@@ -218,7 +237,7 @@ describe('SessionFileLedger', () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
 
     writeFileSync(file, 'hello world');
     foldJunkEvents(world);
@@ -230,14 +249,14 @@ describe('SessionFileLedger', () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
 
     rmSync(file);
     world.fake.fire('a.txt', 'deleted');
     vi.advanceTimersByTime(200);
     expect(await world.ledger.compare(file)).toBe('stale');
 
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
     expect(await world.ledger.compare(file)).toBe('clean');
 
     writeFileSync(file, 'recreated');
@@ -253,13 +272,13 @@ describe('SessionFileLedger', () => {
 
     expect(await world.ledger.compare(file)).toBe('no-baseline');
 
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
     expect(await world.ledger.compare(file)).toBe('clean');
 
     writeFileSync(file, 'hello world');
     expect(await world.ledger.compare(file)).toBe('stale');
 
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
     expect(await world.ledger.compare(file)).toBe('clean');
 
     rmSync(file);
@@ -289,13 +308,13 @@ describe('SessionFileLedger', () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
+    await recordCurrentBaseline(world, file);
     world.poisonedPaths.add(file);
 
-    await world.ledger.recordBaseline(file);
     expect(await world.ledger.compare(file)).toBe('stale');
 
     world.poisonedPaths.clear();
-    await world.ledger.recordBaseline(file);
+    await recordCurrentBaseline(world, file);
     world.poisonedPaths.add(file);
     world.fake.fire('a.txt', 'modified');
     vi.advanceTimersByTime(200);

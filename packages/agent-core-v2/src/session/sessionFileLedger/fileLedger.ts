@@ -4,7 +4,7 @@
  * Defines the `ISessionFileLedger` that remembers, per normalized absolute
  * path, the on-disk stat tuple (`ino`, `mtimeMs`, `size`, existence) this
  * session last successfully read or wrote, together with the
- * `sessionFsWatch` tick captured before that stat. Before every Write/Edit,
+ * `sessionFsWatch` tick captured when that revision is recorded. Before every Write/Edit,
  * `compare` stats the target again and compares the tuple directly; live dirty
  * signals classify watcher echoes and truncated windows but are never the
  * correctness gate. This avoids both debounce latency and delayed watcher
@@ -47,7 +47,7 @@ export type FileLedgerVerdict = 'clean' | 'stale' | 'no-baseline';
 export interface ISessionFileLedger {
   readonly _serviceBrand: undefined;
 
-  recordBaseline(path: string): Promise<void>;
+  recordBaseline(path: string, revision: FileStatTuple): void;
 
   compare(path: string): Promise<FileLedgerVerdict>;
 }

@@ -190,6 +190,28 @@ describe('server-v2 boot', () => {
     server = undefined;
   });
 
+  it('does not dispose the server when lifecycle closeAll fails', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-close-failure-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    const lifecycle = server.core.accessor.get(ISessionLifecycleService);
+    const originalCloseAll = lifecycle.closeAll.bind(lifecycle);
+    const failure = new Error('session shutdown failed');
+    lifecycle.closeAll = async () => {
+      throw failure;
+    };
+
+    await expect(server.close()).rejects.toBe(failure);
+
+    lifecycle.closeAll = originalCloseAll;
+    await server.close();
+    server = undefined;
+  });
+
   it('flushes the dispatch tail into the session journal before close() resolves', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-close-tail-'));
     server = await startServer({

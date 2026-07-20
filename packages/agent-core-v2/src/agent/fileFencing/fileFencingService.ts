@@ -15,9 +15,9 @@
  * flag on, `stale` blocks with an outside-modification conflict and
  * `no-baseline` blocks with a read-first reason (Edit-over-existing, or
  * Write over an already existing file); with the flag off nothing ever
- * blocks and the verdict is marked for the did-hook. The did-hook
- * re-baselines the ledger after any successful fenced call (ranged Reads
- * excepted — per the ledger contract they never count as full reads) and,
+ * blocks and the verdict is marked for the did-hook. The did-hook records the
+ * revision captured by the successful fenced call (ranged Reads excepted —
+ * per the ledger contract they never count as full reads) and,
  * for a flag-off stale mark, composes a `<system>` advisory onto the result
  * note; direct creation of a new file is verdict-`clean`, so it is never
  * advisory'd. Watcher echos of the session's own writes are absorbed by the
@@ -41,7 +41,11 @@ import {
   ISessionFileLedger,
   type FileLedgerVerdict,
 } from '#/session/sessionFileLedger/fileLedger';
-import type { ToolAccesses } from '#/tool/toolContract';
+import {
+  toolFileRevision,
+  type ToolAccesses,
+  type ToolFileRevision,
+} from '#/tool/toolContract';
 
 import { IAgentFileFencingService } from './fileFencing';
 
@@ -100,6 +104,13 @@ function composeNote(existing: string | undefined, advisory: string): string {
   return existing === undefined || existing.length === 0
     ? advisory
     : `${existing}\n${advisory}`;
+}
+
+function revisionForTarget(
+  revision: ToolFileRevision | undefined,
+  targetPath: string,
+): ToolFileRevision | undefined {
+  return revision?.path === targetPath ? revision : undefined;
 }
 
 export class AgentFileFencingService extends Disposable implements IAgentFileFencingService {
@@ -163,7 +174,15 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     this.staleMarks.delete(ctx.toolCall.id);
     if (target === undefined || ctx.result.isError === true) return;
     if (target.toolName === READ_TOOL && isRangedRead(ctx.args)) return;
-    await this.ledger.recordBaseline(target.path);
+    const revision = revisionForTarget(ctx.result[toolFileRevision], target.path);
+    if (revision !== undefined) {
+      this.ledger.recordBaseline(target.path, {
+        exists: true,
+        ino: revision.ino,
+        mtimeMs: revision.mtimeMs,
+        size: revision.size,
+      });
+    }
     if (mark !== undefined) {
       ctx.result = { ...ctx.result, note: composeNote(ctx.result.note, advisoryNote(target, mark)) };
     }

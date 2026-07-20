@@ -137,7 +137,7 @@ describe('SessionEventJournal', () => {
     await j.close();
   });
 
-  it('ignores a torn trailing line but rejects a malformed middle line', async () => {
+  it('repairs a torn trailing line before appending the next event', async () => {
     const j1 = await SessionEventJournal.open(filePath);
     j1.append(j1.nextSeq(), envelope(1));
     await j1.close();
@@ -146,7 +146,19 @@ describe('SessionEventJournal', () => {
     await writeFile(filePath, `${durable}{"kind":"event"}`, 'utf8');
     const j2 = await SessionEventJournal.open(filePath);
     expect(j2.seq).toBe(1);
+    j2.append(j2.nextSeq(), envelope(2));
+    await j2.close();
 
+    expect((await j2.readSince(0, 100)).map((entry) => entry.seq)).toEqual([1, 2]);
+  });
+
+  it('rejects a malformed middle line while serving replay', async () => {
+    const j1 = await SessionEventJournal.open(filePath);
+    j1.append(j1.nextSeq(), envelope(1));
+    await j1.close();
+
+    const durable = await readFile(filePath, 'utf8');
+    const j2 = await SessionEventJournal.open(filePath);
     await writeFile(
       filePath,
       `${durable}not-json\n${durable.split('\n')[1]}\n`,
@@ -154,6 +166,23 @@ describe('SessionEventJournal', () => {
     );
     await expect(j2.readSince(0, 100)).rejects.toBeInstanceOf(JournalStorageError);
     await j2.close();
+  });
+
+  it('starts the first event after a trailing replacement header at seq one', async () => {
+    const lines = [
+      JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_old', created_at: 1 }),
+      JSON.stringify({ kind: 'event', seq: 1, envelope: envelope(1) }),
+      JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_new', created_at: 2 }),
+    ];
+    await writeFile(filePath, lines.join('\n') + '\n', 'utf8');
+
+    const j = await SessionEventJournal.open(filePath);
+    expect(j.epoch).toBe('ep_new');
+    expect(j.seq).toBe(0);
+    j.append(j.nextSeq(), envelope(1));
+    await j.close();
+
+    expect((await j.readSince(0, 100)).map((entry) => entry.seq)).toEqual([1]);
   });
 
   it('cold reads are read-only: no epoch is fabricated and nothing is written', async () => {

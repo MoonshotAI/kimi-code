@@ -7,6 +7,6 @@ export default defineConfig({
   outDir: 'dist',
   clean: true,
   deps: {
-    neverBundle: ['fs-ext-extra-prebuilt'],
+    neverBundle: ['fs-native-extensions'],
   },
 });

@@ -2,9 +2,10 @@
  * `sessionFileLedger` domain (L2) — `ISessionFileLedger` implementation.
  *
  * In-memory per-session ledger of on-disk stat tuples keyed by
- * `normalizeFsWatchKey`. `recordBaseline` captures the watch tick before it
- * re-stats the target, so a concurrent event cannot be absorbed into an older
- * tuple. `compare` always re-stats immediately before a write decision;
+ * `normalizeFsWatchKey`. `recordBaseline` stores the revision observed by the
+ * successful file I/O together with the current watch tick, so a did-hook
+ * cannot accidentally bless a later external change. `compare` always
+ * re-stats immediately before a write decision;
  * watcher ticks classify the result but never replace the stat. An
  * unverifiable stat fails closed as `stale`. The
  * service also guarantees `ISessionFsWatchService` watches the session roots
@@ -49,12 +50,12 @@ export class SessionFileLedger implements ISessionFileLedger {
     this.watch.ensureWatchedRoots(this.sessionRoots());
   }
 
-  async recordBaseline(path: string): Promise<void> {
+  recordBaseline(path: string, revision: FileStatTuple): void {
     this.ensureWatchedRootFor(path);
-    const tick = this.watch.currentTick;
-    const tuple = await this.tryStat(path);
-    if (tuple === undefined) return;
-    this.entries.set(normalizeFsWatchKey(path), { ...tuple, tick });
+    this.entries.set(normalizeFsWatchKey(path), {
+      ...revision,
+      tick: this.watch.currentTick,
+    });
   }
 
   async compare(path: string): Promise<FileLedgerVerdict> {

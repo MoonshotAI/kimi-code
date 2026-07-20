@@ -6,7 +6,6 @@
  */
 
 import {
-  appendFile,
   lstat,
   open,
   readFile,
@@ -26,6 +25,17 @@ import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/inte
 import { toHostFsError } from '#/os/interface/hostFsErrors';
 
 const READ_CHUNK_SIZE = 64 * 1024;
+
+function toHostFileStat(stat: Awaited<ReturnType<typeof nodeStat>>): HostFileStat {
+  return {
+    isFile: stat.isFile(),
+    isDirectory: stat.isDirectory(),
+    isSymbolicLink: stat.isSymbolicLink(),
+    size: Number(stat.size),
+    mtimeMs: Number(stat.mtimeMs),
+    ino: Number(stat.ino),
+  };
+}
 
 function isUtf8Encoding(encoding: BufferEncoding): boolean {
   return encoding === 'utf-8' || encoding === 'utf8';
@@ -64,19 +74,29 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async writeText(path: string, data: string): Promise<void> {
+  async writeText(path: string, data: string): Promise<HostFileStat> {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      await writeFile(path, data, 'utf8');
+      handle = await open(path, 'w');
+      await handle.writeFile(data, 'utf8');
+      return toHostFileStat(await handle.stat());
     } catch (error) {
       throw toHostFsError(error, { path, op: 'write' });
+    } finally {
+      await handle?.close();
     }
   }
 
-  async appendText(path: string, data: string): Promise<void> {
+  async appendText(path: string, data: string): Promise<HostFileStat> {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      await appendFile(path, data, 'utf8');
+      handle = await open(path, 'a');
+      await handle.writeFile(data, 'utf8');
+      return toHostFileStat(await handle.stat());
     } catch (error) {
       throw toHostFsError(error, { path, op: 'append' });
+    } finally {
+      await handle?.close();
     }
   }
 
@@ -109,7 +129,11 @@ export class HostFileSystem implements IHostFileSystem {
 
   async *readLines(
     path: string,
-    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
+    options?: {
+      encoding?: BufferEncoding;
+      errors?: TextDecodeErrors;
+      onFileStat?: (stat: HostFileStat) => void;
+    },
   ): AsyncGenerator<string> {
     try {
       const encoding = options?.encoding ?? 'utf-8';
@@ -118,10 +142,11 @@ export class HostFileSystem implements IHostFileSystem {
       if (!isUtf8Encoding(encoding)) {
         const content = decodeTextWithErrors(await readFile(path), encoding, errors);
         yield* splitLinesKeepingTerminator(content);
+        options?.onFileStat?.(await this.stat(path));
         return;
       }
 
-      yield* this._readUtf8Lines(path, errors);
+      yield* this._readUtf8Lines(path, errors, options?.onFileStat);
     } catch (error) {
       throw toHostFsError(error, { path, op: 'read' });
     }
@@ -130,6 +155,7 @@ export class HostFileSystem implements IHostFileSystem {
   private async *_readUtf8Lines(
     path: string,
     errors: TextDecodeErrors,
+    onFileStat?: (stat: HostFileStat) => void,
   ): AsyncGenerator<string> {
     const fh = await open(path, 'r');
     try {
@@ -168,7 +194,11 @@ export class HostFileSystem implements IHostFileSystem {
         yield decodeTextWithErrors(line, 'utf-8', errors, pendingOffset !== 0);
       }
     } finally {
-      await fh.close();
+      try {
+        onFileStat?.(toHostFileStat(await fh.stat()));
+      } finally {
+        await fh.close();
+      }
     }
   }
 
@@ -190,15 +220,7 @@ export class HostFileSystem implements IHostFileSystem {
 
   async stat(path: string): Promise<HostFileStat> {
     try {
-      const s = await nodeStat(path);
-      return {
-        isFile: s.isFile(),
-        isDirectory: s.isDirectory(),
-        isSymbolicLink: s.isSymbolicLink(),
-        size: s.size,
-        mtimeMs: s.mtimeMs,
-        ino: s.ino,
-      };
+      return toHostFileStat(await nodeStat(path));
     } catch (error) {
       throw toHostFsError(error, { path, op: 'stat' });
     }

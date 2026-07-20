@@ -93,16 +93,12 @@ describe('kernel-file-lock', () => {
     let unlockCalls = 0;
     const times = [0, 0, 9, 10];
     const nativeBinding: KernelFileLockBinding = {
-      flockSync: (_fd, flags) => {
-        if (flags === 'un') {
-          unlockCalls++;
-          return 0;
-        }
+      tryLock: () => {
         lockCalls++;
-        if (lockCalls === 1) {
-          throw Object.assign(new Error('busy'), { code: 'EAGAIN' });
-        }
-        return 0;
+        return lockCalls > 1;
+      },
+      unlock: () => {
+        unlockCalls++;
       },
     };
     setKernelFileLockBindingLoader(() => nativeBinding);

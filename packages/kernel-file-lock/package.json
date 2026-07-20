@@ -21,6 +21,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "fs-ext-extra-prebuilt": "2.2.9"
+    "fs-native-extensions": "1.5.0"
   }
 }

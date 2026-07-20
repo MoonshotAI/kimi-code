@@ -2,9 +2,9 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 import { getEmbeddedNativeAssetManifest, getNativePackageRoot } from './native-assets';
-import { loadNativePackage } from './native-require';
+import { loadKernelFileLockNativeBinding } from './kernel-file-lock';
 
-const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui', 'fs-ext-extra-prebuilt'];
+const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui', 'fs-native-extensions'];
 
 // Verify pi-tui's native helper can actually be loaded through the module hook.
 // pi-tui computes native helper paths from process.execPath and require()s them;
@@ -36,9 +36,9 @@ function smokePiTuiNativeLoad(): void {
 }
 
 function smokeKernelFileLockNativeLoad(): void {
-  const binding = loadNativePackage<{ flockSync?: unknown }>('fs-ext-extra-prebuilt');
-  if (binding === null || typeof binding.flockSync !== 'function') {
-    throw new Error('fs-ext-extra-prebuilt loaded but flockSync is unavailable.');
+  const binding = loadKernelFileLockNativeBinding();
+  if (binding === undefined) {
+    throw new Error('fs-native-extensions binding is unavailable.');
   }
 }
 

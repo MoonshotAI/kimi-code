@@ -322,7 +322,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // it idempotent — concurrent and repeat callers share one execution.
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
-    closePromise ??= doClose();
+    closePromise ??= doClose().catch((error) => {
+      closePromise = undefined;
+      throw error;
+    });
     return closePromise;
   };
   const doClose = async (): Promise<void> => {
@@ -344,13 +347,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     // would abandon its event (e.g. `event.session.created` for a session
     // created right before shutdown), and its journal entry with it.
     await Promise.all([lifecycleDrain, broadcaster.drainDispatches()]);
-    for (const handle of lifecycle.list()) {
-      try {
-        await lifecycle.close(handle.id);
-      } catch (error) {
-        logger.error({ err: error, sessionId: handle.id }, 'session close failed during shutdown');
-      }
-    }
+    await lifecycle.closeAll();
     await app.close();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();

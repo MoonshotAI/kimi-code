@@ -35,13 +35,17 @@ export interface IHostFileSystem {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string>;
-  writeText(path: string, data: string): Promise<void>;
-  appendText(path: string, data: string): Promise<void>;
+  writeText(path: string, data: string): Promise<HostFileStat>;
+  appendText(path: string, data: string): Promise<HostFileStat>;
   readBytes(path: string, n?: number): Promise<Uint8Array>;
   writeBytes(path: string, data: Uint8Array): Promise<void>;
   readLines(
     path: string,
-    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
+    options?: {
+      encoding?: BufferEncoding;
+      errors?: TextDecodeErrors;
+      onFileStat?: (stat: HostFileStat) => void;
+    },
   ): AsyncGenerator<string>;
   createExclusive(path: string, data: Uint8Array): Promise<boolean>;
   /** Follows symlinks to the target (Node `stat` semantics). Use {@link lstat} when the link itself matters. */

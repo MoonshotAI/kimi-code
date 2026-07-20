@@ -78,7 +78,7 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
-    "fs-ext-extra-prebuilt": "2.2.9"
+    "fs-native-extensions": "1.5.0"
   },
   "optionalDependencies": {
     "@mariozechner/clipboard": "^0.3.9",
@@ -112,6 +112,6 @@
     "zod": "^4.3.6"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0 <27"
   }
 }

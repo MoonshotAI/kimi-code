@@ -412,6 +412,29 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.closeSession(sessionId, 'close');
   }
 
+  async closeAll(): Promise<void> {
+    await this.beginClose();
+    const failures: unknown[] = [];
+    for (const [sessionId, entry] of this.entries) {
+      try {
+        if (entry.phase === 'flush-failed') {
+          await this.forceAbort(sessionId);
+          continue;
+        }
+        try {
+          await this.close(sessionId);
+        } catch (error) {
+          if (this.entries.get(sessionId)?.phase !== 'flush-failed') throw error;
+          await this.forceAbort(sessionId);
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'failed to close all sessions');
+  }
+
   async forceAbort(sessionId: string): Promise<void> {
     const entry = this.entries.get(sessionId);
     if (entry === undefined) return;
@@ -442,7 +465,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     });
     this.telemetry.track2('session_dirty_abort', { session_id: sessionId, reason: 'flush-failed' });
     this.log.warn('force-aborting session after an ambiguous durability failure', { sessionId });
-    this.dirtyAbortSession(entry);
+    await this.dirtyAbortSession(entry);
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -836,7 +859,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   override dispose(): void {
     this.closing = true;
-    for (const entry of this.entries.values()) this.dirtyAbortSession(entry);
+    for (const entry of this.entries.values()) void this.dirtyAbortSession(entry);
     super.dispose();
   }
 
@@ -860,7 +883,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private onLeaseLost(sessionId: string): void {
     this.log.error('session lease lost; tearing the session down', { sessionId });
     const entry = this.entries.get(sessionId);
-    if (entry !== undefined) this.dirtyAbortSession(entry);
+    if (entry !== undefined) void this.dirtyAbortSession(entry);
   }
 
   private async acquireSessionLease(sessionId: string): Promise<SessionLease> {
@@ -926,8 +949,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  private dirtyAbortSession(entry: SessionEntry): void {
-    if (entry.dirtyAbortPromise !== undefined) return;
+  private dirtyAbortSession(entry: SessionEntry): Promise<void> {
+    if (entry.dirtyAbortPromise !== undefined) return entry.dirtyAbortPromise;
     if (this.entries.get(entry.handle.id) === entry) this.entries.delete(entry.handle.id);
 
     let taskServices: IAgentTaskService[] = [];
@@ -942,7 +965,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       this.disposeSessionHandle(entry);
     } catch {
     }
-    entry.dirtyAbortPromise = Promise.allSettled(
+    const dirtyAbortPromise = Promise.allSettled(
       taskServices.map((tasks) => tasks.flushPersistence()),
     ).then(() => {
       try {
@@ -951,7 +974,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
       entry.lease.release();
     });
-    void entry.dirtyAbortPromise.catch(() => {});
+    entry.dirtyAbortPromise = dirtyAbortPromise;
+    void dirtyAbortPromise.catch(() => {});
+    return dirtyAbortPromise;
   }
 
   private async readMetaFromDisk(

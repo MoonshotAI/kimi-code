@@ -23,7 +23,7 @@ import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import type { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   MAX_BYTES,
   MAX_LINE_LENGTH,
@@ -33,7 +33,12 @@ import {
   ReadTool,
 } from '#/os/backends/node-local/tools/read';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import {
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+  toolFileRevision,
+} from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -220,6 +225,44 @@ describe('ReadTool', () => {
         '2 lines read from file starting from line 1. Total lines in file: 2. End of file reached.',
       ),
     });
+    expect(result[toolFileRevision]).toEqual({
+      path: '/tmp/a.txt',
+      size: 11,
+      mtimeMs: undefined,
+      ino: undefined,
+    });
+  });
+
+  it('rejects a file whose revision changes while it is being read', async () => {
+    const initial: HostFileStat = {
+      isFile: true,
+      isDirectory: false,
+      size: 6,
+      mtimeMs: 1000,
+      ino: 1,
+    };
+    const changed: HostFileStat = { ...initial, size: 7, mtimeMs: 1001 };
+    const readLines = vi.fn().mockImplementation(async function* (
+      _path: string,
+      options?: { onFileStat?: (stat: HostFileStat) => void },
+    ): AsyncGenerator<string> {
+      yield 'alpha\n';
+      options?.onFileStat?.(changed);
+    });
+    const fs = {
+      readBytes: vi.fn(async () => Buffer.from('alpha\n')),
+      readLines,
+      stat: vi.fn(async () => initial),
+    } as unknown as IHostFileSystem;
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/a.txt' });
+
+    expect(result).toEqual({
+      isError: true,
+      output: '"/tmp/a.txt" changed while it was being read. Retry the read.',
+    });
+    expect(result[toolFileRevision]).toBeUndefined();
   });
 
   it('stats the resolved target so symlinked files stay readable', async () => {
@@ -347,7 +390,10 @@ describe('ReadTool', () => {
       ),
     );
     expect(readBytes).toHaveBeenCalledWith('/tmp/external.txt', MEDIA_SNIFF_BYTES);
-    expect(readLines).toHaveBeenCalledWith('/tmp/external.txt', { errors: 'strict' });
+    expect(readLines).toHaveBeenCalledWith('/tmp/external.txt', {
+      errors: 'strict',
+      onFileStat: expect.any(Function),
+    });
   });
 
   it('returns a friendly error for missing files before sniffing bytes', async () => {
@@ -393,7 +439,10 @@ describe('ReadTool', () => {
       ),
     );
     expect(readBytes).toHaveBeenCalledWith('/home/test/notes/today.txt', MEDIA_SNIFF_BYTES);
-    expect(readLines).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
+    expect(readLines).toHaveBeenCalledWith('/home/test/notes/today.txt', {
+      errors: 'strict',
+      onFileStat: expect.any(Function),
+    });
   });
 
   it('blocks sensitive files independently from workspace access', async () => {

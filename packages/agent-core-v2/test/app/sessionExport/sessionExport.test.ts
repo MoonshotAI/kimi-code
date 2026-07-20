@@ -864,6 +864,7 @@ function registerSessionExportServices(
     list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
     resume: async () => options.lifecycleHandle,
     close: async () => {},
+    closeAll: async () => {},
     forceAbort: async () => {},
     archive: async () => {},
     restore: async () => options.lifecycleHandle,

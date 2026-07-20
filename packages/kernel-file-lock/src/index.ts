@@ -3,7 +3,8 @@ import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 
 export interface KernelFileLockBinding {
-  flockSync(fd: number, flags: 'exnb' | 'un'): number;
+  tryLock(fd: number): boolean;
+  unlock(fd: number): void;
 }
 
 export type KernelFileLockBindingLoader = () => KernelFileLockBinding | undefined;
@@ -31,7 +32,7 @@ type GlobalWithBindingLoader = typeof globalThis & {
 let binding: KernelFileLockBinding | undefined;
 
 function defaultBindingLoader(): KernelFileLockBinding {
-  return nodeRequire('fs-ext-extra-prebuilt') as KernelFileLockBinding;
+  return nodeRequire('fs-native-extensions') as KernelFileLockBinding;
 }
 
 function getBinding(): KernelFileLockBinding {
@@ -39,15 +40,6 @@ function getBinding(): KernelFileLockBinding {
   const override = (globalThis as GlobalWithBindingLoader)[bindingLoaderKey];
   binding = override?.() ?? defaultBindingLoader();
   return binding;
-}
-
-function errorCode(error: unknown): string | undefined {
-  return (error as NodeJS.ErrnoException | undefined)?.code;
-}
-
-function isBusy(error: unknown): boolean {
-  const code = errorCode(error);
-  return code === 'EACCES' || code === 'EAGAIN' || code === 'EWOULDBLOCK';
 }
 
 function sleep(ms: number): Promise<void> {
@@ -82,7 +74,7 @@ class KernelFileLockHandleImpl implements KernelFileLockHandle {
     if (this.released) return;
     this.released = true;
     try {
-      this.binding.flockSync(this.fd, 'un');
+      this.binding.unlock(this.fd);
     } finally {
       closeSync(this.fd);
     }
@@ -106,11 +98,13 @@ export function tryAcquireKernelFileLock(path: string): KernelFileLockHandle | u
   mkdirSync(dirname(path), { recursive: true });
   const fd = openSync(path, 'a+', 0o600);
   try {
-    nativeBinding.flockSync(fd, 'exnb');
+    if (!nativeBinding.tryLock(fd)) {
+      closeSync(fd);
+      return undefined;
+    }
     return new KernelFileLockHandleImpl(path, fd, nativeBinding);
   } catch (error) {
     closeSync(fd);
-    if (isBusy(error)) return undefined;
     throw error;
   }
 }

@@ -27,7 +27,12 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
+import {
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+  toolFileRevision,
+} from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');
@@ -56,8 +61,18 @@ function createSpiedEditFs(
 ) {
   const readText = options.readText ?? vi.fn(async () => '');
   const writeText = options.writeText ?? vi.fn(async () => undefined);
+  const writeTextWithStat = async (path: string, data: string) => {
+    await (writeText as (path: string, data: string) => Promise<unknown>)(path, data);
+    return {
+      isFile: true,
+      isDirectory: false,
+      size: Buffer.byteLength(data),
+      mtimeMs: 1000,
+      ino: 1,
+    };
+  };
   const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 }));
-  const fs = { readText, writeText, stat } as unknown as IHostFileSystem;
+  const fs = { readText, writeText: writeTextWithStat, stat } as unknown as IHostFileSystem;
   return { fs, readText, writeText };
 }
 
@@ -211,6 +226,12 @@ describe('EditTool', () => {
 
     expect(result.output).toContain('Replaced 1 occurrence');
     expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'alpha gamma');
+    expect(result[toolFileRevision]).toEqual({
+      path: '/tmp/a.txt',
+      size: 11,
+      mtimeMs: 1000,
+      ino: 1,
+    });
   });
 
   it('expands leading tilde paths using the kaos home directory', async () => {

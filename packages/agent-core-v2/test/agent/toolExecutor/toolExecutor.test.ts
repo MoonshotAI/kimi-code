@@ -7,6 +7,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import {
+  attachToolFileRevision,
   ToolAccesses,
   type ExecutableTool,
   type ExecutableToolContext,
@@ -14,6 +15,8 @@ import {
   type ToolExecution,
   type ToolResult,
   type ToolUpdate,
+  makeToolFileRevision,
+  toolFileRevision,
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
@@ -708,6 +711,27 @@ describe('AgentToolExecutorService', () => {
         stopTurn: true,
       }),
     ]);
+  });
+
+  it('passes internal file revisions to did-hooks without serializing them', async () => {
+    const revision = makeToolFileRevision('/tmp/a.txt', {
+      size: 5,
+      mtimeMs: 1000,
+      ino: 1,
+    });
+    const tool = new TestTool('read-like', {
+      result: attachToolFileRevision({ output: 'hello' }, revision),
+    });
+    registry.register(tool);
+    let observed;
+    executor.hooks.onDidExecuteTool.register('observe-file-revision', async (ctx) => {
+      observed = ctx.result[toolFileRevision];
+    });
+
+    const results = await execute([toolCall('call_read', 'read-like', {})]);
+
+    expect(observed).toEqual(revision);
+    expect(JSON.stringify(results)).not.toContain('/tmp/a.txt');
   });
 
   it('onDidExecuteTool can replace the final tool result', async () => {

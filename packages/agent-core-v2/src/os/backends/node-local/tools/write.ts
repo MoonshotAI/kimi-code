@@ -26,9 +26,11 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
+  attachToolFileRevision,
   ToolAccesses,
   type BuiltinTool,
   type ExecutableToolResult,
+  makeToolFileRevision,
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
@@ -119,15 +121,17 @@ export class WriteTool implements BuiltinTool<WriteInput> {
 
     try {
       const mode = args.mode ?? 'overwrite';
-      if (mode === 'append') {
-        await this.fs.appendText(safePath, args.content);
-      } else {
-        await this.fs.writeText(safePath, args.content);
-      }
+      const stat =
+        mode === 'append'
+          ? await this.fs.appendText(safePath, args.content)
+          : await this.fs.writeText(safePath, args.content);
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
-      return {
-        output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
-      };
+      return attachToolFileRevision(
+        {
+          output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+        },
+        makeToolFileRevision(safePath, stat),
+      );
     } catch (error) {
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'ENOENT') {

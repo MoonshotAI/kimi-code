@@ -94,6 +94,7 @@ export interface ISessionLifecycleService {
   list(): readonly ISessionScopeHandle[];
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   close(sessionId: string): Promise<void>;
+  closeAll(): Promise<void>;
   forceAbort(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string): Promise<ISessionScopeHandle | undefined>;

@@ -98,6 +98,10 @@ interface JournalEventLine {
   envelope: EventEnvelope;
 }
 
+type JournalTailRepair =
+  | { readonly kind: 'terminate' }
+  | { readonly kind: 'truncate'; readonly byteLength: number };
+
 export interface JournalEntry {
   seq: number;
   envelope: EventEnvelope;
@@ -119,15 +123,18 @@ export class SessionEventJournal {
   private currentEpoch: string | undefined;
   private consecutiveFailures = 0;
   private stickyError: JournalStorageError | undefined;
+  private tailRepair: JournalTailRepair | undefined;
 
   private constructor(
     private readonly filePath: string,
     private readonly logger: JournalLogger,
     epoch: string | undefined,
     lastSeq: number,
+    tailRepair?: JournalTailRepair,
   ) {
     this._seq = lastSeq;
     this.currentEpoch = epoch;
+    this.tailRepair = tailRepair;
   }
 
   /** Highest durable seq appended (0 if none). */
@@ -175,21 +182,30 @@ export class SessionEventJournal {
     let sawAnyLine = false;
     let corrupt = false;
     let segmentSeq = 0;
+    let tailRepair: JournalTailRepair | undefined;
 
     try {
       for await (const line of readLines(filePath)) {
         const raw = line.raw;
-        if (raw.trim().length === 0) continue;
+        if (raw.trim().length === 0) {
+          if (!line.terminated) tailRepair = { kind: 'truncate', byteLength: line.startOffset };
+          continue;
+        }
         sawAnyLine = true;
         const parsed = parseJournalLine(raw);
         if (parsed === undefined) {
-          if (!line.terminated) continue;
+          if (!line.terminated) {
+            tailRepair = { kind: 'truncate', byteLength: line.startOffset };
+            continue;
+          }
           corrupt = true;
           break;
         }
+        if (!line.terminated) tailRepair = { kind: 'terminate' };
         if (parsed.kind === 'journal_header') {
           epoch = parsed.epoch; // last header wins
           segmentSeq = 0;
+          lastSeq = 0;
           continue;
         }
         if (epoch === undefined || parsed.seq !== segmentSeq + 1) {
@@ -214,6 +230,7 @@ export class SessionEventJournal {
       await quarantineCorruptJournal(filePath, logger);
       epoch = undefined;
       lastSeq = 0;
+      tailRepair = undefined;
     }
 
     if (epoch === undefined) {
@@ -225,7 +242,7 @@ export class SessionEventJournal {
       }
       return new SessionEventJournal(filePath, logger, undefined, 0);
     }
-    return new SessionEventJournal(filePath, logger, epoch, lastSeq);
+    return new SessionEventJournal(filePath, logger, epoch, lastSeq, tailRepair);
   }
 
   /** Reserve the next durable seq. The caller must follow with `append()`. */
@@ -338,6 +355,7 @@ export class SessionEventJournal {
     let lines = headerLine !== undefined ? [headerLine, ...pendingSnapshot] : pendingSnapshot;
     try {
       await mkdir(dirname(this.filePath), { recursive: true });
+      await this.repairTail();
       if (this.consecutiveFailures > 0) {
         const committed = await countCommittedPrefix(this.filePath, lines);
         if (committed > 0) {
@@ -396,6 +414,23 @@ export class SessionEventJournal {
     if (headerLine !== undefined) this.headerPending = false;
     this.consecutiveFailures = 0;
     return true;
+  }
+
+  private async repairTail(): Promise<void> {
+    const repair = this.tailRepair;
+    if (repair === undefined) return;
+    const handle = await openFile(this.filePath, repair.kind === 'truncate' ? 'r+' : 'a');
+    try {
+      if (repair.kind === 'truncate') {
+        await handle.truncate(repair.byteLength);
+      } else {
+        await handle.writeFile('\n', 'utf8');
+      }
+      await handle.sync();
+      this.tailRepair = undefined;
+    } finally {
+      await handle.close();
+    }
   }
 
   private buildHeaderLine(): string | undefined {
@@ -462,21 +497,25 @@ function isEventEnvelope(value: unknown): value is EventEnvelope {
 interface RawJournalLine {
   raw: string;
   terminated: boolean;
+  startOffset: number;
 }
 
 async function* readLines(filePath: string): AsyncIterable<RawJournalLine> {
   let buffered = '';
+  let offset = 0;
   const stream = createReadStream(filePath, { encoding: 'utf8' });
   for await (const chunk of stream) {
     buffered += chunk;
     let newlineIndex = buffered.indexOf('\n');
     while (newlineIndex !== -1) {
-      yield { raw: buffered.slice(0, newlineIndex), terminated: true };
+      const raw = buffered.slice(0, newlineIndex);
+      yield { raw, terminated: true, startOffset: offset };
+      offset += Buffer.byteLength(raw, 'utf8') + 1;
       buffered = buffered.slice(newlineIndex + 1);
       newlineIndex = buffered.indexOf('\n');
     }
   }
-  if (buffered.length > 0) yield { raw: buffered, terminated: false };
+  if (buffered.length > 0) yield { raw: buffered, terminated: false, startOffset: offset };
 }
 
 async function quarantineCorruptJournal(filePath: string, logger: JournalLogger): Promise<void> {

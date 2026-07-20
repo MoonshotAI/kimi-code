@@ -9,7 +9,7 @@
  * two Session scopes sharing one workspace (two-instance conflict).
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,7 +36,12 @@ import { ISessionFsWatchService } from '#/session/sessionFs/fsWatch';
 import { SessionFsWatchService } from '#/session/sessionFs/fsWatchService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
-import { ToolAccesses, type ExecutableToolResult } from '#/tool/toolContract';
+import {
+  ToolAccesses,
+  type ExecutableToolResult,
+  makeToolFileRevision,
+  toolFileRevision,
+} from '#/tool/toolContract';
 
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 
@@ -200,13 +205,32 @@ async function runDid(
   ctx: ToolBeforeExecuteContext,
   result?: ExecutableToolResult,
 ): Promise<ToolDidExecuteContext> {
+  let effectiveResult = result;
+  if (effectiveResult === undefined) {
+    const target = ctx.execution.accesses?.find((access) => access.kind === 'file');
+    if (target === undefined || !['Read', 'Write', 'Edit'].includes(ctx.toolCall.name)) {
+      effectiveResult = { output: 'done' };
+    } else {
+      let stat;
+      try {
+        stat = statSync(target.path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        stat = { size: 0 };
+      }
+      effectiveResult = {
+        output: 'done',
+        [toolFileRevision]: makeToolFileRevision(target.path, stat),
+      };
+    }
+  }
   const did: ToolDidExecuteContext = {
     turnId: ctx.turnId,
     signal: ctx.signal,
     toolCall: ctx.toolCall,
     toolCalls: [ctx.toolCall],
     args: ctx.args,
-    result: result ?? { output: 'done' },
+    result: effectiveResult,
   };
   await world.executor.hooks.onDidExecuteTool.run(did);
   return did;
@@ -220,6 +244,10 @@ async function runOk(
 ): Promise<ToolDidExecuteContext> {
   const ctx = await runBefore(world, beforeCtx(toolName, path, opts));
   expect(ctx.decision?.block).not.toBe(true);
+  if (toolName === 'Write') {
+    const args = ctx.args as { readonly content: string; readonly mode?: 'overwrite' | 'append' };
+    writeFileSync(path, args.content, { flag: args.mode === 'append' ? 'a' : 'w' });
+  }
   return runDid(world, ctx);
 }
 
@@ -295,6 +323,25 @@ describe('AgentFileFencingService', () => {
       expect(ctx.decision?.reason).toContain('changed on disk since');
     });
 
+    it('keeps the revision captured by Read when the file changes before the did-hook', async () => {
+      multiServer = true;
+      const world = setup();
+      const file = join(world.env.workDir, 'a.txt');
+      writeFileSync(file, 'hello');
+      const ctx = await runBefore(world, beforeCtx('Read', file));
+      const readRevision = makeToolFileRevision(file, statSync(file));
+
+      writeFileSync(file, 'changed after read');
+      await runDid(world, ctx, {
+        output: 'hello',
+        [toolFileRevision]: readRevision,
+      });
+
+      const edit = await runBefore(world, beforeCtx('Edit', file));
+      expect(edit.decision?.block).toBe(true);
+      expect(edit.decision?.reason).toContain('changed on disk since');
+    });
+
     it('wraps an execution override installed by an earlier hook', async () => {
       const world = setup();
       const file = join(world.env.workDir, 'a.txt');
@@ -366,17 +413,17 @@ describe('AgentFileFencingService', () => {
       const file = join(world.env.workDir, 'a.txt');
       writeFileSync(file, 'hello');
       await runOk(world, 'Read', file);
-      expect(world.env.statCalls()).toBe(1);
+      expect(world.env.statCalls()).toBe(0);
 
       foldChange(world, 'a.txt', 'modified');
 
       const ctx = await runBefore(world, beforeCtx('Edit', file));
       expect(ctx.decision?.block).not.toBe(true);
-      expect(world.env.statCalls()).toBe(2);
+      expect(world.env.statCalls()).toBe(1);
 
       const again = await runBefore(world, beforeCtx('Edit', file));
       expect(again.decision?.block).not.toBe(true);
-      expect(world.env.statCalls()).toBe(3);
+      expect(world.env.statCalls()).toBe(2);
     });
 
     it('resolves a truncated window by stat punch: unchanged passes, changed blocks', async () => {

@@ -99,8 +99,8 @@ function fakeFs(
       if (c === undefined) throw enoent(p);
       return c;
     },
-    writeText: async () => {},
-    appendText: async () => {},
+    writeText: async () => ({ isFile: true, isDirectory: false, size: 0 }),
+    appendText: async () => ({ isFile: true, isDirectory: false, size: 0 }),
     readBytes: async (p, n) => {
       const c = fileMap.get(p);
       if (c === undefined) throw enoent(p);

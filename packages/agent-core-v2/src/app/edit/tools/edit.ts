@@ -32,9 +32,11 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
+  attachToolFileRevision,
   ToolAccesses,
   type BuiltinTool,
   type ExecutableToolResult,
+  makeToolFileRevision,
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
@@ -135,7 +137,10 @@ export class EditTool implements BuiltinTool<EditInput> {
       return { isError: true, output: result.error };
     }
     const word = result.count === 1 ? 'occurrence' : 'occurrences';
-    return { output: `Replaced ${String(result.count)} ${word} in ${args.path}` };
+    return attachToolFileRevision(
+      { output: `Replaced ${String(result.count)} ${word} in ${args.path}` },
+      makeToolFileRevision(safePath, result.stat),
+    );
   }
 }
 

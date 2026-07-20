@@ -1702,6 +1702,74 @@ describe('SessionLifecycleService', () => {
       });
     });
 
+    it('dirty-aborts an active session when closeAll hits a durability failure', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog, registry, storage, docs } = realAlsSeeds(root);
+      const svc = build(seeds);
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      await docs.set('sessions/wd_stub/s1', 'state.json', {
+        id: 's1',
+        version: 2,
+        cwd: '/tmp/proj',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        agents: {},
+        custom: {},
+      });
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        if (args[0].startsWith('sessions/wd_stub/s1')) throw new Error('durable append failed');
+        return originalAppend(...args);
+      };
+      appendLog.append('sessions/wd_stub/s1/agents/main', 'wire.jsonl', { tail: true });
+
+      await svc.closeAll();
+
+      expect(registry.resolve('s1')).toBeUndefined();
+      expect(await docs.get<{ custom?: { dirtyAbort?: { reason?: string } } }>(
+        'sessions/wd_stub/s1',
+        'state.json',
+      )).toMatchObject({ custom: { dirtyAbort: { reason: 'flush-failed' } } });
+      const successor = await new CrossProcessLockService().acquire(leaseFile(root, 's1'));
+      successor.release();
+    });
+
+    it('includes an already flush-failed session when closeAll drains materialized entries', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog, registry, storage, docs } = realAlsSeeds(root);
+      const svc = build(seeds);
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      await docs.set('sessions/wd_stub/s1', 'state.json', {
+        id: 's1',
+        version: 2,
+        cwd: '/tmp/proj',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        agents: {},
+        custom: {},
+      });
+      const failure = new Error('durable append failed');
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        if (args[0].startsWith('sessions/wd_stub/s1')) throw failure;
+        return originalAppend(...args);
+      };
+      appendLog.append('sessions/wd_stub/s1/agents/main', 'wire.jsonl', { tail: true });
+      await expect(svc.close('s1')).rejects.toBe(failure);
+
+      await svc.closeAll();
+
+      expect(registry.resolve('s1')).toBeUndefined();
+      expect(await docs.get<{ custom?: { dirtyAbort?: { reason?: string } } }>(
+        'sessions/wd_stub/s1',
+        'state.json',
+      )).toMatchObject({ custom: { dirtyAbort: { reason: 'flush-failed' } } });
+      const successor = await new CrossProcessLockService().acquire(leaseFile(root, 's1'));
+      successor.release();
+    });
+
     it('closing one session does not wait for another session append', async () => {
       const root = await makeTmpRoot();
       const { seeds, appendLog, storage } = realAlsSeeds(root);
