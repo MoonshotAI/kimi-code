@@ -1,9 +1,9 @@
 /**
  * `agentFileCatalog` domain (L3) — `AgentFileDefinition` → `AgentProfile` factory.
  *
- * `mode: replace` profiles return the file body verbatim as the full system
+ * `promptMode: replace` profiles return the file body verbatim as the full system
  * prompt — no agentsMd / skills context injection, the user owns the whole
- * prompt. `mode: append` profiles reuse the builtin render pipeline and inject
+ * prompt. `promptMode: append` profiles reuse the builtin render pipeline and inject
  * the body into the shared template's `ROLE_ADDITIONAL` slot, keeping the
  * context injection intact. Explicit files are marked as builtin overrides;
  * directory files must opt in through frontmatter. `tools` passes through as the allowlist
@@ -28,7 +28,7 @@ export function agentProfileFromFile(definition: AgentFileDefinition): AgentProf
     tools: definition.tools,
     disallowedTools: definition.disallowedTools,
     systemPrompt:
-      definition.mode === 'append'
+      definition.promptMode === 'append'
         ? (context) => renderSystemPrompt(definition.prompt, context, { skillActive })
         : () => definition.prompt,
   };

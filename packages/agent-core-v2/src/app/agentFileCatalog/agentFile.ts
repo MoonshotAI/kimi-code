@@ -68,8 +68,10 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
   );
 
   const override = parseBoolean(frontmatter['override'], 'override', options.path);
-  const mode = parseMode(frontmatter['mode'], options.path);
-  const tools = parseStringList(frontmatter['tools'], 'tools', options.path);
+  const promptMode = parsePromptMode(frontmatter['promptMode'], options.path);
+  const rawTools = parseStringList(frontmatter['tools'], 'tools', options.path);
+  // Claude Code compatibility: a lone `*` means "all tools", like omitting the field.
+  const tools = rawTools?.length === 1 && rawTools[0] === '*' ? undefined : rawTools;
   const disallowedTools = parseStringList(
     frontmatter['disallowedTools'],
     'disallowedTools',
@@ -86,7 +88,7 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     description,
     whenToUse: nonEmptyString(frontmatter['whenToUse']),
     override,
-    mode,
+    promptMode,
     tools,
     disallowedTools,
     prompt,
@@ -103,12 +105,12 @@ function parseBoolean(value: unknown, field: string, filePath: string): boolean 
   );
 }
 
-function parseMode(value: unknown, filePath: string): AgentPromptMode {
+function parsePromptMode(value: unknown, filePath: string): AgentPromptMode {
   if (value === undefined || value === null) return 'replace';
   const mode = typeof value === 'string' ? value.trim() : undefined;
   if (mode === 'replace' || mode === 'append') return mode;
   throw new AgentFileParseError(
-    `Invalid "mode" value ${JSON.stringify(value)} in ${filePath}: expected "replace" or "append"`,
+    `Invalid "promptMode" value ${JSON.stringify(value)} in ${filePath}: expected "replace" or "append"`,
   );
 }
 
@@ -118,9 +120,17 @@ function parseStringList(
   filePath: string,
 ): readonly string[] | undefined {
   if (value === undefined || value === null) return undefined;
+  // Claude Code compatibility: a bare string is split on commas, so both
+  // `tools: Read, Grep` and the YAML list form are accepted.
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item !== '');
+  }
   if (!Array.isArray(value)) {
     throw new AgentFileParseError(
-      `Frontmatter field "${field}" in ${filePath} must be a list of strings`,
+      `Frontmatter field "${field}" in ${filePath} must be a comma-separated string or a list of strings`,
     );
   }
   const out: string[] = [];

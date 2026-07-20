@@ -75,7 +75,7 @@ name: reviewer
 description: 严格的代码审查 Agent，按严重度分级报告问题
 whenToUse: 代码评审与 PR 检查
 override: false
-mode: replace
+promptMode: replace
 tools:
   - Read
   - Grep
@@ -94,11 +94,11 @@ disallowedTools:
 | `description` | 是 | Agent 的用途。主 Agent 挑选子 Agent 时会看到，请围绕委派决策来写 |
 | `whenToUse` | 否 | 补充说明何时应使用该 Agent |
 | `override` | 否 | 是否允许覆盖同名内置 Agent，默认 `false`。`--agent-file` 属于显式启动意图，无需设置此字段 |
-| `mode` | 否 | `replace`（默认）：正文即 Agent 的完整系统提示词。`append`：正文追加到默认系统提示词之上，工作区指令和 Skill 注入保持生效 |
-| `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。缺省表示允许全部工具；空列表（`tools: []`）表示禁用全部工具 |
-| `disallowedTools` | 否 | 禁止列表，匹配规则相同，在 `tools` 之后应用 |
+| `promptMode` | 否 | `replace`（默认）：正文即 Agent 的完整系统提示词。`append`：正文追加到默认系统提示词之上，工作区指令和 Skill 注入保持生效 |
+| `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。支持 YAML 列表或逗号分隔字符串（`tools: Read, Grep`）两种写法。缺省表示允许全部工具；单独的 `*` 同样表示允许全部工具；空列表（`tools: []`）表示禁用全部工具 |
+| `disallowedTools` | 否 | 禁止列表，写法与匹配规则相同，在 `tools` 之后应用 |
 
-未知字段会被忽略，新版本写的文件在旧版本上仍可读取。
+未知字段会被忽略，新版本写的文件在旧版本上仍可读取。其他 Agent 工具的字段（如 Claude Code 的 `model`、OpenCode 的 `mode`）同样会被忽略；加上 `tools` 的逗号分隔写法，Claude Code 风格的 Agent 文件一般可直接加载 —— 只含 `name`、`description` 和正文的最小文件可跨工具通用。
 
 目录中发现的非法文件会被跳过并告警，不影响其他文件。通过 `--agent-file` 显式传入的文件必须合法 —— 否则 CLI 会报错并退出。
 
@@ -123,7 +123,7 @@ KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的
 
 绑定的 Agent 即会话的身份：在会话首次绑定后即固定，之后不可切换。重复选择已绑定的 Agent（例如以相同的 `--agent` 恢复会话）是 no-op；选择不同的 Agent 会报 "already bound" 错误。
 
-定制主 Agent 时推荐使用 `mode: append`，以保持环境、工作区指令和 Skill 注入生效；`mode: replace` 适合自包含、完全拥有自己提示词的子 Agent。
+定制主 Agent 时推荐使用 `promptMode: append`，以保持环境、工作区指令和 Skill 注入生效；`promptMode: replace` 适合自包含、完全拥有自己提示词的子 Agent。
 
 ### 用 SYSTEM.md 覆盖主 Agent 的系统提示词
 

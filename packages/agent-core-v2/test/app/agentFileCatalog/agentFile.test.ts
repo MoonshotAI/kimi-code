@@ -17,7 +17,7 @@ name: code-reviewer
 description: 严格的代码审查 agent
 whenToUse: 代码评审、PR 检查
 override: true
-mode: append
+promptMode: append
 tools:
   - Read
   - Grep
@@ -42,17 +42,17 @@ describe('parseAgentFileText', () => {
     expect(def.description).toBe('严格的代码审查 agent');
     expect(def.whenToUse).toBe('代码评审、PR 检查');
     expect(def.override).toBe(true);
-    expect(def.mode).toBe('append');
+    expect(def.promptMode).toBe('append');
     expect(def.tools).toEqual(['Read', 'Grep', 'mcp__github__*']);
     expect(def.disallowedTools).toEqual(['Bash']);
     expect(def.prompt).toBe('你是严格的代码审查者。');
     expect(def.source).toBe('project');
   });
 
-  it('defaults mode to replace and leaves tool lists undefined', () => {
+  it('defaults promptMode to replace and leaves tool lists undefined', () => {
     const def = parse('---\nname: solo\ndescription: d\n---\n\nbody\n');
 
-    expect(def.mode).toBe('replace');
+    expect(def.promptMode).toBe('replace');
     expect(def.override).toBe(false);
     expect(def.tools).toBeUndefined();
     expect(def.disallowedTools).toBeUndefined();
@@ -89,16 +89,22 @@ describe('parseAgentFileText', () => {
     );
   });
 
-  it('rejects an invalid mode', () => {
+  it('rejects an invalid promptMode', () => {
     expect(() =>
-      parse('---\nname: solo\ndescription: d\nmode: prepend\n---\n\nbody\n'),
-    ).toThrow(/"mode"/);
+      parse('---\nname: solo\ndescription: d\npromptMode: prepend\n---\n\nbody\n'),
+    ).toThrow(/"promptMode"/);
   });
 
-  it('rejects a non-string mode instead of defaulting to replace', () => {
-    expect(() => parse('---\nname: solo\ndescription: d\nmode: 42\n---\n\nbody\n')).toThrow(
-      /"mode"/,
-    );
+  it('rejects a non-string promptMode instead of defaulting to replace', () => {
+    expect(() =>
+      parse('---\nname: solo\ndescription: d\npromptMode: 42\n---\n\nbody\n'),
+    ).toThrow(/"promptMode"/);
+  });
+
+  it('ignores a foreign mode field (e.g. OpenCode "mode: subagent")', () => {
+    const def = parse('---\nname: solo\ndescription: d\nmode: subagent\n---\n\nbody\n');
+
+    expect(def.promptMode).toBe('replace');
   });
 
   it('rejects a non-boolean override field', () => {
@@ -107,8 +113,25 @@ describe('parseAgentFileText', () => {
     );
   });
 
-  it('rejects a non-list tools field', () => {
-    expect(() => parse('---\nname: solo\ndescription: d\ntools: Read\n---\n\nbody\n')).toThrow(
+  it('accepts a comma-separated tools string (Claude Code style)', () => {
+    const def = parse(
+      '---\nname: solo\ndescription: d\ntools: Read, Grep,mcp__github__*\ndisallowedTools: Bash\n---\n\nbody\n',
+    );
+
+    expect(def.tools).toEqual(['Read', 'Grep', 'mcp__github__*']);
+    expect(def.disallowedTools).toEqual(['Bash']);
+  });
+
+  it('treats a lone "*" tools field as all tools', () => {
+    const fromString = parse('---\nname: solo\ndescription: d\ntools: "*"\n---\n\nbody\n');
+    const fromList = parse('---\nname: solo\ndescription: d\ntools:\n  - "*"\n---\n\nbody\n');
+
+    expect(fromString.tools).toBeUndefined();
+    expect(fromList.tools).toBeUndefined();
+  });
+
+  it('rejects a non-string, non-list tools field', () => {
+    expect(() => parse('---\nname: solo\ndescription: d\ntools: 42\n---\n\nbody\n')).toThrow(
       /"tools"/,
     );
   });
@@ -130,7 +153,7 @@ describe('agentProfileFromFile', () => {
     description: 'd',
     whenToUse: 'reviews',
     override: false,
-    mode: 'replace',
+    promptMode: 'replace',
     prompt: 'PROMPT_BODY',
     path: '/tmp/agents/reviewer.md',
     source: 'user',
@@ -147,7 +170,7 @@ describe('agentProfileFromFile', () => {
   });
 
   it('append mode injects the body and keeps context injection', () => {
-    const profile = agentProfileFromFile({ ...base, mode: 'append' });
+    const profile = agentProfileFromFile({ ...base, promptMode: 'append' });
     const prompt = profile.systemPrompt({ agentsMd: 'AGENTS_MD_CONTENT', skills: 'SKILLS_LISTING' });
 
     expect(prompt).toContain('PROMPT_BODY');
@@ -156,7 +179,7 @@ describe('agentProfileFromFile', () => {
   });
 
   it('append mode with an allowlist without Skill skips the skills listing', () => {
-    const profile = agentProfileFromFile({ ...base, mode: 'append', tools: ['Read'] });
+    const profile = agentProfileFromFile({ ...base, promptMode: 'append', tools: ['Read'] });
     const prompt = profile.systemPrompt({ skills: 'SKILLS_LISTING' });
 
     expect(prompt).toContain('PROMPT_BODY');
@@ -164,7 +187,11 @@ describe('agentProfileFromFile', () => {
   });
 
   it('append mode with Skill in disallowedTools skips the skills listing', () => {
-    const profile = agentProfileFromFile({ ...base, mode: 'append', disallowedTools: ['Skill'] });
+    const profile = agentProfileFromFile({
+      ...base,
+      promptMode: 'append',
+      disallowedTools: ['Skill'],
+    });
     const prompt = profile.systemPrompt({ skills: 'SKILLS_LISTING' });
 
     expect(prompt).toContain('PROMPT_BODY');

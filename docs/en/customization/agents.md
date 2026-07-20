@@ -75,7 +75,7 @@ name: reviewer
 description: Strict code reviewer that reports severity-ranked findings
 whenToUse: Code reviews and PR checks
 override: false
-mode: replace
+promptMode: replace
 tools:
   - Read
   - Grep
@@ -94,11 +94,11 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 | `description` | yes | What the agent does. Shown to the main Agent when it picks a sub-agent, so write it to guide delegation decisions |
 | `whenToUse` | no | Extra hint describing when the agent should be used |
 | `override` | no | Whether this file may replace a same-name built-in Agent. Defaults to `false`; `--agent-file` is already explicit and does not require this field |
-| `mode` | no | `replace` (default): the body is the agent's entire system prompt. `append`: the body is added to the default system prompt, keeping workspace instructions and Skill injections in effect |
-| `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Omit to allow all tools; an empty list (`tools: []`) disables all tools |
-| `disallowedTools` | no | Denylist with the same matching rules, applied after `tools` |
+| `promptMode` | no | `replace` (default): the body is the agent's entire system prompt. `append`: the body is added to the default system prompt, keeping workspace instructions and Skill injections in effect |
+| `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Accepts a YAML list or a comma-separated string (`tools: Read, Grep`). Omit to allow all tools; a lone `*` also allows all tools; an empty list (`tools: []`) disables all tools |
+| `disallowedTools` | no | Denylist with the same syntax and matching rules, applied after `tools` |
 
-Unknown fields are ignored, so newer files stay readable by older versions.
+Unknown fields are ignored, so newer files stay readable by older versions. Fields from other agent tools (such as Claude Code's `model` or OpenCode's `mode`) are ignored the same way, and the comma-separated `tools` form keeps Claude Code-style agent files loadable — a minimal file with `name`, `description`, and a body works across tools.
 
 A file with invalid content discovered in a directory is skipped with a warning and does not affect other files. A file passed explicitly via `--agent-file` must be valid — otherwise the CLI reports the error and exits.
 
@@ -123,7 +123,7 @@ KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on th
 
 The bound agent is the session's identity: it is fixed at the session's first bind and cannot be switched later. Re-selecting the already-bound agent (for example resuming with the same `--agent`) is a no-op; selecting a different one fails with an "already bound" error.
 
-For main-agent customization, prefer `mode: append` so the environment, workspace-instruction, and Skill injections stay in effect; `mode: replace` fits self-contained sub-agents that own their entire prompt.
+For main-agent customization, prefer `promptMode: append` so the environment, workspace-instruction, and Skill injections stay in effect; `promptMode: replace` fits self-contained sub-agents that own their entire prompt.
 
 ### Overriding the main agent's system prompt with SYSTEM.md
 
