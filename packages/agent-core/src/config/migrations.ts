@@ -1,9 +1,9 @@
 /**
  * One-shot config migrations. Each migration runs at most once per kimi home:
- * a marker in `<home>/migrations.json` records completion (ISO timestamp), so
- * a value the user re-sets by hand afterwards is never migrated again. All
- * helpers are best-effort and never throw — a migration must never block
- * startup.
+ * a marker in `<home>/migrations-effort.json` records completion (ISO
+ * timestamp), so a value the user re-sets by hand afterwards is never
+ * migrated again. All helpers are best-effort and never throw — a migration
+ * must never block startup.
  */
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
@@ -14,7 +14,7 @@ import { ensureKimiHome } from './path';
 import { configToTomlData, readConfigFileForUpdate } from './toml';
 import { validateConfig } from './schema';
 
-const MIGRATIONS_FILE = 'migrations.json';
+const MIGRATIONS_FILE = 'migrations-effort.json';
 const THINKING_EFFORT_MAX_TO_HIGH = 'thinking-effort-max-to-high';
 
 function readMigrationMarkers(homeDir: string): Record<string, string> {

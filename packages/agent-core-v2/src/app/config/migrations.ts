@@ -1,11 +1,11 @@
 /**
  * One-shot config migrations — mirror of agent-core's `config/migrations.ts`
  * (the two engines share neither code nor config abstractions, only the
- * on-disk `config.toml` and the `<home>/migrations.json` marker format).
- * Each migration runs at most once per kimi home: a marker records completion
- * (ISO timestamp), so a value the user re-sets by hand afterwards is never
- * migrated again. Best-effort and never throws — a migration must never block
- * startup.
+ * on-disk `config.toml` and the `<home>/migrations-effort.json` marker
+ * format). Each migration runs at most once per kimi home: a marker records
+ * completion (ISO timestamp), so a value the user re-sets by hand afterwards
+ * is never migrated again. Best-effort and never throws — a migration must
+ * never block startup.
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'pathe';
@@ -14,7 +14,7 @@ import { type IAtomicDocumentStore } from '#/persistence/interface/atomicDocumen
 
 import { isPlainObject } from './configPure';
 
-const MIGRATIONS_FILE = 'migrations.json';
+const MIGRATIONS_FILE = 'migrations-effort.json';
 const THINKING_EFFORT_MAX_TO_HIGH = 'thinking-effort-max-to-high';
 const CONFIG_SCOPE = '';
 

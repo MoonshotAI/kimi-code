@@ -740,7 +740,7 @@ describe('ConfigService thinking effort max migration', () => {
   }
 
   function readMarkers(): Record<string, string> {
-    return JSON.parse(readFileSync(join(homeDir, 'migrations.json'), 'utf-8')) as Record<
+    return JSON.parse(readFileSync(join(homeDir, 'migrations-effort.json'), 'utf-8')) as Record<
       string,
       string
     >;
@@ -762,7 +762,7 @@ describe('ConfigService thinking effort max migration', () => {
 
   it('honors a hand-set max once the marker exists', async () => {
     writeFileSync(
-      join(homeDir, 'migrations.json'),
+      join(homeDir, 'migrations-effort.json'),
       JSON.stringify({ 'thinking-effort-max-to-high': new Date().toISOString() }),
     );
     const { config, disposables } = await createMigratingConfig('[thinking]\neffort = "max"\n');

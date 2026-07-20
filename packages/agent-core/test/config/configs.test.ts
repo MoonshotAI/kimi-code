@@ -967,7 +967,7 @@ describe('migrateThinkingEffortMaxToHigh', () => {
     'default_model = "x"\n[providers.x]\ntype = "kimi"\napi_key = "k"\n[models.x]\nprovider = "x"\nmodel = "x"\nmax_context_size = 1000\n';
 
   async function readMarkers(home: string): Promise<Record<string, string>> {
-    return JSON.parse(await readFile(join(home, 'migrations.json'), 'utf-8')) as Record<
+    return JSON.parse(await readFile(join(home, 'migrations-effort.json'), 'utf-8')) as Record<
       string,
       string
     >;
@@ -1018,6 +1018,6 @@ describe('migrateThinkingEffortMaxToHigh', () => {
 
     migrateThinkingEffortMaxToHigh(configPath, home);
 
-    await expect(readFile(join(home, 'migrations.json'), 'utf-8')).rejects.toThrow();
+    await expect(readFile(join(home, 'migrations-effort.json'), 'utf-8')).rejects.toThrow();
   });
 });
