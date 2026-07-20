@@ -1948,8 +1948,8 @@ const sideChat = useSideChat(rawState, {
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
   // modelProvider is defined further below; deferred like eventConn above.
-  thinkingLevelForSessionId: (sessionId, modelId) =>
-    modelProvider.thinkingLevelForSessionId(sessionId, modelId),
+  resolveThinkingForPrompt: (sessionId, modelId) =>
+    modelProvider.resolveThinkingForPrompt(sessionId, modelId),
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {

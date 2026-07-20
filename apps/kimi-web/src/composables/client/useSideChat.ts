@@ -23,13 +23,13 @@ export interface UseSideChatDeps {
   nextOptimisticMsgId: () => string;
   connectEventsIfNeeded: () => void;
   getEventConn: () => KimiEventConnection | null;
-  /** Resolve the thinking level for a session + model id: the session's own
-   *  daemon-reported level when still declared, else the per-model resolution;
-   *  undefined when the model is not in the catalog. */
-  thinkingLevelForSessionId: (
+  /** Resolve the thinking level for a prompt submission: waits for the
+   *  session's own /status fold when it has not landed yet, then resolves the
+   *  session + model level; undefined when the model is not in the catalog. */
+  resolveThinkingForPrompt: (
     sessionId: string | null,
     modelId: string | undefined,
-  ) => ThinkingLevel | undefined;
+  ) => Promise<ThinkingLevel | undefined>;
 }
 
 export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
@@ -38,7 +38,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     nextOptimisticMsgId,
     connectEventsIfNeeded,
     getEventConn,
-    thinkingLevelForSessionId,
+    resolveThinkingForPrompt,
   } = deps;
 
   const sideChatTargetBySession = ref<Record<string, { agentId: string }>>({});
@@ -229,7 +229,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         content: [{ type: 'text', text: trimmed }],
         agentId,
         model,
-        thinking: thinkingLevelForSessionId(sid, model) ?? rawState.thinking,
+        thinking: (await resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

@@ -1537,7 +1537,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         // tracks whatever session the user is looking at now: a queue drain for
         // a background session would otherwise submit the level of the session
         // the user switched to since enqueueing.
-        thinking: modelProvider.thinkingLevelForSessionId(sid, model) ?? rawState.thinking,
+        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1713,7 +1713,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         model,
         // Resolved against this prompt's own session + model, same as a normal
         // send (see submitPromptInternal).
-        thinking: modelProvider.thinkingLevelForSessionId(sid, model) ?? rawState.thinking,
+        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

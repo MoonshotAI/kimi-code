@@ -182,6 +182,28 @@ export function useModelProviderState(
     return model === undefined ? undefined : thinkingLevelForSession(sessionId, model);
   }
 
+  /**
+   * Submission-time resolution: when the session's own level has not been
+   * folded from /status yet (the cold window right after a reload or a
+   * session switch), wait for that fold first. Resolving straight to the
+   * catalog default here would not just display wrong — the prompt carries
+   * the level to the daemon, which writes it into the session profile and
+   * permanently overwrites the level the session actually ran at.
+   */
+  async function resolveThinkingForPrompt(
+    sessionId: string | null | undefined,
+    modelId: string | undefined,
+  ): Promise<ThinkingLevel | undefined> {
+    if (
+      sessionId !== null &&
+      sessionId !== undefined &&
+      rawState.thinkingBySession[sessionId] === undefined
+    ) {
+      await refreshSessionStatus(sessionId);
+    }
+    return thinkingLevelForSessionId(sessionId, modelId);
+  }
+
   function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
     // The explicit-picker path (setThinking). Model switches (setModel) and
     // passive resolution update rawState.thinking in-memory the same way, but
@@ -429,7 +451,7 @@ export function useModelProviderState(
       const rawModel = rawState.sessions.find((s) => s.id === sid)?.model;
       const skillModel = (rawModel && rawModel.length > 0 ? rawModel : rawState.defaultModel) ?? undefined;
       const persisted = await persistSessionProfile(
-        { thinking: thinkingLevelForSessionId(sid, skillModel) ?? rawState.thinking },
+        { thinking: (await resolveThinkingForPrompt(sid, skillModel)) ?? rawState.thinking },
         sid,
       );
       if (!persisted) throw PROFILE_PERSIST_FAILED;
@@ -566,6 +588,7 @@ export function useModelProviderState(
     setModel,
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
+    resolveThinkingForPrompt,
     toggleStarModel,
     activateSkill,
     addProvider,

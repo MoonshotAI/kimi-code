@@ -285,7 +285,7 @@ describe('useModelProviderState thinking on model selection', () => {
     } as ExtendedState;
   }
 
-  function createModelProvider(state: ExtendedState) {
+  function createModelProvider(state: ExtendedState, depOverrides: Partial<UseModelProviderStateDeps> = {}) {
     const deps: UseModelProviderStateDeps = {
       pushOperationFailure: vi.fn(),
       refreshSessionStatus: vi.fn().mockResolvedValue(undefined),
@@ -297,6 +297,7 @@ describe('useModelProviderState thinking on model selection', () => {
         );
       },
       updateSessionMessages: vi.fn(),
+      ...depOverrides,
     };
     const provider = useModelProviderState(state, deps);
     provider.models.value = [effortAppModel, booleanAppModel, maxOnlyAppModel];
@@ -591,5 +592,36 @@ describe('useModelProviderState thinking on model selection', () => {
 
     expect(switched).toBe(false);
     expect(apiMock.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('waits for the status fold when the session level has not landed', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: effortAppModel.id,
+    });
+    const refreshSessionStatus = vi.fn(async () => {
+      state.thinkingBySession = { 'session-1': 'max' };
+    });
+    const provider = createModelProvider(state, { refreshSessionStatus });
+
+    const level = await provider.resolveThinkingForPrompt('session-1', effortAppModel.id);
+
+    expect(refreshSessionStatus).toHaveBeenCalledWith('session-1');
+    expect(level).toBe('max');
+  });
+
+  it('does not refetch status when the session level is already known', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: effortAppModel.id,
+    });
+    state.thinkingBySession = { 'session-1': 'max' };
+    const refreshSessionStatus = vi.fn(async () => undefined);
+    const provider = createModelProvider(state, { refreshSessionStatus });
+
+    const level = await provider.resolveThinkingForPrompt('session-1', effortAppModel.id);
+
+    expect(refreshSessionStatus).not.toHaveBeenCalled();
+    expect(level).toBe('max');
   });
 });
