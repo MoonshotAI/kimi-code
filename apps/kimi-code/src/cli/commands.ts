@@ -1,6 +1,6 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand } from '#/migration/index';
-import { Command, Option } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 
 import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
@@ -78,14 +78,27 @@ export function createProgram(
       new Option(
         '--agent <name>',
         'Agent profile to use for this invocation (v2 engine only). Custom profiles are discovered from agent directories or loaded via --agent-file.',
-      ),
+      )
+        .argParser((value: string, previous: string | undefined) => {
+          if (previous !== undefined) {
+            throw new InvalidArgumentError('--agent may only be specified once.');
+          }
+          return value;
+        })
+        .conflicts('agentFile'),
     )
     .addOption(
       new Option(
         '--agent-file <path>',
-        'Load an agent definition from a Markdown file and select it (v2 engine only). Can be repeated.',
+        'Load an agent definition from a Markdown file and select it (v2 engine only).',
       )
-        .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
+        .argParser((value: string, previous: string[] | undefined) => {
+          if ((previous?.length ?? 0) > 0) {
+            throw new InvalidArgumentError('--agent-file may only be specified once.');
+          }
+          return [value];
+        })
+        .conflicts('agent')
         .default([]),
     )
     .addOption(

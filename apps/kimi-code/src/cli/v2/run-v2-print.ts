@@ -247,14 +247,14 @@ async function resolveNativeSession(
   const lifecycle = app.accessor.get(ISessionLifecycleService);
   const index = app.accessor.get(ISessionIndex);
 
-  // `--agent` selects a catalog profile by name; otherwise the last
-  // `--agent-file` implicitly selects the profile that file defines. The file
+  // `--agent` selects a catalog profile by name; otherwise `--agent-file`
+  // implicitly selects the profile that file defines. The file
   // is parsed here (fatal on error) so a bad file fails before any turn.
   let agentProfileName = opts.agent;
-  const lastAgentFile = opts.agentFiles.at(-1);
-  if (agentProfileName === undefined && lastAgentFile !== undefined) {
+  const agentFile = opts.agentFiles[0];
+  if (agentProfileName === undefined && agentFile !== undefined) {
     const agentFilePath = resolveAgentPath(
-      lastAgentFile,
+      agentFile,
       workDir,
       app.accessor.get(IBootstrapService).osHomeDir,
     );
