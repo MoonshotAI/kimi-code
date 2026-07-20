@@ -79,6 +79,7 @@ function createState(): ExtendedState {
     connection: 'connected',
     permission: 'manual',
     thinking: 'high',
+    thinkingBySession: {},
     planModeBySession: {},
     swarmModeBySession: {},
     goalModeBySession: {},
@@ -117,7 +118,7 @@ function createDeps(): UseWorkspaceStateDeps {
   return {
     taskPoller: {},
     sideChat: {},
-    modelProvider: { thinkingLevelForModelId: () => undefined },
+    modelProvider: { resolveThinkingForPrompt: async () => undefined },
     pushOperationFailure: vi.fn(),
     activity: computed(() => 'running'),
     sessionsKnownEmpty: new Set(),
@@ -743,7 +744,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
         activateSkill,
-        thinkingLevelForModelId: () => undefined,
+        resolveThinkingForPrompt: async () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -761,6 +762,47 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // session switch can't redirect it.
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('carries the draft thinking pick into the new session own entry', async () => {
+    // A level picked on the empty composer has no session to live in yet; the
+    // draft transfer seeds it so the first action submits the pick, not the
+    // catalog default.
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const state = createState();
+    state.thinking = 'max';
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+
+    expect(state.thinkingBySession['sess_new']).toBe('max');
+  });
+
+  it('captures the draft thinking pick before the creation awaits', async () => {
+    // A concurrent session switch mid-creation re-resolves rawState.thinking
+    // for the other session — the seed must come from the pre-await capture.
+    let resolveCreate!: (session: typeof newSession) => void;
+    apiMock.createSession.mockReturnValue(
+      new Promise<typeof newSession>((r) => {
+        resolveCreate = r;
+      }),
+    );
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const state = createState();
+    state.thinking = 'max';
+    const ws = useWorkspaceState(state, deps);
+
+    const pending = ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+    await new Promise((r) => setTimeout(r, 0));
+    // The user switches to another session while createSession is in flight;
+    // the watcher would re-resolve rawState.thinking to that session's level.
+    state.thinking = 'low';
+    resolveCreate(newSession);
+    await pending;
+
+    expect(state.thinkingBySession['sess_new']).toBe('max');
   });
 
   it('passes through skill args', async () => {
@@ -887,7 +929,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
-        thinkingLevelForModelId: () => undefined,
+        resolveThinkingForPrompt: async () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       // Something the goal can land in + what's visible in the sidebar.
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
@@ -1050,7 +1092,7 @@ describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
-        thinkingLevelForModelId: () => undefined,
+        resolveThinkingForPrompt: async () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -1525,7 +1567,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       ...createDeps(),
       modelProvider: {
         models: ref([]),
-        thinkingLevelForModelId: () => undefined,
+        resolveThinkingForPrompt: async () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       ...overrides,
     };
@@ -1588,7 +1630,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
     ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: true });
 
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
     expect(state.queuedBySession.sess_1).toEqual([
       { text: 'second queued', attachments: undefined },
     ]);
@@ -1611,7 +1653,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     );
   });
 
-  it('drains one queued prompt when the finished turn was locally witnessed', () => {
+  it('drains one queued prompt when the finished turn was locally witnessed', async () => {
     const state = createState();
     state.queuedBySession = {
       sess_1: [
@@ -1623,7 +1665,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
     ws.finishPromptLocal('sess_1', { turnWasActive: true });
 
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalledOnce());
     expect(state.queuedBySession.sess_1).toEqual([
       { text: 'second queued', attachments: undefined },
     ]);
@@ -1730,7 +1772,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     state.thinking = 'max'; // the global now tracks that session's max-only model
     state.inFlightBySession = { sess_a: true };
     state.queuedBySession = { sess_a: [{ text: 'follow up', attachments: undefined }] };
-    const thinkingLevelForModelId = vi.fn((id: string | undefined) =>
+    const resolveThinkingForPrompt = vi.fn(async (_sid: string | null, id: string | undefined) =>
       id === 'provider/model-a' ? 'low' : undefined,
     );
     const ws = useWorkspaceState(
@@ -1738,14 +1780,15 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       promptDeps({
         modelProvider: {
           models: ref([]),
-          thinkingLevelForModelId,
+          resolveThinkingForPrompt,
         } as unknown as UseWorkspaceStateDeps['modelProvider'],
       }),
     );
 
     ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
 
-    expect(thinkingLevelForModelId).toHaveBeenCalledWith('provider/model-a');
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
+    expect(resolveThinkingForPrompt).toHaveBeenCalledWith('sess_a', 'provider/model-a');
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_a',
       expect.objectContaining({ model: 'provider/model-a', thinking: 'low' }),
@@ -1763,13 +1806,14 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       promptDeps({
         modelProvider: {
           models: ref([]),
-          thinkingLevelForModelId: () => undefined,
+          resolveThinkingForPrompt: async () => undefined,
         } as unknown as UseWorkspaceStateDeps['modelProvider'],
       }),
     );
 
     ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
 
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_a',
       expect.objectContaining({ model: 'provider/gone-model', thinking: 'max' }),
@@ -1820,6 +1864,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     ws.afterLocalTurnStartsSettle('sess_1', retrySnapshot);
     expect(retrySnapshot).not.toHaveBeenCalled();
 
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
     resolveSubmit({ promptId: 'prompt_new' });
     await pendingSubmit;
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
@@ -1966,6 +2011,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
     // Facade forget path (e.g. archive) while the submit is pending. The
     // daemon definitively rejects afterwards — even then, no resurrection.
+    await vi.waitFor(() => expect(apiMock.submitPrompt).toHaveBeenCalled());
     state.sessions = [];
     delete state.queuedBySession.sess_1;
     rejectSubmit(new DaemonApiError({ code: 50000, msg: 'network down', requestId: 'r' }));

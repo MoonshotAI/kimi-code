@@ -556,7 +556,7 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, ...this.requestProtocolProps() });
+    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, thinking_effort: this.agent.config.thinkingEffort, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
@@ -675,6 +675,7 @@ export class TurnFlow {
       reason: ended.reason,
       duration_ms: ended.durationMs,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       ...this.requestProtocolProps(),
       trace_id: terminalTraceId,
     });
@@ -1203,6 +1204,7 @@ export class TurnFlow {
     this.agent.telemetry.track('turn_interrupted', {
       turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       at_step: atStep,
       interrupt_reason: interruptReason,
       ...this.requestProtocolProps(),

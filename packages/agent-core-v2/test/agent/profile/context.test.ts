@@ -95,6 +95,20 @@ describe('loadAgentsMd symlinked files', () => {
   });
 });
 
+describe('loadAgentsMd unreadable paths', () => {
+  it('warns when an instruction file exists but is a dangling symlink', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+    extraDirs.push(brandHome);
+    await symlink(join(workDir, 'missing-target.md'), join(workDir, 'AGENTS.md'));
+
+    const result = await prepareSystemPromptContext({ fs, homeDir }, workDir, brandHome);
+
+    expect(result.agentsMd).toBe('');
+    expect(result.agentsMdWarning).toBeDefined();
+    expect(result.agentsMdWarning).toContain('not a readable regular file');
+  });
+});
+
 describe('loadAgentsMd brand home (KIMI_CODE_HOME)', () => {
   let brandHome: string;
 

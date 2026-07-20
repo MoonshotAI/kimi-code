@@ -15,6 +15,7 @@ import {
   ensureKimiHome,
   loadRuntimeConfigSafe,
   mergeConfigPatch,
+  migrateThinkingEffortMaxToHigh,
   readConfigFileForUpdate,
   normalizeAdditionalDirs,
   readWorkspaceAdditionalDirs,
@@ -247,6 +248,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.printMode = options.uiMode === 'print';
     this.runTurnOverride = options.runTurnOverride;
     ensureKimiHome(this.homeDir);
+    // One-shot config migrations, before the first load (best-effort, never
+    // throws): rewrites a persisted thinking.effort "max" to "high" once.
+    migrateThinkingEffortMaxToHigh(this.configPath, this.homeDir);
     // Schema errors degrade (invalid sections are dropped with warnings) so a
     // typo cannot prevent startup, but a file that cannot be used at all —
     // TOML syntax error, unreadable — fails fast: defaults-only would start

@@ -7,7 +7,8 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ClusterDb } from '../../src/cluster/index.js';
+import { MiniDb } from '../../src/index.js';
+import { ClusterDb, shardDirName } from '../../src/cluster/index.js';
 import { shardFor } from '../../src/cluster/utils.js';
 import { tmpDir, rmrf } from '../e2e/helpers/tmp.js';
 import { keyOnShard, keysByShard } from './helpers.js';
@@ -216,6 +217,85 @@ test('stats reflect writer usage', async () => {
     assert.ok(s.evictions >= 1, 'LRU eviction happened with tiny pool');
     await db.close();
     await assert.rejects(() => db.get('st:0'), /closed/);
+  } finally {
+    await rmrf(dir);
+  }
+});
+
+interface QueryDoc {
+  g: string;
+  n: number;
+}
+
+test('query() merges filter + sort + skip/limit across shards', async () => {
+  const dir = await tmpDir('minidb-cluster-');
+  try {
+    const db = await ClusterDb.open<QueryDoc>({ dir, shardCount: 4, valueCodec: 'json' });
+    // The four globally-highest n values all sit on shard 0: a per-shard
+    // fetch must take skip+limit rows or a global page would lose them.
+    for (const [i, n] of [100, 101, 102, 103].entries()) {
+      const key = keyOnShard(`high${i}`, 0, 4);
+      await db.set(key, { g: 'x', n });
+    }
+    // 40 filler docs with lower n, hash-scattered over all shards.
+    const filler: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      filler.push(`q:${i}`);
+      await db.set(`q:${i}`, { g: 'x', n: i });
+    }
+
+    const sorted = (rows: { value: QueryDoc | undefined }[]) => rows.map((e) => e.value!.n);
+    const page1 = await db.query({ filter: { g: 'x' }, sort: { n: -1 }, limit: 2 });
+    assert.deepEqual(sorted(page1), [103, 102]);
+    const page2 = await db.query({ filter: { g: 'x' }, sort: { n: -1 }, skip: 2, limit: 2 });
+    assert.deepEqual(sorted(page2), [101, 100]);
+    const page3 = await db.query({ filter: { g: 'x' }, sort: { n: -1 }, skip: 4, limit: 2 });
+    assert.deepEqual(sorted(page3), [39, 38]);
+
+    // Without an explicit sort the global order is key bytes (as in scan).
+    const unordered = await db.query({ key: { prefix: 'q:' } });
+    assert.deepEqual(
+      unordered.map((e) => e.key),
+      filler.toSorted(),
+    );
+
+    // An unfiltered, unbounded query sees every doc exactly once.
+    const all = await db.query();
+    assert.equal(all.length, 44);
+    await db.close();
+  } finally {
+    await rmrf(dir);
+  }
+});
+
+test('compound index definitions fan out to all shards and survive reopen', async () => {
+  const dir = await tmpDir('minidb-cluster-');
+  try {
+    const db = await ClusterDb.open<QueryDoc>({ dir, shardCount: 4, valueCodec: 'json' });
+    await db.set(keyOnShard('ci', 0, 4), { g: 'x', n: 1 });
+    await db.createCompoundIndex('byGN', { groupBy: 'g', orderBy: 'n' });
+    const info = [{ name: 'byGN', groupBy: 'g', orderBy: 'n', orderType: 'number' }];
+    assert.deepEqual(await db.listCompoundIndexes(), info);
+
+    // Every shard applied the definition (verified through its own sidecar).
+    for (let id = 0; id < 4; id++) {
+      const shard = await MiniDb.open({ dir: path.join(dir, shardDirName(id, 4)), valueCodec: 'json', readOnly: true });
+      try {
+        assert.ok(shard.listCompoundIndexes().some((i) => i.name === 'byGN'), `shard ${id} has the index`);
+      } finally {
+        await shard.close();
+      }
+    }
+
+    // A duplicate create is rejected, and the registry round-trips a reopen.
+    await assert.rejects(() => db.createCompoundIndex('byGN', { groupBy: 'g', orderBy: 'n' }), /already exists/);
+    await db.close();
+    const db2 = await ClusterDb.open<QueryDoc>({ dir, shardCount: 4, valueCodec: 'json' });
+    assert.deepEqual(await db2.listCompoundIndexes(), info);
+    assert.equal(await db2.dropCompoundIndex('byGN'), true);
+    assert.deepEqual(await db2.listCompoundIndexes(), []);
+    assert.equal(await db2.dropCompoundIndex('byGN'), false);
+    await db2.close();
   } finally {
     await rmrf(dir);
   }

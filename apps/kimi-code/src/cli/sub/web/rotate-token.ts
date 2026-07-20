@@ -1,12 +1,12 @@
 /**
- * `kimi server rotate-token` — generate a new persistent server token.
+ * `kimi web rotate-token` — generate a new persistent server token.
  *
  * Rewrites `<KIMI_CODE_HOME>/server.token` (0600, atomic). The previous token
  * stops working immediately: a running server re-reads the file on its next
  * auth check, so rotation takes effect without a restart.
  */
 
-import { getLiveLock, rotateServerToken } from '@moonshot-ai/kap-server';
+import { getLiveServerInstance, rotateServerToken } from '@moonshot-ai/kap-server';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 
@@ -15,7 +15,6 @@ import { darkColors } from '#/tui/theme/colors';
 import { getDataDir } from '#/utils/paths';
 
 import { accessUrlLines, splitTokenFragment } from './access-urls';
-import { DEFAULT_SERVER_HOST } from './shared';
 
 export function registerRotateTokenCommand(server: Command): void {
   server
@@ -36,11 +35,11 @@ export function registerRotateTokenCommand(server: Command): void {
 
         // Re-print the access links with the new token so the user can
         // reconnect immediately. When a server is running its bind host/port
-        // come from the lock; otherwise there is nothing to connect to yet.
-        const lock = getLiveLock();
-        if (lock !== undefined) {
-          const host = lock.host ?? DEFAULT_SERVER_HOST;
-          for (const { label, url: href } of accessUrlLines(host, lock.port, token)) {
+        // come from the instance registry; otherwise there is nothing to
+        // connect to yet.
+        const instance = await getLiveServerInstance();
+        if (instance !== undefined) {
+          for (const { label, url: href } of accessUrlLines(instance.host, instance.port, token)) {
             // De-emphasize the `#token=…` fragment so the host/port stands out.
             const [base, frag] = splitTokenFragment(href);
             const rendered =

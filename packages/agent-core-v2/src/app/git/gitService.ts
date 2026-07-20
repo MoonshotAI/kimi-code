@@ -103,7 +103,7 @@ export class GitService implements IGitService {
         throw this.gitUnavailable(cwd, res.stderr.trim() || `git diff exit ${res.exitCode}`);
       }
       if (res.stdout.length === 0 && statusRes.stdout.length === 0) {
-        const exists = await this.fs.stat(absPath).then(
+        const exists = await this.fs.lstat(absPath).then(
           () => true,
           () => false,
         );
