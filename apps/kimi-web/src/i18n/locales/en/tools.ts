@@ -53,6 +53,9 @@ export default {
     error: 'failed',
     done: 'done',
   },
+  output: {
+    showAll: 'Show all {count} lines',
+  },
   ask: {
     dismissed: 'Dismissed',
     answer: '{count} answer',

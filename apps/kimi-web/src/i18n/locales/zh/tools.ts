@@ -53,6 +53,9 @@ export default {
     error: '有失败',
     done: '已完成',
   },
+  output: {
+    showAll: '显示全部 {count} 行',
+  },
   ask: {
     dismissed: '已忽略',
     answer: '{count} 个回答',

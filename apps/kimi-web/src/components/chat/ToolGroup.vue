@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/chat/ToolGroup.vue -->
 <script setup lang="ts">
-import { computed, inject, nextTick, ref } from 'vue';
+import { computed, inject, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ToolCall from './ToolCall.vue';
 import { toolStackKey, toolStackPosition } from '../chatTurnRendering';
@@ -25,13 +25,22 @@ const emit = defineEmits<{
   openAgent: [toolCallId: string];
 }>();
 
-const open = ref(true);
-
 const count = computed(() => props.tools.length);
 const aggregateStatus = computed<'running' | 'error' | 'done'>(() => {
   if (props.tools.some((t) => t.tool.status === 'running')) return 'running';
   if (props.tools.some((t) => t.tool.status === 'error')) return 'error';
   return 'done';
+});
+
+// kimi-ui: groups default to collapsed (they used to default open, mounting
+// every tool call body of every past turn). A group with tools still running
+// opens itself so live execution stays visible.
+const open = ref(aggregateStatus.value === 'running');
+// A collapsed group must also reopen when a running tool is appended LATER
+// (e.g. a completed stack from a refresh gains a new in-flight tool) — the
+// initial ref only captures mount-time state.
+watch(aggregateStatus, (status) => {
+  if (status === 'running') open.value = true;
 });
 const { t } = useI18n();
 
@@ -70,7 +79,8 @@ function onHeadClick(): void {
       <Icon class="tg-car" name="chevron-right" size="sm" />
     </button>
     <div class="tool-group-body" :class="{ open }" :inert="!open">
-      <div class="tool-group-body-inner">
+      <!-- kimi-ui: unmount when collapsed (same DOM-bloat fix as ToolRow). -->
+      <div v-if="open" class="tool-group-body-inner">
         <ToolCall
           v-for="(item, si) in tools"
           :key="toolStackKey(item)"
