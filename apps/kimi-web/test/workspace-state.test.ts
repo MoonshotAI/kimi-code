@@ -79,6 +79,7 @@ function createState(): ExtendedState {
     connection: 'connected',
     permission: 'manual',
     thinking: 'high',
+    thinkingBySession: {},
     planModeBySession: {},
     swarmModeBySession: {},
     goalModeBySession: {},
@@ -761,6 +762,21 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // session switch can't redirect it.
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('carries the draft thinking pick into the new session own entry', async () => {
+    // A level picked on the empty composer has no session to live in yet; the
+    // draft transfer seeds it so the first action submits the pick, not the
+    // catalog default.
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const state = createState();
+    state.thinking = 'max';
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+
+    expect(state.thinkingBySession['sess_new']).toBe('max');
   });
 
   it('passes through skill args', async () => {

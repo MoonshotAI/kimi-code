@@ -1104,6 +1104,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         : session;
     upsertSessionFront(created);
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
+    // Capture the draft thinking level BEFORE selectSession: its watcher
+    // re-resolves rawState.thinking for the new session (no per-session entry
+    // yet → the catalog default), which would otherwise drop a level the user
+    // picked on the empty composer. Seeded into the session's own entry below,
+    // the first prompt/skill submits the pick and the daemon profile follows.
+    const draftThinking = rawState.thinking;
     // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
     // session" (createSession), here we immediately act on it: keeping
     // sessionLoading=true through the snapshot avoids flashing the empty-session
@@ -1118,6 +1124,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // awaiting the snapshot, the setters would otherwise read the then-current
     // activeSessionId and pollute that session while this one loses the modes.
     const sid = session.id;
+    if (draftThinking !== undefined) {
+      rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: draftThinking };
+    }
     if (draftModes.planMode) {
       rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
       savePlanModeToStorage();
