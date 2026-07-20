@@ -10,7 +10,9 @@ outline: 2
 
 ### 新功能
 
-- `kimi server` 命令树替换为 `kimi web`：服务器改为前台运行。
+- **破坏性变更：** 
+  - `kimi server` 命令树已被废弃，请使用 `kimi web` 代替。
+  - `kimi web` 现在在当前终端前台运行并打开浏览器，按 Ctrl+C 停止。
 
 ### 优化
 

@@ -171,7 +171,7 @@ The `kimi server` command tree is deprecated: any `kimi server …` invocation (
 :::
 
 ::: danger
-`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and run `kimi web kill` to stop the server when you are done.
+`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with Ctrl+C when you are done (or run `kimi web kill <server-id>` from another terminal).
 :::
 
 #### `kimi web kill [server-id|all]`

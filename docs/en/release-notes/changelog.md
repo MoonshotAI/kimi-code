@@ -10,7 +10,9 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Replace the `kimi server` command tree with `kimi web`: the server runs in the foreground.
+- **Breaking:**
+  - The `kimi server` command tree is deprecated; use `kimi web` instead.
+  - `kimi web` now runs in the foreground of the current terminal and opens the browser; stop it with Ctrl+C.
 
 ### Polish
 
