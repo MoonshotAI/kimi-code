@@ -60,7 +60,7 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
   };
 }
 
-function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
+export function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
   const providerType = host.state.appState.availableProviders[model.provider]?.type;
   // Flat models (no named provider, e.g. inline base_url served by a v2
   // backend) have no provider entry to look up; their own protocol declaration

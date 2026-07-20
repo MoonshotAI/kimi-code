@@ -779,6 +779,32 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(state.thinkingBySession['sess_new']).toBe('max');
   });
 
+  it('captures the draft thinking pick before the creation awaits', async () => {
+    // A concurrent session switch mid-creation re-resolves rawState.thinking
+    // for the other session — the seed must come from the pre-await capture.
+    let resolveCreate!: (session: typeof newSession) => void;
+    apiMock.createSession.mockReturnValue(
+      new Promise<typeof newSession>((r) => {
+        resolveCreate = r;
+      }),
+    );
+    const activateSkill = vi.fn().mockResolvedValue(undefined);
+    const deps = skillDeps(activateSkill);
+    const state = createState();
+    state.thinking = 'max';
+    const ws = useWorkspaceState(state, deps);
+
+    const pending = ws.startSessionAndActivateSkill('wd_1', 'pre-changelog');
+    await new Promise((r) => setTimeout(r, 0));
+    // The user switches to another session while createSession is in flight;
+    // the watcher would re-resolve rawState.thinking to that session's level.
+    state.thinking = 'low';
+    resolveCreate(newSession);
+    await pending;
+
+    expect(state.thinkingBySession['sess_new']).toBe('max');
+  });
+
   it('passes through skill args', async () => {
     const activateSkill = vi.fn().mockResolvedValue(undefined);
     const deps = skillDeps(activateSkill);

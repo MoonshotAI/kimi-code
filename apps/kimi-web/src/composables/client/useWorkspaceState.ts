@@ -1078,6 +1078,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function createDraftSession(workspaceId: string): Promise<string | null> {
     const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
     if (!ws) return null;
+    // Capture the draft thinking level BEFORE any await: a concurrent session
+    // switch during creation re-resolves rawState.thinking for the other
+    // active session, which would otherwise seed the new session with that
+    // session's effort. Seeded into the new session's own entry below, the
+    // first prompt/skill submits the pick and the daemon profile follows.
+    const draftThinking = rawState.thinking;
     const api = getKimiWebApi();
     let workspaceIdForCreate: string | undefined;
     let cwdForCreate = ws.root;
@@ -1104,12 +1110,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         : session;
     upsertSessionFront(created);
     selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
-    // Capture the draft thinking level BEFORE selectSession: its watcher
-    // re-resolves rawState.thinking for the new session (no per-session entry
-    // yet → the catalog default), which would otherwise drop a level the user
-    // picked on the empty composer. Seeded into the session's own entry below,
-    // the first prompt/skill submits the pick and the daemon profile follows.
-    const draftThinking = rawState.thinking;
     // NOTE: do NOT mark this session known-empty. Unlike "open a new empty
     // session" (createSession), here we immediately act on it: keeping
     // sessionLoading=true through the snapshot avoids flashing the empty-session
