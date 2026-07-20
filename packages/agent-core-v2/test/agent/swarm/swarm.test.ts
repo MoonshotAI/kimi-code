@@ -87,10 +87,12 @@ function stubSwarmCatalog(
   } as unknown as ISessionAgentProfileCatalog;
 }
 
-function stubCallerProfile(): IAgentProfileService {
+function stubCallerProfile(
+  data?: { readonly profileName?: string; readonly subagents?: readonly string[] },
+): IAgentProfileService {
   return {
     _serviceBrand: undefined,
-    data: () => ({ profileName: undefined }),
+    data: () => data ?? { profileName: undefined },
   } as unknown as IAgentProfileService;
 }
 
@@ -335,12 +337,12 @@ describe('AgentSwarmTool', () => {
     expect(tool.description.toLowerCase()).toContain('distinct');
   });
 
-  it('rejects item spawns whose subagent type is outside the caller allowlist', async () => {
+  it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
     const host = mockSwarmHost();
     const caller: AgentProfile = {
       name: 'orchestrator',
       description: 'Orchestrator',
-      subagents: ['explore'],
+      subagents: ['coder'],
       systemPrompt: () => 'orchestrator',
     };
     const tool = new AgentSwarmTool(
@@ -349,7 +351,7 @@ describe('AgentSwarmTool', () => {
       mockSwarmMode(),
       stubConfig(),
       stubSwarmCatalog(caller),
-      stubCallerProfile(),
+      stubCallerProfile({ profileName: 'deleted-profile', subagents: ['explore'] }),
     );
 
     const result = await executeTool(

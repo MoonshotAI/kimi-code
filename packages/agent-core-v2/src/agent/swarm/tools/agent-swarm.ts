@@ -162,7 +162,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
     if ((args.items?.length ?? 0) > 0) {
       await this.catalog.ready;
-      const allowlist = subagentAllowlistFor(this.catalog, this.profile.data().profileName);
+      const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
       if (allowlist !== undefined && !allowlist.includes(profileName)) {
         throw new Error(subagentTypeNotAllowedMessage(profileName, allowlist));
       }

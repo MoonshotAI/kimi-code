@@ -701,6 +701,7 @@ describe('AgentLifecycleService', () => {
       systemPrompt: 'original prompt',
       activeToolNames: ['Read'],
       disallowedTools: ['Bash'],
+      subagents: ['explore'],
     });
 
     const child = await svc.fork('main', { agentId: 'forked' });
@@ -712,6 +713,7 @@ describe('AgentLifecycleService', () => {
       systemPrompt: 'original prompt',
       activeToolNames: ['Read'],
       disallowedTools: ['Bash'],
+      subagents: ['explore'],
     });
   });
 

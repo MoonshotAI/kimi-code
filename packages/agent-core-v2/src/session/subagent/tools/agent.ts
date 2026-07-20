@@ -180,7 +180,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
-    const allowlist = subagentAllowlistFor(this.catalog, this.profile.data().profileName);
+    const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
     const profiles =
       allowlist === undefined
         ? this.catalog.list()
@@ -266,7 +266,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         : DEFAULT_PROFILE_NAME;
       await this.catalog.ready;
       const own = this.profile.data();
-      const allowlist = subagentAllowlistFor(this.catalog, own.profileName);
+      const allowlist = subagentAllowlistFor(this.catalog, own);
       if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
         throw new Error(subagentTypeNotAllowedMessage(requestedProfileName, allowlist));
       }

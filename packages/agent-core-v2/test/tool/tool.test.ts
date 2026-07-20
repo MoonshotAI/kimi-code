@@ -555,6 +555,48 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('- coder: Coder');
   });
 
+  it('lists subagent types from the persisted binding instead of the current catalog profile', () => {
+    const caller: AgentProfile = {
+      name: 'orchestrator',
+      description: 'Orchestrator',
+      subagents: ['coder'],
+      systemPrompt: () => 'orchestrator',
+    };
+    const coder: AgentProfile = {
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    };
+    const explore: AgentProfile = {
+      name: 'explore',
+      description: 'Explorer',
+      systemPrompt: () => 'explore',
+    };
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => [caller, coder, explore].find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [coder, explore],
+      load: async () => {},
+      reload: async () => {},
+    };
+    ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+    ctx.get(IAgentProfileService).applyBindingSnapshot({
+      cwd: '',
+      profileName: 'deleted-profile',
+      thinkingLevel: 'off',
+      systemPrompt: 'persisted prompt',
+      subagents: ['explore'],
+    });
+
+    const description = agentDescription();
+
+    expect(description).toContain('- explore: Explorer');
+    expect(description).not.toContain('- coder: Coder');
+  });
+
   it('mentions resume preference and result visibility', () => {
     ctx = createTestAgent();
 
@@ -638,6 +680,32 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(ISessionAgentProfileCatalog, allowlistCatalog(['explore'])),
     );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'coder',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Subagent type "coder" is not allowed for this agent');
+    expect(result.output).toContain('explore');
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('enforces the persisted subagent allowlist instead of the current catalog profile', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionAgentProfileCatalog, allowlistCatalog(['coder'])),
+    );
+    context.get(IAgentProfileService).applyBindingSnapshot({
+      cwd: '',
+      profileName: 'deleted-profile',
+      thinkingLevel: 'off',
+      systemPrompt: 'persisted prompt',
+      subagents: ['explore'],
+    });
 
     const result = await executeAgentTool(context, {
       prompt: 'Investigate',

@@ -4,10 +4,11 @@
  *
  * Declares the persistent profile config — `cwd`, `modelAlias`, `profileName`,
  * the resolved base thinking effort, `systemPrompt`, and the profile
- * `disallowedTools` denylist — as a wire Model
- * (initial `defaultProfileModel()`), plus the single Op whose `apply` is a pure
- * merge of an already-resolved payload. Live records carry `thinkingEffort` (matching
- * the v1 wire field); legacy replay still accepts `thinkingLevel`. The value is
+ * `disallowedTools` denylist and `subagents` delegation allowlist — as a wire
+ * Model (initial `defaultProfileModel()`), plus the single Op whose `apply` is
+ * a pure merge of an already-resolved payload. Live records carry
+ * `thinkingEffort` (matching the v1 wire field); legacy replay still accepts
+ * `thinkingLevel`. The value is
  * resolved to a `ThinkingEffort` at the call site (via `resolveThinkingEffort` +
  * the `thinking` config section) and carried in the payload, so `apply` stays
  * pure and a resumed agent restores the persisted base value rather than
@@ -47,6 +48,7 @@ export interface ProfileModelState {
   readonly thinkingLevel: string;
   readonly systemPrompt: string;
   readonly disallowedTools?: readonly string[];
+  readonly subagents?: readonly string[];
 }
 
 export const ProfileModel = defineModel<ProfileModelState>('profile', () => ({
@@ -63,6 +65,7 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
     systemPrompt: z.string(),
     activeToolNames: z.array(z.string()).readonly().optional(),
     disallowedTools: z.array(z.string()).readonly(),
+    subagents: z.array(z.string()).readonly().optional(),
   }),
   apply: (s, p) => ({
     cwd: p.cwd ?? s.cwd,
@@ -71,6 +74,7 @@ export const profileBind = ProfileModel.defineOp('profile.bind', {
     thinkingLevel: p.thinkingEffort,
     systemPrompt: p.systemPrompt,
     disallowedTools: p.disallowedTools,
+    subagents: p.subagents,
   }),
 });
 
