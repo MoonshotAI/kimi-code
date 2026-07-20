@@ -65,6 +65,7 @@ export const snapshotSubagentSchema = taskSchema.extend({
   suspended_reason: z.string().optional(),
   swarm_index: z.number().int().nonnegative().optional(),
   run_in_background: z.boolean().optional(),
+  main_turn_independent: z.boolean().optional(),
 });
 export type SnapshotSubagent = z.infer<typeof snapshotSubagentSchema>;
 

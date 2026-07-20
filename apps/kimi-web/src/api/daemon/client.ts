@@ -558,8 +558,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
               },
         pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
         pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
-        // Older servers omit the roster entirely; treat as an empty roster.
-        subagents: (data.subagents ?? []).map(toAppTask),
+        subagents: data.subagents?.map((task) => toAppTask(task, { rosterOwned: true })),
       };
       traceKeyEvent('session:snapshot:accepted', {
         sessionId,
@@ -795,7 +794,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       `/sessions/${encodeURIComponent(sessionId)}/tasks`,
       query,
     );
-    return data.items.map(toAppTask);
+    return data.items.map((task) => toAppTask(task));
   }
 
   async getTask(

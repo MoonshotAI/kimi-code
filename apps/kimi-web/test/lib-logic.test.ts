@@ -747,9 +747,75 @@ describe('mergeSnapshotSubagents', () => {
     expect(merged.map((t) => t.id)).toEqual(['a1', 'bash-1']);
   });
 
-  it('returns the existing list untouched when the roster is empty', () => {
+  it('returns the existing list untouched when an older server omits the roster', () => {
     const existing = [subagent('a1')];
-    expect(mergeSnapshotSubagents([], existing)).toBe(existing);
+    expect(mergeSnapshotSubagents(undefined, existing)).toBe(existing);
+  });
+
+  it('drops a roster-owned background row when an authoritative snapshot omits it', () => {
+    const existing = [
+      subagent('nested-bg', {
+        status: 'running',
+        runInBackground: true,
+        mainTurnIndependent: true,
+        rosterOwned: true,
+      }),
+    ];
+
+    expect(mergeSnapshotSubagents([], existing, { mainTurnActive: true })).toEqual([]);
+  });
+
+  it('keeps a REST-owned background row when the subagent roster omits it', () => {
+    const existing = [
+      subagent('main-bg', {
+        status: 'running',
+        runInBackground: true,
+        mainTurnIndependent: true,
+        rosterOwned: false,
+      }),
+    ];
+
+    expect(mergeSnapshotSubagents([], existing, { mainTurnActive: true })).toBe(existing);
+  });
+
+  it('drops stale live foreground rows when the snapshot shows an idle main turn', () => {
+    // The roster no longer knows the subagent and its terminal event was
+    // missed before the resync. Absence from the roster does not prove the
+    // real terminal state — the subagent may have completed, failed, or
+    // detached while this client was disconnected — so the stale row is
+    // REMOVED, not settled to failed, and the persisted transcript's Agent
+    // tool result drives the completed/error display (issue #1963).
+    const existing = [
+      subagent('a1', { status: 'running', subagentPhase: 'working' }),
+      subagent('a2', { status: 'running', subagentPhase: 'suspended' }),
+      subagent('a3', { status: 'running', runInBackground: true }),
+      subagent('a4', { status: 'running', backgroundTaskId: 'task-1' }),
+    ];
+    const merged = mergeSnapshotSubagents([], existing, { mainTurnActive: false });
+    expect(merged.find((t) => t.id === 'a1')).toBeUndefined();
+    expect(merged.find((t) => t.id === 'a2')).toBeUndefined();
+    // Background/detached subagents survive the turn; REST /tasks owns them.
+    expect(merged.find((t) => t.id === 'a3')?.status).toBe('running');
+    expect(merged.find((t) => t.id === 'a4')?.status).toBe('running');
+  });
+
+  it('keeps roster-known live rows even when the main turn is idle', () => {
+    // The roster stays authoritative for the rows it still tracks.
+    const roster = [subagent('a1', { status: 'running', subagentPhase: 'working' })];
+    const merged = mergeSnapshotSubagents(roster, [], { mainTurnActive: false });
+    expect(merged.find((t) => t.id === 'a1')?.status).toBe('running');
+  });
+
+  it('keeps running rows when the main turn is still active', () => {
+    const existing = [subagent('a1', { status: 'running', subagentPhase: 'working' })];
+    const merged = mergeSnapshotSubagents([], existing, { mainTurnActive: true });
+    expect(merged.find((t) => t.id === 'a1')?.status).toBe('running');
+  });
+
+  it('does not remove terminal rows when the session is idle', () => {
+    const existing = [subagent('a1', { status: 'completed', subagentPhase: 'completed' })];
+    const merged = mergeSnapshotSubagents([], existing, { mainTurnActive: false });
+    expect(merged.find((t) => t.id === 'a1')?.status).toBe('completed');
   });
 });
 

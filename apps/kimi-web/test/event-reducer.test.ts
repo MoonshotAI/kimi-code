@@ -453,6 +453,8 @@ describe('reduceAppEvent taskProgress', () => {
             swarmIndex: 2,
             subagentType: 'explore',
             runInBackground: true,
+            mainTurnIndependent: true,
+            rosterOwned: true,
             outputLines: ['old line'],
             text: 'partial',
           },
@@ -469,6 +471,8 @@ describe('reduceAppEvent taskProgress', () => {
       swarmIndex: 2,
       subagentType: 'explore',
       runInBackground: true,
+      mainTurnIndependent: true,
+      rosterOwned: true,
       outputLines: ['old line'],
       text: 'partial',
     });
@@ -674,5 +678,103 @@ describe('reduceAppEvent unknown agent error', () => {
   it('still renders agent warnings as plain strings', () => {
     const next = reduceRaw({ _agentWarning: true, message: 'heads up' });
     expect(next.warnings[0]).toBe(`${i18n.global.t('warnings.noteLabel')}: heads up`);
+  });
+});
+
+describe('reduceAppEvent main-turn end settles stale subagent rows', () => {
+  function stateWithTasks(tasks: AppTask[]): ReturnType<typeof createInitialState> {
+    return {
+      ...createInitialState(),
+      tasksBySession: { s1: tasks },
+    };
+  }
+
+  function runningSubagent(id: string, extra?: Partial<AppTask>): AppTask {
+    return {
+      id,
+      sessionId: 's1',
+      kind: 'subagent',
+      description: id,
+      status: 'running',
+      subagentPhase: 'working',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...extra,
+    };
+  }
+
+  it('leaves running and suspended subagents untouched when a QUEUED prompt is aborted mid-turn', () => {
+    // A prompt aborted while still pending emits promptAborted while the
+    // active turn — and its foreground subagents — legitimately keep
+    // running; only the main-turn boundary may settle stale rows (#1963).
+    const tasks = [
+      runningSubagent('agent-0'),
+      runningSubagent('agent-1', { subagentPhase: 'suspended' }),
+    ];
+    const next = reduceAppEvent(
+      stateWithTasks(tasks),
+      { type: 'promptAborted', sessionId: 's1', promptId: 'p1' },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']).toEqual(tasks);
+  });
+
+  it('does not settle on promptCompleted either', () => {
+    const next = reduceAppEvent(
+      stateWithTasks([runningSubagent('agent-0')]),
+      { type: 'promptCompleted', sessionId: 's1', promptId: 'p1', reason: 'completed' },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]?.status).toBe('running');
+  });
+
+  it('settles running and suspended foreground subagents when the main turn ends', () => {
+    // A foreground subagent's Agent tool call must return before the main
+    // turn can end, and the scheduler never resumes a suspended member
+    // across the boundary — both are stale by definition here (#1963).
+    const next = reduceAppEvent(
+      stateWithTasks([
+        runningSubagent('agent-0'),
+        runningSubagent('agent-1', { subagentPhase: 'suspended' }),
+      ]),
+      { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'cancelled' },
+      { sessionId: 's1', seq: 1 },
+    );
+    const tasks = next.tasksBySession['s1'] ?? [];
+    expect(tasks.map((t) => t.status)).toEqual(['failed', 'failed']);
+    expect(tasks.map((t) => t.subagentPhase)).toEqual(['failed', 'failed']);
+    expect(tasks[0]?.completedAt).toBeDefined();
+    expect(tasks[0]?.outputPreview).toBe(i18n.global.t('tasks.settleInterruptedWithTurn'));
+  });
+
+  it('drops stale foreground rows when the turn completed normally', () => {
+    const next = reduceAppEvent(
+      stateWithTasks([runningSubagent('agent-0')]),
+      { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']).toEqual([]);
+  });
+
+  it('leaves background and detached subagents running across the main-turn end', () => {
+    const next = reduceAppEvent(
+      stateWithTasks([
+        runningSubagent('agent-bg', { runInBackground: true }),
+        runningSubagent('agent-detached', { backgroundTaskId: 'task-1' }),
+        runningSubagent('agent-nested', { mainTurnIndependent: true }),
+      ]),
+      { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+      { sessionId: 's1', seq: 1 },
+    );
+    const tasks = next.tasksBySession['s1'] ?? [];
+    expect(tasks.map((t) => t.status)).toEqual(['running', 'running', 'running']);
+  });
+
+  it('does not resurrect already-terminal rows', () => {
+    const next = reduceAppEvent(
+      stateWithTasks([runningSubagent('agent-0', { status: 'completed', subagentPhase: 'completed' })]),
+      { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]?.status).toBe('completed');
   });
 });

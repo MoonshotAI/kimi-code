@@ -24,18 +24,14 @@
  * dispatch queue — same pattern as `InFlightTurnTracker`, keeping the roster,
  * the journal watermark, and the fan-out order mutually consistent.
  *
- * Lifetime: the roster is dropped when the main agent starts its NEXT turn —
- * the previous turn's result record was queued for the async wire append
- * before `turn.ended`, so by then it is durable in practice and the
- * transcript takes over as the restore source (a queued/cron follow-up turn
- * can still start inside the ms-scale flush gap; that window self-heals on
- * the next refresh). If the main turn
- * aborts (cancelled / failed / blocked), still-live entries are finalized as
- * failed at `turn.ended` instead: the swarm dies with the turn and the abort
- * path suppresses the members' own `subagent.failed` events. Background
- * subagents (`run_in_background`) are excluded by design: they persist in the
- * background-task store and are served by REST `/tasks`, so listing them here
- * would duplicate the row after a refresh.
+ * Lifetime: foreground entries are dropped when the main agent starts its
+ * NEXT turn, after the preceding result has had time to enter the transcript.
+ * If the main turn aborts (cancelled / failed / blocked), still-live
+ * foreground entries are finalized as failed at `turn.ended` instead. Live
+ * work under a background-owned subtree remains through main-turn boundaries
+ * until its lifecycle event settles it; terminal entries clear at a later
+ * main-turn start. Background tasks owned by the main agent are served by REST
+ * `/tasks` and are never tracked here.
  */
 
 import type { Event } from './events';
@@ -43,18 +39,32 @@ import type { SnapshotSubagent } from '../../../protocol/rest-snapshot';
 
 const MAIN_AGENT_ID = 'main';
 
+export interface SubagentRosterAnnotation {
+  readonly mainTurnIndependent: boolean;
+}
+
 export class SubagentRosterTracker {
   private readonly bySession = new Map<string, Map<string, SnapshotSubagent>>();
+  private readonly mainTurnIndependentAgents = new Map<string, Set<string>>();
 
-  apply(sessionId: string, event: Event): void {
+  apply(sessionId: string, event: Event): SubagentRosterAnnotation | undefined {
     switch (event.type) {
       case 'subagent.spawned': {
-        // Background subagents persist in the main agent's background-task
-        // store and come back through REST `/tasks` after a refresh (keyed by
-        // task id) — tracking them here too would duplicate the row (keyed by
-        // agent id) and mis-target cancel/detail actions. The roster exists
-        // for the foreground/live-only subagents REST cannot serve.
-        if (event.runInBackground === true) return;
+        let independentAgents = this.mainTurnIndependentAgents.get(sessionId);
+        if (independentAgents === undefined) {
+          independentAgents = new Set();
+          this.mainTurnIndependentAgents.set(sessionId, independentAgents);
+        }
+        const mainTurnIndependent =
+          event.runInBackground === true || independentAgents.has(event.agentId);
+        if (mainTurnIndependent) independentAgents.add(event.subagentId);
+        else independentAgents.delete(event.subagentId);
+        const annotation = { mainTurnIndependent };
+
+        // REST `/tasks` only exposes the main agent's background-task store.
+        // A background task launched by a nested agent therefore still needs
+        // the roster to survive a reconnect.
+        if (event.runInBackground === true && event.agentId === MAIN_AGENT_ID) return annotation;
         let roster = this.bySession.get(sessionId);
         if (!roster) {
           roster = new Map();
@@ -71,9 +81,10 @@ export class SubagentRosterTracker {
           parent_tool_call_id: event.parentToolCallId === '' ? undefined : event.parentToolCallId,
           swarm_index: event.swarmIndex,
           run_in_background: event.runInBackground,
+          main_turn_independent: mainTurnIndependent,
           created_at: new Date().toISOString(),
         });
-        return;
+        return annotation;
       }
       case 'subagent.started': {
         const entry = this.bySession.get(sessionId)?.get(event.subagentId);
@@ -93,6 +104,7 @@ export class SubagentRosterTracker {
         return;
       }
       case 'subagent.completed': {
+        this.mainTurnIndependentAgents.get(sessionId)?.delete(event.subagentId);
         const entry = this.bySession.get(sessionId)?.get(event.subagentId);
         if (!entry) return;
         entry.subagent_phase = 'completed';
@@ -102,6 +114,7 @@ export class SubagentRosterTracker {
         return;
       }
       case 'subagent.failed': {
+        this.mainTurnIndependentAgents.get(sessionId)?.delete(event.subagentId);
         const entry = this.bySession.get(sessionId)?.get(event.subagentId);
         if (!entry) return;
         entry.subagent_phase = 'failed';
@@ -111,15 +124,28 @@ export class SubagentRosterTracker {
         return;
       }
       case 'task.started': {
-        // A foreground subagent that detaches (Ctrl+B / timeout) re-enters as
-        // a detached background task served by REST `/tasks` under a new task
-        // id — drop its roster entry so a refresh doesn't seed both the roster
-        // row (agent id) and the REST row (task id). Registration of a
-        // background spawn emits the same event, but those were never tracked
-        // here, so the delete is a no-op for them.
+        // The REST task surface reaches only the main agent. A detached child
+        // task remains roster-owned; mark it background so it survives a main
+        // turn boundary. A main-owned detached task is represented by REST
+        // under its task id, so drop its agent-id roster entry.
         const info = event.info;
         if (info.kind === 'agent' && info.detached === true && info.agentId !== undefined) {
-          this.bySession.get(sessionId)?.delete(info.agentId);
+          let independentAgents = this.mainTurnIndependentAgents.get(sessionId);
+          if (independentAgents === undefined) {
+            independentAgents = new Set();
+            this.mainTurnIndependentAgents.set(sessionId, independentAgents);
+          }
+          independentAgents.add(info.agentId);
+          const roster = this.bySession.get(sessionId);
+          if (event.agentId === MAIN_AGENT_ID) {
+            roster?.delete(info.agentId);
+          } else {
+            const entry = roster?.get(info.agentId);
+            if (entry !== undefined) {
+              entry.run_in_background = true;
+              entry.main_turn_independent = true;
+            }
+          }
         }
         return;
       }
@@ -127,14 +153,11 @@ export class SubagentRosterTracker {
         if (event.agentId !== MAIN_AGENT_ID) return;
         const roster = this.bySession.get(sessionId);
         if (roster === undefined || event.reason === 'completed') return;
-        // Aborted main turn (cancelled / failed / blocked): the swarm dies
-        // with it, and the abort path suppresses the members' own
-        // `subagent.failed` events — finalize any still-live entries here so a
-        // refresh doesn't seed phantom `running` subagents that no later
-        // lifecycle event would correct. The roster itself stays until the
-        // next main `turn.started`, same as the completed path.
+        // Aborted main turn (cancelled / failed / blocked): main-bound work
+        // dies with it. A background-owned subtree is independent and keeps
+        // its own terminal lifecycle event, so it must stay live in the roster.
         for (const entry of roster.values()) {
-          if (entry.status !== 'running') continue;
+          if (entry.status !== 'running' || entry.main_turn_independent === true) continue;
           entry.status = 'failed';
           entry.subagent_phase = 'failed';
           entry.completed_at = new Date().toISOString();
@@ -143,16 +166,18 @@ export class SubagentRosterTracker {
         return;
       }
       case 'turn.started': {
-        // Settle the roster when the main agent starts a NEW turn. The result
-        // record is queued for the async wire append before `turn.ended`, so
-        // by the next turn it is durable in practice; a queued/cron follow-up
-        // can still start inside the flush gap, but that window is ms-scale
-        // and self-heals on the next refresh once the flush lands. (Fully
-        // closing it needs the snapshot reader to read through the agent
-        // append log — deliberately left out of this change.) A subagent's
-        // own turn boundaries must never drop the roster mid-swarm.
+        // Settle foreground roster entries when the main agent starts a NEW
+        // turn. Keep still-running background-owned work: it can legitimately
+        // outlive the main turn and REST cannot read its owner-local task store.
         if (event.agentId === MAIN_AGENT_ID) {
-          this.bySession.delete(sessionId);
+          const roster = this.bySession.get(sessionId);
+          if (roster === undefined) return;
+          for (const [id, entry] of roster) {
+            if (entry.main_turn_independent !== true || entry.status !== 'running') {
+              roster.delete(id);
+            }
+          }
+          if (roster.size === 0) this.bySession.delete(sessionId);
         }
         return;
       }
@@ -170,5 +195,6 @@ export class SubagentRosterTracker {
 
   clear(sessionId: string): void {
     this.bySession.delete(sessionId);
+    this.mainTurnIndependentAgents.delete(sessionId);
   }
 }

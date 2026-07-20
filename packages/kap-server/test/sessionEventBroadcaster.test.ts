@@ -610,6 +610,41 @@ describe('SessionEventBroadcaster', () => {
     expect(next.subagents).toEqual([]);
   });
 
+  it('annotates a foreground descendant of a background agent as main-turn independent', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const parent = lc.addAgent('agent-parent');
+    lc.addAgent('agent-child');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('subagent.spawned', {
+        subagentId: 'agent-parent',
+        subagentName: 'coder',
+        parentToolCallId: 'call-parent',
+        runInBackground: true,
+      }),
+    );
+    parent.bus.emit(
+      agentEvent('subagent.spawned', {
+        subagentId: 'agent-child',
+        subagentName: 'explore',
+        parentToolCallId: 'call-child',
+        runInBackground: false,
+      }),
+    );
+    await bc.getCursor('s1');
+
+    const childSpawn = envelopes.find(
+      (envelope) =>
+        envelope.type === 'subagent.spawned' &&
+        (envelope.payload as { subagentId?: string }).subagentId === 'agent-child',
+    );
+    expect(childSpawn?.payload).toMatchObject({ mainTurnIndependent: true });
+  });
+
   it('subscribe returns false for an unknown session', async () => {
     const { target } = collectingTarget();
     expect(await bc.subscribe('nope', target)).toBe(false);

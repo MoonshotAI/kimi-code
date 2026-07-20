@@ -62,13 +62,52 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
 }
 
 /**
+ * True for a client-side subagent row that only the live event stream can
+ * own: bound to the main turn and still `running`.
+ * Suspended members keep status `running` (phase `suspended`), so this
+ * covers them too — suspension is non-terminal, but it still belongs to the
+ * current main turn's foreground execution. Background rows can outlive a
+ * main turn; their owner may be the main agent's REST task store or a nested
+ * agent represented by the snapshot roster.
+ */
+function isLiveMainTurnBoundSubagentRow(t: AppTask): boolean {
+  return (
+    t.kind === 'subagent' &&
+    t.status === 'running' &&
+    t.mainTurnIndependent !== true &&
+    t.runInBackground !== true &&
+    t.backgroundTaskId === undefined
+  );
+}
+
+/**
  * Seed the task store from the snapshot's subagent roster. The roster is
  * authoritative for identity/status/phase; keep reducer-owned accumulated
  * output (outputLines/text) from any already-live task, and keep tasks the
  * roster does not know about (background bash tasks from REST).
+ *
+ * When the snapshot reports the main turn as INACTIVE (`mainTurnActive:
+ * false`), still-live foreground rows the roster does NOT know are dropped
+ * (issue #1963): their absence from the roster only proves the client-side
+ * row is stale, not what the real terminal state was — the subagent may
+ * have completed, failed, or detached while this client was disconnected,
+ * and the roster forgets it once the next main turn starts. Removing the
+ * row stops the ever-growing timer without fabricating a failure, and lets
+ * the persisted transcript's Agent tool result drive the completed/error
+ * display. The roster is authoritative when present: rows it owns are removed
+ * when absent, including nested background work whose terminal event was
+ * missed. Main-owned background entries remain REST `/tasks`-owned.
  */
-export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): AppTask[] {
-  if (roster.length === 0) return existing;
+export function mergeSnapshotSubagents(
+  roster: AppTask[] | undefined,
+  existing: AppTask[],
+  opts?: { mainTurnActive?: boolean },
+): AppTask[] {
+  if (roster === undefined) {
+    if (opts?.mainTurnActive !== false) return existing;
+    const kept = existing.filter((task) => !isLiveMainTurnBoundSubagentRow(task));
+    return kept.length === existing.length ? existing : kept;
+  }
   const existingById = new Map(existing.map((t) => [t.id, t] as const));
   const rosterIds = new Set(roster.map((t) => t.id));
   const merged = roster.map((task) => {
@@ -76,6 +115,40 @@ export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): 
     if (!live) return task;
     return { ...task, outputLines: live.outputLines, text: live.text };
   });
-  const kept = existing.filter((t) => !rosterIds.has(t.id));
+  const kept = existing.filter(
+    (t) =>
+      !rosterIds.has(t.id) &&
+      t.rosterOwned !== true &&
+      (opts?.mainTurnActive !== false || !isLiveMainTurnBoundSubagentRow(t)),
+  );
+  if (merged.length === 0 && kept.length === existing.length) return existing;
   return kept.length === 0 ? merged : [...merged, ...kept];
+}
+
+/**
+ * Reconcile still-live foreground rows at a main-turn boundary. They cannot
+ * survive a completed main turn: drop them rather than fabricating a failed
+ * terminal state when their terminal event was missed. An interrupted main
+ * turn is the failure fallback for rows that the engine did not settle.
+ */
+export function settleStaleForegroundSubagents(
+  tasks: AppTask[],
+  outcome:
+    | { readonly kind: 'completed' }
+    | { readonly kind: 'interrupted'; readonly reason: string },
+): AppTask[] {
+  if (outcome.kind === 'completed') {
+    return tasks.filter((t) => !isLiveMainTurnBoundSubagentRow(t));
+  }
+  return tasks.map((t) =>
+    isLiveMainTurnBoundSubagentRow(t)
+      ? {
+          ...t,
+          status: 'failed' as const,
+          subagentPhase: 'failed' as const,
+          completedAt: t.completedAt ?? new Date().toISOString(),
+          outputPreview: t.outputPreview ?? outcome.reason,
+        }
+      : t,
+  );
 }

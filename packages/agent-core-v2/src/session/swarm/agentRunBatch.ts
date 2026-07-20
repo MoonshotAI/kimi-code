@@ -25,7 +25,6 @@ export interface AgentRunAttemptOptions {
   readonly runInBackground: boolean;
   readonly signal: AbortSignal;
   readonly onReady?: () => void;
-  readonly suppressRateLimitFailureEvent?: boolean;
 }
 
 export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
@@ -65,11 +64,18 @@ export type AgentRunSuspendedEvent = {
   readonly reason: string;
 };
 
+export type AgentRunFailedEvent = {
+  readonly task: QueuedAgentRunTask;
+  readonly agentId: string;
+  readonly error: string;
+};
+
 export type AgentRunBatchLauncher = {
   spawn(options: AgentSpawnAttemptOptions): Promise<AgentRunAttemptHandle>;
   resume(agentId: string, options: AgentRunAttemptOptions): Promise<AgentRunAttemptHandle>;
   retry(agentId: string, options: AgentRunAttemptOptions): Promise<AgentRunAttemptHandle>;
   suspended?(event: AgentRunSuspendedEvent): void;
+  failed?(event: AgentRunFailedEvent): void;
 };
 
 type RateLimitedOutcome = {
@@ -287,7 +293,6 @@ export class AgentRunBatch<T> {
       onReady: () => {
         this.markAttemptReady(attempt);
       },
-      suppressRateLimitFailureEvent: true,
     };
 
     let handle: AgentRunAttemptHandle;
@@ -376,6 +381,11 @@ export class AgentRunBatch<T> {
         state: 'started',
         error: outcome.error,
       };
+      this.launcher.failed?.({
+        task: attempt.state.task,
+        agentId: outcome.agentId,
+        error: outcome.error,
+      });
     } else {
       this.requeueRateLimited(attempt, outcome.agentId);
     }
@@ -648,5 +658,3 @@ export function resolveSwarmMaxConcurrency(
   }
   return value;
 }
-
-

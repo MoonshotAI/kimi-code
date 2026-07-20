@@ -18,7 +18,10 @@
  * spawn / reload / reminder path is wrapped into `SESSION_INIT_FAILED`.
  * `cancelInit` aborts the in-flight run through the same `AbortSignal` the
  * run was launched with; user cancellations propagate unwrapped (never as
- * `SESSION_INIT_FAILED`) so callers can tell "aborted" from "failed".
+ * `SESSION_INIT_FAILED`) so callers can tell "aborted" from "failed". The
+ * mirrored run still emits its terminal lifecycle event; the TUI's quiet
+ * cancellation behavior is driven by the returned abort instead of hiding
+ * the durable child lifecycle fact.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

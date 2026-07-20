@@ -1093,6 +1093,16 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'subagent.spawned': {
         const taskId = typeof p?.subagentId === 'string' && p.subagentId.length > 0 ? p.subagentId : ulid('task_');
+        const ownerAgentId =
+          typeof p?.agentId === 'string' && p.agentId.length > 0
+            ? p.agentId
+            : MAIN_AGENT_ID;
+        const runInBackground = p?.runInBackground === true;
+        const owner = s.subagentMeta.get(ownerAgentId);
+        const mainTurnIndependent =
+          typeof p?.mainTurnIndependent === 'boolean'
+            ? p.mainTurnIndependent
+            : runInBackground || owner?.mainTurnIndependent === true;
         const task: AppTask = {
           id: taskId,
           sessionId,
@@ -1104,7 +1114,9 @@ export function createAgentProjector(): AgentProjector {
           subagentType: typeof p?.subagentName === 'string' ? p.subagentName : undefined,
           parentToolCallId: typeof p?.parentToolCallId === 'string' ? p.parentToolCallId : undefined,
           swarmIndex: typeof p?.swarmIndex === 'number' ? p.swarmIndex : undefined,
-          runInBackground: p?.runInBackground === true,
+          runInBackground,
+          mainTurnIndependent,
+          rosterOwned: ownerAgentId !== MAIN_AGENT_ID || !runInBackground,
         };
         s.subagentMeta.set(task.id, task);
         out.push({
@@ -1236,10 +1248,18 @@ export function createAgentProjector(): AgentProjector {
             // client (subscribed late): later agent-scoped progress frames are
             // routed by agent id, and seeding subagentMeta here keeps them on
             // this one row instead of synthesizing a second one.
+            const ownerAgentId =
+              typeof p?.agentId === 'string' && p.agentId.length > 0
+                ? p.agentId
+                : MAIN_AGENT_ID;
+            const previous = s.subagentMeta.get(agentId);
             const task = patchSubagent(s, sessionId, agentId, {
               description,
               backgroundTaskId: taskId,
               runInBackground: true,
+              mainTurnIndependent: true,
+              rosterOwned:
+                ownerAgentId === MAIN_AGENT_ID ? false : (previous?.rosterOwned ?? true),
             });
             if (task) out.push({ type: 'taskCreated', sessionId, task });
           } else {
@@ -1258,6 +1278,8 @@ export function createAgentProjector(): AgentProjector {
                 startedAt,
                 subagentPhase: 'queued',
                 runInBackground: true,
+                mainTurnIndependent: true,
+                rosterOwned: false,
               },
             });
           }

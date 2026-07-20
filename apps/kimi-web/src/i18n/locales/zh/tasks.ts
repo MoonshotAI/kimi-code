@@ -19,4 +19,5 @@ export default {
   openDetail: '查看',
   collapse: '折叠',
   expand: '展开',
+  settleInterruptedWithTurn: '已随主回合中断。',
 } as const;

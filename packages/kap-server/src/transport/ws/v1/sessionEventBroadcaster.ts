@@ -86,7 +86,10 @@ import { toWireQuestion } from '../../../routes/questions';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
-import { SubagentRosterTracker } from './subagentRosterTracker';
+import {
+  type SubagentRosterAnnotation,
+  SubagentRosterTracker,
+} from './subagentRosterTracker';
 import {
   type EventEnvelope,
   type JournalLogger,
@@ -1184,18 +1187,20 @@ export class SessionEventBroadcaster {
     const annotation = tracker.apply(sessionId, event);
     // Same queue-discipline as the in-flight tracker: snapshot rebuilds must
     // see exactly the roster as of the durable watermark.
-    roster.apply(sessionId, event);
+    const rosterAnnotation = roster.apply(sessionId, event);
+    const wireEvent: Event & Partial<SubagentRosterAnnotation> =
+      rosterAnnotation === undefined ? event : { ...event, ...rosterAnnotation };
 
     let envelope: EventEnvelope;
     if (volatile) {
-      envelope = this.buildEnvelope(journal.seq, sessionId, event, {
+      envelope = this.buildEnvelope(journal.seq, sessionId, wireEvent, {
         epoch: journal.epoch,
         volatile: true,
         ...(annotation.offset !== undefined ? { offset: annotation.offset } : {}),
       });
     } else {
       const seq = journal.nextSeq();
-      envelope = this.buildEnvelope(seq, sessionId, event, { epoch: journal.epoch });
+      envelope = this.buildEnvelope(seq, sessionId, wireEvent, { epoch: journal.epoch });
       journal.append(seq, envelope);
       tail.push({ seq, envelope });
       while (tail.length > this.maxBufferSize) tail.shift();

@@ -438,6 +438,37 @@ describe('turn.step.retrying bubble reuse', () => {
   });
 });
 
+describe('subagent ownership projection', () => {
+  it('marks a foreground descendant of a background agent as main-turn independent', () => {
+    const projector = createAgentProjector();
+    projector.project(
+      'subagent.spawned',
+      { agentId: 'main', subagentId: 'agent-parent', runInBackground: true },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.spawned',
+      { agentId: 'agent-parent', subagentId: 'agent-child', runInBackground: false },
+      's1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-child',
+          status: 'running',
+          runInBackground: false,
+          mainTurnIndependent: true,
+          rosterOwned: true,
+        }),
+      }),
+    );
+  });
+});
+
 describe('background subagent task registration', () => {
   it('folds task.started (kind agent) into the spawned row instead of adding a second row', () => {
     const projector = createAgentProjector();

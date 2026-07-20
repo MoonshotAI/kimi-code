@@ -40,6 +40,7 @@ import {
   type AgentRunAttemptHandle,
   type AgentRunAttemptOptions,
   type AgentRunBatchLauncher,
+  type AgentRunFailedEvent,
   type AgentRunResult,
   type AgentRunSuspendedEvent,
   type AgentSpawnAttemptOptions,
@@ -337,7 +338,8 @@ describe('AgentRunBatch scheduling contract', () => {
     vi.useFakeTimers();
     try {
       const onSuspended = vi.fn();
-      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onSuspended });
+      const onFailed = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onFailed, onSuspended });
       const running = runBatch(
         Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
         { signal: new AbortController().signal },
@@ -374,6 +376,11 @@ describe('AgentRunBatch scheduling contract', () => {
         },
       ]);
       expect(onSuspended).not.toHaveBeenCalled();
+      expect(onFailed).toHaveBeenCalledWith({
+        task: expect.objectContaining({ data: 2 }),
+        agentId: 'agent-2',
+        error: 'Rate limited',
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -1088,7 +1095,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
-  it('does not emit spawned again when a rate-limited child retries', async () => {
+  it('keeps a rate-limited retry non-terminal until the child completes', async () => {
     vi.useFakeTimers();
     try {
       agents['agent-retry'] = {
@@ -1144,6 +1151,70 @@ describe('SessionSwarmService metadata compatibility', () => {
           .filter(([agentId]) => agentId === 'agent-retry')
           .map(([, request]) => request),
       ).toEqual([{ kind: 'prompt', prompt: 'Continue' }, { kind: 'retry' }]);
+      expect(
+        published
+          .filter(
+            (event) =>
+              'subagentId' in event && event.subagentId === 'agent-retry',
+          )
+          .map((event) => event.type),
+      ).toEqual([
+        'subagent.spawned',
+        'subagent.started',
+        'subagent.suspended',
+        'subagent.started',
+        'subagent.completed',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('publishes one failed terminal when the final rate-limited child cannot be requeued', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-done'] = { labels: { parentAgentId: 'main' } };
+      agents['agent-rate-limited'] = { labels: { parentAgentId: 'main' } };
+      handles.set('agent-done', agentHandle('agent-done', lifecycle, eventBus));
+      handles.set(
+        'agent-rate-limited',
+        agentHandle('agent-rate-limited', lifecycle, eventBus),
+      );
+      const done = createControlledPromise<{ summary: string }>();
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const published: DomainEvent[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+        published.push(event);
+      });
+      runAgent.mockImplementation((agentId, _request, options) => {
+        options?.onReady?.();
+        return {
+          agentId,
+          turn: {} as never,
+          completion: agentId === 'agent-done' ? done : rateLimited,
+        };
+      });
+      const service = ix.get(ISessionSwarmService);
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-done'), resumeSessionTask('agent-rate-limited')],
+      });
+      await vi.advanceTimersByTimeAsync(700);
+      done.resolve({ summary: 'done' });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      await running;
+
+      expect(
+        published
+          .filter(
+            (event) =>
+              'subagentId' in event && event.subagentId === 'agent-rate-limited',
+          )
+          .map((event) => event.type),
+      ).toEqual(['subagent.spawned', 'subagent.started', 'subagent.failed']);
     } finally {
       vi.useRealTimers();
     }
@@ -1355,6 +1426,7 @@ type MockAgentRunAttemptRecord = {
 };
 
 type MockAgentRunBatchRunnerOptions = {
+  readonly onFailed?: (event: AgentRunFailedEvent) => void;
   readonly onSuspended?: (event: AgentRunSuspendedEvent) => void;
   readonly readyDelay?: (attemptIndex: number) => number | undefined;
   readonly maxConcurrency?: number;
@@ -1414,6 +1486,9 @@ function createMockAgentRunBatchRunner(
     retry: async (agentId, runOptions) => createHandle(runOptions, agentId, 'subagent', agentId),
     suspended: (event) => {
       options.onSuspended?.(event);
+    },
+    failed: (event) => {
+      options.onFailed?.(event);
     },
   };
 
