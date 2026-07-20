@@ -93,6 +93,29 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("skips Kitty protocol and enables modifyOtherKeys on Windows Terminal (WT_SESSION)", () => {
+		const previousWtSession = process.env['WT_SESSION'];
+		process.env['WT_SESSION'] = 'test-guid-1234';
+		try {
+			const harness = setupNegotiation();
+			try {
+				// Should NOT send Kitty query; should enable modifyOtherKeys instead
+				assert.equal(harness.writes[0], "\x1b[>4;2m");
+				assert.equal(harness.writes.includes("\x1b[>7u\x1b[?u\x1b[c"), false);
+				assert.equal(harness.terminal.kittyProtocolActive, false);
+				assert.equal(harness.terminal.modifyOtherKeysActive, true);
+			} finally {
+				harness.cleanup();
+			}
+		} finally {
+			if (previousWtSession === undefined) {
+				delete process.env['WT_SESSION'];
+			} else {
+				process.env['WT_SESSION'] = previousWtSession;
+			}
+		}
+	});
+
 	it("activates Kitty mode for non-zero negotiated flags", () => {
 		const harness = setupNegotiation();
 		try {
