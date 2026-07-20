@@ -44,7 +44,6 @@ import {
   type TranscriptOperation,
   type TranscriptTask,
   type TranscriptTaskRef,
-  type TranscriptTodo,
   type TranscriptTurn,
   type TranscriptUsage,
   type TurnOrigin,
