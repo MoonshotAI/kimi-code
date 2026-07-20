@@ -20,12 +20,16 @@ import {
   type AvailableCommand,
   type CancelNotification,
   type ClientCapabilities,
+  type CloseSessionRequest,
+  type CloseSessionResponse,
   type Implementation,
   type InitializeRequest,
   type InitializeResponse,
   type ListSessionsRequest,
   type ListSessionsResponse,
   type LoadSessionRequest,
+  type LogoutRequest,
+  type LogoutResponse,
   type LoadSessionResponse,
   type McpServer,
   type NewSessionRequest,
@@ -222,6 +226,9 @@ export class AcpServer implements Agent {
     this.clientCapabilities = params.clientCapabilities;
 
     const agentCapabilities: AgentCapabilities = {
+      auth: {
+        logout: {},
+      },
       loadSession: true,
       promptCapabilities: {
         image: true,
@@ -235,6 +242,7 @@ export class AcpServer implements Agent {
       sessionCapabilities: {
         list: {},
         resume: {},
+        close: {},
       },
     };
 
@@ -579,6 +587,15 @@ export class AcpServer implements Agent {
     // void = empty success body (ACP allows AuthenticateResponse | void).
   }
 
+  /**
+   * Handle ACP `logout`. Delegates to {@link KimiHarness.auth.logout}.
+   * Returns `undefined` so the wire payload is the canonical empty
+   * success body (ACP allows `LogoutResponse | void`).
+   */
+  async logout(_params: LogoutRequest): Promise<LogoutResponse | void> {
+    await this.harness.auth.logout();
+  }
+
   async prompt(params: PromptRequest): Promise<PromptResponse> {
     const acpSession = this.sessions.get(params.sessionId);
     if (!acpSession) {
@@ -604,6 +621,26 @@ export class AcpServer implements Agent {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * Handle ACP `session/close`. Looks the session up by id, closes it via
+   * {@link AcpSession.session}, and removes the wrapper from the server's
+   * in-memory map. Unknown session ids throw `invalid_params` (-32602).
+   *
+   * Returns `undefined` so the wire payload is the canonical empty success
+   * body (ACP allows `CloseSessionResponse | void`).
+   */
+  async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse | void> {
+    const acpSession = this.sessions.get(params.sessionId);
+    if (!acpSession) {
+      throw RequestError.invalidParams(undefined, `Unknown sessionId: ${params.sessionId}`);
+    }
+    // Abort any prompt still in the pre-turn image-compression phase so it
+    // does not fall through to a closed session and surface an internal error.
+    await acpSession.cancel();
+    await acpSession.session.close();
+    this.sessions.delete(params.sessionId);
   }
 
   /**
