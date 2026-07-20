@@ -22,10 +22,8 @@ import {
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceSort,
-  safeGetJson,
   safeGetString,
   safeRemove,
-  safeSetJson,
   safeSetString,
   saveUnread,
   saveWorkspaceOrder,
@@ -110,26 +108,11 @@ import type {
 
 const PERMISSION_STORAGE_KEY = STORAGE_KEYS.permission;
 const ACTIVE_WORKSPACE_KEY = STORAGE_KEYS.activeWorkspace;
-const THINKING_STORAGE_KEY = STORAGE_KEYS.thinking;
 const PLAN_MODE_STORAGE_KEY = STORAGE_KEYS.planMode;
 const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
-// Thinking levels are persisted PER MODEL: `kimi-web.thinking` holds a JSON map
-// of model id → level. A persisted level may be any non-empty effort string:
-// the reserved 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max').
-// Since the set of legal levels comes from each model's support_efforts, we
-// can't whitelist values — only guard against corrupted localStorage with a
-// charset + length check, and let the resolution in useModelProviderState drop
-// entries the model no longer declares. Per-model storage is only the SEED for
-// a session that has no level of its own yet (a new-session draft): once the
-// daemon reports a session's level, that per-session value wins (see
-// thinkingBySession), so a pick can never leak INTO an existing session — and
-// keying storage by model keeps a pick for one model (e.g. 'low' on an effort
-// model) from leaking onto a model that never declared it (e.g. a max-only
-// always-on model).
-const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
 // existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
@@ -143,6 +126,9 @@ safeRemove(STORAGE_KEYS.codeFont);
 // look. Clear the old persisted key so users who once picked one aren't frozen
 // on a value the UI no longer reads.
 safeRemove(STORAGE_KEYS.theme);
+// The per-model thinking pick store was dropped in favor of the daemon's
+// per-session thinking state — clear the old key so stale picks can't linger.
+safeRemove(STORAGE_KEYS.thinking);
 
 function loadPermissionFromStorage(): PermissionMode {
   try {
@@ -160,44 +146,6 @@ function savePermissionToStorage(mode: PermissionMode): void {
   } catch {
     // ignore
   }
-}
-
-function loadThinkingMap(): Record<string, ThinkingLevel> {
-  const parsed = safeGetJson<unknown>(THINKING_STORAGE_KEY);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-  const out: Record<string, ThinkingLevel> = {};
-  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof value === 'string' && PERSISTED_THINKING_LEVEL_RE.test(value)) {
-      out[id] = value as ThinkingLevel;
-    }
-  }
-  return out;
-}
-
-// The RUNTIME source of truth for per-model picks is this in-memory map,
-// hydrated from localStorage once at startup. Explicit picks update it first
-// (see saveThinkingToStorage), so a pick takes effect even when persistence is
-// unavailable (storage policy/quota — safeSetJson swallows those failures),
-// and so a pick made later in ANOTHER tab can never change what this tab
-// displays or submits mid-session. localStorage is hydration + best-effort
-// persistence only: written with a read-modify-write merge (same pattern as
-// saveUnread) so concurrent tabs' entries survive, and re-read from scratch on
-// the next startup. Anything that is not a model-id map (e.g. the legacy raw
-// single-level string) is discarded rather than applied to every model.
-const thinkingPicks: Record<string, ThinkingLevel> = loadThinkingMap();
-
-function loadThinkingForModel(modelId: string): ThinkingLevel | undefined {
-  return thinkingPicks[modelId];
-}
-
-function saveThinkingToStorage(modelId: string, level: ThinkingLevel): void {
-  thinkingPicks[modelId] = level;
-  // Delta write (same pattern as saveUnread): overlay only the CHANGED entry —
-  // overlaying this tab's whole in-memory snapshot would revert another tab's
-  // newer pick for any model this tab still holds a stale copy of.
-  const map = loadThinkingMap();
-  map[modelId] = level;
-  safeSetJson(THINKING_STORAGE_KEY, map);
 }
 
 // Plan / swarm / goal modes are per-session. Each is persisted as a compact
@@ -2220,8 +2168,6 @@ const modelProvider = useModelProviderState(rawState, {
   refreshSessionStatus,
   persistSessionProfile,
   activity,
-  loadThinkingForModel,
-  saveThinkingToStorage,
   updateSession,
   updateSessionMessages,
 });

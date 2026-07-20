@@ -79,12 +79,6 @@ export interface UseModelProviderStateDeps {
    *  order strictly after the profile must NOT proceed on false. */
   persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
   activity: ComputedRef<ActivityState>;
-  /** Read the persisted thinking pick for a model (undefined = never picked
-   *  for that model). Storage is keyed by model id and seeds NEW sessions —
-   *  a session's own daemon-reported level always wins once it exists. */
-  loadThinkingForModel: (modelId: string) => ThinkingLevel | undefined;
-  /** Persist an explicit thinking pick under the given model id. */
-  saveThinkingToStorage: (modelId: string, level: ThinkingLevel) => void;
   /** Replace one session in place (matched by id). Owned by the facade so the
    *  model module never assigns rawState.sessions directly. */
   updateSession: (id: string, update: (session: AppSession) => AppSession) => void;
@@ -104,8 +98,6 @@ export function useModelProviderState(
     refreshSessionStatus,
     persistSessionProfile,
     activity,
-    loadThinkingForModel,
-    saveThinkingToStorage,
     updateSession,
     updateSessionMessages,
   } = deps;
@@ -147,20 +139,6 @@ export function useModelProviderState(
     return modelById(rawModel)?.id ?? rawModel ?? undefined;
   }
 
-  /**
-   * The level a model should run at when no per-session state exists (the
-   * new-session seed): the user's stored pick for THIS model when the model
-   * still declares it, else the model's catalog default. Validation against
-   * the catalog entry is what keeps a stale or foreign level (picked for
-   * another model, or dropped by a catalog update) from reaching the UI and
-   * the daemon.
-   */
-  function thinkingLevelForModel(model: AppModel): ThinkingLevel {
-    const stored = loadThinkingForModel(model.id);
-    if (stored !== undefined && levelDeclaredBy(model, stored)) return stored;
-    return defaultThinkingLevelFor(model);
-  }
-
   /** thinkingLevelForModel by model id, for paths that submit a prompt for a
    *  session other than the active one (queued drain, steer): the level must
    *  come from the prompt's OWN model, not from rawState.thinking, which always
@@ -169,16 +147,16 @@ export function useModelProviderState(
   function thinkingLevelForModelId(modelId: string | undefined): ThinkingLevel | undefined {
     if (modelId === undefined) return undefined;
     const model = modelById(modelId);
-    return model === undefined ? undefined : thinkingLevelForModel(model);
+    return model === undefined ? undefined : defaultThinkingLevelFor(model);
   }
 
   /**
    * The level a session should run at: the session's OWN daemon-reported level
    * (thinkingBySession — fed by /status folds and explicit picks) when the
-   * model still declares it, else the per-model seed (thinkingLevelForModel).
-   * Per-session state wins so a session keeps the level it actually ran with —
-   * picking 'high' in one session must not retroactively change another
-   * session that ran 'max'.
+   * model still declares it, else the model's catalog default. Per-session
+   * state wins so a session keeps the level it actually ran with — picking
+   * 'high' in one session must not retroactively change another session that
+   * ran 'max'.
    */
   function thinkingLevelForSession(
     sessionId: string | null | undefined,
@@ -189,7 +167,7 @@ export function useModelProviderState(
         ? undefined
         : rawState.thinkingBySession[sessionId];
     if (sessionLevel !== undefined && levelDeclaredBy(model, sessionLevel)) return sessionLevel;
-    return thinkingLevelForModel(model);
+    return defaultThinkingLevelFor(model);
   }
 
   /** thinkingLevelForSession by session + model id, for prompt submission
@@ -205,16 +183,11 @@ export function useModelProviderState(
   }
 
   function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
-    // The explicit-picker path (setThinking) — the ONLY writer of the
-    // per-model storage. Model switches (setModel) and passive resolution
-    // update rawState.thinking in-memory instead, so a level the user never
-    // actually picked (e.g. a derived catalog default) is never mistaken for
-    // a stored choice. Persisted under the CURRENT model id — keying storage
-    // by model keeps a pick from leaking onto models that never declared it.
-    // Only concrete levels are persisted; "no preference" stays in-memory.
+    // The explicit-picker path (setThinking). Model switches (setModel) and
+    // passive resolution update rawState.thinking in-memory the same way, but
+    // only an explicit pick is pushed to the session profile and the daemon
+    // config — a derived catalog default must not masquerade as a user choice.
     rawState.thinking = level;
-    const modelId = currentModelId();
-    if (level !== undefined && modelId !== undefined) saveThinkingToStorage(modelId, level);
     // Mirror the pick into the session's own entry so the per-session
     // resolution (and any later /status fold) agrees with what the user just
     // chose — the daemon profile write lands via persistSessionProfile.
@@ -291,10 +264,9 @@ export function useModelProviderState(
       const api = getKimiWebApi();
       models.value = await api.listModels();
       // Resolve the active session's level: its own daemon-reported level when
-      // still declared, else the stored per-model pick, else the catalog
-      // default. Always re-resolved (not just when unset) so a level carried
-      // over from another model can't outlive the catalog refresh that makes
-      // it invalid.
+      // still declared, else the model's catalog default. Always re-resolved
+      // (not just when unset) so a level carried over from another model can't
+      // outlive the catalog refresh that makes it invalid.
       const active = modelById(currentModelId());
       if (active !== undefined) {
         rawState.thinking = thinkingLevelForSession(rawState.activeSessionId, active);
@@ -333,20 +305,15 @@ export function useModelProviderState(
       ? rawState.sessions.find((s) => s.id === sid)?.model
       : undefined;
     const isSwitch = currentModelId() !== (targetModel?.id ?? modelId);
-    // On a real switch, restore the target model's own stored pick when still
-    // declared; otherwise its catalog default (see thinkingLevelForModelSwitch).
-    const nextThinking = thinkingLevelForModelSwitch(
-      targetModel,
-      prevThinking,
-      isSwitch,
-      targetModel === undefined ? undefined : loadThinkingForModel(targetModel.id),
-    );
+    // On a real switch, pre-select the target model's catalog default (see
+    // thinkingLevelForModelSwitch); re-selecting keeps the live level.
+    const nextThinking = thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch);
     if (!sid) {
       // New-session draft (onboarding composer): no backend session to update.
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
       // In-memory only: a model switch is not a thinking pick, so nothing is
-      // persisted (a derived default would otherwise masquerade as an explicit
-      // choice later). Storage writes stay with setThinking.
+      // persisted beyond the in-memory level (a derived default would otherwise
+      // masquerade as an explicit choice later).
       draftModel.value = modelId;
       rawState.thinking = nextThinking;
       if (nextThinking !== prevThinking && nextThinking !== undefined) {
