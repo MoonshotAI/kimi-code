@@ -283,6 +283,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     }),
     get: vi.fn((agentId) => handles.get(agentId)),
     list: vi.fn(() => [...handles.values()]),
+    broadcastPermissionMode: vi.fn(),
     remove: vi.fn(async (agentId) => {
       handles.delete(agentId);
     }),

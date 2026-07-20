@@ -8,7 +8,8 @@
  * and registers the agent in the session registry. New logs receive a metadata
  * envelope while non-empty unversioned logs are rejected. Removal awaits the
  * agent task manager's graceful exit policy before draining turns and full
- * compaction, then disposing the child scope. Bound at Session scope.
+ * compaction, then disposing the child scope. Fans session-level
+ * permission-mode switches out to every live agent. Bound at Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -297,6 +298,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const prefix = filter?.prefix;
     if (prefix === undefined) return all;
     return all.filter((handle) => handle.id.startsWith(prefix));
+  }
+
+  broadcastPermissionMode(mode: PermissionMode): void {
+    for (const handle of this.handles.values()) {
+      handle.accessor.get(IAgentPermissionModeService).setMode(mode);
+    }
   }
 
   async remove(agentId: string): Promise<void> {

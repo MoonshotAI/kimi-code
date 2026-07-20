@@ -97,8 +97,8 @@ export class SessionLegacyService implements ISessionLegacyService {
     }
     if (agentConfig.permission_mode !== undefined) {
       agent.accessor
-        .get(IAgentPermissionModeService)
-        .setMode(agentConfig.permission_mode as PermissionMode);
+        .get(IAgentLifecycleService)
+        .broadcastPermissionMode(agentConfig.permission_mode as PermissionMode);
     }
     if (agentConfig.plan_mode !== undefined) {
       const plan = agent.accessor.get(IAgentPlanService);
