@@ -239,6 +239,14 @@ const chevronLabel = computed(() =>
 }
 
 /* ---- Slotted line-content primitives ---------------------------------- */
+/* Every truncating primitive (overflow:hidden for the ellipsis) sets a
+   leading that clears the font's ascent + descent rather than inheriting
+   the head's line-height: 1 — a 1em line box is shorter than the metrics
+   (Inter ≈1.21em, JetBrains Mono ≈1.32em), so descenders (j / p / g / y)
+   would be clipped. UI text uses --leading-tight; the mono run uses the
+   font's own normal leading (its ≈1.32em exceeds --leading-tight, and
+   normal adapts to whatever mono face is actually in use). The row stays
+   ~24px: the 16px chevron still drives the head's height. */
 .tl-main :slotted(.tl-name) {
   /* The action label is a quiet lead-in word, not the row's anchor: regular
      weight at the muted rung. The dark anchor belongs to the object — the
@@ -249,6 +257,7 @@ const chevronLabel = computed(() =>
 }
 .tl-main :slotted(.tl-dim) {
   color: var(--color-text-muted);
+  line-height: var(--leading-tight);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -256,6 +265,7 @@ const chevronLabel = computed(() =>
 }
 .tl-main :slotted(.tl-faint) {
   color: var(--color-text-faint);
+  line-height: var(--leading-tight);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -272,6 +282,7 @@ const chevronLabel = computed(() =>
      rung. The only dark object on a line is the file-name button: the one
      interactive place to go. */
   color: var(--color-text-muted);
+  line-height: normal;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -285,6 +296,7 @@ const chevronLabel = computed(() =>
      valid here — clicks are stop-propagation'd by the tool renderer. */
   font-weight: var(--weight-regular);
   color: var(--color-text);
+  line-height: var(--leading-tight);
   flex: none;
   max-width: 60%;
   overflow: hidden;
