@@ -65,6 +65,10 @@ extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 
 **Built-in agents** are distributed with the CLI and have the lowest priority. A directory-discovered file does not override a same-name built-in Agent unless its frontmatter declares `override: true`. A file loaded through `--agent-file` is treated as explicit launch intent, may override a same-name built-in Agent, outranks every directory scope, and applies to the current launch only. Separately, `$KIMI_CODE_HOME/SYSTEM.md` permanently overrides the default main agent's system prompt (it is not part of agent-file discovery); its precedence interactions are covered in the SYSTEM.md section below.
 
+::: warning Trust model
+Agent files are prompt configuration, and project-level files come from the repository itself — including repositories you have just cloned and do not trust yet. A project-scoped file can take over a built-in agent entirely: naming it `agent.md` with `override: true` replaces the **default main agent's whole system prompt**, and `coder.md` with `override: true` replaces the default sub-agent type. Unlike `AGENTS.md` content — which is injected into the prompt as reference data — an override file *is* the system prompt, and a file without a `tools` list keeps every tool. Review `.kimi-code/agents/` and `.agents/agents/` in unfamiliar repositories with the same caution you would apply to scripts, before running Kimi Code inside them.
+:::
+
 ### Agent File Format
 
 An agent file is plain Markdown with a frontmatter block:
@@ -96,6 +100,8 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 | `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Accepts a YAML list or a comma-separated string (`tools: Read, Grep`). Omit to allow all tools; a lone `*` also allows all tools; an empty list (`tools: []`) disables all tools |
 | `disallowedTools` | no | Denylist with the same syntax and matching rules, applied after `tools` |
 | `subagents` | no | Allowlist of sub-agent names this agent may delegate to, with the same syntax as `tools` (YAML list or comma-separated string). Omit to allow every type; a lone `*` also allows all types |
+
+Built-in and user tools match by exact, case-sensitive name; entries starting with `mcp__` match MCP tools as globs. Three entry shapes never match anything and are reported with a warning when the profile takes effect: a wildcard outside an `mcp__` pattern (a bare `*` in `disallowedTools` disables nothing), an `mcp__` literal that is not a full `mcp__<server>__<tool>` name (`mcp__github` matches nothing — use `mcp__github__*` for the whole server), and a name no registered or built-in tool has (usually a typo, such as `read` instead of `Read`).
 
 The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values — unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. The available variables are listed in the SYSTEM.md section below.
 

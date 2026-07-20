@@ -65,6 +65,10 @@ extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 
 **内置 Agent** 随 CLI 分发，优先级最低。目录中发现的文件不会仅凭同名覆盖内置 Agent；如确需替换，必须在 Frontmatter 中声明 `override: true`。通过 `--agent-file` 加载的文件视为显式启动意图，可以覆盖同名内置 Agent，优先级高于所有目录作用域，且仅对本次启动生效。另外，`$KIMI_CODE_HOME/SYSTEM.md` 可永久覆盖默认主 Agent 的系统提示词（它不参与 Agent 文件发现），其优先级交互见下文 SYSTEM.md 小节。
 
+::: warning 信任模型
+Agent 文件属于提示词配置，而项目级文件来自仓库本身 —— 包括你刚刚 clone、尚不可信的仓库。项目作用域的文件可以完全接管内置 Agent：命名为 `agent.md` 并声明 `override: true` 会替换**默认主 Agent 的整个系统提示词**，`coder.md` 加 `override: true` 则会替换默认子 Agent 类型。与 `AGENTS.md` 内容（作为参考资料注入提示词）不同，override 文件**就是**系统提示词本身，且不写 `tools` 的文件保留全部工具。在不熟悉的仓库中运行 Kimi Code 之前，请以对待脚本同样的谨慎检查其中的 `.kimi-code/agents/` 与 `.agents/agents/` 目录。
+:::
+
 ### Agent 文件格式
 
 Agent 文件是带 Frontmatter 的普通 Markdown：
@@ -96,6 +100,8 @@ disallowedTools:
 | `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。支持 YAML 列表或逗号分隔字符串（`tools: Read, Grep`）两种写法。缺省表示允许全部工具；单独的 `*` 同样表示允许全部工具；空列表（`tools: []`）表示禁用全部工具 |
 | `disallowedTools` | 否 | 禁止列表，写法与匹配规则相同，在 `tools` 之后应用 |
 | `subagents` | 否 | 允许委派的子 Agent 名称列表，写法与 `tools` 相同（YAML 列表或逗号分隔字符串）。缺省表示可委派所有类型；单独的 `*` 同样表示全部 |
+
+内置工具与用户工具按名称精确匹配（区分大小写）；以 `mcp__` 开头的条目按 glob 匹配 MCP 工具。有三种写法永远匹配不到任何工具，在 profile 生效时会给出警告：`mcp__` 模式之外使用通配符（`disallowedTools` 里单独的 `*` 什么也禁不掉）；不是完整 `mcp__<服务器>__<工具>` 形式的 `mcp__` 字面量（`mcp__github` 匹配不到任何工具 —— 匹配整个服务器要用 `mcp__github__*`）；以及任何已注册或内置工具都没有的名字（通常是笔误，如把 `Read` 写成 `read`）。
 
 正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染：`${var}` 占位符替换为实时上下文值——未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在你放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以"包裹"默认行为而不是替换它。可用变量见下文 SYSTEM.md 变量表。
 
