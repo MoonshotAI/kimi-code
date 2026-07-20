@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Warn when an entry in a tool allow/deny list (an agent file or the `[tools]` config) can never match any tool — for example a misspelled or wrongly-cased name (v2 engine only).
+Warn when a tool allow/deny list entry can never match any tool, for example a misspelled name (v2 engine only).
