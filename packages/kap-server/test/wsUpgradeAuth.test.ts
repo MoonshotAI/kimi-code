@@ -1,7 +1,7 @@
 /**
  * WebSocket upgrade-time auth (port of v1 `ws-auth.e2e.test.ts`).
  *
- * Both `/api/v1/ws` and `/api/v2/ws` require a valid bearer credential at the
+ * `/api/v1/ws` requires a valid bearer credential at the
  * HTTP `upgrade` (matching v1's wsGatewayService): a token-less or invalid
  * upgrade is rejected with 401 before the socket completes the handshake. The
  * credential is the persistent bearer token (or, when configured, the
@@ -77,7 +77,6 @@ describe('WS upgrade auth', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let v1Url: string;
-  let v2Url: string;
   const sockets: WebSocket[] = [];
 
   beforeEach(async () => {
@@ -90,7 +89,6 @@ describe('WS upgrade auth', () => {
       authTokenService: fixedTokenAuth(TOKEN),
     });
     v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
-    v2Url = `ws://127.0.0.1:${server.port}/api/v2/ws`;
   });
 
   afterEach(async () => {
@@ -111,11 +109,9 @@ describe('WS upgrade auth', () => {
     }
   });
 
-  describe.each([
-    ['/api/v1/ws', 'v1Url', 'server_hello'],
-    ['/api/v2/ws', 'v2Url', 'ready'],
-  ] as const)('%s', (_path, urlKey, firstType) => {
-    const url = (): string => (urlKey === 'v1Url' ? v1Url : v2Url);
+  describe('/api/v1/ws', () => {
+    const firstType = 'server_hello';
+    const url = (): string => v1Url;
 
     it('accepts a valid bearer subprotocol and echoes it', async () => {
       const { ws, firstFrame } = await openConn(url(), {

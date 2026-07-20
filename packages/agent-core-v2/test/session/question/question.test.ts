@@ -104,6 +104,26 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     });
   });
 
+  it('records the owning agent on the interaction origin', async () => {
+    const interaction = session.accessor.get(ISessionInteractionService);
+    const questions = session.accessor.get(ISessionQuestionService);
+
+    const sub = questions.request(makeRequest('q-sub'), { agentId: 'sub-1' });
+    expect(interaction.listPending().find((i) => i.id === 'q-sub')?.origin).toMatchObject({
+      agentId: 'sub-1',
+    });
+
+    const main = questions.request(makeRequest('q-main'));
+    expect(
+      interaction.listPending().find((i) => i.id === 'q-main')?.origin.agentId,
+    ).toBeUndefined();
+
+    questions.dismiss('q-sub');
+    questions.dismiss('q-main');
+    await expect(sub).resolves.toBeNull();
+    await expect(main).resolves.toBeNull();
+  });
+
   it('request with a pre-aborted signal resolves null and parks nothing', async () => {
     const questions = session.accessor.get(ISessionQuestionService);
     const controller = new AbortController();

@@ -1,6 +1,6 @@
 /**
- * Connection context — owns the inspect client (HTTP calls) and its WebSocket
- * (event streams) built from the selected server URL + token.
+ * Connection context — owns the inspect client (HTTP calls over the
+ * `/api/v1/debug` surface) built from the selected server URL + token.
  *
  * Three ways to connect:
  *   1. deep link `?url=` / `?token=` or a previously saved manual config
@@ -13,6 +13,12 @@
  *   3. the manual form or a discovered-server card on the connect screen.
  * `disconnect` suppresses the discovery bootstrap for the rest of the
  * session so it lands on the connect screen instead of reconnecting.
+ *
+ * The client is built only after `probeDebugSurface` confirms the server
+ * mounts `/api/v1/debug` (kap-server started with `--debug-endpoints` on a
+ * loopback bind). There is no fallback surface — when the probe fails the
+ * connection stops on a dedicated error screen (with retry / reconfigure)
+ * instead of silently degrading.
  */
 
 import {
@@ -27,10 +33,8 @@ import {
 
 import {
   createInspectClient,
-  probeRpcBasePath,
+  probeDebugSurface,
   type InspectClient,
-  type RpcBasePath,
-  type WsSocketState,
 } from './channel';
 import {
   fetchServerDiscovery,
@@ -85,7 +89,6 @@ interface ConnectionValue {
   readonly config: ConnectionConfig;
   readonly baseUrl: string;
   readonly klient: InspectClient;
-  readonly wsState: WsSocketState;
   readonly connect: (config: ConnectionConfig, opts?: ConnectOptions) => void;
   readonly disconnect: () => void;
 }
@@ -101,7 +104,6 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     if (params.has('url') || params.has('token')) return initial;
     return localStorage.getItem(STORAGE_KEY) !== null ? initial : null;
   });
-  const [wsState, setWsState] = useState<WsSocketState>('connecting');
   const [discovering, setDiscovering] = useState(config === null);
   const [suppressDiscovery, setSuppressDiscovery] = useState(false);
 
@@ -124,13 +126,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     };
   }, [config, suppressDiscovery]);
 
-  // RPC surface probe: dev servers (`--debug-endpoints`) mount the
-  // whitelist-free `/api/v1/debug` dispatcher; older/production servers fall
-  // back to the `/api/v2` whitelist set. The client is built only after the
-  // probe for this exact config has resolved.
-  const [probe, setProbe] = useState<{ readonly key: string; readonly rpcBase: RpcBasePath } | null>(
-    null,
-  );
+  // Debug-surface probe: the app talks ONLY to `/api/v1/debug` (kap-server
+  // `--debug-endpoints`, loopback). The client is built once the probe for
+  // this exact config has succeeded; a failure is kept and rendered as a
+  // blocking error screen (no fallback surface exists anymore).
+  const [probe, setProbe] = useState<{
+    readonly key: string;
+    readonly error: string | null;
+  } | null>(null);
+  const [probeNonce, setProbeNonce] = useState(0);
   const configKey =
     config === null ? null : `${resolveBaseUrl(config.url)}|${config.token.trim()}`;
 
@@ -141,38 +145,33 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     const token = config.token.trim();
-    void probeRpcBasePath({
+    void probeDebugSurface({
       baseUrl: resolveBaseUrl(config.url),
       token: token === '' ? undefined : token,
-    }).then((rpcBase) => {
-      if (!cancelled) setProbe({ key: configKey, rpcBase });
-    });
+    }).then(
+      () => {
+        if (!cancelled) setProbe({ key: configKey, error: null });
+      },
+      (error: unknown) => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        setProbe({ key: configKey, error: message });
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [config, configKey]);
+  }, [config, configKey, probeNonce]);
 
   const klient = useMemo(() => {
     if (config === null || configKey === null) return null;
-    if (probe === null || probe.key !== configKey) return null;
+    if (probe === null || probe.key !== configKey || probe.error !== null) return null;
     const token = config.token.trim();
     return createInspectClient({
       url: resolveBaseUrl(config.url),
       token: token === '' ? undefined : token,
-      rpcBasePath: probe.rpcBase,
     });
   }, [config, configKey, probe]);
-
-  useEffect(() => {
-    if (klient === null) return;
-    const ws = klient.ws();
-    setWsState(ws.state);
-    const sub = ws.onDidChangeState(setWsState);
-    return () => {
-      sub.dispose();
-      ws.close();
-    };
-  }, [klient]);
 
   const connect = useCallback((next: ConnectionConfig, opts: ConnectOptions = {}) => {
     if (opts.persist ?? true) {
@@ -194,15 +193,32 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setConfig(null);
   }, []);
 
+  const retryProbe = useCallback(() => {
+    setProbe(null);
+    setProbeNonce((n) => n + 1);
+  }, []);
+
   const value = useMemo<ConnectionValue | null>(() => {
     if (klient === null || config === null) return null;
-    return { config, baseUrl: resolveBaseUrl(config.url), klient, wsState, connect, disconnect };
-  }, [klient, config, wsState, connect, disconnect]);
+    return { config, baseUrl: resolveBaseUrl(config.url), klient, connect, disconnect };
+  }, [klient, config, connect, disconnect]);
+
+  const probeFailure =
+    config !== null && probe !== null && probe.key === configKey && probe.error !== null
+      ? { baseUrl: resolveBaseUrl(config.url), error: probe.error }
+      : null;
 
   return (
     <ConnectionContext.Provider value={value}>
       {value !== null ? (
         children
+      ) : probeFailure !== null ? (
+        <DebugSurfaceError
+          baseUrl={probeFailure.baseUrl}
+          error={probeFailure.error}
+          onRetry={retryProbe}
+          onBack={disconnect}
+        />
       ) : config !== null ? (
         <div className="flex h-screen items-center justify-center">
           <div className="text-sm text-neutral-500">
@@ -228,6 +244,51 @@ export function useConnection(): ConnectionValue {
   return value;
 }
 
+/** Blocking screen when the server does not mount the debug RPC surface. */
+function DebugSurfaceError({
+  baseUrl,
+  error,
+  onRetry,
+  onBack,
+}: {
+  baseUrl: string;
+  error: string;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex h-screen items-center justify-center">
+      <div className="w-[520px] rounded-lg border border-red-900/60 bg-neutral-900 p-6 shadow-xl">
+        <h1 className="mb-1 text-lg font-semibold text-red-300">Debug surface unavailable</h1>
+        <p className="mb-3 text-xs leading-relaxed text-neutral-400">
+          Kimi Inspect talks to kap-server exclusively over the debug RPC surface (
+          <code className="text-neutral-300">/api/v1/debug</code>), and{' '}
+          <code className="text-neutral-300">{baseUrl}</code> does not serve it. Start kap-server
+          with <code className="text-neutral-300">--debug-endpoints</code> on a loopback bind and
+          retry.
+        </p>
+        <div className="mb-4 rounded bg-red-950/50 px-2 py-1.5 font-mono text-[11px] text-red-400">
+          {error}
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500"
+            onClick={onRetry}
+          >
+            Retry
+          </button>
+          <button
+            className="rounded border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800"
+            onClick={onBack}
+          >
+            Change server
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConnectScreen({
   onConnect,
   initial,
@@ -250,8 +311,10 @@ function ConnectScreen({
       >
         <h1 className="mb-1 text-lg font-semibold text-neutral-100">Kimi Inspect</h1>
         <p className="mb-5 text-xs text-neutral-500">
-          Connect to a kap-server (<code className="text-neutral-400">/api/v2</code>). Leave the
-          URL empty to use the same-origin dev proxy
+          Connect to a kap-server started with{' '}
+          <code className="text-neutral-400">--debug-endpoints</code> (
+          <code className="text-neutral-400">/api/v1/debug</code>). Leave the URL empty to use the
+          same-origin dev proxy
           {` (${__KIMI_INSPECT_PROXY_TARGET__})`}.
         </p>
         {servers.length > 0 ? (

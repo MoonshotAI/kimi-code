@@ -6,7 +6,9 @@ import { createControlledPromise } from '@antfu/utils';
 import { expect, vi } from 'vitest';
 
 import { toDisposable } from '#/_base/di/lifecycle';
+import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { PromisifyMethods } from '#/_base/utils/types';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import type { AgentTaskInfo } from '#/agent/task/task';
@@ -994,6 +996,25 @@ export class AgentTestContext {
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
+            reg.defineInstance(IAgentLifecycleService, {
+              _serviceBrand: undefined,
+              onDidCreate: Event.None as Event<IAgentScopeHandle>,
+              onDidDispose: Event.None as Event<string>,
+              create: () =>
+                Promise.reject(
+                  new Error('IAgentLifecycleService.create is not supported in the test harness'),
+                ),
+              fork: () =>
+                Promise.reject(
+                  new Error('IAgentLifecycleService.fork is not supported in the test harness'),
+                ),
+              get: () => undefined,
+              list: () => [],
+              remove: () => Promise.resolve(),
+              broadcastPermissionMode: (mode: PermissionMode) => {
+                this.agent.accessor.get(IAgentPermissionModeService).setMode(mode);
+              },
+            } satisfies IAgentLifecycleService);
             reg.defineDescriptor(
               ISessionWorkspaceContext,
               new SyncDescriptor(SessionWorkspaceContextService),

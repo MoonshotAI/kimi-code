@@ -1078,6 +1078,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function createDraftSession(workspaceId: string): Promise<string | null> {
     const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
     if (!ws) return null;
+    // Capture the draft thinking level BEFORE any await: a concurrent session
+    // switch during creation re-resolves rawState.thinking for the other
+    // active session, which would otherwise seed the new session with that
+    // session's effort. Seeded into the new session's own entry below, the
+    // first prompt/skill submits the pick and the daemon profile follows.
+    const draftThinking = rawState.thinking;
     const api = getKimiWebApi();
     let workspaceIdForCreate: string | undefined;
     let cwdForCreate = ws.root;
@@ -1118,6 +1124,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // awaiting the snapshot, the setters would otherwise read the then-current
     // activeSessionId and pollute that session while this one loses the modes.
     const sid = session.id;
+    if (draftThinking !== undefined) {
+      rawState.thinkingBySession = { ...rawState.thinkingBySession, [sid]: draftThinking };
+    }
     if (draftModes.planMode) {
       rawState.planModeBySession = { ...rawState.planModeBySession, [sid]: true };
       savePlanModeToStorage();
@@ -1522,12 +1531,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Resolved against THIS prompt's model (its stored pick when declared,
-        // else its catalog default) — never the active-session rawState.thinking,
-        // which tracks whatever session the user is looking at now: a queue
-        // drain for a background session would otherwise submit the level of
-        // the session the user switched to since enqueueing.
-        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
+        // Resolved against THIS prompt's session + model: the session's own
+        // daemon-reported level when declared, else the model's stored pick or
+        // catalog default — never the active-session rawState.thinking, which
+        // tracks whatever session the user is looking at now: a queue drain for
+        // a background session would otherwise submit the level of the session
+        // the user switched to since enqueueing.
+        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1701,9 +1711,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Resolved against this prompt's own model, same as a normal send (see
-        // submitPromptInternal).
-        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
+        // Resolved against this prompt's own session + model, same as a normal
+        // send (see submitPromptInternal).
+        thinking: (await modelProvider.resolveThinkingForPrompt(sid, model)) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

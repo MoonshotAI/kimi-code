@@ -60,7 +60,6 @@ describe('WS upgrade Host/Origin checks', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let v1Url: string;
-  let v2Url: string;
   const sockets: WebSocket[] = [];
 
   beforeEach(async () => {
@@ -73,7 +72,6 @@ describe('WS upgrade Host/Origin checks', () => {
       authTokenService: fixedTokenAuth(TOKEN),
     });
     v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
-    v2Url = `ws://127.0.0.1:${server.port}/api/v2/ws`;
   });
 
   afterEach(async () => {
@@ -94,11 +92,8 @@ describe('WS upgrade Host/Origin checks', () => {
     }
   });
 
-  describe.each([
-    ['/api/v1/ws', 'v1Url'],
-    ['/api/v2/ws', 'v2Url'],
-  ] as const)('%s', (_path, urlKey) => {
-    const url = (): string => (urlKey === 'v1Url' ? v1Url : v2Url);
+  describe('/api/v1/ws', () => {
+    const url = (): string => v1Url;
 
     it('rejects a spoofed Host before token validation', async () => {
       await expectRejected(url(), { headers: { Host: 'evil.com' } });

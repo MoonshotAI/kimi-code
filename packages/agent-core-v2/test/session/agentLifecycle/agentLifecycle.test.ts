@@ -470,6 +470,27 @@ describe('AgentLifecycleService', () => {
     expect(permissionModeSetMode).not.toHaveBeenCalled();
   });
 
+  it('broadcastPermissionMode sets the mode on every live agent', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    await svc.create({ agentId: 'child' });
+
+    svc.broadcastPermissionMode('yolo');
+
+    expect(permissionModeSetMode.mock.calls).toEqual([['yolo'], ['yolo']]);
+  });
+
+  it('broadcastPermissionMode skips agents that have been removed', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    await svc.create({ agentId: 'child' });
+    await svc.remove('child');
+
+    svc.broadcastPermissionMode('auto');
+
+    expect(permissionModeSetMode.mock.calls).toEqual([['auto']]);
+  });
+
   it('wires MCP OAuth credentials through the session atomic document store', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });

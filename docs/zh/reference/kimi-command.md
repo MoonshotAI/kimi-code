@@ -171,7 +171,7 @@ kimi web --port 58628    # 指定绑定端口
 :::
 
 ::: danger 警告
-`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后运行 `kimi web kill` 停止服务。
+`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 Ctrl+C 停止服务（或在另一个终端运行 `kimi web kill <server-id>`）。
 :::
 
 #### `kimi web kill [server-id|all]`
