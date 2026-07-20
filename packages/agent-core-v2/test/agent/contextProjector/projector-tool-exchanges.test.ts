@@ -512,6 +512,7 @@ describe('projector tool-exchange normalization', () => {
             leading_dropped: 0,
             assistants_merged: 0,
             whitespace_dropped: 0,
+            vacuous_dropped: 0,
           },
         },
       ]);
@@ -521,6 +522,98 @@ describe('projector tool-exchange normalization', () => {
       project([user('go'), assistant('', ['c1']), toolResult('c1', 'one'), user('next')]);
       project([user('go'), assistant('', ['c1'])]);
       expect(telemetryRecords).toEqual([]);
+    });
+  });
+
+  describe('vacuous (thinking-only) messages', () => {
+    function thinkingAssistant(content: ContextMessage['content']): ContextMessage {
+      return { role: 'assistant', content: [...content], toolCalls: [] };
+    }
+
+    it('drops an assistant message whose only part is an empty think block', () => {
+      // A provider-filtered response records exactly this shape; sending it
+      // back is rejected as "message ... with role 'assistant' must not be
+      // empty" on every resend, permanently wedging the session.
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '' }]),
+        reminder('ping'),
+      ];
+      expect(shape(history)).toEqual(['user', 'user']);
+      expect(repairPayloads(warnings)).toEqual([expect.objectContaining({ vacuousDropped: 1 })]);
+      expect(telemetryRecords).toEqual([
+        {
+          event: 'context_projection_repaired',
+          properties: expect.objectContaining({ vacuous_dropped: 1 }),
+        },
+      ]);
+    });
+
+    it('un-wedges a history poisoned by a filtered step (session regression)', () => {
+      const history = [
+        user('u1'),
+        assistant('', ['c1']),
+        toolResult('c1', 'one'),
+        // sealed by the filtered step: no text, no tool calls, one empty think
+        thinkingAssistant([{ type: 'think', think: '' }]),
+        reminder('ping'),
+      ];
+      expect(shape(history)).toEqual(['user', 'assistant', 'tool:c1', 'user']);
+      expect(repairPayloads(warnings)).toEqual([expect.objectContaining({ vacuousDropped: 1 })]);
+    });
+
+    it('keeps a message with real text intact — including its empty think part', () => {
+      // Preserved-thinking providers require even empty reasoning back; only
+      // wholly-vacuous messages may be dropped, never parts of a real message.
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '' }, { type: 'text', text: 'answer' }]),
+      ];
+      expect(project(history)[1]?.content).toEqual([
+        { type: 'think', think: '' },
+        { type: 'text', text: 'answer' },
+      ]);
+      expect(repairPayloads(warnings)).toEqual([]);
+    });
+
+    it('keeps a message whose think block has real content', () => {
+      const history = [user('u1'), thinkingAssistant([{ type: 'think', think: 'real reasoning' }])];
+      expect(shape(history)).toEqual(['user', 'assistant']);
+      expect(repairPayloads(warnings)).toEqual([]);
+    });
+
+    it('keeps a signed think block even when its text is empty', () => {
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '', encrypted: 'sig' }]),
+      ];
+      expect(shape(history)).toEqual(['user', 'assistant']);
+      expect(project(history)[1]?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
+    });
+
+    it('drops a message whose think block is whitespace-only', () => {
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '   ' }]),
+        reminder('ping'),
+      ];
+      expect(shape(history)).toEqual(['user', 'user']);
+      expect(repairPayloads(warnings)).toEqual([expect.objectContaining({ vacuousDropped: 1 })]);
+    });
+
+    it('keeps an assistant message with tool calls even when its think part is empty', () => {
+      const history = [
+        user('u1'),
+        {
+          role: 'assistant' as const,
+          content: [{ type: 'think' as const, think: '' }],
+          toolCalls: [{ type: 'function' as const, id: 'c1', name: 'Lookup', arguments: '{}' }],
+        },
+        toolResult('c1', 'one'),
+      ];
+      expect(shape(history)).toEqual(['user', 'assistant', 'tool:c1']);
+      expect(project(history)[1]?.content).toEqual([{ type: 'think', think: '' }]);
+      expect(repairPayloads(warnings)).toEqual([]);
     });
   });
 

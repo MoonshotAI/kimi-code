@@ -535,6 +535,102 @@ describe('project drops whitespace-only text', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Vacuous (thinking-only) messages
+// ---------------------------------------------------------------------------
+
+function thinkPart(think: string, encrypted?: string): ContentPart {
+  return encrypted === undefined
+    ? { type: 'think', think }
+    : { type: 'think', think, encrypted };
+}
+
+function thinkingAssistant(parts: readonly ContentPart[]): ContextMessage {
+  return { role: 'assistant', content: [...parts], toolCalls: [] };
+}
+
+describe('project drops vacuous (thinking-only) messages', () => {
+  it('drops an assistant message whose only part is an empty think block', () => {
+    // A provider-filtered response records exactly this shape; sending it
+    // back is rejected as "message ... with role 'assistant' must not be
+    // empty" on every resend, permanently wedging the session.
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project(
+      [user('u1'), thinkingAssistant([thinkPart('')]), user('u2')],
+      { onAnomaly: (a) => anomalies.push(a) },
+    );
+    expect(projected.map((m) => m.role)).toEqual(['user', 'user']);
+    expect(anomalies).toEqual([{ kind: 'vacuous_message_dropped', role: 'assistant' }]);
+  });
+
+  it('un-wedges a history poisoned by a filtered step (session regression)', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project(
+      [
+        user('u1'),
+        assistant(['a']),
+        tool('a'),
+        // sealed by the filtered step: no text, no tool calls, one empty think
+        thinkingAssistant([thinkPart('')]),
+        notification('ping'),
+        user('u2'),
+      ],
+      { onAnomaly: (a) => anomalies.push(a) },
+    );
+    expect(findMisplacedToolUses(projected)).toEqual([]);
+    expect(projected.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user', 'user']);
+    expect(anomalies).toEqual([{ kind: 'vacuous_message_dropped', role: 'assistant' }]);
+  });
+
+  it('keeps a message with real text intact — including its empty think part', () => {
+    // Preserved-thinking providers require even empty reasoning back; only
+    // wholly-vacuous messages may be dropped, never parts of a real message.
+    const projected = project([user('u1'), thinkingAssistant([thinkPart(''), textPart('answer')])]);
+    expect(projected[1]?.content).toEqual([thinkPart(''), textPart('answer')]);
+  });
+
+  it('keeps a message whose think block has real content', () => {
+    const projected = project([user('u1'), thinkingAssistant([thinkPart('real reasoning')])]);
+    expect(projected.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(projected[1]?.content).toEqual([thinkPart('real reasoning')]);
+  });
+
+  it('keeps a signed think block even when its text is empty', () => {
+    const projected = project([user('u1'), thinkingAssistant([thinkPart('', 'sig')])]);
+    expect(projected.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(projected[1]?.content).toEqual([thinkPart('', 'sig')]);
+  });
+
+  it('drops a message whose think block is whitespace-only', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project([user('u1'), thinkingAssistant([thinkPart('   ')]), user('u2')], {
+      onAnomaly: (a) => anomalies.push(a),
+    });
+    expect(projected.map((m) => m.role)).toEqual(['user', 'user']);
+    expect(anomalies).toEqual([{ kind: 'vacuous_message_dropped', role: 'assistant' }]);
+  });
+
+  it('keeps an assistant message with tool calls even when its think part is empty', () => {
+    const projected = project([
+      user('u1'),
+      {
+        role: 'assistant',
+        content: [thinkPart('')],
+        toolCalls: [{ type: 'function', id: 'a', name: 'Run', arguments: '{}' }],
+      },
+      tool('a'),
+    ]);
+    expect(projected.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(projected[1]?.content).toEqual([thinkPart('')]);
+  });
+
+  it('reports no anomaly for a silently dropped empty-content message', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    project([user('u1'), emptyAssistant(), user('u2')], { onAnomaly: (a) => anomalies.push(a) });
+    expect(anomalies).toEqual([]);
+  });
+});
+
 describe('project strict-provider sanitizers', () => {
   it('drops leading non-user messages so the first message is a user turn', () => {
     // History that (pathologically) starts with an assistant turn.

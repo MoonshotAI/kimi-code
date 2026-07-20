@@ -97,7 +97,15 @@ export type ProjectionAnomaly =
   /** Two adjacent assistant turns were merged into one (strict). */
   | { readonly kind: 'consecutive_assistants_merged' }
   /** A non-empty but all-whitespace text block was dropped (always). */
-  | { readonly kind: 'whitespace_text_dropped'; readonly role: string };
+  | { readonly kind: 'whitespace_text_dropped'; readonly role: string }
+  /**
+   * Every recorded part serialized to nothing on the wire (e.g. an assistant
+   * step that recorded only an empty thinking part from a provider-filtered
+   * response), so the whole message was dropped. Distinct from the silent
+   * empty-content drop: parts were recorded, yet none of them was sendable —
+   * a genuine defect signal, not routine cleanup.
+   */
+  | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
 
 export function project(history: readonly ContextMessage[], options?: ProjectOptions): Message[] {
   let result = mergeAdjacentUserMessages(history, options?.onAnomaly);
@@ -405,7 +413,34 @@ function prepareMessageForProjection(
   // content-free — it must survive the empty-message cleanup or the loaded
   // schemas silently vanish from every outgoing request.
   if (next.tools !== undefined && next.tools.length > 0) return next;
-  return next.content.length === 0 && next.toolCalls.length === 0 ? null : next;
+  if (next.toolCalls.length > 0) return next;
+  if (next.content.length === 0) return null;
+  // Every remaining part serializes to nothing on the wire — e.g. an
+  // assistant step that recorded only an empty thinking part from a
+  // provider-filtered response. Sent as-is it becomes an assistant message
+  // with no content and no tool calls, which strict providers reject ("the
+  // message ... with role 'assistant' must not be empty") on every resend,
+  // permanently wedging the session. Drop the whole message here. A message
+  // that carries any real content keeps every part verbatim — including
+  // empty thinking blocks, which preserved-thinking providers require back.
+  if (next.content.every(isVacuousContentPart)) {
+    onAnomaly?.({ kind: 'vacuous_message_dropped', role: next.role });
+    return null;
+  }
+  return next;
+}
+
+/**
+ * True when a content part carries nothing the provider wire can represent:
+ * an empty or whitespace-only text block, or an empty thinking block with no
+ * provider signature. A signed thinking block (`encrypted`) is never vacuous
+ * — reasoning providers require it back verbatim — and media parts always
+ * carry content.
+ */
+function isVacuousContentPart(part: ContentPart): boolean {
+  if (part.type === 'text') return part.text.trim().length === 0;
+  if (part.type === 'think') return part.encrypted === undefined && part.think.trim().length === 0;
+  return false;
 }
 
 function canMergeUserMessage(message: ContextMessage): boolean {

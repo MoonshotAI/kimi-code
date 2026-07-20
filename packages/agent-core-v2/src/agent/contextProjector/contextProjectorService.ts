@@ -108,6 +108,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     let leadingDropped = 0;
     let assistantsMerged = 0;
     let whitespaceDropped = 0;
+    let vacuousDropped = 0;
     for (const anomaly of notable) {
       if (anomaly.kind === 'tool_result_reordered') reordered += 1;
       else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
@@ -116,6 +117,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
       else if (anomaly.kind === 'duplicate_tool_result_dropped') duplicateResultsDropped += 1;
       else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
       else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
+      else if (anomaly.kind === 'vacuous_message_dropped') vacuousDropped += 1;
       else whitespaceDropped += 1;
     }
     const toolCallIds = [
@@ -132,6 +134,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
       leadingDropped,
       assistantsMerged,
       whitespaceDropped,
+      vacuousDropped,
       toolCallIds,
     });
     this.telemetry.track2('context_projection_repaired', {
@@ -143,6 +146,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
       leading_dropped: leadingDropped,
       assistants_merged: assistantsMerged,
       whitespace_dropped: whitespaceDropped,
+      vacuous_dropped: vacuousDropped,
     });
   }
 }
@@ -155,7 +159,15 @@ type ProjectionAnomaly =
   | { readonly kind: 'duplicate_tool_result_dropped'; readonly toolCallId: string }
   | { readonly kind: 'leading_non_user_dropped'; readonly role: string }
   | { readonly kind: 'consecutive_assistants_merged' }
-  | { readonly kind: 'whitespace_text_dropped'; readonly role: string };
+  | { readonly kind: 'whitespace_text_dropped'; readonly role: string }
+  /**
+   * Every recorded part serialized to nothing on the wire (e.g. an assistant
+   * step that recorded only an empty thinking part from a provider-filtered
+   * response), so the whole message was dropped. Distinct from the silent
+   * empty-content drop: parts were recorded, yet none of them was sendable —
+   * a genuine defect signal, not routine cleanup.
+   */
+  | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
 
 type OnAnomaly = (anomaly: ProjectionAnomaly) => void;
 
@@ -407,7 +419,22 @@ function project(history: readonly ContextMessage[], onAnomaly?: OnAnomaly): Mes
 
   const emit = (source: ContextMessage): void => {
     const content = projectedContent(source, onAnomaly);
-    if (content.length === 0 && source.toolCalls.length === 0 && !hasDeclaredTools(source)) return;
+    if (source.toolCalls.length === 0 && !hasDeclaredTools(source)) {
+      if (content.length === 0) return;
+      // Every remaining part serializes to nothing on the wire — e.g. an
+      // assistant step that recorded only an empty thinking part from a
+      // provider-filtered response. Sent as-is it becomes an assistant
+      // message with no content and no tool calls, which strict providers
+      // reject ("the message ... with role 'assistant' must not be empty") on
+      // every resend, permanently wedging the session. Drop the whole message
+      // here. A message that carries any real content keeps every part
+      // verbatim — including empty thinking blocks, which preserved-thinking
+      // providers require back.
+      if (content.every(isVacuousContentPart)) {
+        onAnomaly?.({ kind: 'vacuous_message_dropped', role: source.role });
+        return;
+      }
+    }
 
     if (openSlots.size > 0) markForeignBetween();
 
@@ -508,6 +535,19 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
         })
       : source.content;
   return cleanContent(source, content, onAnomaly);
+}
+
+/**
+ * True when a content part carries nothing the provider wire can represent:
+ * an empty or whitespace-only text block, or an empty thinking block with no
+ * provider signature. A signed thinking block (`encrypted`) is never vacuous
+ * — reasoning providers require it back verbatim — and media parts always
+ * carry content.
+ */
+function isVacuousContentPart(part: ContentPart): boolean {
+  if (part.type === 'text') return part.text.trim().length === 0;
+  if (part.type === 'think') return part.encrypted === undefined && part.think.trim().length === 0;
+  return false;
 }
 
 function cleanContent(
