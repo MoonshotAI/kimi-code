@@ -111,12 +111,16 @@ const TOOL_GLYPH: Record<string, IconName> = {
   crondelete: 'calendar-close',
 };
 
-export function toolGlyph(name: string): string {
+export function toolIconName(name: string): IconName {
   const key = normalizeToolName(name);
   let icon = TOOL_GLYPH[key];
   if (!icon && (name ?? '').trim().toLowerCase().includes('skill')) icon = 'bolt';
   if (!icon) icon = 'tool';
-  return iconSvg(icon, 'sm');
+  return icon;
+}
+
+export function toolGlyph(name: string): string {
+  return iconSvg(toolIconName(name), 'sm');
 }
 
 // ---------------------------------------------------------------------------

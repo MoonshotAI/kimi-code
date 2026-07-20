@@ -580,11 +580,12 @@ function scrollToBottom(smooth = false): void {
 type ScrollAnchor = { kind: 'turn' | 'tool'; id: string; top: number };
 
 function scrollAnchorTop(container: HTMLElement, node: HTMLElement): number {
-  // Tool calls inside a collapsed group still exist under an inert, clipped
-  // body. Anchor them to the visible group row so hidden content cannot create
-  // a fake layout delta while the stable tool id remains usable.
+  // Tool calls inside a collapsed fold (activity run / group) still exist
+  // under an inert, clipped body. Anchor them to the visible fold row so
+  // hidden content cannot create a fake layout delta while the stable tool id
+  // remains usable.
   const inert = node.closest<HTMLElement>('[inert]');
-  const positionNode = inert?.closest<HTMLElement>('.tool-group') ?? node;
+  const positionNode = inert?.closest<HTMLElement>('.tool-group, .activity-run') ?? node;
   return (
     positionNode.getBoundingClientRect().top -
     container.getBoundingClientRect().top +

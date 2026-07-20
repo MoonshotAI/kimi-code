@@ -4,7 +4,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment } from '../../types';
 import ToolCall from './ToolCall.vue';
-import ToolGroup from './ToolGroup.vue';
+import ActivityRun from './ActivityRun.vue';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
@@ -497,6 +497,16 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   return block.sourceIndex === turnBlocks(turn).length - 1;
 }
 
+/** An activity run streams while it is the live tail of the streaming turn:
+    its last item sits on the turn's last block, so further steps append into
+    this same run. Once a text block (or anything else) takes the tail, the
+    run settles and folds itself back. */
+function isStreamingActivityRun(turn: ChatTurn, block: { items: { sourceIndex: number }[] }): boolean {
+  if (turn.id !== streamingTurnId.value) return false;
+  const last = block.items.at(-1);
+  return last !== undefined && last.sourceIndex === turnBlocks(turn).length - 1;
+}
+
 // NOTE: the turn-summary line ("已调用 N 个工具…") was removed in f9417af. If it
 // comes back, rebuild it from turnBlocks() with i18n strings — the old
 // implementation lives in git history at f9417af^.
@@ -624,10 +634,11 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
         <template v-for="(blk, bi) in assistantRenderBlocks(turn)" :key="renderBlockKey(blk, bi)">
           <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" />
           <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="(target) => emit('openFile', target)" /></div>
-          <ToolGroup
-            v-else-if="blk.kind === 'tool-stack'"
-            :tools="blk.tools"
+          <ActivityRun
+            v-else-if="blk.kind === 'activity-run'"
+            :items="blk.items"
             mobile
+            :streaming="isStreamingActivityRun(turn, blk)"
             @open-media="emit('openMedia', $event)"
             @open-file="emit('openFile', $event)"
             @open-agent="emit('openAgent', $event)"
@@ -1037,6 +1048,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > .msg,
 .a-msg > :deep(.think),
 .a-msg > :deep(.tool-group),
+.a-msg > :deep(.activity-run),
 .a-msg > :deep(.agent-card),
 .a-msg > :deep(.agent-group),
 .a-msg > :deep(.tool-line),
@@ -1047,6 +1059,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-msg > .msg:first-child,
 .a-msg > :deep(.think:first-child),
 .a-msg > :deep(.tool-group:first-child),
+.a-msg > :deep(.activity-run:first-child),
 .a-msg > :deep(.agent-card:first-child),
 .a-msg > :deep(.agent-group:first-child),
 .a-msg > :deep(.tool-line:first-child),

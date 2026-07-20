@@ -34,82 +34,95 @@ export type ToolStackItem = {
   sourceIndex: number;
 };
 
+/** One item inside a folded activity run: a thinking segment or a quiet-line
+    tool call, keeping its position in the turn's block list. */
+export type ActivityItem =
+  | { kind: 'thinking'; thinking: string; startedAt?: string; durationMs?: number; sourceIndex: number }
+  | { kind: 'tool'; tool: ToolStackItem['tool']; sourceIndex: number };
+
 export type AssistantRenderBlock =
   | { kind: 'thinking'; thinking: string; startedAt?: string; durationMs?: number; sourceIndex: number }
   | { kind: 'text'; text: string; sourceIndex: number }
   | { kind: 'tool'; tool: ToolStackItem['tool']; sourceIndex: number }
-  | { kind: 'tool-stack'; tools: ToolStackItem[] };
+  | { kind: 'activity-run'; items: ActivityItem[] };
 
 export function rendersToolCard(block: Extract<TurnBlock, { kind: 'tool' }>): boolean {
   return !(block.tool.status === 'ok' && block.tool.media);
 }
 
-// Grouping rule (§04): a tool group is a HOMOGENEOUS batch — consecutive
-// calls of ONE groupable kind. Query/execution kinds (read / grep / glob /
-// fetch / bash) merge; consequential kinds never do. Edits and writes must
-// stay individually visible (the diff stat is the most valuable information
-// in the stream), todos and goals narrate progress, a sub-agent delegation
-// keeps its own identity card, question and swarm are cards, and
-// unrecognized kinds stay standalone out of caution.
-const GROUPABLE_KINDS = new Set(['read', 'grep', 'search', 'glob', 'ls', 'web_fetch', 'bash']);
+// Folding rule: a run of CONSECUTIVE quiet activity (thinking segments +
+// quiet-line tool calls) folds into a single disclosure row with a smart
+// summary sentence (see lib/activitySummary.ts). Runs need not be homogeneous
+// — kinds mix freely inside one run. Text never folds (it breaks the run, as
+// does any block that keeps its own richer rendering): result/interaction
+// tools stay standalone — todos and goals narrate progress, a sub-agent
+// delegation keeps its own identity card, question and swarm are cards,
+// successful media tools render inline media, and unrecognized kinds stay
+// standalone out of caution. Edits and writes DO fold (their count surfaces
+// in the summary sentence).
+const FOLDABLE_KINDS = new Set([
+  'read',
+  'grep',
+  'search',
+  'glob',
+  'ls',
+  'web_fetch',
+  'bash',
+  'edit',
+  'multi_edit',
+  'write',
+]);
 
-/** The normalized group kind for a tool, or null when the call always
-    renders standalone (non-groupable kind, or a media tool without a card). */
-function toolGroupKind(tool: ToolStackItem['tool']): string | null {
-  if (tool.status === 'ok' && tool.media) return null;
-  const kind = normalizeToolName(tool.name);
-  return GROUPABLE_KINDS.has(kind) ? kind : null;
+/** True when the tool block joins an activity run; false when it renders
+    standalone and breaks the run on either side (media without a card, or a
+    non-foldable kind). */
+function foldsIntoActivityRun(block: Extract<TurnBlock, { kind: 'tool' }>): boolean {
+  if (!rendersToolCard(block)) return false;
+  return FOLDABLE_KINDS.has(normalizeToolName(block.tool.name));
 }
 
 export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   const blocks = turnBlocks(turn);
   const rendered: AssistantRenderBlock[] = [];
-  let toolRun: ToolStackItem[] = [];
-  let runKind: string | null = null;
+  let run: ActivityItem[] = [];
 
-  const flushToolRun = () => {
-    if (toolRun.length === 1) {
-      const [item] = toolRun;
-      if (item) rendered.push({ kind: 'tool', tool: item.tool, sourceIndex: item.sourceIndex });
-    } else if (toolRun.length > 1) {
-      rendered.push({ kind: 'tool-stack', tools: toolRun });
+  // A run of one item carries no summary value over the plain quiet line —
+  // emit it as the standalone thinking / tool block it always was.
+  const flushRun = () => {
+    const [only] = run;
+    if (run.length === 1 && only) {
+      rendered.push(only);
+    } else if (run.length > 1) {
+      rendered.push({ kind: 'activity-run', items: run });
     }
-    toolRun = [];
-    runKind = null;
+    run = [];
   };
 
   blocks.forEach((block, sourceIndex) => {
-    if (block.kind === 'tool') {
-      const kind = rendersToolCard(block) ? toolGroupKind(block.tool) : null;
-      // Standalone: a media tool (no card) or a non-groupable kind — it
-      // breaks any homogeneous run on either side of it.
-      if (kind === null) {
-        flushToolRun();
-        rendered.push({ kind: 'tool', tool: block.tool, sourceIndex });
-        return;
-      }
-      // A different groupable kind breaks the run: groups stay homogeneous.
-      if (runKind !== null && kind !== runKind) flushToolRun();
-      runKind = kind;
-      toolRun.push({ tool: block.tool, sourceIndex });
-      return;
-    }
-
-    flushToolRun();
     if (block.kind === 'thinking') {
-      rendered.push({
+      run.push({
         kind: 'thinking',
         thinking: block.thinking,
         startedAt: block.startedAt,
         durationMs: block.durationMs,
         sourceIndex,
       });
-    } else if (block.kind === 'text') {
+      return;
+    }
+    if (block.kind === 'tool' && foldsIntoActivityRun(block)) {
+      run.push({ kind: 'tool', tool: block.tool, sourceIndex });
+      return;
+    }
+
+    flushRun();
+    if (block.kind === 'text') {
       rendered.push({ kind: 'text', text: block.text, sourceIndex });
+    } else if (block.kind === 'tool') {
+      rendered.push({ kind: 'tool', tool: block.tool, sourceIndex });
     }
   });
 
-  flushToolRun();
+  flushRun();
   return rendered;
 }
 
@@ -140,8 +153,8 @@ export function toolStackKey(item: ToolStackItem): string {
 }
 
 export function renderBlockKey(block: AssistantRenderBlock, index: number): string {
-  if (block.kind === 'tool-stack') {
-    return `tool-stack-${block.tools[0]?.sourceIndex ?? index}`;
+  if (block.kind === 'activity-run') {
+    return `activity-run-${block.items[0]?.sourceIndex ?? index}`;
   }
   if (block.kind === 'tool') return toolStackKey({ tool: block.tool, sourceIndex: block.sourceIndex });
   return `${block.kind}-${block.sourceIndex}`;

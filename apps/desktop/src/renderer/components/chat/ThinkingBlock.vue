@@ -74,7 +74,7 @@ const elapsedLabel = computed(() => {
   return '';
 });
 
-// Same disclosure pattern as ToolGroup: after toggling, pin the head back into
+// Same disclosure pattern as ActivityRun: after toggling, pin the head back into
 // the viewport so collapsing a long body doesn't leave the user stranded.
 const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
 const headEl = ref<HTMLElement | null>(null);
@@ -148,7 +148,7 @@ function onHeadClick(): void {
 }
 
 /* Elapsed seconds: metadata weight, stays faint even on head hover (same
-   vocabulary as ToolGroup's tg-meta). */
+   vocabulary as the activity fold row's meta). */
 .think-time {
   color: var(--color-text-faint);
   font-weight: 400;
@@ -184,7 +184,7 @@ function onHeadClick(): void {
   transform: rotate(90deg);
 }
 
-/* Same grid-rows collapse as ToolGroup (min-height: 0 lets the track shrink
+/* Same grid-rows collapse as ActivityRun (min-height: 0 lets the track shrink
    below the content's automatic minimum). */
 .think-body {
   display: grid;

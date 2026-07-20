@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatTurn, ToolCall, TurnBlock } from '../src/types';
+import type { ChatTurn, ToolCall, TurnBlock } from '../../src/renderer/types';
 import {
   assistantRenderBlocks,
   formatDuration,
@@ -9,7 +9,7 @@ import {
   turnBlocks,
   turnFinalText,
   turnToMarkdown,
-} from '../src/components/chatTurnRendering';
+} from '../../src/renderer/components/chatTurnRendering';
 
 function tool(id: string, over: Partial<ToolCall> = {}): ToolCall {
   return { id, name: 'read', arg: `· ${id}.ts`, status: 'ok', ...over };

@@ -744,6 +744,23 @@ export function messagesToTurns(
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
       const cronKind = cronOriginKind(msg);
+      // Hidden injections (todo-list reminders, background-task status and
+      // completion notifications) are stream noise, NOT turn boundaries: they
+      // land mid-turn between assistant messages, so flushing on them would
+      // fragment one agent turn into several chat turns (visible as repeated
+      // folded rows with nothing in between). Only these origin kinds are
+      // noise — every other hidden user message (hook results, retries,
+      // system triggers, …) keeps its boundary. Cron injections become their
+      // own turn below.
+      const userOriginKind = (
+        msg.metadata?.['origin'] as { kind?: string } | undefined
+      )?.kind;
+      if (
+        cronKind === undefined &&
+        (userOriginKind === 'injection' || userOriginKind === 'task_notification')
+      ) {
+        continue;
+      }
       // A cron injection always renders as its own standalone turn: agent-core
       // buffers steer input while a turn is in flight and only injects it at the
       // turn boundary, so the cron message does not land between a tool use and
