@@ -245,7 +245,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       trace_id: traceId,
     };
     if (source?.type === 'turn') {
-      properties['turn_id'] = source.turnId;
       if (source.step !== undefined) properties['step_no'] = source.step;
     }
     const statusCode = apiStatusCode(error);

@@ -53,6 +53,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -414,6 +415,25 @@ describe('AgentLifecycleService', () => {
     expect(second.id).toBe('agent-3');
   });
 
+  it('seeds each agent scope with a telemetry view bound to its own agent id', async () => {
+    const records: TelemetryRecord[] = [];
+    ix.stub(ITelemetryService, recordingTelemetry(records));
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const sub = await svc.create({});
+
+    main.accessor.get(ITelemetryService).track2('yolo_toggle', { enabled: true });
+    sub.accessor.get(ITelemetryService).track2('yolo_toggle', { enabled: false });
+
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: 'main', enabled: true },
+    });
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: sub.id, enabled: false },
+    });
+  });
 
   it('create assigns sequential ids when unspecified', async () => {
     const svc = ix.get(IAgentLifecycleService);

@@ -98,7 +98,7 @@ function buildHost(key: string): {
   host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
   host.stub(
     IAgentTelemetryContextService,
-    new AgentTelemetryContextService(makeAgentScopeContext({ agentId: 'main', agentScope: '' })),
+    new AgentTelemetryContextService(),
   );
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelResolver, modelResolver);

@@ -560,9 +560,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
                 type: 'operation',
                 turnId: active.originTurnId,
                 requestKind: 'full_compaction',
-                // Per-attempt count of messages dropped by overflow/empty
-                // shrinks so far; recorded on the llm.request wire op so a
-                // replay can see how much history each retry round blinded.
                 logFields: { droppedCount },
               },
             },

@@ -377,14 +377,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.telemetryContext.set({ turn_id: turn.id });
     const telemetryContext = this.telemetryContext.get();
     const turnTelemetry = this.telemetry.withContext(telemetryContext);
-    const { agent_id, mode, provider_type, protocol } = telemetryContext;
+    const { mode, provider_type, protocol } = telemetryContext;
     let thinkingEffort: string | undefined;
     let result: TurnResult | undefined;
     try {
       thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id)?.thinkingEffort;
       const started: TurnStartedTelemetryEvent = {
         turn_id: turn.id,
-        agent_id,
         mode,
         provider_type,
         protocol,
@@ -420,7 +419,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         if (result.type !== 'completed') {
           const interrupted: TurnInterruptedEvent = {
             turn_id: turn.id,
-            agent_id,
             at_step: result.steps,
             mode,
             interrupt_reason: interruptReasonFor(result),
@@ -434,7 +432,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       const ended: TurnEndedTelemetryEvent = {
         turn_id: turn.id,
-        agent_id,
         reason: result?.type ?? 'failed',
         duration_ms: Date.now() - startedAt,
         mode,

@@ -165,11 +165,11 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     this.trackPlanTelemetry('plan_resolved', { outcome: 'rejected' });
   }
 
-  private trackPlanTelemetry(event: 'plan_submitted', properties: Omit<PlanSubmittedEvent, 'agent_id'>): void;
-  private trackPlanTelemetry(event: 'plan_resolved', properties: Omit<PlanResolvedEvent, 'agent_id'>): void;
+  private trackPlanTelemetry(event: 'plan_submitted', properties: PlanSubmittedEvent): void;
+  private trackPlanTelemetry(event: 'plan_resolved', properties: PlanResolvedEvent): void;
   private trackPlanTelemetry(
     event: 'plan_submitted' | 'plan_resolved',
-    properties: Omit<PlanSubmittedEvent, 'agent_id'> | Omit<PlanResolvedEvent, 'agent_id'>,
+    properties: PlanSubmittedEvent | PlanResolvedEvent,
   ): void {
     if (event === 'plan_submitted') {
       this.telemetry.track2('plan_submitted', properties as PlanSubmittedEvent);
