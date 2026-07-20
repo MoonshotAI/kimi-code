@@ -75,7 +75,6 @@ name: reviewer
 description: Strict code reviewer that reports severity-ranked findings
 whenToUse: Code reviews and PR checks
 override: false
-promptMode: replace
 tools:
   - Read
   - Grep
@@ -90,15 +89,16 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `name` | yes | Unique identifier in kebab-case. Files without a valid `name` are skipped with a warning |
+| `name` | no | Unique identifier in kebab-case. Defaults to the file name without its extension (`review.md` → `review`); a file whose resolved name is missing or not kebab-case is skipped with a warning |
 | `description` | yes | What the agent does. Shown to the main Agent when it picks a sub-agent, so write it to guide delegation decisions |
 | `whenToUse` | no | Extra hint describing when the agent should be used |
 | `override` | no | Whether this file may replace a same-name built-in Agent. Defaults to `false`; `--agent-file` is already explicit and does not require this field |
-| `promptMode` | no | `replace` (default): the body is the agent's entire system prompt. `append`: the body is added to the default system prompt, keeping workspace instructions and Skill injections in effect |
 | `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Accepts a YAML list or a comma-separated string (`tools: Read, Grep`). Omit to allow all tools; a lone `*` also allows all tools; an empty list (`tools: []`) disables all tools |
 | `disallowedTools` | no | Denylist with the same syntax and matching rules, applied after `tools` |
 
-Unknown fields are ignored, so newer files stay readable by older versions. Fields from other agent tools (such as Claude Code's `model` or OpenCode's `mode`) are ignored the same way, and the comma-separated `tools` form keeps Claude Code-style agent files loadable — a minimal file with `name`, `description`, and a body works across tools.
+The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values — unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. The available variables are listed in the SYSTEM.md section below.
+
+Unknown fields are ignored, so newer files stay readable by older versions. Fields from other agent tools (such as Claude Code's `model` or OpenCode's `mode`) are ignored the same way, the comma-separated `tools` form keeps Claude Code-style agent files loadable, and a missing `name` falls back to the file name so OpenCode-style files load too — a minimal file with `description` and a body works across tools.
 
 A file with invalid content discovered in a directory is skipped with a warning and does not affect other files. A file passed explicitly via `--agent-file` must be valid — otherwise the CLI reports the error and exits.
 
@@ -123,7 +123,7 @@ KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on th
 
 The bound agent is the session's identity: it is fixed at the session's first bind and cannot be switched later. Re-selecting the already-bound agent (for example resuming with the same `--agent`) is a no-op; selecting a different one fails with an "already bound" error.
 
-For main-agent customization, prefer `promptMode: append` so the environment, workspace-instruction, and Skill injections stay in effect; `promptMode: replace` fits self-contained sub-agents that own their entire prompt.
+For main-agent customization, reference `${base_prompt}` in the body so the environment, workspace-instruction, and Skill injections from the default prompt stay in effect; a body without `${base_prompt}` owns the entire prompt, which fits self-contained sub-agents.
 
 ### Overriding the main agent's system prompt with SYSTEM.md
 
@@ -131,7 +131,7 @@ To override the main agent's system prompt permanently — without passing `--ag
 
 SYSTEM.md is a plain Markdown body — no frontmatter is required or read. A missing or empty file has no effect, and a read failure falls back to the built-in prompt with a warning. Explicit intent still outranks it: a project-scoped same-name agent file declaring `override: true` and any file passed via `--agent-file` take precedence, and selecting another agent with `--agent` bypasses it entirely. Within the user scope itself, SYSTEM.md wins over a same-name file discovered in the `agents/` directories.
 
-Unlike a regular agent file whose body is used as-is, SYSTEM.md is rendered as a template each time the prompt is built — `${var}` placeholders in the body are substituted:
+Like the body of a regular agent file, SYSTEM.md is rendered as a template each time the prompt is built — `${var}` placeholders in the body are substituted from the live context:
 
 | Variable | Content |
 | --- | --- |
@@ -142,8 +142,10 @@ Unlike a regular agent file whose body is used as-is, SYSTEM.md is rendered as a
 | `${os}` | Operating system kind |
 | `${shell}` | Shell name and path, for example `bash (\`/bin/bash\`)` |
 | `${now}` | Current time in ISO format |
+| `${additional_dirs_info}` | Additional directories added to the workspace; empty when there are none |
+| `${base_prompt}` | The default system prompt. Inside `SYSTEM.md` itself this is the built-in default; inside an agent file it is the effective default — the built-in default, or your `SYSTEM.md` override when present |
 
-Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
+Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. Three pre-composed blocks — `${windows_notes}`, `${additional_dirs_section}`, and `${skills_section}` — render the matching built-in prompt section, or an empty string when it does not apply. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
 
 ```markdown
 You are Kimi, running at ${cwd} on ${os}.

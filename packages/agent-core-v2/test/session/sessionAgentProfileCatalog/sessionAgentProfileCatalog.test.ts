@@ -248,12 +248,12 @@ describe('SessionAgentProfileCatalogService', () => {
       const bad = await writeAgent(
         fixture.workDir,
         'bad.md',
-        '---\ndescription: no name\n---\n\nbody\n',
+        '---\nname: bad\n---\n\nbody\n',
       );
       const { host, session } = makeSession(fixture, { explicitFiles: [bad] });
       const catalog = session.accessor.get(ISessionAgentProfileCatalog);
 
-      await expect(catalog.load()).rejects.toThrow(/name/i);
+      await expect(catalog.load()).rejects.toThrow(/description/i);
       host.dispose();
     });
   });
@@ -275,11 +275,11 @@ describe('SessionAgentProfileCatalogService', () => {
       const bad = await writeAgent(
         fixture.workDir,
         'bad.md',
-        '---\ndescription: no name\n---\n\nbody\n',
+        '---\nname: bad\n---\n\nbody\n',
       );
       const { host, session } = makeSession(fixture, { explicitFiles: [bad] });
       const catalog = session.accessor.get(ISessionAgentProfileCatalog);
-      await expect(catalog.load()).rejects.toThrow(/name/i);
+      await expect(catalog.load()).rejects.toThrow(/description/i);
 
       await writeFile(bad, agentMd('fixed', 'fixed agent'));
       await catalog.reload();
@@ -329,7 +329,7 @@ describe('SessionAgentProfileCatalogService', () => {
       await writeAgent(
         join(fixture.workDir, '.kimi-code', 'agents'),
         'bad.md',
-        '---\ndescription: missing name\n---\n\nbody\n',
+        '---\nname: bad\n---\n\nbody\n',
       );
       await writeAgent(join(fixture.workDir, '.kimi-code', 'agents'), 'good.md', agentMd('good', 'valid'));
       const { host, session } = makeSession(fixture);

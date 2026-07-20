@@ -3,8 +3,9 @@
  * producer.
  *
  * Discovers configured agent profiles through `config`, `workspace`,
- * `bootstrap`, and `hostFs`, and reports skipped files through `log`. Bound at
- * Session scope.
+ * `bootstrap`, and `hostFs`, and reports skipped files through `log`.
+ * `${base_prompt}` is backed by the user source's effective default profile.
+ * Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -25,6 +26,7 @@ import {
   EXTRA_AGENT_DIRS_SECTION,
   type ExtraAgentDirsConfig,
 } from '#/app/agentFileCatalog/configSection';
+import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -51,6 +53,7 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
+    @IUserFileAgentSource private readonly user: IUserFileAgentSource,
   ) {
     super();
     this._register(
@@ -78,6 +81,7 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
         ),
         (message) => this.log.warn(message),
       ),
+      (context) => this.user.getDefaultProfile().systemPrompt(context),
     );
   }
 }

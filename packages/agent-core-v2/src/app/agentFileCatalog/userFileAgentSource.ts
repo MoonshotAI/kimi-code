@@ -5,14 +5,20 @@
  * reports skipped files through `log`, and appends the `<home>/SYSTEM.md`
  * prompt-override profile (synthesized against the builtin default from the
  * App profile catalog) after the scanned profiles so it wins same-name
- * collisions within this contribution. Bound at App scope.
+ * collisions within this contribution. Also exposes the effective default
+ * profile — the `SYSTEM.md` override when present, else the builtin default —
+ * so every agent-file source can back `${base_prompt}` with it. Bound at App
+ * scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import {
+  IAgentProfileCatalogService,
+  type AgentProfile,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
@@ -28,6 +34,13 @@ import { loadSystemMdProfile } from './systemFile';
 
 export interface IUserFileAgentSource extends IAgentProfileSource {
   readonly _serviceBrand: undefined;
+  /**
+   * The default profile ignoring file-based agent definitions: the
+   * `SYSTEM.md` override when present, else the builtin default. Backs
+   * `${base_prompt}` for every agent-file source and is refreshed on each
+   * `load()` pass.
+   */
+  getDefaultProfile(): AgentProfile;
 }
 
 export const IUserFileAgentSource: ServiceIdentifier<IUserFileAgentSource> =
@@ -39,12 +52,20 @@ export class UserFileAgentSource implements IUserFileAgentSource {
   readonly id = 'user';
   readonly priority = AGENT_PROFILE_SOURCE_PRIORITY.user;
 
+  private defaultProfile: AgentProfile;
+
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
     @IAgentProfileCatalogService private readonly builtin: IAgentProfileCatalogService,
-  ) {}
+  ) {
+    this.defaultProfile = builtin.getDefault();
+  }
+
+  getDefaultProfile(): AgentProfile {
+    return this.defaultProfile;
+  }
 
   async load(): Promise<AgentProfileContribution> {
     const roots = await userAgentRoots(
@@ -55,14 +76,16 @@ export class UserFileAgentSource implements IUserFileAgentSource {
         this.log.warn(message, error);
       },
     );
-    const contribution = profilesFromDiscovery(
-      await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
-    );
     const systemMd = await loadSystemMdProfile(
       this.fs,
       this.bootstrap.homeDir,
       this.builtin.getDefault(),
       (message) => this.log.warn(message),
+    );
+    this.defaultProfile = systemMd ?? this.builtin.getDefault();
+    const contribution = profilesFromDiscovery(
+      await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
+      (context) => this.defaultProfile.systemPrompt(context),
     );
     if (systemMd === undefined) return contribution;
     // Append last: within one contribution a later same-name profile wins, so

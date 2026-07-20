@@ -3,7 +3,8 @@
  * producer.
  *
  * Discovers project agent profiles through `workspace` and `hostFs`, and
- * reports skipped files through `log`. Bound at Session scope.
+ * reports skipped files through `log`. `${base_prompt}` is backed by the user
+ * source's effective default profile. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -18,6 +19,7 @@ import {
   type IAgentProfileSource,
 } from '#/app/agentFileCatalog/agentProfileSource';
 import { projectAgentRoots } from '#/app/agentFileCatalog/agentRoots';
+import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -38,6 +40,7 @@ export class ProjectFileAgentSource implements IProjectFileAgentSource {
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
+    @IUserFileAgentSource private readonly user: IUserFileAgentSource,
   ) {}
 
   async load(): Promise<AgentProfileContribution> {
@@ -50,6 +53,7 @@ export class ProjectFileAgentSource implements IProjectFileAgentSource {
     );
     return profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
+      (context) => this.user.getDefaultProfile().systemPrompt(context),
     );
   }
 }

@@ -13,7 +13,10 @@
  */
 
 import type { Event } from '#/_base/event';
-import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type {
+  AgentProfile,
+  AgentProfileContext,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
 
 import { agentProfileFromFile } from './agentProfileFromFile';
 import type { AgentFileDiscoveryResult, SkippedAgentFile } from './types';
@@ -48,11 +51,18 @@ export interface IAgentProfileSource {
   load(): Promise<AgentProfileContribution>;
 }
 
+/**
+ * Map discovered agent files to profiles. `basePrompt` backs each profile's
+ * `${base_prompt}` placeholder and is resolved lazily at render time, so it
+ * always reflects the effective default profile (builtin, or the `SYSTEM.md`
+ * override) rather than any file-based definition.
+ */
 export function profilesFromDiscovery(
   result: AgentFileDiscoveryResult,
+  basePrompt: (context: AgentProfileContext) => string,
 ): AgentProfileContribution {
   return {
-    profiles: result.agents.map(agentProfileFromFile),
+    profiles: result.agents.map((definition) => agentProfileFromFile(definition, basePrompt)),
     skipped: result.skipped,
     scannedRoots: result.scannedRoots,
   };

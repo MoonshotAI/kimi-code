@@ -14,14 +14,11 @@ export interface AgentFileRoot {
   readonly source: AgentFileSource;
 }
 
-export type AgentPromptMode = 'replace' | 'append';
-
 export interface AgentFileDefinition {
   readonly name: string;
   readonly description: string;
   readonly whenToUse?: string;
   readonly override: boolean;
-  readonly promptMode: AgentPromptMode;
   readonly tools?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly prompt: string;

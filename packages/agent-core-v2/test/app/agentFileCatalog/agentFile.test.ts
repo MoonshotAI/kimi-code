@@ -1,7 +1,8 @@
 /**
  * Scenario: agent-file parsing primitives — frontmatter validation, defaults,
- * and the AgentFileDefinition → AgentProfile factory (replace/append modes,
- * tool pass-through, explicit override intent). Pure-function level, no IO.
+ * and the AgentFileDefinition → AgentProfile factory (template substitution,
+ * `${base_prompt}`, tool pass-through, explicit override intent).
+ * Pure-function level, no IO.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/app/agentFileCatalog/agentFile.test.ts`.
  */
@@ -17,7 +18,6 @@ name: code-reviewer
 description: 严格的代码审查 agent
 whenToUse: 代码评审、PR 检查
 override: true
-promptMode: append
 tools:
   - Read
   - Grep
@@ -42,17 +42,15 @@ describe('parseAgentFileText', () => {
     expect(def.description).toBe('严格的代码审查 agent');
     expect(def.whenToUse).toBe('代码评审、PR 检查');
     expect(def.override).toBe(true);
-    expect(def.promptMode).toBe('append');
     expect(def.tools).toEqual(['Read', 'Grep', 'mcp__github__*']);
     expect(def.disallowedTools).toEqual(['Bash']);
     expect(def.prompt).toBe('你是严格的代码审查者。');
     expect(def.source).toBe('project');
   });
 
-  it('defaults promptMode to replace and leaves tool lists undefined', () => {
+  it('leaves optional fields undefined when omitted', () => {
     const def = parse('---\nname: solo\ndescription: d\n---\n\nbody\n');
 
-    expect(def.promptMode).toBe('replace');
     expect(def.override).toBe(false);
     expect(def.tools).toBeUndefined();
     expect(def.disallowedTools).toBeUndefined();
@@ -72,8 +70,30 @@ describe('parseAgentFileText', () => {
     expect(() => parse('---\nfoo: [unclosed\n---\n\nbody\n')).toThrow(AgentFileParseError);
   });
 
-  it('rejects a missing name', () => {
-    expect(() => parse('---\ndescription: d\n---\n\nbody\n')).toThrow(/"name"/);
+  it('derives the name from the file name when omitted', () => {
+    const def = parse('---\ndescription: d\n---\n\nbody\n');
+
+    expect(def.name).toBe('reviewer');
+  });
+
+  it('rejects when the name is neither provided nor derivable', () => {
+    expect(() =>
+      parseAgentFileText({
+        path: '/tmp/agents/.md',
+        source: 'project',
+        text: '---\ndescription: d\n---\n\nbody\n',
+      }),
+    ).toThrow(/"name"/);
+  });
+
+  it('rejects a derived name that is not kebab-case', () => {
+    expect(() =>
+      parseAgentFileText({
+        path: '/tmp/agents/My Agent.md',
+        source: 'project',
+        text: '---\ndescription: d\n---\n\nbody\n',
+      }),
+    ).toThrow(/kebab-case/);
   });
 
   it('rejects a missing description', () => {
@@ -89,22 +109,11 @@ describe('parseAgentFileText', () => {
     );
   });
 
-  it('rejects an invalid promptMode', () => {
-    expect(() =>
-      parse('---\nname: solo\ndescription: d\npromptMode: prepend\n---\n\nbody\n'),
-    ).toThrow(/"promptMode"/);
-  });
-
-  it('rejects a non-string promptMode instead of defaulting to replace', () => {
-    expect(() =>
-      parse('---\nname: solo\ndescription: d\npromptMode: 42\n---\n\nbody\n'),
-    ).toThrow(/"promptMode"/);
-  });
-
   it('ignores a foreign mode field (e.g. OpenCode "mode: subagent")', () => {
     const def = parse('---\nname: solo\ndescription: d\nmode: subagent\n---\n\nbody\n');
 
-    expect(def.promptMode).toBe('replace');
+    expect(def.name).toBe('solo');
+    expect(def.prompt).toBe('body');
   });
 
   it('rejects a non-boolean override field', () => {
@@ -153,14 +162,14 @@ describe('agentProfileFromFile', () => {
     description: 'd',
     whenToUse: 'reviews',
     override: false,
-    promptMode: 'replace',
     prompt: 'PROMPT_BODY',
     path: '/tmp/agents/reviewer.md',
     source: 'user',
   };
+  const basePrompt = () => 'BASE_PROMPT';
 
-  it('replace mode returns the body verbatim and injects no context', () => {
-    const profile = agentProfileFromFile(base);
+  it('returns a plain body verbatim and injects no context', () => {
+    const profile = agentProfileFromFile(base, basePrompt);
     const prompt = profile.systemPrompt({ agentsMd: 'AGENTS_MD_CONTENT', skills: 'SKILLS_LISTING' });
 
     expect(prompt).toBe('PROMPT_BODY');
@@ -169,48 +178,59 @@ describe('agentProfileFromFile', () => {
     expect(profile.override).toBe(false);
   });
 
-  it('append mode injects the body and keeps context injection', () => {
-    const profile = agentProfileFromFile({ ...base, promptMode: 'append' });
-    const prompt = profile.systemPrompt({ agentsMd: 'AGENTS_MD_CONTENT', skills: 'SKILLS_LISTING' });
-
-    expect(prompt).toContain('PROMPT_BODY');
-    expect(prompt).toContain('AGENTS_MD_CONTENT');
-    expect(prompt).toContain('SKILLS_LISTING');
-  });
-
-  it('append mode with an allowlist without Skill skips the skills listing', () => {
-    const profile = agentProfileFromFile({ ...base, promptMode: 'append', tools: ['Read'] });
-    const prompt = profile.systemPrompt({ skills: 'SKILLS_LISTING' });
-
-    expect(prompt).toContain('PROMPT_BODY');
-    expect(prompt).not.toContain('SKILLS_LISTING');
-  });
-
-  it('append mode with Skill in disallowedTools skips the skills listing', () => {
-    const profile = agentProfileFromFile({
-      ...base,
-      promptMode: 'append',
-      disallowedTools: ['Skill'],
+  it('substitutes context variables in the body', () => {
+    const profile = agentProfileFromFile(
+      { ...base, prompt: 'cwd=${cwd} agents=${agents_md} skills=${skills}' },
+      basePrompt,
+    );
+    const prompt = profile.systemPrompt({
+      cwd: '/work',
+      agentsMd: 'AGENTS_MD_CONTENT',
+      skills: 'SKILLS_LISTING',
     });
-    const prompt = profile.systemPrompt({ skills: 'SKILLS_LISTING' });
 
-    expect(prompt).toContain('PROMPT_BODY');
-    expect(prompt).not.toContain('SKILLS_LISTING');
+    expect(prompt).toBe('cwd=/work agents=AGENTS_MD_CONTENT skills=SKILLS_LISTING');
+  });
+
+  it('empties ${skills} when the file allowlist drops the Skill tool', () => {
+    const profile = agentProfileFromFile(
+      { ...base, prompt: 'skills=${skills}', tools: ['Read'] },
+      basePrompt,
+    );
+
+    expect(profile.systemPrompt({ skills: 'SKILLS_LISTING' })).toBe('skills=');
+  });
+
+  it('empties ${skills} when Skill is in disallowedTools', () => {
+    const profile = agentProfileFromFile(
+      { ...base, prompt: 'skills=${skills}', disallowedTools: ['Skill'] },
+      basePrompt,
+    );
+
+    expect(profile.systemPrompt({ skills: 'SKILLS_LISTING' })).toBe('skills=');
+  });
+
+  it('embeds the effective default prompt via ${base_prompt}', () => {
+    const profile = agentProfileFromFile(
+      { ...base, prompt: 'extra instructions\n\n${base_prompt}' },
+      basePrompt,
+    );
+
+    expect(profile.systemPrompt({})).toBe('extra instructions\n\nBASE_PROMPT');
   });
 
   it('passes tools and disallowedTools through', () => {
-    const profile = agentProfileFromFile({
-      ...base,
-      tools: ['Read'],
-      disallowedTools: ['Bash'],
-    });
+    const profile = agentProfileFromFile(
+      { ...base, tools: ['Read'], disallowedTools: ['Bash'] },
+      basePrompt,
+    );
 
     expect(profile.tools).toEqual(['Read']);
     expect(profile.disallowedTools).toEqual(['Bash']);
   });
 
   it('treats an explicit file as an override intent', () => {
-    const profile = agentProfileFromFile({ ...base, source: 'explicit' });
+    const profile = agentProfileFromFile({ ...base, source: 'explicit' }, basePrompt);
 
     expect(profile.override).toBe(true);
   });

@@ -3,7 +3,8 @@
  * producer.
  *
  * Loads runtime-selected agent files through `hostFs`, resolving paths through
- * `workspace` and `bootstrap`. Bound at Session scope.
+ * `workspace` and `bootstrap`. `${base_prompt}` is backed by the user source's
+ * effective default profile. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -19,6 +20,7 @@ import {
   type IAgentProfileSource,
 } from '#/app/agentFileCatalog/agentProfileSource';
 import { resolveAgentPath } from '#/app/agentFileCatalog/paths';
+import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -42,6 +44,7 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
+    @IUserFileAgentSource private readonly user: IUserFileAgentSource,
   ) {}
 
   async load(): Promise<AgentProfileContribution> {
@@ -51,7 +54,9 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
       const filePath = resolveAgentPath(file, this.workspace.workDir, this.bootstrap.osHomeDir);
       const text = await this.fs.readText(filePath);
       profiles.push(
-        agentProfileFromFile(parseAgentFileText({ path: filePath, source: 'explicit', text })),
+        agentProfileFromFile(parseAgentFileText({ path: filePath, source: 'explicit', text }), (context) =>
+          this.user.getDefaultProfile().systemPrompt(context),
+        ),
       );
     }
     return { profiles };

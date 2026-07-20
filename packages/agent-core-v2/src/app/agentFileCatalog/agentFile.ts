@@ -10,7 +10,7 @@
 
 import { FrontmatterError, parseFrontmatter } from '#/app/skillCatalog/parser';
 
-import type { AgentFileDefinition, AgentFileSource, AgentPromptMode } from './types';
+import type { AgentFileDefinition, AgentFileSource } from './types';
 
 export class AgentFileParseError extends Error {
   readonly reason?: unknown;
@@ -54,7 +54,18 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     );
   }
 
-  const name = requiredNonEmptyString(frontmatter['name'], 'name', options.path);
+  const nameField = frontmatter['name'];
+  if (nameField !== undefined && nameField !== null && typeof nameField !== 'string') {
+    throw new AgentFileParseError(
+      `Frontmatter field "name" in ${options.path} must be a non-empty string`,
+    );
+  }
+  // OpenCode compatibility: a missing `name` falls back to the file name, so
+  // agent files written for tools that derive the name from the path load as-is.
+  const name = nonEmptyString(nameField) ?? deriveNameFromPath(options.path);
+  if (name === undefined) {
+    throw new AgentFileParseError(`Missing required frontmatter field "name" in ${options.path}`);
+  }
   if (!AGENT_NAME_PATTERN.test(name)) {
     throw new AgentFileParseError(
       `Invalid agent name "${name}" in ${options.path}: expected kebab-case (e.g. "code-reviewer")`,
@@ -68,7 +79,6 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
   );
 
   const override = parseBoolean(frontmatter['override'], 'override', options.path);
-  const promptMode = parsePromptMode(frontmatter['promptMode'], options.path);
   const rawTools = parseStringList(frontmatter['tools'], 'tools', options.path);
   // Claude Code compatibility: a lone `*` means "all tools", like omitting the field.
   const tools = rawTools?.length === 1 && rawTools[0] === '*' ? undefined : rawTools;
@@ -88,7 +98,6 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     description,
     whenToUse: nonEmptyString(frontmatter['whenToUse']),
     override,
-    promptMode,
     tools,
     disallowedTools,
     prompt,
@@ -102,15 +111,6 @@ function parseBoolean(value: unknown, field: string, filePath: string): boolean 
   if (typeof value === 'boolean') return value;
   throw new AgentFileParseError(
     `Frontmatter field "${field}" in ${filePath} must be a boolean`,
-  );
-}
-
-function parsePromptMode(value: unknown, filePath: string): AgentPromptMode {
-  if (value === undefined || value === null) return 'replace';
-  const mode = typeof value === 'string' ? value.trim() : undefined;
-  if (mode === 'replace' || mode === 'append') return mode;
-  throw new AgentFileParseError(
-    `Invalid "promptMode" value ${JSON.stringify(value)} in ${filePath}: expected "replace" or "append"`,
   );
 }
 
@@ -156,6 +156,12 @@ function requiredNonEmptyString(value: unknown, field: string, filePath: string)
     throw new AgentFileParseError(`Missing required frontmatter field "${field}" in ${filePath}`);
   }
   return parsed;
+}
+
+function deriveNameFromPath(filePath: string): string | undefined {
+  const base = filePath.split(/[\\/]/).pop() ?? '';
+  const name = base.replace(/\.[^.]*$/, '');
+  return name !== '' ? name : undefined;
 }
 
 function nonEmptyString(value: unknown): string | undefined {

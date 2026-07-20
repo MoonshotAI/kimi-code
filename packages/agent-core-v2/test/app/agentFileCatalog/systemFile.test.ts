@@ -2,9 +2,9 @@
  * Scenario: SYSTEM.md prompt-override profile — file tolerance (missing /
  * empty / unreadable → no profile), synthesized profile shape (default name +
  * override opt-in, description/tools inherited from the builtin default), and
- * `${var}` template substitution (known variables replaced, unknown kept
- * verbatim, `${skills}` gated on the Skill tool). Pure logic against real
- * temp dirs plus a targeted fake fs for the read-failure path.
+ * template rendering through the shared variable table (`${skills}` gating,
+ * `${base_prompt}`, `${additional_dirs_info}`). Pure logic against real temp
+ * dirs plus a targeted fake fs for the read-failure path.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/app/agentFileCatalog/systemFile.test.ts`.
  */
@@ -22,7 +22,6 @@ import {
 import {
   SYSTEM_MD_FILENAME,
   loadSystemMdProfile,
-  renderSystemMdPrompt,
 } from '#/app/agentFileCatalog/systemFile';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -125,67 +124,22 @@ describe('loadSystemMdProfile', () => {
 
     expect(profile?.systemPrompt({ skills: 'SKILLS' })).toBe('skills=');
   });
-});
 
-describe('renderSystemMdPrompt', () => {
-  it('substitutes all known variables from the context', () => {
-    const out = renderSystemMdPrompt(
-      [
-        'skills=${skills}',
-        'agents=${agents_md}',
-        'cwd=${cwd}',
-        'listing=${cwd_listing}',
-        'os=${os}',
-        'shell=${shell}',
-        'now=${now}',
-      ].join('\n'),
-      {
-        skills: 'SKILLS',
-        agentsMd: 'AGENTS',
-        cwd: '/work',
-        cwdListing: 'LISTING',
-        osKind: 'macOS',
-        shellName: 'zsh',
-        shellPath: '/bin/zsh',
-        now: 'NOW',
-      },
-      { skillActive: true },
-    );
+  it('embeds the builtin default prompt via ${base_prompt}', async () => {
+    await writeFile(join(home, SYSTEM_MD_FILENAME), 'custom header\n\n${base_prompt}');
+    const { warn } = collectWarnings();
 
-    expect(out).toBe(
-      [
-        'skills=SKILLS',
-        'agents=AGENTS',
-        'cwd=/work',
-        'listing=LISTING',
-        'os=macOS',
-        'shell=zsh (`/bin/zsh`)',
-        'now=NOW',
-      ].join('\n'),
-    );
+    const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
+
+    expect(profile?.systemPrompt({})).toBe('custom header\n\nBUILTIN PROMPT');
   });
 
-  it('keeps unknown placeholders and bare dollars verbatim', () => {
-    const out = renderSystemMdPrompt(
-      'a=${unknown} b=$cwd c=$ d=$${cwd}',
-      { cwd: '/work' },
-      { skillActive: true },
-    );
-    expect(out).toBe('a=${unknown} b=$cwd c=$ d=$/work');
-  });
+  it('substitutes ${additional_dirs_info} from the context', async () => {
+    await writeFile(join(home, SYSTEM_MD_FILENAME), 'dirs=${additional_dirs_info}');
+    const { warn } = collectWarnings();
 
-  it('renders missing context fields as empty strings', () => {
-    const out = renderSystemMdPrompt('x${cwd}y${shell}z${agents_md}', {}, { skillActive: true });
-    expect(out).toBe('xyz');
-  });
+    const profile = await loadSystemMdProfile(hostFs, home, BUILTIN_DEFAULT, warn);
 
-  it('renders ${skills} as empty when skill rendering is off', () => {
-    const out = renderSystemMdPrompt('s=${skills}', { skills: 'SKILLS' }, { skillActive: false });
-    expect(out).toBe('s=');
-  });
-
-  it('defaults ${now} to the current ISO timestamp when the context omits it', () => {
-    const out = renderSystemMdPrompt('${now}', {}, { skillActive: true });
-    expect(Number.isNaN(Date.parse(out))).toBe(false);
+    expect(profile?.systemPrompt({ additionalDirsInfo: '/extra' })).toBe('dirs=/extra');
   });
 });
