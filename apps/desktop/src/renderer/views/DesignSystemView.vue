@@ -822,7 +822,7 @@ onUnmounted(() => {
             <!-- ===== Menu / Dropdown ===== -->
             <h3 class="sub">Menu / Dropdown</h3>
             <p>Desktop menus use a 3.5px panel inset. Standard items use 5px × 9px padding and a 7px icon gap. Their three-layer neutral shadow stays below 4% opacity.</p>
-            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-sm</code>, flat-leaning). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 12px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size.</p>
+            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-sm</code>, flat-leaning). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 12px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size. A dropdown menu pops in from its trigger corner — fade plus a slight 0.97 scale over <code>--duration-base</code> (exit <code>--duration-fast</code>), the composer model dropdown's motion language; the transform origin and the nudge direction follow the anchoring, including the upward flip near the viewport edge.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Menu · dropdown menu</span></div>
               <div class="stage p col" style="align-items:flex-start">
@@ -1489,7 +1489,7 @@ onUnmounted(() => {
                 <tr><td>Title</td><td>flex:1 with truncation and <code>user-select:none</code>; double-click enters inline rename (compact input, not Input), whose text remains selectable</td></tr>
                 <tr><td>Time</td><td>mono xs, <code>fg-faint</code>; yields to the kebab on hover</td></tr>
                 <tr><td>Attention Badge</td><td><code>Badge</code> sm: info (needs answer) / warning (needs approval) / danger (aborted)</td></tr>
-                <tr><td>kebab</td><td><code>IconButton</code> sm, shown on hover; dropdown uses <code>Menu/MenuItem</code></td></tr>
+                <tr><td>kebab</td><td><code>IconButton</code> sm, shown on hover (and pinned visible + lit while its own menu is open); dropdown uses <code>Menu/MenuItem</code>. Right-clicking the row opens the same menu anchored to the cursor — without pinning the kebab — except over the inline rename input, where the native text-editing menu stays</td></tr>
                 <tr><td>Archive confirmation</td><td>replaces the title area, <code>Button</code> sm (danger confirm / secondary cancel)</td></tr>
               </tbody>
             </table>

@@ -372,6 +372,10 @@ function openGhMenu(ws: WorkspaceView, e: MouseEvent): void {
   ghMenuStyle.value = {
     top: `${e.clientY}px`,
     left: `${e.clientX}px`,
+    // The pop animation grows out of the trigger corner — for a context
+    // menu that's the cursor (the menu opens down-right of it).
+    transformOrigin: 'top left',
+    '--menu-pop-shift': '-2px',
   };
   ghMenuOpen.value = true;
   document.addEventListener('mousedown', onGhMenuDocClick, true);
@@ -440,14 +444,20 @@ async function toggleWsMenu(ws: WorkspaceView, e: MouseEvent): Promise<void> {
   const menuH = menu?.offsetHeight ?? 0;
   const menuW = menu?.offsetWidth ?? 0;
   let top = r.bottom + gap;
+  let flipped = false;
   if (top + menuH > window.innerHeight - margin) {
     top = Math.max(margin, r.top - menuH - gap);
+    flipped = true;
   }
   let left = r.right - menuW;
   if (left < margin) left = margin;
+  // The pop animation grows out of the trigger corner — the origin and the
+  // nudge direction follow the upward flip.
   wsMenuStyle.value = {
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
+    transformOrigin: flipped ? 'bottom right' : 'top right',
+    '--menu-pop-shift': flipped ? '2px' : '-2px',
   };
 }
 
@@ -849,49 +859,53 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Workspace right-click menu (position:fixed) -->
-    <Menu
-      v-if="ghMenuOpen"
-      ref="ghMenuRef"
-      class="gh-menu"
-      :style="ghMenuStyle"
-      @click.stop
-    >
-      <MenuItem @click="copyPathFromMenu">
-        <Icon name="copy" size="sm" />
-        {{ t('sidebar.copyPath') }}
-      </MenuItem>
-      <MenuItem class="workspace-rename-item" @click="startRenameFromMenu">
-        <Icon name="pencil" size="sm" />
-        {{ t('sidebar.rename') }}
-      </MenuItem>
-      <MenuItem danger @click="deleteFromMenu">
-        <Icon name="close" size="sm" />
-        {{ t('sidebar.removeWorkspace') }}
-      </MenuItem>
-    </Menu>
+    <Transition name="menu-pop">
+      <Menu
+        v-if="ghMenuOpen"
+        ref="ghMenuRef"
+        class="gh-menu"
+        :style="ghMenuStyle"
+        @click.stop
+      >
+        <MenuItem @click="copyPathFromMenu">
+          <Icon name="copy" size="sm" />
+          {{ t('sidebar.copyPath') }}
+        </MenuItem>
+        <MenuItem class="workspace-rename-item" @click="startRenameFromMenu">
+          <Icon name="pencil" size="sm" />
+          {{ t('sidebar.rename') }}
+        </MenuItem>
+        <MenuItem danger @click="deleteFromMenu">
+          <Icon name="close" size="sm" />
+          {{ t('sidebar.removeWorkspace') }}
+        </MenuItem>
+      </Menu>
+    </Transition>
 
     <!-- Workspace kebab menu (position:fixed, anchored to the ⋯ button so the
          scrolling session list cannot clip it) -->
-    <Menu
-      v-if="wsMenuOpenId !== null && wsMenuTarget"
-      ref="wsMenuRef"
-      class="ws-menu"
-      :style="wsMenuStyle"
-      @click.stop
-    >
-      <MenuItem @click="copyWsPath(wsMenuTarget)">
-        <Icon name="copy" size="sm" />
-        {{ t('sidebar.copyPath') }}
-      </MenuItem>
-      <MenuItem class="workspace-rename-item" @click="startRenameWs(wsMenuTarget)">
-        <Icon name="pencil" size="sm" />
-        {{ t('sidebar.rename') }}
-      </MenuItem>
-      <MenuItem danger @click="deleteWs(wsMenuTarget)">
-        <Icon name="close" size="sm" />
-        {{ t('sidebar.removeWorkspace') }}
-      </MenuItem>
-    </Menu>
+    <Transition name="menu-pop">
+      <Menu
+        v-if="wsMenuOpenId !== null && wsMenuTarget"
+        ref="wsMenuRef"
+        class="ws-menu"
+        :style="wsMenuStyle"
+        @click.stop
+      >
+        <MenuItem @click="copyWsPath(wsMenuTarget)">
+          <Icon name="copy" size="sm" />
+          {{ t('sidebar.copyPath') }}
+        </MenuItem>
+        <MenuItem class="workspace-rename-item" @click="startRenameWs(wsMenuTarget)">
+          <Icon name="pencil" size="sm" />
+          {{ t('sidebar.rename') }}
+        </MenuItem>
+        <MenuItem danger @click="deleteWs(wsMenuTarget)">
+          <Icon name="close" size="sm" />
+          {{ t('sidebar.removeWorkspace') }}
+        </MenuItem>
+      </Menu>
+    </Transition>
     <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
     <Menu
       v-if="sectionMenuOpen"
@@ -1353,6 +1367,27 @@ onBeforeUnmount(() => {
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+/* Menu enter/exit — pops out of the trigger corner (the composer model
+   dropdown's language): fade + a slight scale, exit a touch faster. The
+   origin and the nudge direction come from the positioning code. */
+.menu-pop-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.menu-pop-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  /* The leaving menu lingers for --duration-fast; keep it inert so a second
+     click can't hit items whose backing state is already torn down. */
+  pointer-events: none;
+}
+.menu-pop-enter-from,
+.menu-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 :deep(.workspace-rename-item) {
   font-size: var(--text-xs);

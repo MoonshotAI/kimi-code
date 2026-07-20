@@ -47,6 +47,10 @@ const fullTime = computed(() =>
 
 // Kebab menu
 const menuOpen = ref(false);
+/** What the open menu is anchored to: the kebab pins itself visible + lit
+    only while ITS menu is up; a right-click (cursor-anchored) menu leaves
+    the kebab out of it. */
+const menuAnchor = ref<'kebab' | 'cursor'>('kebab');
 const kebabRef = ref<InstanceType<typeof IconButton> | null>(null);
 const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 // Fixed-position style for the teleported kebab menu, anchored to the ⋯ button.
@@ -72,14 +76,20 @@ function positionMenu(): void {
   const menuH = menu?.offsetHeight ?? 0;
   const menuW = menu?.offsetWidth ?? 0;
   let top = r.bottom + gap;
+  let flipped = false;
   if (top + menuH > window.innerHeight - margin) {
     top = Math.max(margin, r.top - menuH - gap);
+    flipped = true;
   }
   let left = r.right - menuW;
   if (left < margin) left = margin;
+  // The pop animation grows out of the trigger corner — the origin and the
+  // nudge direction follow the upward flip.
   menuStyle.value = {
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
+    transformOrigin: flipped ? 'bottom right' : 'top right',
+    '--menu-pop-shift': flipped ? '2px' : '-2px',
   };
 }
 
@@ -89,13 +99,21 @@ async function toggleMenu(e: Event): Promise<void> {
     closeMenu();
     return;
   }
+  menuAnchor.value = 'kebab';
+  await openMenu();
+  positionMenu();
+}
+
+// Shared open path: mount the (teleported) menu and arm dismissal; the
+// caller then anchors it — the ⋯ button for toggleMenu, the cursor for
+// right-click.
+async function openMenu(): Promise<void> {
   menuOpen.value = true;
   // Defer so the current click doesn't immediately close the menu.
   setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
   window.addEventListener('resize', closeMenu);
   // Wait for the teleported menu to mount so its size can be measured.
   await nextTick();
-  positionMenu();
 }
 function closeMenu(): void {
   menuOpen.value = false;
@@ -134,6 +152,47 @@ function commitRename(): void {
 }
 function cancelRename(): void {
   renaming.value = false;
+}
+
+// Right-click opens the same menu anchored to the cursor (the workspace
+// row's contextmenu vocabulary) — except over the inline rename input,
+// where the native text-editing menu stays.
+async function onRowContextMenu(e: MouseEvent): Promise<void> {
+  if (renaming.value) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (menuOpen.value) closeMenu();
+  menuAnchor.value = 'cursor';
+  await openMenu();
+  positionMenuAtCursor(e);
+}
+
+// Cursor anchor (right-click): open at the pointer, flipping up / left when
+// the menu would leave the viewport — the kebab menu's clamping, minus a
+// trigger rect.
+function positionMenuAtCursor(e: MouseEvent): void {
+  const menu = menuRef.value?.el;
+  const margin = 8;
+  const menuH = menu?.offsetHeight ?? 0;
+  const menuW = menu?.offsetWidth ?? 0;
+  let top = e.clientY;
+  let flippedY = false;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, e.clientY - menuH);
+    flippedY = true;
+  }
+  let left = e.clientX;
+  let flippedX = false;
+  if (left + menuW > window.innerWidth - margin) {
+    left = Math.max(margin, e.clientX - menuW);
+    flippedX = true;
+  }
+  menuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+    transformOrigin: `${flippedY ? 'bottom' : 'top'} ${flippedX ? 'right' : 'left'}`,
+    '--menu-pop-shift': flippedY ? '2px' : '-2px',
+  };
 }
 
 // Copy session ID
@@ -175,7 +234,7 @@ defineExpose({ closeMenu });
 </script>
 
 <template>
-  <div class="se" :class="{ on: active }" @click="emit('select', session.id)">
+  <div class="se" :class="{ on: active }" @click="emit('select', session.id)" @contextmenu="onRowContextMenu">
     <div class="row">
       <!-- Leading status slot (in the gutter left of the title): a spinner
            while the session runs, otherwise an unread blue dot. Fixed width
@@ -246,7 +305,7 @@ defineExpose({ closeMenu });
           ref="kebabRef"
           v-if="!renaming"
           class="kebab"
-          :class="{ open: menuOpen }"
+          :class="{ open: menuOpen && menuAnchor === 'kebab' }"
           size="sm"
           :label="t('sidebar.options')"
           @click.stop="toggleMenu($event)"
@@ -259,7 +318,8 @@ defineExpose({ closeMenu });
     <!-- Kebab dropdown — teleported to <body> and position:fixed so it escapes
          the `overflow: hidden` on the collapsing `.group-sessions` list. -->
     <Teleport to="body">
-      <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
+      <Transition name="menu-pop">
+        <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
         <MenuItem :danger="copyFailed" @click="copySessionId">
           <Icon :name="copiedId ? 'check' : 'copy'" size="sm" />
           {{
@@ -289,7 +349,8 @@ defineExpose({ closeMenu });
         </MenuItem>
         <MenuItem separator />
         <div class="menu-time">{{ fullTime }}</div>
-      </Menu>
+        </Menu>
+      </Transition>
     </Teleport>
   </div>
 </template>
@@ -409,6 +470,27 @@ defineExpose({ closeMenu });
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+/* Menu enter/exit — pops out of the trigger corner (the composer model
+   dropdown's language): fade + a slight scale, exit a touch faster. The
+   origin and the nudge direction come from the positioning code. */
+.menu-pop-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.menu-pop-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  /* The leaving menu lingers for --duration-fast; keep it inert so a second
+     click can't hit items whose backing state is already torn down. */
+  pointer-events: none;
+}
+.menu-pop-enter-from,
+.menu-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 .menu-time {
   padding: 6px 10px;

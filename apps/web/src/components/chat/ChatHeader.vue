@@ -103,16 +103,24 @@ async function toggleMenu(e: Event): Promise<void> {
   const menuW = menu.offsetWidth;
   const menuH = menu.offsetHeight;
   let top = r.bottom + gap;
+  let flipped = false;
   if (top + menuH > window.innerHeight - margin) {
     top = Math.max(margin, r.top - menuH - gap);
+    flipped = true;
   }
   let left = r.left;
+  let alignRight = false;
   if (left + menuW > window.innerWidth - margin) {
     left = Math.max(margin, r.right - menuW);
+    alignRight = true;
   }
+  // The pop animation grows out of the trigger corner — the origin and the
+  // nudge direction follow the anchoring (and the upward flip).
   menuStyle.value = {
     top: `${Math.round(top)}px`,
     left: `${Math.round(left)}px`,
+    transformOrigin: `${flipped ? 'bottom' : 'top'} ${alignRight ? 'right' : 'left'}`,
+    '--menu-pop-shift': flipped ? '2px' : '-2px',
   };
 }
 
@@ -250,13 +258,14 @@ function startArchive(): void {
     </IconButton>
 
     <!-- Fixed more menu -->
-    <Menu
-      v-if="menuOpen"
-      ref="menuRef"
-      class="ch-menu"
-      :style="menuStyle"
-      @click.stop
-    >
+    <Transition name="menu-pop">
+      <Menu
+        v-if="menuOpen"
+        ref="menuRef"
+        class="ch-menu"
+        :style="menuStyle"
+        @click.stop
+      >
       <MenuItem @click="onCopyAll">
         <Icon :name="copied ? 'check' : 'copy'" size="sm" />
         {{ copied ? t('header.copied') : t('header.copyAll') }}
@@ -288,7 +297,8 @@ function startArchive(): void {
           {{ t('header.archiveSession') }}
         </MenuItem>
       </template>
-    </Menu>
+      </Menu>
+    </Transition>
 
     <div class="ch-spacer" />
 
@@ -474,6 +484,27 @@ function startArchive(): void {
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+/* Menu enter/exit — pops out of the trigger corner (the composer model
+   dropdown's language): fade + a slight scale, exit a touch faster. The
+   origin and the nudge direction come from the positioning code. */
+.menu-pop-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.menu-pop-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  /* The leaving menu lingers for --duration-fast; keep it inert so a second
+     click can't hit items whose backing state is already torn down. */
+  pointer-events: none;
+}
+.menu-pop-enter-from,
+.menu-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translateY(var(--menu-pop-shift, -2px));
 }
 
 /* On a narrow conversation column, the action labels collapse to icons. */
