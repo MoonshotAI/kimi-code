@@ -11,7 +11,7 @@
  *           the ACTIVE model. The selected path sticks across models, so the
  *           same field can be compared while scrolling.
  *
- * All data goes through the channel layer — `IModelCatalogService` +
+ * All data goes through the channel layer — `IModelCatalog` +
  * `IModelService` for the list, `IModelCatalog.inspect` per model for the god
  * objects — over the probed RPC surface (`/api/v1/debug` on dev servers,
  * `/api/v2` otherwise). No bespoke REST calls. Refreshes on core domain
@@ -22,11 +22,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import {
-  IModelCatalogService,
+  IModelCatalog,
   type ModelCatalogItem,
+  type ModelPingResult,
   type ProviderCatalogItem,
-} from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
-import { IModelCatalog, type ModelPingResult } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+} from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 import type { InspectionSource } from '@moonshot-ai/agent-core-v2/kosong/contract/inspection';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
 import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
@@ -85,12 +85,12 @@ export function ModelCatalogView({
 
   const providers = useQuery({
     queryKey: ['modelCatalog', 'providers'],
-    queryFn: () => klient.core(IModelCatalogService).listProviders(),
+    queryFn: () => klient.core(IModelCatalog).listProviders(),
     refetchInterval: 15_000,
   });
   const models = useQuery({
     queryKey: ['modelCatalog', 'models'],
-    queryFn: () => klient.core(IModelCatalogService).listModels(),
+    queryFn: () => klient.core(IModelCatalog).listModels(),
     refetchInterval: 15_000,
   });
   // Raw records carry the structured `providerId` grouping fallback.

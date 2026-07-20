@@ -1,15 +1,11 @@
 /**
- * `kosong/catalog` domain (L3) — `IModelCatalogService` implementation.
+ * `kosong/model` domain (L2) — `IProviderDiscoveryService` implementation.
  *
- * Projects the `kosong/model` / `kosong/provider` registries into protocol
- * catalog items, resolves credential state through `config` and `auth`, and
- * persists the global default-model selection through `config`. Also owns the
- * all-provider model refresh (`refreshProviderModels`), which delegates to
- * the shared `@moonshot-ai/kimi-code-oauth` orchestrator (managed OAuth +
- * open platforms + custom registries) and publishes
- * `event.model_catalog.changed` on change. The OAuth-only managed-provider
- * refresh additionally lives in `auth`
- * (`IOAuthService.refreshOAuthProviderModels`). Bound at App scope.
+ * Owns the all-provider model refresh: delegates to the shared
+ * `@moonshot-ai/kimi-code-oauth` orchestrator (managed OAuth + open
+ * platforms + custom registries), writes the discovered providers/models
+ * back through `config`, and publishes `event.model_catalog.changed` on
+ * change. Bound at App scope.
  *
  * `modelSource: 'static'` short-circuits refresh: a provider whose effective
  * model source is `static` (config-declared, or declared by its vendor
@@ -40,8 +36,21 @@ import { IOAuthService } from '#/app/auth/auth';
 import { IEventService } from '#/app/event/event';
 
 import { IConfigService } from '../../app/config/config';
-import { IHostRequestHeaders } from '../model/hostRequestHeaders';
-import { IModelService, MODELS_SECTION, type ModelRecord } from '../model/model';
+import { ModelCatalogErrors } from './errors';
+import { IHostRequestHeaders } from './hostRequestHeaders';
+import {
+  DEFAULT_MODEL_SECTION,
+  IModelService,
+  MODELS_SECTION,
+  type ModelRecord,
+} from './model';
+import { THINKING_SECTION } from './thinking';
+
+import {
+  IProviderDiscoveryService,
+  type RefreshProviderModelsOptions,
+  type RefreshProviderModelsResponse,
+} from './discovery';
 import {
   IProviderService,
   type ModelSource,
@@ -49,27 +58,7 @@ import {
   type ProviderConfig,
   PROVIDERS_SECTION,
 } from '../provider/provider';
-import {
-  getProviderDefinition,
-  resolveProviderEndpoint,
-} from '../provider/providerDefinition';
-
-import { ModelCatalogErrors } from './errors';
-import {
-  type ProviderCredentialState,
-  type RefreshProviderModelsOptions,
-  IModelCatalogService,
-  toProtocolModel,
-  toProtocolProvider,
-  type ModelCatalogItem,
-  type ProviderCatalogItem,
-  type RefreshProviderModelsResponse,
-  type SetDefaultModelResponse,
-} from './modelCatalog';
-
-const DEFAULT_MODEL_SECTION = 'defaultModel';
-const DEFAULT_PROVIDER_SECTION = 'defaultProvider';
-const THINKING_SECTION = 'thinking';
+import { getProviderDefinition } from '../provider/providerDefinition';
 
 /**
  * Statically-sourced providers (and their bound models) hidden from the
@@ -85,7 +74,7 @@ interface StaticExclusion {
 
 const EMPTY_EXCLUSION: StaticExclusion = { providers: {}, models: {} };
 
-export class ModelCatalogService implements IModelCatalogService {
+export class ProviderDiscoveryService implements IProviderDiscoveryService {
   declare readonly _serviceBrand: undefined;
 
   private refreshChain: Promise<unknown> = Promise.resolve();
@@ -98,59 +87,6 @@ export class ModelCatalogService implements IModelCatalogService {
     @IEventService private readonly events: IEventService,
     @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
   ) {}
-
-  async listModels(): Promise<readonly ModelCatalogItem[]> {
-    const models = this.modelService.list();
-    return Object.entries(models).map(([modelId, record]) =>
-      toProtocolModel(modelId, record, this.providerTypeOf(record)),
-    );
-  }
-
-  async listProviders(): Promise<readonly ProviderCatalogItem[]> {
-    const providers = this.providerService.list();
-    const models = this.modelService.list();
-    const globalDefaultModel = this.config.get<string>(DEFAULT_MODEL_SECTION);
-    const out: ProviderCatalogItem[] = [];
-    for (const [providerId, provider] of Object.entries(providers)) {
-      out.push(await this.toCatalogProvider(providerId, provider, models, globalDefaultModel));
-    }
-    return out;
-  }
-
-  async getProvider(providerId: string): Promise<ProviderCatalogItem> {
-    const provider = this.providerService.get(providerId);
-    if (provider === undefined) {
-      throw new Error2(
-        ModelCatalogErrors.codes.PROVIDER_NOT_FOUND,
-        `provider ${providerId} does not exist`,
-      );
-    }
-    const models = this.modelService.list();
-    const globalDefaultModel = this.config.get<string>(DEFAULT_MODEL_SECTION);
-    return this.toCatalogProvider(providerId, provider, models, globalDefaultModel);
-  }
-
-  async setDefaultModel(modelId: string): Promise<SetDefaultModelResponse> {
-    const record = this.modelService.get(modelId);
-    if (record === undefined) {
-      throw new Error2(
-        ModelCatalogErrors.codes.MODEL_NOT_FOUND,
-        `model ${modelId} does not exist`,
-      );
-    }
-    await this.config.set(DEFAULT_MODEL_SECTION, modelId);
-    const updatedRecord = this.modelService.get(modelId) ?? record;
-    return {
-      default_model: modelId,
-      model: toProtocolModel(modelId, updatedRecord, this.providerTypeOf(updatedRecord)),
-    };
-  }
-
-  private providerTypeOf(record: ModelRecord): string | undefined {
-    const providerId =
-      record.providerId ?? record.provider ?? this.config.get<string>(DEFAULT_PROVIDER_SECTION);
-    return this.providerService.get(providerId ?? '')?.type ?? record.protocol;
-  }
 
   refreshProviderModels(
     options: RefreshProviderModelsOptions = {},
@@ -339,47 +275,6 @@ export class ModelCatalogService implements IModelCatalogService {
     }
     return tokenProvider.getAccessToken();
   }
-
-  private async toCatalogProvider(
-    providerId: string,
-    provider: ProviderConfig,
-    models: Readonly<Record<string, ModelRecord>>,
-    globalDefaultModel: string | undefined,
-  ): Promise<ProviderCatalogItem> {
-    const credential = await this.resolveCredential(providerId, provider);
-    return toProtocolProvider(providerId, provider, models, globalDefaultModel, credential);
-  }
-
-  private async resolveCredential(
-    providerId: string,
-    provider: ProviderConfig,
-  ): Promise<ProviderCredentialState> {
-    return {
-      hasApiKey: hasConfiguredApiKey(provider),
-      hasOAuthToken: await this.hasCachedToken(providerId, provider),
-    };
-  }
-
-  private async hasCachedToken(providerId: string, provider: ProviderConfig): Promise<boolean> {
-    if (provider.oauth === undefined) return false;
-    try {
-      const token = await this.oauth.getCachedAccessToken(providerId, provider.oauth);
-      return nonEmpty(token) !== undefined;
-    } catch {
-      return false;
-    }
-  }
-}
-
-/**
- * Credential detection through the provider-definition registry: the inline
- * `apiKey` wins, otherwise the vendor's declared `apiKeyEnv` chain is read
- * from the provider's config env bag.
- */
-function hasConfiguredApiKey(provider: ProviderConfig): boolean {
-  if (nonEmpty(provider.apiKey) !== undefined) return true;
-  if (provider.type === undefined) return false;
-  return resolveProviderEndpoint(provider.type, provider.env ?? {}).apiKey !== undefined;
 }
 
 /** The record with the excluded record's keys removed. */
@@ -389,12 +284,6 @@ function withoutKeys<T>(
 ): Record<string, T> {
   if (Object.keys(excluded).length === 0) return { ...record };
   return Object.fromEntries(Object.entries(record).filter(([key]) => !(key in excluded)));
-}
-
-function nonEmpty(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse {
@@ -415,8 +304,8 @@ function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse 
 
 registerScopedService(
   LifecycleScope.App,
-  IModelCatalogService,
-  ModelCatalogService,
+  IProviderDiscoveryService,
+  ProviderDiscoveryService,
   InstantiationType.Eager,
   'modelCatalog',
 );

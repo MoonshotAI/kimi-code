@@ -35,6 +35,15 @@ import { OAuthRefSchema } from '../provider/provider';
 
 export const MODELS_SECTION = 'models';
 
+/**
+ * The global default-model pointer: a single model id from `[models.*]` used
+ * whenever a call site does not name a model explicitly. Cross-domain by
+ * nature — written by `IModelCatalog.setDefaultModel` and the OAuth login /
+ * refresh flows (`app/auth`), read by runtime resolution fallbacks. The sole
+ * owner of the key constant lives here; every consumer imports it.
+ */
+export const DEFAULT_MODEL_SECTION = 'defaultModel';
+
 const ModelBaseSchema = z.object({
   providerId: z.string().optional(),
 

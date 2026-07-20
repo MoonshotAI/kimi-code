@@ -54,7 +54,7 @@ import {
   nonEmpty,
   resolveModelAuthMaterial,
 } from '#/kosong/model/modelAuth';
-import { type ModelRecord, MODELS_SECTION } from '#/kosong/model/model';
+import { DEFAULT_MODEL_SECTION, type ModelRecord, MODELS_SECTION } from '#/kosong/model/model';
 import {
   IProviderService,
   type OAuthRef,
@@ -77,7 +77,6 @@ import {
 
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
-const DEFAULT_MODEL_SECTION = 'defaultModel';
 const THINKING_SECTION = 'thinking';
 const SERVICES_SECTION = 'services';
 

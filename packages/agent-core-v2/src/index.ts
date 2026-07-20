@@ -104,14 +104,14 @@ export * from '#/kosong/model/thinking';
 export * from '#/kosong/model/catalog';
 export * from '#/kosong/model/catalogService';
 export * from '#/kosong/model/modelRequester';
-import '#/kosong/catalog/configSection';
-// Phase-7 export-surface backfill: `ModelCatalogConfig` / `MODEL_CATALOG_SECTION`
-// live in the configSection side-effect module but the edge (kap-server's
-// refresh scheduler) consumes them from the package root — re-export here.
-export * from '#/kosong/catalog/configSection';
-import '#/kosong/catalog/errors';
-export * from '#/kosong/catalog/modelCatalog';
-export * from '#/kosong/catalog/modelCatalogService';
+import '#/kosong/model/errors';
+import '#/kosong/model/discoveryConfigSection';
+// `ModelCatalogConfig` / `MODEL_CATALOG_SECTION` live in the configSection
+// side-effect module but the edge (kap-server's refresh scheduler) consumes
+// them from the package root — re-export here.
+export * from '#/kosong/model/discoveryConfigSection';
+export * from '#/kosong/model/discovery';
+export * from '#/kosong/model/discoveryService';
 // kosong wire composition roots — importing these modules registers the four
 // protocol bases and every provider definition (kimi + the canonical vendor
 // endpoints); without them the adapter registry stays empty.

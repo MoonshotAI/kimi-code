@@ -1,7 +1,7 @@
 /**
- * `kosong/catalog` domain (L3) — `modelCatalog` config-section schema.
+ * `kosong/model` domain (L2) — `modelCatalog` config-section schema.
  *
- * Owns the `[model_catalog]` configuration section (provider-model catalog
+ * Owns the `[modelCatalog]` configuration section (provider-model catalog
  * auto-refresh cadence). Self-registered at module load via
  * `registerConfigSection`, mirroring the per-domain `configSection.ts`
  * convention, so the `config` domain never imports this domain's types.

@@ -34,6 +34,15 @@
  * (provenance records + intermediate artifacts, reference-only) alongside the
  * Model in the same cache entry. `inspect(id)` assembles the god object from
  * that trace on demand — same pass, same generation, never a re-resolution.
+ *
+ * Enumeration & default pointer: `listModels` projects every configured
+ * model from the SAME materialization `get` serves (falling back to the
+ * config-only projection for models that fail to materialize, so broken
+ * config stays visible); `listProviders` / `getProvider` project the
+ * provider registry plus credential state. `setDefaultModel` writes the
+ * global default-model pointer (`DEFAULT_MODEL_SECTION`) after a
+ * materialization gate — the catalog's only write. The remote-discovery
+ * refresh lives in `kosong/provider/discovery`, not here.
  */
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -60,19 +69,32 @@ import {
   LATEST_OPUS_PROFILE,
   matchKnownAnthropicModelProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
-import { IProviderService, type ProviderConfig } from '../provider/provider';
+import {
+  DEFAULT_PROVIDER_SECTION,
+  IProviderService,
+  type ProviderConfig,
+} from '../provider/provider';
 import {
   explainProviderEndpoint,
   getProviderDefinition,
+  resolveProviderEndpoint,
 } from '../provider/providerDefinition';
 
 import {
   type AuthProvider,
   IModelCatalog,
   type Model,
+  type ModelCatalogItem,
   type ModelPingResult,
+  type ProviderCatalogItem,
+  type ProviderCredentialState,
+  type SetDefaultModelResponse,
   StaticAuthProvider,
+  toProtocolModel,
+  toProtocolModelFallback,
+  toProtocolProvider,
 } from './catalog';
+import { ModelCatalogErrors } from './errors';
 import { IHostRequestHeaders } from './hostRequestHeaders';
 import {
   assembleModelInspection,
@@ -82,7 +104,7 @@ import {
   ResolutionTraceCollector,
   TRACE,
 } from './inspection';
-import { IModelService, type ModelRecord } from './model';
+import { DEFAULT_MODEL_SECTION, IModelService, type ModelRecord } from './model';
 import {
   deriveProviderId,
   effectiveModelConfig,
@@ -206,6 +228,98 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async listModels(): Promise<readonly ModelCatalogItem[]> {
+    const models = this.models.list();
+    return Object.entries(models).map(([modelId, record]) => {
+      const providerType = this.providerTypeOf(record);
+      try {
+        return toProtocolModel(this.get(modelId), record, providerType);
+      } catch {
+        // Broken config must stay visible (and fixable) in listings: fall
+        // back to the config-only projection when materialization fails.
+        return toProtocolModelFallback(modelId, record, providerType);
+      }
+    });
+  }
+
+  async listProviders(): Promise<readonly ProviderCatalogItem[]> {
+    const providers = this.providers.list();
+    const models = this.models.list();
+    const globalDefaultModel = this.config.get<string>(DEFAULT_MODEL_SECTION);
+    const out: ProviderCatalogItem[] = [];
+    for (const [providerId, provider] of Object.entries(providers)) {
+      out.push(await this.toCatalogProvider(providerId, provider, models, globalDefaultModel));
+    }
+    return out;
+  }
+
+  async getProvider(providerId: string): Promise<ProviderCatalogItem> {
+    const provider = this.providers.get(providerId);
+    if (provider === undefined) {
+      throw new Error2(
+        ModelCatalogErrors.codes.PROVIDER_NOT_FOUND,
+        `provider ${providerId} does not exist`,
+      );
+    }
+    const models = this.models.list();
+    const globalDefaultModel = this.config.get<string>(DEFAULT_MODEL_SECTION);
+    return this.toCatalogProvider(providerId, provider, models, globalDefaultModel);
+  }
+
+  async setDefaultModel(modelId: string): Promise<SetDefaultModelResponse> {
+    const record = this.models.get(modelId);
+    if (record === undefined) {
+      throw new Error2(
+        ModelCatalogErrors.codes.MODEL_NOT_FOUND,
+        `model ${modelId} does not exist`,
+      );
+    }
+    // Materialization gate: a model that cannot resolve (dangling provider
+    // reference, conflicting credentials, ...) must not become the default.
+    const model = this.get(modelId);
+    await this.config.set(DEFAULT_MODEL_SECTION, modelId);
+    return {
+      default_model: modelId,
+      model: toProtocolModel(model, record, this.providerTypeOf(record)),
+    };
+  }
+
+  private async toCatalogProvider(
+    providerId: string,
+    provider: ProviderConfig,
+    models: Readonly<Record<string, ModelRecord>>,
+    globalDefaultModel: string | undefined,
+  ): Promise<ProviderCatalogItem> {
+    const credential = await this.resolveCredential(providerId, provider);
+    return toProtocolProvider(providerId, provider, models, globalDefaultModel, credential);
+  }
+
+  private async resolveCredential(
+    providerId: string,
+    provider: ProviderConfig,
+  ): Promise<ProviderCredentialState> {
+    return {
+      hasApiKey: hasConfiguredApiKey(provider),
+      hasOAuthToken: await this.hasCachedToken(providerId, provider),
+    };
+  }
+
+  private async hasCachedToken(providerId: string, provider: ProviderConfig): Promise<boolean> {
+    if (provider.oauth === undefined) return false;
+    try {
+      const token = await this.oauth.getCachedAccessToken(providerId, provider.oauth);
+      return nonEmpty(token) !== undefined;
+    } catch {
+      return false;
+    }
+  }
+
+  private providerTypeOf(record: ModelRecord): string | undefined {
+    const providerId =
+      record.providerId ?? record.provider ?? this.config.get<string>(DEFAULT_PROVIDER_SECTION);
+    return this.providers.get(providerId ?? '')?.type ?? record.protocol;
   }
 
   private buildModel(id: string, trace: ResolutionTraceCollector): Model {
@@ -615,6 +729,17 @@ function locationFromVertexAIBaseUrl(baseUrl: string | undefined): string | unde
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Credential detection through the provider-definition registry: the inline
+ * `apiKey` wins, otherwise the vendor's declared `apiKeyEnv` chain is read
+ * from the provider's config env bag.
+ */
+function hasConfiguredApiKey(provider: ProviderConfig): boolean {
+  if (nonEmpty(provider.apiKey) !== undefined) return true;
+  if (provider.type === undefined) return false;
+  return resolveProviderEndpoint(provider.type, provider.env ?? {}).apiKey !== undefined;
 }
 
 registerScopedService(

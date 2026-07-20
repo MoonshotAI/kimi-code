@@ -65,6 +65,14 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
         throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('modelCatalog.getProvider not exercised in this test');
+      },
+      setDefaultModel: async () => {
+        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
+      },
     };
     seeds = [[IModelCatalog, modelCatalog]];
     await boot();

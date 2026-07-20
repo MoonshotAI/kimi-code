@@ -10,7 +10,7 @@
  *  2. **Domain layering** — a domain at layer L may only import domains at
  *     layer `<= L`. Lower layers must not reach upward. See
  *     `plan/PLAN.md` §3 / §5 for the layer table.
- *  3. **Kosong layering** — the `src/kosong/{contract,protocol,provider,model,catalog}`
+ *  3. **Kosong layering** — the `src/kosong/{contract,protocol,provider,model}`
  *     subtree has its own stricter rules on top of the numeric layers:
  *       - internal order: contract(L0) ← protocol(L1) ← provider/model(L2)
  *         ← catalog(L3); a lower layer never imports a higher one (so L1
@@ -236,7 +236,7 @@ const DOMAIN_LAYER = new Map([
   ['sessionLegacy', 7],
   ['authLegacy', 7],
   ['messageLegacy', 7],
-  // Kosong subtree (`src/kosong/{contract,protocol,provider,model,catalog}`).
+  // Kosong subtree (`src/kosong/{contract,protocol,provider,model}`).
   // The numeric entries make kosong visible to non-kosong importers (e.g. an
   // L4 agent domain may import the L0 contract); the stricter kosong-internal
   // rules live in the KOSONG_* tables below and are checked separately.
@@ -244,7 +244,6 @@ const DOMAIN_LAYER = new Map([
   ['kosong/protocol', 1],
   ['kosong/provider', 2],
   ['kosong/model', 2],
-  ['kosong/catalog', 3],
 ]);
 
 const V1_PACKAGE = '@moonshot-ai/agent-core';
@@ -263,8 +262,8 @@ const SCOPE_DIRS = new Set(['app', 'session', 'agent', 'persistence', 'os', 'kos
 const TWO_LEVEL_SCOPES = new Set(['persistence', 'os', 'kosong']);
 
 /**
- * Kosong-internal layer order: contract ← protocol ← provider/model ←
- * catalog. A lower layer never imports a higher one; `model` → `provider`
+ * Kosong-internal layer order: contract ← protocol ← provider/model.
+ * A lower layer never imports a higher one; `model` → `provider`
  * is the only allowed peer edge. Keyed by the segment under `src/kosong/`.
  */
 const KOSONG_LAYER = new Map([
@@ -272,7 +271,6 @@ const KOSONG_LAYER = new Map([
   ['protocol', 1],
   ['provider', 2],
   ['model', 2],
-  ['catalog', 3],
 ]);
 
 /**
@@ -586,7 +584,7 @@ export function checkSource(source, absFile) {
           violations.push({
             file: absFile,
             line,
-            message: `kosong layer violation: 'kosong/${sourceKosong.sub}' (L${sourceKosongLayer}) imports 'kosong/${targetKosong.sub}' (L${targetKosongLayer}) via '${specifier}' — kosong layers are contract(L0) ← protocol(L1) ← provider/model(L2) ← catalog(L3)`,
+            message: `kosong layer violation: 'kosong/${sourceKosong.sub}' (L${sourceKosongLayer}) imports 'kosong/${targetKosong.sub}' (L${targetKosongLayer}) via '${specifier}' — kosong layers are contract(L0) ← protocol(L1) ← provider/model(L2)`,
           });
         } else if (sourceKosong.sub === 'provider' && targetKosong.sub === 'model') {
           violations.push({

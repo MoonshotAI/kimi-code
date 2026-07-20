@@ -72,9 +72,8 @@ import type {
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type {
-  IModelCatalogService,
-} from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
 import type {
   GetPluginInfoInput,
   InstallPluginInput,
@@ -208,10 +207,12 @@ import {
 import {
   modelCatalogItemSchema,
   providerCatalogItemSchema,
-  refreshProviderModelsOptionsSchema,
-  refreshProviderModelsResponseSchema,
   setDefaultModelResponseSchema,
 } from '../src/contract/global/catalog.js';
+import {
+  refreshProviderModelsOptionsSchema,
+  refreshProviderModelsResponseSchema,
+} from '../src/contract/global/providerDiscovery.js';
 import { experimentalFeatureStateSchema } from '../src/contract/global/flags.js';
 import {
   fsBrowseResponseSchema,
@@ -318,15 +319,16 @@ const _experimentalFeatureState: AssertWire<
 const _fsBrowseResponse: AssertWire<typeof fsBrowseResponseSchema, FsBrowseResponse> = true;
 const _fsHomeResponse: AssertWire<typeof fsHomeResponseSchema, FsHomeResponse> = true;
 
-// catalog.ts — protocol wire shapes derived through the catalog service interface.
-type ModelCatalogItem = Awaited<ReturnType<IModelCatalogService['listModels']>>[number];
-type ProviderCatalogItem = Awaited<ReturnType<IModelCatalogService['listProviders']>>[number];
-type SetDefaultModelResponse = Awaited<ReturnType<IModelCatalogService['setDefaultModel']>>;
+// catalog.ts / providerDiscovery.ts — protocol wire shapes derived through the
+// catalog and discovery service interfaces.
+type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
+type ProviderCatalogItem = Awaited<ReturnType<IModelCatalog['listProviders']>>[number];
+type SetDefaultModelResponse = Awaited<ReturnType<IModelCatalog['setDefaultModel']>>;
 type RefreshProviderModelsOptions = NonNullable<
-  Parameters<IModelCatalogService['refreshProviderModels']>[0]
+  Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;
 type RefreshProviderModelsResponse = Awaited<
-  ReturnType<IModelCatalogService['refreshProviderModels']>
+  ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 const _modelCatalogItem: AssertWire<typeof modelCatalogItemSchema, ModelCatalogItem> = true;
 const _providerCatalogItem: AssertWire<typeof providerCatalogItemSchema, ProviderCatalogItem> =

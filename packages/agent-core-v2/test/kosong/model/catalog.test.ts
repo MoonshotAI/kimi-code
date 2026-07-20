@@ -21,6 +21,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createScopedTestHost } from '#/_base/di/test';
+import { isErrorCode } from '#/_base/errors/codes';
+import { isError2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
@@ -34,19 +36,31 @@ import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/protocolAdapterRegistry';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
-import { IProviderService } from '#/kosong/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import '#/kosong/provider/providerService';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import {
+  globalDefaultForProvider,
+  IModelCatalog,
+  type Model,
+  modelIdsForProvider,
+  toProtocolModel,
+  toProtocolModelFallback,
+  toProtocolProvider,
+} from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
+import '#/kosong/model/errors';
 import { HostRequestHeaders, IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
-import { IModelService } from '#/kosong/model/model';
+import { IModelService, type ModelRecord } from '#/kosong/model/model';
 import '#/kosong/model/modelService';
 
 import { StubConfigService, stubOAuthService, stubTokenProvider } from '../stubs';
 
 const HOST_HEADERS = { 'User-Agent': 'kimi-test/1.0', 'X-Msh-Device-Id': 'device-1' };
 
-function createHost(sections: Record<string, unknown> = {}): {
+function createHost(
+  sections: Record<string, unknown> = {},
+  oauth: IOAuthService = stubOAuthService(),
+): {
   host: ReturnType<typeof createScopedTestHost>;
   config: StubConfigService;
   catalog: ModelCatalog;
@@ -56,7 +70,7 @@ function createHost(sections: Record<string, unknown> = {}): {
   const config = new StubConfigService(sections);
   const host = createScopedTestHost([
     [IConfigService, config],
-    [IOAuthService, stubOAuthService()],
+    [IOAuthService, oauth],
     [IHostRequestHeaders, new HostRequestHeaders(HOST_HEADERS)],
   ]);
   return {
@@ -710,6 +724,420 @@ describe('ModelCatalog ping', () => {
       await expect(catalog.ping('nope')).rejects.toThrowError(
         expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
       );
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
+
+/**
+ * Enumeration & default-model selection: `listModels` / `listProviders` /
+ * `getProvider` project the SAME materialization `get` serves (broken config
+ * falls back to the config-only projection so it stays visible), and
+ * `setDefaultModel` writes the global default pointer behind a
+ * materialization gate.
+ */
+
+const catalogSections: Record<string, unknown> = {
+  providers: {
+    kimi: { type: 'kimi', apiKey: 'sk-test', baseUrl: 'https://api.example.test/v1' },
+    openai: { type: 'openai' },
+  },
+  models: {
+    k2: {
+      provider: 'kimi',
+      model: 'kimi-k2',
+      maxContextSize: 131072,
+      displayName: 'Kimi K2',
+      capabilities: ['thinking'],
+    },
+    turbo: { provider: 'kimi', model: 'kimi-turbo', maxContextSize: 32768, displayName: 'Kimi Turbo' },
+    gpt4o: { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
+  },
+  defaultModel: 'k2',
+};
+
+describe('wire projection (pure)', () => {
+  it('toProtocolModel projects the materialized Model into the snake_case wire shape', () => {
+    const { host, catalog } = createHost(catalogSections);
+    try {
+      const record = (catalogSections['models'] as Record<string, ModelRecord>)['k2']!;
+      expect(toProtocolModel(catalog.get('k2'), record, 'kimi')).toEqual({
+        provider: 'kimi',
+        model: 'k2',
+        display_name: 'Kimi K2',
+        max_context_size: 131072,
+        capabilities: ['thinking'],
+        support_efforts: undefined,
+        default_effort: undefined,
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('toProtocolModelFallback projects the raw record', () => {
+    const record: ModelRecord = {
+      provider: 'kimi',
+      model: 'kimi-k2',
+      maxContextSize: 131072,
+      displayName: 'Kimi K2',
+      capabilities: ['thinking'],
+    };
+    expect(toProtocolModelFallback('k2', record, 'kimi')).toEqual({
+      provider: 'kimi',
+      model: 'k2',
+      display_name: 'Kimi K2',
+      max_context_size: 131072,
+      capabilities: ['thinking'],
+      support_efforts: undefined,
+      default_effort: undefined,
+    });
+  });
+
+  it('modelIdsForProvider and globalDefaultForProvider group models by provider', () => {
+    const models: Record<string, ModelRecord> = {
+      a: { provider: 'p1', model: 'm-a' },
+      b: { provider: 'p2', model: 'm-b' },
+      c: { providerId: 'p1', model: 'm-c' },
+    };
+    expect(modelIdsForProvider(models, 'p1')).toEqual(['a']);
+    expect(globalDefaultForProvider(models, 'a', 'p1')).toBe('a');
+    expect(globalDefaultForProvider(models, 'a', 'p2')).toBeUndefined();
+    expect(globalDefaultForProvider(models, undefined, 'p1')).toBeUndefined();
+  });
+
+  it('toProtocolProvider prefers the provider default, then the global default', () => {
+    const models: Record<string, ModelRecord> = { a: { provider: 'p1', model: 'm-a' } };
+    const provider: ProviderConfig = { type: 'openai', baseUrl: 'https://x.test/v1' };
+    expect(
+      toProtocolProvider('p1', provider, models, 'a', { hasApiKey: true, hasOAuthToken: false }),
+    ).toEqual({
+      id: 'p1',
+      type: 'openai',
+      base_url: 'https://x.test/v1',
+      default_model: 'a',
+      has_api_key: true,
+      status: 'connected',
+      models: ['a'],
+    });
+    expect(
+      toProtocolProvider('p1', { ...provider, defaultModel: 'own' }, models, 'a', {
+        hasApiKey: false,
+        hasOAuthToken: false,
+      }).default_model,
+    ).toBe('own');
+    expect(
+      toProtocolProvider('p1', { ...provider, type: undefined }, models, undefined, {
+        hasApiKey: false,
+        hasOAuthToken: false,
+      }),
+    ).toMatchObject({ type: 'openai', status: 'unconfigured', default_model: undefined });
+  });
+});
+
+describe('ModelCatalog enumeration', () => {
+  it('lists configured models as selectable aliases', async () => {
+    const { host, catalog } = createHost(catalogSections);
+    try {
+      await expect(catalog.listModels()).resolves.toEqual([
+        {
+          provider: 'kimi',
+          model: 'k2',
+          display_name: 'Kimi K2',
+          max_context_size: 131072,
+          capabilities: ['thinking'],
+        },
+        { provider: 'kimi', model: 'turbo', display_name: 'Kimi Turbo', max_context_size: 32768 },
+        { provider: 'openai', model: 'gpt4o', display_name: 'gpt-4o', max_context_size: 128000 },
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects support_efforts and default_effort from the model config', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['models'] as Record<string, ModelRecord>)['k2'] = {
+      ...(catalogSections['models'] as Record<string, ModelRecord>)['k2'],
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const [k2] = await catalog.listModels();
+      expect(k2).toMatchObject({
+        model: 'k2',
+        support_efforts: ['low', 'high', 'max'],
+        default_effort: 'max',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects official Anthropic effort metadata inferred from the model name', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['providers'] as Record<string, ProviderConfig>)['anthropic'] = { type: 'anthropic' };
+    (sections['models'] as Record<string, ModelRecord>)['opus'] = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      maxContextSize: 200000,
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const opus = (await catalog.listModels()).find((model) => model.model === 'opus');
+      expect(opus).toMatchObject({
+        capabilities: ['thinking'],
+        support_efforts: ['low', 'medium', 'high', 'max'],
+        default_effort: 'high',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects latest Opus efforts for unknown Anthropic-compatible models', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['providers'] as Record<string, ProviderConfig>)['custom'] = { type: 'anthropic' };
+    (sections['models'] as Record<string, ModelRecord>)['compatible'] = {
+      provider: 'custom',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const compatible = (await catalog.listModels()).find((model) => model.model === 'compatible');
+      expect(compatible).toMatchObject({
+        capabilities: ['thinking'],
+        support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        default_effort: 'high',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects latest Opus efforts for a flat providerless Anthropic model', async () => {
+    const { host, catalog } = createHost({
+      providers: {},
+      models: {
+        compatible: {
+          model: 'compatible-model',
+          baseUrl: 'https://anthropic.example.test',
+          protocol: 'anthropic',
+          maxContextSize: 128000,
+        },
+      },
+    });
+    try {
+      const compatible = (await catalog.listModels()).find((model) => model.model === 'compatible');
+      expect(compatible).toMatchObject({
+        capabilities: ['thinking'],
+        support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        default_effort: 'high',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('does not project fallback efforts for unknown Kimi-managed Anthropic models', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['models'] as Record<string, ModelRecord>)['compatible'] = {
+      provider: 'kimi',
+      protocol: 'anthropic',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const compatible = (await catalog.listModels()).find((model) => model.model === 'compatible');
+      expect(compatible).toMatchObject({ provider: 'kimi', model: 'compatible' });
+      expect(compatible?.capabilities).toBeUndefined();
+      expect(compatible?.support_efforts).toBeUndefined();
+      expect(compatible?.default_effort).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects effort fields from overrides when present', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['models'] as Record<string, ModelRecord>)['k2'] = {
+      ...(catalogSections['models'] as Record<string, ModelRecord>)['k2'],
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+      overrides: { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'max' },
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const [k2] = await catalog.listModels();
+      expect(k2).toMatchObject({
+        support_efforts: ['low', 'high', 'max'],
+        default_effort: 'max',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('falls back to the config projection for models that fail materialization', async () => {
+    const { host, catalog } = createHost({
+      providers: {},
+      models: {
+        bad: {
+          model: 'bad-model',
+          baseUrl: 'https://x.test/v1',
+          apiKey: 'sk',
+          oauth: { storage: 'file', key: 'oauth/bad' },
+          maxContextSize: 1000,
+          displayName: 'Bad',
+        },
+      },
+    });
+    try {
+      // Conflicting inline credentials make materialization throw; the
+      // listing still shows the broken model with its config values.
+      await expect(catalog.listModels()).resolves.toEqual([
+        { provider: '', model: 'bad', display_name: 'Bad', max_context_size: 1000 },
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('lists providers with per-provider models, default model, and credential state', async () => {
+    const { host, catalog } = createHost(catalogSections);
+    try {
+      await expect(catalog.listProviders()).resolves.toEqual([
+        {
+          id: 'kimi',
+          type: 'kimi',
+          base_url: 'https://api.example.test/v1',
+          default_model: 'k2',
+          has_api_key: true,
+          status: 'connected',
+          models: ['k2', 'turbo'],
+        },
+        {
+          id: 'openai',
+          type: 'openai',
+          has_api_key: false,
+          status: 'unconfigured',
+          models: ['gpt4o'],
+        },
+      ]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('detects env-bag credentials through the vendor endpoint declarations', async () => {
+    const { host, catalog } = createHost({
+      providers: {
+        kimi: { type: 'kimi', env: { KIMI_API_KEY: 'kimi-env-key' } },
+        claude: { type: 'anthropic', env: { ANTHROPIC_API_KEY: 'anthropic-env-key' } },
+        empty: { type: 'openai' },
+      },
+      models: {},
+    });
+    try {
+      const providers = await catalog.listProviders();
+      const byId = Object.fromEntries(providers.map((p) => [p.id, p]));
+      expect(byId['kimi']).toMatchObject({ has_api_key: true, status: 'connected' });
+      expect(byId['claude']).toMatchObject({ has_api_key: true, status: 'connected' });
+      expect(byId['empty']).toMatchObject({ has_api_key: false, status: 'unconfigured' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('marks an OAuth provider connected when a cached token exists', async () => {
+    const oauth = {
+      ...stubOAuthService(),
+      getCachedAccessToken: async () => 'cached-token',
+    } as unknown as IOAuthService;
+    const { host, catalog } = createHost(
+      {
+        providers: { acme: { type: 'kimi', oauth: { storage: 'file', key: 'oauth/acme' } } },
+        models: {},
+      },
+      oauth,
+    );
+    try {
+      const [provider] = await catalog.listProviders();
+      expect(provider).toMatchObject({ id: 'acme', has_api_key: false, status: 'connected' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('gets a single provider by id and reports provider.not_found for an unknown one', async () => {
+    const { host, catalog } = createHost(catalogSections);
+    try {
+      await expect(catalog.getProvider('kimi')).resolves.toMatchObject({
+        id: 'kimi',
+        default_model: 'k2',
+        models: ['k2', 'turbo'],
+      });
+      await expect(catalog.getProvider('missing')).rejects.toSatisfy(
+        (error) => isError2(error) && error.code === 'provider.not_found',
+      );
+      expect(isErrorCode('provider.not_found')).toBe(true);
+      expect(isErrorCode('model.not_found')).toBe(true);
+    } finally {
+      host.dispose();
+    }
+  });
+});
+
+describe('ModelCatalog setDefaultModel', () => {
+  it('persists through config and returns the wire model', async () => {
+    const { host, config, catalog } = createHost(catalogSections);
+    try {
+      await expect(catalog.setDefaultModel('turbo')).resolves.toEqual({
+        default_model: 'turbo',
+        model: {
+          provider: 'kimi',
+          model: 'turbo',
+          display_name: 'Kimi Turbo',
+          max_context_size: 32768,
+        },
+      });
+      expect(config.get<string>('defaultModel')).toBe('turbo');
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('throws model.not_found for an unknown model', async () => {
+    const { host, catalog } = createHost(catalogSections);
+    try {
+      await expect(catalog.setDefaultModel('missing')).rejects.toSatisfy(
+        (error) => isError2(error) && error.code === 'model.not_found',
+      );
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('rejects a model that fails materialization', async () => {
+    const { host, config, catalog } = createHost({
+      providers: {},
+      models: {
+        bad: {
+          model: 'bad-model',
+          baseUrl: 'https://x.test/v1',
+          apiKey: 'sk',
+          oauth: { storage: 'file', key: 'oauth/bad' },
+        },
+      },
+    });
+    try {
+      await expect(catalog.setDefaultModel('bad')).rejects.toThrow();
+      expect(config.get('defaultModel')).toBeUndefined();
     } finally {
       host.dispose();
     }

@@ -1,11 +1,12 @@
 /**
- * `kosong/catalog` domain (L3) — catalog error codes.
+ * `kosong/model` domain (L2) — catalog error codes.
  *
  * The codes are intentionally identical to the deleted legacy
  * `app/modelCatalog` domain's (the wire contract branches on them). The
  * error registry keys on the contributing `codes` OBJECT, so the legacy
- * module could never be loaded together with this one — with it deleted in
- * Phase 5, this domain is the sole owner of the codes.
+ * module could never be loaded together with this one — this domain is the
+ * sole owner of the codes. `provider.not_found` is shared with the
+ * `kosong/provider` discovery service.
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';

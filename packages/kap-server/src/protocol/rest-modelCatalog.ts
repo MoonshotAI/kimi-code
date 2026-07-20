@@ -4,7 +4,7 @@
  *   GET /v1/providers/{provider_id}
  *
  * The catalog item shapes are owned by the engine
- * (`kosong/catalog/modelCatalog`); these are only the REST list/get wrappers
+ * (`kosong/model/catalog`); these are only the REST list/get wrappers
  * around them.
  */
 
@@ -13,7 +13,7 @@ import { z } from 'zod';
 import {
   modelCatalogItemSchema,
   providerCatalogItemSchema,
-} from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
+} from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
 
 export const listModelsResponseSchema = z.object({
   items: z.array(modelCatalogItemSchema),

@@ -109,7 +109,6 @@ export class ModelRequesterImpl implements ModelRequester {
     let firstChunkAt: number | undefined;
     let streamEndedAt: number | undefined;
     let decodeStats: StreamDecodeStats | undefined;
-    let streamedAnyPart = false;
 
     const options: GenerateOptions = {
       signal,
@@ -148,7 +147,6 @@ export class ModelRequesterImpl implements ModelRequester {
           {
             onMessagePart: (part) => {
               firstChunkAt ??= Date.now();
-              streamedAnyPart = true;
               queue.push({ type: 'part', part });
             },
           },
@@ -160,17 +158,11 @@ export class ModelRequesterImpl implements ModelRequester {
       throw translateProviderError(error);
     }
 
-    if (!streamedAnyPart) {
-      for (const part of result.message.content) {
-        firstChunkAt ??= Date.now();
-        queue.push({ type: 'part', part });
-      }
-      for (const toolCall of result.message.toolCalls) {
-        firstChunkAt ??= Date.now();
-        queue.push({ type: 'part', part: toolCall });
-      }
-    }
-
+    // Every content/tool-call part already arrived through `onMessagePart`:
+    // the contract's `generate()` fires the callback for each part before
+    // merging it into the result message and throws `APIEmptyResponseError`
+    // on an empty stream, so there is nothing to backfill from
+    // `result.message` here — only stream-absent metadata remains.
     if (result.usage !== undefined && result.usage !== null) {
       queue.push({ type: 'usage', usage: result.usage, model: this.model.name });
     }

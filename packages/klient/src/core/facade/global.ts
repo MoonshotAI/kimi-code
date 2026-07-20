@@ -32,9 +32,8 @@ import type {
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type {
-  IModelCatalogService,
-} from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
 import type {
   PluginCommandDef,
   PluginInfo,
@@ -67,15 +66,15 @@ export type OAuthFlowSnapshot = NonNullable<Awaited<ReturnType<IOAuthService['ge
 export type OAuthLoginCancelResponse = Awaited<ReturnType<IOAuthService['cancelLogin']>>;
 export type OAuthLogoutResponse = Awaited<ReturnType<IOAuthService['logout']>>;
 
-export type ModelCatalogItem = Awaited<ReturnType<IModelCatalogService['listModels']>>[number];
+export type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
 export type ProviderCatalogItem = Awaited<
-  ReturnType<IModelCatalogService['listProviders']>
+  ReturnType<IModelCatalog['listProviders']>
 >[number];
 export type SetDefaultModelResponse = Awaited<
-  ReturnType<IModelCatalogService['setDefaultModel']>
+  ReturnType<IModelCatalog['setDefaultModel']>
 >;
 export type RefreshProviderModelsOptions = NonNullable<
-  Parameters<IModelCatalogService['refreshProviderModels']>[0]
+  Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;
 
 /** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
@@ -312,19 +311,19 @@ export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
 
     catalog: {
       listModels: () =>
-        call('modelCatalogService', 'listModels', []) as Promise<readonly ModelCatalogItem[]>,
+        call('modelResolver', 'listModels', []) as Promise<readonly ModelCatalogItem[]>,
       listProviders: () =>
-        call('modelCatalogService', 'listProviders', []) as Promise<
+        call('modelResolver', 'listProviders', []) as Promise<
           readonly ProviderCatalogItem[]
         >,
       getProvider: (providerId) =>
-        call('modelCatalogService', 'getProvider', [providerId]) as Promise<ProviderCatalogItem>,
+        call('modelResolver', 'getProvider', [providerId]) as Promise<ProviderCatalogItem>,
       setDefaultModel: (modelId) =>
-        call('modelCatalogService', 'setDefaultModel', [modelId]) as Promise<
+        call('modelResolver', 'setDefaultModel', [modelId]) as Promise<
           SetDefaultModelResponse
         >,
       refresh: (input) =>
-        call('modelCatalogService', 'refreshProviderModels', [
+        call('providerDiscovery', 'refreshProviderModels', [
           input,
         ]) as Promise<RefreshProviderModelsResponse>,
     },

@@ -10,7 +10,8 @@ import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessi
 import { IWorkspaceRegistry } from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import { IModelCatalogService } from '@moonshot-ai/agent-core-v2/kosong/catalog/modelCatalog';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import {
   IAuthSummaryService,
@@ -35,7 +36,8 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   workspaceRegistry: IWorkspaceRegistry,
   configService: IConfigService,
   modelService: IModelService,
-  modelCatalogService: IModelCatalogService,
+  modelResolver: IModelCatalog,
+  providerDiscovery: IProviderDiscoveryService,
   providerService: IProviderService,
   oauthService: IOAuthService,
   authSummaryService: IAuthSummaryService,
