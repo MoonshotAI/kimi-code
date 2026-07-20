@@ -4,6 +4,7 @@ description: |
   Research, writing, and content expertise bundle covering academic research, deep research,
   fact-checking, content creation, technical writing, editing, email drafting, meeting notes,
   and code documentation. Use when conducting research, writing content, or documenting code.
+when-to-use: "Load BEFORE research tasks, fact-checking, technical writing, or documentation work."
 ---
 
 # Research & Writing

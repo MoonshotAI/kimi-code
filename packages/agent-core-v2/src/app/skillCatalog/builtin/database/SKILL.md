@@ -4,6 +4,7 @@ description: |
   Database and data expertise bundle covering SQL optimization, PostgreSQL, pandas, Spark, and
   data analysis. Use when optimizing queries, designing schemas, analyzing data, or working with
   big data processing pipelines.
+when-to-use: "Load BEFORE writing or optimizing SQL, designing schemas, or working with PostgreSQL, pandas, or Spark."
 ---
 
 # Database & Data

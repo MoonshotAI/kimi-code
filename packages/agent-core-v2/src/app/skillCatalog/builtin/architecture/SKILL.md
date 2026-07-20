@@ -4,6 +4,7 @@ description: |
   Software architecture expertise bundle covering system design, API design, GraphQL architecture,
   microservices, legacy modernization, and specification mining. Use when designing high-level
   architecture, making architectural decisions, or reverse-engineering existing systems.
+when-to-use: "Load BEFORE designing system architecture, APIs, GraphQL schemas, or microservices, and before legacy modernization work."
 ---
 
 # Architecture

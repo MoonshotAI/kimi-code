@@ -4,6 +4,7 @@ description: |
   AI and machine learning expertise bundle covering RAG systems, ML pipelines, LLM fine-tuning,
   prompt engineering, and MCP development. Use when building RAG systems, training models,
   fine-tuning LLMs, designing prompts, or building MCP servers.
+when-to-use: "Load BEFORE building RAG systems, ML pipelines, LLM fine-tuning, prompt engineering, or MCP servers."
 ---
 
 # AI & Machine Learning

@@ -4,6 +4,7 @@ description: |
   Programming language expertise bundle covering JavaScript, TypeScript, Python, Go, Rust, Kotlin,
   and C++. Use when writing, debugging, or refactoring code in a specific language, or when needing
   language-specific idioms, type systems, and best practices.
+when-to-use: "Load BEFORE writing, debugging, or refactoring Python, C++, Go, Rust, JavaScript, TypeScript, or Kotlin code, then load the matching sub-skill (e.g. languages.python-pro, languages.cpp-pro)."
 ---
 
 # Languages

@@ -4,6 +4,7 @@ description: |
   Testing and code quality expertise bundle covering test generation, E2E testing with Playwright,
   and code review. Use when writing tests, setting up test infrastructure, analyzing coverage, or
   reviewing code for bugs and vulnerabilities.
+when-to-use: "Load BEFORE writing tests, setting up test infrastructure, Playwright E2E, or reviewing code quality."
 ---
 
 # Testing & Code Quality

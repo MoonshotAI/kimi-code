@@ -4,6 +4,7 @@ description: |
   Backend framework expertise bundle covering Django, FastAPI, NestJS, Rails, Laravel, Spring Boot,
   Java, C#/.NET, PHP, Salesforce, and WebSocket engineering. Use when building server-side
   applications, REST/GraphQL APIs, or real-time communication systems.
+when-to-use: "Load BEFORE writing server-side code with Django, FastAPI, NestJS, Rails, Laravel, Spring Boot, .NET, PHP, or WebSockets."
 ---
 
 # Backend Frameworks

@@ -4,6 +4,7 @@ description: |
   Security expertise bundle covering code review, secure coding, and full-stack security.
   Use when implementing authentication/authorization, preventing OWASP Top 10 vulnerabilities,
   conducting security audits, or building security-focused applications.
+when-to-use: "Load BEFORE implementing auth, reviewing code for vulnerabilities, or any security-sensitive work."
 ---
 
 # Security

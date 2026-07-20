@@ -1,6 +1,7 @@
 ---
 name: embedded-systems
 description: Use when developing firmware for microcontrollers, implementing RTOS applications, or optimizing power consumption. Invoke for STM32, ESP32, FreeRTOS, bare-metal, power optimization, real-time systems, configure peripherals, write interrupt handlers, implement DMA transfers, debug timing issues.
+when-to-use: "Load BEFORE firmware or embedded work: STM32, ESP32, FreeRTOS, bare-metal, interrupts, or power optimization."
 ---
 
 # Embedded Systems Engineer

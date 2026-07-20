@@ -4,6 +4,7 @@ description: |
   DevOps and infrastructure expertise bundle covering Docker, CI/CD, Kubernetes, Terraform,
   cloud architecture, SRE, monitoring, and chaos engineering. Use when building deployment
   pipelines, managing clusters, designing cloud infrastructure, or ensuring system reliability.
+when-to-use: "Load BEFORE any Docker, docker-compose, Kubernetes, Terraform, CI/CD pipeline, cloud infrastructure, monitoring, or SRE work."
 ---
 
 # DevOps & Infrastructure

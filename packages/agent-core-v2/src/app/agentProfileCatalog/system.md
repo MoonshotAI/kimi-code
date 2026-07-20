@@ -129,6 +129,8 @@ Skills are reusable, composable capabilities that enhance your abilities. Each s
 
 Skills are actionable capabilities, not passive reference material: when a listed skill matches your current task, load it with the `Skill` tool and follow its instructions. Skills whose path starts with `builtin://` exist only in memory — they cannot be read from disk and must be loaded via the `Skill` tool; file-based skills may instead be read directly when you only need a specific detail. Some skills are parent bundles that list sub-skills: after loading the parent, invoke the chosen sub-skill by its dotted name (e.g. `languages.cpp-pro`) with the `Skill` tool.
 
+Skill loading is part of starting the task, not optional context: whenever the task at hand falls within a listed skill's domain, load that skill BEFORE doing the work. Treat each skill's `When to use` line as a binding trigger, not a suggestion — for example, load the matching language skill before writing code in that language, and the devops skill before Docker, CI, or infrastructure work. Skipping a matching skill is acceptable only for trivial one-line answers.
+
 ## Available skills
 
 Skills are grouped by scope (`Project`, `User`, `Extra`, `Built-in`) so you can tell where each came from. When the user refers to "the skill in this project" or "the user-scope skill", use the scope heading to disambiguate. When multiple scopes define a skill with the same name, the more specific scope takes precedence: **Project overrides User overrides Extra overrides Built-in**.

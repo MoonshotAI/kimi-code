@@ -4,6 +4,7 @@ description: |
   Project management and decision expertise bundle covering project planning, sprint planning,
   strategy, decision-making, feature specification, Atlassian integration, and critical reasoning.
   Use when planning projects, estimating work, making strategic decisions, or managing tickets.
+when-to-use: "Load BEFORE project planning, sprint planning, estimation, or feature specification."
 ---
 
 # Project Management

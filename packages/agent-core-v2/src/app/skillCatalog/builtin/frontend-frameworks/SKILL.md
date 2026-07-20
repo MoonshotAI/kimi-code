@@ -4,6 +4,7 @@ description: |
   Frontend and client-side framework expertise bundle covering React, Vue, Angular, Next.js,
   Flutter, React Native, Swift/SwiftUI, WordPress, and Shopify. Use when building user interfaces,
   mobile apps, SPAs, SSR applications, or CMS-powered frontends.
+when-to-use: "Load BEFORE building UIs with React, Vue, Angular, Next.js, Flutter, React Native, SwiftUI, WordPress, or Shopify."
 ---
 
 # Frontend Frameworks
