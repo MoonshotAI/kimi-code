@@ -167,20 +167,16 @@ kimi web --port 58628    # 指定绑定端口
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
 
 ::: info 提示
-`kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。该提示将在 Kimi Code 下个大版本移除。
+`kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。唯一的例外是 `kimi server kill`，它仍然可用，仅用于停止 0.28.0 之前版本启动的服务。该提示将在 Kimi Code 下个大版本移除。
 :::
 
 ::: danger 警告
-`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 Ctrl+C 停止服务（或在另一个终端运行 `kimi web kill <server-id>`）。
+`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 `Ctrl+C` 停止服务。
 :::
 
-#### `kimi web kill [server-id|all]`
+#### `kimi server kill`
 
-停止运行中的服务实例：先请求 `POST /api/v1/shutdown` 优雅退出，再对实例 pid 发 SIGTERM、必要时升级为 SIGKILL。多实例并存时用 `[server-id]` 指定目标；缺省停止存活最久的实例；传入特殊关键字 `all` 停止全部实例；id 不存在时报错并列出所有存活实例 id。
-
-#### `kimi web ps`
-
-按 server-id 分组列出每个实例当前连接的客户端（来自 `GET /api/v1/connections`）；`--json` 输出按实例嵌套的原始数据。
+已废弃——仅用于停止 0.28.0 之前的 Kimi Code 版本启动的服务。那些版本可能在后台遗留服务进程，记录在 legacy 单实例锁文件 `~/.kimi-code/server/lock` 中；该命令先请求 `POST /api/v1/shutdown` 优雅退出，再对锁中记录的 pid 发 SIGTERM、必要时升级为 SIGKILL，并在确认进程退出后删除锁文件。`kimi web` 启动的服务在前台运行，直接用 `Ctrl+C` 停止即可。
 
 #### `kimi web rotate-token`
 
