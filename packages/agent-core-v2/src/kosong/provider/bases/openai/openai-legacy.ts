@@ -97,27 +97,30 @@ export const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
  * default".
  */
 export interface OpenAIChatCompletionsHooks {
-  convertTool?(tool: Tool): Record<string, unknown> | undefined;
-  convertMessage?(
+  convertTool?: (tool: Tool) => Record<string, unknown> | undefined;
+  convertMessage?: (
     message: Message,
     converted: Record<string, unknown>,
-  ): Record<string, unknown> | null;
-  mergeHistory?(
+  ) => Record<string, unknown> | null;
+  mergeHistory?: (
     messages: readonly Record<string, unknown>[],
-  ): Record<string, unknown>[] | undefined;
-  buildParams?(params: Record<string, unknown>): Record<string, unknown> | undefined;
-  toolCallIdPolicy?(): ToolCallIdPolicy | undefined;
-  withThinking?(
+  ) => Record<string, unknown>[] | undefined;
+  buildParams?: (params: Record<string, unknown>) => Record<string, unknown> | undefined;
+  toolCallIdPolicy?: () => ToolCallIdPolicy | undefined;
+  withThinking?: (
     effort: ThinkingEffort,
     options: { readonly keep?: string },
     generationKwargs: OpenAILegacyGenerationKwargs,
-  ): OpenAILegacyGenerationKwargs | undefined;
-  preserveThinking?(generationKwargs: Record<string, unknown>): boolean | undefined;
-  withMaxCompletionTokens?(maxCompletionTokens: number): Record<string, unknown> | undefined;
-  cacheKey?(key: string): Record<string, unknown> | undefined;
-  extractUsage?(chunk: Record<string, unknown>): Record<string, unknown> | null | undefined;
-  reasoningKey?(): string | undefined;
-  uploadVideo?(input: string | VideoUploadInput, options?: GenerateOptions): Promise<VideoURLPart>;
+  ) => OpenAILegacyGenerationKwargs | undefined;
+  preserveThinking?: (generationKwargs: Record<string, unknown>) => boolean | undefined;
+  withMaxCompletionTokens?: (maxCompletionTokens: number) => Record<string, unknown> | undefined;
+  cacheKey?: (key: string) => Record<string, unknown> | undefined;
+  extractUsage?: (chunk: Record<string, unknown>) => Record<string, unknown> | null | undefined;
+  reasoningKey?: () => string | undefined;
+  uploadVideo?: (
+    input: string | VideoUploadInput,
+    options?: GenerateOptions,
+  ) => Promise<VideoURLPart>;
 }
 
 export interface OpenAILegacyOptions {
