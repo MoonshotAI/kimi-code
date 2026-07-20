@@ -133,6 +133,7 @@ export class CustomEditor extends Editor {
   /** Return `true` to consume Ctrl+B; return `false`/`undefined` to fall through to the editor default (cursor-left). */
   public onCtrlB?: () => boolean;
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
+  public onCtrlY?: () => void;
   public onToggleTodoExpand?: () => boolean;
   public onUndo?: () => void;
   public onTextPaste?: () => void;
@@ -448,6 +449,11 @@ export class CustomEditor extends Editor {
       // otherwise fall through so readline's backward-char still works at the
       // idle prompt.
       if (this.onCtrlB?.() === true) return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('y'))) {
+      this.onCtrlY?.();
+      return;
     }
 
     if (matchesKey(normalized, Key.ctrl('t'))) {

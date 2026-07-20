@@ -969,6 +969,10 @@ export class KimiTUI {
     void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
   }
 
+  handleYoloToggle(): void {
+    void slashCommands.handleYoloCommand(this, '');
+  }
+
   handleInputModeChange(mode: 'prompt' | 'bash'): void {
     this.setAppState({ inputMode: mode });
     this.updateEditorBorderHighlight();
