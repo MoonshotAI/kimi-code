@@ -88,6 +88,7 @@ export interface ISessionLifecycleService {
   readonly onDidArchiveSession: Event<SessionArchivedEvent>;
   readonly onDidForkSession: Event<SessionForkedEvent>;
   readonly hooks: Hooks<SessionLifecycleHooks>;
+  beginClose(): Promise<void>;
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];

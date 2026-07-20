@@ -111,6 +111,26 @@ test('a stale lock with a protocol payload keeps its lock_id in the stale file n
   await cleanup(dir);
 });
 
+test('a live foreign watch cannot keep stale-lock acquire waiting past its deadline', async () => {
+  const dir = await tmpDir();
+  const p = path.join(dir, 'db.lock');
+  const foreignWatch = `${p}.watch-${process.pid}-foreign`;
+  await fs.writeFile(
+    p,
+    JSON.stringify({ pid: 999999, ts: Date.now(), lock_id: 'old-token' }),
+  );
+  await fs.writeFile(foreignWatch, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+
+  const lock = new LockFile(p);
+  const started = performance.now();
+  assert.equal(await lock.acquire(Date.now() + 100), false);
+  assert.ok(performance.now() - started < 1_000);
+  assert.equal(await fs.readFile(p, 'utf8').then(() => true, () => false), false);
+
+  await fs.unlink(foreignWatch).catch(() => {});
+  await cleanup(dir);
+});
+
 // --- creation window: fresh empty/garbage files are "creating", not stale ----
 
 test('a fresh empty lock file counts as still being created (acquire refused)', async () => {

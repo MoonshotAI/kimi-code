@@ -852,6 +852,7 @@ function registerSessionExportServices(
     onDidCloseSession: noopEvent,
     onDidArchiveSession: noopEvent,
     onDidForkSession: noopEvent,
+    beginClose: async () => {},
     hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
       'onDidCreateSession',
       'onWillCloseSession',

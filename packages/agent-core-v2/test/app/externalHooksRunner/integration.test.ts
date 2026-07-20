@@ -192,6 +192,7 @@ function stubSessionLifecycle(): ISessionLifecycleService {
     onDidCloseSession: Event.None as ISessionLifecycleService['onDidCloseSession'],
     onDidArchiveSession: Event.None as ISessionLifecycleService['onDidArchiveSession'],
     onDidForkSession: Event.None as ISessionLifecycleService['onDidForkSession'],
+    beginClose: async () => {},
     create: async () => {
       throw new Error('not implemented');
     },

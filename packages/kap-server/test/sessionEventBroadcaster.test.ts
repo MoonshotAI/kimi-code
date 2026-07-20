@@ -723,6 +723,19 @@ describe('SessionEventBroadcaster', () => {
     await expect(stat(join(dir, '__global__.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('sends one global hint when a target subscribes to multiple sessions', async () => {
+    sessions.set('s1', new FakeLifecycle());
+    sessions.set('s2', new FakeLifecycle());
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+    await bc.subscribe('s2', target);
+
+    eventBus.emit({ type: 'session.list_changed', payload: {} });
+
+    await vi.waitFor(() => expect(envelopes).toHaveLength(1));
+    expect(envelopes[0]).toMatchObject({ type: 'session.list_changed', session_id: '__global__' });
+  });
+
   it('never serves replay from the in-memory tail while the journal has write failures', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');

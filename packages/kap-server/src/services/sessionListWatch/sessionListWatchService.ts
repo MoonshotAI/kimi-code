@@ -54,6 +54,8 @@ export class SessionListWatchService {
   private rootHandle: IHostFsWatchHandle | undefined;
   /** workspaceId → handle, added/removed as workspace directories come and go. */
   private readonly workspaceHandles = new Map<string, IHostFsWatchHandle>();
+  private readonly pendingWorkspaceWatchers = new Set<string>();
+  private readonly removedWorkspaces = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private started = false;
 
@@ -90,7 +92,11 @@ export class SessionListWatchService {
     }
     this.rootHandle = this.fsWatch.watch(this.sessionsDir, { recursive: false });
     this.rootHandle.onDidChange((change) => this.onRootChange(change));
-    return this.scanWorkspaces();
+    return this.rootHandle.ready
+      .catch((error: unknown) => {
+        this.logger?.warn({ err: String(error) }, 'session list watch: root watcher failed to ready');
+      })
+      .then(() => this.scanWorkspaces());
   }
 
   dispose(): void {
@@ -100,6 +106,8 @@ export class SessionListWatchService {
     }
     for (const handle of this.workspaceHandles.values()) handle.dispose();
     this.workspaceHandles.clear();
+    this.pendingWorkspaceWatchers.clear();
+    this.removedWorkspaces.clear();
     this.rootHandle?.dispose();
     this.rootHandle = undefined;
     this.started = false;
@@ -117,7 +125,7 @@ export class SessionListWatchService {
     }
     for (const entry of entries) {
       if (!this.started) return;
-      if (entry.isDirectory()) this.addWorkspaceWatcher(entry.name);
+      if (entry.isDirectory()) await this.addWorkspaceWatcher(entry.name);
     }
   }
 
@@ -129,8 +137,10 @@ export class SessionListWatchService {
     if (workspaceId === '' || workspaceId.includes(sep)) return;
     this.scheduleHint();
     if (change.action === 'created') {
-      this.addWorkspaceWatcher(workspaceId);
+      this.removedWorkspaces.delete(workspaceId);
+      void this.addWorkspaceWatcher(workspaceId);
     } else if (change.action === 'deleted') {
+      this.removedWorkspaces.add(workspaceId);
       this.removeWorkspaceWatcher(workspaceId);
     }
     // The hint for the root event itself already covers a workspace that
@@ -145,22 +155,48 @@ export class SessionListWatchService {
     this.scheduleHint();
   }
 
-  private addWorkspaceWatcher(workspaceId: string): void {
-    if (this.workspaceHandles.has(workspaceId)) return;
-    let handle: IHostFsWatchHandle;
+  private async addWorkspaceWatcher(workspaceId: string): Promise<void> {
+    if (this.workspaceHandles.has(workspaceId) || this.pendingWorkspaceWatchers.has(workspaceId)) return;
+    this.pendingWorkspaceWatchers.add(workspaceId);
     try {
-      handle = this.fsWatch.watch(join(this.sessionsDir, workspaceId), {
-        recursive: false,
+      const workspacePath = join(this.sessionsDir, workspaceId);
+      const before = await this.readDirectoryNames(workspacePath);
+      let handle: IHostFsWatchHandle;
+      try {
+        handle = this.fsWatch.watch(workspacePath, {
+          recursive: false,
+        });
+      } catch (error) {
+        this.logger?.warn(
+          { workspaceId, err: String(error) },
+          'session list watch: failed to watch workspace dir',
+        );
+        return;
+      }
+      if (!this.started || this.removedWorkspaces.has(workspaceId)) {
+        handle.dispose();
+        return;
+      }
+      this.workspaceHandles.set(workspaceId, handle);
+      handle.onDidChange((change) => this.onWorkspaceChange(change));
+      await handle.ready.catch((error: unknown) => {
+        this.logger?.warn({ workspaceId, err: String(error) }, 'session list watch: workspace watcher failed to ready');
       });
-    } catch (error) {
-      this.logger?.warn(
-        { workspaceId, err: String(error) },
-        'session list watch: failed to watch workspace dir',
-      );
-      return;
+      if (!this.started || this.workspaceHandles.get(workspaceId) !== handle) return;
+      const after = await this.readDirectoryNames(workspacePath);
+      if (!sameNames(before, after)) this.scheduleHint();
+    } finally {
+      this.pendingWorkspaceWatchers.delete(workspaceId);
     }
-    this.workspaceHandles.set(workspaceId, handle);
-    handle.onDidChange((change) => this.onWorkspaceChange(change));
+  }
+
+  private async readDirectoryNames(path: string): Promise<Set<string>> {
+    try {
+      const entries = await readdir(path, { withFileTypes: true });
+      return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+    } catch {
+      return new Set();
+    }
   }
 
   private removeWorkspaceWatcher(workspaceId: string): void {
@@ -185,4 +221,10 @@ export class SessionListWatchService {
       this.logger?.warn({ err: String(error) }, 'session list watch: hint publish failed');
     }
   }
+}
+
+function sameNames(left: Set<string>, right: Set<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const name of left) if (!right.has(name)) return false;
+  return true;
 }

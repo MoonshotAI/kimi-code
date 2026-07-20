@@ -146,6 +146,8 @@ export interface OpenOptions {
   recovery?: RecoveryMode;
   readOnly?: boolean;
   onLockFail?: 'readonly';
+  /** Absolute bound for the underlying lock acquisition settle phase. */
+  lockAcquireTimeoutMs?: number;
   /** Where to keep value bulk. 'memory' keeps values in RAM; 'disk' keeps only
    *  value pointers in RAM and reads values from the snapshot/WAL on demand. */
   valueMode?: ValueModeSetting;
@@ -290,7 +292,11 @@ export class MiniDb<V = unknown> {
       db.lock = new LockFile(path.join(db.dir, 'db.lock'), {
         onLost: () => db.markLockLost(),
       });
-      const got = await db.lock.acquire();
+      const deadline =
+        opts.lockAcquireTimeoutMs === undefined
+          ? undefined
+          : Date.now() + Math.max(0, opts.lockAcquireTimeoutMs);
+      const got = await db.lock.acquire(deadline);
       if (!got) {
         if (opts.onLockFail === 'readonly') {
           db.readOnly = true;

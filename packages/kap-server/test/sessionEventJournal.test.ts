@@ -126,14 +126,34 @@ describe('SessionEventJournal', () => {
       JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_old', created_at: 1 }),
       JSON.stringify({ kind: 'event', seq: 1, envelope: envelope(1) }),
       JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_new', created_at: 2 }),
-      JSON.stringify({ kind: 'event', seq: 2, envelope: envelope(2) }),
+      JSON.stringify({ kind: 'event', seq: 1, envelope: envelope(1) }),
     ];
     await writeFile(filePath, lines.join('\n') + '\n', 'utf8');
 
     const j = await SessionEventJournal.open(filePath);
     expect(j.epoch).toBe('ep_new');
-    expect(j.seq).toBe(2);
+    expect(j.seq).toBe(1);
+    expect((await j.readSince(0, 100)).map((entry) => entry.seq)).toEqual([1]);
     await j.close();
+  });
+
+  it('ignores a torn trailing line but rejects a malformed middle line', async () => {
+    const j1 = await SessionEventJournal.open(filePath);
+    j1.append(j1.nextSeq(), envelope(1));
+    await j1.close();
+
+    const durable = await readFile(filePath, 'utf8');
+    await writeFile(filePath, `${durable}{"kind":"event"}`, 'utf8');
+    const j2 = await SessionEventJournal.open(filePath);
+    expect(j2.seq).toBe(1);
+
+    await writeFile(
+      filePath,
+      `${durable}not-json\n${durable.split('\n')[1]}\n`,
+      'utf8',
+    );
+    await expect(j2.readSince(0, 100)).rejects.toBeInstanceOf(JournalStorageError);
+    await j2.close();
   });
 
   it('cold reads are read-only: no epoch is fabricated and nothing is written', async () => {

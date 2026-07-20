@@ -23,7 +23,7 @@
  * this backend, never `node:fs` directly.
  */
 
-import { createReadStream, mkdirSync } from 'node:fs';
+import { createReadStream, mkdirSync, statSync } from 'node:fs';
 import { mkdir, open, readFile, readdir, unlink } from 'node:fs/promises';
 import { FSWatcher } from 'chokidar';
 import { dirname, join, normalize } from 'pathe';
@@ -49,6 +49,25 @@ import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/int
 
 const WATCH_DEBOUNCE_MS = 150;
 const STORAGE_LOCK_WAIT_TIMEOUT_MS = 10_000;
+
+type WatchFingerprint = { readonly size: number; readonly mtimeMs: number; readonly ino: number } | undefined;
+
+function fingerprint(path: string): WatchFingerprint {
+  try {
+    const stats = statSync(path);
+    return { size: stats.size, mtimeMs: stats.mtimeMs, ino: stats.ino };
+  } catch {
+    return undefined;
+  }
+}
+
+function sameFingerprint(left: WatchFingerprint, right: WatchFingerprint): boolean {
+  return (
+    left?.size === right?.size &&
+    left?.mtimeMs === right?.mtimeMs &&
+    left?.ino === right?.ino
+  );
+}
 
 function isEnoent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -179,6 +198,7 @@ export class FileStorageService implements IFileSystemStorageService {
     const arm = (): void => {
       try {
         mkdirSync(dir, { recursive: true, mode: this.dirMode });
+        const before = fingerprint(normalizedTarget);
         watcher = new FSWatcher({
           ignoreInitial: true,
           awaitWriteFinish: false,
@@ -193,6 +213,9 @@ export class FileStorageService implements IFileSystemStorageService {
           if (normalize(changedPath) === normalizedTarget) schedule();
         });
         watcher.on('error', (error: unknown) => onUnexpectedError(error));
+        watcher.on('ready', () => {
+          if (!sameFingerprint(before, fingerprint(normalizedTarget))) schedule();
+        });
         watcher.add(dir);
       } catch (error) {
         onUnexpectedError(error);

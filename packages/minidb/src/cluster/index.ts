@@ -100,6 +100,7 @@ export class ClusterDb<V = unknown> {
         recovery: opts.recovery,
         maxMemoryBytes: opts.maxMemoryBytes,
         maxMemoryPolicy: opts.maxMemoryPolicy,
+        lockAcquireTimeoutMs: opts.lockAcquireTimeoutMs,
       },
       readerOpts: {
         valueCodec: topology.meta.valueCodec,

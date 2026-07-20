@@ -545,6 +545,22 @@ describe('SessionLifecycleService', () => {
     expect(svc.get('s1')).toBeUndefined();
   });
 
+  it('rejects new session materialization after close admission begins', async () => {
+    const svc = build();
+    await svc.beginClose();
+
+    await expect(svc.create({ sessionId: 's1', workDir: '/tmp/proj' })).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+    await expect(svc.resume('s1')).rejects.toMatchObject({ code: ErrorCodes.SESSION_CLOSED });
+    await expect(
+      svc.fork({ sourceSessionId: 's1', newSessionId: 's2' }),
+    ).rejects.toMatchObject({ code: ErrorCodes.SESSION_CLOSED });
+    await expect(
+      svc.createChild({ sourceSessionId: 's1', newSessionId: 's3' }),
+    ).rejects.toMatchObject({ code: ErrorCodes.SESSION_CLOSED });
+  });
+
   it('create seeds identity and materializes metadata', async () => {
     const svc = build();
     const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });

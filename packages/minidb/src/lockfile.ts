@@ -183,7 +183,7 @@ export class LockFile {
    *  or by a competing takeover. After observing a held lock this call never
    *  re-races: callers that want to wait retry acquire() at a higher level
    *  (see the cluster lock pool). */
-  async acquire(): Promise<boolean> {
+  async acquire(deadline?: number): Promise<boolean> {
     const lockId = this.newLockId();
     this.startedAt ??= processStartedAtOf(this.selfPid);
     // Register a "watch" BEFORE touching the lock: every contender is visible
@@ -204,7 +204,8 @@ export class LockFile {
         // and its quarantine rename, and its late rename would steal this
         // fresh lock AFTER our confirm — the historical "two processes
         // believe they hold the lock" failure the settle exists to prevent.
-        if (!(await this.settleForForeignWatches(lockId, watch, TAKEOVER_SETTLE_BASE_MS))) {
+        if (!(await this.settleForForeignWatches(lockId, watch, TAKEOVER_SETTLE_BASE_MS, deadline))) {
+          await this.abandonCandidate(lockId);
           return false;
         }
         return await this.confirmCreated(lockId);
@@ -232,6 +233,7 @@ export class LockFile {
       const attemptStart = Date.now();
       const stalePath = `${this.path}.stale.${seen.lockId ?? 'unknown'}`;
       for (let attempt = 0; ; attempt++) {
+        if (deadline !== undefined && this.now() >= deadline) return false;
         // The corpse must still be there and stale. A competitor who landed
         // wins by being alive in the file now — back off instead of
         // quarantining their lock. (Unconditional, not just win32: the same
@@ -255,7 +257,13 @@ export class LockFile {
             if (code === 'EPERM' || code === 'EEXIST') return false;
             throw e;
           }
-          await new Promise((r) => setTimeout(r, 20 + Math.floor(Math.random() * 30)));
+          const delay = 20 + Math.floor(Math.random() * 30);
+          const remaining = deadline === undefined ? delay : deadline - this.now();
+          if (remaining <= 0) return false;
+          const waitMs = Math.min(delay, remaining);
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, waitMs);
+          });
         }
       }
 
@@ -268,7 +276,10 @@ export class LockFile {
         TAKEOVER_SETTLE_MAX_MS,
         Math.max(TAKEOVER_SETTLE_BASE_MS, elapsedMs * 4),
       );
-      if (!(await this.settleForForeignWatches(lockId, watch, initialSettleMs))) return false;
+      if (!(await this.settleForForeignWatches(lockId, watch, initialSettleMs, deadline))) {
+        await this.abandonCandidate(lockId);
+        return false;
+      }
       return await this.confirmCreated(lockId);
     } finally {
       await fs.unlink(watch).catch(() => {});
@@ -300,6 +311,12 @@ export class LockFile {
     HELD.add(this);
     hookExit();
     return true;
+  }
+
+  private async abandonCandidate(lockId: string): Promise<void> {
+    const raw = await this.readDiskText();
+    if (tryParse(raw ?? '')?.lock_id !== lockId) return;
+    await fs.unlink(this.path).catch(() => {});
   }
 
   private payload(lockId: string): string {
@@ -383,13 +400,19 @@ export class LockFile {
     lockId: string,
     ownWatch: string,
     initialSettleMs: number,
+    deadline?: number,
   ): Promise<boolean> {
     let settleMs = initialSettleMs;
     for (;;) {
       const cur = await this.inspect();
       if (cur === null || cur.lockId !== lockId) return false;
       if (!(await this.hasLiveForeignWatch(ownWatch))) return true;
-      await new Promise((resolve) => setTimeout(resolve, settleMs));
+      const remaining = deadline === undefined ? settleMs : deadline - this.now();
+      if (remaining <= 0) return false;
+      const waitMs = Math.min(settleMs, remaining);
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, waitMs);
+      });
       settleMs = Math.min(TAKEOVER_SETTLE_MAX_MS, settleMs * 2);
     }
   }

@@ -6,6 +6,7 @@
 import { traceWsIn, traceWsLifecycle, traceWsOut } from '../../debug/trace';
 import { classifyFrame } from './agentEventProjector';
 import { getCredential } from './serverAuth';
+import { SESSION_HELD_BY_PEER_CODE } from './sessionOwnership';
 import type { WireEvent, WireServerFrame } from './wire';
 
 // Mirrors kap-server's WS_BEARER_PROTOCOL_PREFIX. The browser WebSocket API
@@ -406,7 +407,16 @@ export class DaemonEventSocket {
         break;
 
       case 'ack':
-        // ack frames are fire-and-forget for now (no request tracking)
+        if (frame.code === SESSION_HELD_BY_PEER_CODE) {
+          const ownershipDetails = frame.payload?.ownership_details;
+          if (ownershipDetails && typeof ownershipDetails === 'object') {
+            for (const details of Object.values(ownershipDetails as Record<string, unknown>)) {
+              this.handlers.onError(frame.code, frame.msg, false, details);
+            }
+          } else {
+            this.handlers.onError(frame.code, frame.msg, false, frame.payload?.details);
+          }
+        }
         break;
 
       case 'terminal_output': {

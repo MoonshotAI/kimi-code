@@ -46,6 +46,7 @@ function hostFsWatchStub(): IHostFsWatchService {
   return {
     _serviceBrand: undefined,
     watch: (): IHostFsWatchHandle => ({
+      ready: Promise.resolve(),
       onDidChange: (): { dispose(): void } => ({ dispose: () => {} }),
       dispose: () => {},
     }),

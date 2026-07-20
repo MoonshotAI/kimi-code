@@ -39,6 +39,8 @@
  * connections without a transcript spec are unaffected.
  */
 
+import { dirname } from 'node:path';
+
 import type {
   AgentActivityState,
   ApprovalResponse,
@@ -49,17 +51,23 @@ import type {
   Interaction,
   InteractionKind,
   ISessionScopeHandle,
+  SessionOwnershipDetails,
   Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
   IAgentActivityView,
+  ICrossProcessLockService,
   IEventBus,
   IEventService,
   ISessionInteractionService,
   ISessionIndex,
   ISessionLifecycleService,
   MAIN_AGENT_ID,
+  HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
+  LEASE_CREATING_RETRY_AFTER_MS,
+  SESSION_LEASE_TTL_MS,
+  sessionLeasePath,
 } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type {
@@ -239,6 +247,7 @@ export class SessionEventBroadcaster {
   constructor(
     private readonly opts: {
       readonly eventsDir: string;
+      readonly homeDir?: string;
       readonly core: Scope;
       readonly logger?: JournalLogger;
       readonly maxBufferSize?: number;
@@ -357,6 +366,37 @@ export class SessionEventBroadcaster {
     state.deferredTranscriptSeeds.delete(target);
     await this.subscribeTranscript(state, target, deferred.spec, undefined, undefined, deferred.transcriptSince);
     if (state.targets.has(target)) state.transcriptSeeded.add(target);
+  }
+
+  async getSubscriptionFailure(sessionId: string): Promise<SessionOwnershipDetails | undefined> {
+    const summary = await this.opts.core.accessor.get(ISessionIndex).get(sessionId);
+    if (summary === undefined) return undefined;
+
+    const homeDir = this.opts.homeDir ?? dirname(dirname(this.opts.eventsDir));
+    const inspection = this.opts.core
+      .accessor.get(ICrossProcessLockService)
+      .inspect(sessionLeasePath(homeDir, sessionId));
+    if (inspection.state === 'creating') {
+      return {
+        kind: 'held-by-peer',
+        phase: 'creating',
+        retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS,
+      };
+    }
+    if (inspection.state !== 'held' || inspection.payload === undefined) return undefined;
+
+    const heartbeatAt = inspection.payload.heartbeatAt;
+    if (heartbeatAt !== undefined && Date.now() - heartbeatAt > SESSION_LEASE_TTL_MS) {
+      return {
+        kind: 'held-by-peer',
+        phase: 'holder-unresponsive',
+        retry_after_ms: HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
+      };
+    }
+    if (inspection.payload.address !== undefined) {
+      return { kind: 'held-by-peer', phase: 'routable', address: inspection.payload.address };
+    }
+    return { kind: 'held-by-peer', phase: 'held-by-local-instance' };
   }
 
   unsubscribe(sessionId: string, target: BroadcastTarget): void {
@@ -612,6 +652,7 @@ export class SessionEventBroadcaster {
     // Drain so the cursor reflects everything dispatched so far.
     await state.queue;
     const { journal, tail } = state;
+    if (journal.flushInFlight || cursor.seq === 0) await journal.flush();
     const currentSeq = journal.seq;
     const { epoch } = journal;
 
@@ -1349,9 +1390,11 @@ export class SessionEventBroadcaster {
   }
 
   private *allTargets(): Iterable<BroadcastTarget> {
+    const targets = new Set<BroadcastTarget>();
     for (const state of this.sessions.values()) {
-      for (const target of state.targets.keys()) yield target;
+      for (const target of state.targets.keys()) targets.add(target);
     }
+    yield* targets;
   }
 }
 

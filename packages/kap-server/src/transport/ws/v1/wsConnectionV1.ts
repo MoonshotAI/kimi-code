@@ -15,6 +15,7 @@
  * down.
  */
 
+import { ErrorCode } from '../../../protocol/error-codes';
 import { WS_PROTOCOL_VERSION, type SessionCursor } from '../../../protocol/ws-control';
 import {
   transcriptSinceSchema,
@@ -43,6 +44,7 @@ import {
   type SessionEventBroadcaster,
   type TargetSubscription,
 } from './sessionEventBroadcaster';
+import type { SessionOwnershipDetails } from '@moonshot-ai/agent-core-v2';
 import { FsWatchBridge } from './fsWatchBridge';
 import { SkillCatalogBridge } from './skillCatalogBridge';
 
@@ -210,7 +212,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     const transcriptSince = parseTranscriptSince(payload['transcript_since']);
 
     const accepted: string[] = [];
+    const notFound: string[] = [];
     const resyncRequired: string[] = [];
+    const ownershipDetails: Record<string, SessionOwnershipDetails> = {};
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of subscriptions) {
@@ -221,15 +225,20 @@ export class WsConnectionV1 implements BroadcastTarget {
         transcript?.[sid],
         transcriptSince?.[sid],
         accepted,
+        notFound,
         resyncRequired,
+        ownershipDetails,
         serverCursors,
       );
     }
 
+    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
     this.sendFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
+      buildAck(frame.id ?? '', hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0, hasOwnershipFailure ? 'session held by peer' : 'success', {
         accepted_subscriptions: accepted,
+        not_found: notFound,
         resync_required: resyncRequired,
+        ownership_details: ownershipDetails,
         cursors: serverCursors,
       }),
     );
@@ -246,6 +255,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const accepted: string[] = [];
     const notFound: string[] = [];
     const resyncRequired: string[] = [];
+    const ownershipDetails: Record<string, SessionOwnershipDetails> = {};
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of sessionIds) {
@@ -259,7 +269,9 @@ export class WsConnectionV1 implements BroadcastTarget {
         transcriptSince: transcriptSince?.[sid],
       });
       if (!ok) {
-        notFound.push(sid);
+        const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+        if (ownership !== undefined) ownershipDetails[sid] = ownership;
+        else notFound.push(sid);
         continue;
       }
       this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
@@ -274,11 +286,13 @@ export class WsConnectionV1 implements BroadcastTarget {
       }
     }
 
+    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
     this.sendFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
+      buildAck(frame.id ?? '', hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0, hasOwnershipFailure ? 'session held by peer' : 'success', {
         accepted,
         not_found: notFound,
         resync_required: resyncRequired,
+        ownership_details: ownershipDetails,
         cursors: serverCursors,
       }),
     );
@@ -338,7 +352,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     transcriptGrades: TranscriptGradeSpec | undefined,
     transcriptSince: Record<string, number> | undefined,
     accepted: string[],
+    notFound: string[],
     resyncRequired: string[],
+    ownershipDetails: Record<string, SessionOwnershipDetails>,
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
     // Same ordering rule as onSubscribe: baseline after the cursor replay.
@@ -347,7 +363,9 @@ export class WsConnectionV1 implements BroadcastTarget {
       transcriptSince,
     });
     if (!ok) {
-      resyncRequired.push(sid);
+      const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+      if (ownership !== undefined) ownershipDetails[sid] = ownership;
+      else notFound.push(sid);
       return;
     }
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
