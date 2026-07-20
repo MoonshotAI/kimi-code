@@ -481,8 +481,12 @@ const following = ref(true);
 const showPill = ref(false);
 
 /** Within this many pixels from the bottom counts as "at the bottom" —
-    scrolling DOWN into this zone re-enables the follow. */
-const BOTTOM_THRESHOLD = 80;
+    scrolling fully INTO it re-enables the follow. Kept deliberately small:
+    a large threshold re-engaged the follow while users were still reading
+    the streaming tail, yanking them back to the bottom on any small
+    downward scroll. Re-follow now requires reaching the bottom (or
+    clicking the new-message pill). */
+const BOTTOM_THRESHOLD = 8;
 const USER_ACTION_FOLLOW_LOCK_MS = 1000;
 
 function distanceFromBottom(): number {
