@@ -522,6 +522,28 @@ export class ToolManager {
     // builtin/user tool names. The split keeps every caller on one string[].
     this.enabledTools = new Set(names.filter((name) => !isMcpToolName(name)));
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
+    // When the github_tools flag is on, ensure all GitHub tool names are
+    // in the enabled set so they are visible to the model even though the
+    // default profile does not list them explicitly.
+    if (flags.enabled('github_tools')) {
+      for (const name of b.GITHUB_READONLY_TOOL_NAMES) {
+        this.enabledTools.add(name);
+      }
+      // Mutating GitHub tools not in the readonly list.
+      const GITHUB_MUTATING_TOOL_NAMES: readonly string[] = [
+        'GitHubCreateOrUpdateFile',
+        'GitHubCreateIssue',
+        'GitHubUpdateIssue',
+        'GitHubAddIssueComment',
+        'GitHubCreatePR',
+        'GitHubUpdatePR',
+        'GitHubMergePR',
+        'GitHubCreatePRReview',
+      ];
+      for (const name of GITHUB_MUTATING_TOOL_NAMES) {
+        this.enabledTools.add(name);
+      }
+    }
     // Builtin construction reads the enabled set (Bash/Agent bake
     // `allowBackground` from the Task* trio), and the constructor may already
     // have built the map while the enabled set was still empty. The lazy
