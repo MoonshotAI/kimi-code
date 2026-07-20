@@ -6,6 +6,22 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.28.0 (2026-07-20)
+
+### Features
+
+- Replace the `kimi server` command tree with `kimi web`: the server runs in the foreground.
+
+### Polish
+
+- Thinking effort persists only levels below the model's top tier (max).
+- web: Add a note in the model switcher that switching models or thinking effort invalidates the existing prompt cache.
+
+### Bug Fixes
+
+- Correct the YOLO and Auto permission mode descriptions: YOLO auto-approves tool actions but the agent may still ask questions, while Auto is fully autonomous and never asks.
+- Fix the web backend ignoring symbolic links when loading AGENTS.md files and reading files.
+
 ## 0.27.0 (2026-07-17)
 
 ### Features
