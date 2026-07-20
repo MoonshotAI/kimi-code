@@ -49,9 +49,10 @@ export interface ProjectOptions {
   readonly mergeConsecutiveAssistants?: boolean;
   /**
    * When `true`, drop assistant tool calls whose id already appeared earlier
-   * (first occurrence wins; a message left with no content and no calls is
-   * dropped), and drop every tool result after the first for a given id so the
-   * kept call keeps exactly one answer. Duplicate ids are wire-invalid on
+   * (first occurrence wins; a message left with no calls and no sendable
+   * content is dropped), and drop every tool result after the first for a
+   * given id so the kept call keeps exactly one answer. Duplicate ids are
+   * wire-invalid on
    * strict providers ("`tool_use` ids must be unique") and no other pass can
    * repair them. Strict-resend only: a provider that accepted the duplicates
    * when it produced them (e.g. per-response counter ids like `call_0`) must
@@ -220,7 +221,11 @@ function repairToolExchangeAdjacency(
 // Strict providers reject a request whose assistant messages carry two
 // `tool_use` blocks with the same id ("tool_use ids must be unique"). Keep the
 // first occurrence of each call id, drop the rest, and drop an assistant
-// message entirely when duplicates were all it carried. Every result after the
+// message entirely when duplicates were all it carried — or when removing
+// them leaves only vacuous content (e.g. a single empty thinking block),
+// which would serialize as an empty assistant and be rejected again on the
+// strict retry ("the message ... with role 'assistant' must not be empty").
+// Every result after the
 // first for a given id is dropped with its call, so no dangling tool message
 // survives the dedupe; when the kept call has no result of its own, the later
 // duplicate's surviving result is reattached by the adjacency repair. Runs
@@ -247,8 +252,14 @@ function dedupeDuplicateToolCalls(
       });
       if (kept.length === message.toolCalls.length) {
         out.push(message);
-      } else if (kept.length > 0 || message.content.length > 0) {
+      } else if (kept.length > 0 || !message.content.every(isVacuousContentPart)) {
         out.push({ ...message, toolCalls: kept });
+      } else if (message.content.length > 0) {
+        // Every call this message carried was a later duplicate, and only
+        // vacuous content remains: kept, it would serialize as an empty
+        // assistant and be rejected again on the strict retry. Drop it with
+        // a trace (a truly content-free message stays a silent drop).
+        onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
       }
       continue;
     }

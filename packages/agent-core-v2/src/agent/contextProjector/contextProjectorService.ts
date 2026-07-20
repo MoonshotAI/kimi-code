@@ -322,8 +322,10 @@ function dedupeDuplicateToolCalls(messages: readonly Message[], onAnomaly?: OnAn
       });
       if (kept.length === message.toolCalls.length) {
         out.push(message);
-      } else if (kept.length > 0 || message.content.length > 0) {
+      } else if (kept.length > 0 || !message.content.every(isVacuousContentPart)) {
         out.push({ ...message, toolCalls: kept });
+      } else if (message.content.length > 0) {
+        onAnomaly?.({ kind: 'vacuous_message_dropped', role: message.role });
       }
       continue;
     }

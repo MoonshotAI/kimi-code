@@ -762,6 +762,73 @@ describe('project duplicate tool_use ids', () => {
     );
     expect(projected.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
   });
+
+  it('under the strict flag, drops an assistant left with only vacuous content after removing duplicates', () => {
+    // A tool step with an empty thinking block whose call id is a later
+    // duplicate: dedupe strips its only call, and keeping the vacuous
+    // remainder would serialize as an empty assistant and be rejected again
+    // ("the message ... with role 'assistant' must not be empty").
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project(
+      [
+        user('u1'),
+        assistant(['call_a'], 'first'),
+        tool('call_a', 'first result'),
+        {
+          role: 'assistant',
+          content: [thinkPart('')],
+          toolCalls: [{ type: 'function', id: 'call_a', name: 'Run', arguments: '{}' }],
+        },
+        tool('call_a', 'second result'),
+        user('u2'),
+      ],
+      {
+        dedupeDuplicateToolCalls: true,
+        dropOrphanResults: true,
+        onAnomaly: (a) => anomalies.push(a),
+      },
+    );
+    expect(projected.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(anomalies).toContainEqual({ kind: 'duplicate_tool_call_dropped', toolCallId: 'call_a' });
+    expect(anomalies).toContainEqual({ kind: 'duplicate_tool_result_dropped', toolCallId: 'call_a' });
+    expect(anomalies).toContainEqual({ kind: 'vacuous_message_dropped', role: 'assistant' });
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
+
+  it('under the strict flag, keeps a duplicate-stripped assistant whose remaining content is sendable', () => {
+    const anomalies: ProjectionAnomaly[] = [];
+    const projected = project(
+      [
+        user('u1'),
+        assistant(['call_a'], 'first'),
+        tool('call_a', 'first result'),
+        {
+          role: 'assistant',
+          content: [thinkPart(''), textPart('second')],
+          toolCalls: [{ type: 'function', id: 'call_a', name: 'Run', arguments: '{}' }],
+        },
+        tool('call_a', 'second result'),
+        user('u2'),
+      ],
+      {
+        dedupeDuplicateToolCalls: true,
+        dropOrphanResults: true,
+        onAnomaly: (a) => anomalies.push(a),
+      },
+    );
+    expect(projected.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'user',
+    ]);
+    const stripped = projected[3]!;
+    expect(stripped.toolCalls).toEqual([]);
+    expect(stripped.content).toEqual([thinkPart(''), textPart('second')]);
+    expect(anomalies).not.toContainEqual({ kind: 'vacuous_message_dropped', role: 'assistant' });
+    expect(everyToolUseImmediatelyAnswered(projected)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

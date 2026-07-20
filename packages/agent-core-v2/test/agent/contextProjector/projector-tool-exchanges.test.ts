@@ -412,6 +412,66 @@ describe('projector tool-exchange normalization', () => {
     expect((projected[2]?.content[0] as { text: string }).text).toBe('late result');
   });
 
+  it('strict mode drops an assistant left with only vacuous content after deduping', () => {
+    const history = [
+      user('go'),
+      assistant('first', ['dup']),
+      toolResult('dup', 'one'),
+      {
+        role: 'assistant' as const,
+        content: [{ type: 'think' as const, think: '' }],
+        toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+      },
+      toolResult('dup', 'two'),
+      user('next'),
+    ];
+
+    const projected = projectStrict(history);
+
+    expect(
+      projected.map((message) =>
+        message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
+      ),
+    ).toEqual(['user', 'assistant', 'tool:dup', 'user']);
+    expect(repairPayloads(warnings)).toEqual([
+      expect.objectContaining({ duplicateCallsDropped: 1, vacuousDropped: 1 }),
+    ]);
+  });
+
+  it('strict mode keeps a deduped assistant whose remaining content is sendable', () => {
+    const history = [
+      user('go'),
+      assistant('first', ['dup']),
+      toolResult('dup', 'one'),
+      {
+        role: 'assistant' as const,
+        content: [
+          { type: 'think' as const, think: '' },
+          { type: 'text' as const, text: 'second' },
+        ],
+        toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+      },
+      toolResult('dup', 'two'),
+      user('next'),
+    ];
+
+    const projected = projectStrict(history);
+
+    expect(
+      projected.map((message) =>
+        message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
+      ),
+    ).toEqual(['user', 'assistant', 'tool:dup', 'assistant', 'user']);
+    expect(projected[3]?.toolCalls).toEqual([]);
+    expect(projected[3]?.content).toEqual([
+      { type: 'think', think: '' },
+      { type: 'text', text: 'second' },
+    ]);
+    expect(repairPayloads(warnings)).toEqual([
+      expect.objectContaining({ duplicateCallsDropped: 1, vacuousDropped: 0 }),
+    ]);
+  });
+
   it('strict mode drops leading non-user messages', () => {
     const projected = projectStrict([assistant('stale'), toolResult('ghost', 'orphaned'), user('hi')]);
 
