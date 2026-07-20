@@ -1,4 +1,4 @@
-import { APIEmptyResponseError } from './errors';
+import { APIEmptyResponseError, APITimeoutError } from './errors';
 import {
   isContentPart,
   isToolCall,
@@ -117,7 +117,19 @@ export async function generate(
     : tools;
 
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  // Provider streams expose no cancellation handle of their own, so the idle
+  // watchdog must tear down a stalled transport through the request's
+  // AbortSignal: merge the caller's signal with a watchdog-owned controller
+  // and hand the merged signal to the provider.
+  const watchdog = new AbortController();
+  const providerOptions: GenerateOptions = {
+    ...options,
+    signal:
+      options?.signal === undefined
+        ? watchdog.signal
+        : AbortSignal.any([options.signal, watchdog.signal]),
+  };
+  const stream = await provider.generate(systemPrompt, wireTools, history, providerOptions);
   // Early capture: the trace id arrives with the response headers, before the
   // stream body — and before any mid-stream abort — so hosts can attribute
   // even a cancelled stream to its server-side request.
@@ -142,7 +154,7 @@ export async function generate(
   let firstPartAt: number | undefined;
   let lastResumeAt = 0;
 
-  for await (const part of stream) {
+  for await (const part of withStreamIdleTimeout(stream, provider, watchdog)) {
     const arrivedAt = Date.now();
     if (firstPartAt === undefined) {
       firstPartAt = arrivedAt;
@@ -269,6 +281,108 @@ type CancelableStream = StreamedMessage & {
   cancel?: () => unknown;
   return?: () => unknown;
 };
+
+/**
+ * Guard the gap between streamed chunks with an inactivity deadline.
+ *
+ * The provider SSE stream has no read timeout of its own — the openai-node
+ * HTTP client's request timeout is cleared as soon as response headers arrive
+ * (see `openai/src/client.ts` `fetchWithTimeout`, wrapping the fetch call in
+ * `try { … } finally { clearTimeout(timeout) }` and resolving on headers) —
+ * so a connection that goes silent mid-stream would otherwise block
+ * `for await` forever and leave the whole turn hanging. Node's built-in
+ * `undici` has a `bodyTimeout`, but it is reset by every SSE heartbeat frame
+ * (empty `choices:[]`), so a heartbeat-only channel that stops emitting real
+ * deltas never trips it either.
+ *
+ * If no chunk arrives within the deadline the stream is cancelled and a
+ * descriptive `APITimeoutError` subclass is thrown so the step fails loudly
+ * and the loop's retry plugin can re-drive it (see
+ * `isRetryableGenerateError`).
+ */
+const STREAM_IDLE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env['KIMI_STREAM_IDLE_TIMEOUT_MS']);
+  return Number.isFinite(raw) && raw > 0 ? raw : 180_000;
+})();
+
+export class StreamIdleTimeoutError extends APITimeoutError {
+  readonly idleMs: number;
+  readonly elapsedMs: number;
+  readonly traceId: string | null;
+
+  constructor(
+    providerName: string,
+    modelName: string,
+    idleMs: number,
+    elapsedMs: number,
+    traceId: string | null,
+  ) {
+    const traceHint = traceId === null ? '' : ` traceId=${traceId}`;
+    super(
+      `LLM stream stalled: no data received for ${Math.round(idleMs / 1000)}s ` +
+        `(provider: ${providerName}, model: ${modelName}, ` +
+        `elapsedMs: ${elapsedMs}${traceHint}). ` +
+        'The connection was abandoned to avoid hanging forever.',
+    );
+    this.name = 'StreamIdleTimeoutError';
+    this.idleMs = idleMs;
+    this.elapsedMs = elapsedMs;
+    this.traceId = traceId;
+  }
+}
+
+async function* withStreamIdleTimeout(
+  stream: StreamedMessage,
+  provider: ChatProvider,
+  watchdog: AbortController,
+): AsyncGenerator<StreamedMessagePart> {
+  const iterator = stream[Symbol.asyncIterator]();
+  const startedAt = Date.now();
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new StreamIdleTimeoutError(
+              provider.name,
+              provider.modelName,
+              STREAM_IDLE_TIMEOUT_MS,
+              Date.now() - startedAt,
+              stream.traceId ?? null,
+            ),
+          );
+        }, STREAM_IDLE_TIMEOUT_MS);
+      });
+      const next = iterator.next();
+      let result: IteratorResult<StreamedMessagePart>;
+      try {
+        result = await Promise.race([next, timeout]);
+      } catch (error) {
+        if (error instanceof StreamIdleTimeoutError) {
+          // The dangling next() will reject once the transport is aborted
+          // below; swallow it so it never surfaces as an unhandled rejection.
+          next.catch(() => {});
+          // Abort the underlying request so the stalled connection is truly
+          // closed instead of leaking until the server gives up on it.
+          watchdog.abort(error);
+          await cancelStream(stream);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (result.done === true) return;
+      yield result.value;
+    }
+  } finally {
+    // Close the provider iterator on every exit path (timeout, consumer
+    // throw, early break) so generator cleanup runs. Never await it: on a
+    // stalled stream `return()` stays pending until the transport abort
+    // settles the dangling read, and awaiting would re-introduce the hang.
+    void Promise.resolve(iterator.return?.()).catch(() => {});
+  }
+}
 
 function throwAbortError(): never {
   throw new DOMException('The operation was aborted.', 'AbortError');
