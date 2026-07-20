@@ -20,7 +20,9 @@ Custom themes can override the tokens below. The `dark` and `light` columns show
 | `warning` | `#E8A838` | `#92660A` | Warning state. auto/yolo badges, stale markers, Plan mode hint |
 | `error` | `#E85454` | `#B91C1C` | Error state. Error messages, failed tool output |
 | `diffAdded` | `#4EC87E` | `#0E7A38` | Diff added lines |
+| `diffAddedBg` | `#173326` | `#E8F5EE` | Diff added line background |
 | `diffRemoved` | `#E85454` | `#B91C1C` | Diff removed lines |
+| `diffRemovedBg` | `#32181D` | `#FDECEC` | Diff removed line background |
 | `diffAddedStrong` | `#7AD99B` | `#0E7A38` | Diff intra-line changed words, added and bold |
 | `diffRemovedStrong` | `#F08585` | `#B91C1C` | Diff intra-line changed words, removed and bold |
 | `diffGutter` | `#6B6B6B` | `#737373` | Diff line-number gutter |
