@@ -55,6 +55,7 @@ export class StreamingUIController {
   private _thinkingDraft = '';
   private _streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null = null;
   private _activeThinkingComponent: ThinkingComponent | undefined = undefined;
+  private _pendingThinkingCompact = false;
   private _activeCompactionBlock: CompactionComponent | undefined = undefined;
   private _activeToolCalls = new Map<string, ToolCallBlockData>();
   private _streamingToolCallArguments = new Map<
@@ -315,6 +316,7 @@ export class StreamingUIController {
       existingComponent.updateToolCall(toolCall);
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
+      this.compactPendingThinking();
       if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
         this.onToolCallStart(toolCall);
       }
@@ -522,6 +524,7 @@ export class StreamingUIController {
   resetLiveText(): void {
     this.pendingAssistantFlush = false;
     this.pendingThinkingFlush = false;
+    this._pendingThinkingCompact = false;
     this.clearFlushTimerIfIdle();
     this._assistantDraft = '';
     this._streamingBlock = null;
@@ -555,6 +558,10 @@ export class StreamingUIController {
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.finalizeLiveTextBuffers('idle');
+    // After finalizeLiveTextBuffers, onThinkingEnd may have set
+    // _pendingThinkingCompact. Compact now so the thinking block
+    // reaches its final compact form before the turn ends.
+    this.compactPendingThinking();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
@@ -586,6 +593,34 @@ export class StreamingUIController {
   // Live Render Hooks
   // ---------------------------------------------------------------------------
 
+  /**
+   * Compact a stable-mode thinking component to its minimal finalized form.
+   *
+   * Called after the first visible assistant text update so that the thinking
+   * line-count reduction and the assistant content addition happen in the
+   * same pi-tui render cycle. The assistant content growing below offsets
+   * the destructive fullRender, making the transition invisible.
+   *
+   * Also called as a fallback in `finalizeTurn()` for the edge case where
+   * no assistant text follows the thinking block.
+   */
+  compactPendingThinking(): void {
+    if (!this._pendingThinkingCompact) return;
+    this._pendingThinkingCompact = false;
+    // Walk in reverse to find the most recent stable-mode ThinkingComponent,
+    // not an older one from a previous turn.
+    const children = this.host.state.transcriptContainer.children;
+    for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i];
+      if (child instanceof ThinkingComponent) {
+        if ((child as ThinkingComponent).compact()) {
+          this.host.state.ui.requestRender();
+        }
+        break;
+      }
+    }
+  }
+
   onStreamingTextStart(): void {
     const { state } = this.host;
     this._pendingAgentGroup = null;
@@ -608,8 +643,12 @@ export class StreamingUIController {
   onStreamingTextUpdate(fullText: string): void {
     const block = this._streamingBlock;
     if (block !== null) {
+      const hasVisibleAssistantText = fullText.trim().length > 0;
       block.entry.content = fullText;
       block.component.updateContent(fullText, { transient: true });
+      if (hasVisibleAssistantText) {
+        this.compactPendingThinking();
+      }
       this.host.state.ui.requestRender();
     }
   }
@@ -648,7 +687,11 @@ export class StreamingUIController {
 
   onThinkingEnd(): void {
     if (this._activeThinkingComponent === undefined) return;
+    // Enter stable mode: spinner stops but rendered line count stays
+    // identical to live mode, preventing a destructive fullRender when
+    // this component is above the viewport (fixes #981).
     this._activeThinkingComponent.finalize();
+    this._pendingThinkingCompact = true;
     this._activeThinkingComponent = undefined;
     this.host.state.ui.requestRender();
     this.host.mergeCurrentTurnSteps();
@@ -778,6 +821,7 @@ export class StreamingUIController {
     if (this._thinkingDraft.length > 0 || this._streamingBlock !== null) {
       this.finalizeLiveTextBuffers('tool');
     }
+    this.compactPendingThinking();
 
     const existingComponent = this._pendingToolComponents.get(id);
     if (existingComponent !== undefined) {
