@@ -492,8 +492,11 @@ function onAttachmentClick(att: TurnAttachment): void {
   });
 }
 
-function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
+function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number; kind?: string; durationMs?: number }): boolean {
   if (turn.id !== streamingTurnId.value) return false;
+  // A settled thinking block is done even while still the last block — the
+  // turn is parked on an approval/question (see settleThinkingOnUserInteraction).
+  if (block.kind === 'thinking' && block.durationMs !== undefined) return false;
   return block.sourceIndex === turnBlocks(turn).length - 1;
 }
 
@@ -501,9 +504,11 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     its last item sits on the turn's last block, so further steps append into
     this same run. Once a text block (or anything else) takes the tail, the
     run settles and folds itself back. */
-function isStreamingActivityRun(turn: ChatTurn, block: { items: { sourceIndex: number }[] }): boolean {
+function isStreamingActivityRun(turn: ChatTurn, block: { items: { sourceIndex: number; kind?: string; durationMs?: number }[] }): boolean {
   if (turn.id !== streamingTurnId.value) return false;
   const last = block.items.at(-1);
+  // A settled thinking tail means the turn parked on an approval/question.
+  if (last?.kind === 'thinking' && last.durationMs !== undefined) return false;
   return last !== undefined && last.sourceIndex === turnBlocks(turn).length - 1;
 }
 

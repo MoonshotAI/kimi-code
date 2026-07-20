@@ -193,9 +193,15 @@ function itemKey(item: ActivityItem): string {
 }
 
 /** A thinking item streams only while it is the run's (and thus the turn's)
-    live tail — the thinking block folds itself back once the stream moves on. */
+    live tail — the thinking block folds itself back once the stream moves on.
+    A settled durationMs means the turn parked on an approval/question. */
 function isThinkingStreaming(item: ActivityItem): boolean {
-  return props.streaming && item.kind === 'thinking' && item.sourceIndex === lastItem.value?.sourceIndex;
+  return (
+    props.streaming &&
+    item.kind === 'thinking' &&
+    item.durationMs === undefined &&
+    item.sourceIndex === lastItem.value?.sourceIndex
+  );
 }
 </script>
 

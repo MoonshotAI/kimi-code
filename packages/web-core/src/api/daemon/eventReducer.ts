@@ -67,6 +67,36 @@ function closeThinkingParts(content: AppMessageContent[], nowMs: number, before 
   }
 }
 
+/** Settle the open thinking parts of the session's latest assistant message:
+ *  an approval/question parks the turn on the user, and the wait must not
+ *  count as thinking time. */
+function settleThinkingOnUserInteraction(next: KimiClientState, sessionId: string, nowMs: number): void {
+  const msgs = next.messagesBySession[sessionId];
+  if (!msgs) return;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]!;
+    if (m.role !== 'assistant') continue;
+    const hasOpenThinking = m.content.some(
+      (part) => part.type === 'thinking' && part.startedAt !== undefined && part.durationMs === undefined,
+    );
+    if (!hasOpenThinking) return;
+    const content = [...m.content];
+    closeThinkingParts(content, nowMs);
+    const patched = [...msgs];
+    patched[i] = { ...m, content };
+    next.messagesBySession[sessionId] = patched;
+    return;
+  }
+}
+
+/** Wall-clock ms of an approval/question request. Settling at the request
+ *  moment — not at event-consumption time — keeps delivery delays (throttled
+ *  tabs, busy main thread) out of the thinking span. */
+function requestTimeMs(createdAt: string): number {
+  const ms = Date.parse(createdAt);
+  return Number.isNaN(ms) ? Date.now() : ms;
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -668,11 +698,12 @@ export function reduceAppEvent(
       const exists = list.some((a) => a.approvalId === event.approval.approvalId);
       if (!exists) {
         next.approvalsBySession[sid] = [...list, event.approval];
-        // A fresh approval waits on the user: float the session to the top.
-        // Freshness gate: a replayed request whose approval has since been
-        // resolved (so the id dedupe misses it) must not float an idle
-        // session.
+        // A fresh approval waits on the user: settle thinking and float the
+        // session to the top. A replayed request whose approval has since
+        // been resolved (so the id dedupe misses it) must do neither — the
+        // session may already be streaming a later turn's thinking.
         if (isFreshEvent(state, meta)) {
+          settleThinkingOnUserInteraction(next, sid, requestTimeMs(event.approval.createdAt));
           bumpSessionRecency(next, sid);
         }
       }
@@ -711,11 +742,9 @@ export function reduceAppEvent(
       const exists = list.some((q) => q.questionId === event.question.questionId);
       if (!exists) {
         next.questionsBySession[sid] = [...list, event.question];
-        // A fresh question waits on the user: float the session to the top.
-        // Freshness gate: a replayed request whose question has since been
-        // answered (so the id dedupe misses it) must not float an idle
-        // session.
+        // Same freshness gate as approvals (see there).
         if (isFreshEvent(state, meta)) {
+          settleThinkingOnUserInteraction(next, sid, requestTimeMs(event.question.createdAt));
           bumpSessionRecency(next, sid);
         }
       }
