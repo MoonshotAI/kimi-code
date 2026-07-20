@@ -77,7 +77,7 @@ import {
   type ThinkingConfig,
   type ToolsConfig,
 } from './configSection';
-import { isToolActive as evaluateToolActive } from '#/agent/toolPolicy/evaluate';
+import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
 import {
   ActiveToolsModel,
   configUpdate,
@@ -345,7 +345,23 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const profile = this.resolveActiveProfile();
     if (profile === undefined) return;
 
-    const context = await this.buildSystemPromptContext(profile, this.cwd);
+    // Context building reads the AGENTS.md hierarchy through an unguarded
+    // readText, so a stat/read race or a denied read rejects here. A failed
+    // refresh must not reject its callers — the `[tools]` config watcher fires
+    // this voided (an unhandled rejection would crash kap-server) and the
+    // session tool-policy fan-out awaits it across agents — so keep the
+    // current prompt and surface a warning instead.
+    let context: SystemPromptContext;
+    try {
+      context = await this.buildSystemPromptContext(profile, this.cwd);
+    } catch (error) {
+      this.eventBus.publish({
+        type: 'warning',
+        message: `System prompt refresh skipped: ${error instanceof Error ? error.message : String(error)}`,
+        code: 'system-prompt-refresh-failed',
+      });
+      return;
+    }
     this.activeProfile = profile;
     this.update({
       profileName: profile.name,
@@ -718,22 +734,14 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     name: string,
     source: ToolSource = 'builtin',
   ): boolean {
-    const globalTools = this.config.get<ToolsConfig>(TOOLS_SECTION);
-    return (
-      evaluateToolActive(profile, name, source) &&
-      evaluateToolActive(
-        {
-          tools: globalTools?.enabled?.length ? globalTools.enabled : undefined,
-          disallowedTools: globalTools?.disabled,
-        },
-        name,
-        source,
-      ) &&
-      evaluateToolActive(
-        { disallowedTools: this.sessionToolPolicy.disabledTools() },
-        name,
-        source,
-      )
+    return isToolActiveComposed(
+      {
+        profile,
+        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
+      },
+      name,
+      source,
     );
   }
 

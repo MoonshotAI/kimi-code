@@ -3,6 +3,9 @@
  *
  * Applies allowlists and denylists with builtin/MCP matching semantics shared
  * by Agent authorization, profile prompt construction, and child-agent setup.
+ * `isToolActiveComposed` intersects the three policy layers (profile, global
+ * `[tools]` config, Session denylist) so every consumer evaluates the same
+ * combination instead of re-implementing it.
  */
 
 import picomatch from 'picomatch';
@@ -33,6 +36,42 @@ export function isToolActive(
   return !policy.disallowedTools
     .filter((pattern) => isMcpToolName(pattern))
     .some((pattern) => picomatch.isMatch(name, pattern));
+}
+
+export interface GlobalToolsPolicy {
+  readonly enabled?: readonly string[];
+  readonly disabled?: readonly string[];
+}
+
+export interface ToolPolicyLayers {
+  /** The bound profile's own policy. */
+  readonly profile: ToolActivationPolicy;
+  /**
+   * The global `[tools]` config section. An empty/absent `enabled` list means
+   * unconstrained — an explicit empty list must never disable everything.
+   */
+  readonly global?: GlobalToolsPolicy;
+  /** The Session-owned client denylist, applied on top of the other layers. */
+  readonly sessionDisabledTools?: readonly string[];
+}
+
+export function isToolActiveComposed(
+  layers: ToolPolicyLayers,
+  name: string,
+  source: ToolSource = 'builtin',
+): boolean {
+  return (
+    isToolActive(layers.profile, name, source) &&
+    isToolActive(
+      {
+        tools: layers.global?.enabled?.length ? layers.global.enabled : undefined,
+        disallowedTools: layers.global?.disabled,
+      },
+      name,
+      source,
+    ) &&
+    isToolActive({ disallowedTools: layers.sessionDisabledTools }, name, source)
+  );
 }
 
 export function resolveActiveToolNames(
