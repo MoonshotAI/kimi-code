@@ -1741,4 +1741,27 @@ describe('limitAgentReplayByTurns', () => {
     ];
     expect(limitAgentReplayByTurns(records, 2)).toEqual(records.slice(2));
   });
+
+  it('treats goal continuation prompts as turn boundaries, but not other system triggers', () => {
+    const rounds = (n: number): AgentReplayRecord[] =>
+      Array.from({ length: n }, (_, i) => [
+        replayMessage('user', 'Resume the active goal.', {
+          kind: 'system_trigger',
+          name: 'goal_continuation',
+        }),
+        replayMessage('assistant', `round ${i}`),
+      ]).flat();
+    const records = [
+      replayMessage('user', '/goal ship it', { kind: 'user' }),
+      ...rounds(15),
+      replayMessage('user', 'cancelled reminder', {
+        kind: 'system_trigger',
+        name: 'goal_cancelled',
+      }),
+    ];
+    const limited = limitAgentReplayByTurns(records, 10);
+    // The /goal prompt and the first five continuation rounds fall away; the
+    // trailing reminder stays attached to the last kept turn.
+    expect(limited).toEqual(records.slice(11));
+  });
 });

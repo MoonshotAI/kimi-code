@@ -7,8 +7,12 @@ import type { AgentReplayRecord } from '../../rpc/resumed';
  * from an actual user action — a typed prompt, a user-invoked skill/plugin
  * slash command, or a `!` shell command's input line. System-originated user
  * messages (compaction summaries, cron fires, hook results, retries, goal
- * continuation triggers, background-task results, injections) continue the
- * current turn instead.
+ * reminders, background-task results, injections) continue the current turn
+ * instead — with one exception: `goal_continuation` prompts. The goal driver
+ * fires one synthetic continuation prompt per goal turn (see
+ * agent/turn/index.ts), and the goal system itself counts those as turns, so
+ * replay trimming treats them as turn boundaries; otherwise a 100-round goal
+ * would count as a single user turn and resume would replay the entire run.
  *
  * Source of truth for turn-boundary detection; the TUI mirrors this through
  * the SDK re-export instead of keeping its own predicate.
@@ -35,8 +39,13 @@ export function isAgentReplayUserTurnRecord(record: AgentReplayRecord): boolean 
     case 'hook_result':
     case 'injection':
     case 'retry':
-    case 'system_trigger':
       return false;
+    case 'system_trigger':
+      // The goal driver fires one synthetic continuation prompt per goal turn
+      // (agent/turn/index.ts GOAL_CONTINUATION_ORIGIN) — real rounds of work
+      // the goal system itself counts as turns. All other system triggers are
+      // reminders that continue the current turn.
+      return message.origin.name === 'goal_continuation';
   }
 }
 

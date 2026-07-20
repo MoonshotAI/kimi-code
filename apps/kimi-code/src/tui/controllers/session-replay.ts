@@ -307,6 +307,18 @@ export class SessionReplayRenderer {
     if (message.origin?.kind === 'system_trigger') {
       return;
     }
+    if (
+      message.origin?.kind === 'system_trigger' &&
+      message.origin.name === 'goal_continuation'
+    ) {
+      // The goal driver's synthetic "continue" prompt is model-facing (the
+      // autonomous stand-in for the user typing continue) and is never shown
+      // live, so don't render it as a user bubble on replay either. Still
+      // advance the replay turn: each goal round groups under its own turn,
+      // matching how replay trimming counts goal rounds as turns.
+      this.advanceTurn(context);
+      return;
+    }
 
     this.flushAssistant(context);
     const skill = skillActivationFromOrigin(message.origin);

@@ -17,6 +17,7 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui
 import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
@@ -1219,5 +1220,36 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('replay final approved plan');
     expect(transcript).not.toContain('Plan rejected by user.');
     expect(transcript).not.toContain('Plan mode: OFF');
+  });
+
+  it('trims goal sessions to the most recent goal turns and hides continuation prompts', async () => {
+    const replay: AgentReplayRecord[] = [goalReplay(goalSnapshot(), { kind: 'created' })];
+    for (let i = 0; i < 25; i++) {
+      replay.push(
+        message('user', [{ type: 'text', text: 'Continue working toward the active goal.' }], {
+          origin: { kind: 'system_trigger', name: 'goal_continuation' },
+        }),
+        message('assistant', [{ type: 'text', text: `round ${i} summary` }], {
+          toolCalls: [toolCall(`call_${i}`, 'Bash', { command: 'ls' })],
+        }),
+        message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: `call_${i}` }),
+      );
+    }
+
+    const driver = await replayIntoDriver(replay);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+
+    // Continuation prompts are model-facing and never render as user bubbles.
+    expect(transcript).not.toContain('Continue working toward the active goal.');
+    // Only the most recent REPLAY_TURN_LIMIT goal turns are replayed.
+    expect(transcript).not.toContain('round 0 summary');
+    expect(transcript).not.toContain('round 14 summary');
+    expect(transcript).toContain('round 15 summary');
+    expect(transcript).toContain('round 24 summary');
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof ToolCallComponent,
+      ),
+    ).toHaveLength(10);
   });
 });
