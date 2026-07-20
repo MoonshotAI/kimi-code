@@ -835,8 +835,9 @@ export class StreamingUIController {
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {
+      // In-place replacement is picked up by the container's ref-checked
+      // render cache; a tree-wide invalidate is unnecessary (and costly).
       children[idx] = group;
-      state.transcriptContainer.invalidate();
     } else {
       state.transcriptContainer.addChild(group);
     }
@@ -892,8 +893,9 @@ export class StreamingUIController {
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {
+      // In-place replacement is picked up by the container's ref-checked
+      // render cache; a tree-wide invalidate is unnecessary (and costly).
       children[idx] = group;
-      state.transcriptContainer.invalidate();
     } else {
       state.transcriptContainer.addChild(group);
     }
