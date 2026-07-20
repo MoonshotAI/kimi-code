@@ -110,6 +110,7 @@ function ensureKimiPropertyTypes(schema: Record<string, unknown>): Record<string
   if (!isRecord(normalized)) {
     throw new Error('JSON Schema root must normalize to an object.');
   }
+  removeUnknownRequiredProperties(normalized);
   recurseSchema(normalized);
   return normalized;
 }
@@ -304,7 +305,25 @@ function normalizeProperty(node: unknown): void {
     }
   }
 
+  removeUnknownRequiredProperties(node);
   recurseSchema(node);
+}
+
+function removeUnknownRequiredProperties(node: Record<string, unknown>): void {
+  const properties = node['properties'];
+  const required = node['required'];
+  if (!isRecord(properties) || !Array.isArray(required)) {
+    return;
+  }
+
+  const knownRequired = required.filter(
+    (name): name is string => typeof name === 'string' && hasOwn(properties, name),
+  );
+  if (knownRequired.length === 0) {
+    delete node['required'];
+    return;
+  }
+  node['required'] = knownRequired;
 }
 
 function removeIrrelevantStructureKeys(
