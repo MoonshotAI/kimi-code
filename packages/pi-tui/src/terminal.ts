@@ -241,7 +241,6 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
-		this.keyboardProtocolPushed = true;
 		this.clearKeyboardProtocolNegotiationBuffer();
 
 		// Windows Terminal: skip Kitty keyboard protocol to avoid Cyrillic doubling.
@@ -253,6 +252,7 @@ export class ProcessTerminal implements Terminal {
 			return;
 		}
 
+		this.keyboardProtocolPushed = true;
 		process.stdout.write(KITTY_KEYBOARD_PROTOCOL_QUERY);
 	}
 
