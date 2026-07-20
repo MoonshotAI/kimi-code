@@ -4667,7 +4667,7 @@ command = "vim"
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({
         defaultModel: 'turbo',
-        thinking: { enabled: true },
+        thinking: { enabled: true, effort: 'mid' },
       });
     });
     expect(driver.state.appState.model).toBe('turbo');

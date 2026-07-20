@@ -219,15 +219,25 @@ describe('modelThinking', () => {
       expect(thinkingLevelToConfig('on')).toEqual({ enabled: true });
     });
 
-    it('persists whitelisted concrete efforts as the global default', () => {
-      expect(thinkingLevelToConfig('low')).toEqual({ enabled: true, effort: 'low' });
-      expect(thinkingLevelToConfig('high')).toEqual({ enabled: true, effort: 'high' });
-      expect(thinkingLevelToConfig('xhigh')).toEqual({ enabled: true, effort: 'xhigh' });
+    it('persists levels below the model top tier as the global default', () => {
+      expect(thinkingLevelToConfig('low', ['low', 'high', 'max'])).toEqual({
+        enabled: true,
+        effort: 'low',
+      });
+      expect(thinkingLevelToConfig('high', ['low', 'high', 'max'])).toEqual({
+        enabled: true,
+        effort: 'high',
+      });
     });
 
-    it('records only enabled for max and unknown levels', () => {
-      expect(thinkingLevelToConfig('max')).toEqual({ enabled: true });
-      expect(thinkingLevelToConfig('ultra')).toEqual({ enabled: true });
+    it('records only enabled for the model top tier', () => {
+      expect(thinkingLevelToConfig('max', ['low', 'high', 'max'])).toEqual({ enabled: true });
+      expect(thinkingLevelToConfig('max', ['max'])).toEqual({ enabled: true });
+    });
+
+    it('persists concrete levels as-is when the model levels are unknown', () => {
+      expect(thinkingLevelToConfig('max')).toEqual({ enabled: true, effort: 'max' });
+      expect(thinkingLevelToConfig('ultra')).toEqual({ enabled: true, effort: 'ultra' });
     });
   });
 });

@@ -6,31 +6,30 @@ export function isThinkingOn(effort: ThinkingEffort): boolean {
 }
 
 /**
- * Effort levels eligible for persistence to config.toml, on the canonical
- * scale `low/medium/high/xhigh/max`. `max` and any level outside the scale
- * (custom provider-declared names) are session-only: they work at runtime but
- * only the boolean toggle is persisted, so the most expensive tier never
- * becomes the global default for every new session.
- */
-export const PERSISTABLE_THINKING_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh'];
-
-/**
  * Project a thinking effort to the `[thinking]` config patch persisted to
  * config.toml. `'off'` disables thinking; `'on'` is the boolean-model
  * on-signal rather than a declared effort, so it only persists `enabled` —
  * boolean models resolve back to `'on'` at runtime via
- * `defaultThinkingEffortFor`. A concrete effort persists as the global default
- * when it is in {@link PERSISTABLE_THINKING_EFFORTS}; anything above it is
- * session-only and only `enabled` is recorded.
+ * `defaultThinkingEffortFor`. A concrete effort persists as the global
+ * default, EXCEPT the model's highest declared level — the last entry of
+ * `support_efforts` (the list is ordered by strength, the same assumption
+ * the `middleOf` default-effort resolution makes) — which is session-only
+ * and records just `enabled`, so the most expensive tier never becomes the
+ * global default for every new session. When the model's levels are unknown
+ * the concrete effort is persisted as-is.
  */
-export function thinkingEffortToConfig(effort: ThinkingEffort): {
+export function thinkingEffortToConfig(
+  effort: ThinkingEffort,
+  supportEfforts?: readonly string[],
+): {
   enabled: boolean;
   effort?: string;
 } {
   if (effort === 'off') return { enabled: false };
   if (effort === 'on') return { enabled: true };
-  if (PERSISTABLE_THINKING_EFFORTS.includes(effort)) return { enabled: true, effort };
-  return { enabled: true };
+  const top = supportEfforts?.at(-1);
+  if (top !== undefined && effort === top) return { enabled: true };
+  return { enabled: true, effort };
 }
 
 /**

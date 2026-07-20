@@ -13,15 +13,27 @@ describe('thinkingEffortToConfig', () => {
     // be persisted as `thinking.effort` — boolean models have no effort concept
     // and resolve back to 'on' at runtime via defaultThinkingEffortFor.
     ['on', { enabled: true }],
-    // Whitelisted levels persist as the global default; 'max' and unknown
-    // names are session-only and record only the boolean toggle.
     ['low', { enabled: true, effort: 'low' }],
     ['high', { enabled: true, effort: 'high' }],
-    ['xhigh', { enabled: true, effort: 'xhigh' }],
-    ['max', { enabled: true }],
-    ['ultra', { enabled: true }],
-  ] as const)('maps %s → %o', (effort, expected) => {
+    ['max', { enabled: true, effort: 'max' }],
+  ] as const)('maps %s → %o without model efforts', (effort, expected) => {
     expect(thinkingEffortToConfig(effort)).toEqual(expected);
+  });
+
+  it.each([
+    // The model's highest declared level (last support_efforts entry) is
+    // session-only; anything below it persists as the global default.
+    ['low', { enabled: true, effort: 'low' }],
+    ['high', { enabled: true, effort: 'high' }],
+    ['max', { enabled: true }],
+    // Undeclared values persist as-is (the provider validates them).
+    ['ultra', { enabled: true, effort: 'ultra' }],
+  ] as const)('maps %s → %o for [low, high, max]', (effort, expected) => {
+    expect(thinkingEffortToConfig(effort, ['low', 'high', 'max'])).toEqual(expected);
+  });
+
+  it('treats a single declared level as the top tier', () => {
+    expect(thinkingEffortToConfig('max', ['max'])).toEqual({ enabled: true });
   });
 });
 

@@ -261,7 +261,10 @@ async function setDefaultModel(
 ): Promise<void> {
   await host.harness.setConfig({
     defaultModel: alias,
-    thinking: thinkingEffortToConfig(effort),
+    thinking: thinkingEffortToConfig(
+      effort,
+      host.state.appState.availableModels[alias]?.supportEfforts,
+    ),
   });
   await host.authFlow.refreshConfigAfterLogin();
   host.track('model_switch', { model: alias });

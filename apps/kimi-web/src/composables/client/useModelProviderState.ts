@@ -257,7 +257,9 @@ export function useModelProviderState(
    *  values (e.g. the loadModels default pin) — only for user actions. */
   function persistGlobalThinking(level: ThinkingLevel): void {
     void getKimiWebApi()
-      .setConfig({ thinking: thinkingLevelToConfig(level) })
+      .setConfig({
+        thinking: thinkingLevelToConfig(level, modelById(currentModelId())?.supportEfforts),
+      })
       .catch((error: unknown) => pushOperationFailure('setConfig', error));
   }
 

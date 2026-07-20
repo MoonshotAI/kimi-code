@@ -105,30 +105,28 @@ export function effectiveThinkingLevel(
 }
 
 /**
- * Effort levels eligible for persistence to config.toml, on the canonical
- * scale `low/medium/high/xhigh/max` — the same mapping the TUI persists
- * (thinkingEffortToConfig). `max` and any level outside the scale (custom
- * provider-declared names) are session-only: they work at runtime but only
- * the boolean toggle is persisted, so the most expensive tier never becomes
- * the global default for every new session.
- */
-export const PERSISTABLE_THINKING_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh'];
-
-/**
  * Project a thinking level onto the daemon's `[thinking]` config section —
  * the same mapping the TUI persists (thinkingEffortToConfig): 'off' disables
  * thinking, boolean 'on' records only `enabled` (boolean models resolve back
  * to 'on' at runtime), and a concrete effort is recorded as the global
- * default when it is in {@link PERSISTABLE_THINKING_EFFORTS}.
+ * default — EXCEPT the model's highest declared level (the last entry of
+ * `support_efforts`, ordered by strength), which is session-only and records
+ * just `enabled`, so the most expensive tier never becomes the global
+ * default for every new session. When the model's levels are unknown the
+ * concrete level is persisted as-is.
  */
-export function thinkingLevelToConfig(level: ThinkingLevel): {
+export function thinkingLevelToConfig(
+  level: ThinkingLevel,
+  supportEfforts?: readonly string[],
+): {
   enabled: boolean;
   effort?: string;
 } {
   if (level === 'off') return { enabled: false };
   if (level === 'on') return { enabled: true };
-  if (PERSISTABLE_THINKING_EFFORTS.includes(level)) return { enabled: true, effort: level };
-  return { enabled: true };
+  const top = supportEfforts?.at(-1);
+  if (top !== undefined && level === top) return { enabled: true };
+  return { enabled: true, effort: level };
 }
 
 /**

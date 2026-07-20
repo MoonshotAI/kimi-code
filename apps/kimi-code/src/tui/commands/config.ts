@@ -525,7 +525,11 @@ async function persistModelSelection(
   effort: ThinkingEffort,
 ): Promise<boolean> {
   const config = await host.harness.getConfig({ reload: true });
-  const patch = thinkingEffortToConfig(effort);
+  const model = host.state.appState.availableModels[alias];
+  const patch = thinkingEffortToConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
+  );
   if (
     config.defaultModel === alias &&
     config.thinking?.enabled === patch.enabled &&
