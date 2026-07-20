@@ -1,0 +1,7 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // The kimi-code submodule is upstream's code, linted by upstream's own CI.
+  // Our lint gate covers only this repo's sources; scanning the submodule made
+  // `pnpm lint` fail on upstream code we must not edit (kimi-inspect, 2026-07).
+  "ignorePatterns": ["kimi-code/**"]
+}

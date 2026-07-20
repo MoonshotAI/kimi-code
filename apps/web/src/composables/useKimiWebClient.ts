@@ -113,20 +113,11 @@ import type {
 
 const PERMISSION_STORAGE_KEY = STORAGE_KEYS.permission;
 const ACTIVE_WORKSPACE_KEY = STORAGE_KEYS.activeWorkspace;
-const THINKING_STORAGE_KEY = STORAGE_KEYS.thinking;
 const PLAN_MODE_STORAGE_KEY = STORAGE_KEYS.planMode;
 const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
-// A persisted thinking level may be any non-empty effort string: the reserved
-// 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max'). Since the
-// set of legal levels comes from each model's support_efforts, we can't
-// whitelist values — only guard against corrupted localStorage with a charset
-// + length check. An absent/invalid value means the user never picked a level;
-// loadModels() then pins the active model's catalog default as the concrete
-// in-memory value (see useModelProviderState).
-const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in @moonshot-ai/web-core; re-exported here so
 // existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
@@ -140,6 +131,9 @@ safeRemove(STORAGE_KEYS.codeFont);
 // look. Clear the old persisted key so users who once picked one aren't frozen
 // on a value the UI no longer reads.
 safeRemove(STORAGE_KEYS.theme);
+// The per-model thinking pick store was dropped in favor of the daemon's
+// per-session thinking state — clear the old key so stale picks can't linger.
+safeRemove(STORAGE_KEYS.thinking);
 
 function loadPermissionFromStorage(): PermissionMode {
   try {
@@ -154,24 +148,6 @@ function loadPermissionFromStorage(): PermissionMode {
 function savePermissionToStorage(mode: PermissionMode): void {
   try {
     safeSetString(PERMISSION_STORAGE_KEY, mode);
-  } catch {
-    // ignore
-  }
-}
-
-function loadThinkingFromStorage(): ThinkingLevel | undefined {
-  try {
-    const v = safeGetString(THINKING_STORAGE_KEY);
-    if (v && PERSISTED_THINKING_LEVEL_RE.test(v)) return v as ThinkingLevel;
-  } catch {
-    // ignore
-  }
-  return undefined;
-}
-
-function saveThinkingToStorage(v: ThinkingLevel): void {
-  try {
-    safeSetString(THINKING_STORAGE_KEY, v);
   } catch {
     // ignore
   }
@@ -301,10 +277,12 @@ export type PromptAttachment = {
 };
 
 /** A prompt waiting for the session to go idle. Keeps the uploaded
-    fileIds so attachments survive queueing (not just the text). */
+    fileIds so attachments survive queueing (not just the text). The id keys
+    the per-entry flush failure budget locally (assigned at enqueue). */
 interface QueuedPrompt {
   text: string;
   attachments?: PromptAttachment[];
+  id?: string;
 }
 
 export interface ExtendedState extends KimiClientState {
@@ -326,11 +304,18 @@ export interface ExtendedState extends KimiClientState {
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
-  /** The thinking level shown and submitted. Undefined only transiently —
-   *  before the model catalog loads or when the active model is unknown;
-   *  loadModels() pins the active model's catalog default as a concrete
-   *  in-memory value so display and submission always agree. */
+  /** The thinking level shown and submitted for the ACTIVE session. Resolved by
+   *  useModelProviderState: the session's own daemon-reported level
+   *  (`thinkingBySession`) when the model still declares it, else the model's
+   *  stored per-model pick, else its catalog default — undefined only
+   *  transiently before that, so display and submission always agree. */
   thinking: ThinkingLevel | undefined;
+  /** The session's own thinking level as reported by the daemon (GET
+   *  /sessions/{id}/status `thinking_level` and WS `agent.status.updated`),
+   *  keyed by session id. Per-session state wins over the per-model
+   *  localStorage pick: a session keeps the level it actually ran with, so
+   *  switching sessions never leaks one session's pick into another. */
+  thinkingBySession: Record<string, ThinkingLevel>;
   /** Plan-mode toggle per session. Bound to a session (not global) so toggling
    *  it in one session does not affect another. */
   planModeBySession: Record<string, boolean>;
@@ -408,7 +393,11 @@ const rawState: ExtendedState = reactive({
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
-  thinking: loadThinkingFromStorage(),
+  // Resolved per session/model once the catalog/session is known (loadModels
+  // and the active-session watcher in useModelProviderState) — the per-session
+  // map below starts empty and is fed by /status folds.
+  thinking: undefined,
+  thinkingBySession: {},
   planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
@@ -636,6 +625,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.planModeBySession[sessionId];
   delete rawState.swarmModeBySession[sessionId];
   delete rawState.goalModeBySession[sessionId];
+  delete rawState.thinkingBySession[sessionId];
   savePlanModeToStorage();
   saveSwarmModeToStorage();
   saveGoalModeToStorage();
@@ -683,6 +673,14 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   }));
   rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sessionId]: st.swarmMode };
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
+  // Fold the session's own thinking level too — per-session state wins over the
+  // per-model storage pick (see thinkingBySession on ExtendedState).
+  if (st.thinkingEffort.length > 0) {
+    rawState.thinkingBySession = {
+      ...rawState.thinkingBySession,
+      [sessionId]: st.thinkingEffort as ThinkingLevel,
+    };
+  }
 }
 
 /**
@@ -722,12 +720,13 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
  *  session and immediately persisting its draft modes, so a concurrent session
  *  switch can't write the patch to the wrong session.
  *
- *  Returns the update promise. Failures are surfaced via pushOperationFailure
- *  (the UI already updated optimistically, so the user must be told when the
- *  daemon did not apply the change); the promise itself never rejects. Most
- *  callers fire-and-forget via `void persistSessionProfile(...)`; call sites
- *  that must order strictly after the profile (e.g. a skill activation that
- *  can't carry its own modes) await it. */
+ *  Resolves false when the daemon did not apply the patch (also surfaced via
+ *  pushOperationFailure — the UI already updated optimistically, so the user
+ *  must be told); true on success. Most callers fire-and-forget via
+ *  `void persistSessionProfile(...)`; call sites that must order strictly
+ *  after the profile (e.g. a skill activation that can't carry its own modes)
+ *  await it and must NOT proceed on false — awaiting alone enforces nothing,
+ *  since the promise never rejects. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -736,16 +735,18 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
-}, sessionId?: string): Promise<void> {
+}, sessionId?: string): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
-  if (!sid) return Promise.resolve();
+  if (!sid) return Promise.resolve(false);
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
     .then(() => refreshSessionStatus(sid))
+    .then(() => true)
     .catch((err) => {
       // Local state already reflects the change; tell the user (and the log)
       // that the daemon did not persist it.
       pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
+      return false;
     });
 }
 
@@ -870,6 +871,12 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     if (event.planMode !== undefined) {
       rawState.planModeBySession = { ...rawState.planModeBySession, [event.sessionId]: event.planMode };
     }
+    if (event.thinking !== undefined) {
+      rawState.thinkingBySession = {
+        ...rawState.thinkingBySession,
+        [event.sessionId]: event.thinking as ThinkingLevel,
+      };
+    }
   }
 }
 
@@ -954,9 +961,15 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
     meta.seq > prevSeq
   ) {
     const reason = appEvent.reason;
+    // wasMainTurnActive was captured BEFORE the reducer consumed this event
+    // (the reducer clears turnActiveBySession on turn end), so it is the only
+    // remaining signal that this client witnessed a live turn — pass it down
+    // so finishPromptLocal may drain queued prompts behind a turn the user
+    // actually watched (including one started by another client).
     onMainTurnEnd(
       appEvent.sessionId,
       reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle',
+      wasMainTurnActive,
     );
   }
 
@@ -1960,6 +1973,9 @@ const sideChat = useSideChat(rawState, {
   nextOptimisticMsgId,
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
+  // modelProvider is defined further below; deferred like eventConn above.
+  resolveThinkingForPrompt: (sessionId, modelId) =>
+    modelProvider.resolveThinkingForPrompt(sessionId, modelId),
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {
@@ -2178,7 +2194,6 @@ const modelProvider = useModelProviderState(rawState, {
   refreshSessionStatus,
   persistSessionProfile,
   activity,
-  saveThinkingToStorage,
   updateSession,
   updateSessionMessages,
 });
@@ -2660,7 +2675,7 @@ function clearWorkingFlags(sid: string): void {
   }
 }
 
-function onMainTurnEnd(sid: string, status: 'idle' | 'aborted'): void {
+function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: boolean): void {
   // Capture before finishPromptLocal drops it — it keys the completion
   // notification's dedup tag so each finished turn alerts once.
   const finishedPromptId = rawState.promptIdBySession[sid];
@@ -2668,7 +2683,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted'): void {
   // queued message. The notification/sound/unread side effects below stay
   // WS-event-only — the snapshot path (handleSessionSnapshot) must not cry
   // wolf when opening a historical session.
-  workspaceState.finishPromptLocal(sid);
+  workspaceState.finishPromptLocal(sid, { turnWasActive });
 
   // For the session on screen, refresh git status (edits the agent just made)
   // and runtime status (model/context usage may have changed this turn).

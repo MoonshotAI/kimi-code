@@ -17,10 +17,8 @@ let serverHandle: DesktopServerHandle | null = null;
 
 // connect() calls are serialized through this queue: window (re)creation
 // (`activate` → createWindow) and the menu's 重试连接 can fire back-to-back,
-// and two concurrent runs would both try to start the embedded server and
-// race for the same `server-desktop.lock` — whose live-pid check counts *our
-// own* process as a hard conflict (kap-server `ServerLockedError`, "server
-// already running"). Chaining guarantees only one start attempt exists at a
+// and two concurrent runs would both try to start the embedded server on an
+// ephemeral port. Chaining guarantees only one start attempt exists at a
 // time; later runs see the handle the first one established.
 let connectQueue: Promise<void> = Promise.resolve();
 
@@ -79,17 +77,11 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     } else {
       // Reuse the live embedded server instead of restarting it. The server
       // runs in this very process, so a held handle means it is healthy;
-      // closing it first would race the old close()'s lock release against
-      // the new acquire on the same `server-desktop.lock` (the lock counts
-      // this pid as a live conflict and fails with "server already running")
-      // and would tear down perfectly good sessions on every window
-      // (re)creation. A failed start leaves the handle null, so a later
-      // retry comes back through here and starts fresh.
+      // closing it first would tear down perfectly good sessions on every
+      // window (re)creation. A failed start leaves the handle null, so a
+      // later retry comes back through here and starts fresh.
       if (serverHandle === null) {
         serverHandle = await startDesktopServer({
-          // Unpackaged runs are local development: lock separately so they never
-          // fight a running packaged app over `server-desktop.lock`.
-          dev: !app.isPackaged,
           // No static fallback in HMR dev: the renderer comes from the Vite dev
           // server, and desktop-dist may not exist (kap-server would refuse to
           // start without index.html in it).

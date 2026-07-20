@@ -24,8 +24,10 @@ import {
   commitLevel,
   defaultThinkingLevelFor,
   effortLabel,
+  levelDeclaredBy,
   modelThinkingAvailability,
   segmentsFor,
+  thinkingLevelToConfig,
 } from '../src/lib/modelThinking';
 import type { AppMessage, AppModel, AppTask } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
@@ -772,6 +774,45 @@ describe('modelThinking', () => {
       expect(effortLabel('max')).toBe('Max');
       expect(effortLabel('off')).toBe('Off');
       expect(effortLabel('xhigh')).toBe('Xhigh');
+    });
+  });
+
+  describe('levelDeclaredBy', () => {
+    it('accepts levels selectable for the model', () => {
+      expect(levelDeclaredBy(effortModel(), 'low')).toBe(true);
+      expect(levelDeclaredBy(effortModel(), 'off')).toBe(true);
+      expect(levelDeclaredBy(booleanModel(), 'on')).toBe(true);
+      expect(levelDeclaredBy(booleanModel(['always_thinking']), 'on')).toBe(true);
+    });
+    it('rejects levels the model does not declare', () => {
+      expect(levelDeclaredBy(booleanModel(), 'low')).toBe(false);
+      expect(levelDeclaredBy(booleanModel(['always_thinking']), 'off')).toBe(false);
+      expect(levelDeclaredBy(unsupportedModel(), 'max')).toBe(false);
+    });
+  });
+
+  describe('thinkingLevelToConfig', () => {
+    it('maps off/on to enabled only', () => {
+      expect(thinkingLevelToConfig('off')).toEqual({ enabled: false });
+      expect(thinkingLevelToConfig('on')).toEqual({ enabled: true });
+    });
+    it('persists levels below the model top tier as the global default', () => {
+      expect(thinkingLevelToConfig('low', ['low', 'high', 'max'])).toEqual({
+        enabled: true,
+        effort: 'low',
+      });
+      expect(thinkingLevelToConfig('high', ['low', 'high', 'max'])).toEqual({
+        enabled: true,
+        effort: 'high',
+      });
+    });
+    it('records only enabled for the model top tier', () => {
+      expect(thinkingLevelToConfig('max', ['low', 'high', 'max'])).toEqual({ enabled: true });
+      expect(thinkingLevelToConfig('max', ['max'])).toEqual({ enabled: true });
+    });
+    it('persists concrete levels as-is when the model levels are unknown', () => {
+      expect(thinkingLevelToConfig('max')).toEqual({ enabled: true, effort: 'max' });
+      expect(thinkingLevelToConfig('ultra')).toEqual({ enabled: true, effort: 'ultra' });
     });
   });
 });

@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 import {
   startServer,
@@ -40,17 +39,8 @@ export interface StartDesktopServerOptions {
    * origin (`http://127.0.0.1:<port>`) when running with renderer HMR.
    */
   readonly extraCorsOrigins?: readonly string[];
-  /**
-   * Local dev: lock under `server-desktop-dev.lock` instead so a running
-   * packaged app (which holds `server-desktop.lock` on the same
-   * KIMI_CODE_HOME) doesn't block `pnpm dev:desktop`, and vice versa.
-   */
-  readonly dev?: boolean;
   readonly logger?: ReturnType<typeof createServerLogger>;
 }
-
-const DESKTOP_LOCK_FILE = 'server-desktop.lock';
-const DESKTOP_DEV_LOCK_FILE = 'server-desktop-dev.lock';
 
 // The desktop host identifies itself to the upstream model API as its own
 // platform. `createKimiDefaultHeaders` hardcodes X-Msh-Platform to the CLI's
@@ -60,10 +50,6 @@ function desktopHostHeaders(identity: KimiHostIdentity): Record<string, string> 
   const headers = createKimiDefaultHeaders({ homeDir: resolveKimiHome(), ...identity });
   headers['X-Msh-Platform'] = DESKTOP_MSH_PLATFORM;
   return headers;
-}
-
-function desktopLockPath(dev: boolean): string {
-  return join(resolveKimiHome(), dev ? DESKTOP_DEV_LOCK_FILE : DESKTOP_LOCK_FILE);
 }
 
 function readServerToken(): string | undefined {
@@ -78,8 +64,10 @@ function readServerToken(): string | undefined {
 /**
  * Start an in-process Kimi server for the desktop host.
  *
- * - Loopback only, ephemeral port (`port: 0`), independent lock file so it never
- *   races the CLI daemon's `<home>/server/lock`.
+ * - Loopback only, ephemeral port (`port: 0`). kap-server no longer takes a
+ *   single-instance lock — it registers under `<home>/server/instances/`, so
+ *   the embedded server coexists with the CLI daemon and other desktops on
+ *   the same KIMI_CODE_HOME.
  * - The v2 server never calls `process.exit` for `/api/v1/shutdown`; it just
  *   closes the embedded server, so the Electron main process is safe.
  * - Returns once the HTTP server is listening (does not block the caller).
@@ -93,7 +81,6 @@ export async function startDesktopServer(
     host: '127.0.0.1',
     port: 0,
     logger: opts.logger,
-    lockPath: desktopLockPath(opts.dev === true),
     webAssetsDir: opts.webAssetsDir,
     // Report the kimi-code core version as `server_version` (GET /api/v1/meta).
     // kap-server's default reads the package.json next to its own module, which

@@ -43,7 +43,7 @@ describe('startDesktopServer', () => {
     createKimiDefaultHeadersMock.mockClear();
   });
 
-  it('wires startServer with loopback, ephemeral port, independent lock, corsOrigins, identity seed, webAssetsDir; calls installGlobalProxyDispatcher; returns origin/port/close', async () => {
+  it('wires startServer with loopback, ephemeral port, corsOrigins, identity seed, webAssetsDir; calls installGlobalProxyDispatcher; returns origin/port/close', async () => {
     const close = vi.fn().mockResolvedValue(undefined);
     startServerMock.mockResolvedValue({
       host: '127.0.0.1',
@@ -61,7 +61,6 @@ describe('startDesktopServer', () => {
     const args = startServerMock.mock.calls[0]![0];
     expect(args.host).toBe('127.0.0.1');
     expect(args.port).toBe(0);
-    expect(args.lockPath).toMatch(/server-desktop\.lock$/);
     expect(args.webAssetsDir).toBe('/app/web-dist');
     expect(args.corsOrigins).toEqual(['app://renderer']);
     // server_version comes from the tsdown/vitest-injected __KIMI_CORE_VERSION__
@@ -86,21 +85,5 @@ describe('startDesktopServer', () => {
     expect(handle.port).toBe(54321);
     await handle.close();
     expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('locks under server-desktop-dev.lock in dev so a packaged app holding server-desktop.lock does not block it', async () => {
-    startServerMock.mockResolvedValue({
-      host: '127.0.0.1',
-      port: 54322,
-      close: vi.fn().mockResolvedValue(undefined),
-    });
-
-    await startDesktopServer({
-      dev: true,
-      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
-    });
-
-    const args = startServerMock.mock.calls[0]![0];
-    expect(args.lockPath).toMatch(/server-desktop-dev\.lock$/);
   });
 });

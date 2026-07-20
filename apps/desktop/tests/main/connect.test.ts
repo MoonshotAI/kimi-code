@@ -80,7 +80,6 @@ describe('connect', () => {
 
     expect(mocks.startDesktopServer).toHaveBeenCalledTimes(1);
     expect(mocks.startDesktopServer).toHaveBeenCalledWith({
-      dev: false,
       webAssetsDir: '/resources/desktop-dist',
       identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
       extraCorsOrigins: [],
@@ -90,11 +89,11 @@ describe('connect', () => {
     expect(mocks.errorHtml).not.toHaveBeenCalled();
   });
 
-  it('reuses the live embedded server on reconnect — never closes it, never races the lock', async () => {
+  it('reuses the live embedded server on reconnect — never closes it', async () => {
     // Regression: window (re)creation / menu retry used to fire-and-forget the
-    // old close() and immediately re-acquire `server-desktop.lock`; the lock
-    // counts our own live pid as a conflict, so the app showed "server already
-    // running" and tore down the healthy server.
+    // old close() and immediately restart the server; the restart raced the old
+    // close(), so the app showed a spurious failure and tore down the healthy
+    // server.
     const { connect } = await importConnect();
     const handle = fakeHandle();
     mocks.startDesktopServer.mockResolvedValue(handle);
