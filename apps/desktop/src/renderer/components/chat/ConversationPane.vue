@@ -16,6 +16,7 @@ import { Icon, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
+import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
 
 const { t } = useI18n();
 
@@ -1284,6 +1285,19 @@ onUnmounted(() => {
 function focusComposer(): void {
   (dockedComposerRef.value ?? emptyComposerRef.value)?.focus();
 }
+
+// Auto-focus the composer when the active session changes — covers switching
+// to an existing session AND the first-send transition, where the empty
+// composer unmounts and the docked one mounts (possibly ticks after sessionId
+// flips, still disabled while `starting`). Turn end deliberately does not
+// refocus. See useComposerAutoFocus.
+useComposerAutoFocus({
+  sessionId: () => props.sessionId,
+  mobile: () => props.mobile === true,
+  starting: () => props.starting === true,
+  dockedComposer: dockedComposerRef,
+  emptyComposer: emptyComposerRef,
+});
 
 defineExpose({ loadComposerForEdit, focusComposer });
 </script>
