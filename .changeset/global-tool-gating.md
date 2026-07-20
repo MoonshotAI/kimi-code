@@ -8,4 +8,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add globally enforced tool gating (v2 engine only): a `[tools]` section in `config.toml` with `enabled` / `disabled` lists constrains every profile and direct tool execution, while prompt submissions accept a session-persistent `disabledTools` list (REST field `disabled_tools`, SDK prompt options). Set `[tools] disabled = ["Task"]` in `config.toml`, or pass `disabledTools` when prompting through the SDK.
+Add global tool gating (v2 engine only): a `[tools]` section in `config.toml` with `enabled` / `disabled` lists constrains every agent, and SDK / server prompt submissions accept a per-session `disabledTools` list (REST field `disabled_tools`). Set `[tools] disabled = ["Task"]` in `config.toml` to try it.
