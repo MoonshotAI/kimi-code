@@ -114,7 +114,7 @@ disallowedTools:
 两个 CLI flag 用于选择驱动会话的 Agent。**目前二者都要求 v2 引擎** —— 即 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 下的 `kimi -p`；交互式 TUI（v1）暂时会以明确错误拒绝它们：
 
 - **`--agent <name>`**：以指定 Agent 作为主 Agent 启动会话。名称可以指向内置 Agent 或任何已发现的文件；名称不存在时会报错，并列出可用的 Agent。
-- **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。重复传入可注册多个文件 —— 不传 `--agent` 时，以最后一个 `--agent-file` 定义的 Agent 启动 —— 配合 `--agent <name>` 按名称选择。
+- **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。该 flag 只接受一个文件：不可重复传入，也不能与 `--agent` 同时使用。
 
 例如在 print 模式下：
 

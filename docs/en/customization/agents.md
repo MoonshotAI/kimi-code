@@ -114,7 +114,7 @@ Custom agents delegated as sub-agents run without the built-in sub-agent framing
 Two CLI flags select which agent drives the session. **Both currently require the v2 engine** — `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; the interactive TUI (v1) rejects them with a clear error for now:
 
 - **`--agent <name>`**: Start the session with the named agent as the main Agent. The name can refer to a built-in agent or to any discovered file; an unknown name fails with an error listing the available agents.
-- **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. Repeat the flag to register several files — without `--agent`, the profile defined by the last `--agent-file` is selected — and combine it with `--agent <name>` to choose among them by name.
+- **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. The flag accepts exactly one file: it cannot be repeated, and it cannot be combined with `--agent`.
 
 For example, in print mode:
 

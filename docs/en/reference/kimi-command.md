@@ -25,7 +25,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 | `--agent <name>` | | Start the session with the specified agent as the main Agent (v2 engine only) |
-| `--agent-file <path>` | | Load a custom agent from a Markdown file for this launch and select it (v2 engine only). Can be repeated |
+| `--agent-file <path>` | | Load a custom agent from a Markdown file for this launch and select it (v2 engine only). Cannot be repeated or combined with `--agent` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
@@ -104,7 +104,7 @@ There are two ways to specify Skills directories, with different semantics:
 KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"
 ```
 
-`--agent-file` registers a single agent file at the highest priority for this launch only and selects it; repeat the flag to register several files, and add `--agent` to choose among them by name — without `--agent`, the profile defined by the last `--agent-file` is selected. The selection is fixed at the session's first bind: resuming with the same `--agent` is a no-op, and switching to a different one fails with an "already bound" error. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.
+`--agent-file` registers a single agent file at the highest priority for this launch only and selects it; the flag cannot be repeated, and `--agent` and `--agent-file` are mutually exclusive. The selection is fixed at the session's first bind: resuming with the same `--agent` is a no-op, and switching to a different one fails with an "already bound" error. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.
 
 ## Non-Interactive Execution
 

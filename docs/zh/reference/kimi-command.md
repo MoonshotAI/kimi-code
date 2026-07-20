@@ -25,7 +25,7 @@ kimi <subcommand> [options]
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
 | `--agent <name>` | | 以指定 Agent 作为主 Agent 启动会话（仅 v2 引擎） |
-| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent（仅本次启动、仅 v2 引擎）并选中它。可重复传入 |
+| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent（仅本次启动、仅 v2 引擎）并选中它。不可重复传入，也不能与 `--agent` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
@@ -104,7 +104,7 @@ kimi --plan
 KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"
 ```
 
-`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；重复传入可注册多个文件，再加 `--agent` 按名称选择 —— 不传 `--agent` 时，以最后一个 `--agent-file` 定义的 Agent 启动。选择在会话首次绑定后即固定：以相同的 `--agent` 恢复会话是 no-op，换成不同的 Agent 会报 "already bound" 错误。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
+`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，且 `--agent` 与 `--agent-file` 互斥。选择在会话首次绑定后即固定：以相同的 `--agent` 恢复会话是 no-op，换成不同的 Agent 会报 "already bound" 错误。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
 
 ## 非交互执行
 
