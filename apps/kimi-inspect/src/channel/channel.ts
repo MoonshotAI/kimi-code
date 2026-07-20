@@ -1,10 +1,13 @@
 /**
- * Transport-agnostic channel contract for the `/api/v2` client — the
+ * Transport-agnostic channel contract for the debug-RPC client — the
  * old-klient / VS Code `ProxyChannel` model: the channel is bound to one
  * Service (the URL carries the scope + the Service's decorator id) and
  * `command` is the method name, invoked by reflection on the server.
- * `listen` is for the Service's `onXxx` emitter events over the persistent
- * `/api/v2/ws` transport.
+ *
+ * `listen` is kept for contract completeness (Service `onXxx` emitters map to
+ * it), but the `/api/v1/debug` surface is HTTP-only — the v2 event socket
+ * (`/api/v2/ws`) that used to serve it was removed — so the HTTP channel's
+ * `listen` throws and panels fetch on demand instead.
  */
 
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
@@ -31,7 +34,7 @@ export type ServiceRef<T> = ServiceIdentifier<T> | string;
  * Remote view of a Service contract: every method becomes an async wire call;
  * `onXxx` event members (`Event<T>` — callables returning `IDisposable`) stay
  * subscribable events; plain non-function members become zero-arg property
- * reads (the `/api/v2` dispatcher returns non-function members as-is).
+ * reads (the dispatcher returns non-function members as-is).
  */
 export type ServiceProxy<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R

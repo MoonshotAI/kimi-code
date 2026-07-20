@@ -15,6 +15,7 @@ import { ulid } from 'ulid';
 import { okEnvelope } from '../envelope';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
+import type { TranscriptService } from '../services/transcript/transcriptService';
 import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
 import { registerConfigRoutes } from './config';
@@ -39,6 +40,7 @@ import { registerSkillsRoutes } from './skills';
 import { registerTasksRoutes } from './tasks';
 import { registerTerminalsRoutes } from './terminals';
 import { registerToolsRoutes } from './tools';
+import { registerTranscriptRoutes } from './transcript';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
 
@@ -67,6 +69,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly snapshotReader: ISnapshotReader;
+  readonly transcriptService: TranscriptService;
   /**
    * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
    * from the `disableAuth` server option (the `--dangerous-bypass-auth` CLI
@@ -85,7 +88,7 @@ export async function registerApiV1Routes(
       registerHealthRoute(apiV1);
 
       // Dev-only debug RPC surface (`--debug-endpoints`, loopback-gated in
-      // `start.ts`): every scoped Service reachable, no `/api/v2` whitelist.
+      // `start.ts`): every scoped Service reachable.
       if (opts.debugEndpoints === true) {
         registerDebugRoutes(apiV1 as unknown as Parameters<typeof registerDebugRoutes>[0], core);
       }
@@ -157,6 +160,10 @@ export async function registerApiV1Routes(
         core,
         broadcaster: opts.broadcaster,
         reader: opts.snapshotReader,
+      });
+      registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
+        core,
+        transcriptService: opts.transcriptService,
       });
       if (opts.enableShutdown !== false) {
         registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {

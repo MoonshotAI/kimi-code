@@ -273,6 +273,10 @@ watch(
       >{{ thinkingLevel === 'off' ? t('status.planOff') : effortLabel(thinkingLevel) }}</span>
     </div>
 
+    <!-- Prompt-cache invalidation note — same text as the desktop model dropdown,
+         covering both the model row above and this thinking control. -->
+    <div class="cache-note">{{ t('status.cacheNote') }}</div>
+
     <!-- Plan mode → real toggle switch -->
     <button type="button" class="srow" @click="emit('togglePlan')">
       <span class="srow-main">
@@ -497,6 +501,14 @@ watch(
   color: var(--color-text-muted);
 }
 
+/* Prompt-cache note under the thinking row — mirrors .md-cache-note in Composer. */
+.cache-note {
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  line-height: 1.4;
+}
+
 /* Chevron (prototype ›) — fixed icon glyph size, not part of UI font scale. */
 .chev {
   flex: none;
@@ -592,6 +604,10 @@ watch(
     padding-left: max(14px, var(--safe-left));
     padding-right: max(14px, var(--safe-right));
   }
+  .cache-note {
+    padding-left: max(14px, var(--safe-left));
+    padding-right: max(14px, var(--safe-right));
+  }
   .srow-main {
     flex: 1 1 auto;
   }
@@ -618,7 +634,8 @@ watch(
 
 .srow,
 .srow-sub,
-.srow-val { font-family: var(--sans); }
+.srow-val,
+.cache-note { font-family: var(--sans); }
 
 /* Archived sessions sub-view */
 .arch-subhead {

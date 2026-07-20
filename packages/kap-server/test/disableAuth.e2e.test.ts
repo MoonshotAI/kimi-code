@@ -101,10 +101,6 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
     const v1 = await openConn(`ws://127.0.0.1:${port}/api/v1/ws`);
     sockets.push(v1.ws);
     expect(v1.firstFrame).toMatchObject({ type: 'server_hello' });
-
-    const v2 = await openConn(`ws://127.0.0.1:${port}/api/v2/ws`);
-    sockets.push(v2.ws);
-    expect(v2.firstFrame).toMatchObject({ type: 'ready' });
   });
 
   it('default boot keeps the gate closed and reports dangerous_bypass_auth: false', async () => {

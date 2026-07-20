@@ -3,7 +3,7 @@
  * WebSocket connections.
  *
  * Backs `GET /api/v1/connections`. Holds both `/api/v1/ws` (v1 protocol) and
- * `/api/v2/ws` (v2 RPC) connections through the common {@link ConnectionLike}
+ * `/api/v1/ws` connections through the common {@link ConnectionLike}
  * shape. Mirrors v1's `IConnectionRegistry`
  * (`packages/server/src/services/gateway`).
  *

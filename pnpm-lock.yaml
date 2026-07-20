@@ -159,6 +159,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../packages/agent-core-v2
+      '@moonshot-ai/transcript':
+        specifier: workspace:^
+        version: link:../../packages/transcript
       '@tanstack/react-query':
         specifier: ^5.74.4
         version: 5.99.2(react@19.2.5)
@@ -838,6 +841,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/transcript':
+        specifier: workspace:^
+        version: link:../transcript
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
@@ -879,9 +885,6 @@ importers:
         specifier: 'catalog:'
         version: 4.3.6
     devDependencies:
-      '@moonshot-ai/kap-server':
-        specifier: workspace:^
-        version: link:../kap-server
       '@moonshot-ai/protocol':
         specifier: workspace:^
         version: link:../protocol
@@ -1008,6 +1011,12 @@ importers:
         version: 4.3.6
 
   packages/telemetry: {}
+
+  packages/transcript:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
 
 packages:
 

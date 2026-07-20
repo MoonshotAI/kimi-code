@@ -9,6 +9,9 @@
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ToolCall } from '#/app/llmProtocol/message';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
@@ -248,7 +251,7 @@ describe('Agent config', () => {
     });
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
       [wire] turn.prompt                     { "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                    { "turnId": 0, "origin": { "kind": "user" } }
+      [emit] turn.started                    { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
       [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced                 { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message          { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -329,7 +332,7 @@ describe('Agent config', () => {
       [emit] agent.activity.updated      { "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "completed", "at": "<time>" }, "background": [] }
       [emit] prompt.completed            { "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "turnId": 1, "origin": { "kind": "user" } }
+      [emit] turn.started                { "turnId": 1, "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced             { "start": 4, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" } ] }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" }, "time": "<time>" }
@@ -708,3 +711,73 @@ function toolNames(value: unknown): string[] {
     })
     .filter((name): name is string => name !== null);
 }
+
+describe('ConfigService thinking effort max migration', () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'kimi-v2-cfg-migrate-'));
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  async function createMigratingConfig(toml: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap(homeDir));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  function readMarkers(): Record<string, string> {
+    return JSON.parse(readFileSync(join(homeDir, 'migrations-effort.json'), 'utf-8')) as Record<
+      string,
+      string
+    >;
+  }
+
+  it('rewrites a persisted max to high on first load and records the marker', async () => {
+    const { config, disposables } = await createMigratingConfig(
+      '[thinking]\nenabled = true\neffort = "max"\n',
+    );
+
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({
+      enabled: true,
+      effort: 'high',
+    });
+    expect(readMarkers()['thinking-effort-max-to-high']).toBeDefined();
+
+    disposables.dispose();
+  });
+
+  it('honors a hand-set max once the marker exists', async () => {
+    writeFileSync(
+      join(homeDir, 'migrations-effort.json'),
+      JSON.stringify({ 'thinking-effort-max-to-high': new Date().toISOString() }),
+    );
+    const { config, disposables } = await createMigratingConfig('[thinking]\neffort = "max"\n');
+
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'max' });
+
+    disposables.dispose();
+  });
+
+  it('records the marker even when nothing needs migrating', async () => {
+    const { config, disposables } = await createMigratingConfig('[thinking]\neffort = "low"\n');
+
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'low' });
+    expect(readMarkers()['thinking-effort-max-to-high']).toBeDefined();
+
+    disposables.dispose();
+  });
+});
