@@ -82,3 +82,33 @@ export function sortWorkspacesByRecent<T extends { id: string }>(
       (lastEditedAt.get(a.id) ?? Number.NEGATIVE_INFINITY),
   );
 }
+
+/**
+ * Build the per-workspace activity map for the `recent` sort: each workspace's
+ * latest session `updatedAt` (epoch ms), seeded with the local add timestamps
+ * (`addedAt`, keyed by workspace id) so a just-added, still session-less
+ * workspace opens at the top instead of sinking below every workspace with
+ * activity. The max fold lets real session activity take over as soon as it
+ * exists. Child (side chat) sessions are excluded, matching the sidebar list.
+ */
+export function workspaceRecentActivity(
+  sessions: readonly {
+    workspaceId?: string;
+    cwd: string;
+    updatedAt: string;
+    parentSessionId?: string;
+  }[],
+  addedAt: Readonly<Record<string, number>>,
+  workspaceIdForSession: (s: { workspaceId?: string; cwd: string }) => string,
+): Map<string, number> {
+  const lastEditedAt = new Map<string, number>(Object.entries(addedAt));
+  for (const s of sessions) {
+    if (s.parentSessionId) continue;
+    const wid = workspaceIdForSession(s);
+    const t = new Date(s.updatedAt).getTime();
+    if (t > (lastEditedAt.get(wid) ?? Number.NEGATIVE_INFINITY)) {
+      lastEditedAt.set(wid, t);
+    }
+  }
+  return lastEditedAt;
+}

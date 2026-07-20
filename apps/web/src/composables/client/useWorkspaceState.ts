@@ -28,6 +28,7 @@ import type {
 import {
   loadWorkspaceNameOverrides,
   safeRemove,
+  saveWorkspaceAddedAt,
   saveWorkspaceNameOverrides,
   STORAGE_KEYS,
 } from '../../lib/storage';
@@ -1268,6 +1269,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const api = getKimiWebApi();
     try {
       const ws = await api.addWorkspace({ root: trimmed });
+      // Stamp the local add time so the sidebar's `recent` sort (keyed off
+      // session activity) puts the new, still session-less workspace at the
+      // top instead of the bottom. Persisted so the spot survives a refresh.
+      rawState.workspaceAddedAt = { ...rawState.workspaceAddedAt, [ws.id]: Date.now() };
+      saveWorkspaceAddedAt(rawState.workspaceAddedAt);
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
       return true;
@@ -2343,6 +2349,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       console.warn('[kimi-web] deleteWorkspace registry cleanup failed for', id, err);
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
+    // Drop the local add-time entry with the workspace; re-adding re-stamps it.
+    if (id in rawState.workspaceAddedAt) {
+      const { [id]: _droppedAddedAt, ...restAddedAt } = rawState.workspaceAddedAt;
+      rawState.workspaceAddedAt = restAddedAt;
+      saveWorkspaceAddedAt(restAddedAt);
+    }
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
       const nextWorkspace = workspacesView.value[0]?.id ?? null;
       rawState.activeWorkspaceId = nextWorkspace;

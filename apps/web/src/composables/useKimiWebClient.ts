@@ -10,6 +10,7 @@ import {
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
   sortWorkspacesByRecent,
+  workspaceRecentActivity,
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
@@ -20,6 +21,7 @@ import { detectShellDanger } from '../lib/shellDanger';
 import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
 import {
   loadUnread,
+  loadWorkspaceAddedAt,
   loadWorkspaceOrder,
   loadWorkspaceSort,
   safeGetString,
@@ -353,6 +355,13 @@ export interface ExtendedState extends KimiClientState {
   recentRoots: string[];
   // Root paths the user removed from the sidebar (see HIDDEN_WORKSPACES_KEY).
   hiddenWorkspaceRoots: string[];
+  /** Local "just added" timestamp (epoch ms) per workspace id, stamped when the
+   *  user adds a workspace. The sidebar's `recent` sort keys off session
+   *  activity, which a freshly added workspace does not have — without this it
+   *  would sink below every workspace that does. Acts as its activity floor
+   *  until a real session takes over. Persisted (see storage.ts) so the spot
+   *  survives a refresh; entries are dropped when the workspace is removed. */
+  workspaceAddedAt: Record<string, number>;
   /** Installed external apps that can be used with "Open in app". */
   availableOpenInApps: string[];
   /** Global daemon configuration (secrets redacted). */
@@ -416,6 +425,7 @@ const rawState: ExtendedState = reactive({
   fsHome: null,
   recentRoots: [],
   hiddenWorkspaceRoots: loadHiddenWorkspacesFromStorage(),
+  workspaceAddedAt: loadWorkspaceAddedAt(),
   availableOpenInApps: [],
   config: null,
   sideChatMessagesByAgent: {},
@@ -1423,8 +1433,16 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       // is prompt-submit-grained while the client bumps at turn end and on
       // approval/question requests. Blindly taking the server value re-sorted
       // the sidebar on every click (and could even downgrade a newer local
-      // bump), so keep whichever timestamp is newer.
-      updatedAt: snap.session.updatedAt > s.updatedAt ? snap.session.updatedAt : s.updatedAt,
+      // bump), so keep whichever timestamp is newer — except while the main
+      // turn is still running: the server also bumps mid-turn (prompt submit,
+      // auto title, subagent registration), and importing that on click floats
+      // the workspace in the sidebar's recent sort before the turn finishes.
+      // The turn's end bumps recency via the WS event (durable, replayed after
+      // a reconnect), so nothing is lost by holding the local value until then.
+      updatedAt:
+        !snap.session.mainTurnActive && snap.session.updatedAt > s.updatedAt
+          ? snap.session.updatedAt
+          : s.updatedAt,
     }));
     // The snapshot only carries the most recent page; keep any older pages the
     // user already loaded so reopening does not reset scrollback.
@@ -2388,16 +2406,10 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     sessionCount: w.sessionCount,
   }));
   if (workspaceSortMode.value === 'recent') {
-    const lastEditedAt = new Map<string, number>();
-    for (const s of rawState.sessions) {
-      if (s.parentSessionId) continue;
-      const wid = workspaceIdForSession(s);
-      const t = new Date(s.updatedAt).getTime();
-      if (t > (lastEditedAt.get(wid) ?? Number.NEGATIVE_INFINITY)) {
-        lastEditedAt.set(wid, t);
-      }
-    }
-    return sortWorkspacesByRecent(views, lastEditedAt);
+    return sortWorkspacesByRecent(
+      views,
+      workspaceRecentActivity(rawState.sessions, rawState.workspaceAddedAt, workspaceIdForSession),
+    );
   }
   return sortByWorkspaceOrder(views, workspaceOrder.value);
 });

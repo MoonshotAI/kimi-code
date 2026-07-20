@@ -4,6 +4,7 @@ import {
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
   sortWorkspacesByRecent,
+  workspaceRecentActivity,
 } from '../src/lib/workspaceOrder';
 
 describe('reconcileWorkspaceOrder', () => {
@@ -94,6 +95,45 @@ describe('sortWorkspacesByRecent', () => {
     const copy = [...items];
     sortWorkspacesByRecent(items, new Map([['c', 1]]));
     expect(items).toEqual(copy);
+  });
+});
+
+describe('workspaceRecentActivity', () => {
+  const idFor = (s: { workspaceId?: string; cwd: string }): string => s.workspaceId ?? s.cwd;
+  const session = (
+    workspaceId: string,
+    updatedAt: number,
+    parentSessionId?: string,
+  ): { workspaceId: string; cwd: string; updatedAt: string; parentSessionId?: string } => ({
+    workspaceId,
+    cwd: `/ws/${workspaceId}`,
+    updatedAt: new Date(updatedAt).toISOString(),
+    parentSessionId,
+  });
+
+  it('seeds a just-added workspace (no sessions) so it sorts at the top', () => {
+    const items = [{ id: 'a' }, { id: 'ws-new' }];
+    // The seeded add time ranks ahead of workspaces with older activity...
+    const activity = workspaceRecentActivity([session('a', 10)], { 'ws-new': 50 }, idFor);
+    expect(sortWorkspacesByRecent(items, activity).map((x) => x.id)).toEqual(['ws-new', 'a']);
+    // ...but still behind workspaces with newer activity.
+    const newer = workspaceRecentActivity([session('a', 100)], { 'ws-new': 50 }, idFor);
+    expect(sortWorkspacesByRecent(items, newer).map((x) => x.id)).toEqual(['a', 'ws-new']);
+  });
+
+  it('lets real session activity take over once it is newer than the add time', () => {
+    const activity = workspaceRecentActivity([session('ws-new', 500)], { 'ws-new': 50 }, idFor);
+    expect(activity.get('ws-new')).toBe(500);
+  });
+
+  it('keeps the add time when the workspace only has older sessions', () => {
+    const activity = workspaceRecentActivity([session('ws-new', 10)], { 'ws-new': 50 }, idFor);
+    expect(activity.get('ws-new')).toBe(50);
+  });
+
+  it('excludes child (side chat) sessions, matching the sidebar list', () => {
+    const activity = workspaceRecentActivity([session('a', 999, 'parent-1')], {}, idFor);
+    expect(activity.has('a')).toBe(false);
   });
 });
 

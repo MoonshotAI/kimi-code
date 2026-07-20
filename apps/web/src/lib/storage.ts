@@ -24,6 +24,7 @@ export const STORAGE_KEYS = {
   workspaceOrder: 'kimi-web.workspace-order',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   workspaceSort: 'kimi-web.workspace-sort',
+  workspaceAddedAt: 'kimi-web.workspace-added-at',
   // Conversation outline (TOC). The value keeps the legacy `beta-toc` name so
   // users who explicitly turned it off while it was experimental keep their
   // preference after it became on-by-default.
@@ -200,4 +201,25 @@ export function loadWorkspaceSort(): string | null {
 
 export function saveWorkspaceSort(mode: string): void {
   safeSetString(STORAGE_KEYS.workspaceSort, mode);
+}
+
+/**
+ * Local "just added" timestamps (epoch ms) per workspace id, stamped when the
+ * user adds a workspace. Feeds the `recent` sidebar sort so a freshly added,
+ * still session-less workspace opens at the top; persisted so it keeps that
+ * spot across a refresh until real session activity takes over. Entries are
+ * dropped when the workspace is removed.
+ */
+export function loadWorkspaceAddedAt(): Record<string, number> {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.workspaceAddedAt);
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [id, at] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof at === 'number' && Number.isFinite(at)) out[id] = at;
+  }
+  return out;
+}
+
+export function saveWorkspaceAddedAt(addedAt: Record<string, number>): void {
+  safeSetJson(STORAGE_KEYS.workspaceAddedAt, addedAt);
 }

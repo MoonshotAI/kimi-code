@@ -809,10 +809,14 @@ describe('useKimiWebClient (snapshot recency guard)', () => {
       lastSeq: 1,
       workspaceId: 'workspace-1',
     });
-    const snapshotFor = (session: AppSession, serverUpdatedAt: string): AppSessionSnapshot => ({
+    const snapshotFor = (
+      session: AppSession,
+      serverUpdatedAt: string,
+      mainTurnActive = false,
+    ): AppSessionSnapshot => ({
       asOfSeq: 1,
       epoch: 'epoch-1',
-      session: { ...session, updatedAt: serverUpdatedAt },
+      session: { ...session, updatedAt: serverUpdatedAt, mainTurnActive },
       messages: [],
       hasMoreMessages: false,
       inFlightTurn: null,
@@ -826,12 +830,21 @@ describe('useKimiWebClient (snapshot recency guard)', () => {
     const serverUpdatedAtById: Record<string, string> = {
       's-local-newer': '2026-05-01T00:00:00.000Z',
       's-local-older': '2026-03-01T00:00:00.000Z',
+      's-mid-turn': '2026-05-01T00:00:00.000Z',
     };
     const localNewer = makeSession('s-local-newer', '2026-06-01T12:00:00.000Z');
     const localOlder = makeSession('s-local-older', '2026-01-01T00:00:00.000Z');
+    // Server bumped mid-turn (prompt submit / auto title / subagent register);
+    // importing that on click would float the workspace before the turn ends.
+    const midTurn = makeSession('s-mid-turn', '2026-01-01T00:00:00.000Z');
     const getSessionSnapshot = vi.fn((id: string) =>
       Promise.resolve(
-        snapshotFor(id === 's-local-newer' ? localNewer : localOlder, serverUpdatedAtById[id]!),
+        id === 's-mid-turn'
+          ? snapshotFor(midTurn, serverUpdatedAtById[id]!, true)
+          : snapshotFor(
+              id === 's-local-newer' ? localNewer : localOlder,
+              serverUpdatedAtById[id]!,
+            ),
       ),
     );
     const connection: KimiEventConnection = {
@@ -879,7 +892,10 @@ describe('useKimiWebClient (snapshot recency guard)', () => {
         },
       ]),
       getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
-      listSessions: vi.fn(async () => ({ items: [localNewer, localOlder], hasMore: false })),
+      listSessions: vi.fn(async () => ({
+        items: [localNewer, localOlder, midTurn],
+        hasMore: false,
+      })),
       getSessionSnapshot,
       getSessionStatus: vi.fn(async () => ({
         model: 'model-1',
@@ -917,11 +933,15 @@ describe('useKimiWebClient (snapshot recency guard)', () => {
       await client.load();
       await client.selectSession('s-local-newer');
       await client.selectSession('s-local-older');
+      await client.selectSession('s-mid-turn');
 
       const byId = (id: string) =>
         client.workspaceGroups.value.flatMap((g) => g.sessions).find((s) => s.id === id);
       expect(byId('s-local-newer')?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
       expect(byId('s-local-older')?.updatedAt).toBe('2026-03-01T00:00:00.000Z');
+      // A mid-turn server bump must NOT be imported on click — the turn's end
+      // bumps recency via the WS event instead.
+      expect(byId('s-mid-turn')?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
     } finally {
       connection.close();
       vi.unstubAllGlobals();
