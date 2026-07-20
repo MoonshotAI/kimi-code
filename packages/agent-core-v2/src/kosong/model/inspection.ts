@@ -23,7 +23,7 @@ import type { ModelCapability } from '#/kosong/contract/capability';
 import type { InspectionSource, ResolutionTrace } from '#/kosong/contract/inspection';
 import type { Protocol, ProtocolProviderOptions } from '#/kosong/protocol/protocol';
 
-import type { AnthropicModelProfile } from '../provider/bases/anthropic-profile';
+import type { AnthropicModelProfile } from '../provider/bases/anthropic/anthropic-profile';
 import type { ProviderConfig } from '../provider/provider';
 import { getProviderDefinition } from '../provider/providerDefinition';
 

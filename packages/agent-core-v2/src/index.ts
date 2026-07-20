@@ -73,7 +73,7 @@ export type {
   ExtraBody,
   GenerationKwargs,
   KimiThinkingConfig,
-} from '#/kosong/provider/providers/kimi/kimi-params';
+} from '#/kosong/provider/providers/kimi/kimi.contrib';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
@@ -116,10 +116,9 @@ export * from '#/kosong/catalog/modelCatalogService';
 // kosong wire composition roots — importing these modules registers the four
 // protocol bases and every provider definition (kimi + the canonical vendor
 // endpoints); without them the adapter registry stays empty.
-import '#/kosong/provider/bases/anthropic.contrib';
-import '#/kosong/provider/bases/google-genai.contrib';
-import '#/kosong/provider/bases/openai.contrib';
-import '#/kosong/provider/bases/openai-responses.contrib';
+import '#/kosong/provider/bases/anthropic/index';
+import '#/kosong/provider/bases/google-genai/index';
+import '#/kosong/provider/bases/openai/index';
 import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 export * from '#/app/agentProfileCatalog/agentProfileCatalog';

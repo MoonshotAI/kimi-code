@@ -59,7 +59,7 @@ import { ConfigErrors } from '../../app/config/errors';
 import {
   LATEST_OPUS_PROFILE,
   matchKnownAnthropicModelProfile,
-} from '../provider/bases/anthropic-profile';
+} from '../provider/bases/anthropic/anthropic-profile';
 import { IProviderService, type ProviderConfig } from '../provider/provider';
 import {
   explainProviderEndpoint,

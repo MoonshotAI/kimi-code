@@ -19,9 +19,12 @@
  *       - purity: `contract` imports no other domain (only `_base` helpers)
  *         and no external package at all (no SDKs, not even types);
  *         `protocol` imports only `_base` + `contract` and no wire SDK.
- *       - `provider/bases/` sub-boundary: non-contrib base files must not
+ *       - `provider/bases/` sub-boundary: base implementation files must not
  *         import the registries (`protocolBase`, `protocolAdapterRegistry`),
- *         `providerDefinition`, or any `*.contrib.ts` module.
+ *         `providerDefinition`, or any `*.contrib.ts` module. The
+ *         registration side lives in `*.contrib.ts` and in each base
+ *         directory's `index.ts` barrel (import = registration); both are
+ *         exempt.
  *     Kosong directories that do not exist yet are skipped silently (later
  *     refactor phases add them).
  *
@@ -290,7 +293,7 @@ const KOSONG_BANNED_SDK_PACKAGES = ['@anthropic-ai/sdk', '@google/genai', 'opena
  * Parse an absolute path under `src/kosong/` into its subdomain info.
  * Returns `undefined` for paths outside `src/kosong/`.
  * @param {string} absPath
- * @returns {{ sub: string | undefined, inBases: boolean, isContrib: boolean } | undefined}
+ * @returns {{ sub: string | undefined, inBases: boolean, isContrib: boolean, isIndex: boolean } | undefined}
  */
 function kosongInfoOf(absPath) {
   const rel = relative(SRC_ROOT, absPath);
@@ -304,15 +307,18 @@ function kosongInfoOf(absPath) {
     sub: sub === undefined || sub.endsWith('.ts') ? undefined : sub,
     inBases: sub === 'provider' && segments[2] === 'bases',
     isContrib: last.endsWith('.contrib.ts'),
+    isIndex: last === 'index.ts',
   };
 }
 
 /**
- * Whether an import target is off-limits to non-contrib files under
- * `kosong/provider/bases/`: the base registry (`kosong/protocol/protocolBase`),
- * the adapter registry (`kosong/provider/protocolAdapterRegistry`), the
- * provider-definition registry (`kosong/provider/providerDefinition`), or any
- * contrib side-effect module. Matches extensionless specifiers too.
+ * Whether an import target is off-limits to base implementation files under
+ * `kosong/provider/bases/` (everything except `*.contrib.ts` and the
+ * registration `index.ts` barrels): the base registry
+ * (`kosong/protocol/protocolBase`), the adapter registry
+ * (`kosong/provider/protocolAdapterRegistry`), the provider-definition
+ * registry (`kosong/provider/providerDefinition`), or any contrib
+ * side-effect module. Matches extensionless specifiers too.
  * @param {string} targetAbs
  */
 function isKosongBasesBannedTarget(targetAbs) {
@@ -593,12 +599,13 @@ export function checkSource(source, absFile) {
       if (
         sourceKosong.inBases &&
         !sourceKosong.isContrib &&
+        !sourceKosong.isIndex &&
         isKosongBasesBannedTarget(targetAbs)
       ) {
         violations.push({
           file: absFile,
           line,
-          message: `kosong bases boundary: non-contrib files under 'kosong/provider/bases' must not import registries (protocolBase/protocolAdapterRegistry), providerDefinition, or contrib modules (via '${specifier}')`,
+          message: `kosong bases boundary: base implementation files under 'kosong/provider/bases' must not import registries (protocolBase/protocolAdapterRegistry), providerDefinition, or contrib modules (via '${specifier}') — registration lives in *.contrib.ts and the directory index.ts`,
         });
       }
       continue;

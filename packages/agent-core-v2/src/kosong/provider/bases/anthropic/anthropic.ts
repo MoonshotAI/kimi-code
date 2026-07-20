@@ -76,9 +76,9 @@ import {
   type AnthropicModelProfile,
   type AnthropicModelVersion,
 } from './anthropic-profile';
-import { mergeConsecutiveUserMessages } from './merge-user-messages';
-import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
-import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from './tool-call-id';
+import { mergeConsecutiveUserMessages } from '../merge-user-messages';
+import { mergeRequestHeaders, resolveAuthBackedClient } from '../request-auth';
+import { normalizeToolCallIdsForProvider, sanitizeToolCallId } from '../tool-call-id';
 
 function normalizeAnthropicStopReason(raw: string | null | undefined): {
   finishReason: FinishReason | null;

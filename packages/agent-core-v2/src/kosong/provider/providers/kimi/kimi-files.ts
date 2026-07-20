@@ -17,7 +17,7 @@ import { ChatProviderError } from '#/kosong/contract/errors';
 import type { VideoURLPart } from '#/kosong/contract/message';
 import type { ProviderRequestAuth, VideoUploadInput } from '#/kosong/contract/provider';
 
-import { convertOpenAIError } from '../../bases/openai-common';
+import { convertOpenAIError } from '../../bases/openai/openai-common';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,

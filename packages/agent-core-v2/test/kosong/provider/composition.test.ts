@@ -49,17 +49,16 @@ import type {
   ResponseFormat,
   StreamedMessage,
 } from '#/kosong/contract/provider';
-import '#/kosong/provider/bases/anthropic.contrib';
+import '#/kosong/provider/bases/anthropic/index';
 import {
   AnthropicChatProvider,
   resolveDefaultMaxTokens,
-} from '#/kosong/provider/bases/anthropic';
-import '#/kosong/provider/bases/google-genai.contrib';
-import { GoogleGenAIChatProvider } from '#/kosong/provider/bases/google-genai';
-import '#/kosong/provider/bases/openai-responses.contrib';
-import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai-responses';
-import '#/kosong/provider/bases/openai.contrib';
-import { OpenAILegacyChatProvider } from '#/kosong/provider/bases/openai-legacy';
+} from '#/kosong/provider/bases/anthropic/anthropic';
+import '#/kosong/provider/bases/google-genai/index';
+import { GoogleGenAIChatProvider } from '#/kosong/provider/bases/google-genai/google-genai';
+import '#/kosong/provider/bases/openai/index';
+import { OpenAIResponsesChatProvider } from '#/kosong/provider/bases/openai/openai-responses';
+import { OpenAILegacyChatProvider } from '#/kosong/provider/bases/openai/openai-legacy';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import {
   getProviderDefinition,
@@ -240,7 +239,7 @@ describe('resolveAdapterIdentity', () => {
   it('resolves the (kimi, openai) pair registration: its traits plus the trailing synthetic trait', () => {
     const identity = registry.resolveAdapterIdentity('openai', 'kimi');
     expect(identity.baseId).toBe('openai');
-    expect(identity.traits).toHaveLength(7); // 6 vendor traits + synthetic
+    expect(identity.traits).toHaveLength(2); // 1 vendor trait + synthetic
   });
 
   it('resolves the (kimi, anthropic) pair registration: only its own traits', () => {
@@ -445,7 +444,7 @@ describe('kimi provider definitions', () => {
     const native = getProviderDefinition('kimi', 'openai');
     const anthropic = getProviderDefinition('kimi', 'anthropic');
     expect(native?.baseProtocol).toBe('openai');
-    expect(native?.traits).toHaveLength(6);
+    expect(native?.traits).toHaveLength(1);
     expect(anthropic?.baseProtocol).toBe('anthropic');
     expect(anthropic?.traits).toHaveLength(1);
     for (const definition of [native, anthropic]) {
@@ -680,7 +679,7 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
     });
 
     expect(body['prompt_cache_key']).toBe('session-probe');
-    // kimiParamsTrait.buildParams expands extra_body into the top-level params.
+    // kimiOpenAITrait.buildParams expands extra_body into the top-level params.
     expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high', keep: 'all' });
     expect(body).not.toHaveProperty('extra_body');
     // The Kimi trait takes over the token field (no max_tokens backfill left).

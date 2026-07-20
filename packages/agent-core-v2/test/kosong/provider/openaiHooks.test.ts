@@ -23,7 +23,7 @@ import {
   firstProcessEnv,
   traitEndpoint,
   traitProvides,
-} from '#/kosong/provider/bases/openaiHooks';
+} from '#/kosong/provider/bases/openai/openaiHooks';
 
 const context: TraitContext = { config: { protocol: 'openai', modelName: 'm' } };
 

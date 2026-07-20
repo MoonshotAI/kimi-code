@@ -102,8 +102,8 @@ export function usesTraitDrivenThinking(
  *
  * This is the gate for client-side effort strictness (validation, the
  * always-on clamp, and the `'on'` projection). The strict flag is declared
- * by `kimiParamsTrait` — Kimi's native API rejects unlisted efforts — and
- * deliberately NOT by `kimiAnthropicThinkingTrait`: over the Anthropic
+ * by `kimiOpenAITrait` — Kimi's native API rejects unlisted efforts — and
+ * deliberately NOT by `kimiAnthropicTrait`: over the Anthropic
  * transport the backend may accept efforts the local catalog metadata does
  * not list, so the profile must stay lenient there (warn-and-send, with the
  * `anthropic-thinking-*` warnings) instead of rejecting or rewriting the

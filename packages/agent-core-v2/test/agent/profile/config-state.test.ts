@@ -331,7 +331,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
     // The always-thinking clamp turns 'off' into the model default ('high');
     // encoding it as `extra_body.thinking: {type:'enabled'}` is the Kimi
-    // dialect trait's job (`kimiParamsTrait.withThinking`).
+    // dialect trait's job (`kimiOpenAITrait.withThinking`).
     expect(capturedThinking).toMatchObject({ effort: 'high' });
   });
 

@@ -15,7 +15,7 @@ import { registerProtocolBase } from '#/kosong/protocol/protocolBase';
 import { traitDefaultHeaders } from '#/kosong/protocol/protocolTrait';
 
 import { getGoogleGenAIModelCapability, GoogleGenAIChatProvider } from './google-genai';
-import { compactObject, firstProcessEnv, traitEndpoint, traitProvides } from './openaiHooks';
+import { compactObject, firstProcessEnv, traitEndpoint, traitProvides } from '../openai/openaiHooks';
 
 registerProtocolBase({
   id: 'google-genai',

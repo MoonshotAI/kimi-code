@@ -53,8 +53,8 @@ import {
   mergeRequestHeaders,
   requireProviderApiKey,
   resolveAuthBackedClient,
-} from './request-auth';
-import { normalizeToolCallIdsForProvider, sanitizeOpenAIResponsesCallId } from './tool-call-id';
+} from '../request-auth';
+import { normalizeToolCallIdsForProvider, sanitizeOpenAIResponsesCallId } from '../tool-call-id';
 
 function normalizeResponsesFinishReason(
   status: string | null | undefined,

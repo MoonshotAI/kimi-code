@@ -24,7 +24,7 @@ import {
   BUDGET_THINKING_EFFORTS,
   inferAnthropicModelProfile,
   matchKnownAnthropicModelProfile,
-} from '../provider/bases/anthropic-profile';
+} from '../provider/bases/anthropic/anthropic-profile';
 import type { OAuthRef, ProviderConfig } from '../provider/provider';
 import { explainProviderEndpoint } from '../provider/providerDefinition';
 

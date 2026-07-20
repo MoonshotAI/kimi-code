@@ -19,8 +19,8 @@ import {
   createAbortError,
   isRetryableGenerateError,
 } from '#/kosong/contract/errors';
-import { convertAnthropicError } from '#/kosong/provider/bases/anthropic';
-import { convertOpenAIError } from '#/kosong/provider/bases/openai-common';
+import { convertAnthropicError } from '#/kosong/provider/bases/anthropic/anthropic';
+import { convertOpenAIError } from '#/kosong/provider/bases/openai/openai-common';
 
 // Structurally an SDK user-abort: recognized by constructor name, the same
 // way the OpenAI and Anthropic SDKs name their abort error class.

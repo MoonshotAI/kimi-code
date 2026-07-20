@@ -58,7 +58,7 @@ describe('registry-driven vendor verdicts', () => {
 
   it('requiresStrictThinkingValidation: only the strict-validation thinking driver', () => {
     // The strict effort gate (v1 `provider.type === 'kimi'` parity): kimi on
-    // its native openai transport qualifies (kimiParamsTrait marks
+    // its native openai transport qualifies (kimiOpenAITrait marks
     // `strictThinkingValidation`); kimi over anthropic does NOT — the foreign
     // backend may accept unlisted efforts, so the profile stays lenient there
     // and warns instead of rejecting.
