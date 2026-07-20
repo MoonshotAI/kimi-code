@@ -7,18 +7,15 @@ export function isThinkingOn(effort: ThinkingEffort): boolean {
 
 /**
  * Project a thinking effort to the `[thinking]` config patch persisted to
- * config.toml. `'off'` disables thinking; a concrete effort enables thinking
- * and records it as the global effort preference. `'on'` is the boolean-model
- * on-signal rather than a declared effort, so it only persists `enabled` —
- * boolean models resolve back to `'on'` at runtime via `defaultThinkingEffortFor`.
+ * config.toml. Only the boolean `enabled` flag is persisted — picking a model
+ * or thinking mode in the TUI no longer records the concrete effort. Boolean
+ * models resolve back to `'on'` at runtime via `defaultThinkingEffortFor`, and
+ * effort-capable models fall back to their own default effort.
  */
 export function thinkingEffortToConfig(effort: ThinkingEffort): {
   enabled: boolean;
-  effort?: string;
 } {
-  if (effort === 'off') return { enabled: false };
-  if (effort === 'on') return { enabled: true };
-  return { enabled: true, effort };
+  return { enabled: effort !== 'off' };
 }
 
 /**

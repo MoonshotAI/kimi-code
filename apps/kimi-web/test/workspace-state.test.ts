@@ -117,7 +117,7 @@ function createDeps(): UseWorkspaceStateDeps {
   return {
     taskPoller: {},
     sideChat: {},
-    modelProvider: { thinkingLevelForModelId: () => undefined },
+    modelProvider: { thinkingLevelForSessionId: () => undefined },
     pushOperationFailure: vi.fn(),
     activity: computed(() => 'running'),
     sessionsKnownEmpty: new Set(),
@@ -743,7 +743,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
         activateSkill,
-        thinkingLevelForModelId: () => undefined,
+        thinkingLevelForSessionId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -887,7 +887,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
-        thinkingLevelForModelId: () => undefined,
+        thinkingLevelForSessionId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       // Something the goal can land in + what's visible in the sidebar.
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
@@ -1050,7 +1050,7 @@ describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
-        thinkingLevelForModelId: () => undefined,
+        thinkingLevelForSessionId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -1525,7 +1525,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       ...createDeps(),
       modelProvider: {
         models: ref([]),
-        thinkingLevelForModelId: () => undefined,
+        thinkingLevelForSessionId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       ...overrides,
     };
@@ -1730,7 +1730,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     state.thinking = 'max'; // the global now tracks that session's max-only model
     state.inFlightBySession = { sess_a: true };
     state.queuedBySession = { sess_a: [{ text: 'follow up', attachments: undefined }] };
-    const thinkingLevelForModelId = vi.fn((id: string | undefined) =>
+    const thinkingLevelForSessionId = vi.fn((_sid: string | null, id: string | undefined) =>
       id === 'provider/model-a' ? 'low' : undefined,
     );
     const ws = useWorkspaceState(
@@ -1738,14 +1738,14 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       promptDeps({
         modelProvider: {
           models: ref([]),
-          thinkingLevelForModelId,
+          thinkingLevelForSessionId,
         } as unknown as UseWorkspaceStateDeps['modelProvider'],
       }),
     );
 
     ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
 
-    expect(thinkingLevelForModelId).toHaveBeenCalledWith('provider/model-a');
+    expect(thinkingLevelForSessionId).toHaveBeenCalledWith('sess_a', 'provider/model-a');
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_a',
       expect.objectContaining({ model: 'provider/model-a', thinking: 'low' }),
@@ -1763,7 +1763,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       promptDeps({
         modelProvider: {
           models: ref([]),
-          thinkingLevelForModelId: () => undefined,
+          thinkingLevelForSessionId: () => undefined,
         } as unknown as UseWorkspaceStateDeps['modelProvider'],
       }),
     );
