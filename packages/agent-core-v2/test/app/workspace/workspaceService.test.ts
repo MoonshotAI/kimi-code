@@ -63,13 +63,14 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceService {
-    const fileStorage = new FileStorageService(homeDir);
+    const locks = new CrossProcessLockService();
+    const fileStorage = new FileStorageService(homeDir, undefined, undefined, locks);
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(ICrossProcessLockService, new CrossProcessLockService()),
+      stubPair(ICrossProcessLockService, locks),
     ]);
     hosts.push(host);
     return host.app.accessor.get(IWorkspaceService);

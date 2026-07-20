@@ -6,6 +6,8 @@
  * `ISessionLifecycleService` used to create sessions (`create`), look up the
  * live ones (`get` / `list`), close them (`close`), archive/restore them,
  * fork them (`fork`), and fork-then-tag them as direct children (`createChild`). Announces
+ * an ambiguous durability failure through explicit `forceAbort`, which records a
+ * dirty-abort marker before releasing the session lease.
  * lifecycle transitions through ordered hook slots plus
  * `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession` /
  * `onDidForkSession`. App-scoped — a single
@@ -91,6 +93,7 @@ export interface ISessionLifecycleService {
   list(): readonly ISessionScopeHandle[];
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   close(sessionId: string): Promise<void>;
+  forceAbort(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle>;

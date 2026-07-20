@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -9,6 +8,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import {
   type IAgentScopeHandle,
+  type ISessionScopeHandle,
   LifecycleScope,
   _clearScopedRegistryForTests,
   registerScopedService,
@@ -44,6 +44,7 @@ import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIn
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -60,7 +61,10 @@ import {
 } from '#/session/sessionLease/sessionLeaseContactProvider';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
-import { ICrossProcessLockService } from '#/os/interface/crossProcessLock';
+import {
+  CrossProcessLockErrorCode,
+  ICrossProcessLockService,
+} from '#/os/interface/crossProcessLock';
 import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
 import { stubCrossProcessLock } from '../../os/stubs';
 import { stubFlag } from '../flag/stubs';
@@ -294,6 +298,8 @@ function atomicDocumentStoreStub(): IAtomicDocumentStore {
     _serviceBrand: undefined,
     get: () => Promise.resolve(undefined),
     set: () => Promise.resolve(),
+    update: (_scope, _key, mutate) => Promise.resolve(mutate(undefined)),
+    runExclusive: (_scope, _key, op) => op(),
     delete: () => Promise.resolve(),
     list: () => Promise.resolve([]),
     watch: () => (_listener) => ({ dispose: () => {} }),
@@ -413,8 +419,18 @@ async function waitFor(cond: () => boolean, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-class NoopSessionExternalHooksService implements ISessionExternalHooksService {
+let disposedSessionServices = 0;
+
+class NoopSessionExternalHooksService
+  extends Disposable
+  implements ISessionExternalHooksService
+{
   declare readonly _serviceBrand: undefined;
+
+  override dispose(): void {
+    disposedSessionServices++;
+    super.dispose();
+  }
 }
 
 let recordedSessionHookEvents: string[] = [];
@@ -448,6 +464,7 @@ describe('SessionLifecycleService', () => {
   let tmpRoots: string[];
 
   beforeEach(() => {
+    disposedSessionServices = 0;
     recordedSessionHookEvents = [];
     telemetryRecords = [];
     tmpRoots = [];
@@ -856,11 +873,41 @@ describe('SessionLifecycleService', () => {
   it('fires onDidCreateSession with the new handle', async () => {
     const svc = build();
     let captured: { readonly sessionId: string } | undefined;
+    let visibleDuringEvent: ISessionScopeHandle | undefined;
     svc.onDidCreateSession((e) => {
       captured = e;
+      visibleDuringEvent = svc.get(e.sessionId);
     });
     const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     expect(captured).toMatchObject({ sessionId: 's1', handle: h, source: 'startup' });
+    expect(visibleDuringEvent).toBe(h);
+    expect(svc.list()).toContain(h);
+  });
+
+  it('makes a fork visible before fork and create events fire', async () => {
+    const svc = build([
+      stubPair(IWorkspaceRegistry, {
+        ...workspaceRegistryStub(),
+        get: () =>
+          Promise.resolve({
+            id: 'wd_stub',
+            root: '/tmp/proj',
+            name: 'stub',
+            createdAt: 0,
+            lastOpenedAt: 0,
+          }),
+      }),
+    ]);
+    await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+    let visibleDuringFork: ISessionScopeHandle | undefined;
+    svc.onDidForkSession((event) => {
+      visibleDuringFork = svc.get(event.sessionId);
+    });
+
+    const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+    expect(visibleDuringFork).toBe(target);
+    expect(svc.list()).toContain(target);
   });
 
   it('emits session_started with resumed: false and the bound session id on create', async () => {
@@ -1333,18 +1380,26 @@ describe('SessionLifecycleService', () => {
       seeds: ReturnType<typeof stubPair>[];
       appendLog: AppendLogStore;
       registry: WriteAuthorityRegistryService;
+      storage: FileStorageService;
+      docs: JsonAtomicDocumentStore;
     } {
       const registry = new WriteAuthorityRegistryService();
-      const appendLog = new AppendLogStore(new FileStorageService(root), registry);
+      const locks = new CrossProcessLockService();
+      const storage = new FileStorageService(root, undefined, undefined, locks);
+      const appendLog = new AppendLogStore(storage, registry);
+      const docs = new JsonAtomicDocumentStore(storage);
       return {
         seeds: [
           stubPair(IBootstrapService, tmpBootstrapStub(root)),
-          stubPair(ICrossProcessLockService, new CrossProcessLockService()),
+          stubPair(ICrossProcessLockService, locks),
           stubPair(IWriteAuthorityRegistry, registry),
           stubPair(IAppendLogStore, appendLog),
+          stubPair(IAtomicDocumentStore, docs),
         ],
         appendLog,
         registry,
+        storage,
+        docs,
       };
     }
 
@@ -1376,6 +1431,25 @@ describe('SessionLifecycleService', () => {
         event: 'session_lease_acquired',
         properties: { session_id: 's1' },
       });
+    });
+
+    it('rolls back the private scope, authority, and lease when MCP initialization fails', async () => {
+      const root = await makeTmpRoot();
+      const registry = new WriteAuthorityRegistryService();
+      const failure = new Error('mcp failed');
+      const svc = build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        stubPair(ICrossProcessLockService, new CrossProcessLockService()),
+        stubPair(IWriteAuthorityRegistry, registry),
+        stubPair(ISessionMcpService, sessionMcpServiceStub(() => Promise.reject(failure))),
+      ]);
+
+      await expect(svc.create({ sessionId: 's1', workDir: '/tmp/proj' })).rejects.toBe(failure);
+      expect(svc.get('s1')).toBeUndefined();
+      expect(svc.list()).toEqual([]);
+      expect(registry.resolve('s1')).toBeUndefined();
+      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      expect(disposedSessionServices).toBeGreaterThan(0);
     });
 
     it('refuses to materialize a session live-held by another instance', async () => {
@@ -1541,40 +1615,6 @@ describe('SessionLifecycleService', () => {
       expect(remaining.lock_id).toBe('peer-token');
     });
 
-    it('refuses to materialize a session directory an unregistered writer keeps writing', async () => {
-      const root = await makeTmpRoot();
-      const sessionDir = join(root, 'sessions', 'wd_stub', 's1');
-      await mkdir(sessionDir, { recursive: true });
-      await writeFile(join(sessionDir, 'marker'), '1');
-      const writer = setInterval(() => {
-        void writeFile(join(sessionDir, `tick-${randomUUID()}`), 'x').catch(() => {});
-      }, 150);
-      writer.unref();
-      try {
-        const svc = build(
-          realInstanceSeeds(root, [stubPair(IFlagService, stubFlag(true))]),
-        );
-        const error = await createError(svc, 's1');
-        expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
-        expect(error.details).toEqual({ kind: 'unregistered-writer' });
-        await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
-      } finally {
-        clearInterval(writer);
-      }
-    });
-
-    it('materializes when the session directory stops being written between the two checks', async () => {
-      const root = await makeTmpRoot();
-      const sessionDir = join(root, 'sessions', 'wd_stub', 's1');
-      await mkdir(sessionDir, { recursive: true });
-      await writeFile(join(sessionDir, 'marker'), '1');
-      const svc = build(
-        realInstanceSeeds(root, [stubPair(IFlagService, stubFlag(true))]),
-      );
-      const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
-      expect(h.id).toBe('s1');
-    });
-
     it('fork acquires a distinct target lease; releasing the source does not fence the target', async () => {
       const root = await makeTmpRoot();
       const { seeds, appendLog } = realAlsSeeds(root);
@@ -1632,6 +1672,101 @@ describe('SessionLifecycleService', () => {
       const disk = await readFile(join(root, agentScopeStr, 'wire.jsonl'), 'utf8');
       expect(disk).toBe('{"tail":true}\n');
       await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+    });
+
+    it('keeps authority and lease when the session durability barrier fails', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog, registry, storage } = realAlsSeeds(root);
+      const svc = build(seeds);
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      const failure = new Error('durable append failed');
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        if (args[0].startsWith('sessions/wd_stub/s1')) throw failure;
+        return originalAppend(...args);
+      };
+      appendLog.append('sessions/wd_stub/s1/agents/main', 'wire.jsonl', { tail: true });
+
+      await expect(svc.close('s1')).rejects.toBe(failure);
+      expect(svc.get('s1')).toBeUndefined();
+      expect(registry.resolve('s1')).toBeDefined();
+      await expect(stat(leaseFile(root, 's1'))).resolves.toBeDefined();
+      await expect(
+        new CrossProcessLockService().acquire(leaseFile(root, 's1')),
+      ).rejects.toMatchObject({ code: CrossProcessLockErrorCode.Held });
+      await expect(svc.close('s1')).rejects.toBe(failure);
+      expect(registry.resolve('s1')).toBeDefined();
+    });
+
+    it('requires an explicit dirty abort before releasing a failed durability lease', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog, registry, storage, docs } = realAlsSeeds(root);
+      const svc = build(seeds);
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      await docs.set('sessions/wd_stub/s1', 'state.json', {
+        id: 's1',
+        version: 2,
+        cwd: '/tmp/proj',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        agents: {},
+        custom: {},
+      });
+      const failure = new Error('durable append failed');
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        if (args[0].startsWith('sessions/wd_stub/s1')) throw failure;
+        return originalAppend(...args);
+      };
+      appendLog.append('sessions/wd_stub/s1/agents/main', 'wire.jsonl', { tail: true });
+
+      await expect(svc.close('s1')).rejects.toBe(failure);
+      await svc.forceAbort('s1');
+
+      expect(registry.resolve('s1')).toBeUndefined();
+      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      const successor = await new CrossProcessLockService().acquire(leaseFile(root, 's1'));
+      successor.release();
+      expect(telemetryRecords).toContainEqual({
+        event: 'session_dirty_abort',
+        properties: { session_id: 's1', reason: 'flush-failed', sessionId: 's1' },
+      });
+    });
+
+    it('closing one session does not wait for another session append', async () => {
+      const root = await makeTmpRoot();
+      const { seeds, appendLog, storage } = realAlsSeeds(root);
+      const svc = build(seeds);
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      await svc.create({ sessionId: 's10', workDir: '/tmp/proj' });
+      let markBlockedStarted!: () => void;
+      const blockedStarted = new Promise<void>((resolvePromise) => {
+        markBlockedStarted = resolvePromise;
+      });
+      let releaseBlocked!: () => void;
+      const blockedGate = new Promise<void>((resolvePromise) => {
+        releaseBlocked = resolvePromise;
+      });
+      const originalAppend = storage.append.bind(storage);
+      storage.append = async (...args) => {
+        if (args[0].startsWith('sessions/wd_stub/s10')) {
+          markBlockedStarted();
+          await blockedGate;
+        }
+        return originalAppend(...args);
+      };
+      appendLog.append('sessions/wd_stub/s10/agents/main', 'wire.jsonl', { n: 2 });
+      appendLog.append('sessions/wd_stub/s1/agents/main', 'wire.jsonl', { n: 1 });
+      await blockedStarted;
+
+      await svc.close('s1');
+      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      await expect(stat(leaseFile(root, 's10'))).resolves.toBeDefined();
+
+      releaseBlocked();
+      await appendLog.flush('sessions/wd_stub/s10');
+      await svc.close('s10');
     });
   });
 

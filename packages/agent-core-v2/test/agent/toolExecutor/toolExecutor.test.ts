@@ -423,6 +423,27 @@ describe('AgentToolExecutorService', () => {
     expect(second.calls).toHaveLength(1);
   });
 
+  it('an execution override runs instead of the original tool after scheduling', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    executor.hooks.onBeforeExecuteTool.register('replace-execute', async (ctx) => {
+      ctx.decision = {
+        ...ctx.decision,
+        execute: async () => ({ output: 'changed while queued', isError: true }),
+      };
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        output: 'changed while queued',
+        isError: true,
+      }),
+    ]);
+    expect(tool.calls).toEqual([]);
+  });
+
   it('skips later tool calls after an execution requests stopBatchAfterThis', async () => {
     const first = new TestTool('first', { stopBatchAfterThis: true });
     const second = new TestTool('second');

@@ -210,6 +210,17 @@ describe('AgentLifecycleService', () => {
       set: async <T>(scope: string, key: string, value: T): Promise<void> => {
         atomicDocs.set(`${scope}/${key}`, value);
       },
+      update: async <T>(
+        scope: string,
+        key: string,
+        mutate: (current: T | undefined) => T | Promise<T>,
+      ): Promise<T> => {
+        const next = await mutate(atomicDocs.get(`${scope}/${key}`) as T | undefined);
+        atomicDocs.set(`${scope}/${key}`, next);
+        return next;
+      },
+      runExclusive: async <T>(_scope: string, _key: string, op: () => Promise<T>): Promise<T> =>
+        op(),
       delete: async (scope: string, key: string): Promise<void> => {
         atomicDocs.delete(`${scope}/${key}`);
       },

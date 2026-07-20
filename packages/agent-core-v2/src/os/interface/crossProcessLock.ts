@@ -2,7 +2,7 @@
  * `crossProcessLock` domain (L1) — cross-process exclusive file-lock contract.
  *
  * Defines `ICrossProcessLockService`, the single lock protocol that replaces the
- * repo's ad-hoc lockfiles (design: `.tmp/refactor-watch-design-v2.md` §3.3).
+ * repo's ad-hoc lockfiles.
  * One JSON lock file per resource, created with `O_EXCL`. Protocol invariants:
  *
  * - Token-guarded: every acquire generates a fresh `lockId` (ulid); release,
@@ -13,16 +13,17 @@
  *   gone silent (`alive-unresponsive` — alert, never seize). Pid death, or a
  *   pid whose identity no longer matches (pid reused by a new process), makes
  *   the lock stale.
- * - Takeover is rename-isolated: the stale file is renamed aside to
- *   `<lock>.stale.<lockId>` before re-creating, then the new payload is read
- *   back and confirmed — a creator frozen inside its create window (SIGSTOP)
- *   cannot silently stomp the new lock when it resumes.
+ * - Every acquisition attempt registers a process-owned contender intent before
+ *   inspecting the lock. A creator does not return until every older in-flight
+ *   contender has either completed or disappeared. This closes the delayed
+ *   stale-observer race where a contender could quarantine a newer generation
+ *   after its creator had already returned.
  * - Creation window: an empty or unparseable file younger than the creation
  *   window is "creating" (treated as held, no address yet); only past the
  *   window may it be treated as stale.
- * - Heartbeat, for modes that use it, is `pwrite + ftruncate + fsync` on the
- *   fd kept open from acquire — never tmp+rename, which would let a frozen old
- *   holder's next beat overwrite the lock that took it over.
+ * - The fd opened by the winning `O_EXCL` create stays open for the handle's
+ *   lifetime. Heartbeat and payload updates write only through that fd, so a
+ *   holder that lost the public path can never overwrite its successor.
  *
  * The on-disk JSON is flat and snake_case, matching operator-facing lock
  * conventions; the six known protocol keys map to the camelCase fields of
@@ -70,7 +71,7 @@ export interface CrossProcessLockWaitOptions {
 }
 
 export interface CrossProcessLockAcquireOptions {
-  /** Heartbeat mode. Omit for pid-only locks (no fd kept, no beats). */
+  /** Heartbeat mode. Omit for pid-only locks. */
   readonly heartbeat?: CrossProcessLockHeartbeatOptions;
   /** Milliseconds an empty/unparseable lock file counts as "creating" rather
       than stale. Default 5000 for heartbeat-less modes. */
@@ -133,7 +134,7 @@ export interface ICrossProcessLockService {
   acquire(
     lockPath: string,
     options?: CrossProcessLockAcquireOptions,
-  ): ICrossProcessLockHandle;
+  ): Promise<ICrossProcessLockHandle>;
 
   /** Blocking acquisition for short critical sections (lock-in-RMW): retries
       while the lock is held/creating until `wait.timeoutMs` elapses. */
@@ -171,8 +172,10 @@ export interface CrossProcessLockServiceDeps {
   readonly selfPid?: number;
   readonly probeProcess?: ProcessProbe;
   readonly newLockId?: () => string;
+  readonly newAttemptId?: () => string;
   readonly instanceId?: string;
   readonly sleep?: (ms: number) => Promise<void>;
+  readonly beforeStaleIsolation?: () => void | Promise<void>;
 }
 
 export const OsLockErrors = {

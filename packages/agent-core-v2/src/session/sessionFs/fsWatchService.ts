@@ -17,12 +17,11 @@
  * into dirty state. The os workDir watcher runs while either set is
  * non-empty.
  *
- * Dirty state: every confined change entry gets the next monotonic tick and
- * is buffered with it; at flush the entries fold into
- * `dirtyTicks[normalizedAbs]`, and a truncated window (exact paths dropped)
- * conservatively folds `dirtyRootTicks` for every watched root at the
- * window's last tick. Clearing a window without flushing still folds the
- * buffered entries so in-flight dirty signals are never silently dropped.
+ * Dirty state is independent from event delivery: every confined raw change
+ * immediately advances `dirtyTicks[normalizedAbs]`, while protocol events are
+ * still buffered and debounced. A truncated window additionally advances
+ * `dirtyRootTicks` for every watched root. This keeps the optimistic
+ * concurrency ledger from inheriting the UI debounce window.
  * Key normalization is the shared `normalizeFsWatchKey` from the contract.
  */
 
@@ -247,11 +246,15 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
 
   private record(e: HostFsChange, rel: string | undefined): void {
     this.tick += 1;
+    this.dirtyTicks.set(normalizeFsWatchKey(e.path), this.tick);
     this.pending.push({ abs: e.path, rel, tick: this.tick, change: e.action, kind: e.kind });
     this.rawCount += 1;
     if (this.pending.length > this.maxChangesPerWindow) {
       this.truncated = true;
       this.pending = [];
+      for (const root of this.watchedRoots) {
+        this.dirtyRootTicks.set(normalizeFsWatchKey(root), this.tick);
+      }
     }
     if (this.debounceTimer === undefined) {
       const timer = setTimeout(() => this.flush(), this.debounceMs);
@@ -273,10 +276,6 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     if (truncated) {
       for (const root of this.watchedRoots) {
         this.dirtyRootTicks.set(normalizeFsWatchKey(root), this.tick);
-      }
-    } else {
-      for (const entry of pending) {
-        this.dirtyTicks.set(normalizeFsWatchKey(entry.abs), entry.tick);
       }
     }
 
@@ -304,8 +303,10 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
       clearTimeout(this.debounceTimer);
       this.debounceTimer = undefined;
     }
-    for (const entry of this.pending) {
-      this.dirtyTicks.set(normalizeFsWatchKey(entry.abs), entry.tick);
+    if (this.truncated) {
+      for (const root of this.watchedRoots) {
+        this.dirtyRootTicks.set(normalizeFsWatchKey(root), this.tick);
+      }
     }
     this.pending = [];
     this.rawCount = 0;

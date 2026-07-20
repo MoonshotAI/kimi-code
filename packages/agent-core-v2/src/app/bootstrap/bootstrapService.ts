@@ -13,7 +13,7 @@
  * Bound at App scope.
  */
 
-import { basename, join, relative } from 'pathe';
+import { join, relative } from 'pathe';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -58,7 +58,7 @@ export class BootstrapService implements IBootstrapService {
     this.storeDir = join(options.homeDir, 'store');
     this.cacheDir = join(options.homeDir, 'cache');
     this.logsDir = join(options.homeDir, 'logs');
-    this.configKey = basename(options.configPath);
+    this.configKey = relative(options.homeDir, options.configPath);
     this.scopes = {
       config: '',
       sessions: relative(options.homeDir, this.sessionsDir),

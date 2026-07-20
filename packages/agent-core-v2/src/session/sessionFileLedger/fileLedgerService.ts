@@ -2,12 +2,11 @@
  * `sessionFileLedger` domain (L2) — `ISessionFileLedger` implementation.
  *
  * In-memory per-session ledger of on-disk stat tuples keyed by
- * `normalizeFsWatchKey`. `recordBaseline` re-stats the target through
- * `IHostFileSystem` and stores the tuple with the watch service's current
- * tick; `compare` consults only already-folded `sessionFsWatch` dirty state
- * (it never awaits watcher frames) and degrades gracefully: stat failures
- * other than not-found yield `clean` rather than blocking the write path,
- * and paths outside every watched root get a stat-only comparison. The
+ * `normalizeFsWatchKey`. `recordBaseline` captures the watch tick before it
+ * re-stats the target, so a concurrent event cannot be absorbed into an older
+ * tuple. `compare` always re-stats immediately before a write decision;
+ * watcher ticks classify the result but never replace the stat. An
+ * unverifiable stat fails closed as `stale`. The
  * service also guarantees `ISessionFsWatchService` watches the session roots
  * (`workDir` + `additionalDirs` from `ISessionWorkspaceContext`), adding an
  * unwatched containing root additively whenever a Write/Edit target falls
@@ -52,9 +51,10 @@ export class SessionFileLedger implements ISessionFileLedger {
 
   async recordBaseline(path: string): Promise<void> {
     this.ensureWatchedRootFor(path);
+    const tick = this.watch.currentTick;
     const tuple = await this.tryStat(path);
     if (tuple === undefined) return;
-    this.entries.set(normalizeFsWatchKey(path), { ...tuple, tick: this.watch.currentTick });
+    this.entries.set(normalizeFsWatchKey(path), { ...tuple, tick });
   }
 
   async compare(path: string): Promise<FileLedgerVerdict> {
@@ -62,27 +62,18 @@ export class SessionFileLedger implements ISessionFileLedger {
     const key = normalizeFsWatchKey(path);
     const entry = this.entries.get(key);
     const root = this.containingWatchedRoot(key);
-    if (root === undefined) {
-      const current = await this.tryStat(path);
-      if (current === undefined) return 'clean';
-      if (entry === undefined) return current.exists ? 'no-baseline' : 'clean';
-      return fileStatTuplesEqual(entry, current) ? 'clean' : 'stale';
-    }
-    if (entry === undefined) {
-      if ((this.watch.dirtyTickFor(path) ?? 0) > 0) return 'stale';
-      const current = await this.tryStat(path);
-      if (current === undefined) return 'clean';
-      return current.exists ? 'no-baseline' : 'clean';
-    }
+    const current = await this.tryStat(path);
+    if (current === undefined) return 'stale';
     const dirty = Math.max(
       this.watch.dirtyTickFor(path) ?? 0,
-      this.watch.rootDirtyTickFor(root) ?? 0,
+      root === undefined ? 0 : (this.watch.rootDirtyTickFor(root) ?? 0),
     );
-    if (dirty <= entry.tick) return 'clean';
-    const current = await this.tryStat(path);
-    if (current === undefined) return 'clean';
+    if (entry === undefined) {
+      if (dirty > 0) return current.exists ? 'stale' : 'clean';
+      return current.exists ? 'no-baseline' : 'clean';
+    }
     if (fileStatTuplesEqual(entry, current)) {
-      this.entries.set(key, { ...entry, tick: dirty });
+      if (dirty > entry.tick) this.entries.set(key, { ...current, tick: dirty });
       return 'clean';
     }
     return 'stale';

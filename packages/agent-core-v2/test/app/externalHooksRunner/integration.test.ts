@@ -199,6 +199,7 @@ function stubSessionLifecycle(): ISessionLifecycleService {
     list: () => [],
     resume: async () => undefined,
     close: async () => {},
+    forceAbort: async () => {},
     archive: async () => {},
     restore: async () => undefined,
     fork: async () => {

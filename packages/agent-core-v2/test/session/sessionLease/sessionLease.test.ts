@@ -28,8 +28,6 @@ import {
   sessionLeasePath,
   SESSION_LEASE_HEARTBEAT_INTERVAL_MS,
   SESSION_LEASE_TTL_MS,
-  UNREGISTERED_WRITER_RECHECK_DELAY_MS,
-  UNREGISTERED_WRITER_WINDOW_MS,
 } from '#/session/sessionLease/sessionLease';
 
 let tmpDir: string;
@@ -46,8 +44,15 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function acquire(sessionId = 's1', onLost: (sessionId: string) => void = () => {}): SessionLease {
-  return new SessionLease(sessionId, locks.acquire(sessionLeasePath(tmpDir, sessionId)), onLost);
+async function acquire(
+  sessionId = 's1',
+  onLost: (sessionId: string) => void = () => {},
+): Promise<SessionLease> {
+  return new SessionLease(
+    sessionId,
+    await locks.acquire(sessionLeasePath(tmpDir, sessionId)),
+    onLost,
+  );
 }
 
 function thrownError(fn: () => void): Error2 {
@@ -66,17 +71,17 @@ function hostWith(seeds: Parameters<typeof createScopedTestHost>[0] = []): Scope
 }
 
 describe('SessionLease', () => {
-  it('reports its identity through info and passes the hard gate while held', () => {
-    const lease = acquire();
+  it('reports its identity through info and passes the hard gate while held', async () => {
+    const lease = await acquire();
     expect(lease.checkHeld()).toBe(true);
     expect(lease.info).toEqual({ sessionId: 's1', lockId: lease.lockId });
     expect(() => lease.assertWritable()).not.toThrow();
     lease.release();
   });
 
-  it('fails closed with session.lease_lost once the payload no longer carries its token', () => {
+  it('fails closed with session.lease_lost once the payload no longer carries its token', async () => {
     const onLost = vi.fn();
-    const lease = acquire('s1', onLost);
+    const lease = await acquire('s1', onLost);
     writeFileSync(
       sessionLeasePath(tmpDir, 's1'),
       JSON.stringify({ lock_id: 'peer-token', pid: process.pid }),
@@ -93,8 +98,8 @@ describe('SessionLease', () => {
     expect(onLost).toHaveBeenCalledTimes(1);
   });
 
-  it('release is idempotent, unlinks the owned file, and later assertions throw', () => {
-    const lease = acquire();
+  it('release is idempotent, unlinks the owned file, and later assertions throw', async () => {
+    const lease = await acquire();
     lease.release();
     lease.release();
 
@@ -104,8 +109,8 @@ describe('SessionLease', () => {
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
   });
 
-  it('release never unlinks a payload owned by a peer', () => {
-    const lease = acquire();
+  it('release never unlinks a payload owned by a peer', async () => {
+    const lease = await acquire();
     writeFileSync(
       sessionLeasePath(tmpDir, 's1'),
       JSON.stringify({ lock_id: 'peer-token', pid: process.pid }),
@@ -122,8 +127,6 @@ describe('SessionLease', () => {
     expect(SESSION_LEASE_TTL_MS).toBe(6000);
     expect(LEASE_CREATING_RETRY_AFTER_MS).toBe(1000);
     expect(HOLDER_UNRESPONSIVE_RETRY_AFTER_MS).toBe(2000);
-    expect(UNREGISTERED_WRITER_WINDOW_MS).toBe(5000);
-    expect(UNREGISTERED_WRITER_RECHECK_DELAY_MS).toBe(1000);
   });
 
   it('sessionLeasePath lives under <home>/session-leases/', () => {

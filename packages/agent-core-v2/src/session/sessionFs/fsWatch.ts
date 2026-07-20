@@ -11,7 +11,7 @@
  * Beyond the change feed, every confined change entry is folded into a
  * per-session dirty state for optimistic-concurrency consumers
  * (`sessionFileLedger`): a monotonic `currentTick` incremented per processed
- * entry, per-path dirty ticks folded when a debounce window flushes, and
+ * entry, immediate per-path dirty ticks independent of debounce delivery, and
  * per-root dirty ticks for truncated windows whose exact paths were dropped.
  * Client subscriptions (`setWatchedPaths`, replace semantics) and
  * optimistic-concurrency watch anchors (`ensureWatchedRoots`, additive,

@@ -1,6 +1,6 @@
 /**
  * `SessionListWatchService` — the event plane of multi-instance session-list
- * sync (design `.tmp/refactor-watch-design-v2.md` §3.8).
+ * sync.
  *
  * Several kap-server instances can share one home directory (the
  * `multi_server` experimental flag). The session list itself needs no

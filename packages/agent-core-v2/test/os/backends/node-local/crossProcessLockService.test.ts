@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -44,6 +45,7 @@ let tmpDir: string;
 let lockPath: string;
 let nowValue: number;
 let lockSeq: number;
+let attemptSeq: number;
 const handles: ICrossProcessLockHandle[] = [];
 
 function track<T extends ICrossProcessLockHandle>(handle: T): T {
@@ -66,6 +68,8 @@ interface FakeServiceOptions {
   instanceId?: string;
   probe?: ProcessProbe;
   now?: () => number;
+  beforeStaleIsolation?: () => void | Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 function makeService(options: FakeServiceOptions = {}): CrossProcessLockService {
@@ -76,7 +80,9 @@ function makeService(options: FakeServiceOptions = {}): CrossProcessLockService 
     probeProcess: options.probe ?? probeFor(new Map([[selfPid, 'self-start']])),
     now: options.now ?? (() => nowValue),
     newLockId: () => `lockid-${++lockSeq}`,
-    sleep: realSleep,
+    newAttemptId: () => `attempt-${++attemptSeq}`,
+    beforeStaleIsolation: options.beforeStaleIsolation,
+    sleep: options.sleep ?? realSleep,
   });
 }
 
@@ -111,6 +117,13 @@ function backdate(path: string, ageMs: number): void {
   utimesSync(path, t, t);
 }
 
+function findStalePath(lockId: string): string {
+  const prefix = `lock.stale.${lockId}.`;
+  const name = readdirSync(tmpDir).find((entry) => entry.startsWith(prefix));
+  expect(name).toBeDefined();
+  return join(tmpDir, name!);
+}
+
 async function waitFor(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
   const start = Date.now();
   for (;;) {
@@ -125,6 +138,7 @@ beforeEach(() => {
   lockPath = join(tmpDir, 'lock');
   nowValue = 1_000_000;
   lockSeq = 0;
+  attemptSeq = 0;
 });
 
 afterEach(() => {
@@ -133,10 +147,10 @@ afterEach(() => {
 });
 
 describe('acquire / release', () => {
-  it('writes the snake_case payload with extras flat, and release removes the file', () => {
+  it('writes the snake_case payload with extras flat, and release removes the file', async () => {
     const svc = makeService();
     const handle = track(
-      svc.acquire(lockPath, {
+      await svc.acquire(lockPath, {
         address: '127.0.0.1:58627',
         extraPayload: { port: 58627, role: 'primary' },
       }),
@@ -156,9 +170,9 @@ describe('acquire / release', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  it('omits optional keys when the platform cannot provide them', () => {
+  it('omits optional keys when the platform cannot provide them', async () => {
     const svc = makeService({ probe: () => ({ alive: true }) });
-    const handle = track(svc.acquire(lockPath));
+    const handle = track(await svc.acquire(lockPath));
     expect(readDisk()).toEqual({
       lock_id: 'lockid-1',
       instance_id: 'inst-self',
@@ -166,19 +180,19 @@ describe('acquire / release', () => {
     });
   });
 
-  it('creates missing parent directories and release is idempotent', () => {
+  it('creates missing parent directories and release is idempotent', async () => {
     const nested = join(tmpDir, 'a', 'b', 'lock');
     const svc = makeService();
-    const handle = track(svc.acquire(nested));
+    const handle = track(await svc.acquire(nested));
     expect(existsSync(nested)).toBe(true);
     handle.release();
     handle.release();
     expect(existsSync(nested)).toBe(false);
   });
 
-  it('release never unlinks a foreign lock', () => {
+  it('release never unlinks a foreign lock', async () => {
     const svc = makeService();
-    const handle = track(svc.acquire(lockPath));
+    const handle = track(await svc.acquire(lockPath));
     handle.release();
     writePayload({ lock_id: 'someone-else', instance_id: 'x', pid: OTHER_PID });
     handle.release();
@@ -188,7 +202,7 @@ describe('acquire / release', () => {
 });
 
 describe('held vs takeover', () => {
-  it('a live identity-matching holder blocks acquisition with OS_LOCK_HELD', () => {
+  it('a live identity-matching holder blocks acquisition with OS_LOCK_HELD', async () => {
     writePayload({
       lock_id: 'old-id',
       instance_id: 'inst-other',
@@ -198,13 +212,7 @@ describe('held vs takeover', () => {
     const svc = makeService({ probe: probeFor(liveWorld()) });
     const before = readFileSync(lockPath, 'utf8');
 
-    let caught: unknown;
-    try {
-      svc.acquire(lockPath);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toMatchObject({
+    await expect(svc.acquire(lockPath)).rejects.toMatchObject({
       code: CrossProcessLockErrorCode.Held,
       details: { reason: 'held' },
     });
@@ -212,11 +220,11 @@ describe('held vs takeover', () => {
     expect(readdirSync(tmpDir)).toEqual(['lock']);
   });
 
-  it('takes over a dead holder with rename isolation', () => {
+  it('takes over a dead holder with rename isolation', async () => {
     const live = liveWorld();
     const probe = probeFor(live);
     const oldHandle = track(
-      makeService({ selfPid: OTHER_PID, instanceId: 'inst-other', probe }).acquire(
+      await makeService({ selfPid: OTHER_PID, instanceId: 'inst-other', probe }).acquire(
         lockPath,
         { extraPayload: { port: 1 } },
       ),
@@ -224,10 +232,10 @@ describe('held vs takeover', () => {
     const oldDisk = JSON.parse(readFileSync(lockPath, 'utf8')) as Record<string, unknown>;
 
     live.delete(OTHER_PID);
-    const handle = track(makeService({ probe }).acquire(lockPath));
+    const handle = track(await makeService({ probe }).acquire(lockPath));
 
-    expect(existsSync(`${lockPath}.stale.lockid-1`)).toBe(true);
-    expect(JSON.parse(readFileSync(`${lockPath}.stale.lockid-1`, 'utf8'))).toEqual(oldDisk);
+    const stalePath = findStalePath('lockid-1');
+    expect(JSON.parse(readFileSync(stalePath, 'utf8'))).toEqual(oldDisk);
     expect(readDisk().lock_id).toBe('lockid-2');
     expect(handle.lockId).toBe('lockid-2');
 
@@ -237,7 +245,7 @@ describe('held vs takeover', () => {
     expect(readDisk().lock_id).toBe('lockid-2');
   });
 
-  it('treats a live pid with mismatched identity as stale (pid reused)', () => {
+  it('treats a live pid with mismatched identity as stale (pid reused)', async () => {
     writePayload({
       lock_id: 'old-id',
       instance_id: 'inst-other',
@@ -252,12 +260,12 @@ describe('held vs takeover', () => {
       state: 'stale',
       staleReason: 'pid-reused',
     });
-    track(svc.acquire(lockPath));
-    expect(existsSync(`${lockPath}.stale.old-id`)).toBe(true);
+    track(await svc.acquire(lockPath));
+    expect(existsSync(findStalePath('old-id'))).toBe(true);
     expect(readDisk().lock_id).toBe('lockid-1');
   });
 
-  it('refuses takeover when the holder identity is unavailable (conservative held)', () => {
+  it('refuses takeover when the holder identity is unavailable (conservative held)', async () => {
     writePayload({
       lock_id: 'old-id',
       instance_id: 'inst-other',
@@ -269,14 +277,14 @@ describe('held vs takeover', () => {
     const svc = makeService({ probe: probeFor(live) });
 
     expect(svc.inspect(lockPath)).toMatchObject({ state: 'held', unavailableReason: 'held' });
-    expect(() => svc.acquire(lockPath)).toThrowError(
-      expect.objectContaining({ code: CrossProcessLockErrorCode.Held }),
-    );
+    await expect(svc.acquire(lockPath)).rejects.toMatchObject({
+      code: CrossProcessLockErrorCode.Held,
+    });
     expect(readDisk().lock_id).toBe('old-id');
     expect(readdirSync(tmpDir)).toEqual(['lock']);
   });
 
-  it('takes over a legacy payload without lock_id, renamed aside as unknown', () => {
+  it('takes over a legacy payload without lock_id, renamed aside as unknown', async () => {
     writePayload({ pid: OTHER_PID, started_at: '1', port: 58627 });
     const svc = makeService();
 
@@ -285,25 +293,113 @@ describe('held vs takeover', () => {
       staleReason: 'holder-dead',
       payload: { lockId: '', pid: OTHER_PID, port: 58627 },
     });
-    track(svc.acquire(lockPath));
-    expect(existsSync(`${lockPath}.stale.unknown`)).toBe(true);
+    track(await svc.acquire(lockPath));
+    expect(existsSync(findStalePath('unknown'))).toBe(true);
     expect(readDisk().lock_id).toBe('lockid-1');
+  });
+
+  it('never lets two delayed stale contenders both return ownership', async () => {
+    writePayload({
+      lock_id: 'old-id',
+      instance_id: 'inst-dead',
+      pid: DEAD_PID,
+    });
+    const probe = probeFor(liveWorld());
+    let enterIsolation!: () => void;
+    const isolationEntered = new Promise<void>((resolvePromise) => {
+      enterIsolation = resolvePromise;
+    });
+    let resumeIsolation!: () => void;
+    const isolationPaused = new Promise<void>((resolvePromise) => {
+      resumeIsolation = resolvePromise;
+    });
+    let pauseCount = 0;
+    const contenderA = makeService({
+      probe,
+      now: Date.now,
+      beforeStaleIsolation: async () => {
+        pauseCount += 1;
+        if (pauseCount !== 1) return;
+        enterIsolation();
+        await isolationPaused;
+      },
+    });
+    const contenderB = makeService({
+      selfPid: OTHER_PID,
+      instanceId: 'inst-b',
+      probe,
+      now: Date.now,
+    });
+
+    const acquireA = contenderA.acquire(lockPath, { creationWindowMs: 500 });
+    await isolationEntered;
+    const acquireB = contenderB.acquire(lockPath, { creationWindowMs: 500 });
+    await waitFor(() => readDisk().lock_id === 'lockid-1');
+    resumeIsolation();
+
+    const outcomes = await Promise.allSettled([acquireA, acquireB]);
+    const fulfilled = outcomes.filter(
+      (outcome): outcome is PromiseFulfilledResult<ICrossProcessLockHandle> =>
+        outcome.status === 'fulfilled',
+    );
+    const rejected = outcomes.filter(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: CrossProcessLockErrorCode.Lost });
+    track(fulfilled[0]!.value);
+    expect(readDisk().lock_id).toBe(fulfilled[0]!.value.lockId);
+    expect(readdirSync(tmpDir).filter((entry) => entry.startsWith('lock.intent.'))).toEqual([]);
+  });
+
+  it('settles against the contender snapshot without waiting for later arrivals', async () => {
+    const olderIntent = `${lockPath}.intent.older`;
+    const laterIntent = `${lockPath}.intent.later`;
+    writeFileSync(
+      olderIntent,
+      JSON.stringify({ pid: OTHER_PID, process_started_at: 'other-start' }),
+    );
+    let sleepCount = 0;
+    const svc = makeService({
+      probe: probeFor(liveWorld()),
+      sleep: async () => {
+        sleepCount += 1;
+        writeFileSync(
+          laterIntent,
+          JSON.stringify({ pid: OTHER_PID, process_started_at: 'other-start' }),
+        );
+        rmSync(olderIntent, { force: true });
+      },
+    });
+
+    const handle = track(await svc.acquire(lockPath, { creationWindowMs: 500 }));
+
+    expect(sleepCount).toBe(1);
+    expect(handle.checkHeld()).toBe(true);
+    expect(existsSync(laterIntent)).toBe(true);
+  });
+
+  it('ignores a settled intent left behind after cleanup failure', async () => {
+    writeFileSync(
+      `${lockPath}.intent.orphan`,
+      JSON.stringify({ intent_id: 'orphan', state: 'settled', pid: OTHER_PID }),
+    );
+
+    const handle = track(await makeService({ probe: probeFor(liveWorld()) }).acquire(lockPath));
+
+    expect(handle.lockId).toBe('lockid-1');
+    expect(handle.checkHeld()).toBe(true);
   });
 });
 
 describe('creation window', () => {
-  it('an empty file inside the window is creating', () => {
+  it('an empty file inside the window is creating', async () => {
     writeFileSync(lockPath, '');
     const svc = makeService({ now: () => Date.now() });
 
     expect(svc.inspect(lockPath)).toMatchObject({ state: 'creating' });
-    let caught: unknown;
-    try {
-      svc.acquire(lockPath);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toMatchObject({
+    await expect(svc.acquire(lockPath)).rejects.toMatchObject({
       code: CrossProcessLockErrorCode.Held,
       details: { reason: 'creating' },
     });
@@ -311,7 +407,7 @@ describe('creation window', () => {
     expect(readdirSync(tmpDir)).toEqual(['lock']);
   });
 
-  it('an empty file past the window is taken over as stale', () => {
+  it('an empty file past the window is taken over as stale', async () => {
     writeFileSync(lockPath, '');
     backdate(lockPath, 10_000);
     const svc = makeService({ now: () => Date.now() });
@@ -320,12 +416,12 @@ describe('creation window', () => {
       state: 'stale',
       staleReason: 'creation-window-expired',
     });
-    track(svc.acquire(lockPath));
-    expect(existsSync(`${lockPath}.stale.unknown`)).toBe(true);
+    track(await svc.acquire(lockPath));
+    expect(existsSync(findStalePath('unknown'))).toBe(true);
     expect(readDisk().lock_id).toBe('lockid-1');
   });
 
-  it('an unparseable file follows the same window', () => {
+  it('an unparseable file follows the same window', async () => {
     writeFileSync(lockPath, '{oops');
     const svc = makeService({ now: () => Date.now() });
 
@@ -335,8 +431,8 @@ describe('creation window', () => {
       state: 'stale',
       staleReason: 'creation-window-expired',
     });
-    track(svc.acquire(lockPath));
-    expect(existsSync(`${lockPath}.stale.unknown`)).toBe(true);
+    track(await svc.acquire(lockPath));
+    expect(existsSync(findStalePath('unknown'))).toBe(true);
     expect(readDisk().instance_id).toBe('inst-self');
   });
 });
@@ -345,7 +441,7 @@ describe('heartbeat mode', () => {
   it('beats heartbeat_at into the disk payload through the kept fd', async () => {
     const svc = makeService();
     const handle = track(
-      svc.acquire(lockPath, { heartbeat: { intervalMs: 20, ttlMs: 60_000 } }),
+      await svc.acquire(lockPath, { heartbeat: { intervalMs: 20, ttlMs: 60_000 } }),
     );
     expect(readDisk().heartbeat_at).toBe(1_000_000);
 
@@ -360,7 +456,7 @@ describe('heartbeat mode', () => {
     const probe = probeFor(live);
     let lostCount = 0;
     const oldHandle = track(
-      makeService({ probe }).acquire(lockPath, {
+      await makeService({ probe }).acquire(lockPath, {
         heartbeat: { intervalMs: 20, ttlMs: 60_000 },
         onLost: () => {
           lostCount += 1;
@@ -370,7 +466,7 @@ describe('heartbeat mode', () => {
 
     live.delete(SELF_PID);
     track(
-      makeService({ selfPid: OTHER_PID, instanceId: 'inst-b', probe }).acquire(lockPath),
+      await makeService({ selfPid: OTHER_PID, instanceId: 'inst-b', probe }).acquire(lockPath),
     );
 
     await waitFor(() => lostCount === 1);
@@ -380,7 +476,7 @@ describe('heartbeat mode', () => {
     expect(readDisk().lock_id).toBe('lockid-2');
   });
 
-  it('a silent heartbeat with a live identity-matching pid is holder-unresponsive, never seized', () => {
+  it('a silent heartbeat with a live identity-matching pid is holder-unresponsive, never seized', async () => {
     writePayload({
       lock_id: 'old-id',
       instance_id: 'inst-other',
@@ -391,13 +487,9 @@ describe('heartbeat mode', () => {
     const svc = makeService({ probe: probeFor(liveWorld()) });
     const before = readFileSync(lockPath, 'utf8');
 
-    let caught: unknown;
-    try {
-      svc.acquire(lockPath, { heartbeat: { intervalMs: 100, ttlMs: 5_000 } });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toMatchObject({
+    await expect(
+      svc.acquire(lockPath, { heartbeat: { intervalMs: 100, ttlMs: 5_000 } }),
+    ).rejects.toMatchObject({
       code: CrossProcessLockErrorCode.Held,
       details: { reason: 'holder-unresponsive' },
     });
@@ -405,7 +497,7 @@ describe('heartbeat mode', () => {
     expect(readdirSync(tmpDir)).toEqual(['lock']);
   });
 
-  it('a fresh heartbeat with a live holder is a plain held', () => {
+  it('a fresh heartbeat with a live holder is a plain held', async () => {
     writePayload({
       lock_id: 'old-id',
       instance_id: 'inst-other',
@@ -415,13 +507,9 @@ describe('heartbeat mode', () => {
     });
     const svc = makeService({ probe: probeFor(liveWorld()) });
 
-    let caught: unknown;
-    try {
-      svc.acquire(lockPath, { heartbeat: { intervalMs: 100, ttlMs: 5_000 } });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toMatchObject({
+    await expect(
+      svc.acquire(lockPath, { heartbeat: { intervalMs: 100, ttlMs: 5_000 } }),
+    ).rejects.toMatchObject({
       code: CrossProcessLockErrorCode.Held,
       details: { reason: 'held' },
     });
@@ -433,7 +521,7 @@ describe('acquireWithWait / withLock', () => {
   it('a waiting acquirer obtains the lock after the holder releases', async () => {
     const live = liveWorld();
     const probe = probeFor(live);
-    const holder = track(makeService({ probe }).acquire(lockPath));
+    const holder = track(await makeService({ probe }).acquire(lockPath));
 
     const waiter = makeService({
       selfPid: OTHER_PID,
@@ -461,7 +549,7 @@ describe('acquireWithWait / withLock', () => {
   it('a waiting acquirer gives up with OS_LOCK_WAIT_TIMEOUT', async () => {
     const live = liveWorld();
     const probe = probeFor(live);
-    track(makeService({ probe }).acquire(lockPath));
+    track(await makeService({ probe }).acquire(lockPath));
 
     const waiter = makeService({
       selfPid: OTHER_PID,
@@ -477,9 +565,9 @@ describe('acquireWithWait / withLock', () => {
 });
 
 describe('update', () => {
-  it('rewrites extras and re-stamps the protocol keys', () => {
+  it('rewrites extras and re-stamps the protocol keys', async () => {
     const svc = makeService();
-    const handle = track(svc.acquire(lockPath, { extraPayload: { port: 1 } }));
+    const handle = track(await svc.acquire(lockPath, { extraPayload: { port: 1 } }));
 
     handle.update((payload) => ({
       ...payload,
@@ -501,7 +589,7 @@ describe('update', () => {
   it('a later update keeps the extras the heartbeat rewrites', async () => {
     const svc = makeService();
     const handle = track(
-      svc.acquire(lockPath, {
+      await svc.acquire(lockPath, {
         heartbeat: { intervalMs: 20, ttlMs: 60_000 },
         extraPayload: { port: 1 },
       }),
@@ -519,15 +607,15 @@ describe('update', () => {
     handle.release();
   });
 
-  it('update after a takeover throws OS_LOCK_LOST', () => {
+  it('update after a takeover throws OS_LOCK_LOST', async () => {
     const live = liveWorld();
     const probe = probeFor(live);
     const oldHandle = track(
-      makeService({ probe }).acquire(lockPath, { extraPayload: { port: 1 } }),
+      await makeService({ probe }).acquire(lockPath, { extraPayload: { port: 1 } }),
     );
     live.delete(SELF_PID);
     track(
-      makeService({ selfPid: OTHER_PID, instanceId: 'inst-b', probe }).acquire(lockPath),
+      await makeService({ selfPid: OTHER_PID, instanceId: 'inst-b', probe }).acquire(lockPath),
     );
 
     expect(() => {
@@ -535,6 +623,28 @@ describe('update', () => {
     }).toThrowError(expect.objectContaining({ code: CrossProcessLockErrorCode.Lost }));
     expect(readDisk().lock_id).toBe('lockid-2');
     expect(readDisk().port).toBeUndefined();
+  });
+
+  it('update detects a takeover that happens after its initial token check', async () => {
+    const svc = makeService();
+    const handle = track(await svc.acquire(lockPath, { extraPayload: { port: 1 } }));
+    const oldPath = `${lockPath}.old`;
+
+    expect(() => {
+      handle.update((payload) => {
+        renameSync(lockPath, oldPath);
+        writeFileSync(
+          lockPath,
+          JSON.stringify({
+            lock_id: 'foreign-lock',
+            instance_id: 'foreign-instance',
+            pid: OTHER_PID,
+          }),
+        );
+        return { ...payload, port: 2 };
+      });
+    }).toThrowError(expect.objectContaining({ code: CrossProcessLockErrorCode.Lost }));
+    expect(readDisk().lock_id).toBe('foreign-lock');
   });
 });
 

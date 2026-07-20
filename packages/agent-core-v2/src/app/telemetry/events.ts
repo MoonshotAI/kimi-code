@@ -453,6 +453,11 @@ export interface SessionLeaseHolderUnresponsiveEvent {
   session_id: string;
 }
 
+export interface SessionDirtyAbortEvent {
+  session_id: string;
+  reason: 'flush-failed';
+}
+
 export interface FirstLaunchEvent {}
 
 export interface ExitEvent {
@@ -967,6 +972,14 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: "A session's lease holder is alive but its heartbeat is past TTL (frozen).",
     properties: { session_id: 'Session whose holder is unresponsive' },
+  }),
+  session_dirty_abort: defineTelemetryEvent<SessionDirtyAbortEvent>({
+    owner: 'kimi-code',
+    comment: 'A session is force-aborted after its final durability barrier became ambiguous.',
+    properties: {
+      session_id: 'Session whose lease is being released after an ambiguous flush failure',
+      reason: 'Why the dirty abort was required',
+    },
   }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',

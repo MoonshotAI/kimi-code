@@ -167,6 +167,26 @@ test('release never unlinks a lock that was taken over meanwhile', async () => {
   await cleanup(dir);
 });
 
+test('renew never overwrites a foreign lock generation', async () => {
+  const dir = await tmpDir();
+  const p = path.join(dir, 'db.lock');
+  const old = path.join(dir, 'db.lock.old');
+  const lock = new LockFile(p, { newLockId: () => 'a-token' });
+  assert.equal(await lock.acquire(), true);
+
+  await fs.rename(p, old);
+  await fs.writeFile(
+    p,
+    JSON.stringify({ pid: process.pid, ts: Date.now(), lock_id: 'b-token' }),
+  );
+  await lock.renew();
+
+  assert.equal(lock.held, false);
+  const onDisk = JSON.parse(await fs.readFile(p, 'utf8'));
+  assert.equal(onDisk.lock_id, 'b-token');
+  await cleanup(dir);
+});
+
 test('a read-back token mismatch rejects the acquire', async () => {
   const dir = await tmpDir();
   const p = path.join(dir, 'db.lock');

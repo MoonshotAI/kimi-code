@@ -2,9 +2,8 @@
  * `persistence/interface` — session-scoped write fencing contract.
  *
  * Defines `ISessionWriteAuthority`, the per-session lease proof that a Store
- * write must re-verify immediately before its bytes hit storage (design:
- * `.tmp/refactor-watch-design-v2.md` §3.4.2/§3.4.5 — the pre-commit lease
- * re-read is the hard gate and must fail closed), and the App-scoped
+ * write must re-verify immediately before its bytes hit storage (the
+ * pre-commit lease re-read is the hard gate and must fail closed), and the App-scoped
  * `IWriteAuthorityRegistry` the `AppendLogStore` resolves authorities through.
  * The registry never creates semantics of its own: it only maps `sessionId`
  * to the authority the session lifecycle registered, so a write for a

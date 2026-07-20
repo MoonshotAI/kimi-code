@@ -1,6 +1,5 @@
 /**
- * Scenario: App-scope watch of the user-level mcp.json (design:
- * .tmp/refactor-watch-design-v2.md §3.6).
+ * Scenario: App-scope watch of the user-level mcp.json.
  *
  * Valid content fires `onDidChange` (and a fresh `loadMcpServers` observes
  * the new servers — v2 loads mcp.json per session creation and has no cache

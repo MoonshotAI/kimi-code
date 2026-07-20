@@ -2,10 +2,9 @@
  * `sessionFileLedger` domain (L2) — verifies the optimistic-concurrency
  * verdict matrix (clean / stale / no-baseline) against a real tmpdir, a real
  * `HostFileSystem` (stat-call counted) and a fake os watcher: baselines only
- * refresh on success, dirty ticks come from the watch service's folded
- * state, watcher echoes of the session's own writes punch a stat and
- * re-baseline, truncated windows fall back to the per-root dirty tick, and
- * out-of-root targets degrade to a stat-only comparison.
+ * refresh on success, every write decision performs a fresh stat, dirty ticks
+ * arrive before debounced event delivery, watcher echoes of the session's own
+ * writes re-baseline, and truncated windows retain conservative root ticks.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -171,6 +170,18 @@ describe('SessionFileLedger', () => {
     expect(await world.ledger.compare(file)).toBe('stale');
   });
 
+  it('detects an outside modification before the watch debounce flush', async () => {
+    const world = makeWorld();
+    const file = join(world.workDir, 'a.txt');
+    writeFileSync(file, 'hello');
+    await world.ledger.recordBaseline(file);
+
+    writeFileSync(file, 'hello world');
+    world.fake.fire('a.txt', 'modified');
+
+    expect(await world.ledger.compare(file)).toBe('stale');
+  });
+
   it('absorbs the watcher echo of the session own write and re-baselines the tick', async () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
@@ -185,7 +196,7 @@ describe('SessionFileLedger', () => {
     expect(world.statCalls()).toBe(2);
 
     expect(await world.ledger.compare(file)).toBe('clean');
-    expect(world.statCalls()).toBe(2);
+    expect(world.statCalls()).toBe(3);
   });
 
   it('keeps a baselined file clean through an untouched truncated window', async () => {
@@ -200,7 +211,7 @@ describe('SessionFileLedger', () => {
     expect(await world.ledger.compare(file)).toBe('clean');
     expect(world.statCalls()).toBe(2);
     expect(await world.ledger.compare(file)).toBe('clean');
-    expect(world.statCalls()).toBe(2);
+    expect(world.statCalls()).toBe(3);
   });
 
   it('detects an outside modification through a truncated window via the stat punch', async () => {
@@ -274,14 +285,14 @@ describe('SessionFileLedger', () => {
     expect(await world.ledger.compare(file)).toBe('stale');
   });
 
-  it('degrades to clean when stat fails for reasons other than not-found', async () => {
+  it('fails closed when stat fails for reasons other than not-found', async () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
     world.poisonedPaths.add(file);
 
     await world.ledger.recordBaseline(file);
-    expect(await world.ledger.compare(file)).toBe('clean');
+    expect(await world.ledger.compare(file)).toBe('stale');
 
     world.poisonedPaths.clear();
     await world.ledger.recordBaseline(file);
@@ -289,7 +300,7 @@ describe('SessionFileLedger', () => {
     world.fake.fire('a.txt', 'modified');
     vi.advanceTimersByTime(200);
 
-    expect(await world.ledger.compare(file)).toBe('clean');
+    expect(await world.ledger.compare(file)).toBe('stale');
     expect(world.statCalls()).toBeGreaterThan(0);
   });
 });

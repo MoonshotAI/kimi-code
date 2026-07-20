@@ -16,8 +16,8 @@
  * never reorders session listings. Every durable write passes the
  * `sessionLease` hard gate first (`ISessionLeaseService.assertWritable`,
  * synchronously re-reading the lease payload), so an instance that lost the
- * session lease fails closed instead of overwriting a live peer's state
- * (design: `.tmp/refactor-watch-design-v2.md` §3.4.5). Bound at Session scope.
+ * session lease fails closed instead of overwriting a live peer's state.
+ * Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is mirrored into the `IQueryStore`

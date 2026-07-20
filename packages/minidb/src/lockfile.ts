@@ -37,7 +37,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { renameReplace } from './rename-replace.js';
 
 export class LockError extends Error {
   readonly code = 'ELOCKED';
@@ -59,6 +58,8 @@ export interface LockFileDeps {
   probeProcess?: (pid: number) => { alive: boolean; processStartedAt?: string };
   /** Unique token of this acquire; compared on every guarded mutation. */
   newLockId?: () => string;
+  /** Called exactly once when a held lock is replaced or disappears. */
+  onLost?: () => void;
 }
 
 // Track held locks so we can release them on process exit as a safety net.
@@ -165,6 +166,7 @@ export class LockFile {
   private readonly selfPid: number;
   private readonly probeProcess: NonNullable<LockFileDeps['probeProcess']>;
   private readonly newLockId: () => string;
+  private readonly onLost: (() => void) | undefined;
 
   constructor(path: string, deps: LockFileDeps = {}) {
     this.path = path;
@@ -172,6 +174,7 @@ export class LockFile {
     this.selfPid = deps.selfPid ?? process.pid;
     this.probeProcess = deps.probeProcess ?? defaultProbeProcess;
     this.newLockId = deps.newLockId ?? randomUUID;
+    this.onLost = deps.onLost;
   }
 
   /** Try to acquire the lock exactly once. Returns true when this call created
@@ -410,17 +413,38 @@ export class LockFile {
   }
 
   /** Refresh the lock timestamp (proves liveness to processes inspecting the
-   *  lock file). No-op when the lock is not held. Uses write-tmp-then-rename
-   *  so a crash mid-renew cannot leave a truncated, "stale-looking" lock file
-   *  behind for a lock that is actually still owned. The payload keeps our
-   *  token and start-time identity, so guards keep working after a renew. */
+   *  lock file). No-op when the lock is not held. The update is bound to the
+   *  inode whose token was verified: replacing the public path after open can
+   *  only make this holder lose ownership, never overwrite the replacement. */
   async renew(): Promise<void> {
     if (!this.held || this.lockId === undefined) return;
-    const tmp = `${this.path}.tmp-${process.pid}-${nextSidecarSeq()}`;
-    await fs.writeFile(tmp, this.payload(this.lockId));
-    // Windows: replacing our own lock can still clash with a co-process's
-    // readFile/stat of it (EPERM) — the helper rides out such transients.
-    await renameReplace(tmp, this.path, { retries: 20 });
+    const lockId = this.lockId;
+    let handle: fs.FileHandle;
+    try {
+      handle = await fs.open(this.path, 'r+');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        this.markLost();
+        return;
+      }
+      throw error;
+    }
+    try {
+      const raw = await handle.readFile({ encoding: 'utf8' });
+      if (tryParse(raw)?.lock_id !== lockId) {
+        this.markLost();
+        return;
+      }
+      const data = Buffer.from(this.payload(lockId));
+      await handle.write(data, 0, data.length, 0);
+      await handle.truncate(data.length);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    if (tryParse((await this.readDiskText()) ?? '')?.lock_id !== lockId) {
+      this.markLost();
+    }
   }
 
   /** Token-guarded release. Idempotent; a missing or foreign-owned file is
@@ -428,6 +452,7 @@ export class LockFile {
   async release(): Promise<void> {
     if (!this.held) return;
     this.held = false;
+    HELD.delete(this);
     const lockId = this.lockId;
     this.lockId = undefined;
     try {
@@ -443,6 +468,7 @@ export class LockFile {
   releaseSync(): void {
     if (!this.held) return;
     this.held = false;
+    HELD.delete(this);
     const lockId = this.lockId;
     this.lockId = undefined;
     try {
@@ -451,6 +477,14 @@ export class LockFile {
     } catch {
       /* same policy as release(): never unlink on uncertainty */
     }
+  }
+
+  private markLost(): void {
+    if (!this.held) return;
+    this.held = false;
+    this.lockId = undefined;
+    HELD.delete(this);
+    this.onLost?.();
   }
 }
 

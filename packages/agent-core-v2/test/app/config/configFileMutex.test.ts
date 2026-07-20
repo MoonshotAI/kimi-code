@@ -1,20 +1,17 @@
 /**
- * Scenario: config.toml cross-process lock-in-RMW (design:
- * .tmp/refactor-watch-design-v2.md §3.6).
+ * Scenario: config.toml atomic read-modify-write.
  *
- * Two independent `ConfigService` instances share one home dir on the real
- * filesystem; interleaved writes must merge without lost updates, the lock
- * file must be released after each critical section, and a held lock must
- * surface OS_LOCK_WAIT_TIMEOUT while leaving config.toml intact. Watch-based
- * reloads ride real chokidar (150ms debounce), so assertions poll with real
- * timers. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/config/configFileMutex.test.ts`.
+ * Two independent `ConfigService` instances share one storage root on the real
+ * filesystem. The atomic-document Store owns cross-process exclusion, so
+ * interleaved writes merge without lost updates and `ConfigService` never
+ * handles lock paths or lock services itself. Watch-based reloads ride real
+ * chokidar (150ms debounce), so assertions poll with real timers.
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -28,13 +25,16 @@ import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
 import {
   CrossProcessLockErrorCode,
-  ICrossProcessLockService,
+  type ICrossProcessLockService,
   type ICrossProcessLockHandle,
 } from '#/os/interface/crossProcessLock';
 import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import {
+  IFileSystemStorageService,
+  StorageErrors,
+} from '#/persistence/interface/storage';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
@@ -65,13 +65,22 @@ describe('ConfigService config.toml lock-in-RMW', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
-  function createContainer(lock?: ICrossProcessLockService): IConfigService {
+  function createContainer(
+    lock: ICrossProcessLockService = new CrossProcessLockService(),
+    configPath = join(homeDir, 'config.toml'),
+  ): IConfigService {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(ILogService, stubLog());
-    ix.stub(IBootstrapService, stubBootstrap(homeDir, {}));
-    ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    ix.stub(IBootstrapService, {
+      ...stubBootstrap(homeDir, {}),
+      configPath,
+      configKey: relative(homeDir, configPath),
+    });
+    ix.stub(
+      IFileSystemStorageService,
+      new FileStorageService(homeDir, undefined, undefined, lock),
+    );
     ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
-    ix.stub(ICrossProcessLockService, lock ?? new CrossProcessLockService());
     ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     return ix.get(IConfigService);
@@ -134,7 +143,17 @@ describe('ConfigService config.toml lock-in-RMW', () => {
     expect(readdirSync(homeDir).filter((entry) => entry.includes('.stale.'))).toEqual([]);
   });
 
-  it('fails set() with OS_LOCK_WAIT_TIMEOUT while another holder is stuck, leaving config.toml intact', async () => {
+  it('writes and locks a custom config path at its actual location', async () => {
+    const configPath = join(homeDir, 'nested', 'custom.toml');
+    const config = createContainer(new CrossProcessLockService(), configPath);
+    await config.set('alphaSection', { one: 1 });
+
+    expect(readFileSync(configPath, 'utf8')).toContain('[alpha_section]');
+    expect(existsSync(join(homeDir, 'custom.toml'))).toBe(false);
+    expect(existsSync(`${configPath}.lock`)).toBe(false);
+  });
+
+  it('fails set() with storage.locked while another holder is stuck, leaving config.toml intact', async () => {
     let nowValue = 1_000_000;
     let lockSeq = 0;
     const victim = new CrossProcessLockService({
@@ -159,10 +178,11 @@ describe('ConfigService config.toml lock-in-RMW', () => {
       newLockId: () => 'attacker-lock',
     });
     const lockPath = join(homeDir, 'config.toml.lock');
-    const handle: ICrossProcessLockHandle = attacker.acquire(lockPath);
+    const handle: ICrossProcessLockHandle = await attacker.acquire(lockPath);
     try {
       await expect(config.set('blockedSection', { no: true })).rejects.toMatchObject({
-        code: CrossProcessLockErrorCode.WaitTimeout,
+        code: StorageErrors.codes.STORAGE_LOCKED,
+        cause: { code: CrossProcessLockErrorCode.WaitTimeout },
       });
       expect(readFileSync(join(homeDir, 'config.toml'), 'utf8')).toBe(before);
     } finally {

@@ -84,6 +84,30 @@ test('expired keys are removed from secondary indexes', async () => {
   }
 });
 
+test('a writer that loses its lock cannot write into a successor generation', async () => {
+  const dir = await tmpDir();
+  try {
+    const oldWriter = await MiniDb.open({ dir, valueCodec: 'string', autoCompact: false });
+    await oldWriter.set('generation', 'old');
+
+    await fs.writeFile(
+      path.join(dir, 'db.lock'),
+      JSON.stringify({ pid: 0x7fffffff, ts: Date.now(), lock_id: 'successor-generation' }),
+    );
+    await assert.rejects(oldWriter.renewLock(), /write lock was lost/);
+
+    const newWriter = await MiniDb.open({ dir, valueCodec: 'string', autoCompact: false });
+    await newWriter.set('generation', 'new');
+    await assert.rejects(oldWriter.set('generation', 'old-again'), /write lock was lost/);
+    assert.equal(newWriter.get('generation'), 'new');
+
+    await newWriter.close();
+    await oldWriter.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('expired keys are removed from the full-text index', async () => {
   const dir = await tmpDir();
   try {

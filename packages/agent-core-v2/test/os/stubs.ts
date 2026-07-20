@@ -18,7 +18,7 @@ import {
 
 export function stubCrossProcessLock(): ICrossProcessLockService {
   const held = new Set<string>();
-  const acquire = (lockPath: string): ICrossProcessLockHandle => {
+  const acquireHandle = (lockPath: string): ICrossProcessLockHandle => {
     if (held.has(lockPath)) {
       throw new CrossProcessLockError(
         CrossProcessLockErrorCode.Held,
@@ -42,14 +42,14 @@ export function stubCrossProcessLock(): ICrossProcessLockService {
   };
   return {
     _serviceBrand: undefined,
-    acquire,
-    acquireWithWait: (lockPath) => Promise.resolve(acquire(lockPath)),
+    acquire: (lockPath) => Promise.resolve(acquireHandle(lockPath)),
+    acquireWithWait: (lockPath) => Promise.resolve(acquireHandle(lockPath)),
     withLock: async <T>(
       lockPath: string,
       _options: Parameters<ICrossProcessLockService['withLock']>[1],
       fn: (handle: ICrossProcessLockHandle) => T | Promise<T>,
     ): Promise<T> => {
-      const handle = acquire(lockPath);
+      const handle = acquireHandle(lockPath);
       try {
         return await fn(handle);
       } finally {

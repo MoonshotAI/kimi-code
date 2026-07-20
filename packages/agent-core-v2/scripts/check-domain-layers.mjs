@@ -145,6 +145,7 @@ const DOMAIN_LAYER = new Map([
   ['permissionGate', 3],
   ['toolApproval', 3],
   ['flag', 3],
+  ['multiServer', 3],
   ['toolExecutor', 3],
   ['toolResultTruncation', 3],
   ['toolRegistry', 3],

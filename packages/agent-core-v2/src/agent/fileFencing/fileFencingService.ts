@@ -4,7 +4,10 @@
  * Registers the `writeFencing` participant on the `toolExecutor`
  * `onBeforeExecuteTool` / `onDidExecuteTool` hook slots, matching
  * `Read`/`Write`/`Edit` by tool name and letting every other tool pass
- * through. The target path comes from the resolved execution's file accesses
+ * through. For Write/Edit the before hook injects an execution wrapper; the
+ * wrapper re-checks the ledger only after the scheduler grants the declared
+ * file access, so a queued write cannot rely on a stale preflight verdict. The
+ * target path comes from the resolved execution's file accesses
  * — the exact canonical path the tool itself computed — so the ledger and
  * the watcher key it identically. The before-hook records the target keyed
  * by `toolCall.id` (cleared in the did-hook and swept on turn change) and,
@@ -113,7 +116,7 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
   ) {
     super();
     toolExecutor.hooks.onBeforeExecuteTool.register('writeFencing', async (ctx, next) => {
-      await this.onBefore(ctx);
+      this.onBefore(ctx);
       if (ctx.decision?.block === true) return;
       await next();
     });
@@ -123,7 +126,7 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     });
   }
 
-  private async onBefore(ctx: ToolBeforeExecuteContext): Promise<void> {
+  private onBefore(ctx: ToolBeforeExecuteContext): void {
     if (!isFenced(ctx)) return;
     const path = targetPathOf(ctx);
     if (path === undefined) return;
@@ -134,13 +137,22 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     }
     this.targets.set(ctx.toolCall.id, { toolName: ctx.toolCall.name, path });
     if (!WRITE_TOOLS.has(ctx.toolCall.name)) return;
-    const verdict = await this.ledger.compare(path);
-    if (verdict === 'clean') return;
-    if (this.flags.enabled(MULTI_SERVER_FLAG_ID)) {
-      ctx.decision = { block: true, reason: blockReason(ctx.toolCall.name, path, verdict) };
-      return;
-    }
-    this.staleMarks.set(ctx.toolCall.id, verdict);
+    const execute = ctx.decision?.execute ?? ctx.execution.execute;
+    ctx.decision = {
+      ...ctx.decision,
+      execute: async (executeCtx) => {
+        const verdict = await this.ledger.compare(path);
+        if (verdict !== 'clean') {
+          if (this.flags.enabled(MULTI_SERVER_FLAG_ID)) {
+            const reason = blockReason(ctx.toolCall.name, path, verdict);
+            ctx.decision = { ...ctx.decision, block: true, reason };
+            return { output: reason, isError: true };
+          }
+          this.staleMarks.set(ctx.toolCall.id, verdict);
+        }
+        return execute(executeCtx);
+      },
+    };
   }
 
   private async onDid(ctx: ToolDidExecuteContext): Promise<void> {

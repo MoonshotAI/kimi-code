@@ -181,7 +181,18 @@ async function runBefore(
   ctx: ToolBeforeExecuteContext,
 ): Promise<ToolBeforeExecuteContext> {
   await world.executor.hooks.onBeforeExecuteTool.run(ctx);
+  await runPrepared(ctx);
   return ctx;
+}
+
+async function runPrepared(ctx: ToolBeforeExecuteContext): Promise<void> {
+  if (ctx.decision?.execute === undefined) return;
+  await ctx.decision.execute({
+    turnId: ctx.turnId,
+    toolCallId: ctx.toolCall.id,
+    trace: ctx.trace,
+    signal: ctx.signal,
+  });
 }
 
 async function runDid(
@@ -268,6 +279,42 @@ describe('AgentFileFencingService', () => {
       expect(retry.decision?.block).not.toBe(true);
     });
 
+    it('checks the file at execution time rather than during preflight', async () => {
+      multiServer = true;
+      const world = setup();
+      const file = join(world.env.workDir, 'a.txt');
+      writeFileSync(file, 'hello');
+      await runOk(world, 'Read', file);
+
+      const ctx = beforeCtx('Edit', file);
+      await world.executor.hooks.onBeforeExecuteTool.run(ctx);
+      writeFileSync(file, 'changed while queued');
+
+      await runPrepared(ctx);
+      expect(ctx.decision?.block).toBe(true);
+      expect(ctx.decision?.reason).toContain('changed on disk since');
+    });
+
+    it('wraps an execution override installed by an earlier hook', async () => {
+      const world = setup();
+      const file = join(world.env.workDir, 'a.txt');
+      writeFileSync(file, 'hello');
+      await runOk(world, 'Read', file);
+      let overrideCalls = 0;
+      const ctx = beforeCtx('Edit', file);
+      ctx.decision = {
+        execute: async () => {
+          overrideCalls++;
+          return { output: 'overridden' };
+        },
+      };
+
+      await world.executor.hooks.onBeforeExecuteTool.run(ctx);
+      await runPrepared(ctx);
+
+      expect(overrideCalls).toBe(1);
+    });
+
     it('blocks Write over an existing file that was never read', async () => {
       multiServer = true;
       const world = setup();
@@ -329,7 +376,7 @@ describe('AgentFileFencingService', () => {
 
       const again = await runBefore(world, beforeCtx('Edit', file));
       expect(again.decision?.block).not.toBe(true);
-      expect(world.env.statCalls()).toBe(2);
+      expect(world.env.statCalls()).toBe(3);
     });
 
     it('resolves a truncated window by stat punch: unchanged passes, changed blocks', async () => {

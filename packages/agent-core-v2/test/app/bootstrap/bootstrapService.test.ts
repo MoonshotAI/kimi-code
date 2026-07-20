@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
-import { IBootstrapService, bootstrapSeed, resolveBootstrapOptions } from '#/app/bootstrap/bootstrap';
-import { bootstrap } from '#/app/bootstrap/bootstrap';
+import {
+  IBootstrapService,
+  bootstrap,
+  bootstrapSeed,
+  resolveBootstrapOptions,
+} from '#/app/bootstrap/bootstrap';
 import { BootstrapService } from '#/app/bootstrap/bootstrapService';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -26,7 +30,20 @@ describe('BootstrapService (scoped)', () => {
     const svc = host.app.accessor.get(IBootstrapService);
     expect(svc.homeDir).toBe('/tmp/kimi-home');
     expect(svc.configPath).toBe('/tmp/kimi-home/config.toml');
+    expect(svc.configKey).toBe('config.toml');
     expect(svc.sessionsDir).toBe('/tmp/kimi-home/sessions');
+    host.dispose();
+  });
+
+  it('addresses a custom config path relative to the storage root', () => {
+    const host = createScopedTestHost(
+      bootstrapSeed({
+        homeDir: '/tmp/kimi-home',
+        configPath: '/tmp/custom/config.toml',
+      }),
+    );
+    const svc = host.app.accessor.get(IBootstrapService);
+    expect(svc.configKey).toBe('../custom/config.toml');
     host.dispose();
   });
 

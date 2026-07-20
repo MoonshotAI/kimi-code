@@ -6,9 +6,8 @@
  * and the `SessionLease` object that satisfies it: an App-owned wrapper
  * (`SessionLifecycleService` builds it; it is deliberately not a DI service)
  * around the cross-process lock handle at
- * `<homeDir>/session-leases/<sessionId>.json`. `assertWritable` is the
- * Quint-verified hard gate (design: `.tmp/refactor-watch-design-v2.md`
- * §3.4.2/§3.4.5): it synchronously re-reads the on-disk lease payload and
+ * `<homeDir>/session-leases/<sessionId>.json`. `assertWritable` is the hard
+ * gate: it synchronously re-reads the on-disk lease payload and
  * compares the held `lockId` — a mismatch fails closed with
  * `session.lease_lost`, marks the lease lost, and fires the loss callback
  * exactly once so the owning session tears itself down. Release order is the
@@ -33,8 +32,6 @@ export const SESSION_LEASE_HEARTBEAT_INTERVAL_MS = 2000;
 export const SESSION_LEASE_TTL_MS = 6000;
 export const LEASE_CREATING_RETRY_AFTER_MS = 1000;
 export const HOLDER_UNRESPONSIVE_RETRY_AFTER_MS = 2000;
-export const UNREGISTERED_WRITER_WINDOW_MS = 5000;
-export const UNREGISTERED_WRITER_RECHECK_DELAY_MS = 1000;
 
 /** `details` payload of `session.held_by_peer` errors; the zod twin lives in
     packages/protocol (`sessionOwnershipDetailsSchema`) and the shapes must

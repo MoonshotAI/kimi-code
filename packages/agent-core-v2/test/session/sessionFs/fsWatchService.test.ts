@@ -303,7 +303,7 @@ describe('SessionFsWatchService ensured roots and dirty ticks', () => {
     expect(events).toEqual([]);
   });
 
-  it('increments the tick per confined change and folds per-path dirty ticks at flush', () => {
+  it('increments and exposes per-path dirty ticks before the debounce flush', () => {
     const { svc, watch } = makeSession();
     svc.ensureWatchedRoots([WORK_DIR]);
     expect(svc.currentTick).toBe(0);
@@ -311,7 +311,7 @@ describe('SessionFsWatchService ensured roots and dirty ticks', () => {
     const a = join(WORK_DIR, 'a.ts');
     watch.fire('a.ts', 'created');
     expect(svc.currentTick).toBe(1);
-    expect(svc.dirtyTickFor(a)).toBeUndefined();
+    expect(svc.dirtyTickFor(a)).toBe(1);
     vi.advanceTimersByTime(200);
     expect(svc.dirtyTickFor(a)).toBe(1);
 
@@ -327,7 +327,7 @@ describe('SessionFsWatchService ensured roots and dirty ticks', () => {
     for (let i = 0; i < 501; i++) watch.fire(`f${i}.ts`, 'created');
     vi.advanceTimersByTime(200);
 
-    expect(svc.dirtyTickFor(join(WORK_DIR, 'f0.ts'))).toBeUndefined();
+    expect(svc.dirtyTickFor(join(WORK_DIR, 'f0.ts'))).toBe(1);
     expect(svc.rootDirtyTickFor(WORK_DIR)).toBe(501);
   });
 

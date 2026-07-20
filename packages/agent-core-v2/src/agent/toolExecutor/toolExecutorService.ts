@@ -378,6 +378,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }
 
     const executionMetadata = decision?.executionMetadata;
+    const runnableExecution =
+      decision?.execute === undefined ? execution : { ...execution, execute: decision.execute };
 
     await this.willExecuteEmitter.fireAsync(
       {
@@ -393,9 +395,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     return {
       task: {
-        accesses: execution.accesses ?? ToolAccesses.all(),
+        accesses: runnableExecution.accesses ?? ToolAccesses.all(),
         execute: async (taskSignal) =>
-          this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
+          this.runSingleExecution(
+            call,
+            runnableExecution,
+            executionMetadata,
+            options,
+            taskSignal,
+          ),
       },
       stopBatchAfterThis: execution.stopBatchAfterThis,
     };

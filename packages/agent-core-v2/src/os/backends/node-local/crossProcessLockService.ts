@@ -2,13 +2,11 @@
  * `crossProcessLock` domain (L1) — `ICrossProcessLockService` implementation.
  *
  * Node-local backend for the cross-process exclusive file-lock protocol
- * defined by `os/interface/crossProcessLock` (design:
- * `.tmp/refactor-watch-design-v2.md` §3.3). Uses the synchronous `node:fs`
- * API by design: every operation is a short burst (create / read / rename /
- * beat) on low-frequency coordination paths — server lock, session lease,
- * lock-in-RMW — and must never be called from turn/loop hot paths. Process
- * probing goes through `createNodeProcessProbe`; every clock, pid, probe and
- * token source is injectable for tests.
+ * defined by `os/interface/crossProcessLock`. Filesystem mutations are short
+ * synchronous bursts; contender settlement is asynchronous so a delayed
+ * process never forces the event loop to spin while another attempt exits.
+ * Process probing goes through `createNodeProcessProbe`; every clock, pid,
+ * probe and token source is injectable for tests.
  *
  * Protocol invariants implemented here:
  *
@@ -20,16 +18,19 @@
  *   stale; a live identity-matching holder whose heartbeat is past ttl is
  *   `holder-unresponsive` — reported, never seized. An identity that either
  *   side cannot provide counts as matching (conservative).
- * - Takeover is rename-isolated: the stale file is moved aside to
- *   `<lock>.stale.<lockId>` before re-creating, and the freshly created
- *   payload is read back and confirmed against the new `lockId` — a creator
- *   frozen inside its create window cannot silently stomp the new lock.
+ * - Each attempt publishes a unique sidecar intent before inspecting the lock.
+ *   A creator confirms its token, snapshots the foreign intents already
+ *   present, and waits for that finite set to settle before returning. A
+ *   delayed stale observer therefore either sees the new live generation and
+ *   backs off, or steals it before settlement and causes the creator to fail
+ *   rather than double-return; contenders arriving after the snapshot cannot
+ *   starve the creator because they can only observe the new generation.
  * - Creation window: an empty/unparseable file younger than
  *   `creationWindowMs` (default 5s) is `creating` (treated as held); past the
  *   window it is stale.
- * - Heartbeat is `write(position 0) + ftruncate + fsync` on the fd kept open
- *   from acquire — never tmp+rename, which would let a frozen old holder's
- *   next beat overwrite the lock that took it over.
+ * - The winning create fd stays open for every handle. Heartbeat and updates
+ *   write only through that fd — never tmp+rename or path re-open — so a frozen
+ *   old holder cannot overwrite a successor after losing the public path.
  *
  * Bound at App scope.
  */
@@ -40,13 +41,14 @@ import {
   ftruncateSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statSync,
   unlinkSync,
   writeSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { ulid } from 'ulid';
 
@@ -71,6 +73,7 @@ import { createNodeProcessProbe } from './processProbe';
 
 const DEFAULT_CREATION_WINDOW_MS = 5_000;
 const DEFAULT_WAIT_RETRY_INTERVAL_MS = 50;
+const DEFAULT_SETTLE_RETRY_INTERVAL_MS = 10;
 const MAX_ACQUIRE_ATTEMPTS = 3;
 
 function readErrno(error: unknown): string | undefined {
@@ -123,6 +126,19 @@ interface DiskLockPayload {
   address?: string;
   heartbeat_at?: number;
   [extra: string]: unknown;
+}
+
+interface DiskIntentPayload {
+  intent_id?: string;
+  state?: 'active' | 'settled';
+  pid?: number;
+  process_started_at?: string;
+}
+
+interface RegisteredIntent {
+  readonly path: string;
+  readonly token: string;
+  readonly fd: number;
 }
 
 function renderPayloadJson(payload: CrossProcessLockPayload): string {
@@ -239,6 +255,9 @@ class NodeCrossProcessLockHandle implements ICrossProcessLockHandle {
       if (readErrno(error) === 'ENOENT') throw lostError(this.lockPath, 'updating the payload');
       throw toLockIoError(error, { path: this.lockPath, op: 'update' });
     }
+    if (readPayloadFromPath(this.lockPath)?.lockId !== this.lockId) {
+      throw lostError(this.lockPath, 'confirming the updated payload');
+    }
   }
 
   release(): void {
@@ -265,10 +284,6 @@ class NodeCrossProcessLockHandle implements ICrossProcessLockHandle {
 
   writeInitialPayload(): void {
     this.writePayload();
-  }
-
-  sealPidOnly(): void {
-    this.closeFd();
   }
 
   private tick(): void {
@@ -308,14 +323,7 @@ class NodeCrossProcessLockHandle implements ICrossProcessLockHandle {
       fsyncSync(this._fd);
       return;
     }
-    const fd = openSync(this.lockPath, 'r+');
-    try {
-      writeSync(fd, data, 0, data.length, 0);
-      ftruncateSync(fd, data.length);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
+    throw lostError(this.lockPath, 'writing the payload');
   }
 
   private stopHeartbeat(): void {
@@ -342,15 +350,19 @@ export class CrossProcessLockService implements ICrossProcessLockService {
   private readonly selfPid: number;
   private readonly probe: ProcessProbe;
   private readonly newLockId: () => string;
+  private readonly newAttemptId: () => string;
   private readonly instanceId: string;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly beforeStaleIsolation: (() => void | Promise<void>) | undefined;
 
   constructor(deps: CrossProcessLockServiceDeps = {}) {
     this.now = deps.now ?? Date.now;
     this.selfPid = deps.selfPid ?? process.pid;
     this.probe = deps.probeProcess ?? createNodeProcessProbe();
     this.newLockId = deps.newLockId ?? ulid;
+    this.newAttemptId = deps.newAttemptId ?? ulid;
     this.instanceId = deps.instanceId ?? ulid();
+    this.beforeStaleIsolation = deps.beforeStaleIsolation;
     this.sleep =
       deps.sleep ??
       ((ms) =>
@@ -360,10 +372,10 @@ export class CrossProcessLockService implements ICrossProcessLockService {
         }));
   }
 
-  acquire(
+  async acquire(
     lockPath: string,
     options: CrossProcessLockAcquireOptions = {},
-  ): ICrossProcessLockHandle {
+  ): Promise<ICrossProcessLockHandle> {
     try {
       mkdirSync(dirname(lockPath), { recursive: true });
     } catch (error) {
@@ -371,32 +383,82 @@ export class CrossProcessLockService implements ICrossProcessLockService {
     }
     const creationWindowMs = options.creationWindowMs ?? DEFAULT_CREATION_WINDOW_MS;
     const observedTtlMs = options.heartbeat?.ttlMs ?? creationWindowMs;
-    let lastHolder: CrossProcessLockPayload | undefined;
-    for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
-      let fd: number;
-      try {
-        fd = openSync(lockPath, 'wx', 0o600);
-      } catch (error) {
-        if (readErrno(error) !== 'EEXIST') {
-          throw toLockIoError(error, { path: lockPath, op: 'open' });
+    const intent = this.registerIntent(lockPath);
+    let acquiredHandle: ICrossProcessLockHandle | undefined;
+    let primaryError: unknown;
+    let hasPrimaryError = false;
+    try {
+      let lastHolder: CrossProcessLockPayload | undefined;
+      for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
+        let fd: number;
+        try {
+          fd = openSync(lockPath, 'wx', 0o600);
+        } catch (error) {
+          if (readErrno(error) !== 'EEXIST') {
+            throw toLockIoError(error, { path: lockPath, op: 'open' });
+          }
+          const inspection = this.classify(lockPath, creationWindowMs);
+          lastHolder = inspection.payload;
+          switch (inspection.state) {
+            case 'free':
+              continue;
+            case 'creating':
+              throw heldError(lockPath, 'creating', undefined);
+            case 'held':
+              throw heldError(
+                lockPath,
+                this.reasonForHeld(inspection.payload, observedTtlMs),
+                inspection.payload,
+              );
+            case 'stale':
+              if (!(await this.isolateStale(lockPath, inspection, creationWindowMs, intent.path))) {
+                continue;
+              }
+              continue;
+          }
         }
-        const inspection = this.classify(lockPath, creationWindowMs);
-        lastHolder = inspection.payload;
-        switch (inspection.state) {
-          case 'free':
-            continue;
-          case 'creating':
-            throw heldError(lockPath, 'creating', undefined);
-          case 'held':
-            throw heldError(lockPath, this.reasonForHeld(inspection.payload, observedTtlMs), inspection.payload);
-          case 'stale':
-            this.isolateStale(lockPath, inspection);
-            continue;
+        const handle = this.completeAcquire(lockPath, fd, options);
+        try {
+          await this.settleAcquire(handle, intent.path, creationWindowMs);
+          acquiredHandle = handle;
+          break;
+        } catch (error) {
+          handle.release();
+          throw error;
         }
       }
-      return this.completeAcquire(lockPath, fd, options);
+      if (acquiredHandle === undefined) throw heldError(lockPath, 'held', lastHolder);
+    } catch (error) {
+      hasPrimaryError = true;
+      primaryError = error;
     }
-    throw heldError(lockPath, 'held', lastHolder);
+    let cleanupError: unknown;
+    let hasCleanupError = false;
+    try {
+      try {
+        this.markIntentSettled(intent);
+      } catch (error) {
+        hasCleanupError = true;
+        cleanupError = error;
+      }
+      try {
+        this.removeIntent(intent);
+      } catch (error) {
+        if (!hasCleanupError) {
+          hasCleanupError = true;
+          cleanupError = error;
+        }
+      }
+    } finally {
+      this.closeIntent(intent);
+    }
+    if (hasCleanupError && acquiredHandle !== undefined) acquiredHandle.release();
+    if (hasPrimaryError) throw primaryError;
+    if (hasCleanupError) throw cleanupError;
+    if (acquiredHandle === undefined) {
+      throw new Error('cross-process lock acquisition finished without a result');
+    }
+    return acquiredHandle;
   }
 
   async acquireWithWait(
@@ -407,7 +469,7 @@ export class CrossProcessLockService implements ICrossProcessLockService {
     let lastError: CrossProcessLockError | undefined;
     for (;;) {
       try {
-        return this.acquire(lockPath, options);
+        return await this.acquire(lockPath, options);
       } catch (error) {
         if (!(error instanceof CrossProcessLockError) || error.code !== CrossProcessLockErrorCode.Held) {
           throw error;
@@ -488,13 +550,23 @@ export class CrossProcessLockService implements ICrossProcessLockService {
     return 'held';
   }
 
-  private isolateStale(lockPath: string, inspection: CrossProcessLockInspection): void {
+  private async isolateStale(
+    lockPath: string,
+    inspection: CrossProcessLockInspection,
+    creationWindowMs: number,
+    intentPath: string,
+  ): Promise<boolean> {
+    const current = this.classify(lockPath, creationWindowMs);
+    if (current.state !== 'stale') return false;
+    if (inspection.payload?.lockId !== current.payload?.lockId) return false;
+    await this.beforeStaleIsolation?.();
     const rawLockId = inspection.payload?.lockId;
     const staleLockId = rawLockId !== undefined && rawLockId !== '' ? rawLockId : 'unknown';
     try {
-      renameSync(lockPath, `${lockPath}.stale.${staleLockId}`);
+      renameSync(lockPath, `${lockPath}.stale.${staleLockId}.${basename(intentPath)}`);
+      return true;
     } catch (error) {
-      if (readErrno(error) === 'ENOENT') return;
+      if (readErrno(error) === 'ENOENT') return false;
       throw toLockIoError(error, { path: lockPath, op: 'rename-stale' });
     }
   }
@@ -539,12 +611,171 @@ export class CrossProcessLockService implements ICrossProcessLockService {
       handle.release();
       throw lostError(lockPath, 'confirming the newly created payload');
     }
-    if (options.heartbeat !== undefined) {
-      handle.startHeartbeat();
-    } else {
-      handle.sealPidOnly();
-    }
+    if (options.heartbeat !== undefined) handle.startHeartbeat();
     return handle;
+  }
+
+  private registerIntent(lockPath: string): RegisteredIntent {
+    const token = this.newAttemptId();
+    const intentPath = `${lockPath}.intent.${token}`;
+    const startedAt = this.safeProbe(this.selfPid).processStartedAt;
+    const payload: DiskIntentPayload = { intent_id: token, state: 'active', pid: this.selfPid };
+    if (startedAt !== undefined) payload.process_started_at = startedAt;
+    let fd: number | undefined;
+    try {
+      fd = openSync(intentPath, 'wx+', 0o600);
+      this.writeIntent(fd, payload);
+      return { path: intentPath, token, fd };
+    } catch (error) {
+      if (fd !== undefined) this.closeFd(fd);
+      try {
+        unlinkSync(intentPath);
+      } catch {
+        // best effort
+      }
+      throw toLockIoError(error, { path: intentPath, op: 'register-intent' });
+    }
+  }
+
+  private markIntentSettled(intent: RegisteredIntent): void {
+    const current = this.readIntent(intent.path);
+    if (current?.intent_id !== intent.token) return;
+    this.writeIntent(intent.fd, { ...current, intent_id: intent.token, state: 'settled' });
+  }
+
+  private removeIntent(intent: RegisteredIntent): void {
+    try {
+      const current = this.readIntent(intent.path);
+      if (current?.intent_id !== intent.token) return;
+      unlinkSync(intent.path);
+    } catch (error) {
+      if (readErrno(error) !== 'ENOENT') {
+        throw toLockIoError(error, { path: intent.path, op: 'remove-intent' });
+      }
+    }
+  }
+
+  private readIntent(intentPath: string): DiskIntentPayload | undefined {
+    let raw: string;
+    try {
+      raw = readFileSync(intentPath, 'utf8');
+    } catch (error) {
+      if (readErrno(error) === 'ENOENT') return undefined;
+      throw toLockIoError(error, { path: intentPath, op: 'read-intent' });
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return parsed !== null && typeof parsed === 'object' ? (parsed as DiskIntentPayload) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private writeIntent(fd: number, payload: DiskIntentPayload): void {
+    const data = Buffer.from(JSON.stringify(payload), 'utf8');
+    writeSync(fd, data, 0, data.length, 0);
+    ftruncateSync(fd, data.length);
+    fsyncSync(fd);
+  }
+
+  private closeIntent(intent: RegisteredIntent): void {
+    this.closeFd(intent.fd);
+  }
+
+  private closeFd(fd: number): void {
+    try {
+      closeSync(fd);
+    } catch {
+      // best effort
+    }
+  }
+
+  private async settleAcquire(
+    handle: ICrossProcessLockHandle,
+    ownIntentPath: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const startedAt = this.now();
+    const contenders = this.snapshotForeignIntents(handle.lockPath, ownIntentPath);
+    for (;;) {
+      if (!handle.checkHeld()) {
+        throw lostError(handle.lockPath, 'settling concurrent contenders');
+      }
+      if (!this.hasLiveIntent(contenders, timeoutMs)) return;
+      if (this.now() - startedAt >= timeoutMs) {
+        throw heldError(handle.lockPath, 'creating', readPayloadFromPath(handle.lockPath));
+      }
+      await this.sleep(DEFAULT_SETTLE_RETRY_INTERVAL_MS);
+    }
+  }
+
+  private snapshotForeignIntents(
+    lockPath: string,
+    ownIntentPath: string,
+  ): Set<string> {
+    const dir = dirname(lockPath);
+    const prefix = `${basename(lockPath)}.intent.`;
+    const ownName = basename(ownIntentPath);
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch (error) {
+      throw toLockIoError(error, { path: dir, op: 'list-intents' });
+    }
+    return new Set(
+      names
+        .filter((name) => name.startsWith(prefix) && name !== ownName)
+        .map((name) => join(dir, name)),
+    );
+  }
+
+  private hasLiveIntent(intentPaths: Set<string>, creationWindowMs: number): boolean {
+    for (const path of intentPaths) {
+      let raw: string;
+      try {
+        raw = readFileSync(path, 'utf8');
+      } catch (error) {
+        if (readErrno(error) === 'ENOENT') {
+          intentPaths.delete(path);
+          continue;
+        }
+        throw toLockIoError(error, { path, op: 'read-intent' });
+      }
+      let payload: DiskIntentPayload | undefined;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed !== null && typeof parsed === 'object') payload = parsed as DiskIntentPayload;
+      } catch {
+        // handled as a creation-window intent below
+      }
+      if (payload?.state === 'settled') {
+        this.removeIntent({ path, token: payload.intent_id ?? '', fd: -1 });
+        intentPaths.delete(path);
+        continue;
+      }
+      const intentPid = payload?.pid;
+      if (!isProbingPid(intentPid ?? 0)) {
+        const mtimeMs = this.readMtimeMs(path);
+        if (mtimeMs !== undefined && this.now() - mtimeMs >= creationWindowMs) {
+          this.removeIntent({ path, token: payload?.intent_id ?? '', fd: -1 });
+          intentPaths.delete(path);
+          continue;
+        }
+        return true;
+      }
+      const probed = this.safeProbe(intentPid as number);
+      const reused =
+        payload?.process_started_at !== undefined &&
+        probed.processStartedAt !== undefined &&
+        payload.process_started_at !== probed.processStartedAt;
+      if (!probed.alive || reused) {
+        this.removeIntent({ path, token: payload?.intent_id ?? '', fd: -1 });
+        intentPaths.delete(path);
+        continue;
+      }
+      return true;
+    }
+    return false;
   }
 
   private safeProbe(pid: number): { alive: boolean; processStartedAt?: string } {

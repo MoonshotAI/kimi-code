@@ -143,7 +143,7 @@ describe('AppendLogStore', () => {
     );
   });
 
-  it('reacquire after final release waits for retiring storage before fresh I/O', async () => {
+  it('keeps a failed retired generation reachable and blocks replacement I/O', async () => {
     const failure = new Error('retiring append failed');
     let markAppendStarted!: () => void;
     const appendStarted = new Promise<void>((resolve) => {
@@ -153,32 +153,16 @@ describe('AppendLogStore', () => {
     const appendGate = new Promise<void>((resolve) => {
       releaseAppend = resolve;
     });
-    let markReplacementAppendStarted!: () => void;
-    const replacementAppendStarted = new Promise<void>((resolve) => {
-      markReplacementAppendStarted = resolve;
-    });
-    let releaseReplacementAppend!: () => void;
-    const replacementAppendGate = new Promise<void>((resolve) => {
-      releaseReplacementAppend = resolve;
-    });
     let reportFailure!: (error: unknown) => void;
     const reportedFailure = new Promise<unknown>((resolve) => {
       reportFailure = resolve;
     });
     let appendAttempts = 0;
-    let replacementStarted = false;
-    const originalAppend = storage.append.bind(storage);
     storage.append = async (...args) => {
       appendAttempts++;
-      if (appendAttempts === 1) {
-        markAppendStarted();
-        await appendGate;
-        throw failure;
-      }
-      replacementStarted = true;
-      markReplacementAppendStarted();
-      await replacementAppendGate;
-      return originalAppend(...args);
+      markAppendStarted();
+      await appendGate;
+      throw failure;
     };
 
     const retiringOwner = record.acquire(SCOPE, KEY);
@@ -187,28 +171,46 @@ describe('AppendLogStore', () => {
     retiringOwner.dispose();
     const replacementOwner = record.acquire(SCOPE, KEY);
     record.append(SCOPE, KEY, { n: 2 });
-    const orderedFlush = record.flush();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(replacementStarted).toBe(false);
 
     releaseAppend();
     expect(await reportedFailure).toBe(failure);
-    await replacementAppendStarted;
-
-    const currentFlush = record.flush();
-    let flushSettled = false;
-    void currentFlush.then(() => {
-      flushSettled = true;
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(flushSettled).toBe(false);
-
-    releaseReplacementAppend();
-    await Promise.all([orderedFlush, currentFlush]);
-    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
+    await expect(record.flush(SCOPE)).rejects.toBe(failure);
+    await expect(record.flush(SCOPE)).rejects.toBe(failure);
+    expect(appendAttempts).toBe(1);
+    expect(await storage.read(SCOPE, KEY)).toBeUndefined();
     replacementOwner.dispose();
+  });
+
+  it('scoped flush does not wait for an unrelated scope', async () => {
+    const selectedScope = 'agents/s1';
+    const blockedScope = 'agents/s10';
+    let markBlockedStarted!: () => void;
+    const blockedStarted = new Promise<void>((resolve) => {
+      markBlockedStarted = resolve;
+    });
+    let releaseBlocked!: () => void;
+    const blockedGate = new Promise<void>((resolve) => {
+      releaseBlocked = resolve;
+    });
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      if (args[0] === blockedScope) {
+        markBlockedStarted();
+        await blockedGate;
+      }
+      return originalAppend(...args);
+    };
+
+    record.append(blockedScope, KEY, { n: 2 });
+    record.append(selectedScope, KEY, { n: 1 });
+    await blockedStarted;
+
+    await record.flush(selectedScope);
+    expect(new TextDecoder().decode(await storage.read(selectedScope, KEY))).toBe('{"n":1}\n');
+
+    releaseBlocked();
+    await record.flush(blockedScope);
+    expect(new TextDecoder().decode(await storage.read(blockedScope, KEY))).toBe('{"n":2}\n');
   });
 
   it('keeps a sticky failure until every acquired owner releases it', async () => {
@@ -236,8 +238,8 @@ describe('AppendLogStore', () => {
     finalOwner.dispose();
     const replacementOwner = record.acquire(SCOPE, KEY);
     record.append(SCOPE, KEY, { n: 2 });
-    await record.flush();
-    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
+    await expect(record.flush()).rejects.toBe(failure);
+    expect(appendAttempts).toBe(1);
     replacementOwner.dispose();
   });
 
@@ -723,10 +725,10 @@ describe('AppendLogStore', () => {
       return { store: localIx.get(IAppendLogStore), storage };
     }
 
-    function leaseFor(sessionId: string): SessionLease {
+    async function leaseFor(sessionId: string): Promise<SessionLease> {
       return new SessionLease(
         sessionId,
-        locks.acquire(sessionLeasePath(tmpDir, sessionId)),
+        await locks.acquire(sessionLeasePath(tmpDir, sessionId)),
         () => {},
       );
     }
@@ -751,7 +753,7 @@ describe('AppendLogStore', () => {
     });
 
     it('flush rejects with session.lease_lost when the lease is gone and writes no bytes', async () => {
-      const lease = leaseFor('s1');
+      const lease = await leaseFor('s1');
       registry.register(lease);
       const { store, storage } = makeStore();
       let appendAttempts = 0;
@@ -775,7 +777,7 @@ describe('AppendLogStore', () => {
     });
 
     it('rewrite is fenced by the same hard gate', async () => {
-      const lease = leaseFor('s1');
+      const lease = await leaseFor('s1');
       registry.register(lease);
       const { store, storage } = makeStore();
       let writeAttempts = 0;
@@ -813,7 +815,7 @@ describe('AppendLogStore', () => {
     });
 
     it('writes pass while the registered lease is held', async () => {
-      const lease = leaseFor('s1');
+      const lease = await leaseFor('s1');
       registry.register(lease);
       const { store, storage } = makeStore();
       store.append(SESSION_SCOPE, KEY, { n: 1 });
@@ -823,7 +825,7 @@ describe('AppendLogStore', () => {
     });
 
     it('flush awaits the retired buffer final flush before returning', async () => {
-      const lease = leaseFor('s1');
+      const lease = await leaseFor('s1');
       registry.register(lease);
       const { store, storage } = makeStore();
       const handle = store.acquire(SESSION_SCOPE, KEY);

@@ -38,6 +38,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
 
   private readonly scopes = new Map<string, Map<string, Uint8Array>>();
   private readonly watchers = new Map<string, WatchEntry>();
+  private readonly operationQueues = new Map<string, Promise<void>>();
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
     return this.scopes.get(scope)?.get(key);
@@ -129,6 +130,20 @@ export class InMemoryStorageService implements IFileSystemStorageService {
       }
       return combined;
     };
+  }
+
+  runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
+    const id = this.watchKey(scope, key);
+    const previous = this.operationQueues.get(id) ?? Promise.resolve();
+    const result = previous.then(op);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.operationQueues.set(id, tail);
+    return result.finally(() => {
+      if (this.operationQueues.get(id) === tail) this.operationQueues.delete(id);
+    });
   }
 
   private notifyWatchers(scope: string, key: string): void {

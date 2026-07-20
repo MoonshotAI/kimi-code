@@ -9,9 +9,10 @@
  * Serializes whole-log rewrites with live appends, preserves queued or
  * in-flight records across the atomic replacement, keeps ambiguous append and
  * rewrite failures sticky, keeps the shared flush pending until the
- * post-rewrite drain is durable, waits every key before a global flush reports
- * an error, and preserves per-key storage ordering while acquired buffers
- * retire and hand off to replacement owners. Session-scoped writes (journal
+ * post-rewrite drain is durable, supports scoped durability barriers, waits
+ * every selected key before a flush reports an error, and preserves failed
+ * retired buffers so their in-memory tail remains observable while replacement
+ * owners wait for the prior generation. Session-scoped writes (journal
  * bytes under `sessions/<wsId>/<sessionId>`) are fenced: `drain` and `rewrite`
  * re-verify the session's registered `ISessionWriteAuthority` through
  * `IWriteAuthorityRegistry` immediately before bytes hit storage, a session
@@ -135,14 +136,12 @@ export class AppendLogStore implements IAppendLogStore {
     await this.ownFlush(scope, key, state, rewrite);
   }
 
-  async flush(): Promise<void> {
+  async flush(scopePrefix?: string): Promise<void> {
     const inFlight: Promise<void>[] = [];
     for (const [id, state] of this.logs) {
       const { scope, key } = fromLogId(id);
+      if (!matchesScope(scope, scopePrefix)) continue;
       inFlight.push(this.flushState(scope, key, state));
-      // A retired buffer's fire-and-forget final flush must settle before a
-      // global flush reports, or the close path can return with the session
-      // tail still in flight. Its errors stay swallowed per the release path.
       if (state.retirement !== undefined) inFlight.push(state.retirement);
     }
     const settled = await Promise.allSettled(inFlight);
@@ -208,16 +207,14 @@ export class AppendLogStore implements IAppendLogStore {
     state.refCount--;
     if (state.refCount > 0) return;
     state.retired = true;
-    state.retirement = this.settleRetiredState(scope, key, state).catch(() => undefined);
+    state.retirement = this.settleRetiredState(scope, key, state);
+    void state.retirement.catch((error) => state.onError?.(error));
   }
 
   private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {
-    try {
-      await this.flushState(scope, key, state);
-    } finally {
-      const id = logId(scope, key);
-      if (this.logs.get(id) === state) this.logs.delete(id);
-    }
+    await this.flushState(scope, key, state);
+    const id = logId(scope, key);
+    if (this.logs.get(id) === state) this.logs.delete(id);
   }
 
   private ownFlush(
@@ -300,6 +297,10 @@ function logId(scope: string, key: string): string {
 function fromLogId(id: string): { scope: string; key: string } {
   const index = id.indexOf('\n');
   return { scope: id.slice(0, index), key: id.slice(index + 1) };
+}
+
+function matchesScope(scope: string, scopePrefix: string | undefined): boolean {
+  return scopePrefix === undefined || scope === scopePrefix || scope.startsWith(`${scopePrefix}/`);
 }
 
 function encodeBatch(records: readonly unknown[]): Uint8Array {

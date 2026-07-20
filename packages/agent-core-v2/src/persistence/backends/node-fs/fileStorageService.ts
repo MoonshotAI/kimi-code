@@ -10,6 +10,8 @@
  *                fsync, so the replacement is both atomic and durable.
  *   - `append` → `open('a')` + write + `fh.sync()` (when `durable`), plus a
  *                one-time directory fsync per scope.
+ *   - `runExclusive` → the shared cross-process lock protocol on
+ *                      `<value-path>.lock`, bounding lock waits to 10 seconds.
  *   - `watch`  → chokidar on the parent directory, filtered to the exact key and
  *                debounced, so it survives atomic-replace renames and observes a
  *                file that does not exist yet at subscription time.
@@ -27,9 +29,15 @@ import { FSWatcher } from 'chokidar';
 import { dirname, join, normalize } from 'pathe';
 
 import { DisposableStore, combinedDisposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { optional } from '#/_base/di/instantiation';
 import { Emitter, type Event } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { atomicWrite, syncDir } from '#/_base/utils/fs';
+import {
+  CrossProcessLockError,
+  CrossProcessLockErrorCode,
+  ICrossProcessLockService,
+} from '#/os/interface/crossProcessLock';
 
 import type {
   IFileSystemStorageService,
@@ -37,9 +45,10 @@ import type {
   StorageReadRange,
   StorageWriteOptions,
 } from '#/persistence/interface/storage';
-import { toStorageIoError } from '#/persistence/interface/storage';
+import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
 
 const WATCH_DEBOUNCE_MS = 150;
+const STORAGE_LOCK_WAIT_TIMEOUT_MS = 10_000;
 
 function isEnoent(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
@@ -54,6 +63,7 @@ export class FileStorageService implements IFileSystemStorageService {
     private readonly baseDir: string,
     private readonly dirMode?: number,
     private readonly fileMode?: number,
+    @optional(ICrossProcessLockService) private readonly locks?: ICrossProcessLockService,
   ) {}
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
@@ -218,6 +228,37 @@ export class FileStorageService implements IFileSystemStorageService {
       }
       return combined;
     };
+  }
+
+  async runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
+    const filePath = this.path(scope, key);
+    const lockPath = `${filePath}.lock`;
+    if (this.locks === undefined) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_IO_FAILED,
+        'file storage transaction requires a cross-process lock service',
+        { details: { path: filePath, op: 'lock' } },
+      );
+    }
+    try {
+      return await this.locks.withLock(
+        lockPath,
+        { wait: { timeoutMs: STORAGE_LOCK_WAIT_TIMEOUT_MS } },
+        op,
+      );
+    } catch (error) {
+      if (!(error instanceof CrossProcessLockError)) throw error;
+      if (
+        error.code === CrossProcessLockErrorCode.Held ||
+        error.code === CrossProcessLockErrorCode.WaitTimeout
+      ) {
+        throw new StorageError(StorageErrors.codes.STORAGE_LOCKED, 'storage transaction is locked', {
+          details: { path: filePath, op: 'lock' },
+          cause: error,
+        });
+      }
+      throw toStorageIoError(error, { path: lockPath, op: 'lock' });
+    }
   }
 
   async flush(): Promise<void> {

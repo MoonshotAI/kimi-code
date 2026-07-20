@@ -48,6 +48,7 @@ export const tomlDocumentCodec: DocumentCodec = {
 
 class AtomicDocumentStoreBase implements IAtomicDocumentStore {
   declare readonly _serviceBrand: undefined;
+  private readonly operationQueues = new Map<string, Promise<void>>();
 
   constructor(
     private readonly storage: IFileSystemStorageService,
@@ -73,6 +74,35 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
 
   async set<T>(scope: string, key: string, value: T): Promise<void> {
     await this.storage.write(scope, key, this.codec.encode(value), { atomic: true });
+  }
+
+  update<T>(
+    scope: string,
+    key: string,
+    mutate: (current: T | undefined) => T | Promise<T>,
+  ): Promise<T> {
+    return this.runExclusive(scope, key, async () => {
+      const next = await mutate(await this.get<T>(scope, key));
+      await this.set(scope, key, next);
+      return next;
+    });
+  }
+
+  runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
+    if (this.storage.runExclusive !== undefined) {
+      return this.storage.runExclusive(scope, key, op);
+    }
+    const id = `${scope}\0${key}`;
+    const previous = this.operationQueues.get(id) ?? Promise.resolve();
+    const result = previous.then(op);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.operationQueues.set(id, tail);
+    return result.finally(() => {
+      if (this.operationQueues.get(id) === tail) this.operationQueues.delete(id);
+    });
   }
 
   async delete(scope: string, key: string): Promise<void> {

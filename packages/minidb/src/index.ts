@@ -226,6 +226,7 @@ export class MiniDb<V = unknown> {
   private walTail: { dev: number; ino: number; size: number } | null = null;
   readOnly = false;
   private lock: LockFile | null = null;
+  private lockLossError: LockError | null = null;
 
   compactThresholdBytes = 64 * 1024 * 1024;
   autoCompact = true;
@@ -286,7 +287,9 @@ export class MiniDb<V = unknown> {
 
     db.readOnly = !!opts.readOnly;
     if (!db.readOnly) {
-      db.lock = new LockFile(path.join(db.dir, 'db.lock'));
+      db.lock = new LockFile(path.join(db.dir, 'db.lock'), {
+        onLost: () => db.markLockLost(),
+      });
       const got = await db.lock.acquire();
       if (!got) {
         if (opts.onLockFail === 'readonly') {
@@ -1609,7 +1612,9 @@ export class MiniDb<V = unknown> {
    *  for a read-only instance. Exposed for lease-style holders such as the
    *  cluster shard pool, which renew on a timer to prove liveness. */
   async renewLock(): Promise<void> {
-    await this.lock?.renew();
+    if (this.lock === null) return;
+    await this.lock.renew();
+    this.ensureWritable();
   }
 
   /** Advanced/internal (read-replica owners such as the cluster shard pool):
@@ -1664,5 +1669,11 @@ export class MiniDb<V = unknown> {
   }
   private ensureWritable(): void {
     if (this.readOnly) throw new Error('MiniDb is open in read-only mode');
+    if (this.lockLossError !== null) throw this.lockLossError;
+  }
+
+  private markLockLost(): void {
+    if (this.lockLossError !== null) return;
+    this.lockLossError = new LockError(`database write lock was lost: ${this.dir}`);
   }
 }

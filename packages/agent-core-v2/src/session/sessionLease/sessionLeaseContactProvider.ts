@@ -5,9 +5,8 @@
  * `{type: 'address', address}` when the host runs a routable network service
  * (kap-server seeds its listening address), `{type: 'local'}` otherwise —
  * the value is recorded in the lease payload so a blocked peer can tell a
- * routable holder from a local-only one (design:
- * `.tmp/refactor-watch-design-v2.md` §3.4.1 — the discriminated
- * `contact` union landing as the flat `address?` payload field). Read
+ * routable holder from a local-only one (the discriminated `contact` union
+ * lands as the flat `address?` payload field). Read
  * lazily at every lease acquisition through the `contact` thunk, so a host
  * whose address is only known after listen can seed a provider that closes
  * over it. Composition roots override the local-only default through

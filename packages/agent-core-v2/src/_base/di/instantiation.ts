@@ -16,7 +16,7 @@ export namespace _util {
   export function getServiceDependencies(
     ctor: DI_TARGET_OBJ,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): { id: ServiceIdentifier<any>; index: number }[] {
+  ): { id: ServiceIdentifier<any>; index: number; optional: boolean }[] {
     return ctor[DI_DEPENDENCIES] || [];
   }
 
@@ -25,7 +25,7 @@ export namespace _util {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
     [DI_TARGET]: Function;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [DI_DEPENDENCIES]: { id: ServiceIdentifier<any>; index: number }[];
+    [DI_DEPENDENCIES]: { id: ServiceIdentifier<any>; index: number; optional: boolean }[];
   }
 }
 
@@ -56,12 +56,13 @@ function storeServiceDependency(
   // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   target: Function,
   index: number,
+  optional: boolean,
 ): void {
   const t = target as _util.DI_TARGET_OBJ;
   if (t[_util.DI_TARGET] === target) {
-    t[_util.DI_DEPENDENCIES].push({ id, index });
+    t[_util.DI_DEPENDENCIES].push({ id, index, optional });
   } else {
-    t[_util.DI_DEPENDENCIES] = [{ id, index }];
+    t[_util.DI_DEPENDENCIES] = [{ id, index, optional }];
     t[_util.DI_TARGET] = target;
   }
 }
@@ -83,7 +84,7 @@ export function createDecorator<T>(name: string): ServiceIdentifier<T> {
         '@IServiceName-decorator can only be used to decorate a parameter',
       );
     }
-    storeServiceDependency(id, target, index);
+    storeServiceDependency(id, target, index, false);
   } as unknown as ServiceIdentifier<T>;
 
   Object.defineProperty(id, 'toString', {
@@ -97,6 +98,12 @@ export function createDecorator<T>(name: string): ServiceIdentifier<T> {
 
   _util.serviceIds.set(name, id);
   return id;
+}
+
+export function optional<T>(id: ServiceIdentifier<T>): ParameterDecorator {
+  return (target, _key, index): void => {
+    storeServiceDependency(id, target as Function, index, true);
+  };
 }
 
 export function refineServiceDecorator<T1, T extends T1>(

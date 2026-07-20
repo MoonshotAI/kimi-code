@@ -4,12 +4,11 @@
  * Defines the `ISessionFileLedger` that remembers, per normalized absolute
  * path, the on-disk stat tuple (`ino`, `mtimeMs`, `size`, existence) this
  * session last successfully read or wrote, together with the
- * `sessionFsWatch` tick captured at that moment. Before a Write/Edit,
- * `compare` decides from the ledger entry plus live dirty signals whether
- * the target was modified outside this session, punching a single stat only
- * when a dirty signal is newer than the baseline (an unchanged tuple means
- * the signal was the session's own write echo). Targets outside every
- * watched root degrade to the same comparison without dirty signals.
+ * `sessionFsWatch` tick captured before that stat. Before every Write/Edit,
+ * `compare` stats the target again and compares the tuple directly; live dirty
+ * signals classify watcher echoes and truncated windows but are never the
+ * correctness gate. This avoids both debounce latency and delayed watcher
+ * delivery turning into a stale-write allowance.
  *
  * The verdict drives the write-path policy: `clean` lets the call through,
  * `stale` means the file diverged since the baseline (or a path-level dirty

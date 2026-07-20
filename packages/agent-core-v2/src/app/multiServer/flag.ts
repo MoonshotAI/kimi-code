@@ -1,5 +1,6 @@
 /**
- * `multi_server` experimental flag — gates the multi-server shared-homedir work.
+ * `multi_server` experimental flag — gates shared-home coordination among
+ * cooperating lease-aware server versions.
  *
  * When enabled, a kap-server instance registers itself under
  * `<home>/server/instances/<serverId>.json` instead of taking the legacy
@@ -19,7 +20,7 @@ export const multiServerFlag: FlagDefinitionInput = {
   id: MULTI_SERVER_FLAG_ID,
   title: 'multi-server shared home',
   description:
-    'Allow multiple kap-server instances to share one home directory by registering each instance under server/instances/ instead of taking a single homedir lock.',
+    'Allow cooperating lease-aware kap-server instances to share one home directory by registering each instance under server/instances/ instead of taking a single homedir lock.',
   env: MULTI_SERVER_FLAG_ENV,
   default: false,
   surface: 'core',
