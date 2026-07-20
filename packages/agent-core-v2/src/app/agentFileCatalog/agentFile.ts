@@ -87,6 +87,10 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     'disallowedTools',
     options.path,
   );
+  const rawSubagents = parseStringList(frontmatter['subagents'], 'subagents', options.path);
+  // Same convention as `tools`: a lone `*` means "all subagent types", like omitting the field.
+  const subagents =
+    rawSubagents?.length === 1 && rawSubagents[0] === '*' ? undefined : rawSubagents;
 
   const prompt = parsed.body.trim();
   if (prompt.length === 0) {
@@ -100,6 +104,7 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     override,
     tools,
     disallowedTools,
+    subagents,
     prompt,
     path: options.path,
     source: options.source,

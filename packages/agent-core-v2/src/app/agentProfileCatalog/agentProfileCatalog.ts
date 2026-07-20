@@ -64,6 +64,8 @@ export interface AgentProfile {
   readonly tools?: readonly string[];
   // Denylist with the same matching semantics, applied on top of the allowlist result.
   readonly disallowedTools?: readonly string[];
+  // Allowlist of subagent profile names this agent may delegate to; undefined = any type.
+  readonly subagents?: readonly string[];
   systemPrompt(context: AgentProfileContext): string;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;

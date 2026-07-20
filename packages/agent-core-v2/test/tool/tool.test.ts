@@ -519,6 +519,42 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('Tools: Bash, Read, mcp__github__*');
   });
 
+  it('lists only subagent types allowed by the caller profile', () => {
+    const caller: AgentProfile = {
+      name: 'orchestrator',
+      description: 'Orchestrator',
+      subagents: ['explore'],
+      systemPrompt: () => 'orchestrator',
+    };
+    const coder: AgentProfile = {
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    };
+    const explore: AgentProfile = {
+      name: 'explore',
+      description: 'Explorer',
+      systemPrompt: () => 'explore',
+    };
+    const profiles = [caller, coder, explore];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [coder, explore],
+      load: async () => {},
+      reload: async () => {},
+    };
+    ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+
+    const description = agentDescription();
+
+    expect(description).toContain('- explore: Explorer');
+    expect(description).not.toContain('- coder: Coder');
+  });
+
   it('mentions resume preference and result visibility', () => {
     ctx = createTestAgent();
 
@@ -565,6 +601,79 @@ describe('Agent tool execution contract', () => {
     lifecycle.addHandle('main', 'agent');
     return ctx;
   }
+
+  function allowlistCatalog(allowlist: readonly string[]): ISessionAgentProfileCatalog {
+    const caller: AgentProfile = {
+      name: 'orchestrator',
+      description: 'Orchestrator',
+      subagents: allowlist,
+      systemPrompt: () => 'orchestrator',
+    };
+    const coder: AgentProfile = {
+      name: 'coder',
+      description: 'Coder',
+      systemPrompt: () => 'coder',
+    };
+    const explore: AgentProfile = {
+      name: 'explore',
+      description: 'Explorer',
+      systemPrompt: () => 'explore',
+    };
+    const profiles = [caller, coder, explore];
+    return {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => caller,
+      list: () => [coder, explore],
+      load: async () => {},
+      reload: async () => {},
+    };
+  }
+
+  it('rejects a subagent type outside the caller allowlist', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionAgentProfileCatalog, allowlistCatalog(['explore'])),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'coder',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Subagent type "coder" is not allowed for this agent');
+    expect(result.output).toContain('explore');
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('spawns a subagent type inside the caller allowlist', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(ISessionAgentProfileCatalog, allowlistCatalog(['explore'])),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      subagent_type: 'explore',
+    });
+
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ profile: 'explore' }),
+      }),
+    );
+    expect(result.output).toContain('actual_subagent_type: explore');
+  });
 
   it('declares no resource accesses so concurrent Agent calls can run in parallel', async () => {
     const context = createAgentToolContext();

@@ -8,7 +8,8 @@
  * marked as builtin overrides; directory files must opt in through frontmatter.
  * `tools` passes through as the allowlist (`undefined` = every tool active);
  * `disallowedTools` passes through as the denylist evaluated by
- * `IAgentToolPolicyService`.
+ * `IAgentToolPolicyService`; `subagents` passes through as the delegation
+ * allowlist enforced by the `Agent` / `AgentSwarm` tools.
  */
 
 import type {
@@ -33,6 +34,7 @@ export function agentProfileFromFile(
     override: definition.override || definition.source === 'explicit',
     tools: definition.tools,
     disallowedTools: definition.disallowedTools,
+    subagents: definition.subagents,
     systemPrompt: (context) =>
       renderPromptTemplate(definition.prompt, context, { skillActive }, basePrompt),
   };

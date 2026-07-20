@@ -24,6 +24,9 @@ tools:
   - mcp__github__*
 disallowedTools:
   - Bash
+subagents:
+  - explore
+  - plan
 unknownField: tolerated
 ---
 
@@ -44,6 +47,7 @@ describe('parseAgentFileText', () => {
     expect(def.override).toBe(true);
     expect(def.tools).toEqual(['Read', 'Grep', 'mcp__github__*']);
     expect(def.disallowedTools).toEqual(['Bash']);
+    expect(def.subagents).toEqual(['explore', 'plan']);
     expect(def.prompt).toBe('你是严格的代码审查者。');
     expect(def.source).toBe('project');
   });
@@ -54,6 +58,7 @@ describe('parseAgentFileText', () => {
     expect(def.override).toBe(false);
     expect(def.tools).toBeUndefined();
     expect(def.disallowedTools).toBeUndefined();
+    expect(def.subagents).toBeUndefined();
     expect(def.whenToUse).toBeUndefined();
     expect(def.prompt).toBe('body');
   });
@@ -137,6 +142,24 @@ describe('parseAgentFileText', () => {
 
     expect(fromString.tools).toBeUndefined();
     expect(fromList.tools).toBeUndefined();
+  });
+
+  it('accepts a comma-separated subagents string', () => {
+    const def = parse('---\nname: solo\ndescription: d\nsubagents: explore, plan\n---\n\nbody\n');
+
+    expect(def.subagents).toEqual(['explore', 'plan']);
+  });
+
+  it('treats a lone "*" subagents field as all subagent types', () => {
+    const def = parse('---\nname: solo\ndescription: d\nsubagents: "*"\n---\n\nbody\n');
+
+    expect(def.subagents).toBeUndefined();
+  });
+
+  it('rejects a non-string, non-list subagents field', () => {
+    expect(() => parse('---\nname: solo\ndescription: d\nsubagents: 42\n---\n\nbody\n')).toThrow(
+      /"subagents"/,
+    );
   });
 
   it('rejects a non-string, non-list tools field', () => {
@@ -227,6 +250,12 @@ describe('agentProfileFromFile', () => {
 
     expect(profile.tools).toEqual(['Read']);
     expect(profile.disallowedTools).toEqual(['Bash']);
+  });
+
+  it('passes subagents through', () => {
+    const profile = agentProfileFromFile({ ...base, subagents: ['explore'] }, basePrompt);
+
+    expect(profile.subagents).toEqual(['explore']);
   });
 
   it('treats an explicit file as an override intent', () => {

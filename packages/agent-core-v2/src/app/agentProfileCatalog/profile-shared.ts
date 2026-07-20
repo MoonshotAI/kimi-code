@@ -14,7 +14,7 @@
 
 import { renderPrompt } from '#/_base/utils/render-prompt';
 
-import type { AgentProfileContext } from './agentProfileCatalog';
+import type { AgentProfile, AgentProfileContext } from './agentProfileCatalog';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
 
@@ -27,6 +27,32 @@ export const TASK_AGENT_ROLE_PREFIX =
 /** Whether the Skill tool survives a profile's tool list — drives skills injection. */
 export function skillActiveFor(tools: readonly string[]): boolean {
   return tools.includes('Skill');
+}
+
+/**
+ * The delegating agent's subagent-type allowlist, resolved from its own bound
+ * profile: an undefined profile name binds the default profile, while a missing
+ * profile or a missing `subagents` field means every subagent type is allowed.
+ */
+export function subagentAllowlistFor(
+  catalog: {
+    get(name: string): Pick<AgentProfile, 'subagents'> | undefined;
+    getDefault(): Pick<AgentProfile, 'subagents'>;
+  },
+  callerProfileName: string | undefined,
+): readonly string[] | undefined {
+  const caller =
+    callerProfileName === undefined ? catalog.getDefault() : catalog.get(callerProfileName);
+  return caller?.subagents;
+}
+
+/** Tool-facing error for a delegation rejected by the caller's `subagents` allowlist. */
+export function subagentTypeNotAllowedMessage(
+  name: string,
+  allowlist: readonly string[],
+): string {
+  const allowed = allowlist.length === 0 ? 'none' : allowlist.join(', ');
+  return `Subagent type "${name}" is not allowed for this agent. Allowed subagent types: ${allowed}.`;
 }
 
 const WINDOWS_NOTES =

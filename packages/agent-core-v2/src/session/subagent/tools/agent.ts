@@ -50,6 +50,10 @@ import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegis
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
+import {
+  subagentAllowlistFor,
+  subagentTypeNotAllowedMessage,
+} from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -176,8 +180,13 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
+    const allowlist = subagentAllowlistFor(this.catalog, this.profile.data().profileName);
+    const profiles =
+      allowlist === undefined
+        ? this.catalog.list()
+        : this.catalog.list().filter((profile) => allowlist.includes(profile.name));
     const typeLines = buildProfileDescriptions(
-      this.catalog.list(),
+      profiles,
       this.toolRegistry.listReferences(),
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
@@ -256,11 +265,15 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         ? args.subagent_type
         : DEFAULT_PROFILE_NAME;
       await this.catalog.ready;
+      const own = this.profile.data();
+      const allowlist = subagentAllowlistFor(this.catalog, own.profileName);
+      if (allowlist !== undefined && !allowlist.includes(requestedProfileName)) {
+        throw new Error(subagentTypeNotAllowedMessage(requestedProfileName, allowlist));
+      }
       const profile = this.catalog.get(requestedProfileName);
       if (profile === undefined) {
         throw new Error(`Unknown agent type: "${requestedProfileName}"`);
       }
-      const own = this.profile.data();
       if (own.modelAlias === undefined) {
         throw new Error('Caller agent has no model bound');
       }

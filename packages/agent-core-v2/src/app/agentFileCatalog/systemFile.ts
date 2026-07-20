@@ -67,6 +67,7 @@ export async function loadSystemMdProfile(
     override: true,
     tools: builtinDefault.tools,
     disallowedTools: builtinDefault.disallowedTools,
+    subagents: builtinDefault.subagents,
     systemPrompt: (context) =>
       renderPromptTemplate(text, context, { skillActive }, (ctx) =>
         builtinDefault.systemPrompt(ctx),
