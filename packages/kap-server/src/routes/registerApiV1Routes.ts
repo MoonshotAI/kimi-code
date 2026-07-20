@@ -15,6 +15,7 @@ import { ulid } from 'ulid';
 import { okEnvelope } from '../envelope';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
+import type { TranscriptService } from '../services/transcript/transcriptService';
 import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
 import { registerConfigRoutes } from './config';
@@ -25,11 +26,13 @@ import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import type { ISnapshotReader } from '../services/snapshot';
+import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
+import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSnapshotRoutes } from './snapshot';
@@ -37,6 +40,7 @@ import { registerSkillsRoutes } from './skills';
 import { registerTasksRoutes } from './tasks';
 import { registerTerminalsRoutes } from './terminals';
 import { registerToolsRoutes } from './tools';
+import { registerTranscriptRoutes } from './transcript';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
 import { registerWorkspacesRoutes } from './workspaces';
 
@@ -65,6 +69,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly snapshotReader: ISnapshotReader;
+  readonly transcriptService: TranscriptService;
   /**
    * Surface `dangerous_bypass_auth` in the `/meta` payload. Set by `start.ts`
    * from the `disableAuth` server option (the `--dangerous-bypass-auth` CLI
@@ -81,6 +86,12 @@ export async function registerApiV1Routes(
   await app.register(
     async (apiV1) => {
       registerHealthRoute(apiV1);
+
+      // Dev-only debug RPC surface (`--debug-endpoints`, loopback-gated in
+      // `start.ts`): every scoped Service reachable.
+      if (opts.debugEndpoints === true) {
+        registerDebugRoutes(apiV1 as unknown as Parameters<typeof registerDebugRoutes>[0], core);
+      }
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,
@@ -99,6 +110,11 @@ export async function registerApiV1Routes(
       registerSessionsRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
+      );
+      registerSessionExportRoute(
+        apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
+        core,
+        { serverVersion: opts.serverVersion },
       );
       registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], core);
       registerMessagesRoutes(
@@ -144,6 +160,10 @@ export async function registerApiV1Routes(
         core,
         broadcaster: opts.broadcaster,
         reader: opts.snapshotReader,
+      });
+      registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
+        core,
+        transcriptService: opts.transcriptService,
       });
       if (opts.enableShutdown !== false) {
         registerShutdownRoutes(apiV1 as unknown as Parameters<typeof registerShutdownRoutes>[0], {

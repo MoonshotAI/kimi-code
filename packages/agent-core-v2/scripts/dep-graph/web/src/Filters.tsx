@@ -8,13 +8,7 @@ export interface FilterState {
   hiddenDomains: Set<string>;
   search: string;
   hideOrphans: boolean;
-  /** When true, dagre runs once per scope and the bands are stacked vertically. */
   groupByScope: boolean;
-  /**
-   * Tags the user is focusing. When non-empty, nodes carrying any of these
-   * tags (and their neighbours) stay bright and everything else dims — the
-   * "group by tag" view. Empty set means tag focus is off.
-   */
   activeTags: Set<string>;
 }
 
@@ -28,11 +22,6 @@ interface FiltersProps {
 
 const SCOPES: ServiceScope[] = ['App', 'Session', 'Agent'];
 
-/**
- * Left sidebar. All controls mutate `state` via `onChange` — the graph view
- * re-derives its nodes/edges from the current filter set. Rendered as a
- * fixed-width column so the graph takes the rest of the viewport.
- */
 export function Filters({
   graph,
   domains,

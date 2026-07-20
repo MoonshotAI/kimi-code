@@ -136,6 +136,53 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('attaches the summarizer request trace id to compaction_finished', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'Compacted summary.' }],
+      traceId: 'trace-compact-1',
+    });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    expect(records).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({ source: 'manual', trace_id: 'trace-compact-1' }),
+    });
+    expect(ctx.agent.fullCompaction.lastTraceId).toBe('trace-compact-1');
+  });
+
+  it('attaches the failed summarizer request trace id to compaction_failed', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      // 401 is not retryable: the round fails on the first attempt without
+      // backoff timers.
+      throw new APIStatusError(401, 'Unauthorized', 'req-1', null, 'trace-compact-err');
+    };
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({ source: 'manual', trace_id: 'trace-compact-err' }),
+    });
+  });
+
   it('emits the raw summary while keeping the prefixed summary in model context', async () => {
     const ctx = testAgent();
     ctx.configure({
@@ -364,6 +411,7 @@ describe('FullCompaction', () => {
   });
 
   it('force-refreshes OAuth credentials on compaction 401 and treats replay 401 as provider auth error', async () => {
+    const records: TelemetryRecord[] = [];
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthTestAgentOptions(async (options) => {
@@ -380,11 +428,17 @@ describe('FullCompaction', () => {
     ) => {
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
       if (authKeys.length <= 2) {
-        throw new APIStatusError(401, 'Unauthorized', 'req-compact-401');
+        throw new APIStatusError(
+          401,
+          'Unauthorized',
+          'req-compact-401',
+          null,
+          authKeys.length === 1 ? 'trace-compact-initial-401' : 'trace-compact-replay-401',
+        );
       }
       return textResult('Recovered compacted summary.');
     };
-    const ctx = testAgent({ ...oauthOptions, generate });
+    const ctx = testAgent({ ...oauthOptions, generate, telemetry: recordingTelemetry(records) });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -409,6 +463,9 @@ describe('FullCompaction', () => {
     );
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
     expect(tokenCalls).toEqual([undefined, true]);
+    expect(
+      records.find((record) => record.event === 'compaction_failed')?.properties?.['trace_id'],
+    ).toBe('trace-compact-replay-401');
     expect(ctx.compactHistory()).toEqual([
       { role: 'user', text: 'old user one' },
       { role: 'assistant', text: 'old assistant one' },
@@ -2021,16 +2078,14 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
-    // The catalogued model declares no supportEfforts, so the kimi provider
-    // normalizes to boolean thinking and reports 'on' rather than the
-    // requested 'high'. The agent's stored thinkingEffort ('high') is still
-    // carried across the compaction (see the record assertion below).
+    // A Kimi model without supportEfforts is boolean-only, so the effective
+    // state and every compaction request use 'on'.
     expect(providerThinkingEfforts).toEqual(['on', 'on', 'on']);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        thinking_effort: 'high',
+        thinking_effort: 'on',
       }),
     });
   });

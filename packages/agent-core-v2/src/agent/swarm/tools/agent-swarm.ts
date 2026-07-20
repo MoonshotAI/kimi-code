@@ -19,13 +19,14 @@ import {
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { IConfigService } from '#/app/config/config';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
+import { resolveSubagentTimeoutMs } from '#/session/subagent/configSection';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
-const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 const PROMPT_TEMPLATE_PLACEHOLDER = '{{item}}';
 const MAX_AGENT_SWARM_SUBAGENTS = 128;
 
@@ -107,6 +108,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     @ISessionSwarmService private readonly swarmService: ISessionSwarmService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
+    @IConfigService private readonly config: IConfigService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }
@@ -150,6 +152,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
+    const timeoutMs = resolveSubagentTimeoutMs(this.config);
     const specs = await createAgentSwarmSpecs(args, (agentId) =>
       this.swarmService.getSwarmItem({ callerAgentId: this.callerAgentId, agentId }),
     );
@@ -165,7 +168,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         runInBackground: false,
         swarmItem: spec.item,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: timeoutMs,
       };
       if (spec.kind === 'resume') {
         return {

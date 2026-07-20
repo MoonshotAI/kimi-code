@@ -7,7 +7,7 @@
  *     normalization and the `$` builtin branch shared with top-level tools);
  *   - `Tool.deferred` stripping in `generate()` (single strip point for every
  *     provider call — the marker itself must never reach the wire);
- *   - the `select_tools` capability bit (unknown/default-off semantics).
+ *   - the `dynamically_loaded_tools` capability bit (unknown/default-off semantics).
  */
 
 import { UNKNOWN_CAPABILITY, isUnknownCapability } from '#/app/llmProtocol/capability';
@@ -74,7 +74,14 @@ async function captureRequestBody(
     .fn()
     .mockImplementation((params: unknown) => {
       capturedBody = params as Record<string, unknown>;
-      return Promise.resolve(makeChatCompletionResponse());
+      return {
+        withResponse: () =>
+          Promise.resolve({
+            data: makeChatCompletionResponse(),
+            response: new Response(null),
+            request_id: null,
+          }),
+      };
     });
   const stream = await provider.generate('system prompt', tools, history);
   for await (const part of stream) {
@@ -94,7 +101,6 @@ describe('Kimi messages[].tools serialization', () => {
     ];
     const body = await captureRequestBody([], history);
     const messages = body['messages'] as Array<Record<string, unknown>>;
-    // [system prompt, user, system+tools]
     expect(messages).toHaveLength(3);
     const toolsMessage = messages[2]!;
     expect(toolsMessage['role']).toBe('system');
@@ -132,7 +138,6 @@ describe('Kimi messages[].tools serialization', () => {
     for (const message of messages) {
       expect('tools' in message).toBe(false);
     }
-    // Top-level tools[] unchanged by the feature.
     expect(body['tools']).toEqual([
       {
         type: 'function',
@@ -159,6 +164,60 @@ describe('Kimi messages[].tools serialization', () => {
     const messages = body['messages'] as Array<Record<string, unknown>>;
     const serialized = JSON.stringify(messages[2]!['tools']);
     expect(serialized).not.toContain('deferred');
+  });
+});
+
+describe('Kimi x-trace-id capture', () => {
+  function mockKimiCreate(headers: Record<string, string>) {
+    const provider = new KimiChatProvider({
+      model: 'kimi-test',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() => ({
+      withResponse: () =>
+        Promise.resolve({
+          data: makeChatCompletionResponse(),
+          response: new Response(null, { headers }),
+          request_id: null,
+        }),
+    }));
+    return provider;
+  }
+
+  it('reads the trace id from the x-trace-id response header', async () => {
+    const stream = await mockKimiCreate({ 'x-trace-id': 'trace-abc-123' }).generate(
+      'system prompt',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+    );
+    expect(stream.traceId).toBe('trace-abc-123');
+    for await (const part of stream) void part;
+  });
+
+  it('returns null when the response has no x-trace-id header', async () => {
+    const stream = await mockKimiCreate({}).generate(
+      'system prompt',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+    );
+    expect(stream.traceId).toBeNull();
+    for await (const part of stream) void part;
+  });
+
+  it('surfaces the trace id through generate() via onTraceId and the result', async () => {
+    const provider = mockKimiCreate({ 'x-trace-id': 'trace-xyz' });
+    let captured: string | null | undefined;
+    const result = await generate(
+      provider,
+      'system prompt',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+      undefined,
+      { onTraceId: (traceId) => (captured = traceId) },
+    );
+    expect(captured).toBe('trace-xyz');
+    expect(result.traceId).toBe('trace-xyz');
   });
 });
 
@@ -197,6 +256,16 @@ describe('generate() deferred tool stripping', () => {
     expect(seenTools()).toEqual([ADD_TOOL]);
   });
 
+  it('omits trace metadata when the provider does not expose it', async () => {
+    const { provider } = createCapturingProvider();
+    const onTraceId = vi.fn();
+
+    const result = await generate(provider, 'sys', [], [], undefined, { onTraceId });
+
+    expect(onTraceId).not.toHaveBeenCalled();
+    expect(Object.hasOwn(result, 'traceId')).toBe(false);
+  });
+
   it('passes the identical array through when nothing is deferred', async () => {
     const { provider, seenTools } = createCapturingProvider();
     const tools = [ADD_TOOL, BUILTIN_TOOL];
@@ -222,8 +291,6 @@ describe('providers without message-level tool declarations', () => {
   it('classifies tool-declaration-only messages', () => {
     expect(isToolDeclarationOnlyMessage(TOOLS_ONLY_MESSAGE)).toBe(true);
     expect(isToolDeclarationOnlyMessage(HISTORY[0]!)).toBe(false);
-    // A message that also carries content is NOT skipped wholesale (only the
-    // tools field stays off the wire via explicit field construction).
     expect(
       isToolDeclarationOnlyMessage({
         ...TOOLS_ONLY_MESSAGE,
@@ -278,7 +345,6 @@ describe('providers without message-level tool declarations', () => {
     const stream = await provider.generate('sys', [], HISTORY);
     for await (const part of stream) void part;
     const messages = captured!['messages'] as Array<Record<string, unknown>>;
-    // [system prompt, user] — no content-free leftover entry.
     expect(messages).toHaveLength(2);
     for (const message of messages) {
       expect(message['content']).toBeDefined();
@@ -312,7 +378,6 @@ describe('providers without message-level tool declarations', () => {
       });
     const stream = await provider.generate('sys', [], HISTORY);
     for await (const part of stream) void part;
-    // The tools-only message contributes no input item at all.
     expect(captured!['input'] as unknown[]).toHaveLength(1);
     expect(JSON.stringify(captured!['input'])).not.toContain('"tools"');
   });
@@ -324,12 +389,12 @@ describe('providers without message-level tool declarations', () => {
   });
 });
 
-describe('select_tools capability bit', () => {
+describe('dynamically_loaded_tools capability bit', () => {
   it('defaults to false on UNKNOWN_CAPABILITY', () => {
-    expect(UNKNOWN_CAPABILITY.select_tools).toBe(false);
+    expect(UNKNOWN_CAPABILITY.dynamically_loaded_tools).toBe(false);
   });
 
-  it('a capability that only has select_tools is not "unknown"', () => {
+  it('a capability that only has dynamically_loaded_tools is not "unknown"', () => {
     expect(
       isUnknownCapability({
         image_in: false,
@@ -338,16 +403,17 @@ describe('select_tools capability bit', () => {
         thinking: false,
         tool_use: false,
         max_context_tokens: 0,
-        select_tools: true,
+        dynamically_loaded_tools: true,
       }),
     ).toBe(false);
   });
 
-  it('catalog entries map select_tools and default it to false', () => {
+  it('catalog entries map dynamically_loaded_tools and default it to false', () => {
     const base = { id: 'm', limit: { context: 1000 } };
-    expect(catalogModelToCapability(base)?.capability.select_tools).toBe(false);
+    expect(catalogModelToCapability(base)?.capability.dynamically_loaded_tools).toBe(false);
     expect(
-      catalogModelToCapability({ ...base, select_tools: true })?.capability.select_tools,
+      catalogModelToCapability({ ...base, dynamically_loaded_tools: true })?.capability
+        .dynamically_loaded_tools,
     ).toBe(true);
   });
 });

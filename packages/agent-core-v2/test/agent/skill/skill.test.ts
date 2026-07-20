@@ -19,10 +19,9 @@ import {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { Turn } from '#/agent/loop/loop';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from '../../app/skillCatalog/stubs';
+import { registerTestAgentWireServices } from '../../wire/stubs';
 
 const COMMIT_SKILL = stubSkill('commit', {
   description: 'commit changes',
@@ -72,10 +71,7 @@ describe('AgentSkillService', () => {
           undo: () => 0,
           clear: () => {},
         });
-        reg.defineInstance(
-          IAgentWireService,
-          new WireService({ logScope: 'wire', logKey: 'skill-test' }),
-        );
+        registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
@@ -167,10 +163,7 @@ describe('SkillTool', () => {
           undo: () => 0,
           clear: () => {},
         });
-        reg.defineInstance(
-          IAgentWireService,
-          new WireService({ logScope: 'wire', logKey: 'skill-test' }),
-        );
+        registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
@@ -295,7 +288,6 @@ describe('SkillTool', () => {
       output: 'Skill "commit" loaded inline. Follow its instructions.',
     });
     expect(result.output).not.toContain('# Commit');
-    // The tool only declares a `delivery`; the agent (L4) layer performs the steer.
     expect(prompted).toHaveLength(0);
     expect(result.delivery?.kind).toBe('steer');
     expect(result.delivery?.message.origin).toMatchObject({

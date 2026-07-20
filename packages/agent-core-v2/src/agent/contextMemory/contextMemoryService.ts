@@ -10,11 +10,11 @@
  * changes the measured prefix — `clear` resets it, `applyCompaction` adopts
  * `tokensAfter`, and `undo` rebases it (to an estimate when the measured
  * aggregate is truncated); `append` leaves the measured prefix untouched since
- * new messages are the unmeasured tail (see `contextSizeService`). Every
- * mutation still fires `onSpliced` from the live path only (replay rebuilds
- * the Model silently and never invokes these methods), so existing subscribers
- * (context-injector, task-notification) observe the same
- * splice-shaped change events regardless of which Op was persisted. Messages
+ * new messages are the unmeasured tail (see `contextSizeService`).
+ * Splice-shaped mutations publish `context.spliced` from the live path only
+ * (replay rebuilds the Model silently and never invokes these methods), so
+ * existing subscribers observe the same change regardless of which Op was
+ * persisted. Messages
  * are persisted without local ids — the on-disk record matches v1's field set
  * and public message ids are derived from the transcript index. Blob
  * dehydrate/rehydrate is declared on `ContextModel.blobs`. Bound at
@@ -27,9 +27,8 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import { IEventBus } from '#/app/event/eventBus';
 import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import type { Op } from '#/wire/op';
-import type { IWireService } from '#/wire/wireService';
 
 import {
   IAgentContextMemoryService,
@@ -66,7 +65,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();
@@ -86,6 +85,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.wire.dispatch(contextAppendLoopEvent({ event }));
   }
+
   clear(): void {
     const deleteCount = this.get().length;
     if (deleteCount === 0) return;
@@ -143,13 +143,6 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     this.eventBus.publish({ type: 'context.spliced', ...input });
   }
 
-  /**
-   * Cascade a `context_size.measured` Op when an undo truncates the measured
-   * prefix (`ContextSizeModel.length`). If the surviving context still covers
-   * the measured prefix, the measurement stays valid and nothing is emitted;
-   * otherwise the prefix is rebased to an estimate of the surviving messages
-   * (an aggregate measured count can't be truncated without per-message data).
-   */
   private sizeOpsForCut(cutIndex: number, history: readonly ContextMessage[]): Op[] {
     const model = this.wire.getModel(ContextSizeModel);
     if (model.length <= cutIndex) return [];
@@ -166,6 +159,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextMemoryService,
   AgentContextMemoryService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextMemory',
 );

@@ -11,7 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -66,13 +66,48 @@ function mediaPathTag(text: string): { kind: 'image' | 'video' | 'audio'; path: 
  *  recover the fileId from the cache filename to build a playable URL. Returns
  *  undefined when the basename isn't shaped like a file-store id (`f_…`) — e.g.
  *  TUI cache names (`<uuid>-<label>`) or legacy `/tmp/foo.mp4` paths — so the
- *  caller leaves the raw tag as text instead of fabricating a broken /files url. */
-const FILE_STORE_ID_RE = /^f_[A-Za-z0-9]{10,}$/;
+ *  caller leaves the raw tag as text instead of fabricating a broken /files url.
+ *
+ *  File-store ids come in two shapes: v1 `f_`<26-char ULID> (no hyphens) and
+ *  v2 `f_`<randomUUID> (32 hex chars + 4 hyphens). */
+const FILE_STORE_ID_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/;
+/** Same two id shapes, anchored at the start of a `<fileId>-<name>` basename.
+    Splitting on the first '-' instead would truncate v2 UUID ids at their
+    first inner hyphen. */
+const FILE_STORE_ID_AT_START_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?=-)/;
 function fileIdFromCachePath(p: string): string | undefined {
   const base = p.split(/[\\/]/).at(-1) ?? '';
   const dot = base.lastIndexOf('.');
   const id = dot > 0 ? base.slice(0, dot) : base;
   return FILE_STORE_ID_RE.test(id) ? id : undefined;
+}
+
+/** A generic file attachment comes back from the server as a text notice (see
+ *  resolvePromptMediaFiles in the kap-server prompts route):
+ *    Attached file "<name>" (<mime>, <n> bytes): <dir>/<fileId>-<name> — open it with the Read tool
+ *  Recover the chip from the notice instead of dumping it — absolute server
+ *  path and all — into the bubble. The fileId is matched by shape at the start
+ *  of the basename (ULID or UUID, see FILE_STORE_ID_AT_START_RE). Inline-base64
+ *  attachments are content-hash named (no fileId): they still become a chip so
+ *  the notice stays hidden, just without bytes to open. */
+const ATTACHED_FILE_NOTICE_RE =
+  /^Attached file "(.+)" \(([^,]+), (\d+) bytes\): (.+) — open it with the Read tool$/;
+
+function attachedFileNotice(
+  text: string,
+): { name: string; mediaType: string; size: number; fileId?: string } | null {
+  const m = ATTACHED_FILE_NOTICE_RE.exec(text.trim());
+  if (!m) return null;
+  const base = (m[4] ?? '').split(/[\\/]/).at(-1) ?? '';
+  const id = FILE_STORE_ID_AT_START_RE.exec(base)?.[0];
+  return {
+    name: m[1]!,
+    mediaType: m[2]!,
+    size: Number(m[3]),
+    fileId: id !== undefined && FILE_STORE_ID_RE.test(id) ? id : undefined,
+  };
 }
 
 function bytesFromBase64(b64: string): number {
@@ -765,7 +800,7 @@ export function messagesToTurns(
         origin?.kind === 'plugin_command' && origin?.trigger === 'user-slash';
 
       const textParts: string[] = [];
-      const images: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] = [];
+      const attachments: TurnAttachment[] = [];
       for (const c of msg.content) {
         if (c.type === 'text') {
           if (isSkillActivation) {
@@ -786,9 +821,25 @@ export function messagesToTurns(
             if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
               const fileId = fileIdFromCachePath(tag.path);
               if (fileId) {
-                images.push({ url: getFileUrl(fileId), kind: tag.kind, alt: fileId, fileId });
+                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
                 continue;
               }
+            }
+            // A generic file upload comes back as an "Attached file …" notice;
+            // recover the chip the same way (see attachedFileNotice).
+            const attached = attachedFileNotice(c.text);
+            if (attached) {
+              attachments.push({
+                kind: 'file',
+                // No recoverable fileId (inline-base64 upload) → no URL: the
+                // chip renders name/size but stays non-clickable.
+                url: attached.fileId && getFileUrl ? getFileUrl(attached.fileId) : '',
+                fileId: attached.fileId,
+                name: attached.name,
+                mediaType: attached.mediaType,
+                size: attached.size,
+              });
+              continue;
             }
             const stripped = stripImageCompressionCaptions(c.text);
             if (stripped !== c.text && stripped.trim().length === 0) continue;
@@ -796,14 +847,34 @@ export function messagesToTurns(
           }
         }
         const media = resolveMediaUrl(c);
-        if (media) images.push({ url: media.url, kind: media.kind, alt: c.type === 'file' ? c.name : undefined, fileId: media.fileId });
+        if (media) {
+          attachments.push({
+            url: media.url,
+            kind: media.kind,
+            name: c.type === 'file' ? c.name : undefined,
+            fileId: media.fileId,
+          });
+          continue;
+        }
+        // Non-media files (pdf/zip/yaml/…) carry no playable URL, but the chip
+        // still renders them with name/size and a download action.
+        if (c.type === 'file' && getFileUrl) {
+          attachments.push({
+            kind: 'file',
+            url: getFileUrl(c.fileId),
+            fileId: c.fileId,
+            name: c.name,
+            mediaType: c.mediaType || undefined,
+            size: c.size,
+          });
+        }
       }
       turns.push({
         id: msg.id,
         role: 'user',
         no: no++,
         text: textParts.join('\n'),
-        images: images.length > 0 ? images : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
         skillActivation: isSkillActivation
           ? { name: origin.skillName!, args: origin.skillArgs }
           : undefined,

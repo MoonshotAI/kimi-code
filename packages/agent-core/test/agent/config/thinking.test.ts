@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ModelAlias } from '../../../src/config';
-import { defaultThinkingEffortFor, resolveThinkingEffort } from '../../../src/agent/config/thinking';
+import {
+  defaultThinkingEffortFor,
+  resolveThinkingEffort,
+  supportsThinkingEffort,
+} from '../../../src/agent/config/thinking';
 
 function model(overrides: Partial<ModelAlias> = {}): ModelAlias {
   return {
@@ -19,7 +23,7 @@ const effortModel = model({
 });
 const effortModelWithDefault = model({
   capabilities: ['thinking'],
-  supportEfforts: ['low', 'high'],
+  supportEfforts: ['low', 'high', 'max'],
   defaultEffort: 'max',
 });
 const alwaysThinkingModel = model({ capabilities: ['thinking', 'always_thinking'] });
@@ -39,6 +43,18 @@ describe('defaultThinkingEffortFor', () => {
 
   it('returns the declared defaultEffort for effort-capable models', () => {
     expect(defaultThinkingEffortFor(effortModelWithDefault)).toBe('max');
+  });
+
+  it('ignores a defaultEffort that is not declared in supportEfforts', () => {
+    expect(
+      defaultThinkingEffortFor(
+        model({
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+          defaultEffort: 'max',
+        }),
+      ),
+    ).toBe('high');
   });
 
   it('falls back to the middle supportEfforts entry when defaultEffort is absent', () => {
@@ -88,8 +104,10 @@ describe('resolveThinkingEffort', () => {
   });
 
   it('forces always-thinking models back on when the resolved effort is off', () => {
-    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel)).toBe('on');
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel, true)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel, true)).toBe(
+      'on',
+    );
   });
 
   it('honors a configured effort when clamping always-thinking models back on', () => {
@@ -97,17 +115,39 @@ describe('resolveThinkingEffort', () => {
     // an explicitly configured effort is preserved instead of falling back to
     // the model default.
     expect(
-      resolveThinkingEffort(undefined, { enabled: false, effort: 'max' }, alwaysThinkingEffortModel),
+      resolveThinkingEffort(
+        undefined,
+        { enabled: false, effort: 'max' },
+        alwaysThinkingEffortModel,
+        true,
+      ),
     ).toBe('max');
     // without an explicit effort, fall back to the model's default effort.
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel)).toBe(
-      'high',
-    );
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel, true),
+    ).toBe('high');
+  });
+
+  it('preserves off for always-thinking models on compatible protocols', () => {
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingEffortModel, false)).toBe('off');
   });
 
   it('does not force on for models that are not always-thinking', () => {
     expect(resolveThinkingEffort('off', undefined, booleanModel)).toBe('off');
     expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
+  });
+
+  it('falls back to the model default for an unsupported Kimi effort', () => {
+    expect(resolveThinkingEffort('ultra', undefined, effortModel, true)).toBe('medium');
+  });
+
+  it('projects a concrete effort to on for a boolean-only Kimi model', () => {
+    expect(resolveThinkingEffort('ultra', undefined, booleanModel, true)).toBe('on');
+  });
+
+  it('reports unsupported concrete efforts only for Kimi effort models', () => {
+    expect(supportsThinkingEffort('ultra', effortModel, true)).toBe(false);
+    expect(supportsThinkingEffort('ultra', effortModel, false)).toBe(true);
   });
 });
 
@@ -136,6 +176,7 @@ describe('resolveThinkingEffort overrides', () => {
           capabilities: ['thinking'],
           overrides: { capabilities: ['thinking', 'always_thinking'] },
         }),
+        true,
       ),
     ).toBe('on');
   });

@@ -23,7 +23,7 @@ import type {
   ProviderCatalogItem,
   RefreshProviderModelsResponse,
   SetDefaultModelResponse,
-} from '@moonshot-ai/protocol';
+} from './modelCatalog';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -37,6 +37,7 @@ import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
+  type ProviderType,
   PROVIDERS_SECTION,
 } from '#/app/provider/provider';
 
@@ -54,11 +55,6 @@ const THINKING_SECTION = 'thinking';
 export class ModelCatalogService implements IModelCatalogService {
   declare readonly _serviceBrand: undefined;
 
-  /**
-   * Serializes refresh runs so a scheduled refresh and a manual one (or two
-   * manual ones with different options) never race on reading/patching the
-   * persisted config. Mirrors v1's `_refreshChain`.
-   */
   private refreshChain: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -72,7 +68,9 @@ export class ModelCatalogService implements IModelCatalogService {
 
   async listModels(): Promise<readonly ModelCatalogItem[]> {
     const models = this.modelService.list();
-    return Object.entries(models).map(([modelId, alias]) => toProtocolModel(modelId, alias));
+    return Object.entries(models).map(([modelId, alias]) =>
+      toProtocolModel(modelId, alias, this.providerTypeOf(alias)),
+    );
   }
 
   async listProviders(): Promise<readonly ProviderCatalogItem[]> {
@@ -105,8 +103,14 @@ export class ModelCatalogService implements IModelCatalogService {
     const updatedAlias = this.modelService.get(modelId) ?? alias;
     return {
       default_model: modelId,
-      model: toProtocolModel(modelId, updatedAlias),
+      model: toProtocolModel(modelId, updatedAlias, this.providerTypeOf(updatedAlias)),
     };
+  }
+
+  private providerTypeOf(alias: ModelAlias): ProviderType | undefined {
+    const providerId =
+      alias.providerId ?? alias.provider ?? this.config.get<string>('defaultProvider');
+    return this.providerService.get(providerId ?? '')?.type ?? alias.protocol;
   }
 
   refreshProviderModels(
@@ -140,8 +144,6 @@ export class ModelCatalogService implements IModelCatalogService {
     });
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
-      // Broadcasts to every connected client via the core event bus →
-      // `SessionEventBroadcaster` (any provider kind, not just OAuth).
       this.events.publish({ type: 'event.model_catalog.changed', payload: response });
     }
     return response;
@@ -153,17 +155,10 @@ export class ModelCatalogService implements IModelCatalogService {
       removeProvider: (providerId) => this.removeProviderForRefresh(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
-      // Mirrors ModelResolverService: only the User-Agent leaves the host, so
-      // device identity never reaches third-party registry endpoints.
       userAgent: this.hostRequestHeaders.headers['User-Agent'],
     };
   }
 
-  /**
-   * User-layer config shape the orchestrator diffs and edits. Mirrors
-   * `OAuthService.readUserConfigShape` so both refresh paths edit the same
-   * persisted user config (never env/memory-overlaid effective values).
-   */
   private readUserConfigShape(): ManagedKimiConfigShape {
     const providers =
       this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
@@ -206,11 +201,18 @@ export class ModelCatalogService implements IModelCatalogService {
     if (patch.models !== undefined) {
       await this.config.replace(MODELS_SECTION, patch.models);
     }
-    if (patch.defaultModel !== undefined) {
-      await this.config.set(DEFAULT_MODEL_SECTION, patch.defaultModel);
+    // The refresh orchestrator always sends all four keys, so key presence is
+    // the write intent and an explicit `undefined` means CLEAR, not "leave
+    // alone". `set()` cannot express that — its deepMerge resolves an
+    // undefined patch back to the base value — so these go through `replace`,
+    // which deletes the section on undefined. Otherwise a default model (and
+    // its thinking setting) whose alias the upstream dropped would dangle in
+    // the user config forever.
+    if ('defaultModel' in patch) {
+      await this.config.replace(DEFAULT_MODEL_SECTION, patch.defaultModel);
     }
-    if (patch.thinking !== undefined) {
-      await this.config.set(THINKING_SECTION, patch.thinking);
+    if ('thinking' in patch) {
+      await this.config.replace(THINKING_SECTION, patch.thinking);
     }
     return this.readUserConfigShape();
   }
@@ -307,6 +309,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelCatalogService,
   ModelCatalogService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'modelCatalog',
 );

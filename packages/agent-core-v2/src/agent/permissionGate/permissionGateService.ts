@@ -23,7 +23,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionApprovalService } from "#/session/approval/approval";
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import {
   IAgentPermissionGate,
 } from './permissionGate';
@@ -181,6 +181,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
           duration_ms: Date.now() - startedAt,
           session_cache_written: false,
           has_feedback: false,
+          trace_id: context.trace?.traceId,
         });
         this.eventBus.publish({
           type: 'permission.approval.resolved',
@@ -227,6 +228,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
       duration_ms: Date.now() - startedAt,
       session_cache_written: sessionApprovalRule !== undefined,
       has_feedback: response.feedback !== undefined && response.feedback.length > 0,
+      trace_id: context.trace?.traceId,
     });
 
     const resolved = result.resolveApproval?.(response);
@@ -276,11 +278,6 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     return message;
   }
 
-  /**
-   * Rejection messages for agents driven by another agent (no user in the
-   * loop) carry extra "don't retry / don't bypass" guidance. Heuristic: any
-   * agent other than `main` is treated as worker-driven.
-   */
   private usesWorkerRejectionGuidance(): boolean {
     return this.scopeContext.agentId !== 'main';
   }
@@ -290,6 +287,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionGate,
   AgentPermissionGate,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'permissionGate',
 );

@@ -26,8 +26,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { Message } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentContextSizeService, type ContextSize } from './contextSize';
 import { ContextSizeModel, contextSizeMeasured } from './contextSizeOps';
@@ -39,7 +38,7 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
   }
@@ -47,16 +46,17 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
   get(start?: number, end?: number): ContextSize {
     const context = this.context.get();
     const model = this.wire.getModel(ContextSizeModel);
-    // Mirrors `Array.prototype.slice`: defaults to the whole context, negative
-    // indices count back from the end, and an inverted range is empty.
+    // Defensive clamp: the measured prefix can never be longer than the live
+    // context. An op written against a mutated message array once inflated
+    // `model.length` past `context.length`, silently knocking every read off
+    // the measured path onto the per-message estimate branch.
+    const measuredLength = Math.min(model.length, context.length);
     const from = normalizeSliceIndex(start ?? 0, context.length);
     const to = normalizeSliceIndex(end ?? context.length, context.length);
-    const measuredEnd = Math.min(to, model.length);
-    const estimatedStart = Math.max(from, model.length);
-    // The measured-prefix total is the only deterministic measured value; use it
-    // when the range covers the whole prefix, otherwise estimate the sub-range.
+    const measuredEnd = Math.min(to, measuredLength);
+    const estimatedStart = Math.max(from, measuredLength);
     const measured =
-      from === 0 && measuredEnd === model.length
+      from === 0 && measuredEnd === measuredLength
         ? model.tokens
         : estimateTokensForMessages(context.slice(from, measuredEnd));
     const estimated = estimateTokensForMessages(context.slice(estimatedStart, to));
@@ -64,11 +64,15 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
   }
 
   measured(input: readonly Message[], output: readonly Message[], usage: TokenUsage): void {
-    // Only adopt the measurement when `input` still matches the live context.
-    // This rejects stale readings (e.g. the context was spliced, or the request
-    // used overridden messages) so a mismatched measurement cannot poison state.
-    if (!matchesContext(input, this.context.get())) return;
-    const length = input.length + output.length;
+    const context = this.context.get();
+    if (!matchesContext(input, context)) return;
+    // The fold of the step's loop events creates the assistant message in the
+    // context BEFORE the exchange finishes (a skeleton at `step.begin`, filled
+    // by `content.part` folds during streaming), and `input` is that same live
+    // array — so it already includes `output` here. The measured prefix is the
+    // whole current context; `input.length + output.length` would count the
+    // folded output twice.
+    const length = context.length;
     const tokens = tokenUsageTotal(usage);
     this.wire.dispatch(contextSizeMeasured({ length, tokens }));
     this.emitIfChanged();
@@ -102,6 +106,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextSizeService,
   AgentContextSizeService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextSize',
 );

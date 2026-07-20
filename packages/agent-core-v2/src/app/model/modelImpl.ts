@@ -15,6 +15,11 @@
  * wire I/O to `IProtocolAdapterRegistry.createChatProvider(...)` + kosong's
  * `generate(...)`. Phase 8 replaces the wire with native adapters; only this
  * file changes.
+ *
+ * Provider error translation also lives here: a 401 that survives a forced
+ * token refresh means the provider rejected the account itself, so it is
+ * surfaced as `PROVIDER_AUTH_ERROR` carrying the provider's message instead
+ * of a misleading re-login prompt.
  */
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
@@ -28,18 +33,18 @@ import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { ChatProvider } from '#/app/llmProtocol/provider';
 import type { Protocol, ProtocolProviderOptions } from '#/app/protocol/protocol';
 import { generate, type GenerateResult } from '#/app/llmProtocol/generate';
-import { translateProviderError } from '#/app/protocol/errors';
+import { sanitizeStatusErrorMessage, translateProviderError } from '#/app/protocol/errors';
 import { type ProtocolAdapterRegistry } from '#/app/protocol/protocolAdapterRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 
-import type { AuthProvider, LLMEvent, LLMRequestInput, Model } from './modelInstance';
+import type { AuthProvider, LLMEvent, LLMRequestInput, Model, ModelRequestOptions } from './modelInstance';
 
 export interface ModelImplInit {
   readonly id: string;
   readonly name: string;
   readonly aliases: readonly string[];
   readonly protocol: Protocol;
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly capabilities: ModelCapability;
   readonly maxContextSize: number;
@@ -49,6 +54,7 @@ export interface ModelImplInit {
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
   readonly alwaysThinking: boolean;
+  readonly providerType?: string;
   readonly providerName: string;
   readonly authProvider: AuthProvider;
   readonly protocolRegistry: ProtocolAdapterRegistry;
@@ -60,7 +66,7 @@ export class ModelImpl implements Model {
   readonly name: string;
   readonly aliases: readonly string[];
   readonly protocol: Protocol;
-  readonly baseUrl: string;
+  readonly baseUrl: string | undefined;
   readonly headers: Readonly<Record<string, string>>;
   readonly capabilities: ModelCapability;
   readonly maxContextSize: number;
@@ -72,17 +78,12 @@ export class ModelImpl implements Model {
   readonly authProvider: AuthProvider;
   readonly thinkingEffort: ThinkingEffort | null;
   readonly alwaysThinking: boolean;
+  readonly providerType?: string;
   readonly providerName: string;
 
   private readonly protocolRegistry: ProtocolAdapterRegistry;
   private readonly providerOptions: ProtocolProviderOptions;
 
-  /**
-   * Chain of transforms applied to the raw kosong `ChatProvider` before use.
-   * `withThinking` / `withMaxCompletionTokens` / `withGenerationKwargs`
-   * append to this chain; the actual `ChatProvider` is materialized lazily
-   * on the first `.request()` and cached.
-   */
   private readonly transforms: readonly ((p: ChatProvider) => ChatProvider)[];
   private cachedChatProvider: ChatProvider | undefined;
 
@@ -105,10 +106,8 @@ export class ModelImpl implements Model {
     this.providerOptions = init.providerOptions ?? {};
     this.transforms = transforms;
     this.alwaysThinking = init.alwaysThinking;
+    this.providerType = init.providerType;
     this.providerName = init.providerName;
-    // thinkingEffort is materialized via `withThinking` — the transform chain
-    // owns the actual value applied to the underlying ChatProvider; we track
-    // the most recent effort on the wrapper so callers can inspect it.
     this.thinkingEffort = null;
   }
 
@@ -133,6 +132,7 @@ export class ModelImpl implements Model {
         supportEfforts: this.supportEfforts,
         defaultEffort: this.defaultEffort,
         alwaysThinking: this.alwaysThinking,
+        providerType: this.providerType,
         providerName: this.providerName,
         authProvider: this.authProvider,
         protocolRegistry: this.protocolRegistry,
@@ -184,7 +184,6 @@ export class ModelImpl implements Model {
     });
   }
 
-  /** Materialize the transformed kosong ChatProvider. Cached per Model instance. */
   private resolveChatProvider(): ChatProvider {
     if (this.cachedChatProvider !== undefined) return this.cachedChatProvider;
     let provider = this.protocolRegistry.createChatProvider({
@@ -199,9 +198,13 @@ export class ModelImpl implements Model {
     return provider;
   }
 
-  request(input: LLMRequestInput, signal?: AbortSignal): AsyncIterable<LLMEvent> {
+  request(
+    input: LLMRequestInput,
+    signal?: AbortSignal,
+    options?: ModelRequestOptions,
+  ): AsyncIterable<LLMEvent> {
     const queue = new AsyncEventQueue<LLMEvent>();
-    void this.runRequest(input, signal, queue).then(
+    void this.runRequest(input, signal, queue, options).then(
       () => queue.end(),
       (error) => queue.fail(error),
     );
@@ -228,6 +231,7 @@ export class ModelImpl implements Model {
     input: LLMRequestInput,
     signal: AbortSignal | undefined,
     queue: AsyncEventQueue<LLMEvent>,
+    options?: ModelRequestOptions,
   ): Promise<void> {
     signal?.throwIfAborted();
     const provider = this.resolveChatProvider();
@@ -270,20 +274,16 @@ export class ModelImpl implements Model {
               streamEndedAt = Date.now();
               decodeStats = stats;
             },
+            onTraceId: options?.onTraceId,
             responseFormat: input.responseFormat,
           },
         );
       });
     } catch (error) {
-      // Cancellation is control flow, not a provider failure — abort shapes
-      // pass through untouched. Everything else crosses the provider boundary
-      // here, so it is translated into a coded `Error2` exactly once.
       if (isAbortError(error) || signal?.aborted === true) throw error;
       throw translateProviderError(error);
     }
 
-    // Non-streaming providers still populate `result.message`; surface its
-    // content and tool calls as parts so downstream consumers see them.
     if (!streamedAnyPart) {
       for (const part of result.message.content) {
         firstChunkAt ??= Date.now();
@@ -304,6 +304,7 @@ export class ModelImpl implements Model {
       providerFinishReason: result.finishReason ?? undefined,
       rawFinishReason: result.rawFinishReason ?? undefined,
       id: result.id ?? undefined,
+      traceId: result.traceId ?? undefined,
     });
     if (firstChunkAt !== undefined) {
       queue.push({
@@ -333,7 +334,7 @@ export class ModelImpl implements Model {
     try {
       return await run(refreshedAuth);
     } catch (error) {
-      if (isUnauthorizedStatusError(error)) throw toLoginRequiredError(error);
+      if (isUnauthorizedStatusError(error)) throw toProviderAuthError(error);
       throw error;
     }
   }
@@ -347,11 +348,13 @@ function isUnauthorizedStatusError(error: unknown): error is APIStatusError {
   return error instanceof APIStatusError && error.statusCode === 401;
 }
 
-function toLoginRequiredError(error: APIStatusError): Error2 {
+function toProviderAuthError(error: APIStatusError): Error2 {
+  const reason = sanitizeStatusErrorMessage(error.message);
   return new Error2(
-    ErrorCodes.AUTH_LOGIN_REQUIRED,
-    'OAuth provider credentials were rejected. Send /login to login.',
+    ErrorCodes.PROVIDER_AUTH_ERROR,
+    reason.length > 0 ? reason : 'OAuth provider credentials were rejected.',
     {
+      name: error.name,
       cause: error,
       details: {
         statusCode: error.statusCode,
@@ -413,19 +416,12 @@ export function buildStreamTiming(
   return timing;
 }
 
-/**
- * Simple bearer/api-key AuthProvider suitable for the flat-Model case.
- * Wraps a static or provider-backed token retriever with optional force-
- * refresh semantics.
- */
 export class StaticAuthProvider implements AuthProvider {
   readonly canRefresh = false;
 
   constructor(private readonly apiKey: string | undefined) {}
   async getAuth(): Promise<ProviderRequestAuth | undefined> {
     if (this.apiKey === undefined || this.apiKey.trim().length === 0) return undefined;
-    // kosong's provider adapters read the bearer/api token from `apiKey`
-    // (see `requireProviderApiKey`); a headers-only shape is rejected.
     return { apiKey: this.apiKey };
   }
 }

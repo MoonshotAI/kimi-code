@@ -9,18 +9,35 @@
  * stateless projector over the global provider / model / credential state.
  */
 
-import type { AuthSummary } from '@moonshot-ai/protocol';
+import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+
+export const managedProviderStatusSchema = z.enum([
+  'authenticated',
+  'expired',
+  'revoked',
+  'unauthenticated',
+]);
+export type ManagedProviderStatus = z.infer<typeof managedProviderStatusSchema>;
+
+export const managedProviderSummarySchema = z.object({
+  name: z.string().min(1),
+  status: managedProviderStatusSchema,
+});
+export type ManagedProviderSummary = z.infer<typeof managedProviderSummarySchema>;
+
+export const authSummarySchema = z.object({
+  ready: z.boolean(),
+  providers_count: z.number().int().nonnegative(),
+  default_model: z.string().nullable(),
+  managed_provider: managedProviderSummarySchema.nullable(),
+});
+export type AuthSummary = z.infer<typeof authSummarySchema>;
 
 export interface IAuthLegacyService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Compute the v1 readiness snapshot (`GET /api/v1/auth`). Cheap (one provider
-   * list + one config read + one cached-token probe); safe to call on every
-   * request. Never throws on provider state — the probe returns 200 regardless.
-   */
   get(): Promise<AuthSummary>;
 }
 

@@ -16,9 +16,10 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'permission-mode-test';
@@ -47,7 +48,6 @@ let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let log: IAppendLogStore;
 let svc: IAgentPermissionModeService;
-/** Whether the last returned reminder is still live in (simulated) history. */
 let reminderLive = false;
 
 beforeEach(() => {
@@ -57,18 +57,19 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
   ix.stub(IAgentContextInjectorService, injectorStub);
   ix.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
   log = ix.get(IAppendLogStore);
+  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
   svc = ix.get(IAgentPermissionModeService);
 });
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, KEY)) {
+async function readRecords(): Promise<WireRecord[]> {
+  await ix.get(IWireService).flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -85,12 +86,10 @@ async function runRegisteredInjection(): Promise<string | undefined> {
   if (typeof content !== 'string' && content !== undefined) {
     throw new Error('expected permission mode injection provider to return text');
   }
-  // The injector appends returned content to history, so it is live afterwards.
   if (content !== undefined) reminderLive = true;
   return content;
 }
 
-/** Simulate compaction / undo splicing the live reminder out of history. */
 function spliceReminderOut(): void {
   reminderLive = false;
 }
@@ -106,12 +105,13 @@ describe('AgentPermissionModeService (wire-backed)', () => {
 
     expect(svc.mode).toBe('manual');
 
+    svc.setMode('manual');
+    expect(changes).toEqual([]);
+
     svc.setMode('auto');
     expect(svc.mode).toBe('auto');
     expect(changes).toEqual([{ mode: 'auto', previousMode: 'manual' }]);
 
-    // Re-dispatching the current mode is a no-op: apply returns the same
-    // reference, so the wire emits no change and onDidChangeMode does not fire again.
     svc.setMode('auto');
     expect(changes).toEqual([{ mode: 'auto', previousMode: 'manual' }]);
   });
@@ -126,13 +126,23 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     expect('payload' in records[0]!).toBe(false);
   });
 
+  it('persists an explicitly configured manual mode when it matches the initial value', async () => {
+    svc.setMode('manual');
+
+    expect(await readRecords()).toEqual([
+      { type: 'permission.set_mode', mode: 'manual', time: expect.any(Number) },
+    ]);
+  });
+
   it('registers auto-mode reminder injection through the injection service', async () => {
     expect(registeredInjection?.name).toBe('permission_mode');
 
     expect(await runRegisteredInjection()).toBeUndefined();
 
     svc.setMode('auto');
-    expect(await runRegisteredInjection()).toContain('Auto permission mode is active');
+    const autoReminder = await runRegisteredInjection();
+    expect(autoReminder).toContain('Auto permission mode is active');
+    expect(autoReminder).toContain('ExitPlanMode is also approved automatically');
     expect(await runRegisteredInjection()).toBeUndefined();
 
     svc.setMode('manual');
@@ -159,11 +169,6 @@ describe('AgentPermissionModeService (wire-backed)', () => {
   it('re-announces auto mode on a fresh instance even with a live reminder in history (restore)', async () => {
     svc.setMode('auto');
 
-    // Simulate a fresh engine instance after session restore: no in-memory
-    // lastMode, but history still carries a live reminder from before the
-    // restart (the injector re-syncs positions on restore). Positions are
-    // content-agnostic, so the survivor may even be a stale EXIT reminder —
-    // auto mode must still be announced, exactly as v1 does.
     let restoredProvider: ContextInjectionProvider | undefined;
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IAgentContextInjectorService, {
@@ -194,22 +199,25 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.set(
-      IAgentWireService,
-      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'permission-mode-replay' }]),
-    );
     const log2 = ix2.get(IAppendLogStore);
-    const fresh = ix2.get(IAgentWireService);
+    const fresh = registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-mode-replay'), {
+      log: log2,
+    });
 
-    void fresh.replay({ type: 'permission.set_mode', mode: 'auto' });
+    await restoreTestAgentWire(
+      fresh,
+      log2,
+      testWireScope(SCOPE, 'permission-mode-replay'),
+      [{ type: 'permission.set_mode', mode: 'auto' }],
+    );
 
     expect(fresh.getModel(PermissionModeModel)).toBe('auto');
 
-    // Replay is silent: nothing is written back to the wire log.
-    const written: PersistedRecord[] = [];
-    for await (const record of log2.read<PersistedRecord>(SCOPE, 'permission-mode-replay')) {
+    const written: WireRecord[] = [];
+    for await (const record of log2.read<WireRecord>(testWireScope(SCOPE, 'permission-mode-replay'), AGENT_WIRE_RECORD_KEY)) {
       written.push(record);
     }
-    expect(written).toEqual([]);
+    expect(written[0]).toMatchObject({ type: 'metadata' });
+    expect(written.slice(1)).toEqual([{ type: 'permission.set_mode', mode: 'auto' }]);
   });
 });

@@ -29,7 +29,7 @@ export function registerScopedService<T>(
   id: ServiceIdentifier<T>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
-  type: InstantiationType = InstantiationType.Delayed,
+  type: InstantiationType = InstantiationType.Eager,
   domain: string = 'unknown',
 ): void {
   const descriptor = new SyncDescriptor<T>(
@@ -70,11 +70,8 @@ export interface IScopeHandle<K extends LifecycleScope = LifecycleScope> {
   dispose(): void;
 }
 
-/** Handle to the process-root App scope. */
 export type IAppScopeHandle = IScopeHandle<LifecycleScope.App>;
-/** Handle to a Session scope (child of App). */
 export type ISessionScopeHandle = IScopeHandle<LifecycleScope.Session>;
-/** Handle to an Agent scope (child of Session). */
 export type IAgentScopeHandle = IScopeHandle<LifecycleScope.Agent>;
 
 function buildCollection(kind: LifecycleScope, extra?: ScopeSeed): ServiceCollection {

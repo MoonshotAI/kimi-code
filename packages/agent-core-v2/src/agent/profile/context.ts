@@ -22,21 +22,11 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
 
-// Soft budget for the combined AGENTS.md content injected into the system
-// prompt. ~32 KB is roughly 8K–20K tokens (≈1.5–3% of a 262144-token context),
-// large enough to leave the bulk of the context window to the conversation
-// while still catching accidental oversized instruction files. Exceeding it no
-// longer truncates content; it only surfaces a user-visible warning so the user
-// can trim oversized instruction files.
 export const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 
 export const LIST_DIR_ROOT_WIDTH = 30;
 export const LIST_DIR_CHILD_WIDTH = 10;
 
-/**
- * Small dep bag threaded through the context helpers so they only depend on
- * the filesystem primitive plus the host home directory, not on `IKaos`.
- */
 interface ProfileContextDeps {
   readonly fs: IHostFileSystem;
   readonly homeDir: string;
@@ -46,7 +36,6 @@ export interface PreparedSystemPromptContext extends SystemPromptContext {
   readonly cwdListing?: string;
   readonly agentsMd?: string;
   readonly additionalDirsInfo?: string;
-  /** Present when the combined AGENTS.md content exceeds the recommended size. */
   readonly agentsMdWarning?: string;
 }
 
@@ -95,9 +84,13 @@ async function loadAgentsMdForRoots(
 ): Promise<LoadedAgentsMd> {
   const discovered: AgentFile[] = [];
   const seen = new Set<string>();
+  const loadWarnings: string[] = [];
+  const warnLoad = (message: string): void => {
+    loadWarnings.push(message);
+  };
 
   const collect = async (path: string): Promise<boolean> => {
-    const file = await readAgentFile(deps, path);
+    const file = await readAgentFile(deps, path, warnLoad);
     if (file === undefined) return false;
     const key = normalize(file.path);
     if (seen.has(key)) return false;
@@ -106,14 +99,10 @@ async function loadAgentsMdForRoots(
     return true;
   };
 
-  // User-level files come first so any project-level AGENTS.md overrides them.
-  // The brand dir follows KIMI_CODE_HOME (default ~/.kimi-code); the generic
-  // .agents dir stays under the real OS home so it can be shared across tools.
   const realHome = deps.homeDir;
   const brandDir = brandHome ?? join(realHome, '.kimi-code');
   await collect(join(brandDir, 'AGENTS.md'));
 
-  // Generic user-level dir (.agents) matches skill discovery.
   const genericDirs = [join(realHome, '.agents')];
   const genericFiles = genericDirs.flatMap((dir) =>
     ['AGENTS.md', 'agents.md'].map((name) => join(dir, name)),
@@ -137,12 +126,14 @@ async function loadAgentsMdForRoots(
 
   const content = renderAgentFiles(discovered);
   const totalBytes = byteLength(content);
-  const warning =
-    totalBytes > AGENTS_MD_RECOMMENDED_MAX_BYTES
-      ? `AGENTS.md total ${formatKB(totalBytes)} KB exceeds the recommended ` +
+  if (totalBytes > AGENTS_MD_RECOMMENDED_MAX_BYTES) {
+    loadWarnings.push(
+      `AGENTS.md total ${formatKB(totalBytes)} KB exceeds the recommended ` +
         `${formatKB(AGENTS_MD_RECOMMENDED_MAX_BYTES)} KB. Large instruction files ` +
-        `increase cost and may impact performance; consider trimming.`
-      : undefined;
+        `increase cost and may impact performance; consider trimming.`,
+    );
+  }
+  const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
   return { content, warning };
 }
 
@@ -194,20 +185,36 @@ interface AgentFile {
 async function readAgentFile(
   deps: ProfileContextDeps,
   path: string,
+  warn: (message: string) => void,
 ): Promise<AgentFile | undefined> {
-  if (!(await isFile(deps, path))) return undefined;
-  const content = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
+  if (!(await isFile(deps, path))) {
+    if (await entryExists(deps, path)) {
+      warn(`Instruction file at ${path} exists but is not a readable regular file; skipping.`);
+    }
+    return undefined;
+  }
+  let content: string;
+  try {
+    content = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
+  } catch {
+    warn(`Instruction file at ${path} could not be read; skipping.`);
+    return undefined;
+  }
   if (content.length === 0) return undefined;
   return { path, content };
 }
 
 async function pathExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
   try {
-    await deps.fs.stat(path);
+    await deps.fs.lstat(path);
     return true;
   } catch {
     return false;
   }
+}
+
+async function entryExists(deps: ProfileContextDeps, path: string): Promise<boolean> {
+  return pathExists(deps, path);
 }
 
 async function isFile(deps: ProfileContextDeps, path: string): Promise<boolean> {
@@ -250,11 +257,6 @@ function dedupeDirs(dirs: readonly string[]): string[] {
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// listDirectory — compact 2-level directory tree for LLM context.
-// Port of v1 `packages/agent-core/src/tools/support/list-directory.ts`, driven
-// through the os `IHostFileSystem` (`readdir` + `stat`).
-// ---------------------------------------------------------------------------
 
 interface ListDirectoryOptions {
   readonly collapseHiddenDirs?: boolean;

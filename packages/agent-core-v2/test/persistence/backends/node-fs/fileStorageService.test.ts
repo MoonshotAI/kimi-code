@@ -37,13 +37,9 @@ describe('FileStorageService — file permissions', () => {
   });
 
   it.skipIf(isWin)('defaults to the process umask when modes are omitted', async () => {
-    // Backwards compatibility: an unconfigured FileStorageService must not
-    // start tightening permissions on its own — bootstrap opts into 0700/0600.
     const svc = new FileStorageService(dir);
     await svc.write('scope', 'k.json', encoder.encode('{}'));
     const fileStat = await stat(join(dir, 'scope', 'k.json'));
-    // Owner-read/write is always set; we only assert the file is readable by
-    // its owner (the lower bound) rather than pinning an exact mode.
     expect(fileStat.mode & 0o400).toBe(0o400);
   });
 });
@@ -68,7 +64,6 @@ describe('FileStorageService — error translation', () => {
 
   it.skipIf(isWin)('translates non-ENOENT failures into StorageError(io_failed)', async () => {
     const svc = new FileStorageService(dir);
-    // Reading a directory fails with EISDIR — an I/O failure, not a miss.
     await mkdir(join(dir, 'scope', 'adir'), { recursive: true });
     await expect(svc.read('scope', 'adir')).rejects.toSatisfy((error: unknown) => {
       expect(error).toMatchObject({ code: 'storage.io_failed' });
@@ -85,8 +80,6 @@ describe('FileStorageService — error translation', () => {
 
   it.skipIf(isWin)('translates write failures into StorageError(io_failed)', async () => {
     const svc = new FileStorageService(dir);
-    // A file blocks the scope directory: mkdir('<dir>/blocked/k') fails
-    // (EEXIST/ENOTDIR depending on platform and fs implementation).
     await writeFile(join(dir, 'blocked'), 'x');
     await expect(svc.write('blocked', 'k.json', encoder.encode('{}'))).rejects.toMatchObject({
       code: 'storage.io_failed',

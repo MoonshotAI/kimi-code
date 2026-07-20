@@ -14,7 +14,7 @@ import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
-import type { GoalBudgetLimits } from '#/agent/goal/types';
+import type { GoalBudgetLimits, GoalSnapshot } from '#/agent/goal/types';
 import DESCRIPTION from './set-goal-budget.md?raw';
 
 const MIN_REASONABLE_TIME_BUDGET_MS = 1_000;
@@ -23,8 +23,6 @@ const BUDGET_UNITS = ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', '
 
 export const SetGoalBudgetToolInputSchema = z
   .object({
-    // Keep the provider-facing schema simple. Fractional turn/token budgets
-    // are normalized during execution instead of rejected at schema validation.
     value: z.number().positive().describe('The positive numeric budget value.'),
     unit: z.enum(BUDGET_UNITS),
   })
@@ -42,7 +40,11 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
   resolveExecution(args: SetGoalBudgetToolInput): ToolExecution {
     const normalizedArgs = normalizeBudgetInput(args);
     const budget = budgetLimitsFromInput(normalizedArgs);
-    const overBudgetAfterSet = budget !== null && this.wouldExceedBudget(budget);
+    const goalAtResolution = this.goal.getGoal().goal;
+    const overBudgetAfterSet =
+      budget !== null &&
+      goalAtResolution !== null &&
+      this.wouldExceedBudget(goalAtResolution, budget);
     return {
       description: `Setting goal budget: ${formatBudget(
         normalizedArgs.value,
@@ -50,9 +52,16 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
       )}`,
       stopBatchAfterThis: overBudgetAfterSet,
       approvalRule: this.name,
-      execute: async () => {
-        if (this.goal.getGoal().goal === null) {
+      execute: async ({ turnId }) => {
+        const currentGoal = this.goal.getGoal().goal;
+        if (currentGoal === null) {
           return { output: 'Goal budget not set: no current goal.' };
+        }
+        if (
+          currentGoal.goalId !== goalAtResolution?.goalId &&
+          !this.goal.isGoalToolTarget(turnId, currentGoal.goalId)
+        ) {
+          return { output: 'Goal budget not set: the current goal changed.' };
         }
         if (budget === null) {
           return {
@@ -77,9 +86,7 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
     };
   }
 
-  private wouldExceedBudget(newLimits: GoalBudgetLimits): boolean {
-    const goal = this.goal.getGoal().goal;
-    if (goal === null) return false;
+  private wouldExceedBudget(goal: GoalSnapshot, newLimits: GoalBudgetLimits): boolean {
     const current = goal.budget;
     const turnBudget = newLimits.turnBudget ?? current.turnBudget;
     const tokenBudget = newLimits.tokenBudget ?? current.tokenBudget;

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ToolCall } from '#/app/llmProtocol/message';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -101,8 +101,6 @@ describe('AgentPermissionPolicyService chain', () => {
     });
 
     registration.dispose();
-    // After disposal the built-in chain no longer sees the deny-all policy, so
-    // a benign builtin tool is no longer rejected by it.
     await expect(evaluate({ toolName: 'Read', args: { path: 'src/a.ts' } })).resolves.not.toMatchObject({
       policyName: 'deny-all',
     });

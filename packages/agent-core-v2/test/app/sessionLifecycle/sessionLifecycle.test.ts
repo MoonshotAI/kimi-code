@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isAbsolute, resolve } from 'node:path';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
@@ -15,22 +17,22 @@ import { Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IEventService } from '#/app/event/event';
 import {
-  type AgentTaskHooks,
-  type AgentTaskStopHookContext,
   IAgentLifecycleService,
+  MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
+import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
+import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { SessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycleService';
-import { ISessionActivityKernel } from '#/activity/activity';
-import { SessionActivityKernel } from '#/activity/sessionActivityKernel';
+import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
-import { createHooks } from '#/hooks';
-import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
@@ -44,7 +46,6 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
-import { stubSessionActivityKernel } from '../../activity/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 function bootstrapStub(): IBootstrapService {
@@ -53,9 +54,44 @@ function bootstrapStub(): IBootstrapService {
     homeDir: '/tmp',
     sessionScope: (workspaceId: string, sessionId: string) =>
       `sessions/${workspaceId}/${sessionId}`,
+    agentScope: (workspaceId: string, sessionId: string, agentId: string) =>
+      `sessions/${workspaceId}/${sessionId}/agents/${agentId}`,
     sessionDir: (workspaceId: string, sessionId: string) =>
       `/tmp/sessions/${workspaceId}/${sessionId}`,
   } as IBootstrapService;
+}
+
+function tmpBootstrapStub(root: string): IBootstrapService {
+  return {
+    sessionsDir: join(root, 'sessions'),
+    homeDir: root,
+    sessionScope: (workspaceId: string, sessionId: string) =>
+      `sessions/${workspaceId}/${sessionId}`,
+    agentScope: (workspaceId: string, sessionId: string, agentId: string) =>
+      `sessions/${workspaceId}/${sessionId}/agents/${agentId}`,
+    sessionDir: (workspaceId: string, sessionId: string) =>
+      join(root, 'sessions', workspaceId, sessionId),
+  } as IBootstrapService;
+}
+
+function cronStoreStub(
+  initial: readonly CronTask[] = [],
+): ICronTaskPersistence & { readonly docs: Map<string, CronTask> } {
+  const docs = new Map(initial.map((task) => [task.id, task]));
+  return {
+    _serviceBrand: undefined,
+    docs,
+    get: (_workspaceId, taskId) => Promise.resolve(docs.get(taskId)),
+    list: () => Promise.resolve([...docs.values()]),
+    save: (_workspaceId, task) => {
+      docs.set(task.id, task);
+      return Promise.resolve();
+    },
+    delete: (_workspaceId, taskId) => {
+      docs.delete(taskId);
+      return Promise.resolve();
+    },
+  };
 }
 
 function metadataStub(): ISessionMetadata {
@@ -119,6 +155,7 @@ function workspaceRegistryStub(): IWorkspaceRegistry {
     _serviceBrand: undefined,
     list: () => Promise.resolve([]),
     get: () => Promise.resolve(undefined),
+    resolveAliasIds: (id) => Promise.resolve([id]),
     createOrTouch: (root, name) =>
       Promise.resolve<Workspace>({
         id: 'wd_stub',
@@ -155,6 +192,7 @@ function persistentWorkspaceRegistryStub(): IWorkspaceRegistry {
     _serviceBrand: undefined,
     list: () => Promise.resolve([...workspaces.values()]),
     get: (id) => Promise.resolve(workspaces.get(id)),
+    resolveAliasIds: (id) => Promise.resolve([id]),
     createOrTouch: (root, name) => {
       const id = encodeWorkDirKey(root);
       const now = 1;
@@ -234,23 +272,26 @@ function atomicDocumentStoreStub(): IAtomicDocumentStore {
 function agentLifecycleStub(): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
-    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-    onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
     onDidCreate: () => ({ dispose: () => {} }),
-    onDidCreateMain: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),
-    whenReady: () => Promise.resolve(undefined),
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
-    ensureMcpReady: () => Promise.resolve(),
     fork: () => Promise.reject(new Error('not implemented')),
-    run: () => {
-      throw new Error('not implemented');
-    },
-    getHandle: () => undefined,
+    get: () => undefined,
     list: () => [],
     remove: () => Promise.resolve(),
+    broadcastPermissionMode: () => {},
+  };
+}
+
+function sessionMcpServiceStub(
+  ensureMcpReady: () => Promise<void> = () => Promise.resolve(),
+): ISessionMcpService {
+  return {
+    _serviceBrand: undefined,
+    ensureMcpReady,
+    connectionManager: () => {
+      throw new Error('not implemented');
+    },
   };
 }
 
@@ -267,8 +308,7 @@ function agentLifecycleWithMainStub(): IAgentLifecycleService {
   } as IAgentScopeHandle;
   return {
     ...agentLifecycleStub(),
-    getHandle: (id) => (id === MAIN_AGENT_ID ? main : undefined),
-    whenReady: (id) => Promise.resolve(id === MAIN_AGENT_ID ? main : undefined),
+    get: (id) => (id === MAIN_AGENT_ID ? main : undefined),
   };
 }
 
@@ -312,8 +352,7 @@ function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}):
   });
   const lifecycle: IAgentLifecycleService = {
     ...agentLifecycleStub(),
-    getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
-    whenReady: (id: string) => Promise.resolve(id === MAIN_AGENT_ID ? mainHandle : undefined),
+    get: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
     create,
   };
   return { lifecycle, enter, create };
@@ -355,10 +394,12 @@ class RecordingSessionExternalHooksService
 describe('SessionLifecycleService', () => {
   let host: ScopedTestHost | undefined;
   let telemetryRecords: TelemetryRecord[];
+  let tmpRoots: string[];
 
   beforeEach(() => {
     recordedSessionHookEvents = [];
     telemetryRecords = [];
+    tmpRoots = [];
     _clearScopedRegistryForTests();
     registerScopedService(
       LifecycleScope.App,
@@ -375,17 +416,18 @@ describe('SessionLifecycleService', () => {
       'externalHooks',
     );
     registerScopedService(
-      LifecycleScope.Session,
-      ISessionActivityKernel,
-      SessionActivityKernel,
+      LifecycleScope.App,
+      IHostFileSystem,
+      HostFileSystem,
       InstantiationType.Delayed,
-      'activity',
+      'hostFs',
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     host?.dispose();
     host = undefined;
+    await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
   function build(extra: ReturnType<typeof stubPair>[] = []): ISessionLifecycleService {
@@ -400,14 +442,21 @@ describe('SessionLifecycleService', () => {
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
       stubPair(IEventService, eventStub()),
       stubPair(IAgentLifecycleService, agentLifecycleStub()),
+      stubPair(ISessionMcpService, sessionMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
-      stubPair(ISessionActivityKernel, stubSessionActivityKernel()),
       stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
+      stubPair(ICronTaskPersistence, cronStoreStub()),
       ...extra,
     ]);
     return host.app.accessor.get(ISessionLifecycleService);
+  }
+
+  async function makeTmpRoot(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-fork-test-'));
+    tmpRoots.push(root);
+    return root;
   }
 
   it('create / get / list / close', async () => {
@@ -424,9 +473,17 @@ describe('SessionLifecycleService', () => {
   it('create seeds identity and materializes metadata', async () => {
     const svc = build();
     const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
-    // create() awaits ISessionMetadata.ready, so a resolved handle implies the
-    // metadata service was resolved inside the new session scope.
     expect(h.kind).toBe(LifecycleScope.Session);
+  });
+
+  it('create forwards caller-supplied MCP servers to the session MCP initial load', async () => {
+    const ensureMcpReady = vi.fn(() => Promise.resolve());
+    const svc = build([
+      stubPair(ISessionMcpService, sessionMcpServiceStub(ensureMcpReady)),
+    ]);
+    const mcpServers = { docs: { transport: 'http', url: 'https://mcp.example.com' } } as const;
+    await svc.create({ sessionId: 's1', workDir: '/tmp/proj', mcpServers });
+    expect(ensureMcpReady).toHaveBeenCalledWith(mcpServers);
   });
 
   it('create appends the session to the shared session_index.jsonl', async () => {
@@ -440,9 +497,13 @@ describe('SessionLifecycleService', () => {
       }),
     ]);
 
-    await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
-    const workspaceId = encodeWorkDirKey('/tmp/proj');
+    // The index entry addresses the session under the registry-resolved
+    // workspace id — the same id seeding the session's storage scope — not a
+    // recomputed encodeWorkDirKey, so the v1 reader finds it in the bucket it
+    // was materialized into.
+    const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
     expect(appended).toEqual([
       {
         scope: '',
@@ -451,6 +512,46 @@ describe('SessionLifecycleService', () => {
           sessionId: 's1',
           sessionDir: `/tmp/sessions/${workspaceId}/s1`,
           workDir: '/tmp/proj',
+        },
+      },
+    ]);
+  });
+
+  it('indexes the session under the registry-resolved id when the workDir is an alias spelling', async () => {
+    const appended: unknown[] = [];
+    const svc = build([
+      stubPair(IAppendLogStore, {
+        ...appendLogStoreStub(),
+        append: (scope: string, key: string, record: unknown) => {
+          appended.push({ scope, key, record });
+        },
+      }),
+      stubPair(IWorkspaceRegistry, {
+        ...workspaceRegistryStub(),
+        // As the real registry does after folding: the id minted for the
+        // first-seen spelling is reused for the alias.
+        createOrTouch: (root: string, name?: string) =>
+          Promise.resolve({
+            id: 'wd_first_spelling',
+            root,
+            name: name ?? 'proj',
+            createdAt: 0,
+            lastOpenedAt: 0,
+          }),
+      }),
+    ]);
+
+    const handle = await svc.create({ sessionId: 's1', workDir: 'c:\\users\\foo\\proj' });
+
+    expect(handle.accessor.get(ISessionContext).workspaceId).toBe('wd_first_spelling');
+    expect(appended).toEqual([
+      {
+        scope: '',
+        key: 'session_index.jsonl',
+        record: {
+          sessionId: 's1',
+          sessionDir: '/tmp/sessions/wd_first_spelling/s1',
+          workDir: 'c:\\users\\foo\\proj',
         },
       },
     ]);
@@ -516,6 +617,7 @@ describe('SessionLifecycleService', () => {
               }
             : undefined,
         ),
+      resolveAliasIds: (id) => Promise.resolve([id]),
       createOrTouch: (root, name) =>
         Promise.resolve({
           id: encodeWorkDirKey(root),
@@ -605,6 +707,52 @@ describe('SessionLifecycleService', () => {
     expect(archived).toBe(false);
   });
 
+  it('forks successfully even while the source has a busy agent (crash-equivalent copy)', async () => {
+    const busyAgent = {
+      id: MAIN_AGENT_ID,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: (token: unknown) => {
+          if (token === IAgentActivityView) {
+            return {
+              state: () => ({
+                lifecycle: 'ready',
+                turn: { turnId: 0 },
+                background: [],
+              }),
+            };
+          }
+          throw new Error('unexpected service access');
+        },
+      },
+      dispose: () => {},
+    } as unknown as IAgentScopeHandle;
+    const svc = build([
+      stubPair(IWorkspaceRegistry, {
+        ...workspaceRegistryStub(),
+        get: () =>
+          Promise.resolve({
+            id: 'wd_stub',
+            root: '/tmp/proj',
+            name: 'stub',
+            createdAt: 0,
+            lastOpenedAt: 0,
+          }),
+      }),
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        list: () => [busyAgent],
+      }),
+    ]);
+
+    await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+    // Fork never gates on activity: a mid-work copy is crash-equivalent, and
+    // replay already normalizes that on restore.
+    const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+    expect(target.id).toBe('dst');
+  });
+
   it('fires onDidCreateSession with the new handle', async () => {
     const svc = build();
     let captured: { readonly sessionId: string } | undefined;
@@ -615,16 +763,16 @@ describe('SessionLifecycleService', () => {
     expect(captured).toMatchObject({ sessionId: 's1', handle: h, source: 'startup' });
   });
 
-  it('emits session_started with resumed: false on create', async () => {
+  it('emits session_started with resumed: false and the bound session id on create', async () => {
     const svc = build();
     await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     expect(telemetryRecords).toContainEqual({
       event: 'session_started',
-      properties: { resumed: false },
+      properties: { sessionId: 's1', resumed: false },
     });
   });
 
-  it('emits session_started with resumed: true on resume', async () => {
+  it('emits session_started with resumed: true and the bound session id on resume', async () => {
     const workDir = '/tmp/proj';
     const svc = build([
       stubPair(IWorkspaceRegistry, persistentWorkspaceRegistryStub()),
@@ -636,11 +784,11 @@ describe('SessionLifecycleService', () => {
 
     expect(telemetryRecords).toContainEqual({
       event: 'session_started',
-      properties: { resumed: true },
+      properties: { sessionId: 's1', resumed: true },
     });
   });
 
-  it('emits session_load_failed with the error code when resume fails, then rethrows', async () => {
+  it('emits session_load_failed with the bound session id and the error code when resume fails, then rethrows', async () => {
     const svc = build([
       stubPair(ISessionIndex, {
         ...sessionIndexStub(),
@@ -651,11 +799,11 @@ describe('SessionLifecycleService', () => {
     await expect(svc.resume('s1')).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
     expect(telemetryRecords).toContainEqual({
       event: 'session_load_failed',
-      properties: { reason: ErrorCodes.SESSION_NOT_FOUND },
+      properties: { sessionId: 's1', reason: ErrorCodes.SESSION_NOT_FOUND },
     });
   });
 
-  it('emits session_load_failed with the error name for plain errors', async () => {
+  it('emits session_load_failed with the bound session id and the error name for plain errors', async () => {
     const svc = build([
       stubPair(ISessionIndex, {
         ...sessionIndexStub(),
@@ -666,7 +814,7 @@ describe('SessionLifecycleService', () => {
     await expect(svc.resume('s1')).rejects.toBeInstanceOf(TypeError);
     expect(telemetryRecords).toContainEqual({
       event: 'session_load_failed',
-      properties: { reason: 'TypeError' },
+      properties: { sessionId: 's1', reason: 'TypeError' },
     });
   });
 
@@ -692,10 +840,7 @@ describe('SessionLifecycleService', () => {
       resolveMcpReady = resolve;
     });
     const svc = build([
-      stubPair(IAgentLifecycleService, {
-        ...agentLifecycleStub(),
-        ensureMcpReady: () => mcpReady,
-      }),
+      stubPair(ISessionMcpService, sessionMcpServiceStub(() => mcpReady)),
     ]);
 
     let settled = false;
@@ -718,17 +863,13 @@ describe('SessionLifecycleService', () => {
     });
     const svc = build([
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
-      stubPair(IAgentLifecycleService, {
-        ...agentLifecycleWithMainStub(),
-        ensureMcpReady: () => mcpReady,
-      }),
+      stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
+      stubPair(ISessionMcpService, sessionMcpServiceStub(() => mcpReady)),
     ]);
 
     const resumed = svc.resume('s1');
     await tick();
 
-    // materialize has registered the handle in `sessions` and is now blocked on
-    // ensureMcpReady with `resuming` set — the handle must not be observable yet.
     expect(svc.get('s1')).toBeUndefined();
     expect(svc.list()).toEqual([]);
 
@@ -765,9 +906,6 @@ describe('SessionLifecycleService', () => {
     expect(archived).toEqual(['s1']);
   });
 
-  // Mirrors v1's runtime.test.ts additional-dirs coverage: session
-  // creation/resume must merge `.kimi-code/local.toml` dirs with caller
-  // additionalDirs into the session workspace context.
   describe('additional dirs', () => {
     beforeEach(() => {
       registerScopedService(
@@ -853,7 +991,7 @@ describe('SessionLifecycleService', () => {
         }),
         stubPair(IAgentLifecycleService, {
           ...agentLifecycleStub(),
-          getHandle: () => mainHandle,
+          get: () => mainHandle,
         }),
       ]);
 
@@ -866,11 +1004,6 @@ describe('SessionLifecycleService', () => {
     it('fork inherits project-local dirs', async () => {
       const svc = build([
         stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub(['/tmp/extra'])),
-        stubPair(ISessionActivity, {
-          _serviceBrand: undefined,
-          status: () => 'idle' as const,
-          isIdle: () => true,
-        }),
         stubPair(IWorkspaceRegistry, {
           ...workspaceRegistryStub(),
           get: () =>
@@ -901,11 +1034,6 @@ describe('SessionLifecycleService', () => {
 
     it('fork mints a session_-prefixed lowercase id when newSessionId is omitted', async () => {
       const svc = build([
-        stubPair(ISessionActivity, {
-          _serviceBrand: undefined,
-          status: () => 'idle' as const,
-          isIdle: () => true,
-        }),
         stubPair(IWorkspaceRegistry, {
           ...workspaceRegistryStub(),
           get: () =>
@@ -925,6 +1053,134 @@ describe('SessionLifecycleService', () => {
       expect(target.id).toMatch(/^session_[0-9a-f-]{36}$/);
       expect(target.id).toBe(target.id.toLowerCase());
       expect(target.id).not.toBe('src');
+    });
+  });
+
+  describe('fork session state', () => {
+    function workspaceGetStub(): ReturnType<typeof stubPair> {
+      return stubPair(IWorkspaceRegistry, {
+        ...workspaceRegistryStub(),
+        get: () =>
+          Promise.resolve({
+            id: 'wd_stub',
+            root: '/tmp/proj',
+            name: 'stub',
+            createdAt: 0,
+            lastOpenedAt: 0,
+          }),
+      });
+    }
+
+    it('copies blobs, plans, background tasks, and media originals into the fork', async () => {
+      const root = await makeTmpRoot();
+      const svc = build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        workspaceGetStub(),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      const srcDir = join(root, 'sessions', 'wd_stub', 'src');
+      await mkdir(join(srcDir, 'agents', 'main', 'blobs'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'main', 'blobs', 'ab12cd'), 'blob-bytes');
+      await mkdir(join(srcDir, 'agents', 'main', 'plans'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'main', 'plans', 'p1.md'), '# plan');
+      await mkdir(join(srcDir, 'agents', 'main', 'tasks', 'bash-1'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'main', 'tasks', 'bash-1.json'), '{}');
+      await writeFile(join(srcDir, 'agents', 'main', 'tasks', 'bash-1', 'output.log'), 'out');
+      await mkdir(join(srcDir, 'media-originals'), { recursive: true });
+      await writeFile(join(srcDir, 'media-originals', 'x.png'), 'png');
+      await writeFile(join(srcDir, 'state.json'), '{"source":true}');
+      await writeFile(join(srcDir, 'agents', 'main', 'wire.jsonl'), '{"type":"metadata"}\n');
+      await mkdir(join(srcDir, 'logs'), { recursive: true });
+      await writeFile(join(srcDir, 'logs', 'kimi-code.log'), 'log');
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      const dstDir = join(root, 'sessions', 'wd_stub', 'dst');
+      await expect(
+        readFile(join(dstDir, 'agents', 'main', 'blobs', 'ab12cd'), 'utf8'),
+      ).resolves.toBe('blob-bytes');
+      await expect(
+        readFile(join(dstDir, 'agents', 'main', 'plans', 'p1.md'), 'utf8'),
+      ).resolves.toBe('# plan');
+      await expect(
+        readFile(join(dstDir, 'agents', 'main', 'tasks', 'bash-1.json'), 'utf8'),
+      ).resolves.toBe('{}');
+      await expect(
+        readFile(join(dstDir, 'agents', 'main', 'tasks', 'bash-1', 'output.log'), 'utf8'),
+      ).resolves.toBe('out');
+      await expect(readFile(join(dstDir, 'media-originals', 'x.png'), 'utf8')).resolves.toBe(
+        'png',
+      );
+      await expect(stat(join(dstDir, 'state.json'))).rejects.toThrow();
+      await expect(stat(join(dstDir, 'agents', 'main', 'wire.jsonl'))).rejects.toThrow();
+      await expect(stat(join(dstDir, 'logs'))).rejects.toThrow();
+    });
+
+    it('rolls back the target session when fork fails after materializing', async () => {
+      const root = await makeTmpRoot();
+      const srcDir = join(root, 'sessions', 'wd_stub', 'src');
+      const svc = build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        workspaceGetStub(),
+        stubPair(ISessionMetadata, {
+          ...metadataStub(),
+          read: () =>
+            Promise.resolve({
+              agents: { main: {} },
+            } as never),
+        }),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await mkdir(join(srcDir, 'agents', 'main', 'plans'), { recursive: true });
+      await writeFile(join(srcDir, 'agents', 'main', 'plans', 'p1.md'), '# plan');
+      const dstDir = join(root, 'sessions', 'wd_stub', 'dst');
+
+      await expect(svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' })).rejects.toThrow(
+        'not implemented',
+      );
+
+      expect(svc.get('dst')).toBeUndefined();
+      await expect(stat(dstDir)).rejects.toThrow();
+      await expect(svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' })).rejects.toThrow(
+        'not implemented',
+      );
+    });
+
+    it('duplicates the source session cron tasks for the fork', async () => {
+      const root = await makeTmpRoot();
+      const cron = cronStoreStub([
+        {
+          id: 'task-src',
+          cron: '0 9 * * *',
+          prompt: 'standup',
+          createdAt: 1,
+          tags: { [CRON_SESSION_TAG]: 'src' },
+        },
+        {
+          id: 'task-other',
+          cron: '0 9 * * *',
+          prompt: 'other',
+          createdAt: 1,
+          tags: { [CRON_SESSION_TAG]: 'other' },
+        },
+        { id: 'task-untagged', cron: '* * * * *', prompt: 'x', createdAt: 1 },
+      ]);
+      const svc = build([
+        stubPair(IBootstrapService, tmpBootstrapStub(root)),
+        workspaceGetStub(),
+        stubPair(ICronTaskPersistence, cron),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      const all = [...cron.docs.values()];
+      expect(all).toHaveLength(4);
+      const clone = all.find((task) => task.tags?.[CRON_SESSION_TAG] === 'dst');
+      expect(clone).toMatchObject({ cron: '0 9 * * *', prompt: 'standup', createdAt: 1 });
+      expect(clone!.id).not.toBe('task-src');
+      expect(cron.docs.get('task-src')!.tags![CRON_SESSION_TAG]).toBe('src');
     });
   });
 

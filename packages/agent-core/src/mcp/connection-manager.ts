@@ -387,7 +387,7 @@ export class McpConnectionManager {
     // rather than hijacking them into the OAuth flow — the real error is more
     // actionable than "run /mcp-config login" for a server that doesn't speak
     // OAuth.
-    if (entry.config.headers !== undefined) return false;
+    if (entry.config.headers !== undefined && entry.config.auth !== 'oauth') return false;
     return isUnauthorizedLikeError(error);
   }
 

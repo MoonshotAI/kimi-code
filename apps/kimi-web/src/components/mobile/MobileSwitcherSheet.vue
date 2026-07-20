@@ -1,7 +1,7 @@
 <!-- apps/kimi-web/src/components/mobile/MobileSwitcherSheet.vue -->
 <!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: a "+ New
      chat" row, then collapsible workspace groups (folder icon + name +
-     branch/path sub-line + per-group "+") with their session rows beneath.
+     path sub-line + per-group "+") with their session rows beneath.
      Tapping a session selects it AND closes the sheet; tapping a group header
      folds it, same as the desktop sidebar. -->
 <script setup lang="ts">
@@ -9,7 +9,6 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
@@ -18,7 +17,6 @@ import MenuItem from '../ui/MenuItem.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -45,7 +43,7 @@ const emit = defineEmits<{
   addWorkspace: [];
   rename: [id: string, title: string];
   archive: [id: string];
-  /** NOTE: needs `@delete-workspace="client.deleteWorkspace($event)"` wiring in App.vue. */
+  /** NOTE: App.vue wires this to confirmDeleteWorkspace (modal confirm + async delete). */
   deleteWorkspace: [workspaceId: string];
   loadMore: [workspaceId: string];
 }>();
@@ -152,23 +150,16 @@ function onRename(s: Session): void {
   const title = next?.trim();
   if (title) emit('rename', s.id, title);
 }
-async function onArchive(id: string): Promise<void> {
+function onArchive(id: string): void {
   menuFor.value = null;
-  if (
-    await confirm({
-      title: t('sidebar.archive'),
-      message: t('sidebar.archiveConfirm'),
-      variant: 'danger',
-    })
-  ) {
-    emit('archive', id);
-  }
+  // The modal confirm + async archive live in App.vue (confirmArchiveSession).
+  emit('archive', id);
 }
 
 // ---------------------------------------------------------------------------
 // Per-workspace "…" menu: copy path + delete workspace. Copy path is handled
-// locally, like the desktop sidebar; delete is confirmed via modal then
-// emitted to the parent.
+// locally, like the desktop sidebar; delete is emitted to the parent (App.vue
+// owns the modal confirm + async delete).
 // ---------------------------------------------------------------------------
 const wsMenuFor = ref<string | null>(null);
 
@@ -180,17 +171,9 @@ function onCopyWsPath(ws: WorkspaceView): void {
   void copyTextToClipboard(ws.root);
   wsMenuFor.value = null;
 }
-async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
+function onDeleteWorkspace(ws: WorkspaceView): void {
   wsMenuFor.value = null;
-  if (
-    await confirm({
-      title: t('sidebar.removeWorkspace'),
-      message: t('workspace.removeWorkspaceConfirm', { name: ws.name }),
-      variant: 'danger',
-    })
-  ) {
-    emit('deleteWorkspace', ws.id);
-  }
+  emit('deleteWorkspace', ws.id);
 }
 </script>
 
@@ -228,7 +211,7 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
           <div class="mgh-main">
             <span class="mgh-name">{{ g.workspace.name }}</span>
             <Tooltip :text="g.workspace.root">
-              <span class="mgh-path">{{ g.workspace.branch || g.workspace.shortPath }}</span>
+              <span class="mgh-path">{{ g.workspace.shortPath }}</span>
             </Tooltip>
           </div>
 
@@ -274,7 +257,7 @@ async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
             @click="onSelectSession(s.id)"
           >
             <div class="m">
-              <div class="t" :class="{ run: s.busy, aborted: s.status === 'aborted' }">{{ s.title }}</div>
+              <div class="t" :class="{ run: s.busy, aborted: !s.busy && (attentionBySession[s.id] ?? 0) === 0 && (s.lastTurnReason === 'cancelled' || s.lastTurnReason === 'failed') }">{{ s.title }}</div>
               <div class="s">{{ s.time }}</div>
             </div>
             <span v-if="(attentionBySession[s.id] ?? 0) > 0" class="att">{{ attentionBySession[s.id] }}</span>

@@ -27,6 +27,9 @@ import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useConfirmDialog } from './composables/useConfirmDialog';
+import type { PromptAttachment } from './composables/useKimiWebClient';
+import type { TurnAttachment } from './types';
 import { useAuthGate } from './composables/useAuthGate';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
@@ -38,7 +41,7 @@ import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
-import { coerceThinkingForModel, commitLevel, segmentsFor } from './lib/modelThinking';
+import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
@@ -72,6 +75,7 @@ provide(
   (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
 );
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.
 const debugEnabled = isTraceEnabled();
@@ -112,18 +116,25 @@ usePageTitle({ running, showAuthGate });
 // The /thinking slash command has no popover anchor, so it steps to the next
 // segment for the active model (effort models cycle through their declared
 // levels; boolean models flip on/off; unsupported stays off).
-function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
+function nextThinkingLevel(current: ThinkingLevel | undefined): ThinkingLevel {
   // Identity is the model id — display/model names can collide across providers.
   const model = client.models.value.find((m) => m.id === client.status.value.modelId);
   const segs = segmentsFor(model);
-  // Coerce the stored level against the active model before indexing, so a
-  // stale value (e.g. 'on' from a boolean model) doesn't resolve to index -1
-  // and jump to 'off' instead of advancing from the model's default effort.
-  const coerced = coerceThinkingForModel(model, current);
-  const idx = segs.indexOf(coerced);
+  // No stored preference means the model default is in effect — cycle from
+  // there; a level the model doesn't declare (indexOf → -1) starts the cycle
+  // at the first segment.
+  const idx = segs.indexOf(effectiveThinkingLevel(model, current));
   const next = segs[(idx + 1) % segs.length] ?? segs[0] ?? 'off';
   return commitLevel(model, next);
 }
+
+// Status panel (/status) renders current client state only — show the
+// effective thinking level so "no preference" reads as the model default that
+// will actually run, not a blank.
+const statusPanelThinking = computed<ThinkingLevel>(() => {
+  const model = client.models.value.find((m) => m.id === client.status.value.modelId);
+  return effectiveThinkingLevel(model, client.thinking.value);
+});
 
 // First-run onboarding (language + welcome greeting). Shown until the user
 // finishes it once; re-openable from the settings popover.
@@ -134,6 +145,28 @@ function completeOnboarding(): void {
 }
 function openOnboarding(): void {
   showOnboarding.value = true;
+}
+
+// iOS Safari does not shrink `dvh` for the on-screen keyboard. Instead it pans
+// the visual viewport (offsetTop > 0) to reveal the focused field, which a
+// 100dvh in-flow shell cannot follow: the dock ends up behind the keyboard, or
+// the page shows a blank band past the shell's bottom edge. Pin the shell to
+// the VISUAL viewport instead: position:fixed + top/height mirrored from
+// visualViewport (height shrinks with the keyboard, offsetTop tracks the pan).
+// No-ops on desktop, where offsetTop is 0 and height equals innerHeight.
+let appHeightRaf = 0;
+function setAppHeight(): void {
+  const vv = window.visualViewport;
+  const root = document.documentElement.style;
+  root.setProperty('--app-height', `${vv?.height ?? window.innerHeight}px`);
+  root.setProperty('--app-top', `${vv?.offsetTop ?? 0}px`);
+}
+function syncAppHeight(): void {
+  if (appHeightRaf) return;
+  appHeightRaf = requestAnimationFrame(() => {
+    appHeightRaf = 0;
+    setAppHeight();
+  });
 }
 
 onMounted(() => {
@@ -147,6 +180,10 @@ onMounted(() => {
   });
   void client.load();
   loadSidebarCollapsed();
+  setAppHeight();
+  window.visualViewport?.addEventListener('resize', syncAppHeight);
+  window.visualViewport?.addEventListener('scroll', syncAppHeight);
+  window.addEventListener('resize', syncAppHeight);
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
@@ -154,6 +191,15 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  window.visualViewport?.removeEventListener('resize', syncAppHeight);
+  window.visualViewport?.removeEventListener('scroll', syncAppHeight);
+  window.removeEventListener('resize', syncAppHeight);
+  if (appHeightRaf) {
+    cancelAnimationFrame(appHeightRaf);
+    appHeightRaf = 0;
+  }
+  document.documentElement.style.removeProperty('--app-height');
+  document.documentElement.style.removeProperty('--app-top');
   if (offAuthRequired !== null) {
     offAuthRequired();
     offAuthRequired = null;
@@ -276,7 +322,7 @@ const showSettings = ref(false);
 
 type SubmitPayload = {
   text: string;
-  attachments: { fileId: string; kind: 'image' | 'video' }[];
+  attachments: PromptAttachment[];
 };
 const pendingWorkspaceSubmit = ref<SubmitPayload | null>(null);
 // Inline error shown inside the add-workspace picker after the daemon rejects
@@ -314,8 +360,10 @@ async function openModelPicker(): Promise<void> {
   modelsUnavailable.value = false;
   showModelPicker.value = true;
   try {
-    await client.refreshOAuthProviderModels();
-    await client.loadModels();
+    // Full refresh first (every refreshable provider, not just OAuth), so the
+    // list always reflects the live catalog — the WS model-catalog event that
+    // used to keep the cache warm is no longer forwarded by the daemon.
+    await client.refreshAllProviders();
   } catch {
     modelsUnavailable.value = true;
   } finally {
@@ -369,12 +417,41 @@ async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl
   await client.addProvider(input);
 }
 
-async function handleDeleteProvider(id: string): Promise<void> {
-  await client.deleteProvider(id);
-}
-
 async function handleRefreshProvider(id: string): Promise<void> {
   await client.refreshProvider(id);
+}
+
+// Destructive session/workspace/provider actions confirm through the shared
+// modal here (the menu components only emit the intent). Each passes its work
+// as the dialog `action`, so the dialog stays open with a loading state until
+// the operation settles. All three client calls toast their own errors and
+// never reject.
+async function confirmArchiveSession(id: string): Promise<void> {
+  await confirm({
+    title: t('sidebar.archive'),
+    message: t('sidebar.archiveConfirm'),
+    variant: 'danger',
+    action: () => client.archiveSession(id),
+  });
+}
+
+async function confirmDeleteWorkspace(id: string): Promise<void> {
+  const name = client.workspacesView.value.find((w) => w.id === id)?.name ?? id;
+  await confirm({
+    title: t('sidebar.removeWorkspace'),
+    message: t('workspace.removeWorkspaceConfirm', { name }),
+    variant: 'danger',
+    action: () => client.deleteWorkspace(id),
+  });
+}
+
+async function confirmDeleteProvider(id: string): Promise<void> {
+  await confirm({
+    title: t('providers.delete'),
+    message: t('providers.confirmDelete'),
+    variant: 'danger',
+    action: () => client.deleteProvider(id),
+  });
 }
 
 async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
@@ -413,11 +490,11 @@ async function handleLoginSuccess(): Promise<void> {
 // then drop that message's text back into the composer for editing.
 async function handleEditMessage(payload: {
   text: string;
-  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+  attachments?: TurnAttachment[];
 }): Promise<void> {
   await client.undo(1);
   await nextTick();
-  conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.images);
+  conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.attachments);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
@@ -469,6 +546,9 @@ function handleCommand(cmd: string): void {
       break;
     case '/fork':
       void client.forkSession();
+      break;
+    case '/export':
+      void client.exportSession();
       break;
     case '/undo':
       void client.undo();
@@ -661,10 +741,11 @@ function openPr(url: string): void {
         @select-workspace="client.openWorkspace($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
-        @archive="(id) => client.archiveSession(id)"
+        @archive="confirmArchiveSession($event)"
         @fork="(id) => client.forkSession(id)"
+        @export="(id) => client.exportSession(id)"
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
-        @delete-workspace="(id) => client.deleteWorkspace(id)"
+        @delete-workspace="confirmDeleteWorkspace($event)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
         @set-workspace-sort-mode="client.setWorkspaceSortMode($event)"
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
@@ -720,10 +801,11 @@ function openPr(url: string): void {
       :pending-question-actions="client.pendingQuestionActions"
       :pending-approval-actions="client.pendingApprovalActions"
       :running="running"
+      :turn-active="client.turnActive.value"
       :queued="client.queued.value"
       :search-files="client.searchFiles"
       :upload-image="client.uploadImage"
-      :sending="client.isSending.value"
+      :working="client.working.value"
       :starting="client.isStartingFirstPrompt.value"
       :fast-moon="client.fastMoon.value"
       :file-reload-key="client.activeSessionId.value"
@@ -766,7 +848,8 @@ function openPr(url: string): void {
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
-      @archive-session="(id) => client.archiveSession(id)"
+      @archive-session="confirmArchiveSession($event)"
+      @export-session="(id) => client.exportSession(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
       @select-model="handleComposerSelectModel($event)"
@@ -944,7 +1027,7 @@ function openPr(url: string): void {
       :unavailable="providersUnavailable"
       @add="handleAddProvider($event)"
       @refresh="handleRefreshProvider($event)"
-      @delete="handleDeleteProvider($event)"
+      @delete="confirmDeleteProvider($event)"
       @open-login="() => { showProviders = false; openLogin(); }"
       @close="showProviders = false"
     />
@@ -953,7 +1036,7 @@ function openPr(url: string): void {
     <StatusPanel
       v-if="showStatusPanel"
       :status="client.status.value"
-      :thinking="client.thinking.value"
+      :thinking="statusPanelThinking"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :cost-usd="client.sessionCost.value"
@@ -1009,8 +1092,8 @@ function openPr(url: string): void {
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
       @rename="(id, title) => client.renameSession(id, title)"
-      @archive="(id) => client.archiveSession(id)"
-      @delete-workspace="(id) => client.deleteWorkspace(id)"
+      @archive="confirmArchiveSession($event)"
+      @delete-workspace="confirmDeleteWorkspace($event)"
       @load-more="(id) => void client.loadMoreSessions(id)"
     />
 
@@ -1058,8 +1141,17 @@ function openPr(url: string): void {
 .gload-fade-leave-to { opacity: 0; }
 
 .app-shell {
+  /* Pinned to the visual viewport (see setAppHeight): --app-top tracks iOS's
+     keyboard pan and --app-height shrinks with the keyboard, so the shell
+     always covers exactly the visible area. Fixed positioning keeps it out of
+     the document flow that iOS pans. */
+  position: fixed;
+  top: var(--app-top, 0px);
+  left: 0;
+  right: 0;
   height: 100vh;
   height: 100dvh;
+  height: var(--app-height, 100dvh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1235,10 +1327,10 @@ function openPr(url: string): void {
   .auth-page {
     align-items: flex-start;
     padding:
-      max(48px, env(safe-area-inset-top))
-      max(20px, env(safe-area-inset-right))
-      max(24px, env(safe-area-inset-bottom))
-      max(20px, env(safe-area-inset-left));
+      max(48px, var(--safe-top))
+      max(20px, var(--safe-right))
+      max(24px, var(--safe-bottom))
+      max(20px, var(--safe-left));
   }
   .auth-page-copy h1 {
     font-size: 26px;

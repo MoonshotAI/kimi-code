@@ -91,8 +91,6 @@ describe('resolveGithubSource', () => {
       ref: { kind: 'branch', value: 'v5.1.0' },
     });
 
-    // Parser cannot distinguish branch from tag in `/tree/<ref>`, but codeload's
-    // short form resolves either — so no `/refs/heads/` 404.
     expect(result.tarballUrl).toBe('https://codeload.github.com/obra/superpowers/zip/v5.1.0');
     expect(fetchMock).not.toHaveBeenCalled();
   });

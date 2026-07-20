@@ -179,9 +179,30 @@ describe('default agent profiles', () => {
         'TaskStop',
       ]),
     );
-    expect(DEFAULT_AGENT_PROFILES['coder']?.tools).toEqual(
-      expect.arrayContaining(['Read', 'Write', 'Edit', 'Bash']),
-    );
+    expect(DEFAULT_AGENT_PROFILES['coder']?.tools).toEqual([
+      'Agent',
+      'AgentSwarm',
+      'Bash',
+      'CronCreate',
+      'CronDelete',
+      'CronList',
+      'Edit',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Glob',
+      'Grep',
+      'Read',
+      'ReadMediaFile',
+      'Skill',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+      'TodoList',
+      'WebSearch',
+      'FetchURL',
+      'Write',
+      'mcp__*',
+    ]);
     expect(DEFAULT_AGENT_PROFILES['explore']?.tools).not.toContain('Write');
     expect(DEFAULT_AGENT_PROFILES['plan']?.tools).not.toContain('Bash');
   });

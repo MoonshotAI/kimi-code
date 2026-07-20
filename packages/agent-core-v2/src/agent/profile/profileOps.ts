@@ -3,15 +3,17 @@
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
  * Declares the persistent profile config — `cwd`, `modelAlias`, `profileName`,
- * the resolved thinking effort, and `systemPrompt` — as a wire Model (initial
- * `defaultProfileModel()`), plus the single Op whose `apply` is a pure merge of
- * an already-resolved payload. Live records carry `thinkingEffort` (matching
+ * the resolved base thinking effort, and `systemPrompt` — as a wire Model
+ * (initial `defaultProfileModel()`), plus the single Op whose `apply` is a pure
+ * merge of an already-resolved payload. Live records carry `thinkingEffort` (matching
  * the v1 wire field); legacy replay still accepts `thinkingLevel`. The value is
  * resolved to a `ThinkingEffort` at the call site (via `resolveThinkingEffort` +
  * the `thinking` config section) and carried in the payload, so `apply` stays
- * pure and a resumed agent restores
- * the persisted resolved value rather than re-resolving against a possibly-
- * drifted config. `modelCapabilities` is intentionally NOT in the Model — it is
+ * pure and a resumed agent restores the persisted base value rather than
+ * re-resolving against a possibly-drifted config. Runtime-only Kimi env forcing
+ * is projected by `AgentProfileService`; keeping it out of this Model prevents
+ * that Kimi-only value from leaking through model switches or agent forks.
+ * `modelCapabilities` is intentionally NOT in the Model — it is
  * derived live from `IModelResolver` so resume never pins stale capabilities.
  * Each `apply` returns the same reference when nothing changes so the wire's
  * reference-equality gate stays quiet. The `chdir` side effect and the
@@ -101,13 +103,6 @@ function configUpdateThinkingLevel(
   return p.thinkingLevel;
 }
 
-/**
- * The agent's active-tool set. `undefined` means "every tool is active" (the
- * unrestricted default before any `tools.set_active_tools`); a concrete array
- * restricts the set. Kept distinct from `[]` (which would mean "no tools
- * active"), so the initial `undefined` preserves the all-active default rather
- * than collapsing it to an empty allowlist.
- */
 export type ActiveToolsState = readonly string[] | undefined;
 
 export const ActiveToolsModel = defineModel<ActiveToolsState>(

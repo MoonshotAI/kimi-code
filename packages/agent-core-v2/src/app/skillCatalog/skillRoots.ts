@@ -15,8 +15,6 @@ import path from 'pathe';
 
 import type { SkillRoot, SkillSource } from './types';
 
-// Relative to brandHomeDir, which already IS the brand data dir (~/.kimi-code or
-// $KIMI_CODE_HOME) — no '.kimi-code' segment here, or it would nest twice.
 const USER_BRAND_DIRS = ['skills'] as const;
 const USER_GENERIC_DIRS = ['.agents/skills'] as const;
 const PROJECT_BRAND_DIRS = ['.kimi-code/skills'] as const;
@@ -33,7 +31,6 @@ export async function userRoots(
 ): Promise<readonly SkillRoot[]> {
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
-  // homeDir is already the brand data dir, so brand skills live at <homeDir>/skills.
   await pushBrandGroup(roots, USER_BRAND_DIRS, homeDir, 'user', mergeAllAvailableSkills);
   await pushFirstExisting(roots, USER_GENERIC_DIRS, osHomeDir, 'user');
   return roots;

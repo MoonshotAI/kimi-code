@@ -28,6 +28,9 @@ export default {
   goalPause: 'Pause',
   goalResume: 'Resume',
   goalCancel: 'Cancel',
+  goalCancelConfirm: 'Cancel this goal? It cannot be resumed afterwards.',
+  goalCancelConfirmYes: 'Yes',
+  goalCancelConfirmNo: 'No',
   goalStatusActive: 'Active',
   goalStatusPaused: 'Paused',
   goalStatusBlocked: 'Blocked',
@@ -38,6 +41,8 @@ export default {
   thinkingTooltip: 'Toggle thinking mode',
   thinkingOn: 'On',
   thinkingOff: 'Off',
+  cacheNote:
+    'Note: Switching models or thinking effort invalidates the existing prompt cache. Start a new chat to avoid extra token costs.',
   starredModels: 'Starred',
   moreModels: 'More models…',
   // Status panel

@@ -1,5 +1,5 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { describe, expect, it } from 'vitest';
 
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -84,7 +84,6 @@ describe('GoalStartReviewAskPermissionPolicyService', () => {
     const policy = new GoalStartReviewAskPermissionPolicyService(mode);
     const result = policy.evaluate(policyContext('CreateGoal', GOAL_DISPLAY));
     if (result?.kind !== 'ask') throw new Error('expected ask');
-    // Returning undefined lets CreateGoal.execute run and create the goal.
     expect(result.resolveApproval?.({ decision: 'approved', selectedLabel: 'auto' })).toBeUndefined();
     expect(mode.mode).toBe('auto');
   });
@@ -103,7 +102,6 @@ describe('GoalStartReviewAskPermissionPolicyService', () => {
     const policy = new GoalStartReviewAskPermissionPolicyService(mode);
     const result = policy.evaluate(policyContext('CreateGoal', GOAL_DISPLAY));
     if (result?.kind !== 'ask') throw new Error('expected ask');
-    // A cancel resolves to undefined; the manager then blocks the tool call.
     expect(result.resolveApproval?.({ decision: 'cancelled', selectedLabel: 'cancel' })).toBeUndefined();
     expect(mode.mode).toBe('manual');
   });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   collectFilePathAliases,
   findFilePathLinks,
@@ -9,7 +9,7 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
-import { mergeSnapshotSubagents } from '../src/lib/taskMerge';
+import { keepLiveSubagents, mergeSnapshotSubagents } from '../src/lib/taskMerge';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
@@ -19,7 +19,6 @@ import {
   parseWorkspacePathInput,
 } from '../src/lib/workspacePathInput';
 import {
-  coerceThinkingForModel,
   commitLevel,
   defaultThinkingLevelFor,
   effortLabel,
@@ -32,6 +31,163 @@ import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
 import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
 import type { ToolCall } from '../src/types';
+import {
+  clearTrace,
+  installClientErrorCapture,
+  sanitizeForTrace,
+  sessionExportTraceToJsonl,
+  traceEntries,
+  traceKeyEvent,
+  tracePaused,
+  traceRestRequest,
+  traceToJsonl,
+  traceWsIn,
+} from '../src/debug/trace';
+
+// The trace tests exercise its exported recording/serialization contract:
+// session exports receive only bounded, explicitly selected metadata.
+
+describe('bounded Web trace', () => {
+  beforeEach(() => {
+    tracePaused.value = false;
+    clearTrace();
+  });
+
+  afterEach(() => {
+    clearTrace();
+    vi.unstubAllGlobals();
+  });
+
+  it('copies only allowlisted key-path metadata into the independent export ring', () => {
+    const secret = 'PROMPT_TEXT_MUST_NOT_BE_EXPORTED';
+    const metadata = {
+      sessionId: 'sess_1',
+      contentCount: 2,
+      mediaCount: 1,
+      text: secret,
+      apiKey: secret,
+    };
+    traceKeyEvent('prompt:start', metadata);
+
+    metadata.sessionId = 'changed_after_recording';
+
+    expect(traceEntries()).toHaveLength(1);
+    expect(JSON.parse(sessionExportTraceToJsonl())).toEqual({
+      ts: expect.any(Number),
+      event: 'prompt:start',
+      sessionId: 'sess_1',
+      contentCount: 2,
+      mediaCount: 1,
+    });
+    expect(sessionExportTraceToJsonl()).not.toContain(secret);
+  });
+
+  it('records export metadata even while the full debug panel is paused', () => {
+    tracePaused.value = true;
+
+    traceKeyEvent('ws:connection', { status: 'connected' });
+
+    expect(traceEntries()).toHaveLength(0);
+    expect(JSON.parse(sessionExportTraceToJsonl())).toMatchObject({
+      event: 'ws:connection',
+      status: 'connected',
+    });
+  });
+
+  it('caps object keys and reports how many were omitted', () => {
+    const input = Object.fromEntries(Array.from({ length: 60 }, (_, index) => [`key${index}`, index]));
+
+    const result = sanitizeForTrace(input) as Record<string, unknown>;
+
+    expect(result['_truncatedKeys']).toBe(10);
+    expect(Object.keys(result)).toHaveLength(51);
+  });
+
+  it('keeps at most 500 of the newest export entries', () => {
+    for (let index = 0; index < 501; index++) {
+      traceKeyEvent('ws:connection', { status: String(index) });
+    }
+
+    const exported = sessionExportTraceToJsonl().split('\n').map((line) => JSON.parse(line));
+    expect(exported).toHaveLength(500);
+    expect(exported[0]).toMatchObject({ status: '1' });
+    expect(exported.at(-1)).toMatchObject({ status: '500' });
+  });
+
+  it('keeps export JSONL within the 256 KiB UTF-8 budget including newlines', () => {
+    for (let index = 0; index < 500; index++) {
+      traceKeyEvent('export:failed', {
+        sessionId: `sess-${index}-${'😀'.repeat(200)}`,
+        status: '😀'.repeat(200),
+        promptId: '😀'.repeat(200),
+        errorName: '😀'.repeat(200),
+        requestId: '😀'.repeat(200),
+        phase: '😀'.repeat(200),
+      });
+    }
+
+    const jsonl = sessionExportTraceToJsonl();
+    expect(new TextEncoder().encode(jsonl).byteLength).toBeLessThanOrEqual(256 * 1024);
+    expect(JSON.parse(jsonl.split('\n').at(-1)!)).toMatchObject({
+      sessionId: expect.stringMatching(/^sess-499-/),
+    });
+  });
+
+  it('never copies prompt, WebSocket, or console content from the full debug trace', () => {
+    vi.stubGlobal('location', { search: '?debug=1' });
+    const promptSecret = 'PROMPT_SECRET_9fdb1a';
+    const wsSecret = 'WS_PAYLOAD_SECRET_b84c7e';
+    const consoleSecret = 'CONSOLE_SECRET_a2d693';
+
+    traceRestRequest({
+      method: 'POST',
+      path: '/sessions/sess_1/prompts',
+      url: 'http://daemon.test/api/v1/sessions/sess_1/prompts',
+      requestId: 'req_1',
+      body: { prompt: promptSecret },
+    });
+    traceWsIn({
+      type: 'event',
+      session_id: 'sess_1',
+      seq: 4,
+      payload: { text: wsSecret },
+    });
+
+    const originalLog = console.log;
+    console.log = vi.fn();
+    const dispose = installClientErrorCapture();
+    try {
+      console.log(consoleSecret, { value: consoleSecret });
+    } finally {
+      dispose();
+      console.log = originalLog;
+    }
+
+    traceKeyEvent('prompt:start', {
+      sessionId: 'sess_1',
+      contentCount: 1,
+      mediaCount: 0,
+      text: promptSecret,
+    });
+
+    const fullDebugTrace = traceToJsonl();
+    expect(fullDebugTrace).toContain(promptSecret);
+    expect(fullDebugTrace).toContain(wsSecret);
+    expect(fullDebugTrace).toContain(consoleSecret);
+
+    const sessionExportTrace = sessionExportTraceToJsonl();
+    expect(sessionExportTrace).not.toContain(promptSecret);
+    expect(sessionExportTrace).not.toContain(wsSecret);
+    expect(sessionExportTrace).not.toContain(consoleSecret);
+    expect(JSON.parse(sessionExportTrace)).toEqual({
+      ts: expect.any(Number),
+      event: 'prompt:start',
+      sessionId: 'sess_1',
+      contentCount: 1,
+      mediaCount: 0,
+    });
+  });
+});
 
 describe('workspace path input', () => {
   it('recognizes the supported absolute path forms', () => {
@@ -401,35 +557,6 @@ describe('modelThinking', () => {
     });
   });
 
-  describe('coerceThinkingForModel', () => {
-    it('undefined model preserves the requested level (catalog not loaded yet)', () => {
-      expect(coerceThinkingForModel(undefined, 'high')).toBe('high');
-      expect(coerceThinkingForModel(undefined, 'max')).toBe('max');
-      expect(coerceThinkingForModel(undefined, 'on')).toBe('on');
-      expect(coerceThinkingForModel(undefined, 'off')).toBe('off');
-    });
-    it('unsupported model → off', () => {
-      expect(coerceThinkingForModel(unsupportedModel(), 'high')).toBe('off');
-    });
-    it('always-on + off → default level', () => {
-      expect(
-        coerceThinkingForModel(effortModel({ capabilities: ['thinking', 'always_thinking'] }), 'off'),
-      ).toBe('high');
-    });
-    it('effort model + undeclared level → default', () => {
-      expect(coerceThinkingForModel(effortModel(), 'xhigh')).toBe('high');
-    });
-    it('effort model + declared level → kept', () => {
-      expect(coerceThinkingForModel(effortModel(), 'max')).toBe('max');
-    });
-    it('boolean model + non-off level → on', () => {
-      expect(coerceThinkingForModel(booleanModel(), 'high')).toBe('on');
-    });
-    it('toggle + off → off', () => {
-      expect(coerceThinkingForModel(booleanModel(), 'off')).toBe('off');
-    });
-  });
-
   describe('effortLabel', () => {
     it('capitalizes the first letter', () => {
       expect(effortLabel('max')).toBe('Max');
@@ -577,7 +704,7 @@ describe('mergeSnapshotSubagents', () => {
       sessionId: 's1',
       kind: 'subagent',
       description: `task ${id}`,
-      status: 'running',
+      busy: true,
       createdAt: '2026-01-01T00:00:00.000Z',
       ...overrides,
     };
@@ -612,7 +739,7 @@ describe('mergeSnapshotSubagents', () => {
       sessionId: 's1',
       kind: 'bash',
       description: 'npm test',
-      status: 'running',
+      busy: true,
       createdAt: '2026-01-01T00:00:00.000Z',
     };
     const roster = [subagent('a1')];
@@ -623,5 +750,116 @@ describe('mergeSnapshotSubagents', () => {
   it('returns the existing list untouched when the roster is empty', () => {
     const existing = [subagent('a1')];
     expect(mergeSnapshotSubagents([], existing)).toBe(existing);
+  });
+});
+
+
+describe('keepLiveSubagents', () => {
+  function subagent(id: string, overrides: Partial<AppTask> = {}): AppTask {
+    return {
+      id,
+      sessionId: 's1',
+      kind: 'subagent',
+      description: `task ${id}`,
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('returns the REST list untouched when no live-only subagent exists', () => {
+    const rest = [subagent('a1')];
+    expect(keepLiveSubagents(rest, [subagent('a1')])).toBe(rest);
+  });
+
+  it('keeps WS-only swarm subagents that REST omits', () => {
+    const rest: AppTask[] = [];
+    const merged = keepLiveSubagents(rest, [subagent('a1')]);
+    expect(merged.map((t) => t.id)).toEqual(['a1']);
+  });
+
+  it('folds a REST background-subagent row into the WS row keyed by agent id', () => {
+    // The same background subagent: WS keys it by agent id, REST by task id.
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      outputLines: ['step 1'],
+      text: 'partial',
+    });
+    const rest = [subagent('task-9', { runInBackground: true })];
+    const merged = keepLiveSubagents(rest, [live]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe('agent-1');
+    expect(merged[0]?.outputLines).toEqual(['step 1']);
+    expect(merged[0]?.text).toBe('partial');
+    expect(merged[0]?.backgroundTaskId).toBe('task-9');
+  });
+
+  it('lets REST complete a live row whose finish event was missed', () => {
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      subagentPhase: 'working',
+    });
+    const rest = [
+      subagent('task-9', {
+        runInBackground: true,
+        status: 'completed',
+        completedAt: '2026-01-01T00:01:00.000Z',
+        outputPreview: 'done',
+      }),
+    ];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.status).toBe('completed');
+    // The detail panel prefers subagentPhase over status — it must follow too.
+    expect(merged?.subagentPhase).toBe('completed');
+    expect(merged?.completedAt).toBe('2026-01-01T00:01:00.000Z');
+    expect(merged?.outputPreview).toBe('done');
+  });
+
+  it('maps a REST-cancelled row to the failed phase (the enum has no cancelled)', () => {
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      subagentPhase: 'working',
+    });
+    const rest = [subagent('task-9', { runInBackground: true, status: 'cancelled' })];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.status).toBe('cancelled');
+    expect(merged?.subagentPhase).toBe('failed');
+  });
+
+  it('never lets a lagging poll flip a finished row back to running', () => {
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      status: 'completed',
+      completedAt: '2026-01-01T00:01:00.000Z',
+    });
+    const rest = [subagent('task-9', { runInBackground: true, status: 'running' })];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.status).toBe('completed');
+  });
+
+  it('keeps newer REST output flowing into an already-folded row', () => {
+    // The live row carries a preview folded in by an earlier poll; the fresh
+    // REST row has the final persisted output and must win.
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      outputPreview: 'stale tail',
+      outputBytes: 100,
+    });
+    const rest = [
+      subagent('task-9', {
+        runInBackground: true,
+        status: 'completed',
+        outputPreview: 'final result',
+        outputBytes: 200,
+      }),
+    ];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.outputPreview).toBe('final result');
+    expect(merged?.outputBytes).toBe(200);
   });
 });

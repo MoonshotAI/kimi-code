@@ -23,18 +23,18 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import type { SubagentSuspendedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/agentLifecycle/mirrorAgentRun';
 import {
   isSubagentMeta,
   subagentLabels,
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
+import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -55,16 +55,18 @@ import {
   type AgentRunAttemptHandle,
 } from './agentRunBatch';
 
+export interface SubagentSuspendedEvent {
+  readonly type: 'subagent.suspended';
+  readonly subagentId: string;
+  readonly reason: string;
+}
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'subagent.suspended': SubagentSuspendedEvent;
   }
 }
 
-/**
- * Requester-facing label for a resumed agent whose profile binding is unknown.
- * Kept as the legacy wire display value.
- */
 const RESUMED_PROFILE_FALLBACK = 'subagent';
 
 export class SessionSwarmService implements ISessionSwarmService {
@@ -74,6 +76,7 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -105,7 +108,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false),
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
-        const caller = this.lifecycle.getHandle(callerAgentId);
+        const caller = this.lifecycle.get(callerAgentId);
         caller?.accessor.get(IEventBus)?.publish({
           type: 'subagent.suspended',
           subagentId: event.agentId,
@@ -140,9 +143,6 @@ export class SessionSwarmService implements ISessionSwarmService {
     if (callerData.modelAlias === undefined) {
       throw new Error('Caller agent has no model bound');
     }
-    // Explicit inheritance: the child runs the requested profile on the
-    // caller's own model / thinking level / cwd, and inherits the caller's
-    // permission mode so it does not fall back to `manual`.
     const child = await this.lifecycle.create({
       binding: {
         profile: profile.name,
@@ -150,9 +150,11 @@ export class SessionSwarmService implements ISessionSwarmService {
         thinking: callerData.thinkingLevel,
         cwd: callerData.cwd,
       },
-      permissionMode: caller.accessor.get(IAgentPermissionModeService).mode,
       labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
     });
+    child.accessor
+      .get(IAgentPermissionModeService)
+      .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
     child.accessor
       .get(IAgentUserToolService)
       .inheritUserTools(caller.accessor.get(IAgentUserToolService));
@@ -212,7 +214,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     request: { kind: 'prompt'; prompt: string } | { kind: 'retry' },
     options: AgentRunAttemptOptions,
   ): Promise<AgentRunAttemptHandle> {
-    const run = await this.lifecycle.run(agentId, request, {
+    const run = await this.subagents.run(agentId, request, {
       signal: options.signal,
       onReady: options.onReady,
     });
@@ -230,7 +232,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private requireHandle(agentId: string, label: string): IAgentScopeHandle {
-    const handle = this.lifecycle.getHandle(agentId);
+    const handle = this.lifecycle.get(agentId);
     if (handle === undefined) throw new Error(`${label} "${agentId}" does not exist`);
     return handle;
   }
@@ -265,13 +267,12 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 }
 
-// Kept as a type-anchor so future maintenance imports the usage shape from here.
 export type _AgentRunUsage = TokenUsage;
 
 registerScopedService(
   LifecycleScope.Session,
   ISessionSwarmService,
   SessionSwarmService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionSwarm',
 );

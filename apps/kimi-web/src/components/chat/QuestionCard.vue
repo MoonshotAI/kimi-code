@@ -283,7 +283,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
           :label="minimized ? t('question.expand') : t('question.minimize')"
           @click="minimized = !minimized"
         >
-          <Icon v-if="minimized" name="chevron-down" size="md" />
+          <Icon v-if="minimized" name="chevron-up" size="md" />
           <Icon v-else name="minus" size="md" />
         </IconButton>
       </div>

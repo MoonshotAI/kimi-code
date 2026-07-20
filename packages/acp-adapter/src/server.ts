@@ -44,7 +44,14 @@ import {
   type SetSessionModelResponse,
   type Stream,
 } from '@agentclientprotocol/sdk';
-import type { KimiHarness, Session, SessionSummary } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  KimiConfig,
+  KimiHarness,
+  ModelAlias,
+  ProviderConfig,
+  Session,
+  SessionSummary,
+} from '@moonshot-ai/kimi-code-sdk';
 import { log } from '@moonshot-ai/kimi-code-sdk';
 import { LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 
@@ -107,12 +114,96 @@ function toResolvedSlashCommands(
 /**
  * Inline auth gate — moved out of `KimiAuthFacade.hasUsableToken()` so
  * the SDK doesn't have to carry an ACP-specific convenience method.
- * Mirrors the original semantics exactly: any provider with `hasToken`
- * set counts as authed.
+ * OAuth tokens still count as authed, but ACP can also start when the
+ * active model resolves to a provider with config-file credentials.
  */
 async function harnessIsAuthed(harness: KimiHarness): Promise<boolean> {
   const status = await harness.auth.status();
-  return status.providers.some((entry) => entry.hasToken === true);
+  if (status.providers.some((entry) => entry.hasToken)) return true;
+  return hasUsableConfiguredDefaultModel(harness);
+}
+
+async function hasUsableConfiguredDefaultModel(harness: KimiHarness): Promise<boolean> {
+  if (typeof harness.getConfig !== 'function') return false;
+  let config: KimiConfig;
+  try {
+    config = await harness.getConfig();
+  } catch (error) {
+    log.warn('acp: harness.getConfig threw during auth gate; requiring terminal auth', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+
+  if (config.defaultModel === undefined) return false;
+  const alias = config.models?.[config.defaultModel];
+  if (alias === undefined) return false;
+
+  const provider = providerForAlias(config, alias);
+  return provider !== undefined && providerHasNonOAuthCredentials(provider);
+}
+
+function providerForAlias(config: KimiConfig, alias: ModelAlias): ProviderConfig | undefined {
+  const providerName = alias.provider ?? config.defaultProvider;
+  return providerName === undefined ? undefined : config.providers[providerName];
+}
+
+function providerHasNonOAuthCredentials(provider: ProviderConfig): boolean {
+  if (provider.oauth !== undefined) return false;
+  switch (provider.type) {
+    case 'anthropic':
+      return hasProviderValue(provider, 'ANTHROPIC_API_KEY');
+    case 'openai':
+    case 'openai_responses':
+      return hasProviderValue(provider, 'OPENAI_API_KEY');
+    case 'kimi':
+      return hasProviderValue(provider, 'KIMI_API_KEY');
+    case 'google-genai':
+      return hasProviderValue(provider, 'GOOGLE_API_KEY');
+    case 'vertexai':
+      return (
+        hasProviderValue(provider, 'VERTEXAI_API_KEY') ||
+        hasEnvValue(provider, 'GOOGLE_API_KEY') ||
+        (hasEnvValue(provider, 'GOOGLE_CLOUD_PROJECT') &&
+          (hasEnvValue(provider, 'GOOGLE_CLOUD_LOCATION') ||
+            vertexAILocationFromBaseUrl(provider.baseUrl) !== undefined))
+      );
+    default: {
+      const exhaustive: never = provider.type;
+      return exhaustive;
+    }
+  }
+}
+
+function hasProviderValue(provider: ProviderConfig, envKey: string): boolean {
+  return nonEmptyString(provider.apiKey) !== undefined || hasEnvValue(provider, envKey);
+}
+
+function hasEnvValue(provider: ProviderConfig, envKey: string): boolean {
+  return nonEmptyString(provider.env?.[envKey]) !== undefined;
+}
+
+function vertexAILocationFromBaseUrl(baseUrl: string | undefined): string | undefined {
+  const url = nonEmptyString(baseUrl);
+  if (url === undefined) return undefined;
+  try {
+    const host = new URL(url).hostname;
+    const suffix = '-aiplatform.googleapis.com';
+    return host.endsWith(suffix) ? nonEmptyString(host.slice(0, -suffix.length)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function nonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+function thinkingEnabledFromEffort(effort: unknown): boolean | undefined {
+  if (typeof effort !== 'string') return undefined;
+  const normalized = effort.trim().toLowerCase();
+  return normalized.length > 0 && normalized !== 'off';
 }
 
 /**
@@ -295,7 +386,7 @@ export class AcpServer implements Agent {
       mcpServers,
     });
     const currentModelId = await this.resolveCurrentModelId();
-    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled();
+    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled(session);
     const acpSession = new AcpSession(
       this.conn,
       session,
@@ -492,14 +583,13 @@ export class AcpServer implements Agent {
     // Phase 15 reads the resumed thinking effort off the main-agent
     // config and projects it onto the binary toggle: any non-`'off'`
     // effort reads as "thinking on" because the ACP surface only
-    // exposes the boolean axis. Falls back to the harness-level default
-    // when the resume state lacks the field.
+    // exposes the boolean axis. Falls back to the live session status, then
+    // the harness-level default, when the resume state lacks the field.
     const resumedThinkingEffort = resumeState?.agents?.['main']?.config?.thinkingEffort;
-    const currentThinkingEnabled =
-      typeof resumedThinkingEffort === 'string'
-        ? resumedThinkingEffort.trim().toLowerCase() !== 'off' &&
-          resumedThinkingEffort.trim().length > 0
-        : await this.resolveCurrentThinkingEnabled();
+    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled(
+      session,
+      resumedThinkingEffort,
+    );
     const acpSession = new AcpSession(
       this.conn,
       session,
@@ -824,31 +914,43 @@ export class AcpServer implements Agent {
   }
 
   /**
-   * Compute the initial value for the `thinking` toggle when
-   * a session is created (or loaded with no persisted thinking state).
-   * Reads the harness's `getConfig().thinking.enabled` flag if exposed —
-   * the same source `Session.createSession` would consult for new
-   * sessions. Returns `false` when the harness has no opinion, so the
-   * toggle starts off.
+   * Compute the initial value for the `thinking` toggle from the session's
+   * effective effort. A persisted resume-state effort wins; otherwise the
+   * live session status is authoritative. The harness config remains a
+   * best-effort fallback for partial SDK stubs and status-read failures.
    *
-   * Tolerant to partial-stub harnesses for the same reason
-   * {@link resolveCurrentModelId} is — adapter-level unit tests
-   * routinely omit `getConfig`. The swallow-and-fallback path keeps
-   * the test ergonomics symmetric.
+   * Tolerant to partial SDK/session stubs for the same reason
+   * {@link resolveCurrentModelId} is — adapter-level unit tests routinely
+   * omit `getStatus` or `getConfig`. The swallow-and-fallback path keeps the
+   * test ergonomics symmetric.
    */
-  private async resolveCurrentThinkingEnabled(): Promise<boolean> {
+  private async resolveCurrentThinkingEnabled(
+    session: Session,
+    resumedThinkingEffort?: unknown,
+  ): Promise<boolean> {
+    const resumed = thinkingEnabledFromEffort(resumedThinkingEffort);
+    if (resumed !== undefined) return resumed;
+
+    if (typeof session.getStatus === 'function') {
+      try {
+        const current = thinkingEnabledFromEffort((await session.getStatus()).thinkingEffort);
+        if (current !== undefined) return current;
+      } catch (error) {
+        log.warn('acp: session.getStatus threw during thinking toggle resolution; falling back', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     if (typeof this.harness.getConfig !== 'function') return false;
     try {
       const config = await this.harness.getConfig();
       const thinking = (config as { thinking?: { enabled?: unknown; effort?: unknown } })
         .thinking;
-      if (typeof thinking?.enabled === 'boolean') return thinking.enabled;
-      // A non-empty effort with no explicit enabled flag still means thinking
-      // is on — agent-core's resolveThinkingEffort treats config.effort as
-      // enabled unless enabled === false, so mirror that here to keep the
-      // toggle consistent with the runtime.
-      if (typeof thinking?.effort === 'string' && thinking.effort.length > 0) return true;
-      return false;
+      if (thinking?.enabled === false) return false;
+      const configured = thinkingEnabledFromEffort(thinking?.effort);
+      if (configured !== undefined) return configured;
+      return thinking?.enabled === true;
     } catch (err) {
       log.warn('acp: harness.getConfig threw during thinking toggle resolution; defaulting to off', {
         error: err instanceof Error ? err.message : String(err),

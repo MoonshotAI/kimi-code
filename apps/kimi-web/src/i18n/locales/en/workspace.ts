@@ -34,7 +34,6 @@ export default {
   searching: 'Searching…',
   noFilterMatch: 'No subfolders match “{q}”',
   noSubfolders: 'No subfolders here',
-  gitTag: 'git',
   browseHint: 'Click a folder to enter it, then "Open this folder" to add it as a workspace.',
   // Path entry (absolute path typed into the same box)
   checkingPath: 'Checking path…',

@@ -67,6 +67,6 @@ registerScopedService(
   LifecycleScope.App,
   IWebFetchService,
   WebFetchService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'web',
 );

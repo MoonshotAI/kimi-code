@@ -3,9 +3,11 @@
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
  * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
- * to neutralize stale guidance. Resolves session prompt context through
- * `sessionContext` and reports missing skills through `log`. Bound at Agent
- * scope.
+ * to neutralize stale guidance. Main-agent-only (v1 parity): the service
+ * self-gates on `agentId === 'main'`, and the agent bootstrap force-instantiates
+ * it (`igniteEagerServices`) so other agents construct it as a no-op. Resolves
+ * session prompt context through `sessionContext` and reports missing skills
+ * through `log`. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -15,6 +17,7 @@ import { ILogService } from '#/_base/log/log';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
@@ -27,10 +30,15 @@ import { IAgentPluginService } from './agentPlugin';
 
 const SESSION_START_INJECTION_VARIANT = 'plugin_session_start';
 
+// The main agent's id, kept as a local literal: `MAIN_AGENT_ID` lives in the
+// L6 `agentLifecycle` domain and this L4 domain must not import it.
+const MAIN_AGENT_ID = 'main';
+
 export class AgentPluginService extends Disposable implements IAgentPluginService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -40,6 +48,11 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     @ILogService private readonly log: ILogService,
   ) {
     super();
+    // Plugin session-start guidance is main-agent-only (v1 parity:
+    // `pluginSessionStarts: type === 'main' ? … : undefined`). The bootstrap
+    // force-instantiates this Delayed service for every agent
+    // (`igniteEagerServices`); non-main agents no-op.
+    if (scopeContext.agentId !== MAIN_AGENT_ID) return;
     this._register(
       injector.register(
         SESSION_START_INJECTION_VARIANT,
@@ -144,6 +157,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPluginService,
   AgentPluginService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'agentPlugin',
 );

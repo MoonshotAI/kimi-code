@@ -5,7 +5,18 @@
  * Bound at App scope.
  */
 
-import { appendFile, lstat, open, readFile, readdir, mkdir, rm, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  lstat,
+  open,
+  readFile,
+  readdir,
+  mkdir,
+  realpath as nodeRealpath,
+  rm,
+  stat as nodeStat,
+  writeFile,
+} from 'node:fs/promises';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -172,8 +183,6 @@ export class HostFileSystem implements IHostFileSystem {
       }
       return true;
     } catch (error) {
-      // EEXIST keeps its boolean semantics: callers treat a collision as
-      // "the same bytes are already present", not as a failure.
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
       throw toHostFsError(error, { path, op: 'create' });
     }
@@ -181,11 +190,7 @@ export class HostFileSystem implements IHostFileSystem {
 
   async stat(path: string): Promise<HostFileStat> {
     try {
-      // Non-following `lstat` so a symbolic link is reported as itself
-      // (`isSymbolicLink: true`) rather than transparently resolved to its
-      // target. Callers that confine paths lexically rely on this to avoid
-      // escaping the workspace through a symlinked directory.
-      const s = await lstat(path);
+      const s = await nodeStat(path);
       return {
         isFile: s.isFile(),
         isDirectory: s.isDirectory(),
@@ -196,6 +201,22 @@ export class HostFileSystem implements IHostFileSystem {
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'stat' });
+    }
+  }
+
+  async lstat(path: string): Promise<HostFileStat> {
+    try {
+      const s = await lstat(path);
+      return {
+        isFile: s.isFile(),
+        isDirectory: s.isDirectory(),
+        isSymbolicLink: s.isSymbolicLink(),
+        size: s.size,
+        mtimeMs: s.mtimeMs,
+        ino: s.ino,
+      };
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'lstat' });
     }
   }
 
@@ -228,12 +249,20 @@ export class HostFileSystem implements IHostFileSystem {
       throw toHostFsError(error, { path, op: 'remove' });
     }
   }
+
+  async realpath(path: string): Promise<string> {
+    try {
+      return await nodeRealpath(path);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'realpath' });
+    }
+  }
 }
 
 registerScopedService(
   LifecycleScope.App,
   IHostFileSystem,
   HostFileSystem,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'hostFs',
 );

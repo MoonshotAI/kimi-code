@@ -45,13 +45,15 @@ import {
 import type { AuthProvider, Model } from './modelInstance';
 import { IModelResolver } from './modelResolver';
 import { ModelImpl, StaticAuthProvider } from './modelImpl';
-import { resolveThinkingEffortForModel } from './thinking';
+import {
+  resolveKimiThinkingEffortOverride,
+  resolveThinkingEffortForModel,
+} from './thinking';
 
-/** Shape of the `thinking` config section (owned by `profile`); only the
- *  fields the resolver needs to mirror the production default are read here. */
 interface ThinkingSection {
   readonly enabled?: boolean;
   readonly effort?: string;
+  readonly forcedEffort?: string;
 }
 
 type MutableProtocolProviderOptions = {
@@ -82,9 +84,14 @@ export class ModelResolverService extends Disposable implements IModelResolver {
         `Model "${id}" is not configured in config.toml.`,
       );
     }
-    const model = effectiveModelConfig(configuredModel);
-
-    const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } = this.resolveProviderContext(id, model);
+    const routingModel = effectiveModelConfig(configuredModel);
+    const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } =
+      this.resolveProviderContext(id, routingModel);
+    const protocol = this.resolveProtocol(id, routingModel, providerConfig);
+    const model = effectiveModelConfig(
+      configuredModel,
+      providerConfig?.type ?? configuredModel.protocol,
+    );
     const auth = resolveModelAuthMaterial({
       modelId: id,
       model,
@@ -94,12 +101,11 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     });
     const authProvider = this.buildAuthProvider(providerName, auth);
 
-    const protocol = this.resolveProtocol(id, model, providerConfig);
-    // Match production v1: strip a trailing `/v1` only when the model explicitly
-    // overrides into the Anthropic transport. Native Anthropic providers keep
-    // their configured `/v1` because the old provider manager did too.
+    const providerType = providerConfig?.type ?? protocol;
     const resolvedBaseUrl =
-      model.protocol === 'anthropic' ? stripTrailingV1(rawBaseUrl) : rawBaseUrl;
+      model.protocol === 'anthropic' && rawBaseUrl !== undefined
+        ? stripTrailingV1(rawBaseUrl)
+        : rawBaseUrl;
     const wireName = model.name ?? model.model;
     if (wireName === undefined) {
       throw new Error2(
@@ -148,41 +154,40 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       supportEfforts: model.supportEfforts,
       defaultEffort: model.defaultEffort,
       alwaysThinking,
+      providerType,
       providerName,
       authProvider,
       protocolRegistry: this.protocolRegistry as ProtocolAdapterRegistry,
       providerOptions,
     });
 
-    // Apply the production default thinking effort so a plain `model.request()`
-    // behaves like the agent path (which routes through `profile` and reads the
-    // same `thinking` config). Required for models whose
-    // endpoint rejects a request that omits thinking (e.g. kimi-k2.7 over the
-    // Anthropic protocol returns 400 unless `thinking.type === 'enabled'`).
-    const effort = this.resolveDefaultThinking(model, alwaysThinking);
-    return effort === 'off' ? impl : impl.withThinking(effort);
+    const effort = this.resolveDefaultThinking(
+      model,
+      alwaysThinking,
+      protocol === 'kimi',
+      providerType === 'kimi',
+    );
+    return effort === 'off' && protocol !== 'anthropic' ? impl : impl.withThinking(effort);
   }
 
-  /**
-   * Mirror `profile`'s `resolveThinkingEffort` so the god-object's default
-   * matches the production agent path:
-   *   - `thinking.enabled === false` turns thinking off;
-   *   - otherwise the configured `thinking.effort` is used, falling back to the
-   *     model's declared default effort / middle supported effort / boolean `on`;
-   *   - an `always_thinking` model clamps an explicit "off" back to on.
-   */
   private resolveDefaultThinking(
     model: ModelConfig,
     alwaysThinking: boolean,
+    kimiProtocol: boolean,
+    kimiProvider: boolean,
   ): ThinkingEffort {
     const thinking = this.config.get<ThinkingSection | undefined>('thinking');
-    return resolveThinkingEffortForModel(
+    const effort = resolveThinkingEffortForModel(
       undefined,
       {
         enabled: thinking?.enabled,
         effort: thinking?.effort,
       },
       { ...model, alwaysThinking },
+      kimiProtocol,
+    );
+    return (
+      resolveKimiThinkingEffortOverride(thinking?.forcedEffort, effort, kimiProvider) ?? effort
     );
   }
 
@@ -198,23 +203,14 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     return out;
   }
 
-  /**
-   * Return the ProviderConfig this Model resolves against, plus the URL to
-   * hit at runtime. Structured path reads `[providers.<providerId>]`; flat
-   * path synthesizes a Provider record from the Model's inline baseUrl.
-   */
   private resolveProviderContext(
     id: string,
     model: ModelConfig,
   ): {
     readonly providerConfig: ProviderConfig | undefined;
     readonly providerName: string;
-    readonly resolvedBaseUrl: string;
+    readonly resolvedBaseUrl: string | undefined;
   } {
-    // Structured path — Model references a Provider (which may reference a
-    // Platform). Legacy configs still use `provider` in place of `providerId`,
-    // and the top-level `defaultProvider` config is the v1-compatible fallback
-    // when a Model pins neither.
     const providerId =
       model.providerId ?? model.provider ?? this.config.get<string>('defaultProvider');
     if (providerId !== undefined) {
@@ -232,17 +228,9 @@ export class ModelResolverService extends Disposable implements IModelResolver {
           model.protocol ?? providerConfig.type,
           providerConfig.env,
         );
-      if (baseUrl === undefined || baseUrl.length === 0) {
-        throw new Error2(
-          ErrorCodes.CONFIG_INVALID,
-          `Model "${id}" (via provider "${providerId}") is missing a base URL.`,
-        );
-      }
       return { providerConfig, providerName: providerId, resolvedBaseUrl: baseUrl };
     }
 
-    // Flat path — Model carries its own baseUrl. Synthesize a Provider id
-    // from the URL's origin so two flat Models on the same host converge.
     const modelBaseUrl = nonEmpty(model.baseUrl);
     if (modelBaseUrl === undefined) {
       throw new Error2(
@@ -304,18 +292,6 @@ export class ModelResolverService extends Disposable implements IModelResolver {
   }
 }
 
-/**
- * Resolve the outbound `defaultHeaders` for a Model, layering lowest to highest
- * precedence (matches v1's `provider-manager`):
- *
- *   1. `KIMI_CODE_CUSTOM_HEADERS` env (re-read on every resolve so env changes
- *      take effect without restarting the session);
- *   2. host identity headers — the full set (`User-Agent` + `X-Msh-*`) for a
- *      Kimi provider, only the `User-Agent` for every other provider so device
- *      identity never leaks to third-party endpoints (a Kimi provider routed
- *      through the Anthropic protocol still gets the full set, matching v1);
- *   3. provider `customHeaders` (always win on conflict).
- */
 export function resolveOutboundHeaders(
   providerType: string | undefined,
   customHeaders: Readonly<Record<string, string>> | undefined,
@@ -345,13 +321,12 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: maxContextSize,
-    select_tools: declared.has('select_tools') || detected.select_tools === true,
+    dynamically_loaded_tools:
+      declared.has('dynamically_loaded_tools') ||
+      detected.dynamically_loaded_tools === true,
   };
 }
 
-/** Strip a trailing `/v1` (with optional trailing slash) from a baseUrl, matching
- *  production v1's anthropic-transport normalization so the Anthropic SDK's
- *  `/v1/messages` suffix does not produce a double `/v1/v1/messages`. */
 function stripTrailingV1(baseUrl: string): string {
   return baseUrl.replace(/\/v1\/?$/, '');
 }
@@ -360,14 +335,16 @@ function buildProtocolProviderOptions(
   model: ModelConfig,
   protocol: Protocol,
   provider: ProviderConfig | undefined,
-  baseUrl: string,
+  baseUrl: string | undefined,
 ): ProtocolProviderOptions | undefined {
   const options: MutableProtocolProviderOptions = {};
 
   switch (protocol) {
     case 'anthropic':
       if (model.maxOutputSize !== undefined) options.defaultMaxTokens = model.maxOutputSize;
+      if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
+      if (provider?.type === 'kimi') options.kimiThinking = true;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
       break;
     case 'openai': {
@@ -376,7 +353,6 @@ function buildProtocolProviderOptions(
       break;
     }
     case 'kimi':
-      if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       break;
     case 'vertexai': {
       const project = vertexAIProject(provider);
@@ -455,6 +431,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelResolver,
   ModelResolverService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'modelResolver',
 );

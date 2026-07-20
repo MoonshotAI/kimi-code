@@ -24,28 +24,42 @@
  * the in-flight worker promise — stays OUT of the Model (live-only service
  * members): none of it can be resumed, and a session never restores mid-flight.
  * A `running` phase stranded by a crash is reset to `idle` by the service's
- * `wire.onRestored` handler (mirroring `goal`'s post-replay normalization).
+ * `wire.hooks.onDidRestore` hook (mirroring `goal`'s post-replay normalization).
  *
  * The `compaction.*` events publish to `IEventBus` (`compaction.started` via the
  * `begin` Op's `toEvent`; the rest directly from the service); they are
  * declared here via interface-merge (`error` is already declared by `mcp`, so
  * it is not re-declared). The `full_compaction.*` record shapes are registered in
  * `PersistedOpMap` (`#/wire/types`, below) because the records still
- * ride the per-agent `wire.jsonl` log read by `wireRecord.restore()` /
- * `getRecords()`. Consumed by the Agent-scope `fullCompactionService`.
+ * ride the per-agent `wire.jsonl` journal restored by `IWireService`.
+ * Consumed by the Agent-scope `fullCompactionService`.
  */
 
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
-import type {
-  CompactionBlockedEvent,
-  CompactionCancelledEvent,
-  CompactionCompletedEvent,
-  CompactionStartedEvent,
-} from '@moonshot-ai/protocol';
 
-import type { CompactionBeginData } from './types';
+import type { CompactionBeginData, CompactionResult } from './types';
+
+export interface CompactionStartedEvent {
+  readonly type: 'compaction.started';
+  readonly trigger: 'manual' | 'auto';
+  readonly instruction?: string;
+}
+
+export interface CompactionBlockedEvent {
+  readonly type: 'compaction.blocked';
+  readonly turnId?: number;
+}
+
+export interface CompactionCancelledEvent {
+  readonly type: 'compaction.cancelled';
+}
+
+export interface CompactionCompletedEvent {
+  readonly type: 'compaction.completed';
+  readonly result: CompactionResult;
+}
 
 export type CompactionPhase = 'idle' | 'running' | 'cancelled' | 'completed';
 

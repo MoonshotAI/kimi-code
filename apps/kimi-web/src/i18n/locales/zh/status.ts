@@ -28,6 +28,9 @@ export default {
   goalPause: '暂停',
   goalResume: '继续',
   goalCancel: '取消',
+  goalCancelConfirm: '是否需要取消当前目标？取消后将无法恢复。',
+  goalCancelConfirmYes: '是',
+  goalCancelConfirmNo: '否',
   goalStatusActive: '进行中',
   goalStatusPaused: '已暂停',
   goalStatusBlocked: '已阻塞',
@@ -38,6 +41,7 @@ export default {
   thinkingTooltip: '切换思考模式',
   thinkingOn: '开',
   thinkingOff: '关',
+  cacheNote: '提示：切换模型或思考程度会使已有的提示词缓存失效。建议新建对话，避免额外的 token 消耗。',
   starredModels: '收藏',
   moreModels: '更多模型…',
   // 状态面板

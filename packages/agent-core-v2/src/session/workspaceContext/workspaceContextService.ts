@@ -77,6 +77,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionWorkspaceContext,
   SessionWorkspaceContextService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'workspaceContext',
 );

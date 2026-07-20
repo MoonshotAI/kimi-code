@@ -50,6 +50,7 @@ import {
 import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './configPure';
 import { getConfigSectionContributions } from './configSectionContributions';
 import { getConfigOverlayContributions } from './configOverlayContributions';
+import { migrateThinkingEffortMaxToHigh } from './migrations';
 import {
   applySectionToToml,
   camelToSnake,
@@ -59,8 +60,6 @@ import {
   transformTomlData,
 } from './toml';
 
-// Empty scope resolves to `<homeDir>/<configKey>` (join skips empty segments),
-// preserving the historical `<homeDir>/config.toml` location.
 const CONFIG_SCOPE = '';
 
 type GetEnv = (name: string) => string | undefined;
@@ -144,16 +143,9 @@ export class ConfigRegistry implements IConfigRegistry {
     this._onDidRegisterOverlay.event;
 
   constructor() {
-    // Drain module-level contributions registered at import time by owner
-    // `configSection.ts` modules (see `configSectionContributions.ts`). This
-    // makes every statically-imported section available before `IConfigService`
-    // is first resolved, independent of owning-Service construction.
     for (const c of getConfigSectionContributions()) {
       this.registerSection(c.domain, c.schema, c.options);
     }
-    // Drain module-level overlay contributions (see
-    // `configOverlayContributions.ts`) for the same reason: an overlay must
-    // take effect even if its owning Service is never instantiated.
     for (const overlay of getConfigOverlayContributions()) {
       this.registerEffectiveOverlay(overlay);
     }
@@ -166,11 +158,6 @@ export class ConfigRegistry implements IConfigRegistry {
   ): void {
     const existing = this.sections.get(domain);
     if (existing !== undefined) {
-      // A section's owner may live in a child scope (Session/Agent) that is
-      // instantiated more than once per process (e.g. one Agent scope per
-      // session), so the same owner can register its section again. Treat an
-      // identical re-registration as a no-op; only a conflicting registration
-      // from a different owner is an error.
       if (
         isSameSection(
           existing,
@@ -236,18 +223,6 @@ export class ConfigService extends Disposable implements IConfigService {
   readonly onDidSectionChange: Event<ConfigSectionChangedEvent> = this._onDidSectionChange.event;
   readonly ready: Promise<void>;
 
-  /**
-   * Serializes config state transitions (User-target writes and reloads).
-   *
-   * A User-target `set`/`replace` mutates `raw`/`rawSnake`, awaits `persist()`,
-   * and only then rebuilds `effective`; a `load()` replaces all three wholesale
-   * from the on-disk document. Without serialization, a reload whose file read
-   * resolves inside a write's persist window (the atomic rename has not landed
-   * yet) restores the stale pre-write state, and the write's post-persist
-   * `rebuildEffective` then drops the just-written domain from `effective` —
-   * observable e.g. as a `POST /config` response missing the field it just
-   * wrote when the startup model-catalog refresh's `reload()` races the write.
-   */
   private stateChain: Promise<unknown> = Promise.resolve();
 
   private rawSnake: ResolvedConfig = {};
@@ -268,7 +243,14 @@ export class ConfigService extends Disposable implements IConfigService {
     this.configKey = this.bootstrap.configKey;
     this._register(this.registry.onDidRegisterSection((e) => this.revalidateDomain(e.domain)));
     this._register(this.registry.onDidRegisterOverlay(() => this.reapplyOverlays()));
-    this.ready = this.load('load');
+    // One-shot config migrations run before the first load (best-effort, never
+    // throws): rewrites a persisted thinking.effort "max" to "high" once.
+    const { configKey } = this;
+    const { homeDir } = this.bootstrap;
+    this.ready = (async () => {
+      await migrateThinkingEffortMaxToHigh(this.documentStore, configKey, homeDir);
+      await this.load('load');
+    })();
     this._register(
       this.documentStore.watch(CONFIG_SCOPE, this.configKey)(() => {
         void this.reload();
@@ -280,11 +262,6 @@ export class ConfigService extends Disposable implements IConfigService {
     if (Object.prototype.hasOwnProperty.call(this.memory, domain)) {
       return this.memory[domain] as T;
     }
-    // Re-apply the env overlay on every read for env-bound sections so
-    // operational toggles driven purely by the environment (e.g.
-    // `KIMI_DISABLE_CRON`) take effect without a `config.toml` change to
-    // trigger a rebuild. `applySectionEnv` is a pure function and only
-    // runs for sections that actually declare env bindings.
     const section = this.registry.getSection(domain);
     if (section?.env !== undefined) {
       const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
@@ -292,8 +269,6 @@ export class ConfigService extends Disposable implements IConfigService {
         const next = applySectionEnv(this.effective[domain], section.env, getEnv);
         this.effective[domain] = this.registry.validate(domain, next);
       } catch {
-        // Re-evaluation failed (e.g. a malformed env value); keep the last
-        // good effective value rather than throwing from a getter.
       }
     }
     return this.effective[domain] as T;
@@ -310,9 +285,6 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   getAll(): ResolvedConfig {
-    // Keep `getAll()` consistent with `get()`: re-apply env overlays so a
-    // caller reading the whole effective config observes the same live
-    // env values as a per-domain `get()`.
     const effective: ResolvedConfig = { ...this.effective };
     const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
     for (const section of this.registry.listSections()) {
@@ -323,7 +295,6 @@ export class ConfigService extends Disposable implements IConfigService {
           applySectionEnv(effective[section.domain], section.env, getEnv),
         );
       } catch {
-        // Keep the last good effective value for this domain.
       }
     }
     return { ...effective, ...this.memory };
@@ -412,12 +383,6 @@ export class ConfigService extends Disposable implements IConfigService {
     await this.enqueueStateTransition(() => this.load('reload'));
   }
 
-  /**
-   * Run `fn` after every previously enqueued state transition settles, so
-   * User-target writes and reloads can never interleave (see `stateChain`).
-   * The chain itself never rejects: a failed transition propagates to its own
-   * caller but does not poison later transitions.
-   */
   private enqueueStateTransition<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.stateChain.then(() => fn());
     this.stateChain = run.then(
@@ -547,8 +512,6 @@ export class ConfigService extends Disposable implements IConfigService {
     const section = this.registry.getSection(domain);
     if (section === undefined) return;
 
-    // A late-registered section's `raw` was produced by the generic transform;
-    // re-apply its custom `fromToml` against the preserved snake_case value.
     if (section.fromToml !== undefined) {
       const rawSnakeValue = this.rawSnake[camelToSnake(domain)];
       if (rawSnakeValue !== undefined) {
@@ -560,7 +523,6 @@ export class ConfigService extends Disposable implements IConfigService {
       try {
         this.effective[domain] = this.registry.validate(domain, this.raw[domain]);
       } catch {
-        // Invalid value was already reported as a diagnostic at load time.
         return;
       }
     } else if (section.defaultValue !== undefined && this.effective[domain] === undefined) {
@@ -596,13 +558,13 @@ registerScopedService(
   LifecycleScope.App,
   IConfigRegistry,
   ConfigRegistry,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'config',
 );
 registerScopedService(
   LifecycleScope.App,
   IConfigService,
   ConfigService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'config',
 );

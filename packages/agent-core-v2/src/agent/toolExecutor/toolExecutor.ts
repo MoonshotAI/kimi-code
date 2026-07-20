@@ -12,6 +12,7 @@ import type { ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { OrderedHookSlot } from '#/hooks';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 
 export interface ToolCallStartedPayload {
   readonly toolCallId: string;
@@ -22,6 +23,7 @@ export interface ToolCallStartedPayload {
 export interface ToolExecutorExecuteOptions {
   readonly signal: AbortSignal;
   readonly turnId: number;
+  readonly trace?: LLMRequestTrace;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
 }
 
@@ -34,7 +36,6 @@ export interface ToolExecutionResult {
 export type MissingToolDescriber = (toolName: string) => string | undefined;
 export type UnavailableToolDescriber = (toolName: string) => string | undefined;
 
-/** How a duplicate tool call relates to its original (dedupe telemetry). */
 export type ToolCallDupType = 'same_step' | 'cross_step';
 
 export interface IAgentToolExecutorService {
@@ -47,24 +48,9 @@ export interface IAgentToolExecutorService {
     readonly onDidExecuteTool: OrderedHookSlot<ToolDidExecuteContext>;
   };
 
-  /**
-   * Record that a tool call is a duplicate so `tool_call` telemetry can tag
-   * it. Written by the `toolDedupe` plugin (which already injects this
-   * service — injecting the plugin here would cycle); the executor reads and
-   * clears the entry when the call's telemetry fires, defaulting to 'normal'.
-   */
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void;
 
-  /**
-   * Single-slot hook for the "registered but currently unavailable" preflight
-   * message. A second registration overwrites the first; disposing the returned
-   * handle clears the slot only when the same describer still occupies it.
-   */
   registerUnavailableToolDescriber(describer: UnavailableToolDescriber): IDisposable;
-  /**
-   * Single-slot hook for the tool-miss preflight message (e.g. a loaded tool
-   * whose server dropped). Same single-slot semantics as above.
-   */
   registerMissingToolDescriber(describer: MissingToolDescriber): IDisposable;
 }
 

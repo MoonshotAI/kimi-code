@@ -42,18 +42,9 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
 
-// ── Constants ────────────────────────────────────────────────────────
 
-/**
- * Same id shape used by the service and the on-disk persistence
- * layer. We re-check here so a malformed id never reaches the service —
- * the regex is the single source of truth for the on-the-wire id
- * format and an early reject keeps the error message close to the
- * user's input.
- */
 const ID_PATTERN = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 
-// ── Input schema ─────────────────────────────────────────────────────
 
 export const CronDeleteInputSchema = z.object({
   id: z
@@ -62,7 +53,6 @@ export const CronDeleteInputSchema = z.object({
 });
 export type CronDeleteInput = z.infer<typeof CronDeleteInputSchema>;
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
   readonly name = 'CronDelete' as const;
@@ -74,9 +64,6 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
   constructor(@ISessionCronService private readonly cron: ISessionCronService) {}
 
   resolveExecution(args: CronDeleteInput): ToolExecution {
-    // Format check up front. The store would reject the lookup anyway,
-    // but the message is more actionable when it names the constraint
-    // ("ULID") rather than a generic "not found".
     if (!ID_PATTERN.test(args.id)) {
       return {
         isError: true,
@@ -92,19 +79,12 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
       execute: async () => {
         const removed = this.cron.removeTasks([args.id]);
         if (removed.length === 0) {
-          // Not found is reported as an error so the model can correct
-          // itself — see the module header for the rationale. We
-          // deliberately do NOT emit `cron_deleted` here; the metric
-          // tracks real state changes.
           return {
             isError: true,
             output: `No cron job with id ${args.id}.`,
           };
         }
 
-        // Telemetry goes through the service so the tool stays out of
-        // `ITelemetryService` — symmetric with `CronCreate`'s use of
-        // `emitScheduled`.
         this.cron.emitDeleted(args.id);
 
         return {

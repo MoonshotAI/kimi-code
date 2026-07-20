@@ -17,7 +17,7 @@ export interface CompactionConfig {
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   triggerRatio: 0.85,
-  blockRatio: 0.85, // Same as triggerRatio to disable async compaction
+  blockRatio: 0.85,
   reservedContextSize: 50_000,
   maxCompactionPerTurn: Infinity,
   maxOverflowCompactionAttempts: 3,
@@ -129,11 +129,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   computeCompactCount(messages: readonly Message[], source: CompactionSource): number {
-    // Return value: N messages to be compacted (0 means no compaction possible)
-    // LLM Input: messages.slice(0, N) + [user:instruction]
-    // Preserved recent messages: messages.slice(N)
 
-    // Manual compaction
     if (source === 'manual') {
       for (let i = messages.length - 1; i > 0; i--) {
         if (canSplitAfter(messages, i)) {
@@ -143,15 +139,6 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       return 0;
     }
 
-    // Auto compaction rules (in order of precedence):
-    // 1. The split after messages[N-1] must be safe per `canSplitAfter`:
-    //    messages[N-1] is not a user or asst-with-tool-calls, and the retained
-    //    suffix messages.slice(N) has no orphan tool result.
-    // 2. At least one recent message must be preserved
-    // 3. At most maxRecentMessages recent messages should be preserved
-    // 4. At most maxRecentUserMessages recent user messages should be preserved
-    // 5. At most maxRecentSizeRatio * maxSize recent messages should be preserved
-    // 6. N should be as small as possible
 
     let recentMessages = 1;
     let recentUserMessages = 0;
@@ -246,21 +233,6 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 }
 
-/**
- * Decide whether a compaction split is safe to place immediately after
- * `messages[index]`. A split is safe only when:
- *   - `messages[index]` itself is not a user message or an assistant message
- *     with pending tool calls (cutting either of those off from what follows
- *     would break the conversation), AND
- *   - the next message is not a tool result. The history is well-formed:
- *     tool results only appear after their owning `asst_w_tc` and all tool
- *     results for one exchange land consecutively before the next non-tool
- *     message. So if the suffix starts with a tool result, its `asst_w_tc`
- *     must be in the compacted prefix, which would orphan that result
- *     (e.g. splitting between tool_a and tool_b of a parallel call), AND
- *   - the compacted prefix itself does not end with an unresolved tool
- *     exchange, because pending tool results must remain in the retained tail.
- */
 function canSplitAfter(messages: readonly Message[], index: number): boolean {
   const m = messages[index];
   if (m === undefined) return false;

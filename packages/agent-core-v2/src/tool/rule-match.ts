@@ -27,10 +27,6 @@ interface PathMatchSemantics {
   readonly pathClass: PathClass;
 }
 
-/**
- * Match ordinary string fields, like command text or search patterns.
- * `*` and `**` work as wildcards, but the value is not treated as a file path.
- */
 export function globMatch(value: string, pattern: string, options?: { nocase?: boolean }): boolean {
   if (picomatch.isMatch(value, pattern, options)) return true;
 
@@ -44,11 +40,6 @@ function stripLeadingDotSlash(value: string): string {
   return value.startsWith('./') ? value.slice(2) : value;
 }
 
-/**
- * Match file path fields, like Read/Write/Edit `path`.
- * Also compares normalized forms, so `./a`, `dir/../a`, and Windows
- * separator or case variants can match the same rule.
- */
 export function pathGlobMatch(
   value: string,
   pattern: string,
@@ -67,15 +58,6 @@ export function pathGlobMatch(
   return false;
 }
 
-/**
- * Build equivalent spellings for one path string before glob matching:
- * the original text, a leading `./` or `.\` form without that prefix,
- * the canonical absolute path when possible, and slash-form Windows paths.
- *
- * Example: with cwd `/repo`, `./src/../secret.txt` adds both
- * `src/../secret.txt` and `/repo/secret.txt`. On Windows,
- * `C:\repo\secret.txt` also adds `C:/repo/secret.txt`.
- */
 function pathVariants(
   value: string,
   semantics: PathMatchSemantics,
@@ -128,8 +110,6 @@ function pathMatchSemantics(
   pattern: string,
   pathOptions: PermissionPathMatchOptions | undefined,
 ): PathMatchSemantics {
-  // Production callers pass the active Kaos path class. The fallback keeps
-  // the pure matcher useful for tests and direct helper calls.
   const pathClass =
     pathOptions?.pathClass ??
     ([value, pattern].some((candidate) => {
@@ -146,8 +126,6 @@ function pathMatchSemantics(
 
 function addPathVariant(variants: Set<string>, value: string, pathClass: PathClass): void {
   variants.add(value);
-  // Picomatch treats backslashes as escape syntax in some cases; add a
-  // slash-separated Win32 variant so nocase and globs behave predictably.
   if (pathClass === 'win32') variants.add(value.replaceAll('\\', '/'));
 }
 

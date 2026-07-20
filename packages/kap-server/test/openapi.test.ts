@@ -93,6 +93,29 @@ describe('server-v2 OpenAPI', () => {
     expect(content['multipart/form-data']).toBeDefined();
   });
 
+  it('describes session export as a ZIP or JSON error envelope', async () => {
+    const doc = await fetchOpenApi();
+    const exportOp = operation(doc, '/api/v1/sessions/{session_id}/export', 'post');
+    const responses = asRecord(exportOp['responses']);
+    const response = asRecord(responses['200']);
+    const content = asRecord(response['content']);
+    const headers = asRecord(response['headers']);
+    const zipSchema = asRecord(asRecord(content['application/zip'])['schema']);
+    const errorSchema = asRecord(asRecord(content['application/json'])['schema']);
+    const errorProperties = asRecord(errorSchema['properties']);
+
+    expect(zipSchema).toMatchObject({ type: 'string', format: 'binary' });
+    expect(errorProperties).toMatchObject({
+      code: expect.any(Object),
+      msg: expect.any(Object),
+      data: expect.any(Object),
+      request_id: expect.any(Object),
+    });
+    expect(headers['content-disposition']).toBeDefined();
+    expect(headers['content-length']).toBeDefined();
+    expect(headers['cache-control']).toBeDefined();
+  });
+
   it('represents the fs-action dispatcher as a oneOf union', async () => {
     const doc = await fetchOpenApi();
     const fsActionOp = operation(doc, '/api/v1/sessions/{session_id}/{tail}', 'post');

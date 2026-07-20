@@ -33,25 +33,19 @@ export type Protocol = z.infer<typeof ProtocolSchema>;
 export interface ProtocolProviderOptions {
   readonly reasoningKey?: string;
   readonly defaultMaxTokens?: number;
+  readonly supportEfforts?: readonly string[];
   readonly adaptiveThinking?: boolean;
+  readonly kimiThinking?: boolean;
   readonly betaApi?: boolean;
   readonly metadata?: Readonly<Record<string, string>>;
-  readonly supportEfforts?: readonly string[];
   readonly vertexai?: boolean;
   readonly project?: string;
   readonly location?: string;
 }
 
-/**
- * Configuration passed to the protocol adapter to produce a request handler.
- * Keep this shape wire-agnostic: identity comes from `protocol` + `baseUrl`,
- * secrets come from `auth` (resolved by the caller from Platform / Model
- * overrides), constructor-level headers come from `defaultHeaders`, and
- * provider-specific knobs are isolated under `providerOptions`.
- */
 export interface ProtocolAdapterConfig {
   readonly protocol: Protocol;
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
   readonly modelName: string;
   readonly apiKey?: string;
   readonly defaultHeaders?: Readonly<Record<string, string>>;
@@ -61,7 +55,6 @@ export interface ProtocolAdapterConfig {
 export interface IProtocolAdapterRegistry {
   readonly _serviceBrand: undefined;
 
-  /** Protocols this registry can build adapters for. */
   supportedProtocols(): readonly Protocol[];
 }
 

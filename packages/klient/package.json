@@ -1,8 +1,8 @@
 {
   "name": "@moonshot-ai/klient",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
-  "description": "Kimi client SDK — reuse agent-core-v2 service interfaces over the /api/v2 HTTP channel.",
+  "description": "Kimi client SDK — contract-driven facade over agent-core-v2, routable over ipc or in-memory transports.",
   "license": "MIT",
   "type": "module",
   "imports": {
@@ -12,6 +12,14 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./ipc": {
+      "types": "./src/transports/ipc/index.ts",
+      "default": "./src/transports/ipc/index.ts"
+    },
+    "./memory": {
+      "types": "./src/transports/memory/index.ts",
+      "default": "./src/transports/memory/index.ts"
     },
     "./package.json": {
       "types": "./package.json",
@@ -24,11 +32,21 @@
   },
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm typecheck:examples",
+    "typecheck:examples": "tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "smoke": "tsx --tsconfig ./tsconfig.examples.json --import ../../build/register-raw-text-loader.mjs examples/smoke.ts",
+    "clean": "rm -rf dist",
+    "docker:e2e": "bash scripts/run-docker-e2e.sh"
   },
   "dependencies": {
-    "@moonshot-ai/agent-core-v2": "workspace:^"
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@moonshot-ai/protocol": "workspace:^",
+    "@types/ws": "^8.18.0",
+    "ulid": "^3.0.1",
+    "ws": "^8.18.0"
   }
 }

@@ -5,8 +5,8 @@
  * Registers with `sessionLifecycle` hook slots to run `SessionStart` and
  * `SessionEnd` external commands for the current `sessionContext`, and
  * observes the requester-side agent-run hook slot (`onWillStartAgentTask`) and
- * stop event (`onDidStopAgentTask`) hosted on `agentLifecycle`'s
- * `IAgentLifecycleService` to translate them into the `SubagentStart` /
+ * stop event (`onDidStopAgentTask`) hosted on the `subagent` domain's
+ * `ISessionSubagentService` to translate them into the `SubagentStart` /
  * `SubagentStop` external commands. The slot/event host lives on the service
  * that owns the run (run by `mirrorAgentRun`); this adapter only registers its
  * own listeners here, so the runner owns the slots it runs — the same pattern
@@ -25,12 +25,12 @@ import {
   type SessionCloseReason,
   type SessionCreateSource,
 } from '#/app/sessionLifecycle/sessionLifecycle';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   type AgentTaskStartHookContext,
   type AgentTaskStopHookContext,
-  IAgentLifecycleService,
-} from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+  ISessionSubagentService,
+} from '#/session/subagent/subagent';
 
 import { ISessionExternalHooksService } from './externalHooks';
 
@@ -45,7 +45,7 @@ export class SessionExternalHooksService
   constructor(
     @ISessionContext private readonly context: ISessionContext,
     @ISessionLifecycleService lifecycle: ISessionLifecycleService,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
+    @ISessionSubagentService subagents: ISessionSubagentService,
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
   ) {
     super();
@@ -66,12 +66,12 @@ export class SessionExternalHooksService
       }),
     );
     this._register(
-      agentLifecycle.hooks.onWillStartAgentTask.register('externalHooks', async (ctx, next) => {
+      subagents.hooks.onWillStartAgentTask.register('externalHooks', async (ctx, next) => {
         await this.runSubagentStart(ctx);
         await next();
       }),
     );
-    this._register(agentLifecycle.onDidStopAgentTask((ctx) => this.notifySubagentStop(ctx)));
+    this._register(subagents.onDidStopAgentTask((ctx) => this.notifySubagentStop(ctx)));
   }
 
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {

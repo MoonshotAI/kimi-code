@@ -58,11 +58,18 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
       description: `Setting goal status: ${status}`,
       stopBatchAfterThis: status !== 'active' && goalIsActive,
       approvalRule: this.name,
-      execute: async () => {
+      execute: async ({ turnId }) => {
+        const goalAtExecution = this.goal.getGoal().goal;
+        if (goalAtExecution === null || (currentGoal === null && status === 'active')) {
+          return { output: missingGoalOutput(status) };
+        }
+        if (
+          goalAtExecution.goalId !== currentGoal?.goalId &&
+          !this.goal.isGoalToolTarget(turnId, goalAtExecution.goalId)
+        ) {
+          return { output: changedGoalOutput(status) };
+        }
         if (status === 'active') {
-          if (currentGoal === null) {
-            return { output: 'Goal not resumed: no current goal.' };
-          }
           await this.goal.resumeGoal({}, 'model');
           return { output: 'Goal resumed.' };
         }
@@ -91,6 +98,18 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
 
 function isUpdateGoalStatus(status: unknown): status is UpdateGoalToolInput['status'] {
   return status === 'active' || status === 'complete' || status === 'blocked';
+}
+
+function missingGoalOutput(status: UpdateGoalToolInput['status']): string {
+  if (status === 'active') return 'Goal not resumed: no current goal.';
+  if (status === 'complete') return 'Goal not completed: no active goal.';
+  return 'Goal not blocked: no active goal.';
+}
+
+function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
+  if (status === 'active') return 'Goal not resumed: the current goal changed.';
+  if (status === 'complete') return 'Goal not completed: the current goal changed.';
+  return 'Goal not blocked: the current goal changed.';
 }
 
 registerTool(UpdateGoalTool, {

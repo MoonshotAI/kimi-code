@@ -30,6 +30,7 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
+import { effectiveModelForHost } from './config';
 import {
   promptApiKey,
   promptCatalogProviderSelection,
@@ -259,9 +260,17 @@ async function setDefaultModel(
   alias: string,
   effort: ThinkingEffort,
 ): Promise<void> {
+  // Resolve efforts the same way the /model path does (effectiveModelForHost
+  // applies overrides and the protocol-profile inference): catalog entries for
+  // e.g. Anthropic models declare no support_efforts on the alias, and without
+  // the inference a top-tier pick would slip through as a persisted effort.
+  const model = host.state.appState.availableModels[alias];
   await host.harness.setConfig({
     defaultModel: alias,
-    thinking: thinkingEffortToConfig(effort),
+    thinking: thinkingEffortToConfig(
+      effort,
+      model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
+    ),
   });
   await host.authFlow.refreshConfigAfterLogin();
   host.track('model_switch', { model: alias });

@@ -30,7 +30,7 @@ import {
 } from '#/agent/task/tools/task-stop';
 import type { ITaskHandle } from '#/app/task/task';
 import type { ProcessTaskInfo } from '#/os/backends/node-local/tools/process-task';
-import type { SubagentTaskInfo } from '#/session/agentLifecycle/tools/subagent-task';
+import type { SubagentTaskInfo } from '#/session/subagent/tools/subagent-task';
 import { TaskListTool as V1TaskListTool } from '../../../../../agent-core/src/tools/background/task-list';
 import { TaskOutputTool as V1TaskOutputTool } from '../../../../../agent-core/src/tools/background/task-output';
 import { TaskStopTool as V1TaskStopTool } from '../../../../../agent-core/src/tools/background/task-stop';
@@ -220,11 +220,19 @@ class FakeTaskService implements IAgentTaskService {
     return entry.info;
   }
 
+  async stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
+    return this.stop(taskId, 'Aborted by the user');
+  }
+
   async stopAll(reason?: string): Promise<readonly AgentTaskInfo[]> {
     const stopped = await Promise.all(
       Array.from(this.entries.keys()).map((taskId) => this.stop(taskId, reason)),
     );
     return stopped.filter((info): info is AgentTaskInfo => info !== undefined);
+  }
+
+  async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+    return this.stopAll(reason);
   }
 
   async wait(
@@ -437,7 +445,7 @@ describe('TaskOutputTool', () => {
     );
     const output = outputString(result);
 
-    expect(result).toMatchObject({ isError: false, message: 'Task snapshot retrieved.' });
+    expect(result).toMatchObject({ isError: false });
     expect(output).toContain('retrieval_status: success');
     expect(output).toContain('status: completed');
     expect(output).toContain('[output]\nDETACHED-PAYLOAD-LINE');
@@ -522,8 +530,6 @@ describe('TaskOutputTool', () => {
     expect(result.isError ?? false).toBe(false);
     expect(output).toContain('retrieval_status: timeout');
     expect(output).toContain('status: running');
-    // A blocking wait that timed out must steer the caller away from blocking
-    // again — the completion notification arrives on its own.
     expect(output).toContain('next_step:');
     expect(output).toContain('Do not block on it again');
     expect(tasks.waitCalls).toEqual([{ taskId, timeoutMs: 1_000 }]);

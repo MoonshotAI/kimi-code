@@ -35,6 +35,21 @@ import type { SlashCommandHost } from './dispatch';
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 
+const MODEL_SWITCH_CACHE_WARNING =
+  'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+const EFFORT_SWITCH_CACHE_WARNING =
+  'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+
+/** True once the conversation has at least one user message: a switch from
+ * then on resends the accumulated context, losing the cache. Shell-command
+ * echoes are also 'user' transcript entries but carry an empty `bullet`, so
+ * they're excluded. */
+function hasConversationHistory(host: SlashCommandHost): boolean {
+  return host.state.transcriptEntries.some(
+    (entry) => entry.kind === 'user' && entry.bullet !== '',
+  );
+}
+
 function currentTuiConfig(host: SlashCommandHost): TuiConfig {
   return {
     theme: host.state.appState.theme,
@@ -43,6 +58,14 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
   };
+}
+
+export function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
+  const providerType = host.state.appState.availableProviders[model.provider]?.type;
+  // Flat models (no named provider, e.g. inline base_url served by a v2
+  // backend) have no provider entry to look up; their own protocol declaration
+  // plays the provider-identity role, mirroring the resolver.
+  return effectiveModelAlias(model, providerType ?? model.protocol);
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -107,7 +130,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     }
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
+    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
     return;
   }
 
@@ -130,7 +153,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   } else {
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
+    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
   }
 }
 
@@ -151,7 +174,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
     }
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
+    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
     return;
   }
 
@@ -174,7 +197,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   } else {
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
+    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
   }
 }
 
@@ -234,7 +257,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     host.showError('No model selected. Run /model to select one first.');
     return;
   }
-  const effective = effectiveModelAlias(model);
+  const effective = effectiveModelForHost(host, model);
   const segments = segmentsFor(effective);
   const arg = args.trim().toLowerCase();
   if (arg.length === 0) {
@@ -242,10 +265,19 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     return;
   }
   if (!segments.includes(arg)) {
-    host.showError(
-      `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+    const providerType = host.state.appState.availableProviders[effective.provider]?.type;
+    const protocol = effective.protocol ?? providerType;
+    if (protocol !== 'anthropic') {
+      host.showError(
+        `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+      );
+      return;
+    }
+    const knownEfforts = effective.supportEfforts?.join(', ') ?? 'none declared';
+    host.showStatus(
+      `Thinking effort "${arg}" is not listed for ${alias} (known: ${knownEfforts}). Sending "${arg}" unchanged; the configured provider will validate it.`,
+      'warning',
     );
-    return;
   }
   await performModelSwitch(host, alias, arg, true);
 }
@@ -262,6 +294,7 @@ function showEffortPicker(
     new EffortSelectorComponent({
       efforts: segments,
       currentValue,
+      warning: hasConversationHistory(host) ? EFFORT_SWITCH_CACHE_WARNING : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, effort, true);
@@ -358,7 +391,13 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
 }
 
 export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
-  const entries = Object.entries(host.state.appState.availableModels);
+  const models = Object.fromEntries(
+    Object.entries(host.state.appState.availableModels).map(([alias, model]) => [
+      alias,
+      effectiveModelForHost(host, model),
+    ]),
+  );
+  const entries = Object.entries(models);
   if (entries.length === 0) {
     host.showNotice(
       'No models configured',
@@ -368,10 +407,11 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   }
   host.mountEditorReplacement(
     new TabbedModelSelectorComponent({
-      models: host.state.appState.availableModels,
+      models,
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
+      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking, true);
@@ -403,7 +443,8 @@ async function performModelSwitch(
   const modelChanged = alias !== prevModel;
   const effortChanged = effort !== prevEffort;
   const runtimeChanged = modelChanged || effortChanged;
-  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  let effectiveAlias = alias;
+  let effectiveEffort = effort;
 
   const session = host.session;
   try {
@@ -416,6 +457,9 @@ async function performModelSwitch(
       if (effort !== prevEffort) {
         await session.setThinking(effort);
       }
+      const status = await session.getStatus();
+      effectiveAlias = status.model ?? alias;
+      effectiveEffort = status.thinkingEffort;
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
@@ -423,15 +467,25 @@ async function performModelSwitch(
     return;
   }
 
-  host.setAppState({ model: alias, thinkingEffort: effort });
+  if (session === undefined) {
+    effectiveAlias = host.state.appState.model;
+    effectiveEffort = host.state.appState.thinkingEffort;
+  }
+  const effectiveModelChanged = effectiveAlias !== prevModel;
+  const effectiveEffortChanged = effectiveEffort !== prevEffort;
+  const displayName = modelDisplayName(
+    effectiveAlias,
+    host.state.appState.availableModels[effectiveAlias],
+  );
+  host.setAppState({ model: effectiveAlias, thinkingEffort: effectiveEffort });
   if (session === undefined && runtimeChanged) {
-    if (alias !== prevModel) {
-      host.track('model_switch', { model: alias });
+    if (effectiveModelChanged) {
+      host.track('model_switch', { model: effectiveAlias });
     }
-    if (effort !== prevEffort) {
+    if (effectiveEffortChanged) {
       host.track('thinking_toggle', {
-        enabled: effort !== 'off',
-        effort,
+        enabled: effectiveEffort !== 'off',
+        effort: effectiveEffort,
         from: prevEffort,
       });
     }
@@ -440,7 +494,12 @@ async function performModelSwitch(
   let persisted = false;
   if (persist) {
     try {
-      persisted = await persistModelSelection(host, alias, effort);
+      persisted = await persistModelSelection(
+        host,
+        effectiveAlias,
+        effectiveEffort,
+        effectiveEffortChanged,
+      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
@@ -449,18 +508,18 @@ async function performModelSwitch(
   }
 
   let status: string;
-  if (modelChanged) {
+  if (effectiveModelChanged) {
     status = persist
-      ? `Switched to ${displayName} with thinking ${effort}.`
-      : `Switched to ${displayName} with thinking ${effort} for this session only.`;
-  } else if (effortChanged) {
+      ? `Switched to ${displayName} with thinking ${effectiveEffort}.`
+      : `Switched to ${displayName} with thinking ${effectiveEffort} for this session only.`;
+  } else if (effectiveEffortChanged) {
     status = persist
-      ? `Thinking set to ${effort}.`
-      : `Thinking set to ${effort} for this session only.`;
+      ? `Thinking set to ${effectiveEffort}.`
+      : `Thinking set to ${effectiveEffort} for this session only.`;
   } else if (persist && persisted) {
-    status = `Saved ${displayName} with thinking ${effort} as default.`;
+    status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
   } else {
-    status = `Already using ${displayName} with thinking ${effort}.`;
+    status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
   }
   host.showStatus(status, 'success');
 }
@@ -469,13 +528,21 @@ async function persistModelSelection(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
+  effortChanged: boolean,
 ): Promise<boolean> {
   const config = await host.harness.getConfig({ reload: true });
-  const patch = thinkingEffortToConfig(effort);
+  const model = host.state.appState.availableModels[alias];
+  const full = thinkingEffortToConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelForHost(host, model).supportEfforts,
+  );
+  // Re-confirming the effort shown when the picker opened is not an explicit
+  // choice — persist the model but leave the stored effort preference alone.
+  const patch = effortChanged ? full : { enabled: full.enabled };
   if (
     config.defaultModel === alias &&
     config.thinking?.enabled === patch.enabled &&
-    config.thinking?.effort === patch.effort
+    (!effortChanged || config.thinking?.effort === patch.effort)
   ) {
     return false;
   }

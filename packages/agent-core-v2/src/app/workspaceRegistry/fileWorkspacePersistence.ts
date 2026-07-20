@@ -4,7 +4,10 @@
  * File backend of `IWorkspacePersistence`. Persists the catalog as a single
  * v1-compatible `workspaces.json` document at the storage root
  * (`<homeDir>/workspaces.json`, via `scope = ''`) through the
- * `IAtomicDocumentStore` access-pattern Store. Bound at App scope.
+ * `IAtomicDocumentStore` access-pattern Store. The `deleted_workspace_ids`
+ * tombstone list round-trips with the catalog so soft deletions survive
+ * regardless of which engine (v1 or v2) last wrote the file. Bound at App
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -16,11 +19,10 @@ import {
   IWorkspacePersistence,
   type PersistedWorkspaceEntry,
   type PersistedWorkspaceFile,
+  type WorkspaceCatalog,
 } from './workspacePersistence';
 
 const WORKSPACE_REGISTRY_VERSION = 1;
-// Empty scope resolves to `<homeDir>/<key>` (join skips empty segments),
-// preserving the historical `<homeDir>/workspaces.json` location.
 const WORKSPACE_REGISTRY_SCOPE = '';
 const WORKSPACE_REGISTRY_KEY = 'workspaces.json';
 
@@ -29,7 +31,7 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
 
   constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {}
 
-  async load(): Promise<Workspace[] | undefined> {
+  async load(): Promise<WorkspaceCatalog | undefined> {
     const file = await this.docs.get<PersistedWorkspaceFile>(
       WORKSPACE_REGISTRY_SCOPE,
       WORKSPACE_REGISTRY_KEY,
@@ -41,16 +43,14 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
       typeof (file as { workspaces?: unknown }).workspaces !== 'object' ||
       (file as { workspaces?: unknown }).workspaces === null
     ) {
-      // Structurally malformed catalog → treat as unusable so the registry
-      // rebuilds from the legacy session index instead of sticking on empty.
       return undefined;
     }
     const now = Date.now();
-    const result: Workspace[] = [];
+    const workspaces: Workspace[] = [];
     for (const [id, raw] of Object.entries(file.workspaces)) {
-      const entry = sanitizeEntry(raw, now);
+      const entry = sanitizeEntry(raw);
       if (entry === null) continue;
-      result.push({
+      workspaces.push({
         id,
         root: entry.root,
         name: entry.name,
@@ -58,12 +58,16 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
         lastOpenedAt: parseTime(entry.last_opened_at, now),
       });
     }
-    return result;
+    const rawDeleted = (file as { deleted_workspace_ids?: unknown }).deleted_workspace_ids;
+    const deletedIds = Array.isArray(rawDeleted)
+      ? rawDeleted.filter((id): id is string => typeof id === 'string')
+      : [];
+    return { workspaces, deletedIds };
   }
 
-  async save(workspaces: readonly Workspace[]): Promise<void> {
+  async save(catalog: WorkspaceCatalog): Promise<void> {
     const record: Record<string, PersistedWorkspaceEntry> = {};
-    for (const ws of workspaces) {
+    for (const ws of catalog.workspaces) {
       record[ws.id] = {
         root: ws.root,
         name: ws.name,
@@ -74,12 +78,13 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
     const file: PersistedWorkspaceFile = {
       version: WORKSPACE_REGISTRY_VERSION,
       workspaces: record,
+      deleted_workspace_ids: [...catalog.deletedIds],
     };
     await this.docs.set(WORKSPACE_REGISTRY_SCOPE, WORKSPACE_REGISTRY_KEY, file);
   }
 }
 
-function sanitizeEntry(value: unknown, _now: number): PersistedWorkspaceEntry | null {
+function sanitizeEntry(value: unknown): PersistedWorkspaceEntry | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as Partial<PersistedWorkspaceEntry>;
   if (
@@ -107,6 +112,6 @@ registerScopedService(
   LifecycleScope.App,
   IWorkspacePersistence,
   FileWorkspacePersistence,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'workspaceRegistry',
 );

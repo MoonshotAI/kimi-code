@@ -2,45 +2,21 @@ import Dagre from '@dagrejs/dagre';
 
 import type { Edge, ServiceNode, ServiceScope } from '../../analyzer/types';
 
-/** Fallback node box used when the caller doesn't supply per-node dimensions. */
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 48;
 
-/** Horizontal gap between scope bands when `groupByScope` is on. */
 const BAND_GAP = 120;
 
 export interface LayoutOptions {
-  /**
-   * Layout direction. Defaults to `RL` so base primitives (nodes with no
-   * outgoing dependencies) sit on the left and facades sit on the right —
-   * dependency arrows then flow naturally from right-to-left along the
-   * "depends on" relation without needing rank hacks.
-   */
   direction?: 'LR' | 'RL' | 'TB' | 'BT';
-  /** Space between layers (rank direction). */
   ranksep?: number;
-  /** Space between nodes within a layer. */
   nodesep?: number;
-  /**
-   * When true, split the graph by `service.scope` and run dagre three times
-   * (App / Session / Agent), then stack the results vertically with
-   * `BAND_GAP` between bands. Inter-scope edges are drawn by React Flow as
-   * cross-band connectors. When false (default), one dagre run over the
-   * whole set.
-   */
   groupByScope?: boolean;
-  /**
-   * Per-node dimensions. Returned dagre positions match the box the caller
-   * declares here, which lets nodes with per-method port rows request more
-   * vertical space so their neighbours don't collide with the extra rows.
-   * Missing entries fall back to `(NODE_WIDTH, NODE_HEIGHT)`.
-   */
   nodeSize?: (id: string) => { width: number; height: number };
 }
 
 export interface ScopeBand {
   scope: ServiceScope;
-  /** Top-left corner of the band's bounding box. */
   x: number;
   y: number;
   width: number;
@@ -51,28 +27,11 @@ export interface LayoutResult {
   positions: Map<string, { x: number; y: number }>;
   width: number;
   height: number;
-  /** Populated only when `groupByScope` is true — one entry per scope. */
   bands?: ScopeBand[];
 }
 
-/**
- * Horizontal ordering of scope bands, outer-most to inner-most: App on the
- * left (base / longest-lived), Agent on the right (built on top). This
- * matches the "depends on" flow — arrows from Agent go leftward into
- * Session and App, which lines up with the intra-scope RL direction.
- */
 const BAND_ORDER: ServiceScope[] = ['App', 'Session', 'Agent'];
 
-/**
- * Run dagre over the filtered node/edge set and return a `ServiceNode.id` →
- * position map. When `groupByScope` is on, we run dagre three times (one per
- * scope) on the intra-scope edges only, then stack the sub-layouts vertically.
- *
- * Layout is stable for a given input set — dagre picks node ranks
- * deterministically — so filter toggles won't jiggle unrelated nodes.
- * dagre handles 100+ nodes / 400+ edges in <50ms so re-running per filter
- * change is fine.
- */
 export function layoutDagre(
   services: ServiceNode[],
   edges: Edge[],
@@ -102,8 +61,6 @@ function layoutByScope(
   for (const scope of BAND_ORDER) {
     const scoped = byScope.get(scope);
     if (!scoped || scoped.length === 0) continue;
-    // Only intra-scope edges shape this band's layout; inter-scope edges
-    // are rendered across bands by React Flow.
     const scopedIds = new Set(scoped.map((s) => s.id));
     const scopedEdges = edges.filter((e) => scopedIds.has(e.from) && scopedIds.has(e.to));
     const sub = runDagre(scoped, scopedEdges, options);
@@ -139,12 +96,6 @@ function runDagre(
   });
   g.setDefaultEdgeLabel(() => ({}));
 
-  // Isolated nodes (no edges at all) have no ranking constraint, so dagre
-  // parks them at rank 0 — which is the *source* rank (rightmost in RL).
-  // Semantically they don't depend on anything, so they belong with the
-  // base primitives on the sink side (leftmost in RL). Pin them to
-  // `rank: 'max'` — dagre-speak for "put in the sink rank" — regardless of
-  // rankdir; that keeps the intent stable if the direction is flipped later.
   const degree = new Map<string, number>();
   for (const s of services) degree.set(s.id, 0);
   for (const e of edges) {
@@ -165,10 +116,6 @@ function runDagre(
     known.add(s.id);
   }
   for (const e of edges) {
-    // Multigraph: label each parallel edge by kind so dagre keeps them
-    // distinct instead of collapsing. Unresolved edges point at pseudo
-    // targets (`unresolved::TOKEN`) that don't have layout nodes, so they
-    // are skipped here — the frontend renders them separately if needed.
     if (!known.has(e.from) || !known.has(e.to)) continue;
     g.setEdge(e.from, e.to, {}, e.kind);
   }
@@ -180,7 +127,6 @@ function runDagre(
     const n = g.node(s.id);
     if (!n) continue;
     const size = options.nodeSize?.(s.id) ?? { width: NODE_WIDTH, height: NODE_HEIGHT };
-    // Dagre returns center coordinates; React Flow uses top-left.
     positions.set(s.id, { x: n.x - size.width / 2, y: n.y - size.height / 2 });
   }
   const { width = 0, height = 0 } = g.graph();

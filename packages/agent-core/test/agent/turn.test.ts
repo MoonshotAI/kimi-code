@@ -1,3 +1,9 @@
+/**
+ * Agent turn integration contracts through the public RPC harness. Provider
+ * generation and host-executed user tools are the only external boundaries.
+ * Run with: pnpm --filter @moonshot-ai/agent-core test -- turn.test.ts
+ */
+
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -249,7 +255,7 @@ describe('Agent turn flow', () => {
     ).toContain('image/avif');
   });
 
-  describe('image-format recovery', () => {
+  describe('media recovery', () => {
     const IMAGE_CAPABLE: ModelCapability = {
       image_in: true,
       video_in: false,
@@ -285,6 +291,73 @@ describe('Agent turn flow', () => {
         finishReason: 'completed' as const,
         rawFinishReason: 'stop',
       };
+    }
+
+    const OVERSIZED_IMAGE = {
+      id: 'oversized-image',
+      url: 'data:image/png;base64,T1ZFUlNJWkVE',
+    } as const;
+
+    async function runStickyStripRecovery(recoveryImage: {
+      readonly id?: string;
+      readonly url: string;
+    }): Promise<Message[][]> {
+      let attempts = 0;
+      const histories: Message[][] = [];
+      const recoveryCall: ToolCall = {
+        type: 'function',
+        id: 'call-inspect-recovery',
+        name: 'InspectRecovery',
+        arguments: '{}',
+      };
+      const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+        attempts += 1;
+        histories.push(structuredClone(history));
+        if (attempts <= 2) {
+          throw new APIRequestTooLargeError(413, 'Request exceeds the maximum size');
+        }
+        if (attempts === 3) {
+          return {
+            id: 'mock-media-recovery-tool-call',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'inspect the smaller copy' }],
+              toolCalls: [recoveryCall],
+            },
+            usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+            finishReason: 'tool_calls',
+            rawFinishReason: 'tool_calls',
+          };
+        }
+        return okResponse();
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'InspectRecovery',
+        description: 'Return a model-visible recovery image.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      });
+      ctx.agent.context.appendUserMessage(
+        [
+          { type: 'text', text: '<image path="/workspace/oversized.png">' },
+          { type: 'image_url', imageUrl: OVERSIZED_IMAGE },
+          { type: 'text', text: '</image>' },
+        ],
+        { kind: 'user' },
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'recover the image read' }] });
+      await ctx.untilToolCall({
+        output: [{ type: 'image_url', imageUrl: recoveryImage }],
+      });
+      await ctx.untilTurnEnd();
+
+      return histories;
     }
 
     it('strips all media and retries once on a server image-format 400', async () => {
@@ -398,6 +471,43 @@ describe('Agent turn flow', () => {
 
       expect(attempts).toBe(2);
     });
+
+    it('keeps different media produced after the strip snapshot visible on the next model step', async () => {
+      const recoveryImage = {
+        id: 'smaller-copy',
+        url: 'data:image/png;base64,U01BTExFUl9DT1BZ',
+      } as const;
+
+      const histories = await runStickyStripRecovery(recoveryImage);
+
+      expect(histories).toHaveLength(4);
+      const finalParts = histories[3]!.flatMap((message) => message.content);
+      expect(
+        finalParts
+          .filter((part) => part.type === 'image_url')
+          .map((part) => (part.type === 'image_url' ? part.imageUrl : undefined)),
+      ).toEqual([recoveryImage]);
+      expect(
+        finalParts
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('\n'),
+      ).toContain('[image omitted for provider compatibility;');
+    });
+
+    it('keeps the same media stripped when a later tool result recreates its container', async () => {
+      const histories = await runStickyStripRecovery({ ...OVERSIZED_IMAGE });
+
+      expect(histories).toHaveLength(4);
+      const finalParts = histories[3]!.flatMap((message) => message.content);
+      expect(finalParts.filter((part) => part.type === 'image_url')).toHaveLength(0);
+      expect(
+        finalParts
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .filter((text) => text.includes('[image omitted for provider compatibility;')),
+      ).toHaveLength(2);
+    });
   });
 
   it('tracks turn_started and turn_interrupted telemetry', async () => {
@@ -409,11 +519,11 @@ describe('Agent turn flow', () => {
 
     expect(records).toContainEqual({
       event: 'turn_started',
-      properties: { mode: 'agent' },
+      properties: { turn_id: 0, mode: 'agent', thinking_effort: 'off' },
     });
     expect(records).toContainEqual({
       event: 'turn_interrupted',
-      properties: { mode: 'agent', at_step: 0, interrupt_reason: 'error' },
+      properties: { turn_id: 0, mode: 'agent', thinking_effort: 'off', at_step: 0, interrupt_reason: 'error' },
     });
   });
 
@@ -539,20 +649,65 @@ describe('Agent turn flow', () => {
     const started = records.find((candidate) => candidate.event === 'turn_started');
     expect(started).toEqual({
       event: 'turn_started',
-      properties: expect.objectContaining({ mode: 'agent', provider_type: 'kimi', protocol: 'kimi' }),
+      properties: expect.objectContaining({ mode: 'agent', provider_type: 'kimi', protocol: 'kimi', thinking_effort: 'off' }),
     });
 
     const ended = records.find((candidate) => candidate.event === 'turn_ended');
     expect(ended).toEqual({
       event: 'turn_ended',
       properties: expect.objectContaining({
+        turn_id: 0,
         mode: 'agent',
         reason: 'completed',
         provider_type: 'kimi',
         protocol: 'kimi',
+        thinking_effort: 'off',
         duration_ms: expect.any(Number),
       }),
     });
+  });
+
+  it('attaches the provider trace id to turn and tool telemetry', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('traced'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'running' }, bashCallWithId('call_traced', 'printf traced')],
+      traceId: 'trace-turn-1',
+    });
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'done' }],
+      traceId: 'trace-turn-2',
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    // tool_call attributes to the request that produced the call.
+    const toolCall = records.find((candidate) => candidate.event === 'tool_call');
+    expect(toolCall?.properties?.['trace_id']).toBe('trace-turn-1');
+    // turn_ended attributes to the turn's most recent request.
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['trace_id']).toBe('trace-turn-2');
+  });
+
+  it('omits trace_id from turn telemetry when the provider reports none', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hi' }] });
+    await ctx.untilTurnEnd();
+
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['trace_id']).toBeUndefined();
   });
 
   it('tracks duplicate tool-call detection telemetry', async () => {
@@ -625,6 +780,7 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
         tool_name: 'Bash',
         outcome: 'success',
         dup_type: 'cross_step',
@@ -702,6 +858,7 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
         tool_name: 'MissingTool',
         outcome: 'error',
         dup_type: 'normal',
@@ -1763,6 +1920,7 @@ describe('Agent turn flow', () => {
   });
 
   it('treats 401 after force-refresh as provider auth error', async () => {
+    const records: TelemetryRecord[] = [];
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthAgentOptions(
@@ -1781,9 +1939,15 @@ describe('Agent turn flow', () => {
       options,
     ) => {
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
-      throw new APIStatusError(401, 'Unauthorized', 'req-401');
+      throw new APIStatusError(
+        401,
+        'Unauthorized',
+        'req-401',
+        null,
+        authKeys.length === 1 ? 'trace-initial-401' : 'trace-replay-401',
+      );
     };
-    const ctx = testAgent({ ...oauthOptions, generate });
+    const ctx = testAgent({ ...oauthOptions, generate, telemetry: recordingTelemetry(records) });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -1808,6 +1972,12 @@ describe('Agent turn flow', () => {
           }),
         }),
       }),
+    );
+    expect(records.find((record) => record.event === 'api_error')?.properties?.['trace_id']).toBe(
+      'trace-replay-401',
+    );
+    expect(records.find((record) => record.event === 'turn_ended')?.properties?.['trace_id']).toBe(
+      'trace-replay-401',
     );
   });
 
@@ -1944,6 +2114,270 @@ describe('Agent turn flow', () => {
     }
   });
 
+  it('tracks api_error with the failed request trace id from the error response', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      throw new APIStatusError(500, 'server exploded', 'req-1', null, 'trace-err-1');
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record?.properties?.['trace_id']).toBe('trace-err-1');
+  });
+
+  it('omits trace_id from api_error when the failure carried no response', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      throw new APIConnectionError('socket hang up');
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record).toBeDefined();
+    expect(record?.properties?.['trace_id']).toBeUndefined();
+  });
+
+  it('attributes api_error to the in-flight request trace on post-headers failures', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      // Mirror kosong generate(): the trace id callback fires as soon as the
+      // response headers arrive, before the stream body is drained — so a
+      // mid-stream failure has a captured trace but none on the error itself.
+      options?.onTraceId?.('trace-mid-stream');
+      throw new APIEmptyResponseError('empty response');
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record?.properties?.['trace_id']).toBe('trace-mid-stream');
+  });
+
+  it('omits trace_id from api_error when a later step fails before response headers', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      calls += 1;
+      if (calls === 1) {
+        options?.onTraceId?.('trace-step-1');
+        return {
+          id: 'mock-step-1',
+          message: {
+            role: 'assistant' as const,
+            content: [{ type: 'text' as const, text: 'running' }],
+            toolCalls: [
+              {
+                type: 'function' as const,
+                id: 'call_traced',
+                name: 'Bash',
+                arguments: '{"command":"printf traced"}',
+              },
+            ],
+          },
+          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+          finishReason: 'tool_calls' as const,
+          rawFinishReason: 'tool_calls',
+          traceId: 'trace-step-1',
+        };
+      }
+      // Step 2's request fails before any response headers arrive: neither
+      // the error nor the in-flight capture has a trace, and step 1's trace
+      // must not leak into api_error.
+      throw new APIConnectionError('socket hang up');
+    };
+    const ctx = testAgent({
+      generate,
+      kaos: createCommandKaos('traced'),
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record).toBeDefined();
+    expect(record?.properties?.['trace_id']).toBeUndefined();
+  });
+
+  it('attributes turn-level telemetry to the failed request trace on error turns', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      calls += 1;
+      if (calls === 1) {
+        // Mirror kosong generate(): the trace id callback fires before the
+        // stream is drained, as soon as the response headers arrive.
+        options?.onTraceId?.('trace-step-1');
+        return {
+          id: 'mock-step-1',
+          message: {
+            role: 'assistant' as const,
+            content: [{ type: 'text' as const, text: 'running' }],
+            toolCalls: [
+              {
+                type: 'function' as const,
+                id: 'call_traced',
+                name: 'Bash',
+                arguments: '{"command":"printf traced"}',
+              },
+            ],
+          },
+          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+          finishReason: 'tool_calls' as const,
+          rawFinishReason: 'tool_calls',
+          traceId: 'trace-step-1',
+        };
+      }
+      throw new APIStatusError(429, 'rate limited', 'req-2', null, 'trace-fail-2');
+    };
+    const ctx = testAgent({
+      generate,
+      kaos: createCommandKaos('traced'),
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    // The turn failed on step 2's request: turn-level events attribute to the
+    // failed request's trace, not the previous successful step's.
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['reason']).toBe('failed');
+    expect(ended?.properties?.['trace_id']).toBe('trace-fail-2');
+    const interrupted = records.find((candidate) => candidate.event === 'turn_interrupted');
+    expect(interrupted?.properties?.['trace_id']).toBe('trace-fail-2');
+  });
+
+  it('does not reuse the previous step trace when beforeStep fails before a request', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      options?.onTraceId?.('trace-step-1');
+      return {
+        id: 'mock-step-1',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'running' }],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_traced',
+              name: 'Bash',
+              arguments: '{"command":"printf traced"}',
+            },
+          ],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'tool_calls',
+        rawFinishReason: 'tool_calls',
+        traceId: 'trace-step-1',
+      };
+    };
+    const ctx = testAgent({
+      generate,
+      kaos: createCommandKaos('traced'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    let beforeStepCalls = 0;
+    vi.spyOn(ctx.agent.fullCompaction, 'beforeStep').mockImplementation(async () => {
+      beforeStepCalls += 1;
+      if (beforeStepCalls === 2) throw new Error('before step failed');
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    expect(records.find((record) => record.event === 'tool_call')?.properties?.['trace_id']).toBe('trace-step-1');
+    expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['trace_id']).toBeUndefined();
+    expect(records.find((record) => record.event === 'turn_ended')?.properties?.['trace_id']).toBeUndefined();
+  });
+
+  it('attributes turn-level telemetry to the last failed attempt after retries', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async () => {
+      calls += 1;
+      throw new APIStatusError(429, 'rate limited', `req-${String(calls)}`, null, `trace-fail-${String(calls)}`);
+    };
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { maxRetriesPerStep: 2 },
+      },
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    expect(calls).toBe(2);
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['trace_id']).toBe('trace-fail-2');
+    const apiError = records.find((candidate) => candidate.event === 'api_error');
+    expect(apiError?.properties?.['trace_id']).toBe('trace-fail-2');
+  });
+
+  it('omits the previous attempt trace when the final retry fails before headers', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new APIStatusError(429, 'rate limited', 'req-1', null, 'trace-fail-1');
+      }
+      throw new APIConnectionError('socket hang up');
+    };
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { maxRetriesPerStep: 2 },
+      },
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger mixed retry failures' }] });
+    await ctx.untilTurnEnd();
+
+    expect(calls).toBe(2);
+    expect(records.find((record) => record.event === 'api_error')?.properties?.['trace_id']).toBeUndefined();
+    expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['trace_id']).toBeUndefined();
+    expect(records.find((record) => record.event === 'turn_ended')?.properties?.['trace_id']).toBeUndefined();
+  });
+
   it('keeps transient retry handling with request-scoped OAuth auth', async () => {
     const { logger, entries } = captureLogs();
     const authKeys: string[] = [];
@@ -1994,7 +2428,7 @@ describe('Agent turn flow', () => {
     const payloads = requestLogs.map((entry) => entry.payload as Record<string, unknown>);
     expect(payloads[0]).toMatchObject({ turnStep: '0.1' });
     expect(payloads[0]).not.toHaveProperty('attempt');
-    expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/3' });
+    expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/10' });
   });
 
   it('force-refreshes OAuth credentials on video upload 401 and surfaces the provider auth error when replay 401', async () => {
@@ -2096,6 +2530,7 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
         tool_name: 'Bash',
         outcome: 'cancelled',
         dup_type: 'normal',

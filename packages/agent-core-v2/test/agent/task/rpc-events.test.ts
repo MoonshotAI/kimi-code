@@ -19,7 +19,7 @@ import { TaskStopTool } from '#/agent/task/tools/task-stop';
 import {
   SubagentTask,
   type SubagentHandle,
-} from '#/session/agentLifecycle/tools/subagent-task';
+} from '#/session/subagent/tools/subagent-task';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';
@@ -254,17 +254,10 @@ function firstAppendedContextMessage(agent: FakeTaskAgent): TestContextMessage {
   return message;
 }
 
-/** `task.notified` fires once per enqueued notification (after the enqueue). */
 function notifiedCount(ctx: TestAgentContext): number {
   return ctx.allEvents.filter((e) => e.event === 'task.notified').length;
 }
 
-/**
- * Live terminal notifications auto-launch their own turn when the loop is
- * idle (`activeOrNewTurn` admission) and materialize into context when that
- * turn pops them. Queue one response in case the turn's LLM request has not
- * fired yet, then wait for every notification turn to drain.
- */
 async function drainNotifications(ctx: TestAgentContext): Promise<void> {
   ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
   await vi.waitFor(() => {
@@ -274,7 +267,6 @@ async function drainNotifications(ctx: TestAgentContext): Promise<void> {
   });
 }
 
-/** The notification message materialized into context for `taskId` (post-drain). */
 function notificationMessageFor(agent: FakeTaskAgent, taskId: string): TestContextMessage {
   for (const call of agent.context.appendUserMessage.mock.calls as unknown as TestContextMessage[][]) {
     for (const message of call) {
@@ -405,9 +397,6 @@ describe('AgentTaskService — event emission', () => {
 
     await manager.stop(taskId, 'user');
 
-    // The terminal notification auto-launches its own turn (`activeOrNewTurn`),
-    // which publishes turn / context events in the same window; the lifecycle
-    // assertion is about `task.terminated` alone.
     expect(agent.emittedEvents.filter((e) => e.type === 'task.terminated')).toEqual([
       {
         type: 'task.terminated',
@@ -467,8 +456,6 @@ describe('AgentTaskService — notification delivery', () => {
 
     await manager.wait(taskId);
 
-    // Idle completion launches a fresh turn (`activeOrNewTurn`) — the
-    // notification materializes when that turn pops it, no prompt needed.
     await vi.waitFor(() => {
       expect(notifiedCount(ctx)).toBe(1);
     });
@@ -515,7 +502,7 @@ describe('AgentTaskService — notification delivery', () => {
     const { agent, ctx, manager } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'long shell task');
 
-    await manager.stop(taskId);
+    await manager.stopByUser(taskId);
 
     await vi.waitFor(() => {
       expect(notifiedCount(ctx)).toBe(1);
@@ -529,9 +516,7 @@ describe('AgentTaskService — notification delivery', () => {
       status: 'killed',
       notificationId: `task:${taskId}:killed`,
     });
-    expect(message.content[0]!.text).toContain(
-      'Background process killed',
-    );
+    expect(message.content[0]!.text).toContain('long shell task was stopped by user.');
   });
 
   it('TaskStopTool suppresses the real terminal notification for model-requested stops', async () => {
@@ -817,8 +802,6 @@ describe('AgentTaskService — notification delivery', () => {
       expect(fireAndForgetTrigger).toHaveBeenCalled();
     });
 
-    // Delivery itself completed despite the hook failure: the notification
-    // materializes through its auto-launched turn.
     await drainNotifications(ctx);
     expect(notificationMessageFor(agent, taskId).content[0]!.text).toContain(
       'inspect repository completed.',

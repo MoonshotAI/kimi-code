@@ -7,13 +7,17 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentGoalService } from '#/agent/goal/goal';
-import type { PluginCommandActivatedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '#/session/agentLifecycle/agentLifecycle';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -65,6 +69,15 @@ import {
   promptMetadataTextFromSkill,
 } from './prompt-metadata';
 
+export interface PluginCommandActivatedEvent {
+  readonly type: 'plugin_command.activated';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
+}
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'plugin_command.activated': PluginCommandActivatedEvent;
@@ -100,12 +113,11 @@ export class AgentRPCService implements IAgentRPCService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionBtwService private readonly btw: ISessionBtwService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    // Mirror v1: persist `lastPrompt` and derive an easy title from the first
-    // prompt BEFORE launching the turn, so the web session title is populated as
-    // soon as the conversation starts (gap closed — v2 used to leave it empty).
     await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     const handle = await this.promptService.enqueue({ message: {
       role: 'user',
@@ -140,7 +152,10 @@ export class AgentRPCService implements IAgentRPCService {
 
   cancel({ turnId }: CancelPayload): void {
     if (this.loop.status().state === 'running') {
-      this.telemetry.track2('cancel', { from: 'streaming' });
+      this.telemetry.track2('cancel', {
+        from: 'streaming',
+        trace_id: this.loop.status().activeTraceId,
+      });
     }
     this.loop.cancel(turnId);
   }
@@ -159,6 +174,9 @@ export class AgentRPCService implements IAgentRPCService {
     const wasYolo = this.permissionMode.mode === 'yolo';
     const wasAuto = this.permissionMode.mode === 'auto';
     this.permissionMode.setMode(payload.mode);
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      this.agentLifecycle.broadcastPermissionMode(payload.mode);
+    }
     const enabled = this.permissionMode.mode === 'yolo';
     if (enabled !== wasYolo) {
       this.telemetry.track2('yolo_toggle', { enabled });
@@ -212,7 +230,10 @@ export class AgentRPCService implements IAgentRPCService {
   cancelCompaction(_payload: EmptyPayload): void {
     const active = this.fullCompaction.compacting;
     if (active !== null) {
-      this.telemetry.track2('cancel', { from: 'compacting' });
+      this.telemetry.track2('cancel', {
+        from: 'compacting',
+        trace_id: active.traceId,
+      });
     }
     active?.abortController.abort();
   }
@@ -230,6 +251,10 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   stopTask(payload: StopTaskPayload): void {
+    if (payload.reason === undefined) {
+      void this.tasks.stopByUser(payload.taskId);
+      return;
+    }
     void this.tasks.stop(payload.taskId, payload.reason);
   }
 
@@ -360,6 +385,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRPCService,
   AgentRPCService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'rpc',
 );

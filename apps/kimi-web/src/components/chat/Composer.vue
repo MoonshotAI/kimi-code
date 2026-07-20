@@ -6,12 +6,13 @@ import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
 import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '../../lib/slashCommands';
+import { formatTokens } from '../../lib/formatTokens';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
 import {
-  coerceThinkingForModel,
   commitLevel,
+  effectiveThinkingLevel,
   effortLabel,
   isThinkingOn,
   modelThinkingAvailability,
@@ -21,13 +22,16 @@ import { useInputHistory } from '../../composables/useInputHistory';
 import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
-import { useAttachmentUpload } from '../../composables/useAttachmentUpload';
+import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
+import { openFileAttachment } from '../../lib/openFileAttachment';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Spinner from '../ui/Spinner.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
 import ContextRing from '../ui/ContextRing.vue';
 import Tooltip from '../ui/Tooltip.vue';
+import AttachmentChip from './AttachmentChip.vue';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -82,10 +86,10 @@ const placeholder = computed(() =>
 );
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
   /** Steer the composer text (+ any queued prompts, merged by the parent)
       into the RUNNING turn — TUI ctrl+s. */
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   command: [cmd: string];
   interrupt: [];
   setPermission: [mode: PermissionMode];
@@ -287,10 +291,27 @@ function focus(): void {
   // or if focus is triggered during an animation/transition.
   textareaRef.value?.focus({ preventScroll: true });
 }
-function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   loadAttachments(atts);
 }
 defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
+
+// Build the wire-bound attachment payload: images/videos only need the fileId,
+// while file parts also carry name/mediaType/size for the daemon's file shape.
+function toPromptAttachment(a: Attachment): PromptAttachment {
+  return { fileId: a.fileId!, kind: a.kind, name: a.name, mediaType: a.mediaType, size: a.size };
+}
+
+// Chip primary action: media opens the lightbox preview; a generic file opens
+// in a new tab (browser-renderable types) or downloads, once its upload has
+// completed and produced a daemon file id.
+function onAttachmentActivate(att: Attachment): void {
+  if (att.kind === 'file') {
+    if (att.fileId !== undefined) void openFileAttachment(att.fileId, att.name, att.mediaType);
+    return;
+  }
+  openAttachmentPreview(att);
+}
 
 function handleSubmit(): void {
   const trimmed = text.value.trim();
@@ -334,7 +355,7 @@ function handleSubmit(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
+    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
   };
 
   // Revoke object URLs and drop the submitted attachments.
@@ -364,7 +385,7 @@ function handleSteer(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
+    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
   };
   clearAfterSubmit();
   history.push(trimmed);
@@ -587,19 +608,19 @@ onUnmounted(() => {
   document.removeEventListener('click', onDocClick, true);
 });
 
-// Context formatting
-const kFmt = (n: number) => `${Math.round(n / 1000)}k`;
 // Clamped to 0–100: ctxUsed can momentarily exceed ctxMax (estimates), and
-// ctxMax can be 0 before the first status fetch — both broke the ring.
+// ctxMax can be 0 before the first status fetch — both broke the ring. ceil
+// (not round) so a session under 0.5% usage still shows a sliver of arc —
+// Math.round floored it to an empty, "no data"-looking ring.
 const pct = computed(() => {
   const max = props.status?.ctxMax ?? 0;
   if (max <= 0) return 0;
-  return Math.min(100, Math.max(0, Math.round(((props.status?.ctxUsed ?? 0) / max) * 100)));
+  return Math.min(100, Math.max(0, Math.ceil(((props.status?.ctxUsed ?? 0) / max) * 100)));
 });
 
 const ctxTooltip = computed(() => {
-  const used = (props.status?.ctxUsed ?? 0).toLocaleString();
-  const max = (props.status?.ctxMax ?? 0).toLocaleString();
+  const used = formatTokens(props.status?.ctxUsed ?? 0);
+  const max = formatTokens(props.status?.ctxMax ?? 0);
   return t('status.ctxTooltip', { used, max, pct: pct.value });
 });
 
@@ -612,28 +633,16 @@ const currentModel = computed(() =>
 );
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
-// The persisted level can be stale relative to the active model (e.g. a
-// boolean 'on'/'off' carried over when selecting another session). Coerce it
-// against the current model before deriving display state so an always-on
-// model never shows "thinking: off" and an effort model shows its concrete
-// level instead of the bare "thinking" tag.
-const coercedThinkingLevel = computed(() =>
-  coerceThinkingForModel(currentModel.value, props.thinking ?? 'off'),
-);
-// Runtime level clamped to the segments this model actually offers, so a
-// carried-over value never highlights a segment that doesn't exist here.
+// The client resolves the level per model (the model's stored pick when still
+// declared, else the catalog default), so what arrives here is valid for the
+// active model and highlights its segment. An undeclared level can only appear
+// transiently, before the catalog loads, and simply highlights no segment.
+const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
 const activeThinkingSegment = computed(() => {
   const segs = thinkingSegments.value;
-  const level = coercedThinkingLevel.value;
-  if (segs.includes(level)) return level;
-  if (segs.includes('on')) return 'on';
-  return segs[0] ?? 'off';
+  return segs.includes(thinkingLevel.value) ? thinkingLevel.value : '';
 });
-const thinkingOn = computed(() => {
-  if (thinkingAvailability.value === 'always-on') return true;
-  if (thinkingAvailability.value === 'unsupported') return false;
-  return isThinkingOn(coercedThinkingLevel.value);
-});
+const thinkingOn = computed(() => isThinkingOn(thinkingLevel.value));
 // Single-segment (always-on boolean) or unsupported models can't be changed.
 const thinkingReadonly = computed(
   () => thinkingAvailability.value === 'unsupported' || thinkingSegments.value.length <= 1,
@@ -643,7 +652,7 @@ const thinkingReadonly = computed(
 const thinkingSuffix = computed(() => {
   if (!thinkingOn.value) return '';
   const hasEfforts = (currentModel.value?.supportEfforts?.length ?? 0) > 0;
-  const level = coercedThinkingLevel.value;
+  const level = thinkingLevel.value;
   if (hasEfforts && level !== 'on') return t('composer.thinkingSuffixEffort', { level });
   return t('composer.thinkingSuffix');
 });
@@ -839,34 +848,22 @@ function selectModel(modelId: string): void {
   >
     <!-- Attachment chips (above the input row) -->
     <div v-if="attachments.length > 0" class="att-strip">
-      <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
-        <!-- Thumbnail (video shows its first frame; an icon overlays it) -->
-        <Tooltip :text="t('composer.previewAttachment', { name: att.name })">
-          <button type="button" class="att-preview" @click="openAttachmentPreview(att)">
-            <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
-            <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
-            <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
-              <Icon name="play" size="sm" />
-            </span>
-          </button>
-        </Tooltip>
-        <!-- Name + status -->
-        <span class="att-name">{{ att.name }}</span>
-        <!-- Spinner while uploading -->
-        <Spinner v-if="att.uploading" size="sm" :label="t('composer.uploading')" />
-        <!-- Error indicator -->
-        <Tooltip v-else-if="att.error" :text="t('composer.uploadFailed')">
-          <span class="att-err-icon">
-            <Icon name="info" size="sm" />
-          </span>
-        </Tooltip>
-        <!-- Remove button -->
-        <Tooltip :text="t('composer.removeNamed', { name: att.name })">
-          <button class="att-rm" @click="removeAttachment(att.localId)">
-            <Icon name="close" size="sm" />
-          </button>
-        </Tooltip>
-      </div>
+      <AttachmentChip
+        v-for="att in attachments"
+        :key="att.localId"
+        :kind="att.kind"
+        :name="att.name"
+        :url="att.previewUrl"
+        :file-id="att.fileId"
+        :media-type="att.mediaType"
+        :size="att.size"
+        :uploading="att.uploading"
+        :error="att.error"
+        removable
+        :remove-label="t('composer.removeNamed', { name: att.name })"
+        @activate="onAttachmentActivate(att)"
+        @remove="removeAttachment(att.localId)"
+      />
     </div>
 
     <div v-if="previewAttachment" class="att-lightbox" @click.self="closeAttachmentPreview">
@@ -935,12 +932,11 @@ function selectModel(modelId: string): void {
         </div>
       </div>
 
-      <!-- Hidden file input -->
+      <!-- Hidden file input (no accept filter — any file type can be attached) -->
       <input
         v-if="hasUpload"
         ref="fileInputRef"
         type="file"
-        accept="image/*,video/*"
         multiple
         class="file-input-hidden"
         @change="handleFileInputChange"
@@ -957,10 +953,10 @@ function selectModel(modelId: string): void {
           <IconButton
             v-if="hasUpload"
             size="md"
-            :label="t('composer.attachImage')"
+            :label="t('composer.attachFile')"
             @click="openFilePicker"
           >
-            <Icon name="image" />
+            <Icon name="attachment" />
           </IconButton>
 
           <!-- Permission pill — click to open dropdown -->
@@ -1089,12 +1085,10 @@ function selectModel(modelId: string): void {
           <!-- Compact chip when context is high -->
           <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
 
-          <!-- Context meter — circular ring + token count. The ring is
-               aria-hidden, so the trigger exposes the full usage (used/max/pct)
-               via aria-label; focusable so keyboard and switch-control users
-               reach the same tooltip hover users see. The visible "12k/256k"
-               count is hidden under 980px by CSS, but SR users still get this
-               label. -->
+          <!-- Context meter — circular ring only; the full usage (used/max/pct)
+               lives in the tooltip. The ring is aria-hidden, so the trigger
+               exposes those numbers via aria-label; focusable so keyboard and
+               switch-control users reach the same tooltip hover users see. -->
           <Tooltip :text="ctxTooltip">
             <span
               v-if="status && !hideContext"
@@ -1104,7 +1098,6 @@ function selectModel(modelId: string): void {
               :aria-label="ctxTooltip"
             >
               <ContextRing :pct="pct" />
-              <span class="ctx-num">{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</span>
             </span>
           </Tooltip>
 
@@ -1208,6 +1201,9 @@ function selectModel(modelId: string): void {
           </div>
 
           <div class="md-divider" />
+          <div class="md-cache-note">{{ t('status.cacheNote') }}</div>
+
+          <div class="md-divider" />
 
           <!-- More models → open full picker -->
           <button class="md-row md-row-more" role="menuitem" @click="closeDropdown(); emit('pickModel');">
@@ -1215,6 +1211,16 @@ function selectModel(modelId: string): void {
           </button>
         </div>
       </div>
+  </div>
+  <!-- Full-window drop target affordance: shown while files are dragged anywhere
+       over the app (document-level listeners in useAttachmentUpload). Pure CSS
+       show/hide — a Vue <Transition> can strand an invisible node when the drag
+       ends before the enter transition starts. -->
+  <div class="drop-overlay" :class="{ show: isDragOver }" aria-hidden="true">
+    <div class="drop-card">
+      <Icon name="file-plus" size="lg" />
+      <span>{{ t('composer.dropToAttach') }}</span>
+    </div>
   </div>
 </div>
 </template>
@@ -1230,13 +1236,49 @@ function selectModel(modelId: string): void {
   background: var(--color-accent-soft);
 }
 
+/* Full-window drop overlay: pointer-events none — the document-level handlers
+   in useAttachmentUpload receive the drop, the overlay is purely visual. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-bg) 72%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-base) ease,
+    visibility var(--duration-base);
+}
+.drop-overlay.show {
+  opacity: 1;
+  visibility: visible;
+}
+.drop-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-lg);
+  border: 1.5px dashed var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-size: var(--ui-font-size-lg);
+  font-weight: var(--weight-medium);
+  box-shadow: var(--shadow-md);
+}
+
 /* Main composer card */
 .composer-card {
   --composer-send-size: 32px;
   --composer-send-inset: var(--space-2);
   position: relative;
   border: 1px solid var(--line);
-  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset));
+  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
+  corner-shape: superellipse(1.5);
   background: var(--bg);
   box-shadow: var(--shadow-md);
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -1248,106 +1290,13 @@ function selectModel(modelId: string): void {
 
 
 
-/* Attachment strip */
+/* Attachment strip — the chip itself is the shared AttachmentChip; this is
+   only the row layout above the input. */
 .att-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 4px 0 6px;
-}
-
-.att-chip {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--panel2);
-  border: 1px solid var(--color-accent-bd);
-  border-radius: 4px;
-  padding: 3px 6px 3px 4px;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--color-text);
-  max-width: 220px;
-}
-
-.att-preview {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  padding: 0;
-  cursor: zoom-in;
-  flex: none;
-}
-.att-preview:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-/* Play glyph over a video thumbnail so it reads as a video, not a still. */
-.att-video-badge {
-  position: absolute;
-  left: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: var(--color-text-on-accent);
-  pointer-events: none;
-}
-
-.att-chip.att-error {
-  border-color: var(--color-danger);
-  color: var(--color-danger);
-}
-
-.att-thumb {
-  width: 28px;
-  height: 28px;
-  object-fit: cover;
-  border-radius: var(--radius-xs);
-  flex-shrink: 0;
-  background: var(--line2);
-}
-
-.att-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-
-.att-err-icon {
-  display: flex;
-  align-items: center;
-  color: var(--color-danger);
-  flex-shrink: 0;
-}
-
-.att-rm {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  padding: 1px;
-  cursor: pointer;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.att-rm:hover {
-  color: var(--color-danger);
 }
 
 .att-lightbox {
@@ -1643,8 +1592,8 @@ function selectModel(modelId: string): void {
   color: var(--color-danger);
 }
 
-/* Context group — circular ring + num. Focusable for keyboard / switch access
-   to its aria-label and tooltip (see template), so it needs a focus ring. */
+/* Context group — circular ring. Focusable for keyboard / switch access to its
+   aria-label and tooltip (see template), so it needs a focus ring. */
 .ctx-group {
   display: flex;
   align-items: center;
@@ -1656,16 +1605,6 @@ function selectModel(modelId: string): void {
 .ctx-group:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
-}
-
-.ctx-num {
-  font-size: var(--ui-font-size);
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-  letter-spacing: 0;
-  line-height: 16px;
 }
 
 /* Model pill */
@@ -1869,6 +1808,16 @@ function selectModel(modelId: string): void {
 }
 .md-thinking.is-readonly .effort-segments {
   opacity: 0.62;
+}
+.md-cache-note {
+  /* width:0 + min-width:100% — the note never widens the shrink-to-fit
+     dropdown, but always fills its width and wraps there naturally. */
+  width: 0;
+  min-width: 100%;
+  padding: 2px 7px 4px;
+  color: var(--muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.4;
 }
 .md-thinking.is-readonly .effort-seg.is-active {
   background: var(--color-surface-raised);
@@ -2151,16 +2100,11 @@ function selectModel(modelId: string): void {
    toolbar shows every control on one row and toolbar-left / toolbar-right are
    overflow:hidden, so without shedding ink the row clips its own content. The
    context ring stays visible at every width (it is the live context-pressure
-   signal) but the "12k/256k" readout moves into the ring's tooltip, the model
-   name truncates earlier, and the permission label is capped so the ring and
-   the send button are never squeezed out. Mobile (≤640px) additionally hides
-   perm / modes via the rules below (those live in MobileSettingsSheet there). */
+   signal; the exact numbers live in its tooltip), the model name truncates
+   earlier, and the permission label is capped so the ring and the send button
+   are never squeezed out. Mobile (≤640px) additionally hides perm / modes via
+   the rules below (those live in MobileSettingsSheet there). */
 @media (max-width: 980px) {
-  /* The ring already conveys context pressure; the "12k/256k" readout lives in
-     the tooltip and returns at wider widths. */
-  .ctx-num {
-    display: none;
-  }
   /* Model name was budgeted for a wide card (280px); trim it so the ring and
      send button are not squeezed out on a narrow column. */
   .model-pill b {
@@ -2183,9 +2127,9 @@ function selectModel(modelId: string): void {
   .composer {
     padding:
       9px
-      var(--dock-inline-right, max(12px, env(safe-area-inset-right)))
-      max(24px, env(safe-area-inset-bottom))
-      var(--dock-inline-left, max(12px, env(safe-area-inset-left)));
+      var(--dock-inline-right, max(12px, var(--safe-right)))
+      max(24px, var(--safe-bottom))
+      var(--dock-inline-left, max(12px, var(--safe-left)));
   }
   .composer-card {
     --composer-send-size: 36px;
@@ -2240,9 +2184,9 @@ function selectModel(modelId: string): void {
   /* Mobile toolbar: hide secondary controls; attach / context ring / model /
      send stay visible. Permission + plan move into the MobileSettingsSheet.
      The context ring stays at every width by design — it is the live
-     context-pressure signal on a phone (the "12k/256k" readout is hidden here
-     by the ≤980px rule above and remains in the ring's tooltip). The /compact
-     chip also stays so compaction is one tap away at ≥80% usage. */
+     context-pressure signal on a phone (the exact numbers live in the ring's
+     tooltip). The /compact chip also stays so compaction is one tap away at
+     ≥80% usage. */
   .perm-pill,
   .modes {
     display: none;

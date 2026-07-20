@@ -5,7 +5,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/_base/di/scope';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { Emitter, Event } from '#/_base/event';
+import { Emitter } from '#/_base/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -17,13 +17,10 @@ import {
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
 import { FileWorkspaceLocalConfigService } from '#/persistence/backends/node-fs/workspaceLocalConfigService';
-import { createHooks } from '#/hooks';
 import {
-  type AgentTaskHooks,
-  type AgentTaskStopHookContext,
   IAgentLifecycleService,
+  MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceCommandService } from '#/session/workspaceCommand/workspaceCommand';
 import { SessionWorkspaceCommandService } from '#/session/workspaceCommand/workspaceCommandService';
@@ -41,6 +38,7 @@ class MemoryHostFs implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
   readonly files = new Map<string, string>();
   readonly dirs = new Set<string>();
+  readonly danglingSymlinks = new Set<string>();
   readonly statErrors = new Map<string, NodeJS.ErrnoException>();
   readonly readErrors = new Map<string, NodeJS.ErrnoException>();
   readonly readsDuringPausedWrite: string[] = [];
@@ -117,11 +115,19 @@ class MemoryHostFs implements IHostFileSystem {
   async stat(path: string): Promise<HostFileStat> {
     const error = this.statErrors.get(path);
     if (error !== undefined) throw error;
+    if (this.danglingSymlinks.has(path)) throw enoent(path);
     if (this.files.has(path)) {
       return { isFile: true, isDirectory: false, size: this.files.get(path)?.length ?? 0 };
     }
     if (this.dirs.has(path)) return { isFile: false, isDirectory: true, size: 0 };
     throw enoent(path);
+  }
+
+  async lstat(path: string): Promise<HostFileStat> {
+    if (this.danglingSymlinks.has(path)) {
+      return { isFile: false, isDirectory: false, isSymbolicLink: true, size: 0 };
+    }
+    return this.stat(path);
   }
 
   async readdir(): Promise<readonly HostDirEntry[]> {
@@ -135,6 +141,11 @@ class MemoryHostFs implements IHostFileSystem {
   async remove(path: string): Promise<void> {
     this.files.delete(path);
     this.dirs.delete(path);
+  }
+
+  async realpath(path: string): Promise<string> {
+    if (this.files.has(path) || this.dirs.has(path)) return path;
+    throw enoent(path);
   }
 }
 
@@ -152,7 +163,7 @@ interface AgentsStub extends IAgentLifecycleService {
 function agentsStub(): AgentsStub {
   const mainContext = stubContextMemory();
   let mainPresent = false;
-  const mainCreated = new Emitter<IAgentScopeHandle>();
+  const created = new Emitter<IAgentScopeHandle>();
 
   const mainHandle: IAgentScopeHandle = {
     id: MAIN_AGENT_ID,
@@ -169,26 +180,17 @@ function agentsStub(): AgentsStub {
   return {
     _serviceBrand: undefined,
     mainContext,
-    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-    onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
-    onDidCreate: () => ({ dispose: () => {} }),
-    onDidCreateMain: mainCreated.event,
+    onDidCreate: created.event,
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),
-    ensureMcpReady: () => Promise.resolve(),
-    notifyMainCreated: (handle) => mainCreated.fire(handle),
-    notifyAgentTaskStopped: () => {},
     fork: () => Promise.reject(new Error('not implemented')),
-    run: () => {
-      throw new Error('not implemented');
-    },
-    getHandle: (id) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
-    whenReady: (id) => Promise.resolve(id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
+    get: (id) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
     list: () => [],
     remove: () => Promise.resolve(),
+    broadcastPermissionMode: () => {},
     setMain: (present) => {
       mainPresent = present;
-      if (present) mainCreated.fire(mainHandle);
+      if (present) created.fire(mainHandle);
     },
   };
 }
@@ -370,6 +372,20 @@ describe('SessionWorkspaceCommandService', () => {
     expect(result.additionalDirs).toEqual([sharedDir]);
     expect(workspace.additionalDirs).toEqual([sharedDir]);
     expect(fs.files.get(`${projectRoot}/.kimi-code/local.toml`)).toContain(sharedDir);
+  });
+
+  it('keeps a dangling .git symlink as the local project-root marker', async () => {
+    const ancestorRoot = '/repo/project';
+    const workDir = `${ancestorRoot}/apps/foo`;
+    const sharedDir = `${workDir}/shared`;
+    const { svc, fs } = build([sharedDir], true, workDir, `${ancestorRoot}/.git`);
+    fs.danglingSymlinks.add(`${workDir}/.git`);
+
+    const result = await svc.addAdditionalDir({ path: 'shared', persist: true });
+
+    expect(result.projectRoot).toBe(workDir);
+    expect(result.configPath).toBe(`${workDir}/.kimi-code/local.toml`);
+    expect(fs.files.get(`${workDir}/.kimi-code/local.toml`)).toContain(sharedDir);
   });
 
   it('resolves session-only relative dirs against the session workDir when project root is above it', async () => {

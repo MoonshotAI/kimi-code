@@ -1,63 +1,73 @@
 /**
- * Minimal end-to-end example driving a running `kap-server` over `/api/v2` with
- * klient — core + session scopes, both the generic typed proxy and the
- * explicit `SessionIndexClient`, plus the error path.
+ * Minimal end-to-end example driving an in-process engine with klient's
+ * `global` facade over the memory transport (calls and events never leave
+ * the process — same facade either way).
  *
- * Run against a local dev server (auth bypassed for dev):
- *   pnpm dev:server --dangerous-bypass-auth
- *   pnpm -C packages/klient exec tsx examples/basic.ts
+ * Run it (the engine sources need the decorators tsconfig + raw-text loader):
+ *   pnpm -C packages/klient exec tsx --tsconfig ./tsconfig.examples.json \
+ *     --import ../../build/register-raw-text-loader.mjs examples/basic.ts
  */
-import { HttpChannel, Klient, SessionIndexClient } from '@moonshot-ai/klient';
-import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-const BASE = process.env.KIMI_SERVER_URL ?? 'http://127.0.0.1:58627';
-
-async function createSessionViaV1(cwd: string): Promise<string> {
-  const res = await fetch(`${BASE}/api/v1/sessions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ metadata: { cwd } }),
-  });
-  const env = (await res.json()) as { code: number; data: { id: string } };
-  if (env.code !== 0) throw new Error(`create session failed: ${JSON.stringify(env)}`);
-  return env.data.id;
-}
+import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
+import { createKlient } from '@moonshot-ai/klient/memory';
 
 async function main(): Promise<void> {
-  const client = new Klient({ url: BASE });
-
-  // 1) Generic typed proxy — core scope. The token carries type + channel name.
-  const page = await client.core(ISessionIndex).list({});
-  console.log('[core]    sessionIndex.list      ->', page.items.length, 'sessions');
-
-  // 2) Explicit impl — same interface, hand-written class on a bound channel.
-  const index: ISessionIndex = new SessionIndexClient(
-    new HttpChannel({ baseUrl: `${BASE}/api/v2/sessionIndex` }),
-  );
-  const page2 = await index.list({});
-  console.log('[core]    SessionIndexClient.list ->', page2.items.length, 'sessions (explicit)');
-
-  // 3) Session scope — create a session via /api/v1, then read metadata via v2.
-  const id = await createSessionViaV1('/tmp/klient-example');
-  console.log('[v1]      created session         ->', id);
-  const meta = await client.session(id).service(ISessionMetadata).read();
-  console.log('[session] sessionMetadata.read   ->', {
-    id: meta.id,
-    cwd: meta.cwd,
-    archived: meta.archived,
-  });
-
-  // 4) Error path — unknown method -> RPCError(40001).
+  const homeDir = await mkdtemp(join(tmpdir(), 'klient-basic-'));
+  const { app } = bootstrap({ homeDir }, [
+    ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
+  ]);
   try {
-    await (client.core(ISessionIndex) as unknown as { nope(): Promise<unknown> }).nope();
-  } catch (err) {
-    const e = err as { name: string; code: number };
-    console.log('[error]   unknown method         ->', e.name, e.code);
+    const klient = createKlient({ scope: app });
+
+    // 1) Aggregated host snapshot.
+    const env = await klient.global.env();
+    console.log('[env]      platform/homeDir   ->', env.platform, env.homeDir);
+
+    // 2) Read models.
+    const sessions = await klient.global.sessions.list({});
+    console.log('[sessions] list               ->', sessions.items.length, 'sessions');
+    const workspaces = await klient.global.workspaces.list();
+    console.log('[workspaces] list             ->', workspaces.length, 'workspaces');
+    const providers = await klient.global.providers.list();
+    console.log('[providers] list              ->', Object.keys(providers).length, 'providers');
+
+    // 3) Events — klient-level forwarding (no onDid*/onWill* in sight).
+    const sub = klient.events.on('providers.changed', (event) => {
+      console.log(
+        '[event]    providers.changed  -> +%s -%s ~%s',
+        event.added,
+        event.removed,
+        event.changed,
+      );
+    });
+    await klient.global.providers.set({
+      name: '__klient_example__',
+      config: { apiKey: 'example-key' },
+    });
+    await klient.global.providers.delete('__klient_example__');
+    sub.dispose();
+
+    // 4) Error path — a missing plugin surfaces an error.
+    try {
+      await klient.global.plugins.info('__definitely_missing__');
+    } catch (error) {
+      const e = error as { name: string; code?: number };
+      console.log('[error]    plugins.info        ->', e.name, e.code);
+    }
+
+    await klient.close();
+  } finally {
+    app.dispose();
+    await rm(homeDir, { recursive: true, force: true });
   }
 }
 
-main().catch((err) => {
-  console.error(err);
+try {
+  await main();
+} catch (error) {
+  console.error(error);
   process.exit(1);
-});
+}

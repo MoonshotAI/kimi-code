@@ -10,12 +10,14 @@
  */
 
 import type { ToolCall } from '#/app/llmProtocol/message';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 
 import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution } from '#/tool/toolContract';
 
 export interface ToolExecutionHookContext {
   readonly turnId: number;
   readonly signal: AbortSignal;
+  readonly trace?: LLMRequestTrace;
   readonly toolCall: ToolCall;
   readonly toolCalls: readonly ToolCall[];
   readonly tool?: ExecutableTool | undefined;

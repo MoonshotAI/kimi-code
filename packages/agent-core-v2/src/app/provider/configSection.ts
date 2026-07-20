@@ -46,7 +46,6 @@ export const stripProvidersEnv: ConfigStripEnv<Record<string, unknown>> = (value
   return out;
 };
 
-/** Read transform: snake_case file → camelCase in-memory providers record. */
 export const providersFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const out: Record<string, unknown> = {};
@@ -71,7 +70,6 @@ function providerEntryFromToml(data: Record<string, unknown>): Record<string, un
   return out;
 }
 
-/** Write transform: camelCase in-memory providers record → snake_case file. */
 export const providersToToml = (value: unknown, rawSnake: unknown): unknown => {
   if (!isPlainObject(value)) return value;
   const rawSub = cloneRecord(rawSnake);

@@ -71,6 +71,9 @@ const props = defineProps<{
 
 type Step = 'starting' | 'device-code' | 'success' | 'expired' | 'error';
 const step = ref<Step>('starting');
+// True when the error step came from repeated poll failures (daemon gone)
+// rather than startOAuthLogin failing (unsupported endpoint) — picks the copy.
+const pollError = ref(false);
 
 interface FlowData {
   flowId: string;
@@ -87,6 +90,11 @@ const copied = ref(false);
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let countdownTimer: ReturnType<typeof setInterval> | null = null;
+// Consecutive failed polls (onPollOAuthLogin returned null). A single null can
+// be a transient blip; several in a row means the daemon is gone and polling
+// forever would strand the user on "waiting for authorization".
+let consecutivePollFailures = 0;
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 
 // -------------------------------------------------------------------------
 // Lifecycle
@@ -107,6 +115,8 @@ onUnmounted(() => {
 async function startFlow(): Promise<void> {
   stopTimers();
   flow.value = null;
+  pollError.value = false;
+  consecutivePollFailures = 0;
   step.value = 'starting';
 
   const result = await props.onStartOAuthLogin();
@@ -158,18 +168,32 @@ function scheduleNextPoll(intervalSec: number): void {
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
     const result = await props.onPollOAuthLogin();
-    if (result?.status === 'authenticated') {
+    if (result === null) {
+      // Poll failed (or no active flow). Keep polling through transient
+      // blips, but give up with an explicit error after several in a row.
+      consecutivePollFailures += 1;
+      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        stopTimers();
+        pollError.value = true;
+        step.value = 'error';
+        return;
+      }
+      scheduleNextPoll(intervalSec);
+      return;
+    }
+    consecutivePollFailures = 0;
+    if (result.status === 'authenticated') {
       stopTimers();
       step.value = 'success';
       setTimeout(() => {
         emit('success');
         emit('close');
       }, 1200);
-    } else if (result?.status === 'expired' || result?.status === 'cancelled') {
+    } else if (result.status === 'expired' || result.status === 'cancelled') {
       stopTimers();
       step.value = 'expired';
     } else {
-      // pending or null — keep polling
+      // pending — keep polling
       scheduleNextPoll(intervalSec);
     }
   }, intervalSec * 1000);
@@ -289,12 +313,16 @@ function formatSeconds(s: number): string {
       </div>
     </template>
 
-    <!-- Error (endpoint missing or network failure) -->
+    <!-- Error (endpoint missing, network failure, or repeated poll failures) -->
     <template v-else-if="step === 'error'">
       <div class="center-body">
         <AuthStateIcon kind="error" />
-        <span class="center-text warn-text">{{ t('login.errorTitle') }}</span>
-        <span class="center-hint">{{ t('login.errorHint') }}</span>
+        <span class="center-text warn-text">
+          {{ pollError ? t('login.pollErrorTitle') : t('login.errorTitle') }}
+        </span>
+        <span class="center-hint">
+          {{ pollError ? t('login.pollErrorHint') : t('login.errorHint') }}
+        </span>
       </div>
       <div class="actions">
         <Button variant="primary" @click="retryFlow">{{ t('login.retry') }}</Button>

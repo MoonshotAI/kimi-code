@@ -42,6 +42,9 @@
  *                    `skill_activation` origin. The returned `Turn` handle is
  *                    discarded; clients follow progress via the `skill.activated`
  *                    + `turn.*` events emitted by the service on the WS stream.
+ *                    The edge then applies the prompt-metadata update
+ *                    (`applyPromptMetadataUpdate`) so a first `/<skill>`
+ *                    message titles the session, matching the native RPC path.
  *
  * **Model projection**: `SkillDefinition` (v2) → protocol `SkillDescriptor`,
  * byte-for-byte with v1's `toProtocolSkill`
@@ -72,9 +75,11 @@ import {
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
+  IEventService,
   IPluginService,
   ISessionIndex,
   ISessionLifecycleService,
+  ISessionMetadata,
   ISessionSkillCatalog,
   ISkillCatalogRuntimeOptions,
   ISkillDiscovery,
@@ -83,8 +88,10 @@ import {
   isError2,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
+  applyPromptMetadataUpdate,
   configuredRoots,
   projectRoots,
+  promptMetadataTextFromSkill,
   userRoots,
   type ISessionScopeHandle,
   type Scope,
@@ -92,19 +99,20 @@ import {
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  activateSkillRequestSchema,
-  activateSkillResultSchema,
-  listSkillsResponseSchema,
-  workspaceIdParamSchema,
-  type SkillDescriptor,
-} from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  activateSkillRequestSchema,
+  activateSkillResultSchema,
+  listSkillsResponseSchema,
+} from '../protocol/rest-skill';
+import { workspaceIdParamSchema } from '../protocol/rest-workspace';
+import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
 
 interface SkillsRouteHost {
@@ -283,6 +291,17 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         await agent.accessor
           .get(IAgentSkillService)
           .activate({ name: parsed.id, args: req.body.args });
+        // Keep the easy-title behavior of the native RPC / TUI path: a first
+        // `/<skill>` message titles the session (same as routes/prompts.ts).
+        await applyPromptMetadataUpdate(
+          {
+            metadata: resolved.handle.accessor.get(ISessionMetadata),
+            eventService: core.accessor.get(IEventService),
+            sessionId: session_id,
+          },
+          promptMetadataTextFromSkill({ name: parsed.id, args: req.body.args }),
+        );
+        requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);

@@ -50,6 +50,7 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
 
@@ -58,7 +59,6 @@ const DEFAULT_TIMEOUT_S = 60;
 const MAX_TIMEOUT_S = 5 * 60;
 const DEFAULT_BACKGROUND_TIMEOUT_S = 10 * 60;
 const MAX_BACKGROUND_TIMEOUT_S = 24 * 60 * 60;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 
 export const BashInputSchema = z
   .object({
@@ -142,7 +142,6 @@ async function disposeProcess(proc: IProcess): Promise<void> {
   try {
     await proc.dispose();
   } catch {
-    /* best-effort cleanup */
   }
 }
 
@@ -166,11 +165,6 @@ function withoutBackgroundDescription(description: string): string {
     );
 }
 
-/**
- * Strip the auto-background-on-timeout promise when the config disabled it
- * (`task.bash_auto_background_on_timeout = false`): timed-out foreground
- * commands are killed in that configuration, and the description must say so.
- */
 function withoutAutoBackgroundOnTimeout(description: string): string {
   return description.replace(
     ' When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.',
@@ -249,16 +243,10 @@ export class BashTool implements BuiltinTool<BashInput> {
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
       TERM: 'dumb',
-      // Default to '0' so git fails fast on private remotes if a TTY happens
-      // to be inherited; honour an explicit ambient value when the user has
-      // set one.
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
       SHELL: this.env.shellPath,
     };
 
-    // v2's ISessionProcessRunner.exec overlays this env on process.env, so we pass
-    // only the noninteractive knobs (the v1 spread of process.env is handled
-    // by the runner).
     return this.runner.exec(shellArgs, { env: noninteractiveEnv });
   }
 
@@ -316,14 +304,7 @@ export class BashTool implements BuiltinTool<BashInput> {
         {
           detached: startsInBackground,
           timeoutMs,
-          // Detaching (ctrl+b) moves a foreground command to the background;
-          // give it the background timeout so it is not still bounded by the
-          // shorter foreground deadline.
           detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
-          // A foreground command that hits its timeout is moved to the
-          // background (re-armed to detachTimeoutMs) instead of being killed —
-          // unless disabled via config, or background tooling is unavailable
-          // for this agent.
           autoBackgroundOnTimeout: this.allowBackground() && this.autoBackgroundOnTimeout(),
           signal: startsInBackground ? undefined : signal,
         },
@@ -338,8 +319,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       };
     }
 
-    // Foreground `!` shell commands surface their task id so the TUI can detach
-    // (ctrl+b) this exact task. Background runs are already detached.
     if (!startsInBackground) onForegroundTaskStart?.(taskId);
 
     if (startsInBackground) {
@@ -416,8 +395,11 @@ export class BashTool implements BuiltinTool<BashInput> {
       result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
         brief: `Killed by timeout (${timeoutLabel})`,
       });
-    } else if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
-      result = builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
+    } else if (
+      current?.status === 'killed' &&
+      current.stopReason === userCancellationReason().message
+    ) {
+      result = builder.error('Interrupted by user', { brief: 'Interrupted by user' });
     } else if (
       (current?.status === 'failed' || current?.status === 'killed') &&
       current.stopReason !== undefined
@@ -474,9 +456,7 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
-    const message = backgroundResultMessage(labels.title, foregroundResult.message);
     const result: ExecutableToolResult & {
-      readonly message: string;
       readonly brief: string;
       readonly truncated: boolean;
     } = {
@@ -485,7 +465,6 @@ export class BashTool implements BuiltinTool<BashInput> {
         foregroundOutput.length === 0
           ? metadata
           : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
-      message,
       brief: labels.brief,
       truncated: foregroundResult.truncated,
     };
@@ -496,9 +475,6 @@ export class BashTool implements BuiltinTool<BashInput> {
     scenario: 'background_started' | 'foreground_detached',
   ): string {
     if (scenario === 'foreground_detached') {
-      // The user explicitly moved a foreground call to the background to avoid
-      // blocking the current turn. Steer the model away from waiting on it.
-      // Only mention TaskOutput when the tool is actually available.
       const avoid = this.allowBackground()
         ? 'do NOT wait, poll, or call TaskOutput on it'
         : 'do NOT wait or poll';
@@ -507,9 +483,6 @@ export class BashTool implements BuiltinTool<BashInput> {
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }
-    // background_started: the model chose to launch in the background. Same anti-wait
-    // stance — immediately waiting on a background task is just a blocked turn, so do
-    // not invite a TaskOutput peek here.
     if (!this.allowBackground()) {
       return 'next_step: You will be automatically notified when it completes.\n';
     }
@@ -522,12 +495,6 @@ export class BashTool implements BuiltinTool<BashInput> {
 }
 
 registerTool(BashTool);
-
-function backgroundResultMessage(title: string, suffix: string): string {
-  const normalized = title.endsWith('.') ? title : `${title}.`;
-  if (suffix.length === 0) return normalized;
-  return suffix.endsWith('.') ? `${normalized} ${suffix}` : `${normalized} ${suffix}.`;
-}
 
 function formatTimeoutLabel(timeoutMs: number): string {
   return timeoutMs % 1000 === 0 ? `${String(timeoutMs / 1000)}s` : `${String(timeoutMs)}ms`;
@@ -544,7 +511,6 @@ function closeProcessStdin(proc: IProcess): void {
   try {
     proc.stdin.end();
   } catch {
-    /* process already gone */
   }
 }
 
@@ -552,7 +518,6 @@ async function killSpawnedProcess(proc: IProcess): Promise<void> {
   try {
     await proc.kill('SIGTERM');
   } catch {
-    /* process already gone */
   } finally {
     await disposeProcess(proc);
   }

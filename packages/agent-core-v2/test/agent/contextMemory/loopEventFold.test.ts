@@ -121,7 +121,6 @@ describe('loop-event fold parity', () => {
 
   it('drops an empty partial assistant left by a failed attempt when the retry begins', () => {
     context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
-    // The attempt failed before any output; the loop re-runs the step.
     context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
     context.appendLoopEvent({
       type: 'content.part',
@@ -156,7 +155,6 @@ describe('loop-event fold parity', () => {
       name: 'Bash',
       args: {},
     });
-    // The attempt failed before the tool result arrived; the retry begins.
     context.appendLoopEvent({ type: 'step.begin', uuid: 's2' });
 
     expect(shapes(context.get())).toEqual([

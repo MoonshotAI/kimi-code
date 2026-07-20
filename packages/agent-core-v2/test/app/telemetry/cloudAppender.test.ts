@@ -103,6 +103,29 @@ describe('CloudAppender', () => {
     expect(typeof event?.['timestamp']).toBe('number');
   });
 
+  it('applies setContext sessionId and model updates to subsequent events', async () => {
+    const requests: CapturedRequest[] = [];
+    const appender = new CloudAppender(
+      baseOptions({
+        homeDir,
+        deviceId: 'dev123',
+        model: 'initial-model',
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+
+    appender.setContext({ sessionId: 'sess42', model: 'switched-model' });
+    appender.track('turn_started', {});
+    await appender.flush();
+
+    const event = requests[0]?.body.events[0];
+    expect(event?.['session_id']).toBe('sess42');
+    expect(event?.['context_model']).toBe('switched-model');
+  });
+
   it('sends Authorization header when a token is provided', async () => {
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(

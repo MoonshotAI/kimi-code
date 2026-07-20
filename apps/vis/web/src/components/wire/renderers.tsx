@@ -217,6 +217,12 @@ export const WIRE_RENDERERS: RendererMap = {
     detail: (r) => <LoopEventDetail event={r.event} />,
   },
 
+  'context.update_token_count': {
+    tone: 'meta',
+    label: 'tokens',
+    headline: (r) => ({ main: <Dim>context {r.tokenCount} tok</Dim> }),
+  },
+
   'context.clear': {
     tone: 'warning',
     label: 'clear',

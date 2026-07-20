@@ -3,6 +3,7 @@
 
 import type { KimiApiConfig } from '../config';
 import { buildRestUrl, buildWsUrl } from '../config';
+import { traceKeyEvent } from '../../debug/trace';
 import type {
   AppConfig,
   AppGoal,
@@ -16,7 +17,6 @@ import type {
   AppSessionCursor,
   AppSessionRuntimeStatus,
   AppSessionSnapshot,
-  AppSessionStatus,
   AppTask,
   AppTaskStatus,
   AppTerminal,
@@ -51,7 +51,6 @@ import {
   toWireApprovalResponse,
   toWirePromptSubmission,
   toWireQuestionResponse,
-  toWireSessionStatus,
   toAppWorkspace,
   wireEventSeq,
   wireEventSessionId,
@@ -86,6 +85,53 @@ import type {
   WireLogoutResult,
 } from './wire';
 import { DaemonEventSocket } from './ws';
+
+function safeExportFileName(contentDisposition: string | undefined, fallback: string): string {
+  if (contentDisposition === undefined) return fallback;
+  let candidate: string | undefined;
+  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(contentDisposition)?.[1]?.trim();
+  if (encoded !== undefined) {
+    try {
+      candidate = decodeURIComponent(encoded.replaceAll(/^"|"$/g, ''));
+    } catch {
+      return fallback;
+    }
+  } else {
+    candidate =
+      /filename\s*=\s*"([^"]*)"/i.exec(contentDisposition)?.[1] ??
+      /filename\s*=\s*([^;]+)/i.exec(contentDisposition)?.[1]?.trim();
+  }
+  if (
+    candidate === undefined ||
+    candidate.length === 0 ||
+    candidate.length > 200 ||
+    candidate === '.' ||
+    candidate === '..' ||
+    /[\u0000-\u001F\u007F/\\]/.test(candidate) ||
+    !candidate.toLowerCase().endsWith('.zip')
+  ) {
+    return fallback;
+  }
+  return candidate;
+}
+
+function errorTraceMetadata(err: unknown): Record<string, string | number | undefined> {
+  if (typeof err !== 'object' || err === null) return { errorName: typeof err };
+  const value = err as {
+    name?: unknown;
+    code?: unknown;
+    requestId?: unknown;
+    phase?: unknown;
+    status?: unknown;
+  };
+  return {
+    errorName: typeof value.name === 'string' ? value.name : 'Error',
+    errorCode: typeof value.code === 'number' ? value.code : undefined,
+    requestId: typeof value.requestId === 'string' ? value.requestId : undefined,
+    phase: typeof value.phase === 'string' ? value.phase : undefined,
+    httpStatus: typeof value.status === 'number' ? value.status : undefined,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Wire response shapes for endpoints not in shared wire.ts
@@ -299,7 +345,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async listSessions(
     input?: PageRequest & {
-      status?: AppSessionStatus;
+      busy?: boolean;
       workspaceId?: string;
       includeArchive?: boolean;
       archivedOnly?: boolean;
@@ -310,7 +356,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       before_id: input?.beforeId,
       after_id: input?.afterId,
       page_size: input?.pageSize,
-      status: input?.status ? toWireSessionStatus(input.status) : undefined,
+      busy: input?.busy,
       include_archive: input?.includeArchive,
       archived_only: input?.archivedOnly,
       exclude_empty: input?.excludeEmpty,
@@ -481,36 +527,74 @@ export class DaemonKimiWebApi implements KimiWebApi {
    * Rebuild flow: getSessionSnapshot() → seedSnapshot() → subscribe(cursor).
    */
   async getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot> {
-    const data = await this.http.get<WireSessionSnapshot>(
-      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+    const startedAt = Date.now();
+    traceKeyEvent('session:snapshot:start', { sessionId });
+    try {
+      const data = await this.http.get<WireSessionSnapshot>(
+        `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      );
+      const snapshot: AppSessionSnapshot = {
+        asOfSeq: data.as_of_seq,
+        epoch: data.epoch,
+        session: toAppSession(data.session),
+        // Snapshot messages are already chronological ascending.
+        messages: data.messages.items.map(toAppMessage),
+        hasMoreMessages: data.messages.has_more,
+        inFlightTurn:
+          data.in_flight_turn === null
+            ? null
+            : {
+                turnId: data.in_flight_turn.turn_id,
+                assistantText: data.in_flight_turn.assistant_text,
+                thinkingText: data.in_flight_turn.thinking_text,
+                runningTools: data.in_flight_turn.running_tools.map((t) => ({
+                  toolCallId: t.tool_call_id,
+                  name: t.name,
+                  args: t.args,
+                  description: t.description,
+                  lastProgress: t.last_progress,
+                })),
+                promptId: data.in_flight_turn.current_prompt_id,
+              },
+        pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
+        pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
+        // Older servers omit the roster entirely; treat as an empty roster.
+        subagents: (data.subagents ?? []).map(toAppTask),
+      };
+      traceKeyEvent('session:snapshot:accepted', {
+        sessionId,
+        busy: snapshot.session.busy,
+        seq: snapshot.asOfSeq,
+        messageCount: snapshot.messages.length,
+        durationMs: Date.now() - startedAt,
+      });
+      return snapshot;
+    } catch (error) {
+      traceKeyEvent('session:snapshot:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        ...errorTraceMetadata(error),
+      });
+      throw error;
+    }
+  }
+
+  async exportSession(
+    sessionId: string,
+    webLog?: string,
+  ): Promise<{ blob: Blob; fileName: string }> {
+    const webLogBytes = webLog === undefined ? 0 : new TextEncoder().encode(webLog).byteLength;
+    const webLogEntries = webLog === undefined || webLog.length === 0 ? 0 : webLog.split('\n').length;
+    const result = await this.http.postZip(
+      `/sessions/${encodeURIComponent(sessionId)}/export`,
+      { web_log: webLog },
+      { web_log_bytes: webLogBytes, web_log_entries: webLogEntries },
     );
+    const fallback = `${sessionId}.zip`;
     return {
-      asOfSeq: data.as_of_seq,
-      epoch: data.epoch,
-      session: toAppSession(data.session),
-      // Snapshot messages are already chronological ascending.
-      messages: data.messages.items.map(toAppMessage),
-      hasMoreMessages: data.messages.has_more,
-      inFlightTurn:
-        data.in_flight_turn === null
-          ? null
-          : {
-              turnId: data.in_flight_turn.turn_id,
-              assistantText: data.in_flight_turn.assistant_text,
-              thinkingText: data.in_flight_turn.thinking_text,
-              runningTools: data.in_flight_turn.running_tools.map((t) => ({
-                toolCallId: t.tool_call_id,
-                name: t.name,
-                args: t.args,
-                description: t.description,
-                lastProgress: t.last_progress,
-              })),
-              promptId: data.in_flight_turn.current_prompt_id,
-            },
-      pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
-      pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
-      // Older servers omit the roster entirely; treat as an empty roster.
-      subagents: (data.subagents ?? []).map(toAppTask),
+      blob: result.blob,
+      fileName: safeExportFileName(result.contentDisposition, fallback),
     };
   }
 
@@ -522,15 +606,39 @@ export class DaemonKimiWebApi implements KimiWebApi {
     sessionId: string,
     input: PromptSubmission,
   ): Promise<PromptSubmitResult> {
-    const data = await this.http.post<WirePromptSubmitResult>(
-      `/sessions/${encodeURIComponent(sessionId)}/prompts`,
-      toWirePromptSubmission(input),
-    );
-    return {
-      promptId: data.prompt_id,
-      userMessageId: data.user_message_id,
-      status: data.status,
-    };
+    const startedAt = Date.now();
+    traceKeyEvent('prompt:start', {
+      sessionId,
+      contentCount: input.content.length,
+      mediaCount: input.content.filter((part) =>
+        part.type === 'image' || part.type === 'video' || part.type === 'file'
+      ).length,
+    });
+    try {
+      const data = await this.http.post<WirePromptSubmitResult>(
+        `/sessions/${encodeURIComponent(sessionId)}/prompts`,
+        toWirePromptSubmission(input),
+      );
+      traceKeyEvent('prompt:accepted', {
+        sessionId,
+        promptId: data.prompt_id,
+        status: data.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return {
+        promptId: data.prompt_id,
+        userMessageId: data.user_message_id,
+        status: data.status,
+      };
+    } catch (error) {
+      traceKeyEvent('prompt:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        ...errorTraceMetadata(error),
+      });
+      throw error;
+    }
   }
 
   // POST /sessions/{id}/prompts:steer — steer daemon-queued prompts into the
@@ -1067,8 +1175,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
           name: e.name,
           path: e.path,
           isDir: e.is_dir,
-          isGitRepo: e.is_git_repo,
-          branch: e.branch,
         })),
       };
     } catch {
@@ -1324,6 +1430,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
         const { type, seq, session_id: sessionId, payload, offset } = frame;
         const appEvents = projector.project(type, payload, sessionId, { offset });
         for (const appEvent of appEvents) {
+          const turnId = (payload as { turnId?: unknown } | null)?.turnId;
+          const stream =
+            appEvent.type === 'assistantDelta' &&
+            typeof turnId === 'number' &&
+            typeof offset === 'number' &&
+            (type === 'assistant.delta' || type === 'thinking.delta')
+              ? {
+                  turnId,
+                  offset,
+                  kind: type === 'assistant.delta' ? ('text' as const) : ('thinking' as const),
+                }
+              : undefined;
           // historyCompacted from the projector is either a compaction signal
           // (reason auto_compact — no reload, the divider marker handles it) or
           // a delta-gap recovery (reason delta_gap — a real resync, routed to
@@ -1331,7 +1449,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
           if (appEvent.type === 'historyCompacted' && !isCompactionReason(appEvent.reason)) {
             handlers.onResync(sessionId, seq);
           }
-          handlers.onEvent(appEvent, { sessionId, seq });
+          handlers.onEvent(appEvent, { sessionId, seq, stream });
         }
       },
 

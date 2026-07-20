@@ -179,10 +179,6 @@ describe('convertMCPContentBlock', () => {
   });
 
   test('replaces a resource_link whose declared image format is unsupported with a notice', () => {
-    // The declared MIME is the only format signal for a remote image: when
-    // the server honestly declares a format providers reject (e.g. an image
-    // search tool returning AVIF links), the image is dropped for a notice
-    // that keeps the URL so the model can fetch and convert it.
     const block = assertValidMcpBlock({
       type: 'resource_link',
       name: 'img.avif',

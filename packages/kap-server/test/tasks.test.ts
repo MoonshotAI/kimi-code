@@ -110,7 +110,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agent =
-      session.accessor.get(IAgentLifecycleService).getHandle('main') ??
+      session.accessor.get(IAgentLifecycleService).get('main') ??
       (await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' }));
     return agent.accessor.get(IAgentTaskService);
   }
@@ -258,6 +258,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     );
     expect(cancelled.body.code).toBe(0);
     expect(cancelled.body.data).toEqual({ cancelled: true });
+    expect(tasks.getTask(taskId)?.stopReason).toBe('Aborted by the user');
 
     // The task is now terminal (killed → cancelled); a second cancel is a
     // conflict with the idempotent envelope shape.

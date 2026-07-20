@@ -12,9 +12,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface FileEditInput {
-  /** Absolute, access-checked path to read and write. */
   readonly path: string;
-  /** User-facing path used in messages. */
   readonly displayPath: string;
   readonly old_string: string;
   readonly new_string: string;

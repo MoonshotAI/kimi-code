@@ -7,15 +7,6 @@ import { InstantiationService } from '#/_base/di/instantiationService';
 import { dispose } from '#/_base/di/lifecycle';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 
-/**
- * Delayed-instantiation tests for the `SyncDescriptor(Ctor, [], true)` Proxy
- * mechanism ("Delayed and events" family).
- *
- * A service registered this way is handed to consumers as a Proxy: subscribing
- * to its `onDid…`/`onWill…` events does NOT construct it, and the first real
- * property/method access does. Listeners that subscribed before construction
- * are replayed onto the real instance once it materializes.
- */
 
 describe('Delayed instantiation', () => {
   it('subscribing to an event does not instantiate; first method call does', () => {
@@ -60,14 +51,12 @@ describe('Delayed instantiation', () => {
       eventCount++;
     };
 
-    // subscribing to the event does NOT trigger instantiation
     const d1 = c.a.onDidDoIt(listener);
     const d2 = c.a.onDidDoIt(listener);
     expect(created).toBe(false);
     expect(eventCount).toBe(0);
     d2.dispose();
 
-    // instantiation happens on the first real method call
     c.a.doIt();
     expect(created).toBe(true);
     expect(eventCount).toBe(1);
@@ -124,15 +113,12 @@ describe('Delayed instantiation', () => {
       eventCount++;
     };
 
-    // capture the event function reference BEFORE instantiation
     const event = c.a.onDidDoIt;
     expect(created).toBe(false);
 
-    // trigger instantiation through an unrelated method
     c.a.noop();
     expect(created).toBe(true);
 
-    // the reference captured earlier is still usable
     const d1 = event(listener);
     c.a.doIt();
     expect(eventCount).toBe(1);

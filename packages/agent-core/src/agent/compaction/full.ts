@@ -25,9 +25,11 @@ import type { ContextMessage } from '../context/types';
 import { stripDynamicToolContext } from '../context/dynamic-tools';
 import { isAbortError } from '../../loop/errors';
 import {
+  findAPIStatusError,
   retryBackoffDelays,
   sleepForRetry,
 } from '../../loop/retry';
+import { LLMRequestTraceState } from '../../loop/llm';
 import {
   renderTodoList,
   TODO_STORE_KEY,
@@ -86,6 +88,11 @@ export class FullCompaction {
   // stop an overflow -> compact -> overflow loop when compaction can no
   // longer shrink the request below the model window.
   private consecutiveOverflowCompactions = 0;
+  // Trace id (`x-trace-id`, Kimi/KFC only) of the latest summarizer request,
+  // updated on every attempt — success or failure — so a compaction cancelled
+  // mid-request can still be attributed to its server-side request.
+  private lastSummarizerTraceId: string | undefined;
+  private activeSummarizerTrace: LLMRequestTraceState | undefined;
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -107,6 +114,13 @@ export class FullCompaction {
 
   get isCompacting(): boolean {
     return this.compacting !== null;
+  }
+
+  /** Trace id (`x-trace-id`, Kimi/KFC only) of the latest summarizer request. */
+  get lastTraceId(): string | undefined {
+    return this.activeSummarizerTrace !== undefined
+      ? this.activeSummarizerTrace.traceId
+      : this.lastSummarizerTraceId;
   }
 
   getEffectiveMaxContextTokens(): number {
@@ -390,6 +404,10 @@ export class FullCompaction {
     const originalHistory = [...this.agent.context.history];
     const tokensBefore = estimateTokensForMessages(originalHistory);
     let retryCount = 0;
+    // Reset per round: a failure before any response headers arrive (network
+    // error / local abort) must report no trace id, not a previous round's.
+    this.lastSummarizerTraceId = undefined;
+    this.activeSummarizerTrace = undefined;
     try {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
@@ -450,9 +468,14 @@ export class FullCompaction {
         ];
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
         try {
+          const trace = new LLMRequestTraceState();
+          this.activeSummarizerTrace = trace;
           const generateOptions: GenerateOptionsWithRequestLogFields = {
             signal,
             requestLogFields: { kind: 'compaction', droppedCount },
+            onTraceId: (traceId) => {
+              trace.capture(traceId);
+            },
           };
           const response = await this.agent.generate(
             provider,
@@ -462,6 +485,9 @@ export class FullCompaction {
             undefined,
             generateOptions,
           );
+          // Multi-round compaction keeps the latest round's request trace id.
+          this.lastSummarizerTraceId = response.traceId ?? undefined;
+          this.activeSummarizerTrace = undefined;
           if (response.finishReason === 'truncated') {
             throw new CompactionTruncatedError();
           }
@@ -469,6 +495,12 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
+          // A failed request usually still returns response headers, so its
+          // trace id rides along on the converted status error.
+          const statusError = findAPIStatusError(error);
+          if (statusError?.traceId !== null && statusError?.traceId !== undefined) {
+            this.activeSummarizerTrace?.capture(statusError.traceId);
+          }
           // A request-body-size rejection (HTTP 413) or an image-format
           // rejection is first retried with media parts replaced by text
           // markers: accumulated base64 payloads are the usual 413 culprit,
@@ -601,6 +633,7 @@ export class FullCompaction {
         retry_count: retryCount,
         round: 1,
         thinking_effort: this.agent.config.thinkingEffort,
+        trace_id: this.lastTraceId,
         ...(usage === null
           ? {}
           : { input_tokens: inputTotal(usage), output_tokens: usage.output }),
@@ -622,6 +655,7 @@ export class FullCompaction {
         retry_count: retryCount,
         thinking_effort: this.agent.config.thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
+        trace_id: this.lastTraceId,
       });
       if (
         isKimiError(error) &&

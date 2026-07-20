@@ -104,6 +104,12 @@ A goal can stop in three ways:
 
 Write stop conditions into the objective. `/goal` does not have a separate stop-limit flag.
 
+## Manage goals in the web UI
+
+The web UI shows the current goal in a strip below the conversation. Select the strip to expand or collapse its details. When a token budget is configured, the header shows its progress; goals without a token budget do not show a progress bar.
+
+Use the strip actions to pause an active goal, resume a paused or blocked goal, or cancel the current goal. Selecting Resume starts the next goal turn so the agent continues the work. Cancellation requires confirmation because it cannot be resumed afterwards.
+
 ## Queue upcoming goals
 
 Agents sometimes complete a goal too quickly. Users can be disappointed that they can assign only one goal at a time. Many people already know the upcoming goals they want to pursue. They had to wait for the current goal to complete, open the TUI, and submit the next goal manually.

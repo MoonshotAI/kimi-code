@@ -31,18 +31,9 @@ export interface RegisterMediaToolsDeps {
   readonly workspace: WorkspaceConfig;
   readonly capabilities: ModelCapability;
   readonly videoUploader?: VideoUploader;
-  /** Sink for the `image_compress` / `image_crop` events (source 'read_media'). */
   readonly telemetry?: ITelemetryService;
 }
 
-/**
- * Register the media tools against the agent tool registry.
- *
- * Registers `ReadMediaFile` only when the active model supports image or
- * video input. Returns an `IDisposable` that unregisters whatever was
- * registered (a no-op when nothing matched), so the caller can tie it to a
- * lifecycle and re-run registration cleanly on capability changes.
- */
 export function registerMediaTools(
   toolRegistry: IAgentToolRegistryService,
   deps: RegisterMediaToolsDeps,
@@ -62,16 +53,6 @@ export function registerMediaTools(
   );
 }
 
-/**
- * Bind a runnable Model's `uploadVideo` into the `VideoUploader` shape the
- * media tool expects. Returns `undefined` when the Model does not support
- * video upload, in which case the tool falls back to an inline data URL.
- *
- * With `telemetry` set, every upload reports a `video_upload` event — outcome
- * (success/error), byte size, mime type, duration, and the caller's static
- * props (model alias, protocol). A throwing telemetry client never affects
- * the upload outcome.
- */
 export function createVideoUploader(
   model: Pick<Model, 'uploadVideo'> | undefined,
   telemetry?: VideoUploadTelemetry,
@@ -92,7 +73,6 @@ export function createVideoUploader(
       try {
         telemetry.client.track2('video_upload', props);
       } catch {
-        // Telemetry must never affect the upload outcome.
       }
     };
     try {
@@ -111,9 +91,7 @@ export function createVideoUploader(
   };
 }
 
-/** Wiring for the optional `video_upload` telemetry events. */
 export interface VideoUploadTelemetry {
   readonly client: ITelemetryService;
-  /** Static properties merged into every event, e.g. model alias and protocol. */
   readonly props?: Pick<VideoUploadEvent, 'model' | 'provider_type' | 'protocol'>;
 }

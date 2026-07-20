@@ -8,30 +8,33 @@
 
 import type { Readable } from 'node:stream';
 
-import type { FileMeta } from '@moonshot-ai/protocol';
+import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
+import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
 
-/** Hard upload cap mirrored from the v1 server (50 MiB). */
+export const fileMetaSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  media_type: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  created_at: isoDateTimeSchema,
+  expires_at: isoDateTimeSchema.optional(),
+});
+export type FileMeta = z.infer<typeof fileMetaSchema>;
+
 export const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 export interface SaveOptions {
-  /** Display name override; defaults to the uploaded filename. */
   readonly name?: string;
-  /** MIME type; defaults to `application/octet-stream`. */
   readonly mimeType?: string;
-  /** Optional TTL in seconds; recorded as `expires_at` on the metadata. */
   readonly expiresInSec?: number;
 }
 
 export interface GetResult {
   readonly meta: FileMeta;
-  /**
-   * Open a fresh stream over the stored blob. `range` is inclusive and lets
-   * callers serve byte ranges without first buffering the whole file.
-   */
   readonly stream: (range?: FileReadRange) => Readable;
 }
 
@@ -50,9 +53,6 @@ export interface IFileService {
 
 export const IFileService: ServiceIdentifier<IFileService> = createDecorator<IFileService>('fileService');
 
-// ---------------------------------------------------------------------------
-// Error domain
-// ---------------------------------------------------------------------------
 
 export const FileErrors = {
   codes: {

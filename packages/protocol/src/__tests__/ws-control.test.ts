@@ -170,6 +170,20 @@ describe('ws-control — §3.1 server_hello', () => {
     expect(result.success).toBe(true);
   });
 
+  it('parses a server_hello without heartbeat_ms (no server heartbeat)', () => {
+    const result = serverHelloMessageSchema.safeParse({
+      type: 'server_hello',
+      timestamp: TS,
+      payload: {
+        ws_connection_id: 'conn_local',
+        protocol_version: 2,
+        max_event_buffer_size: 1000,
+        capabilities: { event_batching: false, compression: false },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('rejects a server_hello missing protocol_version', () => {
     const result = serverHelloMessageSchema.safeParse({
       type: 'server_hello',
