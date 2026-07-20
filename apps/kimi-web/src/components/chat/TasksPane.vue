@@ -6,10 +6,17 @@ import { reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TaskItem } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import Badge from '../ui/Badge.vue';
+import Icon from '../ui/Icon.vue';
+import StatusGlyph, { type StatusGlyphStatus } from './StatusGlyph.vue';
 
 defineProps<{ tasks: TaskItem[] }>();
 
-const emit = defineEmits<{ cancel: [taskId: string] }>();
+const emit = defineEmits<{
+  cancel: [taskId: string];
+  /** A subagent row was clicked — open its live detail in the side panel. */
+  open: [taskId: string];
+}>();
 
 const { t } = useI18n();
 
@@ -23,28 +30,26 @@ function hasDetail(task: TaskItem): boolean {
   return Boolean((task.output && task.output.length > 0) || task.meta);
 }
 
-function toggle(task: TaskItem): void {
+function handleClick(task: TaskItem): void {
+  // Subagents open their live detail in the right-side panel instead of
+  // expanding inline — the dock only lists background subagents, and their
+  // streaming progress belongs in the side panel.
+  if (task.kind === 'subagent') {
+    emit('open', task.id);
+    return;
+  }
   if (!hasDetail(task)) return;
   if (expandedIds.has(task.id)) expandedIds.delete(task.id);
   else expandedIds.add(task.id);
 }
 
-function statusGlyph(state: string): string {
-  switch (state) {
-    case 'run': return '●';
-    case 'done': return '✓';
-    case 'fail': return '✗';
-    default: return '○';
-  }
+function isClickable(task: TaskItem): boolean {
+  return task.kind === 'subagent' || hasDetail(task);
 }
 
-function statusClass(state: string): string {
-  switch (state) {
-    case 'run': return 's-run';
-    case 'done': return 's-done';
-    case 'fail': return 's-fail';
-    default: return 's-pending';
-  }
+function glyphStatus(state: string): StatusGlyphStatus {
+  if (state === 'run' || state === 'done' || state === 'fail') return state;
+  return 'pending';
 }
 
 async function copyToClipboard(text: string, taskId: string, set: Set<string>): Promise<void> {
@@ -82,28 +87,20 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
           v-for="task in tasks"
           :key="task.id"
           class="tp-row"
-          :class="{ done: task.state === 'done', fail: task.state === 'fail', expandable: hasDetail(task) }"
+          :class="{ done: task.state === 'done', fail: task.state === 'fail', expandable: isClickable(task) }"
         >
-          <div class="tp-main" :role="hasDetail(task) ? 'button' : undefined" @click="toggle(task)">
-            <span class="tp-glyph" :class="statusClass(task.state)">{{ statusGlyph(task.state) }}</span>
+          <div class="tp-main" :role="isClickable(task) ? 'button' : undefined" @click="handleClick(task)">
+            <StatusGlyph :status="glyphStatus(task.state)" />
             <span class="tp-name">{{ task.name }}</span>
-            <span class="tp-kind">{{ task.kind }}</span>
+            <Badge variant="neutral" size="sm">{{ task.kind }}</Badge>
             <span class="tp-time">{{ task.timing }}</span>
             <button
               v-if="task.state === 'run'"
               class="tp-stop"
               @click.stop="emit('cancel', task.id)"
             >{{ t('tasks.stop') }}</button>
-            <svg
-              v-if="hasDetail(task)"
-              class="tp-chevron"
-              :class="{ open: expandedIds.has(task.id) }"
-              viewBox="0 0 16 16" width="12" height="12"
-              fill="none" stroke="currentColor" stroke-width="1.8"
-              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-            >
-              <path d="M6 4l4 4-4 4" />
-            </svg>
+            <Icon v-if="task.kind === 'subagent'" class="tp-chevron" name="chevron-right" size="sm" />
+            <Icon v-else-if="hasDetail(task)" class="tp-chevron" :class="{ open: expandedIds.has(task.id) }" name="chevron-right" size="sm" />
           </div>
           <div
             v-if="expandedIds.has(task.id) && hasDetail(task)"
@@ -157,14 +154,14 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   gap: 8px;
 }
 .tp-title {
-  color: var(--blue2);
-  font-weight: 700;
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  color: var(--color-accent-hover);
+  font-weight: 500;
+  font-size: var(--text-base);
   text-transform: capitalize;
 }
 .tp-count {
   color: var(--muted);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
 }
 
 /* List: no cards, just clean rows. Shows ALL tasks and scrolls internally once
@@ -186,14 +183,14 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   text-decoration: line-through;
 }
 .tp-row.fail .tp-name {
-  color: var(--err);
+  color: var(--color-danger);
 }
 
 .tp-main {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  font-size: var(--text-base);
 }
 .tp-row.expandable > .tp-main {
   cursor: pointer;
@@ -211,21 +208,8 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   transform: rotate(90deg);
 }
 
-/* Status glyph */
-.tp-glyph {
-  flex: none;
-  font-size: calc(var(--ui-font-size) - 3px);
-  width: 16px;
-  text-align: center;
-  user-select: none;
-}
-.tp-glyph.s-run   { color: var(--blue); font-weight: 700; }
-.tp-glyph.s-done  { color: var(--ok); }
-.tp-glyph.s-fail  { color: var(--err); }
-.tp-glyph.s-pending { color: var(--faint); }
-
 .tp-name {
-  color: var(--ink);
+  color: var(--color-text);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -233,27 +217,18 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   white-space: nowrap;
 }
 
-.tp-kind {
-  flex: none;
-  font-size: max(9px, calc(var(--ui-font-size) - 4px));
-  color: var(--dim);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 0 5px;
-}
-
 .tp-time {
   flex: none;
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
   color: var(--muted);
 }
 
 .tp-stop {
   flex: none;
   background: none;
-  border: 1px solid color-mix(in srgb, var(--err) 22%, var(--bg));
-  border-radius: 3px;
-  color: var(--err);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, var(--bg));
+  border-radius: var(--radius-xs);
+  color: var(--color-danger);
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
   padding: 1px 8px;
   cursor: pointer;
@@ -273,7 +248,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   position: relative;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 
 .tp-copy {
@@ -286,7 +261,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   transition: opacity 0.12s ease, visibility 0.12s ease;
   background: var(--panel2);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   color: var(--dim);
   font-size: max(9px, calc(var(--ui-font-size) - 3.5px));
   padding: 1px 7px;
@@ -302,8 +277,8 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   background: var(--panel);
 }
 .tp-copy.copied {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 30%, var(--line));
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 30%, var(--line));
 }
 
 .tp-pre {
@@ -316,7 +291,7 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
 .tp-pre code {
   display: block;
   font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
   line-height: 1.55;
   color: var(--dim);
   white-space: pre-wrap;
@@ -353,4 +328,6 @@ async function copyTaskOutput(task: TaskItem): Promise<void> {
   .tp-detail { margin-left: 0; }
   .tp-pre { font-size: var(--ui-font-size-xs); }
 }
+
+.tp-stop { border-radius: var(--radius-md); font-family: var(--sans); }
 </style>

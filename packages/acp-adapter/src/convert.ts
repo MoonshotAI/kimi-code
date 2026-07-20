@@ -1,7 +1,13 @@
 import type { ContentBlock, ToolCallContent } from '@agentclientprotocol/sdk';
 import {
   log,
+  buildImageCompressionCaption,
+  compressBase64ForModel,
+  gateImageFormatParts,
+  parseImageDataUrl,
+  persistOriginalImage,
   type PromptPart,
+  type TelemetryClient,
   type ToolInputDisplay,
   type ToolResultEvent,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -12,6 +18,9 @@ import { isHideOutputMarker } from './marker';
  * Convert an array of ACP {@link ContentBlock}s into the SDK's
  * {@link PromptPart} array.
  *
+ * Image parts are built from the client-declared MIME verbatim; run the
+ * result through {@link compressPromptImageParts} before submitting so
+ * unsupported formats are dropped and MIME aliases canonicalized.
  */
 export function acpBlocksToPromptParts(
   blocks: readonly ContentBlock[],
@@ -67,6 +76,88 @@ export function acpBlocksToPromptParts(
     log.warn('acp: dropping unsupported prompt content block', {
       type: (block as { type: string }).type,
     });
+  }
+  return out;
+}
+
+/**
+ * Shrink oversized inline images in a prompt-part list — the ACP ingestion
+ * point's input-stage compression, mirroring the CLI's paste-time and the
+ * server's upload-time step. Best effort: a part that cannot be compressed is
+ * passed through unchanged.
+ *
+ * The format gate (`gateImageFormatParts`) runs first: parts whose MIME is
+ * outside the provider-accepted set are never forwarded — the part is
+ * dropped and a text notice stands in, so one unsupported image cannot
+ * poison the session history; accepted MIME aliases (`image/jpg`,
+ * case/whitespace variants) are rewritten to the canonical form strict
+ * provider whitelists require.
+ *
+ * Compression is never silent: a re-encoded image gains a caption text part
+ * immediately before it stating what the original was, and the original bytes
+ * are persisted (into `originalsDir` — typically the session's
+ * media-originals dir — or the shared temp-dir fallback) so the model can
+ * read fine detail back via ReadMediaFile + region.
+ */
+export async function compressPromptImageParts(
+  parts: readonly PromptPart[],
+  options: {
+    readonly originalsDir?: string | undefined;
+    /** Report an `image_compress` event per prompt image (source `acp_prompt`). */
+    readonly telemetry?: TelemetryClient | undefined;
+    /**
+     * Longest-edge ceiling (px) from the harness's [image] config, resolved
+     * per prompt so a config reload applies immediately. Absent → the
+     * env/built-in default cap applies.
+     */
+    readonly maxImageEdgePx?: number | undefined;
+  } = {},
+): Promise<PromptPart[]> {
+  const out: PromptPart[] = [];
+  for (const part of gateImageFormatParts(parts) as PromptPart[]) {
+    if (part.type === 'image_url') {
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed !== null) {
+        const result = await compressBase64ForModel(parsed.base64, parsed.mimeType, {
+          maxEdge: options.maxImageEdgePx,
+          telemetry:
+            options.telemetry === undefined
+              ? undefined
+              : { client: options.telemetry, source: 'acp_prompt' },
+        });
+        if (result.changed) {
+          const originalPath = await persistOriginalImage(
+            Buffer.from(parsed.base64, 'base64'),
+            parsed.mimeType,
+            options.originalsDir === undefined ? {} : { dir: options.originalsDir },
+          );
+          out.push({
+            type: 'text',
+            text: buildImageCompressionCaption({
+              original: {
+                width: result.originalWidth,
+                height: result.originalHeight,
+                byteLength: result.originalByteLength,
+                mimeType: parsed.mimeType,
+              },
+              final: {
+                width: result.width,
+                height: result.height,
+                byteLength: result.finalByteLength,
+                mimeType: result.mimeType,
+              },
+              originalPath,
+            }),
+          });
+          out.push({
+            type: 'image_url',
+            imageUrl: { ...part.imageUrl, url: `data:${result.mimeType};base64,${result.base64}` },
+          });
+          continue;
+        }
+      }
+    }
+    out.push(part);
   }
   return out;
 }

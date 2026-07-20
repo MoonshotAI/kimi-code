@@ -15,6 +15,7 @@ import {
   BackgroundTaskPersistence,
   ProcessBackgroundTask,
   type BackgroundManager,
+  type BackgroundTaskInfo,
 } from '../../../src/agent/background';
 import {
   agentTask,
@@ -734,6 +735,64 @@ describe('BackgroundManager', () => {
     }
   });
 
+  it('auto-backgrounds a foreground task instead of killing it when its deadline fires', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { manager } = createBackgroundManager();
+      const { proc, killSpy } = pendingProcess();
+      const taskId = manager.registerTask(
+        new ProcessBackgroundTask(proc, 'sleep 60', 'auto background'),
+        {
+          detached: false,
+          timeoutMs: 1_000,
+          detachTimeoutMs: 5_000,
+          autoBackgroundOnTimeout: true,
+        },
+      );
+      const waiting = manager.waitForForegroundRelease(taskId);
+
+      // The 1s foreground deadline detaches the task instead of killing it.
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(waiting).resolves.toBe('timeout_detached');
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(manager.getTask(taskId)).toMatchObject({ status: 'running', detached: true });
+
+      // The task keeps running past the original deadline; the re-armed 5s
+      // detach deadline still applies (1000 + 5000 = 6000ms).
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(manager.getTask(taskId)?.status).toBe('running');
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(manager.getTask(taskId)?.status).toBe('timed_out');
+      expect(killSpy).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('kills a foreground task on timeout when auto-background is not enabled', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { manager } = createBackgroundManager();
+      const { proc, killSpy } = pendingProcess();
+      const taskId = manager.registerTask(
+        new ProcessBackgroundTask(proc, 'sleep 60', 'plain timeout'),
+        {
+          detached: false,
+          timeoutMs: 1_000,
+          detachTimeoutMs: 5_000,
+        },
+      );
+      const waiting = manager.waitForForegroundRelease(taskId);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(waiting).resolves.toBe('terminal');
+      expect(killSpy).toHaveBeenCalled();
+      expect(manager.getTask(taskId)?.status).toBe('timed_out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns undefined or empty output for unknown task ids', async () => {
     const { manager } = createBackgroundManager();
 
@@ -805,4 +864,97 @@ describe('BackgroundManager', () => {
     expect(info).toMatchObject({ kind: 'process', status: 'completed', exitCode: 0 });
     expect(await manager.readOutput(taskId)).toContain('bg-ok');
   }, 15_000);
+});
+
+
+describe('waitForActiveTasks', () => {
+  function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (reason?: unknown) => void;
+  } {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  const isAgent = (info: BackgroundTaskInfo): boolean => info.kind === 'agent';
+
+  it('resolves immediately when no task matches the predicate', async () => {
+    const { manager } = createBackgroundManager();
+    // A process task does not match the agent predicate.
+    registerProcess(manager, immediateProcess(0), 'noop', 'proc');
+    await expect(manager.waitForActiveTasks(isAgent)).resolves.toBeUndefined();
+  });
+
+  it('waits until a matching agent task reaches a terminal state', async () => {
+    const { manager } = createBackgroundManager();
+    const done = deferred<{ result: string }>();
+    manager.registerTask(agentTask(done.promise, 'agent'));
+
+    let settled = false;
+    const wait = manager.waitForActiveTasks(isAgent).then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    done.resolve({ result: 'ok' });
+    await wait;
+    expect(settled).toBe(true);
+  });
+
+  it('re-enumerates tasks registered during the wait (fan-out)', async () => {
+    const { manager } = createBackgroundManager();
+    const first = deferred<{ result: string }>();
+    manager.registerTask(agentTask(first.promise, 'first'));
+
+    let settled = false;
+    const wait = manager.waitForActiveTasks(isAgent).then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Fan out a second agent task after the wait started.
+    const second = deferred<{ result: string }>();
+    manager.registerTask(agentTask(second.promise, 'second'));
+
+    // Completing only the first must not settle the wait.
+    first.resolve({ result: '1' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    second.resolve({ result: '2' });
+    await wait;
+    expect(settled).toBe(true);
+  });
+
+  it('returns when the timeout elapses even if a matching task is still running', async () => {
+    const { manager } = createBackgroundManager();
+    const done = deferred<{ result: string }>();
+    const taskId = manager.registerTask(agentTask(done.promise, 'stuck'));
+
+    await manager.waitForActiveTasks(isAgent, { timeoutMs: 20 });
+
+    // Task is still running (never resolved), but the wait returned on the deadline.
+    expect(manager.getTask(taskId)?.status).toBe('running');
+    done.resolve({ result: 'late' });
+  });
+
+  it('rejects when the signal is aborted', async () => {
+    const { manager } = createBackgroundManager();
+    const done = deferred<{ result: string }>();
+    manager.registerTask(agentTask(done.promise, 'agent'));
+    const controller = new AbortController();
+
+    const wait = manager.waitForActiveTasks(isAgent, { signal: controller.signal });
+    controller.abort(new Error('stop'));
+
+    await expect(wait).rejects.toThrow('stop');
+    done.resolve({ result: 'late' });
+  });
 });

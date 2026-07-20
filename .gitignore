@@ -4,9 +4,12 @@ dist-web/
 dist-single/
 dist-native/
 .tmp-api-extractor/
+.contract-types-tmp/
+.local/
 coverage/
 *.tsbuildinfo
 .vitest-results/
+.vite/
 .DS_Store
 .playwright-mcp/
 .claude
@@ -16,6 +19,10 @@ plugins/cdn/
 .worktrees/
 .kimi-code/local.toml
 .kimi-sandbox/
+.vscode/
+!apps/vscode/.vscode/
+!apps/vscode/.vscode/*.json
+apps/vscode/artifacts/
 
 Dockerfile
 docker-compose.yml
@@ -24,3 +31,16 @@ docker-compose.yml
 docs/superpowers/
 reports/
 .superpowers/
+/plan/
+
+# Agent scratch / throwaway files - do not commit
+.tmp/
+HANDOVER*.md
+HANDOFF*.md
+handoff.md
+handover.md
+*-designs.html
+*-design.html
+*-mockup.html
+*-demo.html
+*-demos.html

@@ -3,8 +3,8 @@
  *
  * Pure in-process pub-sub: a thin wrapper over `Emitter<Event>`. No
  * sessionId extraction, no per-session sequence numbers, no ring buffer, no
- * WS fan-out — those daemon transport concerns live in
- * `@moonshot-ai/server/services/WSBroadcastService`, which subscribes to this
+ * WS fan-out — those daemon transport concerns live in kap-server's
+ * `transport/ws/v1/sessionEventBroadcaster.ts`, which subscribes to this
  * bus via `onDidPublish` and handles the broadcast/replay machinery.
  *
  * Listener exceptions route to `onUnexpectedError` inside `Emitter.fire()`

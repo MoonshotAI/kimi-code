@@ -5,11 +5,58 @@ import {
   formatDuration,
   formatResetTime,
   isManagedKimiCode,
+  isManagedKimiCodeBaseUrl,
+  kimiCodeBaseUrl,
+  kimiCodeUsageUrl,
   parseManagedUsagePayload,
 } from '../src/managed-usage';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+describe('kimiCodeBaseUrl', () => {
+  it('strips trailing slashes from the KIMI_CODE_BASE_URL override', () => {
+    // The env value must be normalized at the source: provision persists it
+    // verbatim while the model refresh rewrites it normalized, and the
+    // deep-equal diff between the two shapes would fire a spurious
+    // providers-changed event mid-login.
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://gw.example.com/');
+    expect(kimiCodeBaseUrl()).toBe('https://gw.example.com');
+    expect(kimiCodeUsageUrl()).toBe('https://gw.example.com/usages');
+  });
+});
+
+describe('isManagedKimiCodeBaseUrl', () => {
+  it('matches the default managed endpoint, with or without a trailing slash', () => {
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/coding/v1')).toBe(true);
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/coding/v1/')).toBe(true);
+  });
+
+  it('matches against the KIMI_CODE_BASE_URL override', () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://gw.example.com/coding/v1/');
+    expect(isManagedKimiCodeBaseUrl('https://gw.example.com/coding/v1')).toBe(true);
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/coding/v1')).toBe(false);
+  });
+
+  it('is case-insensitive on the origin but strict on the path', () => {
+    expect(isManagedKimiCodeBaseUrl('https://API.KIMI.COM/coding/v1')).toBe(true);
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/CODING/v1')).toBe(false);
+  });
+
+  it('rejects other paths on the managed host and other hosts entirely', () => {
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/coding/v2')).toBe(false);
+    expect(isManagedKimiCodeBaseUrl('https://api.kimi.com/v1')).toBe(false);
+    expect(isManagedKimiCodeBaseUrl('https://gateway.example.com/coding/v1')).toBe(false);
+    expect(isManagedKimiCodeBaseUrl('https://api.moonshot.cn/v1')).toBe(false);
+  });
+
+  it('rejects undefined and unparseable values', () => {
+    expect(isManagedKimiCodeBaseUrl(undefined)).toBe(false);
+    expect(isManagedKimiCodeBaseUrl('')).toBe(false);
+    expect(isManagedKimiCodeBaseUrl('not a url')).toBe(false);
+  });
 });
 
 describe('isManagedKimiCode', () => {
@@ -25,8 +72,8 @@ describe('isManagedKimiCode', () => {
 
 describe('parseManagedUsagePayload', () => {
   it('returns empty when payload is not an object', () => {
-    expect(parseManagedUsagePayload(null)).toEqual({ summary: null, limits: [] });
-    expect(parseManagedUsagePayload('nope')).toEqual({ summary: null, limits: [] });
+    expect(parseManagedUsagePayload(null)).toEqual({ summary: null, limits: [], extraUsage: null });
+    expect(parseManagedUsagePayload('nope')).toEqual({ summary: null, limits: [], extraUsage: null });
   });
 
   it('extracts a summary from the `usage` object', () => {
@@ -74,6 +121,73 @@ describe('parseManagedUsagePayload', () => {
     const parsed = parseManagedUsagePayload({ usage: { used: 1, limit: 10, resetAt: future } });
     expect(parsed.summary?.resetHint).toMatch(/resets in/);
   });
+
+  it('extracts extra usage from boosterWallet.balance', () => {
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 40, limit: 1000, name: 'Weekly limit' },
+      boosterWallet: {
+        id: 'wallet_1',
+        balance: {
+          type: 'BOOSTER',
+          amount: '20000000000',
+          amountLeft: '10000000000',
+          unit: 'UNIT_CURRENCY',
+        },
+        monthlyChargeLimitEnabled: true,
+        monthlyChargeLimit: { currency: 'USD', priceInCents: '20000' },
+        monthlyUsed: { currency: 'USD', priceInCents: '5000' },
+      },
+    });
+    expect(parsed.extraUsage).toEqual({
+      balanceCents: 10000,
+      totalCents: 20000,
+      monthlyChargeLimitEnabled: true,
+      monthlyChargeLimitCents: 20000,
+      monthlyUsedCents: 5000,
+      currency: 'USD',
+    });
+  });
+
+  it('treats missing amountLeft as zero balance', () => {
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10 },
+      boosterWallet: { balance: { type: 'BOOSTER', amount: '20000000000' } },
+    });
+    expect(parsed.extraUsage).toMatchObject({ totalCents: 20000, balanceCents: 0 });
+  });
+
+  it('defaults monthly limit fields when absent', () => {
+    const parsed = parseManagedUsagePayload({
+      usage: { used: 1, limit: 10 },
+      boosterWallet: {
+        balance: { type: 'BOOSTER', amount: '20000000000', amountLeft: '20000000000' },
+      },
+    });
+    expect(parsed.extraUsage).toEqual({
+      balanceCents: 20000,
+      totalCents: 20000,
+      monthlyChargeLimitEnabled: false,
+      monthlyChargeLimitCents: 0,
+      monthlyUsedCents: 0,
+      currency: 'USD',
+    });
+  });
+
+  it('returns null extra usage when boosterWallet is missing or invalid', () => {
+    expect(parseManagedUsagePayload({ usage: { used: 1, limit: 10 } }).extraUsage).toBeNull();
+    expect(
+      parseManagedUsagePayload({
+        usage: { used: 1, limit: 10 },
+        boosterWallet: { balance: { type: 'OTHER', amount: '100', amountLeft: '50' } },
+      }).extraUsage,
+    ).toBeNull();
+    expect(
+      parseManagedUsagePayload({
+        usage: { used: 1, limit: 10 },
+        boosterWallet: { balance: { type: 'BOOSTER', amount: '0', amountLeft: '0' } },
+      }).extraUsage,
+    ).toBeNull();
+  });
 });
 
 describe('fetchManagedUsage', () => {
@@ -92,6 +206,7 @@ describe('fetchManagedUsage', () => {
       parsed: {
         summary: { label: 'Weekly limit', used: 1, limit: 10 },
         limits: [],
+        extraUsage: null,
       },
     });
 

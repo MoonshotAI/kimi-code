@@ -1,6 +1,7 @@
 import type { ContentPart, Message } from '@moonshot-ai/kosong';
 
 import type { SkillSource } from '../../skill';
+import type { ToolInputDisplay } from '../../tools/display';
 import type { BackgroundTaskStatus } from '../background';
 
 export interface UserPromptOrigin {
@@ -18,6 +19,15 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
+}
+
+export interface PluginCommandOrigin {
+  readonly kind: 'plugin_command';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string | undefined;
+  readonly trigger: 'user-slash';
 }
 
 export interface InjectionOrigin {
@@ -80,6 +90,7 @@ export interface RetryOrigin {
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
+  | PluginCommandOrigin
   | InjectionOrigin
   | ShellCommandOrigin
   | CompactionSummaryOrigin
@@ -93,6 +104,17 @@ export type PromptOrigin =
 export type ContextMessage = Message & {
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  /**
+   * UI-only input displays keyed by tool call id. These are rebuilt from the
+   * persisted loop events for resume/replay and stripped before provider calls.
+   */
+  toolCallDisplays?: Record<string, ToolInputDisplay>;
+  /**
+   * Tool-result side channel rendered to the model but never to UIs; see
+   * `ExecutableToolResult.note`. Appended to the projected tool message at
+   * the provider boundary and stripped from the wire message itself.
+   */
+  readonly note?: string;
 };
 
 export interface UserMessageRecord {

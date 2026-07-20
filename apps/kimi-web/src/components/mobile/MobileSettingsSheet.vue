@@ -6,13 +6,25 @@
 <!-- (theme / color scheme / language) and the sign-in/out entry, which previously -->
 <!-- had no mobile counterpart. -->
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
-import type { ThinkingLevel } from '../../api/types';
-import type { ColorScheme, Theme } from '../../composables/useKimiWebClient';
+import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
+import type { ColorScheme } from '../../composables/useKimiWebClient';
+import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import {
+  commitLevel,
+  effectiveThinkingLevel,
+  effortLabel,
+  modelThinkingAvailability,
+  segmentsFor,
+} from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import { formatTokens } from '../../lib/formatTokens';
+import Button from '../ui/Button.vue';
+import Input from '../ui/Input.vue';
+import SegmentedControl from '../ui/SegmentedControl.vue';
 
 const { t } = useI18n();
 
@@ -23,15 +35,22 @@ const props = withDefaults(
     thinking?: ThinkingLevel;
     planMode?: boolean;
     swarmMode?: boolean;
-    theme?: Theme;
     colorScheme?: ColorScheme;
     uiFontSize?: number;
     authReady?: boolean;
-    betaToc?: boolean;
+    conversationToc?: boolean;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
+    /** Available models — used to derive the current model's thinking segments. */
+    models?: AppModel[];
   }>(),
-  { theme: 'terminal', colorScheme: 'system', uiFontSize: 14, authReady: false, serverVersion: '' },
+  {
+    colorScheme: 'system',
+    uiFontSize: 14,
+    authReady: false,
+    serverVersion: '',
+    models: () => [],
+  },
 );
 
 const emit = defineEmits<{
@@ -41,25 +60,45 @@ const emit = defineEmits<{
   togglePlan: [];
   toggleSwarm: [];
   setPermission: [mode: PermissionMode];
-  setTheme: [theme: Theme];
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
-  setBetaToc: [on: boolean];
+  setConversationToc: [on: boolean];
   login: [];
   logout: [];
 }>();
 
+function onColorScheme(v: string): void {
+  emit('setColorScheme', v as ColorScheme);
+}
+
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
 
-const thinkingLevel = computed<ThinkingLevel>(() => props.thinking ?? 'high');
+// Identity is the model id — display/model names can collide across providers.
+const currentModel = computed<AppModel | undefined>(() =>
+  props.models?.find((m) => m.id === props.status?.modelId),
+);
+const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
+const thinkingSegments = computed(() => segmentsFor(currentModel.value));
+// The client resolves the level per model (the model's stored pick when still
+// declared, else the catalog default), so what arrives here is valid for the
+// active model. An undeclared level can only appear transiently, before the
+// catalog loads, and simply highlights no segment.
+const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
+const activeThinkingSegment = computed<string>(() => {
+  const segs = thinkingSegments.value;
+  return segs.includes(thinkingLevel.value) ? thinkingLevel.value : '';
+});
+const thinkingOptions = computed(() =>
+  thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
+);
 const planOn = computed<boolean>(() => props.planMode === true);
 const swarmOn = computed<boolean>(() => props.swarmMode === true);
 
 const permColor = computed<string>(() => {
   const p = props.status.permission;
-  if (p === 'yolo') return 'var(--err)';
-  if (p === 'auto') return 'var(--warn)';
-  return 'var(--faint)';
+  if (p === 'yolo') return 'var(--color-danger)';
+  if (p === 'auto') return 'var(--color-warning)';
+  return 'var(--color-text-muted)';
 });
 /** Permission sub-line, e.g. "manual · confirm every tool". */
 const permSub = computed<string>(() => {
@@ -68,20 +107,19 @@ const permSub = computed<string>(() => {
   return `${p} · ${desc}`;
 });
 
-const kFmt = (n: number): string => `${Math.round(n / 1000)}k`;
 const ctxPct = computed<number>(() =>
+  // ceil (not round) so sub-0.5% usage still renders a visible bar sliver.
   props.status.ctxMax > 0
-    ? Math.min(100, Math.max(0, Math.round((props.status.ctxUsed / props.status.ctxMax) * 100)))
+    ? Math.min(100, Math.max(0, Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100)))
     : 0,
 );
-// Same "12k/256k" format as the desktop toolbar ring.
+// Shared 1024-based formatter, same as the desktop tooltip / status panel.
 const ctxValue = computed<string>(() =>
-  props.status.ctxMax > 0 ? `${kFmt(props.status.ctxUsed)}/${kFmt(props.status.ctxMax)}` : t('status.statusNone'),
+  props.status.ctxMax > 0 ? `${formatTokens(props.status.ctxUsed)}/${formatTokens(props.status.ctxMax)}` : t('status.statusNone'),
 );
 
-function cycleThinking(): void {
-  // On/off toggle (TUI parity). 'high' = the backend default effort.
-  emit('setThinking', thinkingLevel.value === 'off' ? 'high' : 'off');
+function setThinkingSegment(value: string): void {
+  emit('setThinking', commitLevel(currentModel.value, value));
 }
 
 function cyclePermission(): void {
@@ -104,6 +142,94 @@ function onLogout(): void {
   emit('logout');
   emit('update:modelValue', false);
 }
+
+// ---------------------------------------------------------------------------
+// Archived-sessions sub-view — mirrors the desktop Settings "Archived" tab so
+// the mobile archive confirmation (which points users to Settings to restore)
+// is true here too. Loads all archived sessions once when the view opens;
+// search + sort run client-side over the full set.
+// ---------------------------------------------------------------------------
+const client = useKimiWebClient();
+type SheetView = 'main' | 'archived';
+const view = ref<SheetView>('main');
+
+const archivedItems = ref<AppSession[]>([]);
+const archivedLoading = ref(false);
+const archivedLoaded = ref(false);
+const archiveQuery = ref('');
+const archiveSort = ref<'archived-desc' | 'created-desc' | 'name-asc'>('archived-desc');
+
+const ARCHIVED_PAGE_SIZE = 100;
+
+async function loadAllArchived(): Promise<void> {
+  if (archivedLoading.value) return;
+  archivedLoading.value = true;
+  archivedLoaded.value = false;
+  try {
+    const all: AppSession[] = [];
+    let beforeId: string | undefined;
+    for (;;) {
+      const page = await client.loadArchivedSessions({ beforeId, pageSize: ARCHIVED_PAGE_SIZE });
+      all.push(...page.items);
+      if (!page.hasMore || page.items.length === 0) break;
+      const next = page.items.at(-1)?.id;
+      if (next === undefined) break;
+      beforeId = next;
+    }
+    archivedItems.value = all;
+    archivedLoaded.value = true;
+  } catch (err) {
+    console.warn('loadAllArchived failed', err);
+  } finally {
+    archivedLoading.value = false;
+  }
+}
+
+function openArchived(): void {
+  view.value = 'archived';
+  archiveQuery.value = '';
+  void loadAllArchived();
+}
+
+function backToMain(): void {
+  view.value = 'main';
+}
+
+const filteredArchived = computed<AppSession[]>(() => {
+  const q = archiveQuery.value.trim().toLowerCase();
+  let rows = archivedItems.value.filter((s) => s.archived === true);
+  if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
+  rows = rows.slice();
+  if (archiveSort.value === 'archived-desc') {
+    rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  } else if (archiveSort.value === 'created-desc') {
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } else {
+    rows.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+  }
+  return rows;
+});
+
+async function onRestore(id: string): Promise<void> {
+  const ok = await client.restoreSession(id);
+  if (ok) archivedItems.value = archivedItems.value.filter((s) => s.id !== id);
+}
+
+function archiveTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Reset to the main view whenever the sheet is closed, so reopening starts at
+// the top rather than mid-list.
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (!open) view.value = 'main';
+  },
+);
 </script>
 
 <template>
@@ -112,6 +238,9 @@ function onLogout(): void {
     :title="t('mobile.settingsTitle')"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <template v-if="view === 'main'">
+    <div class="group-title">{{ t('mobile.groupSession') }}</div>
+
     <!-- Model → opens ModelPicker -->
     <button type="button" class="srow" @click="onPickModel">
       <span class="srow-main">
@@ -121,14 +250,32 @@ function onLogout(): void {
       <span class="chev">›</span>
     </button>
 
-    <!-- Thinking level → inline cycle (value + chevron) -->
-    <button type="button" class="srow" @click="cycleThinking">
+    <!-- Thinking level → segmented control (or read-only value when single/unsupported) -->
+    <div class="srow read-only">
       <span class="srow-main">
         <span class="srow-label">{{ t('status.statusThinking') }}</span>
+        <span
+          v-if="thinkingAvailability === 'unsupported'"
+          class="srow-sub"
+        >{{ t('status.modeNotSupported') }}</span>
       </span>
-      <span class="srow-val">{{ thinkingLevel === 'off' ? t('status.planOff') : t('status.planOn') }}</span>
-      <span class="chev">›</span>
-    </button>
+      <SegmentedControl
+        v-if="thinkingSegments.length > 1"
+        :model-value="activeThinkingSegment"
+        :options="thinkingOptions"
+        size="sm"
+        @update:model-value="setThinkingSegment"
+      />
+      <span
+        v-else
+        class="srow-val"
+        :class="{ dim: thinkingLevel === 'off' }"
+      >{{ thinkingLevel === 'off' ? t('status.planOff') : effortLabel(thinkingLevel) }}</span>
+    </div>
+
+    <!-- Prompt-cache invalidation note — same text as the desktop model dropdown,
+         covering both the model row above and this thinking control. -->
+    <div class="cache-note">{{ t('status.cacheNote') }}</div>
 
     <!-- Plan mode → real toggle switch -->
     <button type="button" class="srow" @click="emit('togglePlan')">
@@ -168,56 +315,31 @@ function onLogout(): void {
       </span>
     </div>
 
-    <!-- App preferences (the desktop settings-popover controls) -->
-    <div class="srow read-only pref">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('theme.label') }}</span>
-      </span>
-      <div class="seg" role="group" :aria-label="t('theme.label')">
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: theme === 'modern' }"
-          :aria-pressed="theme === 'modern'"
-          @click="emit('setTheme', 'modern')"
-        >{{ t('theme.modern') }}</button>
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: theme === 'kimi' }"
-          :aria-pressed="theme === 'kimi'"
-          @click="emit('setTheme', 'kimi')"
-        >{{ t('theme.kimi') }}</button>
-      </div>
-    </div>
+    <div class="group-title">{{ t('mobile.groupApp') }}</div>
 
+    <!-- Archived sessions → opens the archived restore sub-view -->
+    <button type="button" class="srow" @click="openArchived">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('mobile.archivedSessions') }}</span>
+        <span class="srow-sub">{{ t('mobile.archivedSessionsSub') }}</span>
+      </span>
+      <span class="chev">›</span>
+    </button>
+
+    <!-- App preferences (the desktop settings-popover controls) -->
     <div class="srow read-only pref">
       <span class="srow-main">
         <span class="srow-label">{{ t('theme.colorSchemeLabel') }}</span>
       </span>
-      <div class="seg" role="group" :aria-label="t('theme.colorSchemeLabel')">
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: colorScheme === 'light' }"
-          :aria-pressed="colorScheme === 'light'"
-          @click="emit('setColorScheme', 'light')"
-        >{{ t('theme.light') }}</button>
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: colorScheme === 'dark' }"
-          :aria-pressed="colorScheme === 'dark'"
-          @click="emit('setColorScheme', 'dark')"
-        >{{ t('theme.dark') }}</button>
-        <button
-          type="button"
-          class="seg-opt"
-          :class="{ on: colorScheme === 'system' }"
-          :aria-pressed="colorScheme === 'system'"
-          @click="emit('setColorScheme', 'system')"
-        >{{ t('theme.system') }}</button>
-      </div>
+      <SegmentedControl
+        :model-value="colorScheme ?? 'system'"
+        :options="[
+          { value: 'light', label: t('theme.light') },
+          { value: 'dark', label: t('theme.dark') },
+          { value: 'system', label: t('theme.system') },
+        ]"
+        @update:model-value="onColorScheme"
+      />
     </div>
 
     <div class="srow read-only pref">
@@ -246,12 +368,12 @@ function onLogout(): void {
       </label>
     </div>
 
-    <button type="button" class="srow" @click="emit('setBetaToc', !betaToc)">
+    <button type="button" class="srow" @click="emit('setConversationToc', !conversationToc)">
       <span class="srow-main">
-        <span class="srow-label">{{ t('settings.betaToc') }}</span>
-        <span class="srow-sub">{{ t('settings.betaTocHint') }}</span>
+        <span class="srow-label">{{ t('settings.conversationToc') }}</span>
+        <span class="srow-sub">{{ t('settings.conversationTocHint') }}</span>
       </span>
-      <span class="toggle" :class="{ on: betaToc }" role="switch" :aria-checked="betaToc" />
+      <span class="toggle" :class="{ on: conversationToc }" role="switch" :aria-checked="conversationToc" />
     </button>
 
     <!-- Account: sign in / out -->
@@ -273,26 +395,83 @@ function onLogout(): void {
       </span>
       <span class="srow-val dim">{{ serverVersion }}</span>
     </div>
+    </template>
+
+    <template v-else>
+      <!-- Archived sessions sub-view -->
+      <div class="arch-subhead">
+        <button type="button" class="arch-back" @click="backToMain">
+          <span class="chev back">‹</span> {{ t('mobile.archivedBack') }}
+        </button>
+        <span class="arch-count">{{ t('mobile.sessionCount', { n: filteredArchived.length }) }}</span>
+      </div>
+
+      <div class="arch-tools">
+        <Input
+          class="arch-search-input"
+          :model-value="archiveQuery"
+          size="sm"
+          :placeholder="t('settings.archivedSearch')"
+          @update:model-value="archiveQuery = $event"
+        />
+        <SegmentedControl
+          size="sm"
+          :model-value="archiveSort"
+          :options="[
+            { value: 'archived-desc', label: t('settings.archivedSortArchived') },
+            { value: 'created-desc', label: t('settings.archivedSortCreated') },
+            { value: 'name-asc', label: t('settings.archivedSortName') },
+          ]"
+          @update:model-value="archiveSort = $event as 'archived-desc' | 'created-desc' | 'name-asc'"
+        />
+      </div>
+
+      <div v-if="archivedLoading" class="arch-empty">{{ t('settings.archivedLoadingAll') }}</div>
+
+      <template v-else-if="filteredArchived.length > 0">
+        <div v-for="s in filteredArchived" :key="s.id" class="arch-row">
+          <div class="arch-meta">
+            <div class="arch-name">{{ s.title }}</div>
+            <div class="arch-time">{{ t('settings.archivedAt', { time: archiveTime(s.updatedAt) }) }}</div>
+          </div>
+          <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
+        </div>
+      </template>
+
+      <div v-else class="arch-empty">
+        {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
+      </div>
+    </template>
   </BottomSheet>
 </template>
 
 <style scoped>
+.group-title {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
 .srow {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   width: 100%;
   min-height: 52px;
-  padding: 15px 16px;
+  padding: var(--space-3);
   background: none;
   border: none;
-  border-bottom: 1px solid var(--line2);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-family: var(--mono);
   text-align: left;
-  color: var(--ink);
+  color: var(--color-text);
 }
-.srow:active:not(.read-only) { background: var(--panel); }
+.srow:hover:not(.read-only) { background: var(--color-surface-sunken); }
+.srow:active:not(.read-only) { background: var(--color-surface-sunken); }
 .srow.read-only { cursor: default; }
 
 .srow-main {
@@ -302,31 +481,38 @@ function onLogout(): void {
   flex-direction: column;
   gap: 1px;
 }
-.srow-label { font-size: calc(var(--ui-font-size) - 0.5px); color: var(--ink); }
+.srow-label { font-size: var(--text-base); color: var(--color-text); }
 .srow-sub {
-  font-size: calc(var(--ui-font-size) - 2.5px);
-  color: var(--faint);
-  font-family: var(--mono);
+  font-size: var(--text-base);
+  color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .srow-val {
   flex: none;
-  font-family: var(--mono);
+  font-family: var(--font-mono);
   font-size: var(--ui-font-size);
-  font-weight: 600;
-  color: var(--blue2);
+  font-weight: 500;
+  color: var(--color-accent-hover);
 }
 .srow-val.dim {
   font-weight: 400;
-  color: var(--muted);
+  color: var(--color-text-muted);
+}
+
+/* Prompt-cache note under the thinking row — mirrors .md-cache-note in Composer. */
+.cache-note {
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  line-height: 1.4;
 }
 
 /* Chevron (prototype ›) — fixed icon glyph size, not part of UI font scale. */
 .chev {
   flex: none;
-  color: var(--faint);
+  color: var(--color-text-faint);
   font-size: 17px;
   line-height: 1;
 }
@@ -336,12 +522,12 @@ function onLogout(): void {
   flex: none;
   width: 44px;
   height: 26px;
-  border-radius: 14px;
-  background: var(--line);
+  border-radius: var(--radius-full);
+  background: var(--color-line);
   position: relative;
   transition: background 0.18s;
 }
-.toggle.on { background: var(--blue); }
+.toggle.on { background: var(--color-accent); }
 .toggle::after {
   content: "";
   position: absolute;
@@ -349,41 +535,17 @@ function onLogout(): void {
   left: 3px;
   width: 20px;
   height: 20px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   box-sizing: border-box;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  box-shadow: var(--shadow-xs);
   transition: left 0.18s;
 }
 .toggle.on::after { left: 21px; }
 
 /* App preference rows: segmented theme/color-scheme toggles + language switcher. */
 .srow.pref { cursor: default; }
-.seg {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--bg);
-  flex: none;
-}
-.seg-opt {
-  border: none;
-  background: none;
-  font-family: inherit;
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  color: var(--muted);
-  cursor: pointer;
-  padding: 7px 14px;
-  line-height: 1.4;
-}
-.seg-opt + .seg-opt { border-left: 1px solid var(--line); }
-.seg-opt.on {
-  background: var(--soft);
-  color: var(--blue2);
-  font-weight: 600;
-}
 
 .num-field {
   display: inline-flex;
@@ -392,43 +554,43 @@ function onLogout(): void {
   flex: none;
   height: 34px;
   padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
 }
 .num-input {
   width: 50px;
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
+  color: var(--color-text);
+  font-family: var(--font-mono);
   font-size: var(--ui-font-size);
   text-align: right;
 }
 .num-unit {
-  color: var(--muted);
-  font-family: var(--mono);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
   font-size: var(--ui-font-size-xs);
 }
 
 /* Account rows */
-.srow.acct.in .srow-label { color: var(--blue2); font-weight: 600; }
-.srow.acct.out .srow-label { color: var(--err); }
+.srow.acct.in .srow-label { color: var(--color-accent-hover); font-weight: 500; }
+.srow.acct.out .srow-label { color: var(--color-danger); }
 
 /* Context meter (96px prototype) */
 .ctx-meter {
   flex: none;
   width: 96px;
   height: 7px;
-  border-radius: 4px;
-  background: var(--panel2);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-sunken);
   overflow: hidden;
 }
 .ctx-meter i {
   display: block;
   height: 100%;
-  background: var(--blue);
+  background: var(--color-accent);
 }
 
 @media (max-width: 640px) {
@@ -436,7 +598,15 @@ function onLogout(): void {
     align-items: flex-start;
     gap: 10px;
     min-width: 0;
-    padding: 14px max(14px, env(safe-area-inset-right)) 14px max(14px, env(safe-area-inset-left));
+    padding: 14px max(14px, var(--safe-right)) 14px max(14px, var(--safe-left));
+  }
+  .group-title {
+    padding-left: max(14px, var(--safe-left));
+    padding-right: max(14px, var(--safe-right));
+  }
+  .cache-note {
+    padding-left: max(14px, var(--safe-left));
+    padding-right: max(14px, var(--safe-right));
   }
   .srow-main {
     flex: 1 1 auto;
@@ -451,15 +621,6 @@ function onLogout(): void {
   .srow.pref .srow-main {
     flex: 1 0 100%;
   }
-  .seg {
-    max-width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .seg-opt {
-    flex: 0 0 auto;
-    padding: 7px 10px;
-  }
   .num-field {
     margin-left: auto;
   }
@@ -469,5 +630,75 @@ function onLogout(): void {
   .ctx-meter {
     margin-top: 2px;
   }
+}
+
+.srow,
+.srow-sub,
+.srow-val,
+.cache-note { font-family: var(--sans); }
+
+/* Archived sessions sub-view */
+.arch-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+.arch-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  padding: var(--space-1) var(--space-2) var(--space-1) 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-accent-hover);
+  cursor: pointer;
+}
+.chev.back { font-size: 20px; }
+.arch-count {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
+.arch-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  flex-wrap: wrap;
+}
+.arch-search-input { flex: 1; min-width: 160px; }
+.arch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-line);
+}
+.arch-row:first-of-type { border-top: none; }
+.arch-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.arch-name {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arch-time {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+}
+.arch-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
 }
 </style>

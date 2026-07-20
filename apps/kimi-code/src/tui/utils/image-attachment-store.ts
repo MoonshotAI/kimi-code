@@ -6,7 +6,9 @@
  * (640×480)]` / `[video #2 sample.mov]`). The placeholder is what the
  * user sees in the input field; on submit, `extractMediaAttachments`
  * walks the text and expands image placeholders to image content parts
- * and video placeholders to file-path tags for `ReadMediaFile`.
+ * (preceded by a compression caption when paste-time compression shrank
+ * the bytes — see `ImageAttachment.original`) and video placeholders to
+ * file-path tags for `ReadMediaFile`.
  *
  * Scope is per-`KimiTUI` instance. Reloads (`/new`, `/clear`,
  * session switch) call `clear()` so ids restart from 1 and stale
@@ -15,6 +17,18 @@
  * `--resume` wouldn't know how to materialize the files anyway.
  */
 
+export interface ImageAttachmentOriginal {
+  /**
+   * Where the pre-compression bytes were persisted for readback
+   * (ReadMediaFile + region); null when persistence failed.
+   */
+  readonly path: string | null;
+  readonly width: number;
+  readonly height: number;
+  readonly byteLength: number;
+  readonly mime: string;
+}
+
 export interface ImageAttachment {
   readonly id: number;
   readonly kind: 'image';
@@ -22,6 +36,12 @@ export interface ImageAttachment {
   readonly mime: string;
   readonly width: number;
   readonly height: number;
+  /**
+   * Pre-compression original, recorded when paste-time compression changed
+   * the bytes. Drives the compression caption emitted on submit so the model
+   * knows it received a downsampled copy. Absent for untouched pastes.
+   */
+  readonly original?: ImageAttachmentOriginal | undefined;
   /** Rendered placeholder string, e.g. `[image #1 (640×480)]`. */
   readonly placeholder: string;
 }
@@ -43,7 +63,13 @@ export class ImageAttachmentStore {
   private nextId = 1;
   private readonly byId = new Map<number, MediaAttachment>();
 
-  addImage(bytes: Uint8Array, mime: string, width: number, height: number): ImageAttachment {
+  addImage(
+    bytes: Uint8Array,
+    mime: string,
+    width: number,
+    height: number,
+    original?: ImageAttachmentOriginal,
+  ): ImageAttachment {
     const id = this.nextId;
     this.nextId += 1;
     const attachment: ImageAttachment = {
@@ -53,6 +79,7 @@ export class ImageAttachmentStore {
       mime,
       width,
       height,
+      original,
       placeholder: formatPlaceholder(id, width, height),
     };
     this.byId.set(id, attachment);
@@ -86,6 +113,19 @@ export class ImageAttachmentStore {
   clear(): void {
     this.byId.clear();
     this.nextId = 1;
+  }
+
+  /**
+   * Drop a single attachment, releasing its bytes. Used to reclaim image
+   * memory once the transcript entry that references it is trimmed.
+   */
+  remove(id: number): void {
+    this.byId.delete(id);
+  }
+
+  /** Drop many attachments at once. See {@link remove}. */
+  removeMany(ids: Iterable<number>): void {
+    for (const id of ids) this.byId.delete(id);
   }
 
   size(): number {

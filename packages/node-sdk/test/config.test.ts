@@ -35,7 +35,6 @@ async function makeTempDir(): Promise<string> {
 
 const COMPLETE_TOML = `
 default_model = "kimi-for-coding"
-default_thinking = false
 default_permission_mode = "auto"
 skip_afk_prompt_injection = false
 default_plan_mode = false
@@ -84,6 +83,10 @@ api_key = "sk-fetch"
 
 [notifications]
 claim_stale_after_ms = 15000
+
+[thinking]
+enabled = true
+effort = "high"
 `;
 
 describe('SDK config TOML', () => {
@@ -125,7 +128,8 @@ max_context_size = "large"
     const config = parseConfigString(COMPLETE_TOML, 'complete.toml');
 
     expect(config.defaultModel).toBe('kimi-for-coding');
-    expect(config.defaultThinking).toBe(false);
+    expect(config.thinking?.enabled).toBe(true);
+    expect(config.thinking?.effort).toBe('high');
     expect(config.defaultPermissionMode).toBe('auto');
     expect(config.defaultPlanMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
@@ -325,31 +329,22 @@ describe('KimiHarness config API', () => {
 
   it('returns experimental feature metadata through the harness', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION', '');
     const homeDir = await makeTempDir();
-    await writeFile(
-      join(homeDir, 'config.toml'),
-      `
-[experimental]
-micro_compaction = false
-`,
-      'utf-8',
-    );
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     const features = await harness.getExperimentalFeatures();
-    const microCompaction = features.find((feature) => feature.id === 'micro_compaction');
-
-    expect(microCompaction).toMatchObject({
-      id: 'micro_compaction',
-      title: 'Micro compaction',
-      enabled: false,
-      source: 'config',
-      configValue: false,
-      env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    });
     expect(features).toEqual([
-      expect.objectContaining({ id: 'micro_compaction', enabled: false }),
+      {
+        id: 'tool-select',
+        title: 'Tool select (progressive tool disclosure)',
+        description:
+          'Keep MCP tool schemas out of the immutable top-level tools[]; the model loads them on demand via the select_tools tool. Only takes effect on models whose capability catalog declares dynamically loaded tools.',
+        surface: 'core',
+        env: 'KIMI_CODE_EXPERIMENTAL_TOOL_SELECT',
+        defaultEnabled: false,
+        enabled: false,
+        source: 'default',
+      },
     ]);
   });
 
@@ -368,7 +363,7 @@ micro_compaction = false
     const config = await harness.getConfig({ reload: true });
     expect(config.providers).toEqual({});
     expect(config.defaultModel).toBeUndefined();
-    expect(config.defaultThinking).toBeUndefined();
+    expect(config.thinking?.enabled).toBeUndefined();
   });
 
   it('reloads an active session without closing the SDK session wrapper', async () => {

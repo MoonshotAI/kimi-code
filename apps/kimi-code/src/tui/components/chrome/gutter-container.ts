@@ -9,8 +9,8 @@
  * the edge and adding them would just churn the diff renderer.
  */
 
-import { Container } from '@earendil-works/pi-tui';
-import type { Component } from '@earendil-works/pi-tui';
+import { Container } from '@moonshot-ai/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
 
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 

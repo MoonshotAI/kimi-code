@@ -5,6 +5,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  isRetryableGenerateError,
 } from '#/errors';
 import { convertAnthropicError, AnthropicChatProvider } from '#/providers/anthropic';
 import {
@@ -85,6 +86,30 @@ describe('convertAnthropicError', () => {
     expect((result as APIProviderRateLimitError).statusCode).toBe(429);
   });
 
+  it('reads an integer retry-after header (seconds) onto the rate-limit error', () => {
+    const err = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } },
+      'rate limited',
+      new Headers({ 'retry-after': '7' }),
+    );
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).retryAfterMs).toBe(7_000);
+  });
+
+  it('ignores a non-integer (HTTP-date) retry-after header, leaving retryAfterMs null', () => {
+    const err = AnthropicAPIError.generate(
+      429,
+      { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } },
+      'rate limited',
+      new Headers({ 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' }),
+    );
+    const result = convertAnthropicError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).retryAfterMs).toBeNull();
+  });
+
   it('generic AnthropicError -> ChatProviderError', () => {
     const err = new AnthropicError('something went wrong');
     const result = convertAnthropicError(err);
@@ -103,6 +128,33 @@ describe('convertAnthropicError', () => {
     const result = convertAnthropicError('string error');
     expect(result).toBeInstanceOf(ChatProviderError);
     expect(result.message).toContain('string error');
+  });
+
+  it('classifies undici TypeError("terminated") as a retryable APIConnectionError', () => {
+    // Node v24 + undici raises a raw `TypeError: terminated` when an SSE
+    // response stream is dropped mid-flight. It is NOT an Anthropic SDK error,
+    // so it falls into the generic Error branch — but it is a transport-layer
+    // connection failure and must be retryable like any dropped connection.
+    const err = new TypeError('terminated');
+    (err as { cause?: unknown }).cause = new Error('other side closed');
+
+    const result = convertAnthropicError(err);
+
+    expect(result).toBeInstanceOf(APIConnectionError);
+    expect(isRetryableGenerateError(result)).toBe(true);
+  });
+
+  it('still wraps an unrelated raw Error as a base ChatProviderError, now retryable via fallback', () => {
+    // An unrelated raw Error is NOT an Anthropic SDK error and carries no
+    // usable HTTP status, so convertAnthropicError wraps it as a base
+    // ChatProviderError (constructor check guards that typing). The fallback
+    // safety net in isRetryableGenerateError then treats such unclassified
+    // provider failures as transient — retry beats failing the run on the
+    // first blip.
+    const result = convertAnthropicError(new Error('something completely unrelated'));
+
+    expect(result.constructor).toBe(ChatProviderError);
+    expect(isRetryableGenerateError(result)).toBe(true);
   });
 });
 describe('non-stream error propagation', () => {
@@ -353,5 +405,33 @@ describe('stream error propagation', () => {
       expect(error).toBeInstanceOf(APIStatusError);
       expect((error as APIStatusError).statusCode).toBe(401);
     }
+  });
+
+  it('undici TypeError("terminated") during stream iteration -> retryable APIConnectionError', async () => {
+    // The real-world failure: the SSE stream drops mid-flight and undici raises
+    // a raw `TypeError: terminated` from inside the for-await loop. The provider
+    // must surface a retryable APIConnectionError so the loop retries instead of
+    // failing the turn outright.
+    const provider = createStreamProvider();
+    (provider as any)._client.messages.create = vi
+      .fn()
+      .mockResolvedValue(makeErrorStream(new TypeError('terminated'))) as never;
+
+    const result = await provider.generate(
+      '',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] }],
+    );
+    let caught: unknown;
+    try {
+      for await (const _ of result) {
+        void _;
+      }
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(APIConnectionError);
+    expect(isRetryableGenerateError(caught)).toBe(true);
   });
 });

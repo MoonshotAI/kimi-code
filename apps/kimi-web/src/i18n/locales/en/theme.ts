@@ -1,9 +1,9 @@
 export default {
-  label: 'Theme',
-  modern: 'Explore',
-  kimi: 'Native',
-  colorSchemeLabel: 'Appearance',
-  light: 'Light',
-  dark: 'Dark',
+  colorSchemeLabel: 'Light/Dark',
+  light: 'Moon Bright',
+  dark: 'Moon Dark',
   system: 'System',
+  accentLabel: 'Accent',
+  accentBlue: 'Blue',
+  accentBlack: 'Black',
 } as const;

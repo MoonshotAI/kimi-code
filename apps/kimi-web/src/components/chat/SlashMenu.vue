@@ -47,16 +47,19 @@ watch(
 </template>
 
 <style scoped>
-.slash-menu {
+/* `[role="listbox"]` raises specificity (0,3,0) so the redesign's surface +
+   shadow-md win over any global menu styles. */
+.slash-menu[role="listbox"] {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  z-index: 100;
+  padding: var(--space-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  z-index: var(--z-dropdown);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -66,35 +69,36 @@ watch(
   grid-template-columns: minmax(90px, 32%) minmax(0, 1fr);
   align-items: start;
   gap: 10px;
-  padding: 5px 12px;
+  padding: 6px 10px;
   cursor: pointer;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  border-bottom: 1px solid var(--line2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  border-radius: var(--radius-sm);
 }
 
-.slash-item:last-child {
-  border-bottom: none;
+.slash-item:hover {
+  background: var(--color-surface-sunken);
 }
-
-.slash-item:hover,
 .slash-item.active {
-  background: var(--soft);
+  background: var(--color-accent-soft);
+}
+.slash-item.active .slash-name {
+  color: var(--color-accent-hover);
 }
 
 .slash-name {
-  color: var(--blue);
-  font-weight: 600;
+  color: var(--color-accent);
+  font-weight: 500;
   min-width: 0;
-  line-height: 1.45;
+  line-height: var(--leading-normal);
   overflow-wrap: anywhere;
 }
 
 .slash-desc {
-  color: var(--dim);
-  font-size: calc(var(--ui-font-size) - 2.5px);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
   min-width: 0;
-  line-height: 1.45;
+  line-height: var(--leading-normal);
   overflow-wrap: anywhere;
 }
 
@@ -104,4 +108,8 @@ watch(
     gap: 2px;
   }
 }
+
+/* ---- Menu surface defaults ---- */
+.slash-menu { border-radius: var(--radius-lg); box-shadow: var(--sh); }
+.slash-desc { font-family: var(--sans); }
 </style>

@@ -1,7 +1,15 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { APIStatusError, getModelCapability, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
-import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig, ProviderType } from '../config';
+import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import {
+  effectiveModelAlias,
+  type KimiConfig,
+  type ModelAlias,
+  type OAuthRef,
+  type ProviderConfig,
+  type ProviderType,
+} from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
 export interface BearerTokenProvider {
@@ -19,6 +27,8 @@ export interface ResolvedRuntimeProvider {
   readonly modelCapabilities: ModelCapability;
   /** Declared 'always_thinking' capability — the model cannot disable thinking. */
   readonly alwaysThinking?: boolean;
+  readonly supportEfforts?: readonly string[];
+  readonly defaultEffort?: string;
   readonly maxOutputSize?: number;
   /** Configured provider wire type (`provider.type`), before any model-level protocol override. */
   readonly type: ProviderType;
@@ -103,7 +113,9 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
-    if (!Number.isInteger(alias.maxContextSize) || alias.maxContextSize <= 0) {
+    const effectiveAlias = effectiveModelAlias(alias, providerConfig.type);
+
+    if (!Number.isInteger(effectiveAlias.maxContextSize) || effectiveAlias.maxContextSize <= 0) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
         `Model "${model}" must define a positive max_context_size in config.toml.`,
@@ -115,20 +127,24 @@ export class ProviderManager implements ModelProvider {
       alias.model,
       alias.protocol,
       this.options.kimiRequestHeaders,
-      alias.maxOutputSize,
-      alias.reasoningKey,
+      effectiveAlias.maxOutputSize,
+      effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
-      alias.adaptiveThinking,
+      effectiveAlias.supportEfforts,
+      effectiveAlias.adaptiveThinking,
+      alias.betaApi,
     );
 
     return {
       providerName,
       provider,
-      modelCapabilities: resolveModelCapabilities(alias, provider),
-      alwaysThinking: (alias.capabilities ?? []).some(
+      modelCapabilities: resolveModelCapabilities(effectiveAlias, provider),
+      alwaysThinking: (effectiveAlias.capabilities ?? []).some(
         (c) => c.trim().toLowerCase() === 'always_thinking',
       ),
-      maxOutputSize: alias.maxOutputSize,
+      supportEfforts: effectiveAlias.supportEfforts,
+      defaultEffort: effectiveAlias.defaultEffort,
+      maxOutputSize: effectiveAlias.maxOutputSize,
       type: providerConfig.type,
       protocol: alias.protocol,
     };
@@ -192,9 +208,10 @@ export class ProviderManager implements ModelProvider {
         } catch (error) {
           if (!(error instanceof APIStatusError) || error.statusCode !== 401) throw error;
           if (refreshed) {
+            const reason = error.message.replaceAll('\r', '');
             throw new KimiError(
-              ErrorCodes.AUTH_LOGIN_REQUIRED,
-              'OAuth provider credentials were rejected. Send /login to login.',
+              ErrorCodes.PROVIDER_AUTH_ERROR,
+              reason.length > 0 ? reason : 'OAuth provider credentials were rejected.',
               {
                 cause: error,
                 details: { statusCode: error.statusCode, requestId: error.requestId },
@@ -222,6 +239,12 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: alias.maxContextSize,
+    // Message-level tool declarations ("dynamically loaded tools"). Every
+    // field here must be merged explicitly — a capability registered in
+    // kosong that is not forwarded here never reaches the agent.
+    dynamically_loaded_tools:
+      declared.has('dynamically_loaded_tools') ||
+      detected.dynamically_loaded_tools === true,
   };
 }
 
@@ -233,9 +256,12 @@ function toKosongProviderConfig(
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
+  supportEfforts: readonly string[] | undefined,
   adaptiveThinking: boolean | undefined,
+  betaApi: boolean | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
+  const envCustomHeaders = parseKimiCodeCustomHeaders();
   switch (effectiveType) {
     case 'anthropic': {
       const baseUrl = providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
@@ -248,11 +274,25 @@ function toKosongProviderConfig(
             : baseUrl,
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
+        supportEfforts,
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
+        ...(provider.type === 'kimi' ? { kimiThinking: true } : {}),
+        ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
         ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
-        ...defaultHeadersField(provider.customHeaders),
+        // When a Kimi provider is routed through the Anthropic transport
+        // (`protocol: 'anthropic'`), upstream is the managed Kimi endpoint,
+        // so align its full outbound identity headers (User-Agent + X-Msh-*)
+        // with the Kimi OpenAI transport. Plain Anthropic providers only
+        // receive the unified `User-Agent` (no `X-Msh-*` device identity),
+        // matching the other non-Kimi transports. Provider `customHeaders`
+        // still win on conflict.
+        ...defaultHeadersField(
+          provider.type === 'kimi' && modelProtocol === 'anthropic'
+            ? { ...envCustomHeaders, ...kimiRequestHeaders, ...provider.customHeaders }
+            : { ...envCustomHeaders, ...kimiUserAgentHeader(kimiRequestHeaders), ...provider.customHeaders },
+        ),
       };
     }
     case 'openai':
@@ -262,7 +302,11 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
-        ...defaultHeadersField(provider.customHeaders),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     case 'kimi':
       return {
@@ -271,13 +315,23 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
         generationKwargs: { prompt_cache_key: promptCacheKey },
-        ...defaultHeadersField({ ...kimiRequestHeaders, ...provider.customHeaders }),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiRequestHeaders,
+          ...provider.customHeaders,
+        }),
       };
     case 'google-genai':
       return {
         type: 'google-genai',
         model,
+        baseUrl: providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     case 'openai_responses':
       return {
@@ -285,17 +339,33 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
-        ...defaultHeadersField(provider.customHeaders),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     case 'vertexai': {
-      const useServiceAccount = hasVertexAIServiceEnv(provider);
+      // Resolve the effective endpoint once (config `base_url` or the
+      // GOOGLE_VERTEX_BASE_URL env fallback) and use it for BOTH forwarding and
+      // location detection, so the env fallback behaves exactly like
+      // `base_url` — including deriving the region from an
+      // `*-aiplatform.googleapis.com` host for the service-account path.
+      const baseUrl = providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
+      const useServiceAccount = hasVertexAIServiceEnv(provider, baseUrl);
       return {
         type: 'vertexai',
         model,
         vertexai: useServiceAccount,
+        baseUrl,
         apiKey: useServiceAccount ? undefined : providerApiKey(provider),
         project: vertexAIProject(provider),
-        location: vertexAILocation(provider),
+        location: vertexAILocation(provider, baseUrl),
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
       };
     }
     default: {
@@ -316,6 +386,19 @@ function defaultHeadersField(
 ): { defaultHeaders?: Record<string, string> } {
   if (headers === undefined || Object.keys(headers).length === 0) return {};
   return { defaultHeaders: { ...headers } };
+}
+
+// Extract just the `User-Agent` from the Kimi identity headers so non-Kimi
+// providers (OpenAI, Anthropic, Google, Vertex) also identify as
+// `kimi-code-cli/<version>` without leaking the `X-Msh-*` device identity
+// headers to third-party endpoints. The full `kimiRequestHeaders` set stays
+// reserved for the Kimi transport (and the Kimi-routed Anthropic transport),
+// where upstream is the managed Kimi endpoint.
+function kimiUserAgentHeader(
+  kimiRequestHeaders: Record<string, string> | undefined,
+): Record<string, string> {
+  const userAgent = kimiRequestHeaders?.['User-Agent'];
+  return userAgent === undefined ? {} : { 'User-Agent': userAgent };
 }
 
 function providerApiKey(provider: ProviderConfig): string | undefined {
@@ -345,19 +428,19 @@ function providerApiKey(provider: ProviderConfig): string | undefined {
   }
 }
 
-function hasVertexAIServiceEnv(provider: ProviderConfig): boolean {
-  return vertexAIProject(provider) !== undefined && vertexAILocation(provider) !== undefined;
+function hasVertexAIServiceEnv(provider: ProviderConfig, baseUrl: string | undefined): boolean {
+  return vertexAIProject(provider) !== undefined && vertexAILocation(provider, baseUrl) !== undefined;
 }
 
 function vertexAIProject(provider: ProviderConfig): string | undefined {
   return envValue(provider.env, 'GOOGLE_CLOUD_PROJECT');
 }
 
-function vertexAILocation(provider: ProviderConfig): string | undefined {
-  return (
-    envValue(provider.env, 'GOOGLE_CLOUD_LOCATION') ??
-    locationFromVertexAIBaseUrl(provider.baseUrl)
-  );
+function vertexAILocation(
+  provider: ProviderConfig,
+  baseUrl: string | undefined,
+): string | undefined {
+  return envValue(provider.env, 'GOOGLE_CLOUD_LOCATION') ?? locationFromVertexAIBaseUrl(baseUrl);
 }
 
 function providerValue(

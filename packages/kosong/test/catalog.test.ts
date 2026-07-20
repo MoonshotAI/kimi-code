@@ -82,6 +82,7 @@ describe('catalogModelToCapability', () => {
         thinking: true,
         tool_use: true,
         max_context_tokens: 200000,
+        dynamically_loaded_tools: false,
       },
     });
   });

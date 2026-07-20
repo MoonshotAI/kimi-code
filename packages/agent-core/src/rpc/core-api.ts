@@ -1,6 +1,7 @@
 import type { AgentConfigData } from '#/agent/config';
 import type { AgentContextData } from '#/agent/context';
 import type { BackgroundTaskInfo } from '#/agent/background';
+import type { CronTaskSnapshot } from '#/agent/cron';
 import type {
   GoalBudgetLimits,
   GoalBudgetReport,
@@ -18,12 +19,15 @@ import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
+import type { GlobalMcpServerConfig } from '#/mcp/global-config';
 import type { ContentPart } from '@moonshot-ai/kosong';
 import type { SessionWarning } from '@moonshot-ai/protocol';
 
-import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
+import type { PluginCommandDef, PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
 import type { UsageStatus } from './events';
 import type { WithAgentId, WithSessionId } from './types';
+
+export type { PluginCommandDef } from '#/plugin';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
@@ -39,7 +43,7 @@ export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'vi
 export type PromptInput = readonly PromptPart[];
 
 export type EmptyPayload = {};
-export type SessionMetadataPatch = Partial<Omit<SessionMeta, 'agents'>>;
+export type SessionMetadataPatch = Partial<Omit<SessionMeta, 'agents' | 'additionalDirs'>>;
 
 export interface ClientTelemetryInfo {
   readonly id?: string | undefined;
@@ -58,6 +62,7 @@ export interface CreateSessionPayload {
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
   readonly client?: ClientTelemetryInfo | undefined;
+  readonly drainAgentTasksOnStop?: boolean;
 }
 
 export interface CloseSessionPayload {
@@ -68,10 +73,16 @@ export interface ArchiveSessionPayload {
   readonly sessionId: string;
 }
 
+export interface DeleteSessionPayload {
+  readonly sessionId: string;
+}
+
 export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
+  /** Include persisted subagent states in the returned replay snapshot. */
+  readonly includeSubagents?: boolean;
 }
 
 export interface ReloadSessionPayload {
@@ -90,6 +101,11 @@ export interface ForkSessionPayload {
   readonly id?: string;
   readonly title?: string;
   readonly metadata?: JsonObject;
+  /**
+   * Zero-based index of the user-visible turn to retain through. When omitted,
+   * the complete session is copied (the existing fork behavior).
+   */
+  readonly turnIndex?: number;
 }
 
 export interface ShellEnvironment {
@@ -199,7 +215,7 @@ export interface CancelPayload {
   readonly turnId?: number;
 }
 export interface SetThinkingPayload {
-  readonly level: string;
+  readonly effort: string;
 }
 export interface SetPermissionPayload {
   readonly mode: PermissionMode;
@@ -222,6 +238,12 @@ export interface BeginCompactionPayload {
 }
 export interface UndoHistoryPayload {
   readonly count: number;
+}
+export interface ImportContextPayload {
+  /** Raw text supplied by the host. Core does not perform file I/O. */
+  readonly content: string;
+  /** User-facing description of the source, for example `file 'notes.md'`. */
+  readonly source: string;
 }
 export interface RegisterToolPayload {
   readonly name: string;
@@ -271,6 +293,16 @@ export interface ActivateSkillPayload {
   readonly args?: string | undefined;
 }
 
+export interface ListWorkspaceSkillsPayload {
+  readonly workDir: string;
+}
+
+export interface ActivatePluginCommandPayload {
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly args?: string | undefined;
+}
+
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
@@ -285,6 +317,43 @@ export interface McpStartupMetrics {
 
 export interface ReconnectMcpServerPayload {
   readonly name: string;
+}
+
+export type { GlobalMcpServerConfig } from '#/mcp/global-config';
+
+export interface PutGlobalMcpServerPayload {
+  readonly server: GlobalMcpServerConfig;
+}
+
+export interface GlobalMcpServerNamePayload {
+  readonly name: string;
+}
+
+export type BeginGlobalMcpServerAuthResult =
+  | { readonly status: 'already-authorized' }
+  | {
+      readonly status: 'authorization-required';
+      readonly flowId: string;
+      readonly authorizationUrl: string;
+    };
+
+export interface CompleteGlobalMcpServerAuthPayload {
+  readonly flowId: string;
+  readonly timeoutMs?: number;
+}
+
+export interface CancelGlobalMcpServerAuthPayload {
+  readonly flowId: string;
+}
+
+export interface TestGlobalMcpServerPayload {
+  readonly name: string;
+  readonly cwd?: string;
+}
+
+export interface GlobalMcpServerTestResult {
+  readonly success: boolean;
+  readonly output: string;
 }
 
 export interface InstallPluginPayload {
@@ -367,6 +436,10 @@ export interface RemoveKimiProviderPayload {
   readonly providerId: string;
 }
 
+export interface GetCronTasksResult {
+  readonly tasks: readonly CronTaskSnapshot[];
+}
+
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
   runShellCommand: (payload: RunShellCommandPayload) => Promise<ShellCommandResult>;
@@ -392,13 +465,16 @@ export interface AgentAPI {
   stopBackground: (payload: StopBackgroundPayload) => void;
   detachBackground: (payload: DetachBackgroundPayload) => BackgroundTaskInfo | undefined;
   clearContext: (payload: EmptyPayload) => void;
+  importContext: (payload: ImportContextPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
+  activatePluginCommand: (payload: ActivatePluginCommandPayload) => void;
   startBtw: (payload: EmptyPayload) => string;
   createGoal: (payload: CreateGoalPayload) => GoalSnapshot;
   getGoal: (payload: EmptyPayload) => GoalToolResult;
   pauseGoal: (payload: EmptyPayload) => GoalSnapshot;
   resumeGoal: (payload: EmptyPayload) => GoalSnapshot;
   cancelGoal: (payload: EmptyPayload) => GoalSnapshot;
+  getCronTasks: (payload: EmptyPayload) => GetCronTasksResult;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
@@ -416,11 +492,14 @@ export interface SessionAPI extends AgentAPIWithId {
   updateSessionMetadata: (payload: UpdateSessionMetadataPayload) => void;
   getSessionMetadata: (payload: EmptyPayload) => SessionMeta;
   listSkills: (payload: EmptyPayload) => readonly SkillSummary[];
+  listPluginCommands: (payload: EmptyPayload) => readonly PluginCommandDef[];
   listMcpServers: (payload: EmptyPayload) => readonly McpServerInfo[];
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
   getSessionWarnings: (payload: EmptyPayload) => readonly SessionWarning[];
+  waitForBackgroundTasksOnPrint: (payload: EmptyPayload) => void;
+  handlePrintMainTurnCompleted: (payload: EmptyPayload) => 'finish' | 'continue';
   addAdditionalDir: (payload: AddAdditionalDirPayload) => AddAdditionalDirResult;
 }
 
@@ -433,14 +512,27 @@ export interface CoreAPI extends SessionAPIWithId {
   getConfigDiagnostics: (payload: EmptyPayload) => ConfigDiagnostics;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
+  listGlobalMcpServers: (payload: EmptyPayload) => readonly GlobalMcpServerConfig[];
+  addGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
+  updateGlobalMcpServer: (payload: PutGlobalMcpServerPayload) => readonly GlobalMcpServerConfig[];
+  removeGlobalMcpServer: (payload: GlobalMcpServerNamePayload) => readonly GlobalMcpServerConfig[];
+  beginGlobalMcpServerAuth: (
+    payload: GlobalMcpServerNamePayload,
+  ) => BeginGlobalMcpServerAuthResult;
+  completeGlobalMcpServerAuth: (payload: CompleteGlobalMcpServerAuthPayload) => void;
+  cancelGlobalMcpServerAuth: (payload: CancelGlobalMcpServerAuthPayload) => void;
+  resetGlobalMcpServerAuth: (payload: GlobalMcpServerNamePayload) => void;
+  testGlobalMcpServer: (payload: TestGlobalMcpServerPayload) => GlobalMcpServerTestResult;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
   archiveSession: (payload: ArchiveSessionPayload) => void;
+  deleteSession: (payload: DeleteSessionPayload) => void;
   resumeSession: (payload: ResumeSessionPayload) => ResumeSessionResult;
   reloadSession: (payload: ReloadSessionPayload) => ResumeSessionResult;
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;
+  listWorkspaceSkills: (payload: ListWorkspaceSkillsPayload) => Promise<readonly SkillSummary[]>;
   listPlugins: (payload: EmptyPayload) => readonly PluginSummary[];
   installPlugin: (payload: InstallPluginPayload) => PluginSummary;
   setPluginEnabled: (payload: SetPluginEnabledPayload) => void;

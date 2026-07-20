@@ -31,11 +31,38 @@ export function isManagedKimiCode(providerKey?: string | null): boolean {
 }
 
 export function kimiCodeBaseUrl(): string {
-  return process.env['KIMI_CODE_BASE_URL'] ?? DEFAULT_KIMI_CODE_BASE_URL;
+  // Single source of truth for the canonical base-url shape: normalize the
+  // env override here instead of letting a trailing slash leak into the
+  // persisted provider entry, where a later normalized rewrite would diff
+  // against it and emit a spurious providers-changed event during login.
+  return (process.env['KIMI_CODE_BASE_URL'] ?? DEFAULT_KIMI_CODE_BASE_URL).replace(/\/+$/, '');
 }
 
 export function kimiCodeUsageUrl(): string {
-  return `${kimiCodeBaseUrl().replace(/\/+$/, '')}/usages`;
+  return `${kimiCodeBaseUrl()}/usages`;
+}
+
+/**
+ * Strict match against the managed Kimi Code endpoint: both URLs are parsed
+ * and compared by lowercase origin + pathname without trailing slashes.
+ * Anything that fails to parse — or differs in host or path, e.g. a proxy,
+ * gateway, or self-hosted mirror — is NOT the managed endpoint and must not
+ * be auto-refreshed, because its `/models` schema cannot be trusted.
+ */
+export function isManagedKimiCodeBaseUrl(baseUrl: string | undefined): boolean {
+  if (baseUrl === undefined) return false;
+  const managed = parseNormalizedUrl(kimiCodeBaseUrl());
+  const candidate = parseNormalizedUrl(baseUrl);
+  return managed !== undefined && candidate !== undefined && managed === candidate;
+}
+
+function parseNormalizedUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return `${url.origin.toLowerCase()}${url.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface UsageRow {
@@ -45,14 +72,78 @@ export interface UsageRow {
   readonly resetHint?: string | undefined;
 }
 
+export interface BoosterWalletInfo {
+  /** Remaining balance in whole cents (from balance.amountLeft). */
+  readonly balanceCents: number;
+  /** Total balance in whole cents (from balance.amount). */
+  readonly totalCents: number;
+  /** Whether the user enabled a monthly spending cap. */
+  readonly monthlyChargeLimitEnabled: boolean;
+  /** Monthly spending cap in whole cents; 0 means unlimited. */
+  readonly monthlyChargeLimitCents: number;
+  /** Monthly spend so far in whole cents. */
+  readonly monthlyUsedCents: number;
+  /** ISO currency code, e.g. USD / CNY. */
+  readonly currency: string;
+}
+
 export interface ParsedManagedUsage {
   readonly summary: UsageRow | null;
   readonly limits: UsageRow[];
+  readonly extraUsage: BoosterWalletInfo | null;
+}
+
+const FIXED_POINT_CENTS = 1_000_000;
+
+function fixedPointToCents(value: number): number {
+  const cents = value / FIXED_POINT_CENTS;
+  if (cents > 0 && cents < 1) return 1;
+  return Math.round(cents);
+}
+
+function parseMoney(raw: unknown): { cents: number; currency: string } | null {
+  if (!isRecord(raw)) return null;
+  const cents = toInt(raw['priceInCents']);
+  if (cents === null) return null;
+  const currency = typeof raw['currency'] === 'string' ? raw['currency'] : '';
+  return { cents, currency };
+}
+
+function parseBoosterWallet(raw: unknown): BoosterWalletInfo | null {
+  if (!isRecord(raw)) return null;
+  const balance = raw['balance'];
+  if (!isRecord(balance)) return null;
+  if (balance['type'] !== 'BOOSTER') return null;
+  const amountRaw = toInt(balance['amount']);
+  if (amountRaw === null || amountRaw <= 0) return null;
+  const totalCents = fixedPointToCents(amountRaw);
+  const amountLeftRaw = toInt(balance['amountLeft']);
+  const balanceCents = amountLeftRaw !== null ? fixedPointToCents(amountLeftRaw) : 0;
+
+  const monthlyLimit = parseMoney(raw['monthlyChargeLimit']);
+  const monthlyUsed = parseMoney(raw['monthlyUsed']);
+  const monthlyChargeLimitEnabled = raw['monthlyChargeLimitEnabled'] === true;
+
+  const currency =
+    monthlyLimit && monthlyLimit.currency.length > 0
+      ? monthlyLimit.currency
+      : monthlyUsed && monthlyUsed.currency.length > 0
+        ? monthlyUsed.currency
+        : 'USD';
+
+  return {
+    balanceCents,
+    totalCents,
+    monthlyChargeLimitEnabled,
+    monthlyChargeLimitCents: monthlyLimit?.cents ?? 0,
+    monthlyUsedCents: monthlyUsed?.cents ?? 0,
+    currency,
+  };
 }
 
 export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
   if (typeof payload !== 'object' || payload === null) {
-    return { summary: null, limits: [] };
+    return { summary: null, limits: [], extraUsage: null };
   }
   const rec = payload as Record<string, unknown>;
   const summary = toUsageRow(rec['usage'], 'Weekly limit');
@@ -71,7 +162,8 @@ export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
       if (row !== null) limits.push(row);
     }
   }
-  return { summary, limits };
+  const extraUsage = parseBoosterWallet(rec['boosterWallet']);
+  return { summary, limits, extraUsage };
 }
 
 function toUsageRow(raw: unknown, defaultLabel: string): UsageRow | null {

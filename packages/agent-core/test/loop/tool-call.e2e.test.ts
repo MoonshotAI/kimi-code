@@ -13,12 +13,13 @@ import { describe, expect, it } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
 import type { Logger } from '../../src/logging';
-import type { ExecutableTool, ExecutableToolResult, LoopHooks, ToolExecution } from '../../src/loop';
+import type { ExecutableTool, ExecutableToolResult, LoopHooks, ToolCall, ToolExecution } from '../../src/loop';
 import { PathSecurityError } from '../../src/tools/policies/path-access';
 import {
   makeEndTurnResponse,
   makeResponse,
   makeTextParts,
+  makeThinkingParts,
   makeToolCall,
   makeToolUseResponse,
 } from './fixtures/fake-llm';
@@ -97,6 +98,58 @@ describe('runTurn — tool-call behaviour', () => {
     expect(trs[0]?.result.isError).toBeUndefined();
   });
 
+  it('preserves a tool result note through normalization into the recorded event', async () => {
+    const blocks = new ContentBlocksTool({
+      output: 'payload',
+      note: '<system>meta for the model</system>',
+    });
+    const { context } = await runTurn({
+      tools: [blocks],
+      responses: [
+        makeToolUseResponse([makeToolCall('blocks', {}, 'tc-note')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const result = context.toolResults()[0]?.result;
+    expect(result?.output).toBe('payload');
+    // note is part of the persisted result contract (unlike stopTurn/message,
+    // which normalization drops before the record is written).
+    expect(result?.note).toBe('<system>meta for the model</system>');
+  });
+
+  it('enforces the note contract (string | undefined) at the normalization boundary', async () => {
+    // Tools are arbitrary JS: a malformed note (null, number, object, empty
+    // string) must never reach the record — everything downstream (history,
+    // projection, vis) trusts the contract instead of re-validating.
+    const malformed = [null, 42, { text: 'x' }, ''];
+    const tools = malformed.map(
+      (note, i) =>
+        new ContentBlocksTool({ output: `payload-${String(i)}`, note } as never),
+    );
+    for (const [i, tool] of tools.entries()) {
+      Object.defineProperty(tool, 'name', { value: `blocks${String(i)}` });
+    }
+
+    const { context } = await runTurn({
+      tools,
+      responses: [
+        makeToolUseResponse(
+          tools.map((tool, i) => makeToolCall(tool.name, {}, `tc-bad-${String(i)}`)),
+        ),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    const results = context.toolResults();
+    expect(results).toHaveLength(malformed.length);
+    for (const [i, entry] of results.entries()) {
+      expect(entry.result.output).toBe(`payload-${String(i)}`);
+      expect(entry.result.isError).toBeUndefined();
+      expect('note' in entry.result).toBe(false);
+    }
+  });
+
   it('skips side-effecting tools when usage recording stops the turn', async () => {
     const echo = new EchoTool();
     const { result, sink, llm } = await runTurn({
@@ -170,6 +223,7 @@ describe('runTurn — tool-call behaviour', () => {
     const tcRow = context.toolCalls();
     const trRow = context.toolResults();
     expect(tcRow.length).toBe(1);
+    expect(tcRow[0]?.args).toEqual({ x: 1 });
     expect(trRow.length).toBe(1);
     expect(trRow[0]?.result.isError).toBe(true);
   });
@@ -191,7 +245,7 @@ describe('runTurn — tool-call behaviour', () => {
     expect(expectTextOutput(results[0]?.result.output).toLowerCase()).toContain('invalid args');
   });
 
-  it('records an error tool.result when LLM-side args parsing already failed', async () => {
+  it('falls back to schema validation when LLM-side args parsing fails', async () => {
     const echo = new EchoTool();
     const { sink } = await runTurn({
       tools: [echo],
@@ -201,7 +255,7 @@ describe('runTurn — tool-call behaviour', () => {
             type: 'function',
             id: 'tc-1',
             name: 'echo',
-              arguments: '{',
+            arguments: '{}{',
           },
         ]),
         makeEndTurnResponse('done'),
@@ -212,7 +266,38 @@ describe('runTurn — tool-call behaviour', () => {
     const results = sink.byType('tool.result');
     expect(results.length).toBe(1);
     expect(results[0]?.result.isError).toBe(true);
-    expect(results[0]?.result.output).toContain('malformed JSON in arguments');
+    const output = expectTextOutput(results[0]?.result.output);
+    expect(output).toContain('Invalid args');
+    expect(output).toContain("must have required property 'text'");
+    expect(output).not.toContain('malformed JSON in arguments');
+    expect(output).not.toContain('Expected arguments schema:');
+  });
+
+  it('does not repair malformed tool args JSON', async () => {
+    const echo = new EchoTool();
+    const { sink } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeToolUseResponse([
+          {
+            type: 'function',
+            id: 'tc-1',
+            name: 'echo',
+            arguments: '{"text":"hi",}',
+          },
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(echo.calls).toHaveLength(0);
+
+    const results = sink.byType('tool.result');
+    expect(results.length).toBe(1);
+    expect(results[0]?.result.isError).toBe(true);
+    const output = expectTextOutput(results[0]?.result.output);
+    expect(output).toContain('Invalid args');
+    expect(output).toContain("must have required property 'text'");
   });
 
   it('captures tool execution failures as error results', async () => {
@@ -794,3 +879,117 @@ class StopSuccessTool implements ExecutableTool<Record<string, unknown>> {
     };
   }
 }
+
+
+describe('runTurn — unexecuted tool calls (abnormal step end)', () => {
+  it('records and closes a complete tool call when the step ends paused', async () => {
+    const echo = new EchoTool();
+    const { result, context, sink } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(makeThinkingParts('let me run a tool'), [makeToolCall('echo', { text: 'hi' }, 'tc-1')], 'paused'),
+      ],
+    });
+
+    // The call must not execute, but it is recorded and immediately closed
+    // with a synthetic interrupted result so the exchange stays wire-valid.
+    expect(echo.calls.length).toBe(0);
+    expect(result.stopReason).toBe('paused');
+    expect(context.toolCalls().map((e) => [e.toolCallId, e.name, e.args])).toEqual([
+      ['tc-1', 'echo', { text: 'hi' }],
+    ]);
+    const results = context.toolResults();
+    expect(results.map((e) => e.toolCallId)).toEqual(['tc-1']);
+    expect(results[0]?.result.isError).toBe(true);
+    expect(expectTextOutput(results[0]?.result.output)).toContain('not executed');
+    // Events pair up in the live stream too, and the step seals as paused.
+    expect(sink.byType('tool.call').map((e) => e.toolCallId)).toEqual(['tc-1']);
+    expect(sink.byType('tool.result').map((e) => e.toolCallId)).toEqual(['tc-1']);
+    expect(context.stepEnds()[0]?.finishReason).toBe('paused');
+  });
+
+  it('sanitizes truncated (unparseable) arguments to {} when recording the call', async () => {
+    // The provider stream was cut mid-arguments: id and name arrived, the JSON
+    // did not. The recorded call must carry sanitized args — the raw fragment
+    // would crash the next request's wire conversion.
+    const partialCall: ToolCall = {
+      type: 'function',
+      id: 'tc-partial',
+      name: 'echo',
+      arguments: '{"text":"unterminated',
+    };
+    const echo = new EchoTool();
+    const { context } = await runTurn({
+      tools: [echo],
+      responses: [
+        // The realistic poison shape: an empty signed thinking block plus the
+        // partial call (what a pause_turn response carries).
+        makeResponse([{ type: 'think', think: '', encrypted: 'sig' }], [partialCall], 'paused'),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(context.toolCalls().map((e) => [e.toolCallId, e.args])).toEqual([['tc-partial', {}]]);
+    const results = context.toolResults();
+    expect(results.map((e) => e.toolCallId)).toEqual(['tc-partial']);
+    expect(results[0]?.result.isError).toBe(true);
+  });
+
+  it('records and closes tool calls when the stream fails overloaded (other finish)', async () => {
+    const echo = new EchoTool();
+    const { result, context } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(makeTextParts(''), [makeToolCall('echo', { text: 'hi' }, 'tc-ovl')], 'unknown'),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(result.stopReason).toBe('unknown');
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-ovl']);
+    expect(context.toolResults().map((e) => e.toolCallId)).toEqual(['tc-ovl']);
+    expect(context.toolResults()[0]?.result.isError).toBe(true);
+  });
+
+  it('records and closes a tool call cut off by max_tokens', async () => {
+    const echo = new EchoTool();
+    const { result, context } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(makeTextParts('partial answer'), [makeToolCall('echo', { text: 'hi' }, 'tc-max')], 'max_tokens'),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(result.stopReason).toBe('max_tokens');
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-max']);
+    expect(context.toolResults().map((e) => e.toolCallId)).toEqual(['tc-max']);
+    expect(context.toolResults()[0]?.result.isError).toBe(true);
+  });
+
+  it('closes every unexecuted call in provider order', async () => {
+    const echo = new EchoTool();
+    const { context } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeResponse(
+          makeThinkingParts('two calls'),
+          [makeToolCall('echo', { text: 'a' }, 'tc-a'), makeToolCall('echo', { text: 'b' }, 'tc-b')],
+          'paused',
+        ),
+      ],
+    });
+
+    expect(echo.calls.length).toBe(0);
+    expect(context.toolCalls().map((e) => e.toolCallId)).toEqual(['tc-a', 'tc-b']);
+    expect(context.toolResults().map((e) => e.toolCallId)).toEqual(['tc-a', 'tc-b']);
+  });
+
+  it('does not record synthetic results for a normal end_turn without tool calls', async () => {
+    const { context } = await runTurn({
+      responses: [makeEndTurnResponse('done')],
+    });
+    expect(context.toolCalls()).toEqual([]);
+    expect(context.toolResults()).toEqual([]);
+  });
+});

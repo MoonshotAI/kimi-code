@@ -24,6 +24,7 @@ async function makePlugin(
     sessionStartSkill?: string;
     mcpServers?: Record<string, unknown>;
     hooks?: readonly unknown[];
+    commands?: Record<string, string>;
   } = {},
 ): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), `plugin-${name}-`));
@@ -52,6 +53,15 @@ async function makePlugin(
   }
   if (options.hooks !== undefined) {
     manifest['hooks'] = options.hooks;
+  }
+  if (options.commands !== undefined) {
+    manifest['commands'] = ['./commands'];
+    await mkdir(path.join(root, 'commands'), { recursive: true });
+    for (const [file, body] of Object.entries(options.commands)) {
+      const filePath = path.join(root, 'commands', file);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, body, 'utf8');
+    }
   }
   await writeFile(
     path.join(root, 'kimi.plugin.json'),
@@ -902,6 +912,68 @@ describe('PluginManager', () => {
     await manager.load();
     await manager.install(root);
     expect(manager.summaries()[0]?.hookCount).toBe(2);
+  });
+
+  it('enabledCommands() returns parsed commands from enabled plugins', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      commands: {
+        'deploy.md': '---\ndescription: Deploy\n---\nDeploy with $ARGUMENTS',
+        'env.md': '---\ndescription: Env\n---\nManage env',
+      },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    const commands = await manager.enabledCommands();
+    expect(commands.map((c) => ({ pluginId: c.pluginId, name: c.name, description: c.description }))).toEqual(
+      expect.arrayContaining([
+        { pluginId: 'demo', name: 'deploy', description: 'Deploy' },
+        { pluginId: 'demo', name: 'env', description: 'Env' },
+      ]),
+    );
+    expect(commands.find((c) => c.name === 'deploy')?.body).toBe('Deploy with $ARGUMENTS');
+  });
+
+  it('enabledCommands() preserves the relative-path namespace for nested commands', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      commands: {
+        'deploy.md': '---\ndescription: Deploy\n---\nbody',
+        'frontend/component.md': '---\ndescription: Component\n---\nbody',
+      },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    const commands = await manager.enabledCommands();
+    expect(commands.map((c) => c.name).toSorted()).toEqual(['deploy', 'frontend/component']);
+  });
+
+  it('enabledCommands() excludes disabled plugins', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      commands: { 'deploy.md': '---\ndescription: Deploy\n---\nbody' },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    await manager.setEnabled('demo', false);
+    expect(await manager.enabledCommands()).toEqual([]);
+  });
+
+  it('summaries() include commandCount', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      commands: {
+        'a.md': '---\ndescription: A\n---\nbody',
+        'b.md': '---\ndescription: B\n---\nbody',
+      },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.summaries()[0]?.commandCount).toBe(2);
   });
 });
 

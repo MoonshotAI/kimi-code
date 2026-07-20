@@ -6,13 +6,12 @@ import {
   APITimeoutError,
   ChatProviderError,
   isRetryableGenerateError,
+  normalizeAPIStatusError,
 } from '#/errors';
 import type { ContentPart } from '#/message';
 import {
   convertContentPart,
   convertOpenAIError,
-  reasoningEffortToThinkingEffort,
-  thinkingEffortToReasoningEffort,
 } from '#/providers/openai-common';
 import { OpenAILegacyChatProvider, OpenAILegacyStreamedMessage } from '#/providers/openai-legacy';
 import {
@@ -118,6 +117,61 @@ describe('convertOpenAIError: provider rate limit', () => {
     expect(result).toBeInstanceOf(APIProviderRateLimitError);
     expect((result as APIProviderRateLimitError).statusCode).toBe(429);
   });
+
+  it('reads an integer retry-after header (seconds) onto the rate-limit error', () => {
+    const err = new OpenAIAPIError(
+      429,
+      undefined,
+      'Too many requests',
+      new Headers({ 'retry-after': '12' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).retryAfterMs).toBe(12_000);
+  });
+
+  it('ignores a non-integer (HTTP-date) retry-after header, leaving retryAfterMs null', () => {
+    const err = new OpenAIAPIError(
+      429,
+      undefined,
+      'Too many requests',
+      new Headers({ 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).retryAfterMs).toBeNull();
+  });
+
+  it('carries the x-trace-id response header onto the status error', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': 'trace-err-500' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBe('trace-err-500');
+  });
+
+  it('leaves traceId null when the error response has no x-trace-id header', () => {
+    const err = new OpenAIAPIError(500, undefined, 'Internal server error', new Headers());
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBeNull();
+  });
+
+  it('leaves traceId null when the x-trace-id header is empty', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': '' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBeNull();
+  });
 });
 describe('convertOpenAIError: subclass errors still match first', () => {
   it('APIConnectionError matches its own case', () => {
@@ -211,11 +265,16 @@ describe('convertOpenAIError: raw transport-layer stream errors', () => {
     expect(isRetryableGenerateError(result)).toBe(true);
   });
 
-  it('still wraps an unrelated raw Error as a non-retryable ChatProviderError', () => {
+  it('still wraps an unrelated raw Error as a base ChatProviderError, now retryable via fallback', () => {
+    // An unrelated raw Error is NOT an OpenAI SDK error and carries no usable
+    // HTTP status, so convertOpenAIError wraps it as a base ChatProviderError
+    // (constructor check guards that typing). The fallback safety net in
+    // isRetryableGenerateError then treats such unclassified provider failures
+    // as transient — retry beats failing the run on the first blip.
     const result = convertOpenAIError(new Error('something completely unrelated'));
 
     expect(result.constructor).toBe(ChatProviderError);
-    expect(isRetryableGenerateError(result)).toBe(false);
+    expect(isRetryableGenerateError(result)).toBe(true);
   });
 });
 describe('OpenAI streaming: undici terminated mid-stream', () => {
@@ -311,59 +370,14 @@ describe('convertContentPart', () => {
     expect(() => convertContentPart(bogus)).toThrow(/Unknown content part type/);
   });
 });
-describe('thinkingEffortToReasoningEffort', () => {
-  it('maps off -> undefined', () => {
-    expect(thinkingEffortToReasoningEffort('off')).toBeUndefined();
-  });
-  it('maps low -> "low"', () => {
-    expect(thinkingEffortToReasoningEffort('low')).toBe('low');
-  });
-  it('maps medium -> "medium"', () => {
-    expect(thinkingEffortToReasoningEffort('medium')).toBe('medium');
-  });
-  it('maps high -> "high"', () => {
-    expect(thinkingEffortToReasoningEffort('high')).toBe('high');
-  });
-  it('maps xhigh -> "xhigh"', () => {
-    expect(thinkingEffortToReasoningEffort('xhigh')).toBe('xhigh');
-  });
-  it('maps max -> "xhigh"', () => {
-    expect(thinkingEffortToReasoningEffort('max')).toBe('xhigh');
-  });
-  it('throws on unknown effort', () => {
-    expect(() => thinkingEffortToReasoningEffort('extreme' as never)).toThrow(
-      /Unknown thinking effort/,
+describe('normalizeAPIStatusError thinking effort guidance', () => {
+  it('adds configuration guidance when a provider rejects reasoning_effort', () => {
+    const error = normalizeAPIStatusError(400, 'Invalid reasoning_effort: xhigh');
+
+    expect(error.message).toContain('Non-Kimi providers receive effort strings');
+    expect(error.message).toContain(
+      'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking',
     );
-  });
-});
-describe('reasoningEffortToThinkingEffort', () => {
-  it('returns null for undefined', () => {
-    const effort: string | undefined = undefined;
-    expect(reasoningEffortToThinkingEffort(effort)).toBeNull();
-  });
-  it('maps "low" -> low', () => {
-    expect(reasoningEffortToThinkingEffort('low')).toBe('low');
-  });
-  it('maps "minimal" -> low (alias)', () => {
-    expect(reasoningEffortToThinkingEffort('minimal')).toBe('low');
-  });
-  it('maps "medium" -> medium', () => {
-    expect(reasoningEffortToThinkingEffort('medium')).toBe('medium');
-  });
-  it('maps "high" -> high', () => {
-    expect(reasoningEffortToThinkingEffort('high')).toBe('high');
-  });
-  it('maps "xhigh" -> xhigh', () => {
-    expect(reasoningEffortToThinkingEffort('xhigh')).toBe('xhigh');
-  });
-  it('maps "max" -> xhigh (alias)', () => {
-    expect(reasoningEffortToThinkingEffort('max')).toBe('xhigh');
-  });
-  it('maps "none" -> off', () => {
-    expect(reasoningEffortToThinkingEffort('none')).toBe('off');
-  });
-  it('unknown values fall back to off', () => {
-    expect(reasoningEffortToThinkingEffort('ultra')).toBe('off');
   });
 });
 describe('convertOpenAIError: non-Error values', () => {

@@ -22,6 +22,7 @@ import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatPluginSourceLabel, isOfficialPluginSource } from '../utils/plugin-source-label';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
+import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
 
 interface ShowPluginsPickerOptions {
@@ -410,6 +411,12 @@ async function handlePluginsPanelSelection(
         selection.source,
         isOfficialPluginSource(selection.source),
       );
+      return;
+    case 'open-url':
+      host.restoreEditor();
+      openUrl(selection.url);
+      host.showStatus(`Opening the ${selection.label} page in your browser…`, 'success');
+      host.showStatus(`If it did not open, visit ${selection.url}`);
       return;
   }
 }

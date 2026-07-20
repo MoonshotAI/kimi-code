@@ -1,3 +1,9 @@
+/**
+ * Scenario: protocol success/error envelopes and canonical error codes.
+ * Responsibilities: verify schema round-trips, stable numeric codes, and reason labels.
+ * Wiring: pure protocol schemas and constructors; no external boundaries.
+ * Run: `pnpm --filter @moonshot-ai/protocol exec vitest run src/__tests__/envelope.test.ts`.
+ */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -57,6 +63,20 @@ describe('envelope', () => {
       '{"code":40001,"msg":"validation failed","data":null,"request_id":"req_z"}',
     );
   });
+
+  it('errEnvelope surfaces stack when provided and omits it when absent', () => {
+    const err = new Error('boom');
+    const withStack = errEnvelope(ErrorCode.INTERNAL_ERROR, 'boom', 'req_s', err.stack);
+    expect(withStack.stack).toBe(err.stack);
+    expect(JSON.stringify(withStack)).toContain('"stack":');
+    expect(envelopeSchema(z.any()).parse(withStack).stack).toBe(err.stack);
+
+    // No stack → field is absent and the wire shape is byte-identical to before.
+    const without = errEnvelope(ErrorCode.INTERNAL_ERROR, 'boom', 'req_s');
+    expect(JSON.stringify(without)).toBe(
+      '{"code":50001,"msg":"boom","data":null,"request_id":"req_s"}',
+    );
+  });
 });
 
 describe('error-codes', () => {
@@ -64,6 +84,7 @@ describe('error-codes', () => {
     expect(ErrorCode.SUCCESS).toBe(0);
     expect(ErrorCode.VALIDATION_FAILED).toBe(40001);
     expect(ErrorCode.SESSION_NOT_FOUND).toBe(40401);
+    expect(ErrorCode.GOAL_UNSUPPORTED_AGENT).toBe(40920);
     expect(ErrorCode.APPROVAL_EXPIRED).toBe(41001);
     expect(ErrorCode.FS_WATCH_LIMIT_EXCEEDED).toBe(42902);
     expect(ErrorCode.INTERNAL_ERROR).toBe(50001);
@@ -76,6 +97,7 @@ describe('error-codes', () => {
     expect(ErrorCodeReason[ErrorCode.MODEL_NOT_FOUND]).toBe('model.not_found');
     expect(ErrorCodeReason[ErrorCode.VALIDATION_FAILED]).toBe('validation.failed');
     expect(ErrorCodeReason[ErrorCode.FS_WATCH_LIMIT_EXCEEDED]).toBe('fs.watch_limit_exceeded');
+    expect(ErrorCodeReason[ErrorCode.GOAL_UNSUPPORTED_AGENT]).toBe('goal.unsupported_agent');
   });
 
   it('reserved codes are not redefined (40101, 50002 absent)', () => {

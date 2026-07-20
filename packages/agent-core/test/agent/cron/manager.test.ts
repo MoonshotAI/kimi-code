@@ -67,6 +67,55 @@ describe('CronManager', () => {
     });
   });
 
+  describe('listTaskSnapshots', () => {
+    it('returns every task with its recurring flag and post-jitter next fire', () => {
+      const { agent } = createAgentStub();
+      const harness = createClocks();
+      const manager = new CronManager(agent, {
+        clocks: harness.clocks,
+        pollIntervalMs: null,
+      });
+
+      const recurring = manager.store.add(
+        { cron: '*/5 * * * *', prompt: 'recurring job' },
+        harness.now(),
+      );
+      const oneShot = manager.store.add(
+        { cron: '*/5 * * * *', prompt: 'one shot', recurring: false },
+        harness.now(),
+      );
+      const neverFires = manager.store.add(
+        { cron: '0 0 31 2 *', prompt: 'impossible date' },
+        harness.now(),
+      );
+
+      const byId = new Map(manager.listTaskSnapshots().map((s) => [s.id, s]));
+      expect(byId.size).toBe(3);
+
+      const r = byId.get(recurring.id);
+      expect(r).toMatchObject({
+        id: recurring.id,
+        cron: '*/5 * * * *',
+        recurring: true,
+        createdAt: recurring.createdAt,
+      });
+      expect(typeof r?.nextFireAt).toBe('number');
+
+      expect(byId.get(oneShot.id)).toMatchObject({ recurring: false });
+
+      // A degenerate expression reports `nextFireAt: null` so hosts polling
+      // for pending work (e.g. `kimi -p`) never wait on a task that can
+      // never trigger a turn.
+      expect(byId.get(neverFires.id)?.nextFireAt).toBeNull();
+    });
+
+    it('returns an empty list when no tasks are scheduled', () => {
+      const { agent } = createAgentStub();
+      const manager = new CronManager(agent, { pollIntervalMs: null });
+      expect(manager.listTaskSnapshots()).toEqual([]);
+    });
+  });
+
   describe('handleFire — recurring', () => {
     it('steers with cron_job origin and emits cron_fired telemetry', () => {
       const stub = createAgentStub({ steerReturns: 7 });

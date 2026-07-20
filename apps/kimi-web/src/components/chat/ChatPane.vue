@@ -2,29 +2,35 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia } from '../../types';
+import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment } from '../../types';
 import ToolCall from './ToolCall.vue';
+import ToolGroup from './ToolGroup.vue';
 import Markdown from './Markdown.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
-import AgentCard from './AgentCard.vue';
-import AgentGroup from './AgentGroup.vue';
-import MoonSpinner from '../MoonSpinner.vue';
-import { formatMessageTime } from '../../lib/formatMessageTime';
+import CronNotice from './CronNotice.vue';
+import MessageTime from './MessageTime.vue';
+import AuthMedia from './AuthMedia.vue';
+import AttachmentChip from './AttachmentChip.vue';
+import MoonSpinner from '../ui/MoonSpinner.vue';
+import Spinner from '../ui/Spinner.vue';
+import Icon from '../ui/Icon.vue';
+import Tooltip from '../ui/Tooltip.vue';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { openFileAttachment } from '../../lib/openFileAttachment';
 import {
   assistantRenderBlocks,
   formatDuration,
   formatTokens,
   renderBlockKey,
-  toolStackKey,
-  toolStackPosition,
   turnBlocks,
   turnFinalText,
   turnToMarkdown,
 } from '../chatTurnRendering';
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 onUnmounted(() => {
   if (copiedTimer !== null) {
@@ -35,9 +41,13 @@ onUnmounted(() => {
     clearTimeout(copiedConversationTimer);
     copiedConversationTimer = null;
   }
-  if (undoTimer !== null) {
-    clearTimeout(undoTimer);
-    undoTimer = null;
+  if (undoFallbackTimer !== null) {
+    clearTimeout(undoFallbackTimer);
+    undoFallbackTimer = null;
+  }
+  if (unsupportedOpenTimer !== null) {
+    clearTimeout(unsupportedOpenTimer);
+    unsupportedOpenTimer = null;
   }
 });
 
@@ -46,29 +56,18 @@ const props = withDefaults(
     turns: ChatTurn[];
     approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
     /**
-     * Bubble chat layout: render each turn as a chat bubble (user = right-aligned
-     * soft-blue bubble, assistant = left-aligned plain text with no role label)
-     * instead of the desktop `user@kimi $` / `kimi >` line-turns. Driven by the
-     * Modern desktop theme OR a narrow (phone) viewport.
+     * True while the MAIN agent has a turn in flight (not merely "session
+     * busy" — background subagents and BTW side chats don't set this). Marks
+     * the last assistant turn as actively streaming so its Markdown animates
+     * the smooth typewriter/fade reveal; all other turns render statically.
      */
-    bubble?: boolean;
+    turnActive?: boolean;
     /**
-     * Backwards-compatible alias for `bubble` (the phone shell still passes
-     * `mobile`). Either prop enables the bubble layout.
+     * The main conversation has an unfinished prompt (submitted, or a main
+     * turn in flight). Renders the moon-spinner placeholder at the end of the
+     * transcript and gates "edit & resend" on the last user message.
      */
-    mobile?: boolean;
-    /**
-     * True while the active session is busy (activity !== idle). Used to mark the
-     * last assistant turn as actively streaming so its Markdown animates the
-     * smooth typewriter/fade reveal; all other turns render statically.
-     */
-    running?: boolean;
-    /**
-     * True immediately after the user hits send and before the assistant reply
-     * starts streaming. Renders a moon-spinner placeholder at the end of the
-     * transcript so the user knows the request is in flight.
-     */
-    sending?: boolean;
+    working?: boolean;
     /** Switches the CSS-only working moon to the faster visual cadence. */
     fastMoon?: boolean;
     /**
@@ -107,15 +106,19 @@ const props = withDefaults(
      */
     toolDiffPanel?: boolean;
     /**
+     * Pending user messages queued while the session is busy. Rendered inline
+     * at the tail of the transcript (after the running turn) — click to edit,
+     * × to remove, drag the grip to reorder.
+     */
+    queued?: QueuedPromptView[];
+    /**
      * @deprecated No longer used — Composer is rendered by ConversationPane.
      */
   }>(),
   {
     approvals: () => [],
-    bubble: false,
-    mobile: false,
-    running: false,
-    sending: false,
+    turnActive: false,
+    working: false,
     fastMoon: false,
     compaction: null,
     hasMoreMessages: false,
@@ -123,12 +126,9 @@ const props = withDefaults(
     loadingMoreError: false,
     isFollowing: false,
     toolDiffPanel: false,
+    queued: () => [],
   },
 );
-
-// Bubble layout is active on phones AND on the Modern desktop theme. ThinkingBlock
-// / ToolCall use their soft "bubble" rendering in the same condition.
-const childBubble = computed(() => props.bubble || props.mobile);
 
 // Top sentinel for lazy-loading older messages. Visible when there are older
 // messages or while a page is loading; the IntersectionObserver fires as soon
@@ -177,21 +177,20 @@ watch(
 );
 
 // The id of the turn that is actively streaming: the last assistant turn while
-// the session is running. Its Markdown renders with `streaming` (final=false);
-// every other turn renders statically.
+// the main turn is in flight. Its Markdown renders with `streaming`
+// (final=false); every other turn renders statically.
 const streamingTurnId = computed<string | null>(() => {
-  if (!props.running || props.turns.length === 0) return null;
+  if (!props.turnActive || props.turns.length === 0) return null;
   const last = props.turns.at(-1)!;
   return last.role === 'assistant' ? last.id : null;
 });
 
-// Trailing "working" moon. `sending` is an optimistic flag set on submit and
-// kept until the session goes idle, so during a normal turn the moon shows the
-// whole time. After a page refresh that in-memory flag is gone, so fall back to
-// `running` (restored from the session's live status) — otherwise a refresh mid
-// stream froze the transcript with no "still working" indicator. Either flag
-// shows the same moon footer.
-const showWorking = computed(() => props.sending || props.running);
+// Trailing "working" moon: shown while the main conversation has an unfinished
+// prompt. `working` is the union of the optimistic submit window and the main
+// turn's liveness (restored from the snapshot's inFlightTurn after a refresh);
+// background agents and BTW side chats never show here — the moon belongs to
+// the main conversation only.
+const showWorking = computed(() => props.working);
 
 const emit = defineEmits<{
   openFile: [target: FilePreviewRequest];
@@ -201,15 +200,78 @@ const emit = defineEmits<{
   openThinking: [target: { turnId: string; blockIndex: number }];
   /** Show a compaction divider's summary text in the right-side panel. */
   openCompaction: [target: { turnId: string }];
-  /** Show a subagent's full detail in the right-side panel. */
-  openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
+  /** Show a subagent's live detail in the right-side panel (keyed by the
+   *  spawning `Agent` tool-call id). */
+  openAgent: [toolCallId: string];
   /** Show an Edit/Write tool call's diff in the right-side panel. */
   openToolDiff: [id: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
-  editMessage: [text: string];
+  editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
   loadOlderMessages: [];
+  /** Remove a queued message by index. */
+  unqueue: [index: number];
+  /** Load a queued message back into the composer for editing (and dequeue it). */
+  editQueued: [index: number];
+  /** Drag-to-reorder a queued message within the active session's queue. */
+  reorderQueue: [payload: { from: number; to: number }];
 }>();
+
+// ---- Inline queue (pending messages while running) ------------------------
+// Edit/remove are one-click; reorder is HTML5 drag-and-drop initiated from the
+// grip handle (the body stays a click-to-edit button).
+const dragFrom = ref<number | null>(null);
+const dragOver = ref<{ index: number; position: 'before' | 'after' } | null>(null);
+
+function hasAttachments(item: QueuedPromptView): boolean {
+  return (item.attachments?.length ?? 0) > 0;
+}
+
+function onQueueEdit(index: number): void {
+  // Image/video attachments round-trip through the composer now (the composer
+  // can hold fileIds), so a queued prompt can be loaded back for edit whether or
+  // not it carries media.
+  emit('editQueued', index);
+}
+
+function onQueueDragStart(index: number, event: DragEvent): void {
+  dragFrom.value = index;
+  if (!event.dataTransfer) return;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', String(index));
+  // Use the whole row as the drag image instead of just the grip handle.
+  const row = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>('.q-turn');
+  if (row) event.dataTransfer.setDragImage(row, 24, 24);
+}
+
+function onQueueDragOver(index: number, event: DragEvent): void {
+  if (dragFrom.value === null) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+  dragOver.value = { index, position };
+}
+
+function onQueueDrop(index: number, event: DragEvent): void {
+  event.preventDefault();
+  const from = dragFrom.value;
+  const position = dragOver.value?.position ?? 'before';
+  dragFrom.value = null;
+  dragOver.value = null;
+  if (from === null) return;
+  // Convert the "before/after target row" into a final insertion index,
+  // adjusting for the source row being removed first on downward moves.
+  let to = position === 'before' ? index : index + 1;
+  if (from < to) to -= 1;
+  if (from === to) return;
+  emit('reorderQueue', { from, to });
+}
+
+function onQueueDragEnd(): void {
+  dragFrom.value = null;
+  dragOver.value = null;
+}
 
 // Id of the most recent user turn — the only one offered an "edit & resend"
 // affordance (undo only rewinds the latest exchange).
@@ -221,14 +283,14 @@ const lastUserTurnId = computed<string | null>(() => {
 });
 
 /** Whether to offer "edit & resend" on this turn: the latest user message, only
-    while the session is idle (not mid-reply) and it isn't a slash activation. */
+    while the conversation has nothing unfinished and it isn't a slash activation. */
 function canEditTurn(turn: ChatTurn): boolean {
   return (
     turn.role === 'user' &&
     turn.id === lastUserTurnId.value &&
-    !props.running &&
-    !props.sending &&
-    !turn.skillActivation
+    !props.working &&
+    !turn.skillActivation &&
+    !turn.pluginCommand
   );
 }
 
@@ -252,42 +314,54 @@ function compactionDividerLabel(turn: ChatTurn): string {
 // Per-turn copy button state (keyed by turn id)
 const copiedTurn = ref<string | null>(null);
 
-// Undo/edit-and-resend confirmation state (keyed by turn id)
-const confirmingEditTurnId = ref<string | null>(null);
+// Undo in-flight guard (keyed by turn id) — set while the server rewinds the
+// turn so a second undo can't fire until the first one settles.
 const undoingTurnId = ref<string | null>(null);
-let undoTimer: ReturnType<typeof setTimeout> | null = null;
+// Fallback that releases the undoing state if the server rewind never removes
+// the turn (e.g. the undo failed). Without it the guard in confirmEditMessage
+// would block any further undo.
+let undoFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+const UNDO_FALLBACK_MS = 2500;
 
-// Expanded timestamp state (keyed by turn id)
-const expandedTimeTurnIds = ref<Set<string>>(new Set());
-function isTimeExpanded(turnId: string): boolean {
-  return expandedTimeTurnIds.value.has(turnId);
-}
-function toggleTime(turnId: string): void {
-  const next = new Set(expandedTimeTurnIds.value);
-  if (next.has(turnId)) next.delete(turnId);
-  else next.add(turnId);
-  expandedTimeTurnIds.value = next;
-}
-function displayMessageTime(iso: string, turnId: string): string {
-  if (isTimeExpanded(turnId)) {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const pad2 = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+async function onUndo(turn: ChatTurn): Promise<void> {
+  if (
+    await confirm({
+      title: t('conversation.undo'),
+      message: t('conversation.undoConfirm'),
+      variant: 'primary',
+    })
+  ) {
+    confirmEditMessage(turn);
   }
-  return formatMessageTime(iso, t('conversation.yesterday'));
 }
 
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
-  confirmingEditTurnId.value = null;
   undoingTurnId.value = turn.id;
-  undoTimer = setTimeout(() => {
-    undoTimer = null;
-    emit('editMessage', turn.text);
+  emit('editMessage', { text: turn.text, attachments: turn.attachments });
+  // Fallback: if the server rewind never removes the turn (e.g. it failed),
+  // release the guard so the user can retry.
+  undoFallbackTimer = setTimeout(() => {
+    undoFallbackTimer = null;
     undoingTurnId.value = null;
-  }, 240);
+  }, UNDO_FALLBACK_MS);
 }
+
+// Release the undoing guard once the server rewind has actually removed the turn
+// from the list (post-render, so the element is already gone).
+watch(
+  () => props.turns,
+  (turns) => {
+    if (undoingTurnId.value === null) return;
+    if (turns.some((t) => t.id === undoingTurnId.value)) return;
+    undoingTurnId.value = null;
+    if (undoFallbackTimer !== null) {
+      clearTimeout(undoFallbackTimer);
+      undoFallbackTimer = null;
+    }
+  },
+  { flush: 'post' },
+);
 
 // Copy-whole-conversation state
 const copiedConversation = ref(false);
@@ -298,7 +372,7 @@ function copyConversation(): void {
   if (props.turns.length === 0) return;
   const lines: string[] = [];
   for (const turn of props.turns) {
-    if (turn.role === 'compaction') continue; // dividers don't copy
+    if (turn.role === 'compaction' || turn.role === 'cron') continue; // dividers / cron notices don't copy
     const roleLabel = turn.role === 'user' ? 'User' : 'Assistant';
     const content = turnToMarkdown(turn);
     if (content.trim()) {
@@ -399,6 +473,39 @@ function copyUserMessage(turn: ChatTurn): void {
   }).catch(() => {/* ignore */});
 }
 
+function userAttachmentMedia(att: TurnAttachment): ToolMedia {
+  // User-uploaded media carries no path/mime metadata; the preview panel falls
+  // back to a generic label and sniffs the mime from the URL when needed. When
+  // a fileId is present the preview fetches the bytes with auth (a bare
+  // getFileUrl src 401s under daemon auth).
+  return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId };
+}
+
+// Transient "can't open this type" hint after clicking a file chip of a
+// non-previewable type. Mirrors the copiedTurn timer pattern; cleared on unmount.
+const unsupportedOpenName = ref<string | null>(null);
+let unsupportedOpenTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onAttachmentClick(att: TurnAttachment): void {
+  if (att.kind === 'image' || att.kind === 'video') {
+    emit('openMedia', userAttachmentMedia(att));
+    return;
+  }
+  // Generic files open in a new tab, but only whitelisted inert types —
+  // anything else gets the unsupported hint instead of an active-document
+  // preview (see openFileAttachment).
+  if (att.fileId === undefined) return;
+  void openFileAttachment(att.fileId, att.name, att.mediaType).then((result) => {
+    if (result !== 'unsupported') return;
+    unsupportedOpenName.value = att.name ?? att.fileId ?? '';
+    if (unsupportedOpenTimer !== null) clearTimeout(unsupportedOpenTimer);
+    unsupportedOpenTimer = setTimeout(() => {
+      unsupportedOpenTimer = null;
+      unsupportedOpenName.value = null;
+    }, 2400);
+  });
+}
+
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
   if (turn.id !== streamingTurnId.value) return false;
   return block.sourceIndex === turnBlocks(turn).length - 1;
@@ -410,14 +517,12 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 </script>
 
 <template>
-  <!-- ===================== MOBILE: chat bubbles ===================== -->
-  <!-- Same ChatTurn data as desktop, rendered as bubbles. User turns are
-       right-aligned soft-blue bubbles (no `user@kimi $` prefix, no line number);
-       assistant turns are left-aligned plain text with NO role/name label,
-       showing in order: thinking → message text → tool cards. -->
-  <div v-if="childBubble" class="chat">
+  <!-- Chat bubbles: user turns are right-aligned soft-blue bubbles; assistant
+       turns are left-aligned plain text with no role/name label, in order:
+       thinking → message text → tool cards. -->
+  <div class="chat">
     <div v-if="sessionLoading" class="chat-loading">
-      <span class="dot-pulse" aria-hidden="true" />
+      <Spinner size="sm" />
       <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
     </div>
     <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty" />
@@ -437,7 +542,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
         {{ t('conversation.loadOlder') }}
       </button>
       <span v-else class="top-sentinel-text">
-        <span class="dot-pulse" aria-hidden="true" />
+        <Spinner size="sm" />
         {{ t('conversation.loadingOlder') }}
       </span>
     </div>
@@ -446,94 +551,64 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
       <!-- User turn → right-aligned soft-blue bubble (undo affordance lives
            outside the bubble with an inline confirm step). -->
       <template v-if="turn.role === 'user'">
-        <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
-          <!-- Image / video attachments -->
-          <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
-            <template v-for="(img, ii) in turn.images" :key="ii">
-              <video
-                v-if="img.kind === 'video'"
-                class="u-img"
-                :src="img.url"
-                controls
-                playsinline
-                preload="metadata"
+        <div class="u-turn">
+          <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
+            <!-- Unified attachment chips: files, images and videos -->
+            <div v-if="turn.attachments && turn.attachments.length > 0" class="u-atts">
+              <AttachmentChip
+                v-for="(att, ai) in turn.attachments"
+                :key="ai"
+                :kind="att.kind"
+                :name="att.name"
+                :url="att.url"
+                :file-id="att.fileId"
+                :media-type="att.mediaType"
+                :size="att.size"
+                @activate="onAttachmentClick(att)"
               />
-              <img
-                v-else
-                class="u-img"
-                :src="img.url"
-                :alt="img.alt || ''"
-                loading="lazy"
-              />
-            </template>
-          </div>
-          <!-- Skill activation card (replaces raw XML) -->
-          <div v-if="turn.skillActivation" class="skill-act">
-            <div class="skill-act-head">
-              <span class="skill-act-arrow">▶</span>
-              <span>{{ t('conversation.activatedSkill', { name: turn.skillActivation.name }) }}</span>
             </div>
-            <div v-if="turn.skillActivation.args" class="skill-act-args">{{ turn.skillActivation.args }}</div>
+            <!-- Skill activation card (replaces raw XML) -->
+            <div v-if="turn.skillActivation" class="skill-act">
+              <div class="skill-act-head">
+                <span class="skill-act-arrow">▶</span>
+                <span>{{ t('conversation.activatedSkill', { name: turn.skillActivation.name }) }}</span>
+              </div>
+              <div v-if="turn.skillActivation.args" class="skill-act-args">{{ turn.skillActivation.args }}</div>
+            </div>
+            <!-- Plugin command card (replaces expanded body) -->
+            <div v-else-if="turn.pluginCommand" class="skill-act">
+              <div class="skill-act-head">
+                <span class="skill-act-arrow">▶</span>
+                <span>/{{ turn.pluginCommand.pluginId }}:{{ turn.pluginCommand.commandName }}</span>
+              </div>
+              <div v-if="turn.pluginCommand.args" class="skill-act-args">{{ turn.pluginCommand.args }}</div>
+            </div>
+            <!-- User input renders verbatim (pre-wrap), never through Markdown -->
+            <div v-else class="u-text">{{ turn.text }}</div>
           </div>
-          <!-- User input renders verbatim (pre-wrap), never through Markdown -->
-          <div v-else class="u-text">{{ turn.text }}</div>
-        </div>
-        <div v-if="turn.createdAt || canEditTurn(turn)" class="u-meta">
-          <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
+          <div v-if="turn.createdAt || canEditTurn(turn)" class="u-meta">
+            <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
+              <button
+                type="button"
+                class="u-edit"
+                :aria-label="t('conversation.undoTooltip')"
+                @click="onUndo(turn)"
+              >
+                <Icon name="undo" size="sm" />
+              </button>
+            </div>
             <button
-              v-if="confirmingEditTurnId !== turn.id"
+              v-if="turn.text.trim().length > 0"
               type="button"
-              class="u-edit"
-              :data-tooltip="t('conversation.undoTooltip')"
-              @click="confirmingEditTurnId = turn.id"
+              class="u-copy"
+              :aria-label="t('filePreview.copy')"
+              @click.stop="copyUserMessage(turn)"
             >
-              <span class="u-edit-text">{{ t('conversation.undo') }}</span>
-              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M6.5 2.5 3 6l3.5 3.5"/>
-                <path d="M3 6h6.5a3.8 3.8 0 1 1 0 7.6H7.5"/>
-              </svg>
+              <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
+              <Icon v-else name="check" size="sm" />
             </button>
-            <div v-else class="u-edit-confirm" @click.stop>
-              <span>{{ t('conversation.undoConfirm') }}</span>
-              <button
-                type="button"
-                class="u-edit-confirm-btn confirm"
-                @click.stop="confirmEditMessage(turn)"
-              >
-                {{ t('conversation.confirm') }}
-              </button>
-              <button
-                type="button"
-                class="u-edit-confirm-btn"
-                @click.stop="confirmingEditTurnId = null"
-              >
-                {{ t('conversation.cancel') }}
-              </button>
-            </div>
+            <MessageTime v-if="turn.createdAt" :time="turn.createdAt" />
           </div>
-          <button
-            v-if="turn.text.trim().length > 0"
-            type="button"
-            class="u-copy"
-            :data-tooltip="t('filePreview.copy')"
-            @click.stop="copyUserMessage(turn)"
-          >
-            <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="9" height="9" rx="1.5"/>
-              <path d="M6 1h7a1 1 0 0 1 1 1v7"/>
-            </svg>
-            <svg v-else viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="3,8 6.5,11.5 13,5"/>
-            </svg>
-          </button>
-          <button
-            v-if="turn.createdAt"
-            type="button"
-            class="u-time"
-            @click.stop="toggleTime(turn.id)"
-          >
-            {{ displayMessageTime(turn.createdAt, turn.id) }}
-          </button>
         </div>
       </template>
 
@@ -554,34 +629,39 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
         <span class="cd-line" aria-hidden="true" />
       </div>
 
+      <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
+           a lightweight in-transcript notice rather than a user bubble. -->
+      <CronNotice v-else-if="turn.role === 'cron'" :text="turn.text" :cron="turn.cron" :turn-id="turn.id" :created-at="turn.createdAt" />
+
       <!-- Assistant turn → left-aligned, no name/role label. -->
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
         <template v-for="(blk, bi) in assistantRenderBlocks(turn)" :key="renderBlockKey(blk, bi)">
-          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" :mobile="childBubble" :streaming="isStreamingRenderBlock(turn, blk)" @open="emit('openThinking', { turnId: turn.id, blockIndex: blk.sourceIndex })" />
+          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" @open="emit('openThinking', { turnId: turn.id, blockIndex: blk.sourceIndex })" />
           <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="(target) => emit('openFile', target)" /></div>
-          <div v-else-if="blk.kind === 'tool-stack'" class="tool-stack">
-            <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :mobile="childBubble" :stack-position="toolStackPosition(si, blk.tools.length)" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
-          </div>
-          <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
-          <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
-          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
+          <ToolGroup
+            v-else-if="blk.kind === 'tool-stack'"
+            :tools="blk.tools"
+            mobile
+            :tool-diff-panel="toolDiffPanel"
+            @open-media="emit('openMedia', $event)"
+            @open-file="emit('openFile', $event)"
+            @open-tool-diff="emit('openToolDiff', $event)"
+            @open-agent="emit('openAgent', $event)"
+          />
+          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" @open-agent="emit('openAgent', $event)" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
-          <span v-if="turn.durationMs !== undefined" class="a-duration" :title="`${turn.durationMs} ms`">{{ formatDuration(turn.durationMs) }}</span>
+          <Tooltip :text="`${turn.durationMs} ms`">
+            <span v-if="turn.durationMs !== undefined" class="a-duration">{{ formatDuration(turn.durationMs) }}</span>
+          </Tooltip>
           <button
             v-if="assistantRunFinalText(ti).trim().length > 0"
             class="a-cpbtn"
-            tabindex="-1"
+            :aria-label="t('filePreview.copy')"
             @click="copyAssistantRun(ti)"
           >
-            <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="9" height="9" rx="1.5"/>
-              <path d="M6 1h7a1 1 0 0 1 1 1v7"/>
-            </svg>
-            <svg v-else viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="3,8 6.5,11.5 13,5"/>
-            </svg>
-            <span class="a-cpbtn-text">{{ t('filePreview.copy') }}</span>
+            <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
+            <Icon v-else name="check" size="sm" />
           </button>
         </div>
       </div>
@@ -593,198 +673,96 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     <!-- Compaction in progress — body-sized moon activity notice -->
     <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
 
-    <!-- Working placeholder — moon spinner while the turn is in flight (covers
-         a page refresh mid-stream, where `sending` was lost but the session is
-         still running). -->
+    <!-- Working placeholder — moon spinner while the conversation has an
+         unfinished prompt (covers a page refresh mid-stream, where the
+         optimistic submit flag was lost but the main turn is still in flight). -->
     <div v-if="showWorking" class="sending-placeholder">
       <MoonSpinner :fast="fastMoon" />
     </div>
+
+    <!-- Inline queue — pending user messages shown after the running turn.
+         Click to edit, × to remove, drag the grip to reorder. -->
+    <div v-if="queued.length > 0" class="q-stack">
+      <div class="q-head">
+        <span class="q-title">
+          <Icon name="mail" size="sm" />
+          {{ t('composer.queueLabel') }} · <b>{{ queued.length }}</b>
+        </span>
+        <span class="q-hint">{{ t('composer.queueAutoDrain') }}</span>
+      </div>
+      <div
+        v-for="(item, qi) in queued"
+        :key="qi"
+        class="u-turn q-turn"
+        :class="{
+          'q-dragging': dragFrom === qi,
+          'drop-before': dragOver?.index === qi && dragOver.position === 'before',
+          'drop-after': dragOver?.index === qi && dragOver.position === 'after',
+        }"
+        @dragover="onQueueDragOver(qi, $event)"
+        @drop="onQueueDrop(qi, $event)"
+      >
+        <div class="u-bub q-bub">
+          <span
+            class="q-grip"
+            :title="t('composer.queueDragTitle')"
+            draggable="true"
+            @dragstart="onQueueDragStart(qi, $event)"
+            @dragend="onQueueDragEnd"
+          >
+            <Icon name="grip" size="sm" />
+          </span>
+          <button
+            type="button"
+            class="q-body"
+            :title="t('composer.editQueued')"
+            @click="onQueueEdit(qi)"
+          >
+            <span v-if="item.text" class="u-text q-text">{{ item.text }}</span>
+            <span v-else class="q-text q-text-placeholder">
+              <Icon name="file" size="sm" />
+              {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
+            </span>
+          </button>
+          <div v-if="hasAttachments(item)" class="q-imgs">
+            <template v-for="(att, ai) in item.attachments" :key="ai">
+              <span v-if="att.kind === 'file'" class="q-file">
+                <Icon name="file" size="sm" />
+                {{ att.name ?? att.fileId }}
+              </span>
+              <AuthMedia
+                v-else
+                :url="att.url"
+                :kind="att.kind"
+                :file-id="att.fileId"
+                media-class="q-img"
+                :controls="false"
+                muted
+              />
+            </template>
+          </div>
+          <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
+          <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
+          <button
+            type="button"
+            class="q-rm"
+            :aria-label="t('composer.remove')"
+            @click.stop="emit('unqueue', qi)"
+          >
+            <Icon name="close" size="sm" />
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <!-- ===================== DESKTOP: line-turns ===================== -->
-  <div v-else class="term">
-    <!-- Loading state: shown while fetching a historical session's turns -->
-    <div v-if="sessionLoading" class="chat-loading">
-      <span class="dot-pulse" aria-hidden="true" />
-      <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
-    </div>
-    <!-- Empty state: a fresh/empty session shows a blank pane (Composer lives in
-         the dock, moved here by ConversationPane when workspaceEmpty). -->
-    <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty" />
-
-    <div
-      v-if="hasMoreMessages || loadingMore"
-      ref="topSentinelRef"
-      class="top-sentinel"
-      :class="{ 'top-sentinel-loading': loadingMore }"
-    >
-      <button
-        v-if="!loadingMore"
-        type="button"
-        class="top-sentinel-btn"
-        @click="emit('loadOlderMessages')"
-      >
-        {{ t('conversation.loadOlder') }}
-      </button>
-      <span v-else class="top-sentinel-text">
-        <span class="dot-pulse" aria-hidden="true" />
-        {{ t('conversation.loadingOlder') }}
-      </span>
-    </div>
-
-    <template v-for="(turn, ti) in turns" :key="turn.id">
-      <!-- Compaction divider — full-width separator, no gutter number. -->
-      <div v-if="turn.role === 'compaction'" class="compact-divider turn-anchor" :data-turn-id="turn.id" role="separator">
-        <span class="cd-line" aria-hidden="true" />
-        <button
-          v-if="turn.text"
-          type="button"
-          class="cd-label cd-btn"
-          @click="emit('openCompaction', { turnId: turn.id })"
-        >
-          <span>{{ compactionDividerLabel(turn) }}</span>
-          <span class="cd-view">{{ t('conversation.viewSummary') }}</span>
-        </button>
-        <span v-else class="cd-label">{{ compactionDividerLabel(turn) }}</span>
-        <span class="cd-line" aria-hidden="true" />
-      </div>
-
-      <div
-        v-else
-        class="ln turn-anchor"
-        :data-turn-id="turn.id"
-        :class="[turn.role === 'user' ? 'userline' : 'ai', { undoing: undoingTurnId === turn.id }]"
-      >
-        <!-- Line-number gutter -->
-        <span class="no">{{ turn.no }}</span>
-
-        <div class="tx">
-          <!-- Role prefix -->
-          <div class="role-row">
-            <template v-if="turn.role === 'user'">
-              <span class="pr">user@kimi</span>
-              <span class="who"> $ </span>
-            </template>
-            <template v-else>
-              <span class="pr">kimi</span>
-              <span class="who"> &gt; </span>
-            </template>
-
-            <!-- Per-message copy button (always visible, only when turn is complete) -->
-            <button v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && assistantRunFinalText(ti).trim().length > 0" class="cpbtn" @click="copyAssistantRun(ti)" tabindex="-1">
-              <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="9" height="9" rx="1.5"/>
-                <path d="M6 1h7a1 1 0 0 1 1 1v7"/>
-              </svg>
-              <svg v-else viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="3,8 6.5,11.5 13,5"/>
-              </svg>
-              <span class="cpbtn-text">{{ t('filePreview.copy') }}</span>
-            </button>
-            <span v-if="turn.durationMs !== undefined && turn.role === 'assistant'" class="turn-duration" :title="`${turn.durationMs} ms`">{{ formatDuration(turn.durationMs) }}</span>
-          </div>
-
-          <!-- User input renders verbatim (pre-wrap), never through Markdown -->
-          <div v-if="turn.role === 'user'" class="u-text">
-            <div v-if="turn.skillActivation" class="skill-act">
-              <div class="skill-act-head">
-                <span class="skill-act-arrow">▶</span>
-                <span>{{ t('conversation.activatedSkill', { name: turn.skillActivation.name }) }}</span>
-              </div>
-              <div v-if="turn.skillActivation.args" class="skill-act-args">{{ turn.skillActivation.args }}</div>
-            </div>
-            <template v-else>{{ turn.text }}</template>
-          </div>
-
-          <!-- Thinking + message text + tool cards, interleaved in original call order. -->
-          <template v-else>
-            <template v-for="(blk, bi) in assistantRenderBlocks(turn)" :key="renderBlockKey(blk, bi)">
-              <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" :streaming="isStreamingRenderBlock(turn, blk)" @open="emit('openThinking', { turnId: turn.id, blockIndex: blk.sourceIndex })" />
-              <Markdown v-else-if="blk.kind === 'text' && blk.text" :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="(target) => emit('openFile', target)" />
-              <div v-else-if="blk.kind === 'tool-stack'" class="tool-stack">
-                <ToolCall v-for="(item, si) in blk.tools" :key="toolStackKey(item)" :tool="item.tool" :stack-position="toolStackPosition(si, blk.tools.length)" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
-              </div>
-              <AgentCard v-else-if="blk.kind === 'agent'" :member="blk.member" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
-              <AgentGroup v-else-if="blk.kind === 'agentGroup'" :members="blk.members" @open="emit('openAgent', { turnId: turn.id, blockIndex: blk.sourceIndex, memberId: $event })" />
-              <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" />
-            </template>
-          </template>
-        </div>
-
-        <div
-          v-if="turn.role === 'user' && canEditTurn(turn)"
-          class="u-edit-wrap ln-edit-wrap"
-          :class="{ undoing: undoingTurnId === turn.id }"
-        >
-          <button
-            v-if="confirmingEditTurnId !== turn.id"
-            type="button"
-            class="u-edit"
-            :data-tooltip="t('conversation.undoTooltip')"
-            @click="confirmingEditTurnId = turn.id"
-          >
-            <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M6.5 2.5 3 6l3.5 3.5"/>
-              <path d="M3 6h6.5a3.8 3.8 0 1 1 0 7.6H7.5"/>
-            </svg>
-            <span class="u-edit-text">{{ t('conversation.undo') }}</span>
-          </button>
-          <div v-else class="u-edit-confirm" @click.stop>
-            <span>{{ t('conversation.undoConfirm') }}</span>
-            <button
-              type="button"
-              class="u-edit-confirm-btn confirm"
-              @click.stop="confirmEditMessage(turn)"
-            >
-              {{ t('conversation.confirm') }}
-            </button>
-            <button
-              type="button"
-              class="u-edit-confirm-btn"
-              @click.stop="confirmingEditTurnId = null"
-            >
-              {{ t('conversation.cancel') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </template>
-
-    <!-- Pending approvals as standalone interrupt cards (do not depend on a
-         matching tool_use being loaded in the transcript) -->
-    <!-- Pending approvals are rendered in the bottom dock (ConversationPane),
-         alongside questions, so both blocking prompts share one position. -->
-
-    <!-- Compaction in progress — body-sized moon activity notice -->
-    <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
-
-    <!-- Working placeholder — moon spinner while the turn is in flight (covers
-         a page refresh mid-stream, where `sending` was lost but the session is
-         still running). -->
-    <div v-if="showWorking" class="ln sending-line">
-      <span class="no">—</span>
-      <div class="tx">
-        <div class="role-row">
-          <span class="pr">kimi</span>
-          <span class="who"> &gt; </span>
-        </div>
-        <MoonSpinner :fast="fastMoon" label="Sending…" />
-      </div>
-    </div>
+  <!-- Transient hint after clicking a file chip whose type can't be opened. -->
+  <div v-if="unsupportedOpenName !== null" class="open-unsupported" role="status">
+    {{ t('composer.attachmentOpenUnsupported', { name: unsupportedOpenName }) }}
   </div>
 </template>
 
 <style scoped>
-.term {
-  --chat-turn-gap: 10px;
-  --chat-block-gap: 10px;
-  --chat-section-gap: 16px;
-  padding: 14px 18px 10px;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 .chat-empty {
   /* Fills the chat area and centers the hint vertically (parent grows via flex). */
   flex: 1;
@@ -809,101 +787,8 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   color: var(--muted);
 }
 .chat-loading-text { font-size: var(--ui-font-size-sm); }
-.dot-pulse {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--blue);
-  animation: dot-pulse-anim 1.4s ease-in-out infinite;
-}
-@keyframes dot-pulse-anim {
-  0%, 100% { opacity: 0.4; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1); }
-}
 
-.ln { display: flex; gap: 11px; margin-bottom: var(--chat-turn-gap); }
-.no {
-  color: var(--faint);
-  width: 22px;
-  text-align: right;
-  flex: none;
-  user-select: none;
-  font-size: calc(var(--ui-font-size) - 3px);
-  padding-top: 2px;
-}
-.tx { flex: 1; min-width: 0; }
-.tx > :deep(.think),
-.tx > :deep(.md),
-.tx > .tool-stack,
-.tx > :deep(.agent-card),
-.tx > :deep(.agent-group),
-.tx > :deep(.box),
-.tx > :deep(.media-tool) {
-  margin-top: var(--chat-block-gap);
-}
-.tx > :deep(.think:first-child),
-.tx > :deep(.md:first-child),
-.tx > .tool-stack:first-child,
-.tx > :deep(.agent-card:first-child),
-.tx > :deep(.agent-group:first-child),
-.tx > :deep(.box:first-child),
-.tx > :deep(.media-tool:first-child) {
-  margin-top: 0;
-}
-
-/* Role prefix row */
-.role-row {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  margin-bottom: 2px;
-  position: relative;
-}
-.userline .pr { color: var(--blue2); font-weight: 700; font-size: calc(var(--ui-font-size) - 1.5px); }
-.ai .pr { color: var(--ok); font-weight: 700; font-size: calc(var(--ui-font-size) - 1.5px); }
-.who { color: var(--muted); font-size: calc(var(--ui-font-size) - 1.5px); }
-.turn-duration {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 8px;
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--muted);
-  font-family: var(--mono);
-  line-height: 1;
-}
-
-/* Copy button: always visible, text shows on hover */
-.cpbtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--faint);
-  font-size: var(--ui-font-size-sm);
-  font-family: var(--mono);
-  padding: 0 4px 0 0;
-  margin-left: 8px;
-}
-.cpbtn:hover {
-  color: var(--blue);
-}
-.cpbtn-text {
-  opacity: 0;
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transition: opacity 0.15s ease, max-width 0.15s ease;
-  cursor: pointer;
-}
-.cpbtn:hover .cpbtn-text {
-  opacity: 1;
-  max-width: 120px;
-}
-
-/* ===================== Mobile bubble layout ===================== */
+/* ===================== Bubble layout ===================== */
 .chat {
   --chat-turn-gap: 16px;
   --chat-block-gap: 10px;
@@ -914,11 +799,33 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   padding: 16px 14px 20px;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 .chat .chat-empty { align-self: stretch; }
-.chat > .u-bub,
+
+/* Bottom-center pill for the "can't open this file type" hint. */
+.open-unsupported {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(90%, 480px);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-size: var(--ui-font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
+.chat > .u-turn,
 .chat > .a-msg,
 .chat > .compact-divider,
+.chat > .cron-notice,
 .chat > .sending-placeholder,
 .chat > :deep(.activity-notice) {
   margin-top: var(--chat-turn-gap);
@@ -926,107 +833,49 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .chat > .a-msg {
   margin-top: 10px;
 }
-.chat > .u-bub:first-child,
+.chat > .u-turn:first-child,
 .chat > .a-msg:first-child,
 .chat > .compact-divider:first-child,
+.chat > .cron-notice:first-child,
 .chat > .sending-placeholder:first-child,
 .chat > :deep(.activity-notice:first-child) {
   margin-top: 0;
 }
 
-/* User message → right-aligned soft-blue bubble */
+/* User turn — wraps the bubble + meta row so they lay out as one right-aligned group. */
+.u-turn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  align-self: flex-start;
+  width: 100%;
+}
+
+/* User message → right-aligned soft-blue bubble (redesign .p-bubble-user). */
 .u-bub {
   align-self: flex-end;
-  max-width: 84%;
-  background: var(--bluebg);
-  border: 1px solid var(--blueln);
-  color: var(--ink);
-  border-radius: 16px 16px 5px 16px;
-  padding: 10px 14px;
-  font-size: 15px;
-  line-height: 1.55;
+  max-width: 78%;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-bd);
+  color: var(--color-text);
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
+  padding: 11px 15px;
+  font-size: var(--content-font-size);
+  line-height: var(--leading-normal);
+  box-shadow: var(--shadow-xs);
 }
 .u-meta {
   align-self: flex-end;
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  max-width: 84%;
+  max-width: 78%;
   margin-top: 2px;
   margin-right: 4px;
 }
-.u-meta .u-time {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 5px;
-  background: none;
-  border: none;
-  border-radius: 5px;
-  color: var(--muted);
-  font: inherit;
-  font-size: calc(var(--ui-font-size) - 3px);
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.7;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
-  white-space: nowrap;
-}
-.u-meta .u-time:hover {
-  opacity: 1;
-  color: var(--blue);
-  background: var(--hover);
-}
-.u-meta .u-edit,
-.u-meta .u-time {
+.u-meta .u-edit {
   min-height: 22px;
   box-sizing: border-box;
-}
-.u-meta .u-edit svg {
-  margin-top: -1.5px;
-}
-.u-meta .u-edit-text {
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transition: max-width 0.15s ease;
-}
-.u-meta .u-edit:hover .u-edit-text { max-width: 120px; }
-@keyframes undo-bubble-exit {
-  0% {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-    filter: blur(0);
-  }
-  55% {
-    opacity: 0.45;
-    transform: translateX(10px) scale(0.985);
-    filter: blur(0.4px);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(28px) scale(0.92);
-    filter: blur(2px);
-  }
-}
-@keyframes undo-line-exit {
-  0% {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(18px);
-  }
-}
-.u-bub.undoing {
-  pointer-events: none;
-  transform-origin: right center;
-  animation: undo-bubble-exit 240ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-}
-.ln.userline.undoing {
-  pointer-events: none;
-  transform-origin: right center;
-  animation: undo-line-exit 240ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 /* User input is shown verbatim — preserve newlines, break long tokens. */
 .u-text {
@@ -1040,14 +889,15 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .u-edit {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   padding: 2px 5px;
   background: none;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   font: inherit;
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
+  line-height: 1;
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.12s, color 0.12s, background-color 0.12s;
@@ -1056,19 +906,19 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   display: block;
   flex: none;
 }
-.u-edit span { line-height: 1; }
-.u-edit:hover { opacity: 1; color: var(--blue); background: var(--hover); }
+.u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 /* Copy button — icon-only, shares the undo button's muted→hover style. */
 .u-copy {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   padding: 2px 5px;
   background: none;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   font: inherit;
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
   line-height: 1;
   cursor: pointer;
   opacity: 0.7;
@@ -1077,100 +927,11 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   box-sizing: border-box;
 }
 .u-copy svg { display: block; flex: none; }
-.u-copy:hover { opacity: 1; color: var(--blue); background: var(--hover); }
-/* Custom tooltip for the undo button: appears faster than the native title
-   tooltip and avoids duplicating the browser's long default delay. */
-.u-meta [data-tooltip] {
-  position: relative;
-}
-.u-meta [data-tooltip]::after,
-.u-meta [data-tooltip]::before {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.12s ease, visibility 0.12s ease;
-  transition-delay: 0s;
-  z-index: 100;
-}
-.u-meta [data-tooltip]::after {
-  content: attr(data-tooltip);
-  bottom: calc(100% + 6px);
-  padding: 4px 8px;
-  background: var(--ink);
-  color: var(--bg);
-  font-size: 12px;
-  line-height: 1.3;
-  border-radius: 5px;
-  white-space: nowrap;
-}
-.u-meta [data-tooltip]::before {
-  content: '';
-  bottom: calc(100% + 2px);
-  border-width: 4px;
-  border-style: solid;
-  border-color: var(--ink) transparent transparent transparent;
-}
-.u-meta [data-tooltip]:hover::after,
-.u-meta [data-tooltip]:hover::before,
-.u-meta [data-tooltip]:focus-visible::after,
-.u-meta [data-tooltip]:focus-visible::before {
-  opacity: 1;
-  visibility: visible;
-  transition-delay: 0.25s;
-}
+.u-copy:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
 /* Mobile bubble layout: right-align the undo button below the bubble. */
 .u-edit-wrap { display: flex; justify-content: flex-end; }
-.u-edit-wrap.undoing {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(12px) scale(0.95);
-  transition: opacity 120ms ease, transform 160ms ease;
-}
 .chat > .u-edit-wrap { margin-top: 4px; }
 .chat > .u-edit-wrap + .a-msg { margin-top: 8px; }
-/* Desktop line layout: place the affordance after the message text with the
-   same icon-only-then-label hover reveal behaviour. */
-.ln-edit-wrap {
-  flex: none;
-  display: flex;
-  align-items: flex-start;
-  padding-top: 2px;
-}
-.ln .u-edit-text {
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transition: max-width 0.15s ease;
-}
-.ln .u-edit:hover .u-edit-text { max-width: 120px; }
-/* Inline confirm state shown after the user clicks the undo affordance. */
-.u-edit-confirm {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 5px;
-  color: var(--muted);
-  font: inherit;
-  font-size: calc(var(--ui-font-size) - 3px);
-  border-radius: 5px;
-  background: var(--hover);
-}
-.u-edit-confirm span { line-height: 1; }
-.u-edit-confirm-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-size: calc(var(--ui-font-size) - 3px);
-  line-height: 1;
-  color: var(--blue);
-  cursor: pointer;
-}
-.u-edit-confirm-btn:hover { text-decoration: underline; }
-.u-edit-confirm-btn.confirm { color: var(--blue); }
 
 /* Compaction divider — a full-width separator marking where the daemon
    compacted the context. Prior turns above it are untouched; clicking the
@@ -1183,7 +944,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   width: 100%;
   margin: var(--chat-section-gap) 0 0;
 }
-.term > .compact-divider:first-child,
 .chat > .compact-divider:first-child {
   margin-top: 0;
 }
@@ -1198,7 +958,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   align-items: center;
   gap: 8px;
   max-width: 80%;
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  font-size: var(--text-base);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -1208,10 +968,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   padding: 0;
   cursor: pointer;
   font: inherit;
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  font-size: var(--text-base);
   color: var(--muted);
 }
-.cd-view { color: var(--blue); }
+.cd-view { color: var(--color-accent); }
 .cd-btn:hover .cd-view { text-decoration: underline; }
 
 /* Assistant message → left-aligned plain column, no role label */
@@ -1219,10 +979,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   align-self: flex-start;
   max-width: 94%;
   width: 94%;
-}
-.tool-stack {
-  display: flex;
-  flex-direction: column;
 }
 .a-msg-ft {
   display: flex;
@@ -1236,42 +992,39 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 .a-duration {
   display: inline-flex;
   align-items: center;
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
   color: var(--muted);
   line-height: 1;
 }
 
+/* Copy button — icon-only, shares the undo button's muted→hover style so the
+   message-stream action buttons (copy / undo) all read as one family. */
 .a-cpbtn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  padding: 2px 5px;
   background: none;
   border: none;
-  color: var(--faint);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: 1;
   cursor: pointer;
-  font-size: calc(var(--ui-font-size) - 3px);
-  padding: 2px 6px 2px 0;
-  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
+  min-height: 22px;
+  box-sizing: border-box;
 }
 .a-cpbtn:hover {
-  color: var(--ink);
-}
-.a-cpbtn svg,
-.a-cpbtn-text {
-  pointer-events: none;
+  opacity: 1;
+  color: var(--color-accent);
+  background: var(--hover);
 }
 .a-cpbtn svg {
+  display: block;
   flex: none;
-}
-.a-cpbtn-text {
-  opacity: 0;
-  max-width: none;
-  overflow: visible;
-  white-space: nowrap;
-  transition: opacity 0.15s ease;
-}
-.a-cpbtn:hover .a-cpbtn-text {
-  opacity: 1;
 }
 /* Touch devices: always show the copy buttons (no hover to reveal them) and
    give the bubble-layout button a comfortable tap size. */
@@ -1287,17 +1040,11 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     padding: 8px 10px;
     margin: -4px -6px;
   }
-  /* Desktop line-turns layout on a touch screen (tablets): the hover-revealed
-     copy button would otherwise be permanently invisible. */
-  .cpbtn {
-    opacity: 1;
-    pointer-events: auto;
-  }
 }
 .a-msg .msg {
   font-size: var(--ui-font-size);
   line-height: 1.6;
-  color: var(--ink);
+  color: var(--color-text);
   font-weight: 500;
 }
 .a-msg .msg :deep(p) { margin: 0; }
@@ -1305,58 +1052,76 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 /* ChatPane owns block spacing; child components own only their internal layout. */
 .a-msg > .msg,
 .a-msg > :deep(.think),
-.a-msg > .tool-stack,
+.a-msg > :deep(.tool-group),
 .a-msg > :deep(.agent-card),
 .a-msg > :deep(.agent-group),
 .a-msg > :deep(.box),
+.a-msg > :deep(.swarm-card),
 .a-msg > :deep(.media-tool) {
   margin-top: var(--chat-block-gap);
 }
 .a-msg > .msg:first-child,
 .a-msg > :deep(.think:first-child),
-.a-msg > .tool-stack:first-child,
+.a-msg > :deep(.tool-group:first-child),
 .a-msg > :deep(.agent-card:first-child),
 .a-msg > :deep(.agent-group:first-child),
 .a-msg > :deep(.box:first-child),
+.a-msg > :deep(.swarm-card:first-child),
 .a-msg > :deep(.media-tool:first-child) {
   margin-top: 0;
 }
 .a-msg :deep(code) {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 1px 5px;
-  color: var(--blue2);
+  font: .9em var(--font-mono);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  color: var(--color-accent-hover);
 }
 
-.u-imgs {
+/* ===================== Wide tables (desktop) ===================== */
+/* 760px corresponds to --p-content-max. Container-query conditions cannot
+   reference CSS custom properties directly. */
+@container (min-width: 760px) {
+  /* markstream's content-visibility:auto implies paint containment, which can
+     clip a table that breaks out of the normal Markdown width. Disable it only
+     for renderers that actually contain a table. Keep contain:layout intact. */
+  .a-msg .msg :deep(.markstream-vue.markdown-renderer:has(.table-node-wrapper)) {
+    content-visibility: visible;
+  }
+
+  /* Let a table grow naturally beyond the reading column, centred within the
+     conversation pane. The first-stage overflow-x:auto continues to handle
+     content wider than this wrapper. */
+  .a-msg .msg :deep(.table-node-wrapper) {
+    position: relative;
+    left: 50%;
+    width: max-content;
+    min-width: 100%;
+    max-width: min(
+      var(--p-table-max),
+      calc(100cqi - var(--space-5) - var(--space-5))
+    ) !important;
+    transform: translateX(-50%);
+  }
+}
+
+/* Unified attachment chips (files / images / videos) above the bubble text —
+   the chip itself is AttachmentChip; this is only the row layout. */
+.u-atts {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
 }
-.u-img {
-  max-width: 100%;
-  max-height: 200px;
-  border-radius: 8px;
-  object-fit: cover;
-}
 
-/* NOTE: Modern-theme chat/bubble styles live in src/style.css (global). Scoped
-   `:global(html[data-theme=modern]) .u-bub` rules here did NOT win the cascade,
-   so they were moved to the global sheet. */
+/* NOTE: Chat/bubble styles live in src/style.css (global). Scoped `.u-bub`
+   rules here did NOT win the cascade, so they were moved to the global sheet. */
 
-/* Mobile bubble layout sending placeholder */
+/* Sending placeholder */
 .sending-placeholder {
   align-self: flex-start;
   padding: 10px 0;
-}
-
-/* Desktop line-turns sending placeholder */
-.sending-line .tx {
-  padding-top: 2px;
 }
 
 /* Skill activation card (replaces raw <kimi-skill-loaded> XML) */
@@ -1367,18 +1132,18 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 }
 .skill-act-head {
   font-size: var(--ui-font-size-sm);
-  font-weight: 600;
-  color: var(--blue2);
+  font-weight: 500;
+  color: var(--color-accent-hover);
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .skill-act-arrow {
-  color: var(--blue);
-  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--color-accent);
+  font-size: var(--text-base);
 }
 .skill-act-args {
-  font-size: calc(var(--ui-font-size) - 1.5px);
+  font-size: var(--text-base);
   color: var(--muted);
   padding-left: 17px;
   white-space: pre-wrap;
@@ -1390,7 +1155,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   .chat {
     box-sizing: border-box;
     width: 100%;
-    padding: 14px max(12px, env(safe-area-inset-right)) 18px max(12px, env(safe-area-inset-left));
+    padding: 14px max(12px, var(--safe-right)) 18px max(12px, var(--safe-left));
   }
   .u-bub {
     max-width: min(88%, calc(100vw - 52px));
@@ -1424,20 +1189,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .a-cpbtn-text,
-  .cpbtn-text {
-    opacity: 1;
-    max-width: 120px;
-  }
   .u-edit-confirm {
     flex-wrap: wrap;
     justify-content: flex-end;
     max-width: calc(100vw - 28px);
-  }
-  .userline .pr,
-  .ai .pr,
-  .who {
-    font-size: calc(var(--ui-font-size) + 0.5px);
   }
   .ts {
     font-size: var(--ui-font-size-sm);
@@ -1484,6 +1239,214 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   gap: 8px;
   color: var(--muted);
   font-size: var(--ui-font-size-sm);
+}
+
+.chat { background: transparent; }
+.chat {
+  gap: 0;
+  padding: 22px 20px 26px;
+}
+.u-bub {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-bd);
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
+  padding: 11px 15px;
+  box-shadow: var(--shc);
+}
+.a-msg {
+  max-width: 100%;
+  width: 100%;
+}
+
+/* ---- Inline queue: pending user messages at the tail of the transcript ----
+   Reuses .u-turn / .u-bub so the pending bubbles sit in the same right-aligned
+   column as real user turns; the .q-bub modifier swaps in a lower-emphasis
+   "not yet sent" treatment (surface fill + dashed border). */
+.chat > .q-stack {
+  margin-top: var(--chat-turn-gap);
+}
+.chat > .q-stack:first-child {
+  margin-top: 0;
+}
+.q-stack {
+  align-self: flex-end;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.q-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 6px;
+  color: var(--color-text-faint);
+  font-size: var(--ui-font-size-xs);
+}
+.q-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.q-title b {
+  color: var(--color-accent-hover);
+  font-weight: var(--weight-medium);
+}
+.q-hint {
+  color: var(--color-text-faint);
+}
+.q-turn {
+  position: relative;
+}
+.q-bub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  background: var(--color-surface-raised);
+  border: 1px dashed var(--color-accent-bd);
+  padding: 8px 8px 8px 6px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.q-bub:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.q-grip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  color: var(--color-text-faint);
+  cursor: grab;
+  opacity: 0.7;
+}
+.q-grip:hover {
+  opacity: 1;
+}
+.q-grip:active {
+  cursor: grabbing;
+}
+.q-body {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.82;
+}
+.q-bub:hover .q-body {
+  opacity: 1;
+}
+.q-body:disabled {
+  cursor: default;
+}
+.q-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.q-text-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+}
+.q-imgs {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.q-img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-line);
+}
+.q-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-line);
+  color: var(--color-text-muted);
+  font-size: calc(var(--ui-font-size) - 3px);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.q-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--ui-font-size-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.q-tag-next {
+  color: var(--color-accent-hover);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-bd);
+}
+.q-tag-idx {
+  color: var(--color-text-faint);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
+}
+.q-rm {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.q-bub:hover .q-rm,
+.q-bub:focus-within .q-rm,
+.q-rm:focus-visible {
+  opacity: 1;
+}
+.q-rm:hover {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+/* Drag reorder: dim the row being dragged, show an insertion line on the target. */
+.q-turn.q-dragging .q-bub {
+  opacity: 0.45;
+}
+.q-turn.drop-before::before,
+.q-turn.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-accent);
+  border-radius: var(--radius-full);
+  z-index: 1;
+}
+.q-turn.drop-before::before {
+  top: -5px;
+}
+.q-turn.drop-after::after {
+  bottom: -5px;
 }
 
 </style>

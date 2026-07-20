@@ -1,4 +1,4 @@
-import type { Component } from '@earendil-works/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
 import type { ContextMessage } from '@moonshot-ai/kimi-code-sdk';
 import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
 
@@ -15,6 +15,7 @@ import { BackgroundAgentStatusComponent } from '../components/messages/backgroun
 import { CronMessageComponent } from '../components/messages/cron-message';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { SkillActivationComponent } from '../components/messages/skill-activation';
+import { PluginCommandComponent } from '../components/messages/plugin-command';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { UserMessageComponent } from '../components/messages/user-message';
@@ -237,6 +238,9 @@ function isContextUndoAnchor(message: ContextMessage): boolean {
   if (origin.kind === 'skill_activation') {
     return origin.trigger === 'user-slash';
   }
+  if (origin.kind === 'plugin_command') {
+    return origin.trigger === 'user-slash';
+  }
   return false;
 }
 
@@ -295,6 +299,9 @@ function formatUndoChoiceLabel(
     if (name.length === 0) return 'Skill: unknown';
     return args.length > 0 ? `/${name} ${args}` : `/${name}`;
   }
+  if (entry.kind === 'plugin_command' && entry.pluginCommandData !== undefined) {
+    return formatPluginCommandSlash(entry.pluginCommandData) ?? 'User message';
+  }
 
   const content = singleLine(entry.content);
   const imageCount = entry.imageAttachmentIds?.length ?? 0;
@@ -314,7 +321,17 @@ function formatUndoChoiceInput(entry: TranscriptEntry): string {
     if (name.length === 0) return '';
     return args.length > 0 ? `/${name} ${args}` : `/${name}`;
   }
+  if (entry.kind === 'plugin_command' && entry.pluginCommandData !== undefined) {
+    return formatPluginCommandSlash(entry.pluginCommandData) ?? entry.content;
+  }
   return entry.content;
+}
+
+function formatPluginCommandSlash(data: NonNullable<TranscriptEntry['pluginCommandData']>): string | undefined {
+  const name = `${data.pluginId}:${data.commandName}`;
+  const args = singleLine(data.args ?? '');
+  if (name.length === 0) return undefined;
+  return args.length > 0 ? `/${name} ${args}` : `/${name}`;
 }
 
 function singleLine(text: string): string {
@@ -374,7 +391,8 @@ function undoLimitFromError(
 function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
   return (
     entry.kind === 'user' ||
-    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash')
+    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash') ||
+    entry.kind === 'plugin_command'
   );
 }
 
@@ -400,6 +418,7 @@ function isUndoContextEntry(entry: TranscriptEntry): boolean {
     case 'tool_call':
     case 'thinking':
     case 'skill_activation':
+    case 'plugin_command':
     case 'cron':
       return true;
     case 'status':
@@ -440,7 +459,8 @@ function removeUndoContextComponents(
 function isUndoAnchorComponent(child: Component): boolean {
   return (
     child instanceof UserMessageComponent ||
-    (child instanceof SkillActivationComponent && child.trigger === 'user-slash')
+    (child instanceof SkillActivationComponent && child.trigger === 'user-slash') ||
+    child instanceof PluginCommandComponent
   );
 }
 
@@ -459,6 +479,7 @@ function isUndoContextComponent(child: Component): boolean {
     child instanceof AgentSwarmProgressComponent ||
     child instanceof ReadGroupComponent ||
     child instanceof SkillActivationComponent ||
+    child instanceof PluginCommandComponent ||
     child instanceof BackgroundAgentStatusComponent ||
     child instanceof CronMessageComponent
   );

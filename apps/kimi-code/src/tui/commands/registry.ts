@@ -2,7 +2,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'pathe';
 
-import type { AutocompleteItem } from '@earendil-works/pi-tui';
+import type { AutocompleteItem } from '@moonshot-ai/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
@@ -136,15 +136,15 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
-    description: 'Toggle auto-approve mode',
-    priority: 100,
+    description: 'Toggle YOLO mode: auto-approve tool actions, but the agent may still ask questions.',
+    priority: 101,
     availability: 'always',
   },
   {
     name: 'auto',
     aliases: [],
-    description: 'Toggle auto permission mode',
-    priority: 100,
+    description: 'Toggle Auto mode: fully autonomous, agent decides everything without asking.',
+    priority: 99,
     availability: 'always',
   },
   {
@@ -182,6 +182,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Switch LLM model',
     priority: 100,
+    availability: 'always',
+  },
+  {
+    name: 'effort',
+    aliases: ['thinking'],
+    description: 'Switch thinking effort',
+    priority: 95,
     availability: 'always',
   },
   {
@@ -378,9 +385,16 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'copy',
+    aliases: [],
+    description: 'Copy the last assistant message to the clipboard',
+    priority: 40,
+  },
+  {
     name: 'web',
     aliases: [],
-    description: 'Open the current session in the Web UI and exit the terminal',
+    description:
+      'Open the current session in the Web UI — pick a running server or start a new one',
     priority: 40,
     availability: 'always',
   },

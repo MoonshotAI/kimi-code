@@ -9,13 +9,25 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TokenUsage } from '@moonshot-ai/kosong';
+import {
+  APIRequestTooLargeError,
+  isImageFormatError,
+  isRecoverableRequestStructureError,
+  type TokenUsage,
+} from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
-import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
+import { errorMessage } from './errors';
+import {
+  LLMRequestTraceState,
+  type LLM,
+  type LLMChatParams,
+  type LLMChatResponse,
+  type LLMRequestTrace,
+} from './llm';
 import { chatWithRetry } from './retry';
-import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
+import { recordUnexecutedToolCalls, runToolCallBatch, type ToolCallStepContext } from './tool-call';
 import type {
   ExecutableTool,
   LoopHooks,
@@ -33,32 +45,74 @@ export interface ExecuteLoopStepDeps {
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly buildMessages: LoopMessageBuilder;
+  /**
+   * Media projection already used by `buildMessages` for this step. Defaults
+   * to `normal` for direct callers. Recovery only moves forward:
+   * normal -> media-degraded -> media-stripped.
+   */
+  readonly initialMediaProjection?: 'normal' | 'media-degraded' | 'media-stripped';
+  readonly buildMessagesStrict?: LoopMessageBuilder | undefined;
+  /** See RunTurnInput.buildMessagesMediaDegraded. */
+  readonly buildMessagesMediaDegraded?: LoopMessageBuilder | undefined;
+  /** See RunTurnInput.buildMessagesMediaStripped. */
+  readonly buildMessagesMediaStripped?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
   readonly llm: LLM;
   readonly tools?: readonly ExecutableTool[] | undefined;
+  /**
+   * Per-step tool table builder; wins over the static `tools` snapshot.
+   * Evaluated after `beforeStep`, next to `buildMessages`, so the executable
+   * table and the request messages reflect the same state — `beforeStep` can
+   * run compaction, which discards loaded dynamic tool schemas.
+   */
+  readonly buildTools?: (() => readonly ExecutableTool[]) | undefined;
+  /** See RunTurnInput.describeMissingTool. */
+  readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
+  readonly onRequestTrace?: (trace: LLMRequestTrace) => void;
 }
 
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   readonly usage: TokenUsage;
   readonly stopReason: LoopStepStopReason;
+  /**
+   * True when this step only succeeded after resending with the
+   * media-degraded projection. The turn loop uses it to keep later steps on
+   * that projection — re-sending the full-media history would pay a fresh
+   * rejection on every step of the turn.
+   */
+  readonly mediaDegradedResendUsed?: boolean;
+  /**
+   * True when this step only succeeded after resending with every media
+   * part stripped (image-format rejection, or a 413 that survived the
+   * media-degraded resend). The turn loop keeps later steps on the stripped
+   * projection for the same reason as above.
+   */
+  readonly mediaStrippedResendUsed?: boolean;
 }> {
   const {
     turnId,
     signal,
     buildMessages,
+    initialMediaProjection = 'normal',
+    buildMessagesStrict,
+    buildMessagesMediaDegraded,
+    buildMessagesMediaStripped,
     dispatchEvent,
     llm,
     tools,
+    buildTools,
+    describeMissingTool,
     hooks,
     log,
     currentStep,
     maxRetryAttempts,
     recordUsage,
+    onRequestTrace,
   } = deps;
 
   if (hooks?.beforeStep !== undefined) {
@@ -75,13 +129,20 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
 
   signal.throwIfAborted();
 
+  // Resolve the tool table AFTER beforeStep so it reflects the same state as
+  // the messages built below (beforeStep can run compaction, which discards
+  // loaded dynamic tool schemas from the context and the ledger — a table
+  // captured earlier would still dispatch a tool the model no longer has).
+  const stepTools = buildTools !== undefined ? buildTools() : tools;
   const messages = await buildMessages();
   signal.throwIfAborted();
 
   const stepUuid = randomUUID();
+  const trace = new LLMRequestTraceState();
 
   const step: ToolCallStepContext = {
-    tools,
+    tools: stepTools,
+    describeMissingTool,
     hooks,
     log,
     dispatchEvent,
@@ -90,6 +151,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     currentStep,
     stepUuid,
+    trace,
   };
 
   await dispatchEvent({
@@ -98,11 +160,17 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     step: currentStep,
   });
+  onRequestTrace?.(trace);
 
   const chatParams: LLMChatParams = {
     messages,
-    tools: tools ?? [],
+    tools: stepTools ?? [],
     signal,
+    requestLogFields:
+      initialMediaProjection === 'normal'
+        ? undefined
+        : { projection: initialMediaProjection },
+    trace,
     ...createChatStreamingCallbacks({
       dispatchEvent,
       turnId,
@@ -110,16 +178,217 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       stepUuid,
     }),
   };
-  const response: LLMChatResponse = await chatWithRetry({
+  const retryInput = {
     llm,
-    params: chatParams,
     dispatchEvent,
     turnId,
     currentStep,
     stepUuid,
     maxAttempts: maxRetryAttempts,
     log,
-  });
+  } as const;
+  const chatWithMediaProjection = async (
+    builder: LoopMessageBuilder,
+    projection: 'media-degraded' | 'media-stripped',
+  ): Promise<LLMChatResponse> => {
+    signal.throwIfAborted();
+    const projectedMessages = await builder();
+    signal.throwIfAborted();
+    return chatWithRetry({
+      ...retryInput,
+      params: {
+        ...chatParams,
+        messages: projectedMessages,
+        requestLogFields: { projection },
+      },
+    });
+  };
+  let response: LLMChatResponse;
+  let mediaDegradedResendUsed = false;
+  let mediaStrippedResendUsed = false;
+  try {
+    response = await chatWithRetry({ ...retryInput, params: chatParams });
+  } catch (error) {
+    if (error instanceof APIRequestTooLargeError) {
+      // The provider rejected the request BODY as too large (HTTP 413) —
+      // accumulated base64 media, not tokens, so compaction's token-driven
+      // recovery never fires (media is estimated at a small flat cost). The
+      // same media is re-sent on every request, so without intervention the
+      // session stays stuck. Recovery advances through each projection at most
+      // once: normal -> media-degraded -> media-stripped. A later step that is
+      // already degraded skips the duplicate degraded request; one already
+      // stripped has no smaller media projection and propagates the rejection.
+      if (initialMediaProjection === 'media-stripped') throw error;
+
+      if (initialMediaProjection === 'media-degraded') {
+        if (buildMessagesMediaStripped === undefined) throw error;
+        log?.warn(
+          'provider rejected media-degraded request as too large; resending with all media stripped',
+          {
+            turnStep: `${turnId}.${String(currentStep)}`,
+            model: llm.modelName,
+          },
+        );
+        try {
+          response = await chatWithMediaProjection(
+            buildMessagesMediaStripped,
+            'media-stripped',
+          );
+        } catch (strippedError) {
+          log?.error('all-media-stripped resend failed; request cannot be reduced further', {
+            turnStep: `${turnId}.${String(currentStep)}`,
+            model: llm.modelName,
+            originalError: errorMessage(error),
+            strippedError: errorMessage(strippedError),
+          });
+          throw strippedError;
+        }
+        mediaStrippedResendUsed = true;
+        log?.info('recovered from request-too-large after stripping all media', {
+          turnStep: `${turnId}.${String(currentStep)}`,
+        });
+      } else {
+        if (buildMessagesMediaDegraded === undefined) throw error;
+        signal.throwIfAborted();
+        log?.warn('provider rejected request as too large; resending with degraded media', {
+          turnStep: `${turnId}.${String(currentStep)}`,
+          model: llm.modelName,
+        });
+        try {
+          response = await chatWithMediaProjection(
+            buildMessagesMediaDegraded,
+            'media-degraded',
+          );
+          mediaDegradedResendUsed = true;
+          log?.info('recovered after media-degraded resend', {
+            turnStep: `${turnId}.${String(currentStep)}`,
+          });
+        } catch (degradedError) {
+          if (
+            buildMessagesMediaStripped === undefined ||
+            !(
+              degradedError instanceof APIRequestTooLargeError ||
+              isImageFormatError(degradedError)
+            )
+          ) {
+            log?.error('media-degraded resend still rejected by provider', {
+              turnStep: `${turnId}.${String(currentStep)}`,
+              model: llm.modelName,
+              originalError: errorMessage(error),
+              degradedError: errorMessage(degradedError),
+            });
+            throw degradedError;
+          }
+
+          log?.warn(
+            degradedError instanceof APIRequestTooLargeError
+              ? 'media-degraded resend is still too large; resending with all media stripped'
+              : 'provider rejected an image in the media-degraded resend; resending with all media stripped',
+            {
+              turnStep: `${turnId}.${String(currentStep)}`,
+              model: llm.modelName,
+            },
+          );
+          try {
+            response = await chatWithMediaProjection(
+              buildMessagesMediaStripped,
+              'media-stripped',
+            );
+          } catch (strippedError) {
+            log?.error('all-media-stripped resend failed; request cannot be reduced further', {
+              turnStep: `${turnId}.${String(currentStep)}`,
+              model: llm.modelName,
+              originalError: errorMessage(error),
+              degradedError: errorMessage(degradedError),
+              strippedError: errorMessage(strippedError),
+            });
+            throw strippedError;
+          }
+          mediaStrippedResendUsed = true;
+          log?.info('recovered after stripping all media from a rejected media-degraded request', {
+            turnStep: `${turnId}.${String(currentStep)}`,
+          });
+        }
+      }
+    } else if (isImageFormatError(error)) {
+      // The provider rejected an IMAGE in the request (unsupported format or
+      // undecodable data). Unlike the 413 case — too MUCH media — the error
+      // never says WHICH image is poison, and the same history is re-sent
+      // every turn, so the session would stay stuck. Resend ONCE with every
+      // media part replaced by a text marker: the only projection guaranteed
+      // to carry no poison. Read-side only — the history keeps its media,
+      // and the `<image path="...">` wrappers survive so the model can
+      // re-read files (getting conversion guidance for refused formats). A
+      // rejection of that rebuild propagates unchanged.
+      if (
+        initialMediaProjection === 'media-stripped' ||
+        buildMessagesMediaStripped === undefined
+      ) {
+        throw error;
+      }
+      log?.warn('provider rejected an image in the request; resending with all media stripped', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+        model: llm.modelName,
+      });
+      try {
+        response = await chatWithMediaProjection(buildMessagesMediaStripped, 'media-stripped');
+      } catch (strippedError) {
+        log?.error('media-stripped resend still rejected by provider', {
+          turnStep: `${turnId}.${String(currentStep)}`,
+          model: llm.modelName,
+          originalError: errorMessage(error),
+          strippedError: errorMessage(strippedError),
+        });
+        throw strippedError;
+      }
+      mediaStrippedResendUsed = true;
+      log?.info('recovered after media-stripped resend', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+      });
+    } else if (buildMessagesStrict !== undefined && isRecoverableRequestStructureError(error)) {
+      // A structural request rejection (tool_use/tool_result pairing, empty or
+      // whitespace-only text, non-user first message, non-alternating roles) means
+      // the projected history is not wire-compliant for a strict provider — and
+      // since the same history is re-sent every turn, the session would stay stuck
+      // on this error forever. Resend ONCE with a strict, guaranteed-compliant
+      // rebuild (every open call closed, stray results dropped, leading non-user
+      // trimmed, consecutive assistants merged) as a last resort. Any other error,
+      // or a host that supplied no strict builder, propagates unchanged.
+      signal.throwIfAborted();
+      log?.warn('provider rejected request structure; resending with strict projection', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+        model: llm.modelName,
+      });
+      const strictMessages = await buildMessagesStrict();
+      signal.throwIfAborted();
+      try {
+        response = await chatWithRetry({
+          ...retryInput,
+          params: {
+            ...chatParams,
+            messages: strictMessages,
+            requestLogFields: { projection: 'strict' },
+          },
+        });
+      } catch (strictError) {
+        // The strictly-sanitized rebuild was still rejected — our wire-compliance
+        // repair did not cover this case. Surface it loudly: the session is stuck
+        // and this is the signal we need to diagnose the gap.
+        log?.error('strict resend still rejected by provider; request remains wire-invalid', {
+          turnStep: `${turnId}.${String(currentStep)}`,
+          model: llm.modelName,
+          originalError: errorMessage(error),
+          strictError: errorMessage(strictError),
+        });
+        throw strictError;
+      }
+      log?.info('recovered after strict resend', {
+        turnStep: `${turnId}.${String(currentStep)}`,
+      });
+    } else {
+      throw error;
+    }
+  }
   const usage = response.usage;
   const usageResult = await recordUsage(usage);
   const stopTurnAfterUsage = usageResult?.stopTurn === true;
@@ -134,6 +403,19 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   if (effectiveStopReason === 'tool_use') {
     const toolBatch = await runToolCallBatch(step, response);
     if (toolBatch.stopTurn) effectiveStopReason = 'end_turn';
+  } else if (
+    (stopReason === 'paused' || stopReason === 'unknown' || stopReason === 'max_tokens') &&
+    response.toolCalls.length > 0
+  ) {
+    // The provider stream broke off (paused / overloaded / token limit) while
+    // the response still carries tool calls — possibly cut off mid-arguments.
+    // Record each call and close it with a synthetic interrupted result:
+    // dropping them would lose the model's intent and can persist an
+    // assistant message strict providers reject as empty. Filtered responses
+    // keep their existing behavior (calls vanish): persisting flagged content
+    // risks re-triggering the filter on every resend, and a well-formed
+    // tool_use response stopped by usage recording keeps its skip behavior.
+    await recordUnexecutedToolCalls(step, response);
   }
 
   // When a tool batch runs, it drains paired `tool.result` events even when
@@ -149,8 +431,16 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     finishReason: effectiveStopReason,
     llmFirstTokenLatencyMs: response.streamTiming?.firstTokenLatencyMs,
     llmStreamDurationMs: response.streamTiming?.streamDurationMs,
+    llmRequestBuildMs: response.streamTiming?.requestBuildMs,
+    llmServerFirstTokenMs: response.streamTiming?.serverFirstTokenMs,
+    llmServerDecodeMs: response.streamTiming?.serverDecodeMs,
+    llmClientConsumeMs: response.streamTiming?.clientConsumeMs,
+    messageId: response.messageId,
+    traceId: response.traceId,
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
+
+  logStepTiming(log, turnId, currentStep, response);
 
   let stopTurnAfterStep = stopTurnAfterUsage;
   if (hooks?.afterStep !== undefined) {
@@ -173,7 +463,39 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     usage,
     stopReason:
       stopTurnAfterStep && effectiveStopReason === 'tool_use' ? 'end_turn' : effectiveStopReason,
+    mediaDegradedResendUsed,
+    mediaStrippedResendUsed,
   };
+}
+
+/**
+ * Emit a per-step completion log with the LLM response timing. TTFT is split
+ * into the client-side request-build portion and the network + API-server
+ * portion, and the decode window is split into server (awaiting parts) vs.
+ * client (processing parts) time, so slow turns can be attributed without
+ * parsing the wire log.
+ */
+function logStepTiming(
+  log: Logger | undefined,
+  turnId: string,
+  step: number,
+  response: LLMChatResponse,
+): void {
+  if (log === undefined) return;
+  const timing = response.streamTiming;
+  if (timing === undefined) return;
+  log.info('llm response', {
+    turnStep: `${turnId}/${String(step)}`,
+    ttftMs: timing.firstTokenLatencyMs,
+    ...(timing.requestBuildMs !== undefined ? { requestBuildMs: timing.requestBuildMs } : {}),
+    ...(timing.serverFirstTokenMs !== undefined
+      ? { serverFirstTokenMs: timing.serverFirstTokenMs }
+      : {}),
+    streamDurationMs: timing.streamDurationMs,
+    ...(timing.serverDecodeMs !== undefined ? { serverDecodeMs: timing.serverDecodeMs } : {}),
+    ...(timing.clientConsumeMs !== undefined ? { clientConsumeMs: timing.clientConsumeMs } : {}),
+    outputTokens: response.usage.output,
+  });
 }
 
 function deriveStepStopReason(response: LLMChatResponse): LoopStepStopReason {

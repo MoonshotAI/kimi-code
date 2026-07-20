@@ -13,6 +13,7 @@ import {
   GoogleGenAIStreamedMessage,
   messagesToGoogleGenAIContents,
 } from '#/providers/google-genai';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -50,6 +51,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -69,7 +71,7 @@ async function captureRequestBody(
     return Promise.resolve(makeGenerateContentResponse());
   });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -128,7 +130,87 @@ describe('GoogleGenAIChatProvider', () => {
 
       expect(body['contents']).toEqual([{ parts: [{ text: 'Hello!' }], role: 'user' }]);
       const config = body['config'] as Record<string, unknown>;
-      expect(config['system_instruction']).toBe('You are helpful.');
+      expect(config['systemInstruction']).toBe('You are helpful.');
+    });
+
+    it('serializes an explicitly empty ThinkPart as a Google thought part', async () => {
+      const provider = createProvider({ stream: false });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '', encrypted: 'thought-signature' }],
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['contents']).toEqual([
+        {
+          role: 'model',
+          parts: [{ text: '', thought: true, thoughtSignature: 'thought-signature' }],
+        },
+      ]);
+    });
+
+    it('maps json_schema response format to response config', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(config['responseMimeType']).toBe('application/json');
+      expect(config['responseJsonSchema']).toEqual(schema);
+    });
+
+    it('replaces native responseSchema when applying json_schema response format', async () => {
+      const provider = createProvider().withGenerationKwargs({
+        responseSchema: {
+          type: 'object',
+          properties: { old: { type: 'string' } },
+        },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(config['responseSchema']).toBeUndefined();
+      expect(config['responseJsonSchema']).toEqual(schema);
     });
 
     it('system messages in history are wrapped and emitted as user content', () => {
@@ -153,21 +235,20 @@ describe('GoogleGenAIChatProvider', () => {
 
       const contents = messagesToGoogleGenAIContents(messages);
 
-      expect(contents).toHaveLength(2);
-      const first = contents[0] as unknown as {
+      // The system turn is wrapped as a user turn, then merged with the
+      // following real user turn — Gemini/Vertex would reject the two
+      // consecutive user Contents the wrap would otherwise produce. The
+      // <system>…</system> tags keep the boundary legible within the merged
+      // turn.
+      expect(contents).toHaveLength(1);
+      const merged = contents[0] as unknown as {
         role: string;
         parts: Array<{ text?: string }>;
       };
-      expect(first.role).toBe('user');
-      expect(first.parts).toHaveLength(1);
-      expect(first.parts[0]!.text).toBe('<system>You are helpful.</system>');
-      // Original user turn is untouched.
-      const second = contents[1] as unknown as {
-        role: string;
-        parts: Array<{ text?: string }>;
-      };
-      expect(second.role).toBe('user');
-      expect(second.parts[0]!.text).toBe('Hi');
+      expect(merged.role).toBe('user');
+      expect(merged.parts).toHaveLength(2);
+      expect(merged.parts[0]!.text).toBe('<system>You are helpful.</system>');
+      expect(merged.parts[1]!.text).toBe('Hi');
       // No emitted content carries the unsupported "system" role.
       for (const c of contents) {
         expect((c as unknown as { role: string }).role).not.toBe('system');
@@ -212,7 +293,53 @@ describe('GoogleGenAIChatProvider', () => {
       ]);
     });
 
-    it('multi-turn conversation with system prompt sets system_instruction', async () => {
+    it('merges consecutive user messages into one Content (post-compaction shape)', () => {
+      // After compaction the history is `[kept user prompts, user-role summary,
+      // injected reminders]` — all role 'user'. Gemini/Vertex require strictly
+      // alternating user/model turns and reject consecutive user Contents, so
+      // the converter must collapse them into a single user Content.
+      const contents = messagesToGoogleGenAIContents([
+        { role: 'user', content: [{ type: 'text', text: 'Earlier prompt' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Conversation summary' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'A reminder' }], toolCalls: [] },
+      ]);
+
+      expect(contents).toEqual([
+        {
+          role: 'user',
+          parts: [
+            { text: 'Earlier prompt' },
+            { text: 'Conversation summary' },
+            { text: 'A reminder' },
+          ],
+        },
+      ]);
+    });
+
+    it('merges a trailing user turn into the preceding tool-result Content', () => {
+      // A user turn arriving right after a tool result (e.g. steering) would
+      // otherwise produce two consecutive user Contents (the function-response
+      // turn and the steer text), which Gemini/Vertex rejects.
+      const toolCall: ToolCall = {
+        type: 'function',
+        id: 'call_1',
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
+      };
+      const contents = messagesToGoogleGenAIContents([
+        { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
+        { role: 'assistant', content: [], toolCalls: [toolCall] },
+        { role: 'tool', content: [{ type: 'text', text: '5' }], toolCallId: 'call_1', toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'Now multiply' }], toolCalls: [] },
+      ]);
+
+      expect(contents.map((c) => c.role)).toEqual(['user', 'model', 'user']);
+      const last = contents.at(-1)!;
+      expect(last.parts.some((p) => p.functionResponse !== undefined)).toBe(true);
+      expect(last.parts.some((p) => p.text === 'Now multiply')).toBe(true);
+    });
+
+    it('multi-turn conversation with system prompt sets systemInstruction', async () => {
       const provider = createProvider();
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'What is 2+2?' }], toolCalls: [] },
@@ -228,10 +355,10 @@ describe('GoogleGenAIChatProvider', () => {
       ]);
 
       const config = body['config'] as Record<string, unknown>;
-      expect(config['system_instruction']).toBe('You are a math tutor.');
+      expect(config['systemInstruction']).toBe('You are a math tutor.');
     });
 
-    it('tool definitions use parameters_json_schema', async () => {
+    it('tool definitions use parametersJsonSchema', async () => {
       const provider = createProvider();
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -241,11 +368,11 @@ describe('GoogleGenAIChatProvider', () => {
       const config = body['config'] as Record<string, unknown>;
       expect(config['tools']).toEqual([
         {
-          function_declarations: [
+          functionDeclarations: [
             {
               name: 'add',
               description: 'Add two integers.',
-              parameters_json_schema: {
+              parametersJsonSchema: {
                 type: 'object',
                 properties: {
                   a: { type: 'integer', description: 'First number' },
@@ -257,11 +384,11 @@ describe('GoogleGenAIChatProvider', () => {
           ],
         },
         {
-          function_declarations: [
+          functionDeclarations: [
             {
               name: 'multiply',
               description: 'Multiply two integers.',
-              parameters_json_schema: {
+              parametersJsonSchema: {
                 type: 'object',
                 properties: {
                   a: { type: 'integer', description: 'First number' },
@@ -303,14 +430,14 @@ describe('GoogleGenAIChatProvider', () => {
         {
           parts: [
             { text: "I'll add those numbers for you." },
-            { function_call: { name: 'add', args: { a: 2, b: 3 } } },
+            { functionCall: { name: 'add', args: { a: 2, b: 3 } } },
           ],
           role: 'model',
         },
         {
           parts: [
             {
-              function_response: {
+              functionResponse: {
                 name: 'add',
                 response: { output: '5' },
                 parts: [],
@@ -322,11 +449,11 @@ describe('GoogleGenAIChatProvider', () => {
       ]);
     });
 
-    it('tool call with thought_signature_b64 emits thoughtSignature on outbound function_call', async () => {
+    it('tool call with thought_signature_b64 emits thoughtSignature on outbound functionCall', async () => {
       // Round-trip: a previous turn returned a tool call with thoughtSignature
       // (decoded into ToolCall.extras.thought_signature_b64). When we send
       // the assistant message back, the converter must put the original
-      // signature back into the function_call part so Gemini can resume the
+      // signature back into the functionCall part so Gemini can resume the
       // reasoning chain.
       const provider = createProvider();
       const history: Message[] = [
@@ -349,15 +476,15 @@ describe('GoogleGenAIChatProvider', () => {
       const contents = body['contents'] as Array<{ parts: unknown[]; role: string }>;
       const assistantParts = contents.find((c) => c.role === 'model')!.parts;
       const fnCallPart = assistantParts.find(
-        (p) => (p as Record<string, unknown>)['function_call'] !== undefined,
-      ) as { function_call: Record<string, unknown>; thought_signature?: unknown } | undefined;
+        (p) => (p as Record<string, unknown>)['functionCall'] !== undefined,
+      ) as { functionCall: Record<string, unknown>; thoughtSignature?: unknown } | undefined;
       expect(fnCallPart).toMatchObject({
-        function_call: { name: 'add', args: { a: 2, b: 3 } },
-        thought_signature: 'dGhvdWdodF9zaWduYXR1cmVfZGF0YQ==',
+        functionCall: { name: 'add', args: { a: 2, b: 3 } },
+        thoughtSignature: 'dGhvdWdodF9zaWduYXR1cmVfZGF0YQ==',
       });
     });
 
-    it('tool message with image_url result yields function_response + inline data part', () => {
+    it('tool message with image_url result yields functionResponse + inline data part', () => {
       const messages: Message[] = [
         {
           role: 'assistant',
@@ -392,11 +519,11 @@ describe('GoogleGenAIChatProvider', () => {
       expect(userContent.role).toBe('user');
       expect(userContent.parts.length).toBeGreaterThanOrEqual(2);
 
-      const fnResp = userContent.parts.find((p) => 'function_response' in p) as
-        | { function_response: { name: string; response: { output: string } } }
+      const fnResp = userContent.parts.find((p) => 'functionResponse' in p) as
+        | { functionResponse: { name: string; response: { output: string } } }
         | undefined;
       expect(fnResp).toMatchObject({
-        function_response: {
+        functionResponse: {
           name: 'fetch_image',
           response: { output: 'Found image:' },
         },
@@ -443,14 +570,14 @@ describe('GoogleGenAIChatProvider', () => {
         parts: Array<Record<string, unknown>>;
       };
       expect(userContent.role).toBe('user');
-      // function_response + audio + video
+      // functionResponse + audio + video
       expect(userContent.parts).toHaveLength(3);
 
-      const fnResp = userContent.parts.find((p) => 'function_response' in p) as
-        | { function_response: { response: { output: string } } }
+      const fnResp = userContent.parts.find((p) => 'functionResponse' in p) as
+        | { functionResponse: { response: { output: string } } }
         | undefined;
       expect(fnResp).toMatchObject({
-        function_response: { response: { output: 'Got audio and video:' } },
+        functionResponse: { response: { output: 'Got audio and video:' } },
       });
 
       const fileDataParts = userContent.parts.filter((p) => 'fileData' in p) as Array<{
@@ -536,7 +663,7 @@ describe('GoogleGenAIChatProvider', () => {
       const body = await captureRequestBody(provider, '', [ADD_TOOL, MUL_TOOL], history);
 
       // Snapshot of the expected wire format:
-      // - exactly 3 contents in order (user, model with 2 function_calls, user with 2 function_responses bundled)
+      // - exactly 3 contents in order (user, model with 2 functionCalls, user with 2 functionResponses bundled)
       // - both tool results are N:1 packed into ONE user Content
       // - text parts are concatenated into `response.output` (system-reminder + result)
       // - functionCall / functionResponse never include an `id` field
@@ -545,15 +672,15 @@ describe('GoogleGenAIChatProvider', () => {
         {
           parts: [
             { text: "I'll calculate both." },
-            { function_call: { name: 'add', args: { a: 2, b: 3 } } },
-            { function_call: { name: 'multiply', args: { a: 4, b: 5 } } },
+            { functionCall: { name: 'add', args: { a: 2, b: 3 } } },
+            { functionCall: { name: 'multiply', args: { a: 4, b: 5 } } },
           ],
           role: 'model',
         },
         {
           parts: [
             {
-              function_response: {
+              functionResponse: {
                 name: 'add',
                 response: {
                   output: '<system-reminder>This is a system reminder</system-reminder>5',
@@ -562,7 +689,7 @@ describe('GoogleGenAIChatProvider', () => {
               },
             },
             {
-              function_response: {
+              functionResponse: {
                 name: 'multiply',
                 response: {
                   output: '<system-reminder>This is a system reminder</system-reminder>20',
@@ -587,15 +714,15 @@ describe('GoogleGenAIChatProvider', () => {
 
       expect(body['contents']).toEqual([{ parts: [{ text: 'Hello!' }], role: 'user' }]);
       const config = body['config'] as Record<string, unknown>;
-      expect(config['system_instruction']).toBe('You are helpful.');
+      expect(config['systemInstruction']).toBe('You are helpful.');
     });
   });
 
   describe('generation kwargs', () => {
-    it('applies temperature and max_output_tokens', async () => {
+    it('applies temperature and maxOutputTokens', async () => {
       const provider = createProvider().withGenerationKwargs({
         temperature: 0.7,
-        max_output_tokens: 2048,
+        maxOutputTokens: 2048,
       });
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
@@ -604,10 +731,10 @@ describe('GoogleGenAIChatProvider', () => {
 
       const config = body['config'] as Record<string, unknown>;
       expect(config['temperature']).toBe(0.7);
-      expect(config['max_output_tokens']).toBe(2048);
+      expect(config['maxOutputTokens']).toBe(2048);
     });
 
-    it('withMaxCompletionTokens sets max_output_tokens on the cloned provider', async () => {
+    it('withMaxCompletionTokens sets maxOutputTokens on the cloned provider', async () => {
       const original = createProvider();
       const provider = original.withMaxCompletionTokens(1024);
       const history: Message[] = [
@@ -617,7 +744,8 @@ describe('GoogleGenAIChatProvider', () => {
 
       const config = body['config'] as Record<string, unknown>;
       expect(provider).not.toBe(original);
-      expect(config['max_output_tokens']).toBe(1024);
+      expect(config['maxOutputTokens']).toBe(1024);
+      expect(provider.maxCompletionTokens).toBe(1024);
     });
   });
 
@@ -625,15 +753,15 @@ describe('GoogleGenAIChatProvider', () => {
     // When a tool message arrives without a preceding assistant message
     // carrying the tool_call (e.g. after history compaction), the provider
     // falls back to parsing the name out of the tool_call_id. Google IDs
-    // produced by this provider have the shape "{tool_name}_{id_suffix}"
-    // where the suffix is a single non-underscored token, so stripping the
-    // first underscore truncates multi-word tool names such as
-    // `fetch_image_<id>` down to `fetch`.
+    // produced by this provider have the shape "{tool_name}_{upstream_id}_{entropy}"
+    // where `entropy` is a fixed 8-hex-char suffix and the upstream id is a
+    // non-underscored token, so stripping the first underscore would truncate
+    // multi-word tool names such as `fetch_image_<id>` down to `fetch`.
     function firstFunctionResponseName(history: Message[]): string | undefined {
       const contents = messagesToGoogleGenAIContents(history);
       for (const content of contents) {
         for (const part of content.parts) {
-          if (part.function_response) return part.function_response.name;
+          if (part.functionResponse) return part.functionResponse.name;
         }
       }
       return undefined;
@@ -686,10 +814,34 @@ describe('GoogleGenAIChatProvider', () => {
       ];
       expect(firstFunctionResponseName(history)).toBe('bareid');
     });
+
+    it('strips both the entropy suffix and the upstream id', () => {
+      const history: Message[] = [
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCallId: 'AgentSwarm_0_ab12cd34',
+          toolCalls: [],
+        },
+      ];
+      expect(firstFunctionResponseName(history)).toBe('AgentSwarm');
+    });
+
+    it('strips entropy and upstream id from multi-word tool names', () => {
+      const history: Message[] = [
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCallId: 'fetch_image_abc123_a1b2c3d4',
+          toolCalls: [],
+        },
+      ];
+      expect(firstFunctionResponseName(history)).toBe('fetch_image');
+    });
   });
 
-  describe('no id in function_call or function_response', () => {
-    it('does not include id in function_call or function_response parts', () => {
+  describe('no id in functionCall or functionResponse', () => {
+    it('does not include id in functionCall or functionResponse parts', () => {
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
         {
@@ -715,11 +867,11 @@ describe('GoogleGenAIChatProvider', () => {
 
       for (const content of contents) {
         for (const part of content.parts) {
-          if (part.function_call) {
-            expect(part.function_call).not.toHaveProperty('id');
+          if (part.functionCall) {
+            expect(part.functionCall).not.toHaveProperty('id');
           }
-          if (part.function_response) {
-            expect(part.function_response).not.toHaveProperty('id');
+          if (part.functionResponse) {
+            expect(part.functionResponse).not.toHaveProperty('id');
           }
         }
       }
@@ -727,7 +879,7 @@ describe('GoogleGenAIChatProvider', () => {
   });
 
   describe('with thinking', () => {
-    it('non-gemini-3 model uses thinking_budget', async () => {
+    it('non-gemini-3 model uses thinkingBudget', async () => {
       const provider = createProvider({ model: 'gemini-2.5-flash' }).withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
@@ -735,13 +887,13 @@ describe('GoogleGenAIChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       const config = body['config'] as Record<string, unknown>;
-      expect(config['thinking_config']).toEqual({
-        include_thoughts: true,
-        thinking_budget: 32_000,
+      expect(config['thinkingConfig']).toEqual({
+        includeThoughts: true,
+        thinkingBudget: 32_000,
       });
     });
 
-    it('gemini-3 model uses thinking_level', async () => {
+    it('gemini-3 model uses thinkingLevel', async () => {
       const provider = createProvider({ model: 'gemini-3-pro-preview' }).withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
@@ -749,9 +901,9 @@ describe('GoogleGenAIChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       const config = body['config'] as Record<string, unknown>;
-      expect(config['thinking_config']).toEqual({
-        include_thoughts: true,
-        thinking_level: 'HIGH',
+      expect(config['thinkingConfig']).toEqual({
+        includeThoughts: true,
+        thinkingLevel: 'HIGH',
       });
     });
 
@@ -763,9 +915,9 @@ describe('GoogleGenAIChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       const config = body['config'] as Record<string, unknown>;
-      expect(config['thinking_config']).toEqual({
-        include_thoughts: false,
-        thinking_budget: 0,
+      expect(config['thinkingConfig']).toEqual({
+        includeThoughts: false,
+        thinkingBudget: 0,
       });
     });
 
@@ -779,7 +931,7 @@ describe('GoogleGenAIChatProvider', () => {
         ];
         const body = await captureRequestBody(provider, '', [], history);
         const config = body['config'] as Record<string, unknown>;
-        return config['thinking_config'] as Record<string, unknown> | undefined;
+        return config['thinkingConfig'] as Record<string, unknown> | undefined;
       }
 
       it('off minimizes thinking and hides thoughts (not just default config)', async () => {
@@ -787,32 +939,32 @@ describe('GoogleGenAIChatProvider', () => {
         // Gemini 3 cannot be fully disabled, but we should request the lowest
         // available level (MINIMAL) and suppress thought output.
         expect(thinkingConfig).toEqual({
-          include_thoughts: false,
-          thinking_level: 'MINIMAL',
+          includeThoughts: false,
+          thinkingLevel: 'MINIMAL',
         });
       });
 
       it('low maps to LOW', async () => {
         const thinkingConfig = await captureThinkingConfig('low');
         expect(thinkingConfig).toEqual({
-          include_thoughts: true,
-          thinking_level: 'LOW',
+          includeThoughts: true,
+          thinkingLevel: 'LOW',
         });
       });
 
       it('medium maps to MEDIUM (not HIGH)', async () => {
         const thinkingConfig = await captureThinkingConfig('medium');
         expect(thinkingConfig).toEqual({
-          include_thoughts: true,
-          thinking_level: 'MEDIUM',
+          includeThoughts: true,
+          thinkingLevel: 'MEDIUM',
         });
       });
 
       it('high maps to HIGH', async () => {
         const thinkingConfig = await captureThinkingConfig('high');
         expect(thinkingConfig).toEqual({
-          include_thoughts: true,
-          thinking_level: 'HIGH',
+          includeThoughts: true,
+          thinkingLevel: 'HIGH',
         });
       });
     });
@@ -843,6 +995,72 @@ describe('GoogleGenAIChatProvider', () => {
     });
   });
 
+  describe('base URL forwarding', () => {
+    // The @google/genai SDK exposes the effective endpoint through its internal
+    // ApiClient. `getCustomBaseUrl()` returns exactly the `httpOptions.baseUrl`
+    // handed to the client, so it is the most direct signal that a configured
+    // base URL survived provider construction — the alternative being a silent
+    // fallback to generativelanguage.googleapis.com.
+    function customBaseUrl(provider: GoogleGenAIChatProvider): string | undefined {
+      const client = (
+        provider as unknown as {
+          _client: { apiClient: { getCustomBaseUrl(): string | undefined } };
+        }
+      )._client;
+      return client.apiClient.getCustomBaseUrl();
+    }
+
+    it('forwards baseUrl to the Google GenAI SDK client', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test-key',
+        baseUrl: 'https://qianxun.example/v1beta',
+      });
+      expect(customBaseUrl(provider)).toBe('https://qianxun.example/v1beta');
+    });
+
+    it('leaves the SDK default endpoint in place when no baseUrl is set', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test-key',
+      });
+      expect(customBaseUrl(provider)).toBeUndefined();
+    });
+
+    it('forwards baseUrl and defaultHeaders together without dropping either', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-2.5-flash',
+        apiKey: 'test-key',
+        baseUrl: 'https://qianxun.example/v1beta',
+        defaultHeaders: { 'User-Agent': 'kimi-code-cli/test' },
+      });
+      const client = (
+        provider as unknown as {
+          _client: {
+            apiClient: {
+              getCustomBaseUrl(): string | undefined;
+              getHeaders(): Record<string, string>;
+            };
+          };
+        }
+      )._client;
+      expect(client.apiClient.getCustomBaseUrl()).toBe('https://qianxun.example/v1beta');
+      expect(client.apiClient.getHeaders()).toMatchObject({
+        'User-Agent': 'kimi-code-cli/test',
+      });
+    });
+
+    it('forwards baseUrl in vertexai mode', () => {
+      const provider = new GoogleGenAIChatProvider({
+        model: 'gemini-1.5-pro',
+        apiKey: 'test-key',
+        vertexai: true,
+        baseUrl: 'https://qianxun.example/vertex',
+      });
+      expect(customBaseUrl(provider)).toBe('https://qianxun.example/vertex');
+    });
+  });
+
   describe('response parsing (non-stream)', () => {
     it('yields text from non-stream response', async () => {
       const provider = createProvider({ stream: false });
@@ -865,6 +1083,38 @@ describe('GoogleGenAIChatProvider', () => {
         inputCacheRead: 0,
         inputCacheCreation: 0,
       });
+    });
+
+    it('yields an empty ThinkPart from an explicitly empty thought part', async () => {
+      const provider = createProvider({ stream: false });
+      ((provider as any)._client.models as Record<string, unknown>)['generateContent'] = vi
+        .fn()
+        .mockResolvedValue({
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [
+                  { text: '', thought: true, thoughtSignature: 'thought-signature' },
+                  { functionCall: { name: 'lookup', args: {} } },
+                ],
+              },
+            },
+          ],
+        });
+
+      const stream = await provider.generate('', [], []);
+      const parts = await collectParts(stream);
+
+      expect(parts).toEqual([
+        { type: 'think', think: '', encrypted: 'thought-signature' },
+        {
+          type: 'function',
+          id: expect.stringMatching(/^lookup_/),
+          name: 'lookup',
+          arguments: '{}',
+        },
+      ]);
     });
   });
 
@@ -959,6 +1209,18 @@ describe('GoogleGenAIChatProvider', () => {
       ]);
     });
 
+    it('yields an empty ThinkPart from an explicitly empty thought part', async () => {
+      async function* mockStream() {
+        yield {
+          candidates: [{ content: { parts: [{ text: '', thought: true }] } }],
+        };
+      }
+
+      const msg = new GoogleGenAIStreamedMessage(mockStream(), true);
+
+      expect(await collectParts(msg)).toEqual([{ type: 'think', think: '' }]);
+    });
+
     it('yields function call from stream', async () => {
       async function* mockStream() {
         yield {
@@ -986,7 +1248,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'add_call_1',
+          id: expect.stringMatching(/^add_call_1_[0-9a-f]{8}$/),
           name: 'add', arguments: '{"a":2,"b":3}',
         },
       ]);
@@ -1016,7 +1278,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'search_fc_1',
+          id: expect.stringMatching(/^search_fc_1_[0-9a-f]{8}$/),
           name: 'search', arguments: '{"q":"test"}',
           extras: { thought_signature_b64: 'sig_abc123' },
         },

@@ -11,6 +11,8 @@ description: Use when generating changesets in the kimi-code repository, includi
 
 All other `@moonshot-ai/*` packages are treated as internal packages, including `@moonshot-ai/kimi-code-sdk`, `agent-core`, `kosong`, `kaos`, `kimi-code-oauth`, `kimi-telemetry`, and `migration-legacy`.
 
+`@moonshot-ai/pi-tui` is a special internal package: it is a private fork (`private: true`) that is never published, but it keeps its own changelog through changesets. It is an exception to Core Rule 4 — see the dedicated section below.
+
 ## Core Rules
 
 1. **Inspect the actual changes first.** Use `git status` / `git diff --name-only` to identify which packages were actually changed.
@@ -19,7 +21,7 @@ All other `@moonshot-ai/*` packages are treated as internal packages, including 
 4. **Internal package source changes that enter the CLI bundle must manually list the CLI.** `@moonshot-ai/kimi-code` inline-bundles `@moonshot-ai/*` source, but those internal packages are devDependencies from the CLI's perspective, so changesets will not automatically propagate bumps. If a change enters the CLI output, list `@moonshot-ai/kimi-code`.
    - **Web app (`@moonshot-ai/kimi-web`) changes always enter the CLI bundle.** `@moonshot-ai/kimi-web` is ignored by changesets (see `.changeset/config.json`) and cannot be mixed with `@moonshot-ai/kimi-code` in one changeset frontmatter. Describe the web change in the changelog text, but list `@moonshot-ai/kimi-code` so the CLI release carries the bundled `dist-web` output.
 5. **Docs-only and tests-only changes usually do not need a changeset.** README, internal docs, and `test/` changes that do not enter package output do not trigger a CLI bump.
-6. `@moonshot-ai/vis` / `vis-server` / `vis-web` are ignored by changesets and should not be handled.
+6. `@moonshot-ai/vis` / `vis-server` / `vis-web` are ignored by changesets and should not be handled. `@moonshot-ai/kimi-inspect` (a private dev app that never ships) is likewise ignored and must never appear in a changeset frontmatter.
 
 ## Workflow
 
@@ -145,7 +147,8 @@ Clarify session status typing for internal SDK callers.
 
 `@moonshot-ai/kimi-web` is ignored by changesets and must **never** appear in a changeset frontmatter. Because the web app is bundled into the CLI release artifact, any web change that ships must list `@moonshot-ai/kimi-code` instead and describe the actual web-facing change in the text.
 
-- If a PR contains both web UI changes and server API changes, split them into separate changesets so each entry has a focused description.
+- Prefix the changelog entry text with `web: ` (for example `web: Fix the chat not scrolling to the bottom after sending a message.`) so the synced docs changelog can mark web UI entries. Apply this whenever the change is to the web project (`@moonshot-ai/kimi-web`).
+- If a PR ships a web UI feature backed by server API changes that exist solely to power that feature, prefer a single `web:` entry describing what the web user gets. Do not add a separate server-API changeset unless the API has independent user value (a public endpoint that SDK or server consumers call directly). The docs changelog sync also deduplicates this pattern, but catching it here avoids duplicate changesets.
 - Do not enumerate every micro-tweak; keep it to one sentence that captures what the web user gets.
 
 Web-only fix:
@@ -155,25 +158,54 @@ Web-only fix:
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix the web chat not scrolling to the bottom after sending a message.
+web: Fix the chat not scrolling to the bottom after sending a message.
 ```
 
-Web UI plus server APIs in the same PR (split into two changesets):
+Web UI plus backing server APIs in the same PR (prefer a single `web:` entry; the API is plumbing):
 
 ```markdown
 ---
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add the server-hosted web UI, including chat layout and session list behaviors.
+web: Add the server-hosted web UI, including chat layout and session list behaviors.
+```
+
+Split into two changesets only when the API has independent user value on its own (for example, a public endpoint SDK consumers call directly). In that case add the web entry above plus a separate one such as `Add a public REST API to list archived sessions for SDK consumers.`
+
+## `@moonshot-ai/pi-tui` changes
+
+`@moonshot-ai/pi-tui` is a vendored fork that lives in `packages/pi-tui`. It is `private: true` and is never published, but it is **not** ignored by changesets: changesets versions it and writes `packages/pi-tui/CHANGELOG.md` so the fork keeps its own history. Because it is bundled into the CLI like other internal packages, it is an exception to Core Rule 4 — do **not** list `@moonshot-ai/kimi-code` for a change that only touches pi-tui.
+
+- Changes that only affect pi-tui (build, package, strict-mode cleanup, renderer fixes): list `@moonshot-ai/pi-tui` only. No CLI changeset.
+- If the same change is also user-visible in the CLI (for example a terminal rendering fix that CLI users can see), add a **separate** changeset that lists `@moonshot-ai/kimi-code` with CLI-focused wording, in addition to the pi-tui changeset. Do not mix both packages in one frontmatter — the two changelogs need different wording.
+
+pi-tui-only change:
+
+```markdown
+---
+"@moonshot-ai/pi-tui": patch
+---
+
+Export the package manifest so the bundled binary can locate its native assets.
+```
+
+pi-tui change that is also visible in the CLI (two separate changesets):
+
+```markdown
+---
+"@moonshot-ai/pi-tui": patch
+---
+
+Clamp the differential render to the visible viewport so scrolling up during streaming no longer jumps to the top.
 ```
 
 ```markdown
 ---
-"@moonshot-ai/kimi-code": minor
+"@moonshot-ai/kimi-code": patch
 ---
 
-Add the server REST and WebSocket APIs that power the web UI.
+Fix the transcript jumping to the top when scrolling up through history during streaming output.
 ```
 
 ## Red Flags
@@ -188,3 +220,6 @@ Add the server REST and WebSocket APIs that power the web UI.
 - The wording claims more than the diff actually did.
 - The CLI wording mentions internal package names, class names, or PR numbers.
 - The entry includes real internal identifiers instead of neutral placeholders.
+- A change that only touches `@moonshot-ai/pi-tui` lists `@moonshot-ai/kimi-code` instead of `@moonshot-ai/pi-tui`, or mixes both packages in one frontmatter.
+- A web app change entry is missing the `web: ` prefix.
+- A server/API changeset exists only to back a web feature that a `web:` changeset already describes (use one `web:` entry instead, unless the API has independent user value).

@@ -15,13 +15,23 @@
  * `for model_key, model in models.items()`.
  *
  * `thinkingSupported` is true if any of:
- *   1. the alias's declared `capabilities` array contains `'thinking'`, or
+ *   1. the alias's declared `capabilities` array contains `'thinking'`
+ *      (including the capability inferred from the Anthropic wire protocol —
+ *      see the `providerType` context below), or
  *   2. the underlying model name matches `/thinking|reason/i`
  *      (always-thinking variants), or
  *   3. the underlying model name is on the {@link TOGGLEABLE_THINKING_MODELS}
  *      allow-list (mirrors `kimi-cli/src/kimi_cli/llm.py:derive_model_capabilities`).
+ *
+ * The runtime resolves a model's wire protocol from
+ * `alias.protocol ?? provider.type` (see
+ * `ProviderManager.resolveProviderConfig`). The derive helpers below take the
+ * provider's `type` as an optional second argument so the catalog agrees with
+ * the runtime about Anthropic profiles even when the alias itself does not
+ * declare `protocol`.
  */
 
+import { effectiveModelAlias, type ProviderType } from '@moonshot-ai/agent-core';
 import type { KimiHarness, ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 /**
@@ -37,6 +47,13 @@ export interface AcpModelEntry {
   readonly thinkingSupported: boolean;
   /** Declared 'always_thinking' capability — thinking cannot be turned off. */
   readonly alwaysThinking?: boolean;
+  /**
+   * The thinking effort to send when the binary ACP toggle flips on: the
+   * model's declared `default_effort`, else the middle `support_efforts`
+   * entry, else `'on'` for boolean models. Mirrors agent-core's
+   * `defaultThinkingEffortFor` so the ACP on-state matches the TUI.
+   */
+  readonly defaultThinkingEffort: string;
 }
 
 /**
@@ -47,12 +64,13 @@ export interface AcpModelEntry {
  */
 const TOGGLEABLE_THINKING_MODELS = new Set(['kimi-for-coding', 'kimi-code']);
 
-export function deriveThinkingSupported(alias: ModelAlias): boolean {
-  const declared = alias.capabilities ?? [];
+export function deriveThinkingSupported(alias: ModelAlias, providerType?: ProviderType): boolean {
+  const effective = effectiveModelAlias(alias, providerType);
+  const declared = effective.capabilities ?? [];
   if (declared.includes('thinking') || declared.includes('always_thinking')) return true;
-  const lower = alias.model.toLowerCase();
+  const lower = effective.model.toLowerCase();
   if (lower.includes('thinking') || lower.includes('reason')) return true;
-  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return true;
+  if (TOGGLEABLE_THINKING_MODELS.has(effective.model)) return true;
   return false;
 }
 
@@ -63,8 +81,27 @@ export function deriveThinkingSupported(alias: ModelAlias): boolean {
  * `thinkingSupported`, but only an explicit (server-derived) declaration
  * may remove the off option from the client.
  */
-export function deriveAlwaysThinking(alias: ModelAlias): boolean {
-  return (alias.capabilities ?? []).includes('always_thinking');
+export function deriveAlwaysThinking(alias: ModelAlias, providerType?: ProviderType): boolean {
+  return (effectiveModelAlias(alias, providerType).capabilities ?? []).includes(
+    'always_thinking',
+  );
+}
+
+/**
+ * The effort a boolean "thinking on" toggle maps to for this model: declared
+ * `default_effort`, else the middle `support_efforts` entry, else `'on'` for
+ * boolean models (no `support_efforts`).
+ */
+export function deriveDefaultThinkingEffort(
+  alias: ModelAlias,
+  providerType?: ProviderType,
+): string {
+  const effective = effectiveModelAlias(alias, providerType);
+  const efforts = effective.supportEfforts;
+  if (efforts !== undefined && efforts.length > 0) {
+    return effective.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
+  }
+  return 'on';
 }
 
 /**
@@ -79,22 +116,49 @@ export async function listModelsFromHarness(
   harness: KimiHarness,
 ): Promise<readonly AcpModelEntry[]> {
   if (typeof harness.getConfig !== 'function') return [];
-  let models: Record<string, ModelAlias> | undefined;
+  let config: Awaited<ReturnType<KimiHarness['getConfig']>>;
   try {
-    const config = await harness.getConfig();
-    models = config.models;
+    config = await harness.getConfig();
   } catch {
     return [];
   }
+  const models = config.models;
   if (models === undefined) return [];
   const out: AcpModelEntry[] = [];
   for (const [id, alias] of Object.entries(models)) {
+    const providerType = providerTypeOf(alias, config);
+    const effective = effectiveModelAlias(alias, providerType);
     out.push({
       id,
-      name: alias.displayName ?? alias.model ?? id,
-      thinkingSupported: deriveThinkingSupported(alias),
-      alwaysThinking: deriveAlwaysThinking(alias),
+      name: effective.displayName ?? effective.model ?? id,
+      thinkingSupported: deriveThinkingSupported(alias, providerType),
+      alwaysThinking: deriveAlwaysThinking(alias, providerType),
+      defaultThinkingEffort: deriveDefaultThinkingEffort(alias, providerType),
     });
   }
   return out;
+}
+
+/**
+ * The alias's provider type, resolved like
+ * `ProviderManager.resolveProviderConfig` does: the alias's provider (falling
+ * back to the configured default provider). The Anthropic fallback profile in
+ * `effectiveModelAlias` only applies to non-Kimi providers, so a custom-named
+ * model on a `type = "anthropic"` provider still gets an inferred effort list
+ * while managed Kimi models keep only their catalog-declared efforts.
+ */
+function providerTypeOf(
+  alias: ModelAlias,
+  config: {
+    providers?: Record<string, { type?: ProviderType } | undefined>;
+    defaultProvider?: string | undefined;
+  },
+): ProviderType | undefined {
+  const providerName = alias.provider ?? config.defaultProvider;
+  const providerType =
+    providerName === undefined ? undefined : config.providers?.[providerName]?.type;
+  // Flat models (inline base_url, no named provider) have no provider entry to
+  // look up; their own protocol declaration plays the provider-identity role,
+  // mirroring the v2 ModelResolverService.
+  return providerType ?? alias.protocol;
 }

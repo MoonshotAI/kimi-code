@@ -8,12 +8,9 @@ to a local **server** over REST + WebSocket. Vue 3 + Vite + TypeScript.
 ## Quick start
 
 ```bash
-# 1) Against a REAL server (the server must be running and reachable)
+# Against a REAL server (the server must be running and reachable)
 WEB_PORT=5197 KIMI_SERVER_URL=http://192.168.97.91:58627 pnpm -C apps/kimi-web run dev
 #   …or from the repo root:  pnpm dev:web   (uses the defaults below)
-
-# 2) Offline / no server — a stub that fakes the server API + event stream
-pnpm -C apps/kimi-web run dev:stub      # then run dev in another shell
 
 # checks
 pnpm -C apps/kimi-web run typecheck     # vue-tsc --noEmit
@@ -99,7 +96,7 @@ web UI of the `kimi` CLI (`apps/kimi-code`).
 4. **Publish** — the root `.github/workflows/release.yml` publishes
    `@moonshot-ai/kimi-code` to npm; `dist-web` is listed in the package `files`
    array, so the built web assets travel with the CLI package.
-5. **Serve** — `kimi server run` / `kimi web` serves `dist-web` from the
+5. **Serve** — `kimi web` serves `dist-web` from the
    installed package.
 
 The web UI does not display its own package version or build commit. It is

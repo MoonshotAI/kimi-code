@@ -4,7 +4,7 @@ Kimi Code CLI runs as an interactive TUI (terminal user interface) built around 
 
 ## Input box basics
 
-The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / `Ctrl-J` to insert a newline. When the input box is empty, press `↑` / `↓` to browse the input history for the current working directory.
+The input box accepts free-form text. Press `Enter` to send, or `Shift-Enter` / `Ctrl-J` to insert a newline. When the input box is empty, press `↑` / `↓` to browse the input history for the current working directory, including previous shell commands.
 
 **Exiting the CLI**: press `Ctrl-D` with the input box empty, press `Ctrl-C` twice while idle, or type `/exit`. Pressing `Ctrl-C` or `Esc` during streaming output interrupts the current turn — it does not exit the program.
 
@@ -37,7 +37,7 @@ Type `@` to trigger file-path completion. Selecting a path inserts its relative 
 
 ## Approval flow
 
-When the agent calls a tool that has side effects — modifying files, running commands — the TUI displays an approval panel for your confirmation. Approvals are not triggered in YOLO mode, nor for writes to plan files in Plan mode.
+When the agent calls a tool that has side effects — modifying files, running commands — the TUI displays an approval panel for your confirmation. Approvals are not triggered for regular tool calls in YOLO mode, nor for writes to plan files in Plan mode.
 
 Use the arrow keys to select an option and press `Enter` to confirm, or press `1` / `2` / `3` to select by number directly. `Esc`, `Ctrl-C`, and `Ctrl-D` are all equivalent to rejecting.
 
@@ -52,13 +52,13 @@ In Plan mode the agent first outputs an action plan and waits for your approval 
 - Toggle: `Shift-Tab` or `/plan`
 - Clear the current plan: `/plan clear` (only while idle)
 
-After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode always requires your confirmation, even if YOLO mode is also active.
+After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode requires your confirmation even if YOLO mode is also active. Auto mode is the exception: plan exits are approved automatically and marked as "Auto-approved" in the transcript.
 
 ### YOLO / Auto mode
 
-**YOLO mode** (`/yolo`) skips the approval confirmation for almost all tool calls, making it suitable for batch tasks you know are safe. The one exception is the exit-confirmation for Plan mode.
+**YOLO mode** (`/yolo`) auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, or exiting Plan mode — and the agent can still ask you questions.
 
-**Auto mode** (`/auto`) is more restrained: tool approvals are handled automatically, but the agent does not ask the user clarifying questions — useful when you want unattended operation without fully disabling approvals.
+**Auto mode** (`/auto`) is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own.
 
 ::: warning
 YOLO mode skips confirmation for file writes and command execution. Only use it in working directories you trust.
@@ -71,6 +71,7 @@ Shell mode lets you run terminal commands without leaving the conversation. The 
 - Enter: type `!` in an empty input box, or paste a command that starts with `!`.
 - Exit: press `Backspace` or `Esc` in an empty input box; submitting a command also returns you to normal mode automatically.
 - Run in background: while a command is running, press `Ctrl+B` to move it to a background task.
+- Recall previous commands: with the input box empty in shell mode, press `↑` to browse earlier shell commands; recalling one keeps you in shell mode so it runs as a command again.
 
 In shell mode the input box shows a `!` prompt on the left and the border turns violet. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal, so Kimi can use `gh` afterward.
 
@@ -80,7 +81,7 @@ The input box remains usable while the agent is thinking or calling tools, and s
 
 - **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
-- **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output
+- **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
 
 ## External editor
 

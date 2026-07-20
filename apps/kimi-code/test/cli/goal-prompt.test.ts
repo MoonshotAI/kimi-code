@@ -46,6 +46,12 @@ describe('parseHeadlessGoalCreate', () => {
     expect(parseHeadlessGoalCreate('/goal status')).toBeUndefined();
     expect(parseHeadlessGoalCreate('/goal pause')).toBeUndefined();
   });
+
+  it('rejects malformed goal create prompts instead of falling through', () => {
+    expect(() => parseHeadlessGoalCreate(`/goal ${'x'.repeat(4001)}`)).toThrow(
+      'Goal objective is too long',
+    );
+  });
 });
 
 describe('goal summary', () => {
@@ -86,6 +92,7 @@ const mocks = vi.hoisted(() => {
     getStatus: vi.fn(async () => ({ permission: 'auto', model: 'k2' })),
     createGoal: vi.fn(async () => snapshot({ status: 'active' })),
     getGoal: vi.fn(async () => ({ goal: snapshot({ status: 'complete' }) })),
+    getCronTasks: vi.fn(async () => ({ tasks: [] })),
     onEvent: vi.fn((handler: (event: any) => void) => {
       eventHandlers.add(handler);
       return () => eventHandlers.delete(handler);
@@ -97,6 +104,7 @@ const mocks = vi.hoisted(() => {
         handler(mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
       }
     }),
+    waitForBackgroundTasksOnPrint: vi.fn(async () => {}),
   };
   return {
     session,
@@ -160,15 +168,24 @@ describe('runPrompt headless goal mode', () => {
   let savedExitCode: typeof process.exitCode;
 
   beforeEach(() => {
+    // Pin the experimental engine flag off so runPrompt stays on the v1 path
+    // this suite mocks, regardless of the host environment (matches
+    // run-prompt.test.ts). With the flag on, runPrompt dispatches to the
+    // native v2 runner, which ignores these mocks and hangs the test.
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     savedExitCode = process.exitCode;
     mocks.experimentalFeatures = [{ id: 'micro_compaction', enabled: true }];
     mocks.sessions = [];
     mocks.session.createGoal.mockClear();
+    mocks.session.prompt.mockClear();
+    mocks.session.waitForBackgroundTasksOnPrint.mockClear();
     mocks.session.getStatus.mockResolvedValue({ permission: 'auto', model: 'k2' } as never);
     mocks.session.getGoal.mockResolvedValue({ goal: snapshot({ status: 'complete' }) } as never);
+    mocks.session.getCronTasks.mockResolvedValue({ tasks: [] } as never);
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     process.exitCode = savedExitCode;
   });
 
@@ -241,6 +258,113 @@ describe('runPrompt headless goal mode', () => {
     });
     expect(mocks.session.createGoal).toHaveBeenCalled();
     expect(mocks.session.prompt).toHaveBeenCalledWith('Ship feature X');
+  });
+
+  it('keeps listening across continuation turns until the goal is terminal', async () => {
+    const active = snapshot({ status: 'active', turnsUsed: 1, tokensUsed: 80 });
+    const completed = snapshot({ status: 'complete', turnsUsed: 2, tokensUsed: 160 });
+    mocks.session.getGoal.mockResolvedValueOnce({ goal: active } as never);
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 1, delta: '1' }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      }
+      await Promise.resolve();
+      for (const handler of mocks.eventHandlers) {
+        handler(
+          mocks.mainEvent({
+            type: 'turn.started',
+            turnId: 2,
+            origin: { kind: 'system_trigger', name: 'goal_continuation' },
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'assistant.delta', turnId: 2, delta: '2' }));
+        handler(
+          mocks.mainEvent({
+            type: 'goal.updated',
+            snapshot: completed,
+            change: { kind: 'completion', status: 'complete' },
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), 'test', {
+      stdout,
+      stderr,
+      process: { once: () => {}, off: () => {}, exit: () => undefined as never },
+    });
+
+    expect(stdout.text()).toBe('• 1\n\n• 2\n\n');
+    expect(stderr.text()).toContain('Goal [complete]');
+    expect(stderr.text()).toContain('turns: 2');
+  });
+
+  it('ignores stale goal checks once a continuation turn has started', async () => {
+    const completed = snapshot({ status: 'complete', turnsUsed: 2, tokensUsed: 160 });
+    let resolveFirstGoal: ((value: { goal: null }) => void) | undefined;
+    const firstGoal = new Promise<{ goal: null }>((resolve) => {
+      resolveFirstGoal = resolve;
+    });
+    mocks.session.getGoal
+      .mockImplementationOnce(() => firstGoal as never)
+      .mockResolvedValue({ goal: null } as never);
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      const emit = (event: Record<string, unknown>) => {
+        for (const handler of [...mocks.eventHandlers]) {
+          handler(mocks.mainEvent(event));
+        }
+      };
+      emit({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+      emit({ type: 'assistant.delta', turnId: 1, delta: '1' });
+      emit({ type: 'turn.ended', turnId: 1, reason: 'completed' });
+      emit({
+        type: 'turn.started',
+        turnId: 2,
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+      });
+      emit({ type: 'assistant.delta', turnId: 2, delta: '2' });
+      emit({
+        type: 'goal.updated',
+        snapshot: completed,
+        change: { kind: 'completion', status: 'complete' },
+      });
+      resolveFirstGoal?.({ goal: null });
+      await Promise.resolve();
+      emit({ type: 'assistant.delta', turnId: 2, delta: ' tail' });
+      emit({ type: 'turn.ended', turnId: 2, reason: 'completed' });
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts(), 'test', {
+      stdout,
+      stderr,
+      process: { once: () => {}, off: () => {}, exit: () => undefined as never },
+    });
+
+    expect(stdout.text()).toBe('• 1\n\n• 2 tail\n\n');
+    expect(stderr.text()).toContain('Goal [complete]');
+  });
+
+  it('does not send an invalid goal create prompt as a normal prompt', async () => {
+    const stdout = writer();
+    const stderr = writer();
+
+    await expect(
+      runPrompt(opts({ prompt: `/goal ${'x'.repeat(4001)}` }), 'test', {
+        stdout,
+        stderr,
+        process: { once: () => {}, off: () => {}, exit: () => undefined as never },
+      }),
+    ).rejects.toThrow('Goal objective is too long');
+
+    expect(mocks.session.createGoal).not.toHaveBeenCalled();
+    expect(mocks.session.prompt).not.toHaveBeenCalled();
   });
 
   it('validates the resumed session model before creating a headless goal', async () => {

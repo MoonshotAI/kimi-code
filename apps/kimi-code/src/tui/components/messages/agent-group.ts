@@ -15,11 +15,12 @@
  * - Ungrouping is not implemented. Once formed, a group stays grouped.
  */
 
-import type { TUI } from '@earendil-works/pi-tui';
-import { Container, Spacer, Text } from '@earendil-works/pi-tui';
+import type { TUI } from '@moonshot-ai/pi-tui';
+import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
 
@@ -371,7 +372,5 @@ function formatElapsed(seconds: number): string {
 }
 
 function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k tok`;
-  return `${String(n)} tok`;
+  return `${formatTokenCount(n)} tok`;
 }

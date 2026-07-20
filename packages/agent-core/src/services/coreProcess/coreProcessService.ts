@@ -3,9 +3,11 @@
  */
 
 import { createRPC, KimiCore } from '../../rpc';
+import type { ImageLimits } from '../../tools/support/image-limits';
 import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
 import type { OAuthTokenProviderResolver } from '../../session/provider-manager';
+import { noopTelemetryClient, type TelemetryClient } from '../../telemetry';
 import {
   createKimiDefaultHeaders,
   type KimiHostIdentity,
@@ -18,6 +20,7 @@ import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
 import { ILogService } from '../logger/logger';
 import { IQuestionService } from '../question/question';
+import { IWorkspaceRegistry } from '../workspace/workspaceRegistry';
 import { ICoreProcessService, type CoreProcessServiceOptions } from './coreProcess';
 
 export class CoreProcessService extends Disposable implements ICoreProcessService {
@@ -30,6 +33,15 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
    * directly. After dispose, the proxy rejects on every method invocation.
    */
   public readonly rpc: CoreRPC;
+
+  public readonly kimiRequestHeaders: Record<string, string> | undefined;
+
+  public readonly telemetry: TelemetryClient;
+
+  /** The core's owner-scoped [image] limits; see ICoreProcessService. */
+  public get imageLimits(): ImageLimits {
+    return this._core.imageLimits;
+  }
 
   /**
    * The in-process `KimiCore` instance. Kept private so daemon-side code can't
@@ -58,6 +70,7 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     @IApprovalService approvalService: IApprovalService,
     @IQuestionService questionService: IQuestionService,
     @ILogService logService: ILogService,
+    @IWorkspaceRegistry workspaceRegistry: IWorkspaceRegistry,
   ) {
     super();
 
@@ -91,9 +104,10 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     // synthesize from `options.identity`. Hosts that pass neither
     // (no identity, no headers) still construct — but their requests will
     // trip the 40340 guard.
-    const kimiRequestHeaders: Record<string, string> | undefined =
+    this.kimiRequestHeaders =
       options.kimiRequestHeaders ??
       CoreProcessService._defaultKimiRequestHeaders(env.homeDir, options.identity);
+    this.telemetry = options.telemetry ?? noopTelemetryClient;
 
     // `appVersion` flows into Session records (`app_version`) and tool
     // call ctx. Prefer explicit > identity.version so callers can pin
@@ -101,15 +115,27 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
     const appVersion: string | undefined =
       options.appVersion ?? options.identity?.version;
 
+    // Default-wire the workspace-id resolver. Without it, KimiCore's session
+    // store mints a bucket hash from the workDir string as-is, so a case/slash
+    // variant of a registered Windows root splits sessions into a second
+    // bucket that the registered workspace cannot page. The registry's
+    // identity-aware lookup reuses the registered id. Caller-supplied
+    // `resolveWorkspaceId` always wins — same override contract as
+    // `resolveOAuthTokenProvider` above.
+    const resolveWorkspaceId =
+      options.resolveWorkspaceId ??
+      ((workDir: string) => workspaceRegistry.findWorkspaceIdByRoot(workDir));
+
     // 2. Construct the core. KimiCore's ctor wires itself into `coreRpc` and
     //    exposes `this.sdk: Promise<SDKRPC>` for the reverse direction.
     this._core = new KimiCore(coreRpc, {
       ...options,
       homeDir: env.homeDir,
       configPath: env.configPath,
-      kimiRequestHeaders,
+      kimiRequestHeaders: this.kimiRequestHeaders,
       appVersion,
       resolveOAuthTokenProvider,
+      resolveWorkspaceId,
     });
 
     // 3. Satisfy the SDK side with a BridgeClientAPI that routes to peer services.
@@ -229,7 +255,8 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
 
 // Self-register under the global singleton registry. Ctor signature is
 // `(options, @IEnvironmentService, @IEventService, @IApprovalService,
-//  @IQuestionService, @ILogService)` — the leading `options` slot is a pure data bag so we
+//  @IQuestionService, @ILogService, @IWorkspaceRegistry)` — the leading
+// `options` slot is a pure data bag so we
 // register with `[{}]` as a sane default. Daemon-side `start.ts` overrides
 // this descriptor via `services.set(ICoreProcessService, new
 // SyncDescriptor(CoreProcessService, [opts.coreProcessOptions ?? {}], false))`

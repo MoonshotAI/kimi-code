@@ -1,19 +1,23 @@
 <!-- apps/kimi-web/src/components/chat/ConversationPane.vue -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
-import type { SwarmGroup } from '../../composables/swarmGroups';
 import type { FileItem } from './MentionMenu.vue';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
-import SwarmCard from './SwarmCard.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
+import Icon from '../ui/Icon.vue';
+import Spinner from '../ui/Spinner.vue';
+import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -24,7 +28,6 @@ const props = defineProps<{
   /** Model-maintained todo list (TodoList tool) — shown as a floating card. */
   todos?: TodoView[];
   goal?: AppGoal | null;
-  swarms?: SwarmGroup[];
   activationBadges?: ActivationBadges;
   status: ConversationStatus;
   thinking?: ThinkingLevel;
@@ -32,7 +35,16 @@ const props = defineProps<{
   swarmMode?: boolean;
   goalMode?: boolean;
   questions?: UIQuestion[];
+  /** Question ids with an in-flight respond/dismiss (drives the card loading
+   *  state). Keyed by questionId with the action kind. */
+  pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
+  /** Approval ids with an in-flight respond (drives the card loading state). */
+  pendingApprovalActions?: Record<string, true>;
+  /** Session busy (any agent, incl. background work) — Stop/Escape affordances. */
   running?: boolean;
+  /** MAIN agent turn in flight — the conversation's streaming state (streaming
+   *  reveal, turn-end scroll settle). Background-only work does NOT set this. */
+  turnActive?: boolean;
   queued?: QueuedPromptView[];
   searchFiles?: (q: string) => Promise<FileItem[]>;
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
@@ -40,12 +52,15 @@ const props = defineProps<{
   changes?: { path: string; status: string }[];
   /** Cache-buster that remounts the chat pane when the active session changes. */
   fileReloadKey?: string | number;
-  sending?: boolean;
+  /** The main conversation has an unfinished prompt (submitted or a main turn
+   *  in flight) — the working moon. */
+  working?: boolean;
+  /** True while the empty-composer first prompt is being created + submitted.
+   *  Drives the empty-session "starting conversation…" loading state. */
+  starting?: boolean;
   fastMoon?: boolean;
   /** Mobile shell: compact chrome. */
   mobile?: boolean;
-  /** Bubble themes (Modern/Kimi): render chat bubbles at all widths (desktop included). */
-  modern?: boolean;
   /** True while switching sessions and the turns array is not yet loaded. */
   sessionLoading?: boolean;
   /** Live compaction state of the active session (non-null while running). */
@@ -78,13 +93,13 @@ const props = defineProps<{
   sessionTitle?: string;
   /** GitHub PR for the current branch, when known (shown in the chat header). */
   pr?: { number: number; state: string; url: string } | null;
-  /** Beta conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
-  betaToc?: boolean;
+  /** Conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
+  conversationToc?: boolean;
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string }];
   cancelTask: [taskId: string];
   answer: [questionId: string, response: QuestionResponse];
@@ -93,6 +108,7 @@ const emit = defineEmits<{
   interrupt: [];
   unqueue: [index: number];
   editQueued: [index: number];
+  reorderQueue: [payload: { from: number; to: number }];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
   togglePlan: [];
@@ -107,13 +123,13 @@ const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openThinking: [target: { turnId: string; blockIndex: number }];
   openCompaction: [target: { turnId: string }];
-  openAgent: [target: { turnId: string; blockIndex: number; memberId: string }];
+  openAgent: [toolCallId: string];
   openToolDiff: [id: string];
   /** Chat header / files pane: focus the diff detail layer and refresh git status. */
   openChanges: [];
   refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
-  editMessage: [text: string];
+  editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
@@ -126,6 +142,8 @@ const emit = defineEmits<{
   forkSession: [id: string];
   /** Chat header / session row: archive current session. */
   archiveSession: [id: string];
+  /** Chat header: export current session. */
+  exportSession: [id: string];
 }>();
 
 // Empty-composer workspace picker.
@@ -153,24 +171,10 @@ watch(wsPickOpen, (open) => {
   if (!open) wsPickExpanded.value = false;
 });
 
-/** Swarm cards are live progress indicators: keep the bottom stack only while
-    at least one member is still queued, working, or suspended. Once every
-    member has finished (completed or failed), the card is no longer useful as
-    a persistent footer and is removed from the stack. */
-const activeSwarms = computed<SwarmGroup[]>(() => {
-  return (
-    props.swarms?.filter((group) =>
-      group.members.some((member) => member.phase !== 'completed' && member.phase !== 'failed'),
-    ) ?? []
-  );
-});
-
 function pickWorkspace(id: string): void {
   wsPickOpen.value = false;
   if (id !== props.activeWorkspaceId) emit('selectWorkspace', id);
 }
-
-const { t } = useI18n();
 
 // The align toggle was removed with its UI (6e50cb7) — reading layout is
 // always centered now. Drop the old persisted preference so users who once
@@ -184,10 +188,24 @@ const copyConversationCopied = ref(false);
 const goalExpandSignal = ref(0);
 let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Load text into whichever composer is currently mounted (docked vs the
-    empty-session composer). Used by App for "edit & resend the last message". */
-function loadComposerForEdit(value: string): void {
-  (dockedComposerRef.value ?? emptyComposerRef.value)?.loadForEdit(value);
+/** Load text (and any attachments) into whichever composer is currently mounted
+    (docked vs the empty-session composer). Used by App for "edit & resend the
+    last message", and by the queue when a pending prompt is loaded for edit.
+    Returns false when no composer is actually able to receive the content (e.g.
+    the dock is showing a pending question/approval and the composer is hidden),
+    so the caller can avoid dropping the prompt. */
+function loadComposerForEdit(
+  value: string,
+  attachments?: TurnAttachment[],
+): boolean {
+  const composer = dockedComposerRef.value ?? emptyComposerRef.value;
+  if (!composer) return false;
+  // loadForEdit returns false when the dock's nested Composer is hidden; the
+  // empty composer's loadForEdit returns void (treat as success).
+  const ok = composer.loadForEdit(value);
+  if (ok === false) return false;
+  composer.loadAttachmentsForEdit(attachments ?? []);
+  return true;
 }
 
 function handleCopyConversationCopied(): void {
@@ -203,29 +221,45 @@ function focusGoal(): void {
   goalExpandSignal.value++;
 }
 
-function focusSwarm(): void {
-  void nextTick(() => {
-    const first = panesRef.value?.querySelector<HTMLElement>('.swarm-card');
-    first?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
-}
-
-const bubble = computed(() => props.mobile === true || props.modern === true);
-
 const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
-const subagentTasks = computed(() => props.tasks.filter((t) => t.kind === 'subagent'));
+// The dock lists only BACKGROUND subagents. Foreground subagents render inline
+// in the message flow as the `Agent` tool card, so showing them here too would
+// duplicate them (and foreground ones can't be cancelled from the dock anyway).
+const subagentTasks = computed(() =>
+  props.tasks.filter((t) => t.kind === 'subagent' && t.runInBackground),
+);
 const bashRunning = computed(() => bashTasks.value.filter((t) => t.state === 'run').length);
 const subagentRunning = computed(() => subagentTasks.value.filter((t) => t.state === 'run').length);
+
+// Let AgentTool cards know whether their spawning tool-call has a matching live
+// or background subagent task, so the "Open detail" button can be hidden when
+// the task is gone (e.g. a completed foreground subagent after a page refresh).
+function resolveAgentTaskId(toolCallId: string): string | undefined {
+  const tasks = props.tasks;
+  const task =
+    tasks.find((tk) => tk.id === toolCallId) ?? tasks.find((tk) => tk.parentToolCallId === toolCallId);
+  if (task) return task.id;
+  // A subagent task synthesized from a text delta (client subscribed after the
+  // spawn, so the lifecycle parentToolCallId was missed) has no parentToolCallId.
+  // When exactly one such unmapped subagent task exists, attribute it to this
+  // Agent tool call so the Open-detail button stays reachable.
+  const unmapped = tasks.filter((tk) => tk.kind === 'subagent' && !tk.parentToolCallId);
+  if (unmapped.length === 1) return unmapped[0]!.id;
+  return undefined;
+}
+provide('resolveAgentTaskId', resolveAgentTaskId);
+provide('pinScroll', pinScrollFor);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 const hasDockWork = computed(() =>
-  props.tasks.length > 0 ||
+  bashTasks.value.length > 0 ||
+  subagentTasks.value.length > 0 ||
   (props.todos?.length ?? 0) > 0 ||
   (props.queued?.length ?? 0) > 0,
 );
-const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'queue' | null>(null);
+const dockPanel = ref<'bash' | 'subagent' | 'todos' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
 
-function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'queue'): void {
+function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
 }
 
@@ -241,6 +275,7 @@ function tocTitle(turn: ChatTurn): string {
   if (turn.role === 'compaction') return t('conversation.compactedPlain');
   if (turn.role === 'user') {
     if (turn.skillActivation) return `/${turn.skillActivation.name}`;
+    if (turn.pluginCommand) return `/${turn.pluginCommand.pluginId}:${turn.pluginCommand.commandName}`;
     const text = turn.text.trim().replaceAll(/\s+/g, ' ');
     return text.length > 0 ? text : 'user';
   }
@@ -250,91 +285,119 @@ function tocTitle(turn: ChatTurn): string {
   return 'kimi';
 }
 
+// The TOC is keyed by user query: one entry per user turn, not per turn/block.
 const conversationTocItems = computed<ConversationTocItem[]>(() =>
-  props.turns.map((turn, index) => ({
-    id: turn.id,
-    role: turn.role,
-    no: turn.no || index + 1,
-    title: tocTitle(turn),
-  })),
-);
-
-function turnContentLength(turn: ChatTurn): number {
-  if (turn.role === 'compaction') return 20;
-  if (turn.role === 'user') {
-    return (turn.text?.length ?? 0) + (turn.skillActivation ? 20 : 0);
-  }
-  return (
-    (turn.text?.length ?? 0) +
-    (turn.thinking?.length ?? 0) +
-    (turn.tools?.reduce(
-      (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
-      0,
-    ) ?? 0)
-  );
-}
-
-const TOC_BUBBLE_MIN = 10;
-const TOC_BUBBLE_MAX = 56;
-const TOC_TRACK_HEIGHT = 420;
-
-const tocMetrics = computed<{ id: string; height: number }[]>(() => {
-  const items = conversationTocItems.value;
-  const lengths = items.map((item) => {
-    const turn = props.turns.find((t) => t.id === item.id);
-    return turn ? turnContentLength(turn) : TOC_BUBBLE_MIN;
-  });
-  const total = lengths.reduce((s, n) => s + n, 0) || items.length * TOC_BUBBLE_MIN;
-  return items.map((item, i) => {
-    const len = lengths[i] ?? TOC_BUBBLE_MIN;
-    const ratio = total > 0 ? len / total : 0;
-    const height = Math.max(TOC_BUBBLE_MIN, Math.min(TOC_BUBBLE_MAX, ratio * TOC_TRACK_HEIGHT));
-    return { id: item.id, height: Math.round(height) };
-  });
-});
-
-const tocTotalHeight = computed(() =>
-  tocMetrics.value.reduce((s, m) => s + m.height, 0) + (conversationTocItems.value.length - 1) * 4,
+  props.turns
+    .filter((turn) => turn.role === 'user')
+    .map((turn, index) => ({
+      id: turn.id,
+      role: turn.role,
+      no: index + 1,
+      title: tocTitle(turn),
+    })),
 );
 
 const activeTurnId = ref<string | null>(null);
-const tocViewport = ref<{ top: number; height: number } | null>(null);
 
-function updateTocViewport(): void {
+function updateActiveTocQuery(): void {
   const pane = panesRef.value;
   if (!pane) return;
   const anchors = pane.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id]');
   if (anchors.length === 0) return;
+  const items = conversationTocItems.value;
+  if (items.length === 0) return;
+  const userIds = new Set(items.map((item) => item.id));
+
+  // When pinned to the bottom (auto-follow / short content), the latest query is
+  // the active one even if its message sits below the pane's vertical middle —
+  // otherwise the highlight would lag one query behind at the bottom.
+  if (distanceFromBottom() <= BOTTOM_THRESHOLD) {
+    activeTurnId.value = items[items.length - 1]!.id;
+    return;
+  }
+
   const paneRect = pane.getBoundingClientRect();
   const paneMiddle = paneRect.height / 2;
+  // Otherwise the active highlight tracks the query that owns the current
+  // viewport: the last user-turn anchor at or above the middle.
   let bestId: string | null = null;
-  let bestDist = Infinity;
   anchors.forEach((el) => {
-    const rect = el.getBoundingClientRect();
-    const top = rect.top - paneRect.top;
-    const dist = Math.abs(top + rect.height / 2 - paneMiddle);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestId = el.dataset.turnId ?? null;
-    }
+    const id = el.dataset.turnId;
+    if (!id || !userIds.has(id)) return;
+    const top = el.getBoundingClientRect().top - paneRect.top;
+    if (top <= paneMiddle) bestId = id;
   });
-  activeTurnId.value = bestId;
+  activeTurnId.value = bestId ?? items[0]!.id;
+}
 
-  const maxScroll = pane.scrollHeight - pane.clientHeight;
-  const ratio = maxScroll > 0 ? pane.scrollTop / maxScroll : 0;
-  const total = tocTotalHeight.value;
-  const top = ratio * total;
-  const height = pane.scrollHeight > 0 ? (pane.clientHeight / pane.scrollHeight) * total : total;
-  tocViewport.value = {
-    top: Math.max(0, top),
-    height: Math.max(8, Math.min(height, total - top)),
-  };
+// --- TOC occlusion by wide tables -------------------------------------------
+// Wide markdown tables (up to --p-table-max) can extend past the TOC rail,
+// which stays anchored to the reading-column edge. While a table actually
+// covers the rail we hide the TOC temporarily so the table stays fully
+// interactive (clicks, text selection, horizontal scroll). The user's TOC
+// setting is untouched and the rail returns as soon as the table scrolls away.
+const tocOccludedByTable = ref(false);
+let tocHitTestRaf = 0;
+
+function scheduleTocTableHitTest(): void {
+  if (tocHitTestRaf) return;
+  tocHitTestRaf = raf(() => {
+    tocHitTestRaf = 0;
+    updateTocTableOcclusion();
+  });
+}
+
+function updateTocTableOcclusion(): void {
+  const pane = panesRef.value;
+  const toc =
+    !props.mobile && props.conversationToc && pane
+      ? pane.closest('.con')?.querySelector<HTMLElement>('.conversation-toc')
+      : null;
+  // The hit x is the centre of the fixed rail bar: `.toc-bar` keeps a stable x
+  // even when hover expands the labels rightward, so hovering the TOC itself
+  // never flips the state (the nav centre would).
+  const bar = toc?.querySelector<HTMLElement>('.toc-bar');
+  let covered = false;
+  if (pane && toc && bar) {
+    const barRect = bar.getBoundingClientRect();
+    const tocRect = toc.getBoundingClientRect();
+    const railX = barRect.left + barRect.width / 2;
+    // Plain geometric overlap: the rail paints above the content, so any table
+    // wrapper that covers the bar's x AND overlaps the rail vertically would
+    // have its pointer events intercepted by the rail — hide the TOC until the
+    // table scrolls away. Rect overlap is exact (no sampling gap) and ignores
+    // paint-order quirks. Only wrappers inside THIS pane count; other panes
+    // (side chat, preview) are outside `pane`.
+    covered = Array.from(
+      pane.querySelectorAll<HTMLElement>('.table-node-wrapper'),
+    ).some((wrapper) => {
+      const rect = wrapper.getBoundingClientRect();
+      return (
+        rect.left <= railX &&
+        railX <= rect.right &&
+        rect.top < tocRect.bottom &&
+        rect.bottom > tocRect.top
+      );
+    });
+  }
+  if (tocOccludedByTable.value !== covered) {
+    tocOccludedByTable.value = covered;
+  }
 }
 
 // The first pending question (if any)
 const pendingQuestion = computed<UIQuestion | undefined>(() =>
   props.questions && props.questions.length > 0 ? props.questions[0] : undefined,
 );
+
+// Action kind currently in flight for the visible question card, if any. Drives
+// the submit/dismiss loading state and disables the buttons while the daemon
+// processes the response.
+const questionBusyKind = computed<'answer' | 'dismiss' | undefined>(() => {
+  const q = pendingQuestion.value;
+  if (!q) return undefined;
+  return props.pendingQuestionActions?.[q.questionId];
+});
 
 // The first pending approval (if any). Rendered in the SAME bottom-dock slot as
 // the question (replacing the composer) so both "agent is blocked on you"
@@ -343,6 +406,14 @@ const pendingQuestion = computed<UIQuestion | undefined>(() =>
 const pendingApproval = computed(() =>
   props.approvals && props.approvals.length > 0 ? props.approvals[0] : undefined,
 );
+
+// True while the visible approval card has a respond in flight. Drives the
+// action buttons' loading/disabled state and blocks duplicate decisions.
+const approvalBusy = computed<boolean>(() => {
+  const a = pendingApproval.value;
+  if (!a) return false;
+  return !!props.pendingApprovalActions?.[a.approvalId];
+});
 
 // ---------------------------------------------------------------------------
 // Auto-scroll: "following" state machine + "new messages" pill
@@ -355,7 +426,11 @@ const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
-type ComposerHandle = { loadForEdit: (value: string) => void; focus: () => void };
+type ComposerHandle = {
+  loadForEdit: (value: string) => boolean | void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
+  focus: () => void;
+};
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
 function toHtmlEl(el: RefArg): HTMLElement | null {
@@ -386,6 +461,10 @@ function bindChatDock(el: RefArg): void {
   ) {
     dockedComposerRef.value = {
       loadForEdit: el.loadForEdit.bind(el),
+      loadAttachmentsForEdit:
+        'loadAttachmentsForEdit' in el && typeof el.loadAttachmentsForEdit === 'function'
+          ? el.loadAttachmentsForEdit.bind(el)
+          : () => {},
       focus: el.focus.bind(el),
     };
   } else {
@@ -415,6 +494,11 @@ function distanceFromBottom(): number {
 let lastScrollTop = 0;
 let userActionFollowUntil = 0;
 let lastSmoothScroll = 0;
+// While a smooth scroll is in flight, instant `scrollToBottom(false)` calls
+// (e.g. from the streaming follow) are skipped so they don't cancel the
+// animation — see scrollToBottom().
+let smoothScrollUntil = 0;
+const SMOOTH_SCROLL_GUARD_MS = 420;
 let stableFollowRaf = 0;
 let stableFollowToken = 0;
 
@@ -423,9 +507,15 @@ function hasUserActionFollowLock(): boolean {
 }
 
 function onPanesScroll(): void {
+  scheduleTocTableHitTest();
   const el = panesRef.value;
   if (!el) return;
   const top = el.scrollTop;
+
+  if (isPinned()) {
+    lastScrollTop = top;
+    return;
+  }
 
   if (performance.now() - lastSmoothScroll < 100) {
     lastScrollTop = top;
@@ -441,40 +531,95 @@ function onPanesScroll(): void {
   }
   if (top < lastScrollTop - 1 && dist > 1) {
     following.value = false;
+    showPill.value = true;
   } else if (dist <= BOTTOM_THRESHOLD && top > lastScrollTop + 1) {
     following.value = true;
     showPill.value = false;
   }
   lastScrollTop = top;
-  updateTocViewport();
+  updateActiveTocQuery();
 }
 
 function scrollToBottom(smooth = false): void {
   const el = panesRef.value;
+  following.value = true;
+  showPill.value = false;
   if (!el) return;
+  // A smooth scroll (e.g. right after sending a message) needs time to play;
+  // skip instant jumps during the guard window so the streaming follow doesn't
+  // immediately snap to the bottom and cancel the animation.
+  if (!smooth && performance.now() < smoothScrollUntil) return;
   if (smooth && typeof el.scrollTo === 'function') {
     lastSmoothScroll = performance.now();
+    smoothScrollUntil = performance.now() + SMOOTH_SCROLL_GUARD_MS;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   } else {
     el.scrollTop = el.scrollHeight;
   }
   lastScrollTop = el.scrollTop;
-  following.value = true;
-  showPill.value = false;
 }
 
-function findTopAnchor(
+type ScrollAnchor = { kind: 'turn' | 'tool'; id: string; top: number };
+
+function scrollAnchorTop(container: HTMLElement, node: HTMLElement): number {
+  // Tool calls inside a collapsed group still exist under an inert, clipped
+  // body. Anchor them to the visible group row so hidden content cannot create
+  // a fake layout delta while the stable tool id remains usable.
+  const inert = node.closest<HTMLElement>('[inert]');
+  const positionNode = inert?.closest<HTMLElement>('.tool-group') ?? node;
+  return (
+    positionNode.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop
+  );
+}
+
+function findTopAnchors(
   container: HTMLElement,
   scrollTop: number,
-): { id: string; top: number } | null {
-  const anchors = container.querySelectorAll<HTMLElement>('.turn-anchor');
-  for (const anchor of anchors) {
-    if (anchor.offsetTop >= scrollTop) {
-      const id = anchor.dataset.turnId;
-      if (id) return { id, top: anchor.offsetTop };
-    }
+): ScrollAnchor[] {
+  const anchors = Array.from(
+    container.querySelectorAll<HTMLElement>('.turn-anchor[data-turn-id], [data-scroll-anchor-id]'),
+  ).map((node) => ({ node, top: scrollAnchorTop(container, node) }));
+  const firstAfterTop = anchors.findIndex((anchor) => anchor.top >= scrollTop);
+  const start = firstAfterTop < 0 ? Math.max(0, anchors.length - 1) : firstAfterTop;
+  // The first id can be rebuilt when a page boundary splits an assistant turn;
+  // a nearby turn or tool call retains a stable fallback.
+  return anchors.slice(start, start + 2).flatMap((anchor) => {
+    const toolId = anchor.node.dataset.scrollAnchorId;
+    const id = toolId ?? anchor.node.dataset.turnId;
+    return id ? [{ kind: toolId ? 'tool' : 'turn', id, top: anchor.top }] : [];
+  });
+}
+
+type HistoryScrollSnapshot = {
+  anchors: ScrollAnchor[];
+  oldHeight: number;
+};
+
+const pendingHistoryRestoreBySession = new Map<string, HistoryScrollSnapshot>();
+
+function historyScrollDelta(container: HTMLElement, snapshot: HistoryScrollSnapshot): number {
+  for (const anchor of snapshot.anchors) {
+    const attr = anchor.kind === 'tool' ? 'data-scroll-anchor-id' : 'data-turn-id';
+    const newAnchor = container.querySelector<HTMLElement>(
+      `[${attr}="${attrEscape(anchor.id)}"]`,
+    );
+    if (newAnchor) return scrollAnchorTop(container, newAnchor) - anchor.top;
   }
-  return null;
+  // If the page boundary split an assistant/tool turn, messagesToTurns may
+  // rebuild that turn with a new id. Fall back to the overall height delta.
+  return container.scrollHeight - snapshot.oldHeight;
+}
+
+function restoreHistoryScroll(
+  container: HTMLElement,
+  snapshot: HistoryScrollSnapshot,
+  currentTop = container.scrollTop,
+): number {
+  container.scrollTop = currentTop + historyScrollDelta(container, snapshot);
+  lastScrollTop = container.scrollTop;
+  return container.scrollTop;
 }
 
 async function handleLoadOlderMessages(): Promise<void> {
@@ -482,6 +627,7 @@ async function handleLoadOlderMessages(): Promise<void> {
     !props.sessionId ||
     !props.loadOlderMessages ||
     props.loadingMore ||
+    historyLoadInProgress.value ||
     !props.hasMoreMessages
   ) {
     return;
@@ -489,41 +635,43 @@ async function handleLoadOlderMessages(): Promise<void> {
   const requestedSessionId = props.sessionId;
   const el = panesRef.value;
   const oldTop = el?.scrollTop ?? 0;
-  const oldHeight = el?.scrollHeight ?? 0;
-  const oldAnchor = el ? findTopAnchor(el, oldTop) : null;
+  const snapshot: HistoryScrollSnapshot = {
+    anchors: el ? findTopAnchors(el, oldTop) : [],
+    oldHeight: el?.scrollHeight ?? 0,
+  };
 
-  historyLoadInProgress.value = true;
+  setHistoryLoadInProgress(requestedSessionId, true);
+  cancelScheduledFollow();
   try {
+    // Flush the class that disables native scroll anchoring before Vue prepends
+    // history. The explicit delta restoration below owns this one mutation;
+    // native anchoring resumes afterwards for late Markdown/media layout shifts.
+    await nextTick();
     await props.loadOlderMessages(requestedSessionId);
     await nextTick();
-  } finally {
-    historyLoadInProgress.value = false;
-  }
 
-  // If the user switched sessions while the request was in flight, do not
-  // restore scroll position on the newly selected session's pane.
-  if (props.sessionId !== requestedSessionId) return;
-
-  const el2 = panesRef.value;
-  if (!el2) return;
-
-  // Restore scroll position using a stable anchor near the old viewport top.
-  // This isolates height inserted above the anchor and ignores any new bottom
-  // content (e.g. streaming assistant turns) that arrived during the request.
-  let delta = 0;
-  if (oldAnchor) {
-    const newAnchor = el2.querySelector<HTMLElement>(
-      `.turn-anchor[data-turn-id="${attrEscape(oldAnchor.id)}"]`,
-    );
-    if (newAnchor) {
-      delta = newAnchor.offsetTop - oldAnchor.top;
+    // If the user switched sessions while the request was in flight, do not
+    // restore the newly selected pane. Save the original anchor so the deferred
+    // per-session scroll state can be adjusted when this session mounts again.
+    if (props.sessionId !== requestedSessionId) {
+      pendingHistoryRestoreBySession.set(requestedSessionId, snapshot);
+      return;
     }
+
+    const el2 = panesRef.value;
+    if (!el2) return;
+
+    // Restore scroll position using a stable anchor near the old viewport top.
+    // This isolates height inserted above the anchor and ignores any new bottom
+    // content (e.g. streaming assistant turns) that arrived during the request.
+    // Apply the delta to the CURRENT scrollTop, not the pre-fetch oldTop: the
+    // user may have kept scrolling (e.g. trackpad momentum) while the request
+    // was in flight, and snapping back to oldTop would yank the viewport down.
+    restoreHistoryScroll(el2, snapshot);
+    pendingHistoryRestoreBySession.delete(requestedSessionId);
+  } finally {
+    setHistoryLoadInProgress(requestedSessionId, false);
   }
-  // If the page boundary split an assistant/tool turn, messagesToTurns may
-  // rebuild that turn with a new id. Fall back to the overall height delta so
-  // the viewport does not jump into the inserted history.
-  if (delta === 0) delta = el2.scrollHeight - oldHeight;
-  el2.scrollTop = oldTop + delta;
 }
 
 function attrEscape(value: string): string {
@@ -536,6 +684,7 @@ function scrollToTurn(turnId: string): void {
   if (!el) return;
   const target = el.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
   if (!target) return;
+  cancelActiveScrollWrites();
   following.value = false;
   showPill.value = distanceFromBottom() > BOTTOM_THRESHOLD;
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -559,6 +708,42 @@ function raf(cb: () => void): number {
 function cancelRaf(id: number): void {
   if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(id);
   else clearTimeout(id);
+}
+
+// --- Scroll anchoring for expand/collapse interactions ----------------------
+// Toggling a tool row/group grows or shrinks its body, which would otherwise move
+// the viewport: a collapse near the bottom shrinks scrollHeight and lets the
+// browser clamp scrollTop, and the auto-follow may snap to the tail. While the
+// transition runs we pin the toggled row's viewport position and suppress the
+// auto-follow, so the row stays put and only its body opens downward / collapses
+// upward.
+let pinUntil = 0;
+let pinRaf = 0;
+let pinEl: HTMLElement | null = null;
+let pinTargetTop = 0;
+
+function isPinned(): boolean {
+  return performance.now() < pinUntil;
+}
+
+function pinScrollFor(el: HTMLElement, ms = 260): void {
+  const panes = panesRef.value;
+  if (!panes) return;
+  pinEl = el;
+  pinTargetTop = el.getBoundingClientRect().top;
+  pinUntil = performance.now() + ms;
+  if (pinRaf) return;
+  const tick = () => {
+    pinRaf = 0;
+    if (performance.now() >= pinUntil || !pinEl) {
+      pinEl = null;
+      return;
+    }
+    const delta = pinEl.getBoundingClientRect().top - pinTargetTop;
+    if (delta) panes.scrollTop += delta;
+    pinRaf = raf(tick);
+  };
+  pinRaf = raf(tick);
 }
 
 function scheduleStableFollow(maxFrames = 36): void {
@@ -638,13 +823,17 @@ watch(scrollKey, async (next, prev) => {
   // Prepending older history changes this key; suppress only that exact case so
   // concurrent bottom appends still raise the new-message pill.
   if (historyLoadInProgress.value && isHistoryPrependOnly(prev, next)) {
-    updateTocViewport();
+    updateActiveTocQuery();
     return;
   }
   await nextTick();
-  if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
-  else showPill.value = true;
-  updateTocViewport();
+  if (following.value || hasUserActionFollowLock()) {
+    // A rewind (undo / compaction) shortens the transcript — glide to the new
+    // bottom smoothly; growth (new turns / streaming) snaps instantly so the
+    // follow keeps up with the tail.
+    scrollToBottom(next.length < prev.length);
+  } else showPill.value = true;
+  updateActiveTocQuery();
 });
 
 watch(dockRef, () => {
@@ -673,13 +862,20 @@ watch(
     if (oldKey && el) {
       scrollStateBySession.set(String(oldKey), { top: el.scrollTop, following: following.value });
     }
+    cancelActiveScrollWrites();
     await nextTick();
     const el2 = panesRef.value;
     const saved = newKey ? scrollStateBySession.get(String(newKey)) : undefined;
     if (saved && el2) {
+      const pendingRestore = pendingHistoryRestoreBySession.get(String(newKey));
+      const top = pendingRestore
+        ? restoreHistoryScroll(el2, pendingRestore, saved.top)
+        : saved.top;
+      if (pendingRestore) pendingHistoryRestoreBySession.delete(String(newKey));
       following.value = saved.following;
-      el2.scrollTop = saved.top;
-      lastScrollTop = saved.top;
+      el2.scrollTop = top;
+      lastScrollTop = el2.scrollTop;
+      showPill.value = !saved.following && distanceFromBottom() > 1;
       if (saved.following) {
         scheduleStableFollow();
       }
@@ -689,7 +885,7 @@ watch(
       scrollToBottom(false);
       scheduleStableFollow();
     }
-    updateTocViewport();
+    updateActiveTocQuery();
   },
 );
 
@@ -700,18 +896,20 @@ watch(
     following.value = true;
     await nextTick();
     scheduleStableFollow();
-    updateTocViewport();
+    updateActiveTocQuery();
   },
 );
 
 watch(
-  () => props.running,
+  // Settle the scroll-follow when the conversation's turn finishes (not when
+  // background-only work ends — the transcript didn't move then).
+  () => props.turnActive,
   async (now, was) => {
     if (now || !was) return;
     if (!following.value && !hasUserActionFollowLock()) return;
     await nextTick();
     scheduleStableFollow(48);
-    updateTocViewport();
+    updateActiveTocQuery();
   },
 );
 
@@ -720,14 +918,45 @@ function followAfterUserAction(): void {
   showPill.value = false;
   userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
   void nextTick(() => {
-    scrollToBottom(false);
+    scrollToBottom(true);
     scheduleStableFollow(16);
   });
 }
 
-function handleComposerSubmit(payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }): void {
+function handleComposerSubmit(payload: { text: string; attachments: PromptAttachment[] }): void {
   followAfterUserAction();
   emit('submit', payload);
+}
+
+// Undo ("edit & resend") rewinds the transcript asynchronously — the server
+// round-trip in App.vue's handleEditMessage truncates the turns after this emit
+// returns. Scrolling here would target the pre-rewind bottom and fight the
+// bubble-exit animation, so we only arm the follow state; the scrollKey watcher
+// smooth-scrolls once the truncated turns actually land.
+function handleEditMessage(payload: {
+  text: string;
+  attachments?: TurnAttachment[];
+}): void {
+  following.value = true;
+  showPill.value = false;
+  userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
+  emit('editMessage', payload);
+}
+
+// A queued message was clicked for editing: load its text (and any attachments)
+// back into the active composer, then let the parent dequeue it (mirrors the old
+// dock-queue flow). Only dequeue when the load actually succeeds — if the dock is
+// showing a pending question/approval the composer is hidden and the load no-ops,
+// so dequeuing would drop the prompt instead of making it editable.
+function handleEditQueued(index: number): void {
+  const item = props.queued?.[index];
+  const text = item?.text ?? '';
+  const loaded = loadComposerForEdit(text, item?.attachments);
+  if (loaded) emit('editQueued', index);
+}
+
+function handleReorderQueue(payload: { from: number; to: number }): void {
+  emit('reorderQueue', payload);
 }
 
 function handleQuestionAnswer(qid: string, resp: QuestionResponse): void {
@@ -747,24 +976,131 @@ let contentObserver: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let observedContent: Element | null = null;
 let observedDock: HTMLElement | null = null;
+let lastObservedScrollHeight = 0;
+let lastObservedClientHeight = 0;
 let scrollRaf = 0;
-let pillEligible = false;
-const historyLoadInProgress = ref(false);
+const historyLoadingSessions = ref<ReadonlySet<string>>(new Set());
+const historyLoadInProgress = computed(
+  () => !!props.sessionId && historyLoadingSessions.value.has(props.sessionId),
+);
 
-function scheduleFollow(allowPill: boolean): void {
-  // Prepending older history changes turns.length but is not new bottom content;
-  // suppress the "new messages" pill until the scroll position is restored.
+function setHistoryLoadInProgress(sessionId: string, inProgress: boolean): void {
+  const next = new Set(historyLoadingSessions.value);
+  if (inProgress) next.add(sessionId);
+  else next.delete(sessionId);
+  historyLoadingSessions.value = next;
+}
+
+function scheduleFollow(): void {
   if (historyLoadInProgress.value) return;
-  pillEligible = pillEligible || allowPill;
   if (scrollRaf) return;
-  const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
-  scrollRaf = schedule(() => {
+  scrollRaf = raf(() => {
     scrollRaf = 0;
-    const wantPill = pillEligible;
-    pillEligible = false;
+    if (historyLoadInProgress.value) return;
+    if (isPinned()) return;
     if (following.value || hasUserActionFollowLock()) scrollToBottom(false);
-    else if (wantPill) showPill.value = true;
-  }) as unknown as number;
+  });
+}
+
+function cancelScheduledFollow(): void {
+  stableFollowToken++;
+  if (stableFollowRaf) {
+    cancelRaf(stableFollowRaf);
+    stableFollowRaf = 0;
+  }
+  if (scrollRaf) {
+    cancelRaf(scrollRaf);
+    scrollRaf = 0;
+  }
+}
+
+function cancelActiveScrollWrites(): void {
+  const el = panesRef.value;
+
+  userActionFollowUntil = 0;
+  cancelScheduledFollow();
+  pinUntil = 0;
+  pinEl = null;
+
+  if (el) {
+    const top = el.scrollTop;
+    if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'auto' });
+    else el.scrollTop = top;
+  }
+  smoothScrollUntil = 0;
+  lastSmoothScroll = Number.NEGATIVE_INFINITY;
+  if (el) lastScrollTop = el.scrollTop;
+}
+
+// Wheel, touch, and scrollbar input arrive before the browser dispatches
+// `scroll`. Stop queued writers before they can overwrite the user's movement.
+function stopFollowingForUserIntent(): void {
+  const el = panesRef.value;
+  if (!el || (el.scrollHeight - el.clientHeight <= 1 && !props.hasMoreMessages)) return;
+
+  following.value = false;
+  cancelActiveScrollWrites();
+  if (el.scrollHeight - el.clientHeight > 1) showPill.value = true;
+}
+
+function nestedScrollerCanMoveUp(event: Event): boolean {
+  const pane = panesRef.value;
+  if (!pane) return false;
+  for (const target of event.composedPath()) {
+    if (target === pane) return false;
+    if (
+      target instanceof HTMLElement &&
+      target.scrollHeight > target.clientHeight + 1 &&
+      target.scrollTop > 1
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function onPanesWheel(event: WheelEvent): void {
+  if (
+    event.defaultPrevented ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.deltaY >= 0 ||
+    nestedScrollerCanMoveUp(event)
+  ) {
+    return;
+  }
+  stopFollowingForUserIntent();
+}
+
+function onPanesPointerDown(event: PointerEvent): void {
+  const el = panesRef.value;
+  if (!el || event.defaultPrevented || event.button !== 0 || event.pointerType === 'touch') return;
+  const rect = el.getBoundingClientRect();
+  const gutterWidth = el.offsetWidth - el.clientWidth;
+  const hitWidth = gutterWidth > 0 ? gutterWidth : 12;
+  if (event.target === el && event.clientX >= rect.right - hitWidth) {
+    stopFollowingForUserIntent();
+  }
+}
+
+let lastTouchY: number | null = null;
+
+function onPanesTouchStart(event: TouchEvent): void {
+  lastTouchY = event.touches.length === 1 ? event.touches[0]!.clientY : null;
+}
+
+function onPanesTouchMove(event: TouchEvent): void {
+  const y = event.touches.length === 1 ? event.touches[0]!.clientY : null;
+  // The finger moving down means the scroll container is moving up.
+  if (
+    y !== null &&
+    lastTouchY !== null &&
+    y > lastTouchY + 2 &&
+    !nestedScrollerCanMoveUp(event)
+  ) {
+    stopFollowingForUserIntent();
+  }
+  lastTouchY = y;
 }
 
 function ensureContentObserved(): void {
@@ -800,11 +1136,15 @@ function rebindScrollObservers(): void {
     ensureContentObserved();
     ensureDockObserved();
   }
+  lastObservedScrollHeight = el?.scrollHeight ?? 0;
+  lastObservedClientHeight = el?.clientHeight ?? 0;
+  scheduleTocTableHitTest();
 }
 
 function onContentMutated(): void {
   ensureContentObserved();
-  scheduleFollow(true);
+  scheduleFollow();
+  scheduleTocTableHitTest();
 }
 
 function onVisibilityChange(): void {
@@ -835,10 +1175,18 @@ function handleInterrupt(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (props.running || props.sending)) {
+  if (event.key === 'Escape' && (props.running || props.working)) {
     event.preventDefault();
     handleInterrupt();
   }
+}
+
+// When the on-screen keyboard opens, browsers without interactive-widget support
+// fire a visualViewport resize instead of shrinking the layout viewport. Re-follow
+// the tail so the latest turn stays visible above the keyboard. No-op while the
+// user has manually scrolled away (following === false).
+function onVisualViewportResize(): void {
+  if (following.value) scheduleFollow();
 }
 
 onMounted(() => {
@@ -848,25 +1196,41 @@ onMounted(() => {
     }
     if (typeof ResizeObserver === 'function') {
       resizeObserver = new ResizeObserver(() => {
+        scheduleTocTableHitTest();
         updatePanesScrollbarWidth();
-        scheduleFollow(false);
+        const el = panesRef.value;
+        if (!el) return;
+        const { scrollHeight, clientHeight } = el;
+        const grew = scrollHeight > lastObservedScrollHeight + 1;
+        const viewportShrank = clientHeight < lastObservedClientHeight - 1;
+        lastObservedScrollHeight = scrollHeight;
+        lastObservedClientHeight = clientHeight;
+        // Follow the tail on genuine growth (new turns, streaming, or late-loading
+        // media that gain height after scrollKey has already run) or a shrinking
+        // viewport (composer dock growing and hiding the last message). While a tool
+        // row/group is being toggled (the pinned window) suppress follow entirely,
+        // so the row opens downward / collapses upward without moving the viewport.
+        if (!isPinned() && (grew || viewportShrank)) scheduleFollow();
       });
     }
     rebindScrollObservers();
     scheduleStableFollow(48);
-    updateTocViewport();
+    updateActiveTocQuery();
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
     }
+    window.visualViewport?.addEventListener('resize', onVisualViewportResize);
   });
 });
 
 onUnmounted(() => {
   if (contentObserver) contentObserver.disconnect();
   if (resizeObserver) resizeObserver.disconnect();
-  if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf);
+  if (scrollRaf) cancelRaf(scrollRaf);
   if (stableFollowRaf) cancelRaf(stableFollowRaf);
+  if (pinRaf) cancelRaf(pinRaf);
+  if (tocHitTestRaf) cancelRaf(tocHitTestRaf);
   if (abortToastTimer !== null) clearTimeout(abortToastTimer);
   if (copyConversationCopiedTimer !== null) {
     clearTimeout(copyConversationCopiedTimer);
@@ -876,6 +1240,7 @@ onUnmounted(() => {
     document.removeEventListener('visibilitychange', onVisibilityChange);
     document.removeEventListener('keydown', onKeyDown);
   }
+  window.visualViewport?.removeEventListener('resize', onVisualViewportResize);
 });
 
 function focusComposer(): void {
@@ -910,17 +1275,18 @@ defineExpose({ loadComposerForEdit, focusComposer });
       @rename-session="(id, title) => emit('renameSession', id, title)"
       @fork-session="(id) => emit('forkSession', id)"
       @archive-session="(id) => emit('archiveSession', id)"
+      @export-session="(id) => emit('exportSession', id)"
     />
 
-    <!-- Beta conversation outline: right edge, proportional bubbles, viewport indicator, hover tooltip. -->
+    <!-- Conversation outline: right edge rail of vertical bars (one per user
+         query); hover to expand a labeled panel. -->
     <ConversationToc
-      v-if="betaToc"
+      v-if="conversationToc"
       :items="conversationTocItems"
-      :metrics="tocMetrics"
       :active-turn-id="activeTurnId"
-      :viewport="tocViewport"
       :mobile="mobile"
       :session-loading="sessionLoading"
+      :occluded="tocOccludedByTable"
       @select="scrollToTurn"
     />
 
@@ -928,27 +1294,36 @@ defineExpose({ loadComposerForEdit, focusComposer });
       <div
         :ref="bindChatPane"
         class="panes chat-scroll"
+        :class="{
+          'is-following': following,
+          'history-prepending': historyLoadInProgress,
+        }"
         @scroll.passive="onPanesScroll"
+        @wheel.passive="onPanesWheel"
+        @pointerdown.passive="onPanesPointerDown"
+        @touchstart.passive="onPanesTouchStart"
+        @touchmove.passive="onPanesTouchMove"
       >
         <div class="content-wrap" :class="[mobile ? 'align-mobile' : 'align-center']">
           <template v-if="turns.length === 0 && !sessionLoading">
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
             <div class="empty-hint">
-              <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
-              <span class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
-              <!-- Workspace picker: choose where this new conversation starts. -->
-              <div v-if="hasWorkspaces" class="ws-pick">
-                <button type="button" class="ws-pick-btn" :title="t('conversation.switchWorkspace')" @click.stop="wsPickOpen = !wsPickOpen">
-                  <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
-                    <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-                    <path d="M1 5.5h12"/>
-                  </svg>
-                  <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
-                  <svg class="ws-pick-chev" :class="{ open: wsPickOpen }" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="4,6 8,10 12,6" />
-                  </svg>
-                </button>
+              <span class="empty-hint-title" :class="{ 'is-starting': starting }">
+                <Spinner v-if="starting" size="sm" />
+                <span>{{ starting ? t('conversation.starting') : t('composer.emptyConversationTitle') }}</span>
+              </span>
+              <span v-if="!starting" class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
+              <!-- Workspace picker: choose where this new conversation starts.
+                   Hidden while starting — a workspace is already committed. -->
+              <div v-if="hasWorkspaces && !starting" class="ws-pick">
+                <Tooltip :text="t('conversation.switchWorkspace')">
+                  <button type="button" class="ws-pick-btn" @click.stop="wsPickOpen = !wsPickOpen">
+                    <Icon name="folder" size="sm" />
+                    <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
+                    <Icon class="ws-pick-chev" :class="{ open: wsPickOpen }" name="chevron-down" size="sm" />
+                  </button>
+                </Tooltip>
                 <div v-if="wsPickOpen" class="ws-pick-backdrop" @click="wsPickOpen = false" />
                 <div v-if="wsPickOpen" class="ws-pick-menu">
                   <button
@@ -976,24 +1351,18 @@ defineExpose({ loadComposerForEdit, focusComposer });
                     class="ws-pick-action"
                     @click.stop="wsPickOpen = false; emit('addWorkspace')"
                   >
-                    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-                      <path d="M8 3v10M3 8h10"/>
-                    </svg>
+                    <Icon name="plus" size="sm" />
                     <span>{{ t('conversation.addWorkspace') }}</span>
                   </button>
                 </div>
               </div>
               <button
-                v-else
+                v-else-if="!starting"
                 type="button"
                 class="empty-add-workspace"
                 @click="emit('addWorkspace')"
               >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-                  <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-                  <path d="M1 5.5h12"/>
-                  <path d="M8 7.25v4.5M5.75 9.5h4.5"/>
-                </svg>
+                <Icon name="folder-plus" size="sm" />
                 <span>{{ t('conversation.addWorkspace') }}</span>
               </button>
             </div>
@@ -1010,10 +1379,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :plan-mode="planMode"
               :swarm-mode="swarmMode"
               :goal-mode="goalMode"
+              :goal="goal"
               :activation-badges="activationBadges"
               :models="models"
               :starred-ids="starredIds"
               :skills="skills"
+              :starting="starting"
               hide-context
               @submit="handleComposerSubmit"
               @steer="emit('steer', $event)"
@@ -1030,7 +1401,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @create-goal="emit('createGoal', $event)"
               @control-goal="emit('controlGoal', $event)"
               @focus-goal="focusGoal"
-              @focus-swarm="focusSwarm"
               @compact="emit('compact')"
               @pick-model="emit('pickModel')"
               @select-model="emit('selectModel', $event)"
@@ -1043,10 +1413,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
               :approvals="approvals"
-              :bubble="bubble"
-              :mobile="mobile"
-              :running="running"
-              :sending="sending"
+              :turn-active="turnActive"
+              :working="working"
               :fast-moon="fastMoon"
               :session-loading="sessionLoading"
               :compaction="compaction"
@@ -1055,6 +1423,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :loading-more-error="loadingMoreError"
               :is-following="following"
               :tool-diff-panel="true"
+              :queued="queued"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
@@ -1062,12 +1431,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
               @open-tool-diff="emit('openToolDiff', $event)"
-              @edit-message="emit('editMessage', $event)"
+              @edit-message="handleEditMessage"
               @load-older-messages="handleLoadOlderMessages"
+              @unqueue="emit('unqueue', $event)"
+              @edit-queued="handleEditQueued"
+              @reorder-queue="handleReorderQueue"
             />
-            <div v-if="activeSwarms.length > 0" class="swarm-stack">
-              <SwarmCard v-for="group in activeSwarms" :key="group.id" :group="group" />
-            </div>
           </template>
         </div>
       </div>
@@ -1077,6 +1446,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :style="chatDockStyle"
         :session-id="sessionId"
         :running="running"
+        :starting="starting"
         :queued="queued"
         :search-files="searchFiles"
         :upload-image="uploadImage"
@@ -1100,10 +1470,13 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :has-dock-work="hasDockWork"
         :todos="todos"
         :pending-question="pendingQuestion"
+        :question-busy-kind="questionBusyKind"
         :pending-approval="pendingApproval"
+        :approval-busy="approvalBusy"
         :mobile="mobile"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
+        @open-agent="emit('openAgent', $event)"
         @answer="handleQuestionAnswer"
         @dismiss="emit('dismiss', $event)"
         @approval="handleApproval"
@@ -1113,8 +1486,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
         @steer="emit('steer', $event)"
         @command="emit('command', $event)"
         @interrupt="handleInterrupt"
-        @unqueue="emit('unqueue', $event)"
-        @edit-queued="emit('editQueued', $event)"
         @set-permission="emit('setPermission', $event)"
         @set-thinking="emit('setThinking', $event)"
         @toggle-plan="emit('togglePlan')"
@@ -1123,7 +1494,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
           @open-btw="emit('command', '/btw')"
           @create-goal="emit('createGoal', $event)"
           @focus-goal="focusGoal"
-          @focus-swarm="focusSwarm"
           @compact="emit('compact')"
           @pick-model="emit('pickModel')"
           @select-model="emit('selectModel', $event)"
@@ -1139,18 +1509,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :aria-label="t('conversation.jumpToLatestAria')"
         @click="scrollToBottom(true)"
       >
-        <svg
-          class="pill-chevron"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="4,6 8,10 12,6" />
-        </svg>
+        <Icon class="pill-chevron" name="chevron-down" size="md" />
         {{ t('conversation.newMessages') }}
       </button>
     </Transition>
@@ -1184,8 +1543,15 @@ defineExpose({ loadComposerForEdit, focusComposer });
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overflow-anchor: none;
+  /* Keep the visible message stable while the user browses history. Bottom
+     following and history prepend use explicit scroll writes, so they opt out. */
+  overflow-anchor: auto;
   scrollbar-gutter: stable;
+}
+
+.panes.is-following,
+.panes.history-prepending {
+  overflow-anchor: none;
 }
 
 /* Chat tab layout: the message list scrolls, while the dock stays as the
@@ -1210,6 +1576,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 .content-wrap.align-center { margin-left: auto; margin-right: auto; }
 .content-wrap.align-left { margin-left: 0; margin-right: auto; }
@@ -1229,12 +1596,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
     min-width: 0;
   }
 }
-.swarm-stack {
-  padding: 0 18px 16px;
-}
-.content-wrap.align-mobile .swarm-stack {
-  padding: 0 14px 18px;
-}
 
 /* Empty-workspace spacers: push the centred Composer to the vertical middle. */
 .empty-spacer { flex: 1; }
@@ -1248,16 +1609,24 @@ defineExpose({ loadComposerForEdit, focusComposer });
   gap: 8px;
   text-align: center;
   padding: 0 16px 16px;
-  color: var(--ink);
-  font-family: var(--sans);
+  color: var(--color-text);
+  font-family: var(--font-ui);
 }
 .empty-hint-title {
   font-size: calc(var(--ui-font-size) + 16px);
+  font-optical-sizing: auto;
   font-weight: 600;
+}
+.empty-hint-title.is-starting {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--dim);
+  font-weight: 400;
 }
 .empty-hint-text {
   display: inline-block;
-  font-size: calc(var(--ui-font-size) + 2px);
+  font-size: var(--text-base);
   color: var(--dim);
   max-width: 100%;
   overflow: hidden;
@@ -1280,11 +1649,11 @@ defineExpose({ loadComposerForEdit, focusComposer });
   cursor: pointer;
 }
 .empty-add-workspace:hover {
-  border-color: var(--bd);
-  color: var(--ink);
+  border-color: var(--color-accent-bd);
+  color: var(--color-text);
 }
 .empty-add-workspace:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 .empty-add-workspace svg {
@@ -1294,13 +1663,14 @@ defineExpose({ loadComposerForEdit, focusComposer });
 /* Empty-composer workspace picker */
 .ws-pick {
   position: relative;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
 }
 .ws-pick-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: 320px;
+  width: max-content;
+  max-width: min(100%, calc(100vw - var(--space-8)));
   padding: 5px 10px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1310,29 +1680,32 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
 }
-.ws-pick-btn:hover { border-color: var(--bd); color: var(--ink); }
-.ws-pick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-pick-btn:hover { border-color: var(--color-accent-bd); color: var(--color-text); }
+.ws-pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-pick-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
 .ws-pick-chev.open { transform: rotate(180deg); }
 .ws-pick-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 19;
+  z-index: var(--z-sticky);
 }
 .ws-pick-menu {
   position: absolute;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   left: 50%;
   transform: translateX(-50%);
   top: calc(100% + 6px);
-  z-index: 20;
-  min-width: 220px;
-  max-width: min(86vw, 340px);
+  z-index: var(--z-dropdown);
+  width: max-content;
+  min-width: min(180px, calc(100cqw - var(--space-8)));
+  max-width: calc(100cqw - var(--space-8));
   max-height: 50vh;
-  overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  overflow: hidden auto;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 4px;
 }
 .ws-pick-item {
@@ -1347,19 +1720,45 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 6px;
   padding: 6px 10px;
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
 }
 .ws-pick-item:hover { background: var(--panel2); }
-.ws-pick-item.on { background: var(--soft); }
-.ws-pick-item-name { font-size: var(--ui-font-size-sm); color: var(--ink); }
-.ws-pick-item.on .ws-pick-item-name { color: var(--blue2); font-weight: 600; }
-.ws-pick-item-path { font-size: calc(var(--ui-font-size) - 3px); color: var(--muted); }
+.ws-pick-item.on { background: var(--color-accent-soft); }
+.ws-pick-item-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+.ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); }
+.ws-pick-item-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: 475;
+  color: var(--muted);
+}
 .ws-pick-item.ws-pick-more {
   flex-direction: row;
-  justify-content: center;
+  align-items: center;
+  justify-content: flex-start;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   color: var(--dim);
 }
-.ws-pick-item.ws-pick-more:hover { color: var(--ink); }
+.ws-pick-item.ws-pick-more:hover { color: var(--color-text); }
+.ws-pick-item.ws-pick-more span,
+.ws-pick-action span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .ws-pick-divider {
   height: 1px;
   margin: 4px 6px;
@@ -1376,11 +1775,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 6px;
   padding: 7px 10px;
   cursor: pointer;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
   color: var(--dim);
 }
-.ws-pick-action:hover { background: var(--panel2); color: var(--ink); }
+.ws-pick-action:hover { background: var(--panel2); color: var(--color-text); }
 .ws-pick-action svg { flex: none; }
 
 /* Chat scroll area: owns only messages; the dock is the bottom sibling. */
@@ -1408,11 +1808,13 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--panel);
-  color: var(--ink);
+  color: var(--color-text);
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
-  z-index: 10;
+  box-shadow: var(--shadow-sm);
+  /* Positioned after the message flow, so base z-index is enough to float above
+     content while staying below composer dropdowns. */
+  z-index: var(--z-base);
 }
 .newmsg-pill:hover { background: var(--panel2); }
 .pill-chevron {
@@ -1435,12 +1837,12 @@ defineExpose({ loadComposerForEdit, focusComposer });
   top: 60px;
   transform: translateX(-50%);
   padding: 8px 14px;
-  border-radius: 6px;
-  background: var(--ink);
+  border-radius: var(--radius-sm);
+  background: var(--color-text);
   color: var(--bg);
   font-size: var(--ui-font-size-sm);
-  z-index: 20;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  z-index: var(--z-sticky);
+  box-shadow: var(--shadow-sm);
 }
 .abort-toast-text {
   display: flex;
@@ -1456,4 +1858,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   opacity: 0;
   transform: translateX(-50%) translateY(-6px);
 }
+
+.con { background: var(--bg); }
+.newmsg-pill { font-family: var(--sans); }
 </style>

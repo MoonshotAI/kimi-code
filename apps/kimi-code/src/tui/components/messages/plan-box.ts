@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { Markdown, truncateToWidth, visibleWidth, type Component, type MarkdownTheme } from '@earendil-works/pi-tui';
+import { Markdown, truncateToWidth, visibleWidth, type Component, type MarkdownTheme } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';

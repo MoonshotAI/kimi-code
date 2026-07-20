@@ -3,20 +3,28 @@
      scattered in the sidebar account popover: appearance, language, account,
      connection, plus notifications and the troubleshooting-log export. -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
-import type { ColorScheme, Theme } from '../../composables/useKimiWebClient';
-import type { AppConfig, AppConfigProvider, AppModel } from '../../api/types';
+import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
+import type { AppConfig, AppModel } from '../../api/types';
+import Dialog from '../ui/Dialog.vue';
+import Switch from '../ui/Switch.vue';
+import Button from '../ui/Button.vue';
+import SegmentedControl from '../ui/SegmentedControl.vue';
+import Select from '../ui/Select.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
 
 const props = defineProps<{
-  theme: Theme;
   colorScheme: ColorScheme;
+  accent: Accent;
   uiFontSize: number;
   authReady: boolean;
   accountModel?: string | null;
@@ -24,12 +32,14 @@ const props = defineProps<{
   notify: boolean;
   /** Browser-notification-on-question (needs answer) preference. */
   notifyQuestion: boolean;
+  /** Browser-notification-on-approval preference. */
+  notifyApproval: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
   notifyPermission?: string;
   /** Play-a-sound-on-completion preference. */
   sound: boolean;
-  /** Beta conversation TOC (proportional, viewport, hover tooltip). */
-  betaToc?: boolean;
+  /** Conversation outline (proportional bubbles, viewport indicator, hover tooltip). */
+  conversationToc?: boolean;
   /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
   config?: AppConfig | null;
   /** Models from the daemon catalog, used to label default-model choices. */
@@ -38,36 +48,51 @@ const props = defineProps<{
   configSaving?: boolean;
   /** Server version reported by GET /api/v1/meta. */
   serverVersion?: string;
+  /** Backend engine generation from GET /api/v1/meta ('v1' legacy, 'v2' kap-server). */
+  backend?: 'v1' | 'v2';
 }>();
 
 const emit = defineEmits<{
-  setTheme: [theme: Theme];
   setColorScheme: [colorScheme: ColorScheme];
+  setAccent: [accent: Accent];
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
   setNotifyQuestion: [on: boolean];
+  setNotifyApproval: [on: boolean];
   setSound: [on: boolean];
-  setBetaToc: [on: boolean];
+  setConversationToc: [on: boolean];
   login: [];
   logout: [];
   openOnboarding: [];
+  openProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
   close: [];
 }>();
 
-type SettingsTab = 'general' | 'agent' | 'advanced' | 'experimental';
+type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
 
 const activeTab = ref<SettingsTab>('general');
 
 const tabs: { id: SettingsTab; labelKey: string }[] = [
   { id: 'general', labelKey: 'settings.tabs.general' },
   { id: 'agent', labelKey: 'settings.tabs.agent' },
+  { id: 'account', labelKey: 'settings.tabs.account' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced' },
-  { id: 'experimental', labelKey: 'settings.tabs.experimental' },
+  { id: 'archived', labelKey: 'settings.tabs.archived' },
 ];
 
 const daemonEndpoint = serverEndpointLabel();
+const backendLabel = computed(() =>
+  props.backend === 'v2' ? 'v2 (kap-server)' : 'v1 (server)',
+);
 const permissionModes = ['manual', 'auto', 'yolo'] as const;
+// Reuse the Composer's permission labels (status.permission*) so the
+// default-permission names stay in sync with the toolbar.
+const permissionLabelKey: Record<(typeof permissionModes)[number], string> = {
+  manual: 'status.permissionManual',
+  auto: 'status.permissionAuto',
+  yolo: 'status.permissionYolo',
+};
 
 // Modal focus: move focus into the dialog on open, restore it to the opener on
 // close (Escape-to-close is handled below).
@@ -122,12 +147,6 @@ const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>
     .map(([provider, options]) => ({ provider, options }));
 });
 
-const providerEntries = computed<Array<{ id: string; provider: AppConfigProvider }>>(() =>
-  Object.entries(props.config?.providers ?? {})
-    .map(([id, provider]) => ({ id, provider }))
-    .sort((a, b) => a.id.localeCompare(b.id)),
-);
-
 const defaultPermissionMode = computed(() => {
   const mode = props.config?.defaultPermissionMode;
   return mode === 'auto' || mode === 'yolo' || mode === 'manual' ? mode : 'manual';
@@ -154,8 +173,7 @@ function configBool(value: boolean | undefined): boolean {
   return value === true;
 }
 
-function setDefaultModel(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value;
+function setDefaultModel(value: string): void {
   if (!value || value === props.config?.defaultModel) return;
   emit('updateConfig', { defaultModel: value });
 }
@@ -165,194 +183,309 @@ function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   emit('updateConfig', { defaultPermissionMode: mode });
 }
 
-function toggleConfigBoolean(key: 'defaultThinking' | 'defaultPlanMode' | 'mergeAllAvailableSkills' | 'telemetry'): void {
+function toggleConfigBoolean(key: 'defaultPlanMode' | 'mergeAllAvailableSkills'): void {
   const current = props.config?.[key];
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
+}
+
+// "Default thinking" lives at config.thinking.enabled on the daemon — the legacy
+// top-level defaultThinking field was removed. Read/write it there so the toggle
+// actually persists (the old field was silently stripped by the server).
+//
+// Mirror the core resolver: thinking is on unless explicitly disabled
+// (enabled === false). An absent thinking section — or one with an effort but no
+// enabled field — falls through to the model/default effort (on for
+// thinking-capable models), so the toggle reflects that as on.
+function thinkingEnabled(): boolean {
+  const thinking = props.config?.thinking;
+  if (!thinking || typeof thinking !== 'object') return true;
+  return (thinking as { enabled?: boolean }).enabled !== false;
+}
+
+function toggleDefaultThinking(): void {
+  emit('updateConfig', { thinking: { enabled: !thinkingEnabled() } } as Partial<AppConfig>);
+}
+
+// Telemetry is opt-out: undefined and `true` both mean enabled, only explicit
+// `false` disables it. Toggle based on that effective state so an unset value
+// (displayed as on) flips to `false` instead of writing a redundant `true`.
+function toggleTelemetry(): void {
+  const enabled = props.config?.telemetry !== false;
+  emit('updateConfig', { telemetry: !enabled } as Partial<AppConfig>);
 }
 
 function setTab(tab: SettingsTab): void {
   activeTab.value = tab;
 }
+
+// ---------------------------------------------------------------------------
+// Archived-sessions tab — its own list state (server-side `archived_only`
+// filter), kept separate from the per-workspace active list. Search, workspace
+// filter and sort all run client-side over the loaded pages. Restore goes
+// through the composable so the sidebar list updates automatically.
+// ---------------------------------------------------------------------------
+const client = useKimiWebClient();
+
+const archivedItems = ref<AppSession[]>([]);
+const archivedLoading = ref(false);
+const archivedLoaded = ref(false);
+const archiveQuery = ref('');
+const archiveWsFilter = ref<string>('all'); // 'all' | cwd
+const archiveSort = ref<'archived-desc' | 'created-desc' | 'name-asc'>('archived-desc');
+
+// Load every archived session once when the tab opens (no frontend pagination).
+// Search, sort and the workspace filter then run client-side over the full set,
+// so results are always global and there is no empty-page / cursor bookkeeping
+// to get wrong. The user waits a moment on first open in exchange for simplicity.
+const ARCHIVED_PAGE_SIZE = 100;
+
+async function loadAllArchived(): Promise<void> {
+  if (archivedLoading.value || archivedLoaded.value) return;
+  archivedLoading.value = true;
+  try {
+    const all: AppSession[] = [];
+    let beforeId: string | undefined;
+    for (;;) {
+      const page = await client.loadArchivedSessions({ beforeId, pageSize: ARCHIVED_PAGE_SIZE });
+      all.push(...page.items);
+      if (!page.hasMore || page.items.length === 0) break;
+      const next = page.items.at(-1)?.id;
+      if (next === undefined) break;
+      beforeId = next;
+    }
+    archivedItems.value = all;
+    archivedLoaded.value = true;
+  } catch (err) {
+    console.warn('loadAllArchived failed', err);
+  } finally {
+    archivedLoading.value = false;
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'archived' && !archivedLoaded.value) {
+    void loadAllArchived();
+  }
+});
+
+const archiveWorkspaces = computed<string[]>(() => {
+  const set = new Set<string>();
+  for (const s of archivedItems.value) set.add(s.cwd);
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+});
+
+const filteredArchived = computed<AppSession[]>(() => {
+  const q = archiveQuery.value.trim().toLowerCase();
+  // Defensive invariant: this panel must only ever render archived sessions,
+  // even if an older server ignores `archived_only` and falls back to the
+  // default (unarchived) list. Filter again on the client.
+  let rows = archivedItems.value.filter((s) => s.archived === true);
+  if (archiveWsFilter.value !== 'all') {
+    rows = rows.filter((s) => s.cwd === archiveWsFilter.value);
+  }
+  if (q) rows = rows.filter((s) => s.title.toLowerCase().includes(q));
+  rows = rows.slice();
+  if (archiveSort.value === 'archived-desc') {
+    rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  } else if (archiveSort.value === 'created-desc') {
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } else {
+    rows.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+  }
+  return rows;
+});
+
+const groupedArchived = computed<{ cwd: string; items: AppSession[] }[]>(() => {
+  const map = new Map<string, AppSession[]>();
+  for (const s of filteredArchived.value) {
+    const list = map.get(s.cwd) ?? [];
+    list.push(s);
+    map.set(s.cwd, list);
+  }
+  return Array.from(map.entries()).map(([cwd, items]) => ({ cwd, items }));
+});
+
+async function onRestore(id: string): Promise<void> {
+  const ok = await client.restoreSession(id);
+  if (ok) {
+    archivedItems.value = archivedItems.value.filter((s) => s.id !== id);
+  }
+}
+
+function archiveTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 </script>
 
 <template>
-  <div class="backdrop" @click.self="emit('close')">
-    <div ref="dialogRef" class="dialog" role="dialog" aria-modal="true" tabindex="-1" :aria-label="t('settings.title')">
-      <div class="dh">
-        <span class="dtitle">{{ t('settings.title') }}</span>
-        <button class="close-btn" :title="t('settings.close')" @click="emit('close')">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">
-            <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
-          </svg>
+  <Dialog :open="true" :close-on-esc="false" :title="t('settings.title')" size="xl" height="fixed" :padded="false" @close="emit('close')">
+    <div ref="dialogRef" class="sd">
+      <nav class="settings-tabs" role="tablist" :aria-label="t('settings.title')">
+        <button
+          v-for="tb in tabs"
+          :key="tb.id"
+          type="button"
+          class="tab"
+          role="tab"
+          :aria-selected="activeTab === tb.id"
+          :class="{ on: activeTab === tb.id }"
+          @click="setTab(tb.id)"
+        >
+          {{ t(tb.labelKey) }}
         </button>
-      </div>
+      </nav>
 
-      <div class="settings-layout">
-        <nav class="settings-tabs" role="tablist" :aria-label="t('settings.title')">
-          <button
-            v-for="tab in tabs"
-            :key="tab.id"
-            type="button"
-            class="tab"
-            role="tab"
-            :aria-selected="activeTab === tab.id"
-            :aria-controls="`settings-panel-${tab.id}`"
-            :id="`settings-tab-${tab.id}`"
-            :class="{ on: activeTab === tab.id }"
-            @click="setTab(tab.id)"
-          >
-            {{ t(tab.labelKey) }}
-          </button>
-        </nav>
-
-        <div class="body">
-          <!-- General: Appearance + Notifications + Account -->
-          <section
-            v-show="activeTab === 'general'"
-            :id="`settings-panel-general`"
-            class="panel"
-            role="tabpanel"
-            aria-labelledby="settings-tab-general"
-          >
-            <section class="sec">
-              <h3 class="sec-title">{{ t('settings.appearance') }}</h3>
-              <div class="row">
-                <span class="rlabel">{{ t('theme.label') }}</span>
-                <div class="seg" role="group" :aria-label="t('theme.label')">
-                  <button type="button" class="opt" :class="{ on: theme === 'modern' }" :aria-pressed="theme === 'modern'" @click="emit('setTheme', 'modern')">{{ t('theme.modern') }}</button>
-                  <button type="button" class="opt" :class="{ on: theme === 'kimi' }" :aria-pressed="theme === 'kimi'" @click="emit('setTheme', 'kimi')">{{ t('theme.kimi') }}</button>
-                </div>
-              </div>
-              <div class="row">
-                <span class="rlabel">{{ t('theme.colorSchemeLabel') }}</span>
-                <div class="seg" role="group" :aria-label="t('theme.colorSchemeLabel')">
-                  <button type="button" class="opt" :class="{ on: colorScheme === 'light' }" :aria-pressed="colorScheme === 'light'" @click="emit('setColorScheme', 'light')">{{ t('theme.light') }}</button>
-                  <button type="button" class="opt" :class="{ on: colorScheme === 'dark' }" :aria-pressed="colorScheme === 'dark'" @click="emit('setColorScheme', 'dark')">{{ t('theme.dark') }}</button>
-                  <button type="button" class="opt" :class="{ on: colorScheme === 'system' }" :aria-pressed="colorScheme === 'system'" @click="emit('setColorScheme', 'system')">{{ t('theme.system') }}</button>
-                </div>
-              </div>
-              <div class="row">
-                <span class="rlabel">{{ t('settings.uiFontSize') }}</span>
-                <label class="num-field">
-                  <input
-                    class="num-input"
-                    type="number"
-                    min="12"
-                    max="20"
-                    step="1"
-                    :value="uiFontSize"
-                    :aria-label="t('settings.uiFontSize')"
-                    @input="emit('setUiFontSize', Number(($event.target as HTMLInputElement).value))"
-                  />
-                  <span class="num-unit">px</span>
-                </label>
-              </div>
-              <div class="row">
-                <span class="rlabel">{{ t('sidebar.language') }}</span>
-                <LanguageSwitcher />
-              </div>
-            </section>
-
-            <section class="sec">
-              <h3 class="sec-title">{{ t('settings.notifications') }}</h3>
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.notifyOnComplete') }}
-                  <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
-                </span>
-                <button
-                  type="button"
-                  class="switch"
-                  role="switch"
-                  :class="{ on: notify }"
-                  :aria-checked="notify"
-                  :disabled="notifyPermission === 'denied'"
-                  @click="emit('setNotify', !notify)"
-                >
-                  <span class="knob" />
-                </button>
-              </div>
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.notifyOnQuestion') }}
-                  <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
-                </span>
-                <button
-                  type="button"
-                  class="switch"
-                  role="switch"
-                  :class="{ on: notifyQuestion }"
-                  :aria-checked="notifyQuestion"
-                  :disabled="notifyPermission === 'denied'"
-                  @click="emit('setNotifyQuestion', !notifyQuestion)"
-                >
-                  <span class="knob" />
-                </button>
-              </div>
-              <div class="row">
-                <span class="rlabel">{{ t('settings.soundOnComplete') }}</span>
-                <button
-                  type="button"
-                  class="switch"
-                  role="switch"
-                  :class="{ on: sound }"
-                  :aria-checked="sound"
-                  @click="emit('setSound', !sound)"
-                >
-                  <span class="knob" />
-                </button>
-              </div>
-            </section>
-
-            <section class="sec">
-              <h3 class="sec-title">{{ t('settings.account') }}</h3>
-              <div class="row">
-                <span class="rlabel">{{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
-                <span v-if="authReady && accountModel" class="rvalue" :title="accountModel">{{ accountModel }}</span>
-              </div>
-              <div class="actions">
-                <button type="button" class="act" @click="emit('openOnboarding'); emit('close')">{{ t('onboarding.reopen') }}</button>
-                <button v-if="authReady" type="button" class="act danger" @click="emit('logout')">{{ t('sidebar.signOut') }}</button>
-                <button v-else type="button" class="act signin" @click="emit('login')">{{ t('sidebar.signIn') }}</button>
-              </div>
-            </section>
-
-            <section class="sec">
-              <h3 class="sec-title">{{ t('settings.build') }}</h3>
-              <div class="row">
-                <span class="rlabel">{{ t('settings.serverVersion') }}</span>
-                <span class="rvalue mono">{{ serverVersion || '-' }}</span>
-              </div>
-            </section>
+      <div class="body">
+        <!-- General: Appearance + Notifications -->
+        <section v-show="activeTab === 'general'" class="panel">
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.appearance') }}</h3>
+            <div class="row">
+              <span class="rlabel">{{ t('theme.colorSchemeLabel') }}</span>
+              <SegmentedControl
+                :model-value="colorScheme"
+                :options="[
+                  { value: 'light', label: t('theme.light') },
+                  { value: 'dark', label: t('theme.dark') },
+                  { value: 'system', label: t('theme.system') },
+                ]"
+                @update:model-value="emit('setColorScheme', $event as ColorScheme)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('theme.accentLabel') }}</span>
+              <SegmentedControl
+                :model-value="accent"
+                :options="[
+                  { value: 'blue', label: t('theme.accentBlue') },
+                  { value: 'mono', label: t('theme.accentBlack') },
+                ]"
+                @update:model-value="emit('setAccent', $event as Accent)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.uiFontSize') }}</span>
+              <label class="num-field">
+                <input
+                  class="num-input"
+                  type="number"
+                  min="12"
+                  max="20"
+                  step="1"
+                  :value="uiFontSize"
+                  :aria-label="t('settings.uiFontSize')"
+                  @input="emit('setUiFontSize', Number(($event.target as HTMLInputElement).value))"
+                />
+                <span class="num-unit">px</span>
+              </label>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('sidebar.language') }}</span>
+              <LanguageSwitcher />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.conversationToc') }}
+                <span class="hint">{{ t('settings.conversationTocHint') }}</span>
+              </span>
+              <Switch
+                :model-value="conversationToc ?? true"
+                :label="t('settings.conversationToc')"
+                @update:model-value="emit('setConversationToc', $event)"
+              />
+            </div>
           </section>
 
-          <!-- Agent defaults -->
-          <section
-            v-show="activeTab === 'agent'"
-            :id="`settings-panel-agent`"
-            class="panel"
-            role="tabpanel"
-            aria-labelledby="settings-tab-agent"
-          >
-            <section class="sec">
-              <div class="sec-head">
-                <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
-                <span v-if="configSaving" class="saving">{{ t('settings.saving') }}</span>
-              </div>
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.notifications') }}</h3>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.notifyOnComplete') }}
+                <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
+              </span>
+              <Switch
+                :model-value="notify"
+                :disabled="notifyPermission === 'denied'"
+                :label="t('settings.notifyOnComplete')"
+                @update:model-value="emit('setNotify', $event)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.notifyOnQuestion') }}
+                <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
+              </span>
+              <Switch
+                :model-value="notifyQuestion"
+                :disabled="notifyPermission === 'denied'"
+                :label="t('settings.notifyOnQuestion')"
+                @update:model-value="emit('setNotifyQuestion', $event)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.notifyOnApproval') }}
+                <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
+              </span>
+              <Switch
+                :model-value="notifyApproval"
+                :disabled="notifyPermission === 'denied'"
+                :label="t('settings.notifyOnApproval')"
+                @update:model-value="emit('setNotifyApproval', $event)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.soundOnComplete') }}</span>
+              <Switch
+                :model-value="sound"
+                :label="t('settings.soundOnComplete')"
+                @update:model-value="emit('setSound', $event)"
+              />
+            </div>
+          </section>
+        </section>
 
-              <template v-if="config">
-                <div class="row">
-                  <span class="rlabel">
-                    {{ t('settings.defaultModel') }}
-                    <span class="hint">{{ t('settings.defaultModelHint') }}</span>
-                  </span>
-                  <select
-                    v-if="modelGroups.length > 0"
-                    class="select-field"
-                    :value="config.defaultModel ?? ''"
+        <!-- Account -->
+        <section v-show="activeTab === 'account'" class="panel">
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.account') }}</h3>
+            <div class="row">
+              <span class="rlabel">{{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
+              <Tooltip :text="accountModel">
+                <span v-if="authReady && accountModel" class="rvalue">{{ accountModel }}</span>
+              </Tooltip>
+            </div>
+            <div class="actions">
+              <Button variant="secondary" size="sm" @click="emit('openOnboarding'); emit('close')">{{ t('onboarding.reopen') }}</Button>
+              <Button v-if="authReady" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
+              <Button v-else variant="primary" size="sm" @click="emit('login')">{{ t('sidebar.signIn') }}</Button>
+            </div>
+          </section>
+        </section>
+
+        <!-- Agent defaults -->
+        <section v-show="activeTab === 'agent'" class="panel">
+          <section class="sec">
+            <div class="sec-head">
+              <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
+              <span v-if="configSaving" class="saving">{{ t('settings.saving') }}</span>
+            </div>
+
+            <template v-if="config">
+              <div class="row">
+                <span class="rlabel">
+                  {{ t('settings.defaultModel') }}
+                  <span class="hint">{{ t('settings.defaultModelHint') }}</span>
+                </span>
+                <div v-if="modelGroups.length > 0" class="select-wrap">
+                  <Select
+                    :model-value="config.defaultModel ?? ''"
                     :disabled="configSaving"
                     :aria-label="t('settings.defaultModel')"
-                    @change="setDefaultModel"
+                    @update:model-value="setDefaultModel"
                   >
                     <option v-if="!config.defaultModel" value="" disabled>{{ t('settings.noDefaultModel') }}</option>
                     <optgroup v-for="group in modelGroups" :key="group.provider" :label="group.provider">
@@ -360,240 +493,185 @@ function setTab(tab: SettingsTab): void {
                         {{ model.label }}
                       </option>
                     </optgroup>
-                  </select>
-                  <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
+                  </Select>
                 </div>
-
-                <div class="row">
-                  <span class="rlabel">
-                    {{ t('settings.defaultPermission') }}
-                    <span class="hint">{{ t('settings.defaultPermissionHint') }}</span>
-                  </span>
-                  <div class="seg" role="group" :aria-label="t('settings.defaultPermission')">
-                    <button
-                      v-for="mode in permissionModes"
-                      :key="mode"
-                      type="button"
-                      class="opt"
-                      :class="{ on: defaultPermissionMode === mode }"
-                      :aria-pressed="defaultPermissionMode === mode"
-                      :disabled="configSaving"
-                      @click="setDefaultPermissionMode(mode)"
-                    >
-                      {{ t(`settings.permission.${mode}`) }}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="row">
-                  <span class="rlabel">
-                    {{ t('settings.defaultThinking') }}
-                    <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
-                  </span>
-                  <button
-                    type="button"
-                    class="switch"
-                    role="switch"
-                    :class="{ on: configBool(config.defaultThinking) }"
-                    :aria-checked="configBool(config.defaultThinking)"
-                    :disabled="configSaving"
-                    @click="toggleConfigBoolean('defaultThinking')"
-                  >
-                    <span class="knob" />
-                  </button>
-                </div>
-
-                <div class="row">
-                  <span class="rlabel">
-                    {{ t('settings.defaultPlanMode') }}
-                    <span class="hint">{{ t('settings.defaultPlanModeHint') }}</span>
-                  </span>
-                  <button
-                    type="button"
-                    class="switch"
-                    role="switch"
-                    :class="{ on: configBool(config.defaultPlanMode) }"
-                    :aria-checked="configBool(config.defaultPlanMode)"
-                    :disabled="configSaving"
-                    @click="toggleConfigBoolean('defaultPlanMode')"
-                  >
-                    <span class="knob" />
-                  </button>
-                </div>
-
-                <div class="row">
-                  <span class="rlabel">
-                    {{ t('settings.mergeSkills') }}
-                    <span class="hint">{{ t('settings.mergeSkillsHint') }}</span>
-                  </span>
-                  <button
-                    type="button"
-                    class="switch"
-                    role="switch"
-                    :class="{ on: configBool(config.mergeAllAvailableSkills) }"
-                    :aria-checked="configBool(config.mergeAllAvailableSkills)"
-                    :disabled="configSaving"
-                    @click="toggleConfigBoolean('mergeAllAvailableSkills')"
-                  >
-                    <span class="knob" />
-                  </button>
-                </div>
-
-                <div v-if="config.telemetry !== undefined" class="row">
-                  <span class="rlabel">{{ t('settings.telemetry') }}</span>
-                  <button
-                    type="button"
-                    class="switch"
-                    role="switch"
-                    :class="{ on: configBool(config.telemetry) }"
-                    :aria-checked="configBool(config.telemetry)"
-                    :disabled="configSaving"
-                    @click="toggleConfigBoolean('telemetry')"
-                  >
-                    <span class="knob" />
-                  </button>
-                </div>
-
-                <div v-if="providerEntries.length > 0" class="provider-list">
-                  <div v-for="{ id, provider } in providerEntries" :key="id" class="provider-row">
-                    <div class="provider-main">
-                      <span class="provider-id">{{ id }}</span>
-                      <span class="provider-type">{{ provider.type }}</span>
-                    </div>
-                    <div class="provider-meta">
-                      <span :class="['provider-badge', provider.hasApiKey ? 'ok' : 'warn']">
-                        {{ provider.hasApiKey ? t('settings.credentialReady') : t('settings.credentialMissing') }}
-                      </span>
-                      <span v-if="provider.defaultModel" class="provider-model">{{ provider.defaultModel }}</span>
-                    </div>
-                  </div>
-                </div>
-              </template>
-
-              <div v-else class="empty-config">
-                {{ t('settings.configUnavailable') }}
+                <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
               </div>
-            </section>
-          </section>
 
-          <!-- Advanced -->
-          <section
-            v-show="activeTab === 'advanced'"
-            :id="`settings-panel-advanced`"
-            class="panel"
-            role="tabpanel"
-            aria-labelledby="settings-tab-advanced"
-          >
-            <section class="sec">
-              <h3 class="sec-title">{{ t('settings.advanced') }}</h3>
-              <div class="row">
-                <span class="rlabel">{{ t('sidebar.daemon') }}</span>
-                <span class="rvalue mono">{{ daemonEndpoint }}</span>
-              </div>
               <div class="row">
                 <span class="rlabel">
-                  {{ t('settings.exportLog') }}
-                  <span v-if="!isTraceEnabled()" class="hint">{{ t('settings.logHint') }}</span>
+                  {{ t('settings.defaultPermission') }}
+                  <span class="hint">{{ t('settings.defaultPermissionHint') }}</span>
                 </span>
-                <button type="button" class="act" @click="exportLog">{{ t('settings.exportLogBtn') }}</button>
+                <SegmentedControl
+                  :model-value="defaultPermissionMode"
+                  :options="permissionModes.map((m) => ({ value: m, label: t(permissionLabelKey[m]) }))"
+                  @update:model-value="setDefaultPermissionMode($event as 'manual' | 'auto' | 'yolo')"
+                />
               </div>
-            </section>
-          </section>
 
-          <!-- Experimental -->
-          <section
-            v-show="activeTab === 'experimental'"
-            :id="`settings-panel-experimental`"
-            class="panel"
-            role="tabpanel"
-            aria-labelledby="settings-tab-experimental"
-          >
-            <section class="sec">
-              <h3 class="sec-title">{{ t('settings.beta') }}</h3>
               <div class="row">
                 <span class="rlabel">
-                  {{ t('settings.betaToc') }}
-                  <span class="hint">{{ t('settings.betaTocHint') }}</span>
+                  {{ t('settings.defaultThinking') }}
+                  <span class="hint">{{ t('settings.defaultThinkingHint') }}</span>
                 </span>
-                <button
-                  type="button"
-                  class="switch"
-                  role="switch"
-                  :class="{ on: betaToc }"
-                  :aria-checked="betaToc"
-                  @click="emit('setBetaToc', !betaToc)"
-                >
-                  <span class="knob" />
-                </button>
+                <Switch
+                  :model-value="thinkingEnabled()"
+                  :disabled="configSaving"
+                  :label="t('settings.defaultThinking')"
+                  @update:model-value="toggleDefaultThinking()"
+                />
               </div>
-            </section>
+
+              <div class="row">
+                <span class="rlabel">
+                  {{ t('settings.defaultPlanMode') }}
+                  <span class="hint">{{ t('settings.defaultPlanModeHint') }}</span>
+                </span>
+                <Switch
+                  :model-value="configBool(config.defaultPlanMode)"
+                  :disabled="configSaving"
+                  :label="t('settings.defaultPlanMode')"
+                  @update:model-value="toggleConfigBoolean('defaultPlanMode')"
+                />
+              </div>
+
+              <div class="row">
+                <span class="rlabel">
+                  {{ t('settings.mergeSkills') }}
+                  <span class="hint">{{ t('settings.mergeSkillsHint') }}</span>
+                </span>
+                <Switch
+                  :model-value="configBool(config.mergeAllAvailableSkills)"
+                  :disabled="configSaving"
+                  :label="t('settings.mergeSkills')"
+                  @update:model-value="toggleConfigBoolean('mergeAllAvailableSkills')"
+                />
+              </div>
+            </template>
+
+            <div v-else class="empty-config">
+              {{ t('settings.configUnavailable') }}
+            </div>
           </section>
-        </div>
+        </section>
+
+        <!-- Advanced: diagnostics + data/privacy -->
+        <section v-show="activeTab === 'advanced'" class="panel">
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.advanced') }}</h3>
+            <div class="row">
+              <span class="rlabel">{{ t('sidebar.daemon') }}</span>
+              <span class="rvalue mono">{{ daemonEndpoint }}</span>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.backend') }}</span>
+              <span class="rvalue mono">{{ backendLabel }}</span>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.serverVersion') }}</span>
+              <span class="rvalue mono">{{ serverVersion || '-' }}</span>
+            </div>
+            <div v-if="config" class="row">
+              <span class="rlabel">
+                {{ t('settings.telemetry') }}
+                <span class="hint">{{ t('settings.telemetryHint') }}</span>
+                <span class="hint">{{ t('settings.telemetryRestartHint') }}</span>
+              </span>
+              <Switch
+                :model-value="config.telemetry !== false"
+                :disabled="configSaving"
+                :label="t('settings.telemetry')"
+                @update:model-value="toggleTelemetry()"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.exportLog') }}
+                <span v-if="!isTraceEnabled()" class="hint">{{ t('settings.logHint') }}</span>
+              </span>
+              <Button variant="secondary" size="sm" @click="exportLog">{{ t('settings.exportLogBtn') }}</Button>
+            </div>
+          </section>
+        </section>
+
+        <!-- Archived sessions -->
+        <section v-show="activeTab === 'archived'" class="panel">
+          <div class="panel-head">
+            <div class="panel-kicker">Archived sessions</div>
+            <h4 class="panel-title">{{ t('settings.archivedTitle') }}</h4>
+            <p class="panel-desc">{{ t('settings.archivedDesc') }}</p>
+          </div>
+
+          <div class="archive-toolbar">
+            <label class="archive-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+              <input v-model="archiveQuery" :placeholder="t('settings.archivedSearch')" />
+            </label>
+            <Select
+              :model-value="archiveWsFilter"
+              size="sm"
+              :aria-label="t('settings.archivedAllWorkspaces')"
+              @update:model-value="archiveWsFilter = $event as string"
+            >
+              <option value="all">{{ t('settings.archivedAllWorkspaces') }}</option>
+              <option v-for="ws in archiveWorkspaces" :key="ws" :value="ws">{{ ws }}</option>
+            </Select>
+            <SegmentedControl
+              size="sm"
+              :model-value="archiveSort"
+              :options="[
+                { value: 'archived-desc', label: t('settings.archivedSortArchived') },
+                { value: 'created-desc', label: t('settings.archivedSortCreated') },
+                { value: 'name-asc', label: t('settings.archivedSortName') },
+              ]"
+              @update:model-value="archiveSort = $event as 'archived-desc' | 'created-desc' | 'name-asc'"
+            />
+          </div>
+
+          <div v-if="archivedLoading" class="archive-empty">
+            {{ t('settings.archivedLoadingAll') }}
+          </div>
+
+          <template v-else>
+            <div v-if="groupedArchived.length > 0" class="archive-list">
+              <section v-for="g in groupedArchived" :key="g.cwd" class="archive-card">
+                <div class="archive-workspace">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h6l2 2h10v9H3z" /><path d="M3 7V5h6l2 2" /></svg>
+                  <span class="path">{{ g.cwd }}</span>
+                  <span class="count">{{ t('settings.archivedSessionsCount', { count: g.items.length }) }}</span>
+                </div>
+                <div class="setting-card">
+                  <div v-for="s in g.items" :key="s.id" class="archive-row">
+                    <div class="archive-meta">
+                      <div class="archive-name">{{ s.title }}</div>
+                      <div class="archive-time">{{ t('settings.archivedAt', { time: archiveTime(s.updatedAt) }) }}</div>
+                    </div>
+                    <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div v-else class="archive-empty">
+              {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
+            </div>
+          </template>
+        </section>
+
       </div>
     </div>
-  </div>
+  </Dialog>
 </template>
 
 <style scoped>
-.backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(20, 23, 28, 0.42);
-  padding: 24px;
-}
-.dialog {
-  width: min(720px, 100%);
-  height: 640px;
-  max-height: calc(100vh - 80px);
-  display: flex;
-  flex-direction: column;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
-  overflow: hidden;
-}
-.dh {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.dtitle { font-family: var(--sans); font-size: var(--ui-font-size-lg); font-weight: 600; color: var(--ink); }
-.close-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-}
-.close-btn:hover { background: var(--soft); color: var(--ink); }
-
-.settings-layout {
-  display: flex;
-  flex-direction: row;
-  min-height: 0;
-  flex: 1;
-}
+.sd { display: flex; flex-direction: row; min-height: 0; height: 100%; }
 
 .settings-tabs {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 140px;
-  padding: 10px 8px;
-  border-right: 1px solid var(--line);
-  background: var(--panel);
+  width: 148px;
+  padding: var(--space-2);
   gap: 2px;
   overflow-y: auto;
 }
@@ -601,267 +679,164 @@ function setTab(tab: SettingsTab): void {
   text-align: left;
   padding: 8px 10px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--muted);
-  font-family: var(--sans);
-  font-size: calc(var(--ui-font-size) - 0.5px);
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
-.tab:hover { background: var(--soft); color: var(--ink); }
-.tab.on { background: var(--soft); color: var(--blue2); font-weight: 600; }
+.tab:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+.tab.on { background: var(--color-accent-soft); color: var(--color-accent); font-weight: var(--weight-medium); }
+.tab:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
-.body { overflow-y: auto; padding: 6px 16px 16px; flex: 1; }
+.body { display: flex; flex-direction: column; overflow-y: auto; padding: var(--space-2) var(--space-5) var(--space-5) var(--space-6); flex: 1; min-width: 0; }
 .panel { display: block; }
-.sec { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.sec { padding: var(--space-4) 0; border-bottom: 1px solid var(--color-line); }
 .sec:last-child { border-bottom: none; }
 .sec-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 .sec-title {
-  margin: 0 0 10px;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  font-weight: 700;
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--color-text-muted);
 }
 .sec-head .sec-title { margin-bottom: 0; }
 .saving {
   flex: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 34px;
-  padding: 3px 0;
+  gap: var(--space-3);
+  min-height: 38px;
+  padding: var(--space-1) 0;
 }
-.rlabel { font-family: var(--sans); font-size: calc(var(--ui-font-size) - 0.5px); color: var(--ink); display: flex; flex-direction: column; gap: 2px; }
-.rvalue { font-family: var(--sans); font-size: calc(var(--ui-font-size) - 1.5px); color: var(--muted); max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rvalue.mono { font-family: var(--mono); font-size: var(--ui-font-size-xs); }
-.hint { font-size: calc(var(--ui-font-size) - 3px); color: var(--faint); font-family: var(--sans); }
+.rlabel {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.rvalue {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rvalue.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+.hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); }
 
 .num-field {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   flex: none;
-  padding: 0 8px;
-  height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
+  padding: 0 var(--space-3);
+  height: 38px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
+.num-field:hover { border-color: var(--color-line-strong); }
+.num-field:focus-within { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
 .num-input {
   width: 48px;
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
   text-align: right;
 }
 .num-unit {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.opt {
-  border: none;
-  background: var(--bg);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  padding: 5px 12px;
-  cursor: pointer;
-  border-left: 1px solid var(--line);
-}
-.opt:first-child { border-left: none; }
-.opt:hover { color: var(--ink); }
-.opt.on { background: var(--soft); color: var(--blue2); font-weight: 600; }
-.opt:disabled { opacity: 0.55; cursor: not-allowed; }
-
-.select-field {
-  min-width: 220px;
-  max-width: min(320px, 50vw);
-  height: 32px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  padding: 0 8px;
-}
-.select-field:disabled { opacity: 0.6; cursor: not-allowed; }
+.select-wrap { min-width: 220px; max-width: min(320px, 50vw); flex: none; }
 
 .empty-config {
-  font-family: var(--sans);
-  font-size: calc(var(--ui-font-size) - 1px);
-  color: var(--muted);
-  padding: 4px 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  color: var(--color-text-muted);
+  padding: var(--space-1) 0;
 }
 
-.provider-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 10px;
-}
-.provider-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel2);
-}
-.provider-main,
-.provider-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.provider-main { flex: 1; }
-.provider-meta { flex: none; max-width: 45%; }
-.provider-id,
-.provider-model {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.provider-id {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: var(--ink);
-}
-.provider-type {
-  flex: none;
-  font-family: var(--mono);
-  font-size: max(10px, calc(var(--ui-font-size) - 4px));
-  color: var(--muted);
-}
-.provider-model {
-  font-family: var(--mono);
-  font-size: max(10px, calc(var(--ui-font-size) - 4px));
-  color: var(--muted);
-}
-.provider-badge {
-  flex: none;
-  border-radius: 999px;
-  padding: 2px 7px;
-  font-family: var(--mono);
-  font-size: max(10px, calc(var(--ui-font-size) - 4px));
-}
-.provider-badge.ok {
-  background: color-mix(in srgb, var(--ok) 12%, var(--bg));
-  color: var(--ok);
-}
-.provider-badge.warn {
-  background: color-mix(in srgb, var(--warn) 12%, var(--bg));
-  color: var(--warn);
-}
-
-.toggle-row { cursor: pointer; }
-.switch {
-  flex: none;
-  width: 40px;
-  height: 22px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--panel2);
-  position: relative;
-  cursor: pointer;
-  transition: background 0.16s;
-  padding: 0;
-}
-.switch.on { background: var(--blue); border-color: var(--blue); }
-.switch:disabled { opacity: 0.5; cursor: not-allowed; }
-.knob {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: transform 0.16s;
-}
-.switch.on .knob { transform: translateX(18px); }
-
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.act {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: calc(var(--ui-font-size) - 1.5px);
-  padding: 6px 12px;
-  cursor: pointer;
-}
-.act:hover { background: var(--soft); border-color: var(--bd); }
-.act.signin { background: var(--blue); color: var(--bg); border-color: var(--blue); }
-.act.signin:hover { background: var(--blue2); }
-.act.danger { color: var(--err); border-color: color-mix(in srgb, var(--err) 30%, var(--line)); }
-.act.danger:hover { background: color-mix(in srgb, var(--err) 8%, var(--bg)); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 
 @media (max-width: 640px) {
-  .backdrop {
-    padding:
-      max(12px, env(safe-area-inset-top))
-      max(12px, env(safe-area-inset-right))
-      max(12px, env(safe-area-inset-bottom))
-      max(12px, env(safe-area-inset-left));
-  }
-  .dialog {
-    max-height: calc(100dvh - 24px);
-  }
-  .settings-layout { flex-direction: column; }
+  .sd { flex-direction: column; }
   .settings-tabs {
     flex-direction: row;
     width: auto;
-    border-right: none;
-    border-bottom: 1px solid var(--line);
-    padding: 8px 12px;
-    gap: 6px;
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-1);
     overflow-x: auto;
   }
-  .tab { white-space: nowrap; }
+  .tab { white-space: nowrap; flex: none; }
   .row {
     align-items: flex-start;
     flex-direction: column;
   }
-  .select-field {
+  .select-wrap {
     width: 100%;
     max-width: none;
   }
-  .provider-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .provider-meta {
-    max-width: 100%;
-    flex-wrap: wrap;
-  }
 }
+/* Archived-sessions tab */
+.setting-card { border: 1px solid var(--color-line); border-radius: var(--radius-xl); overflow: hidden; background: var(--color-bg); }
+.panel-head { margin-bottom: var(--space-4); }
+.panel-kicker { font-size: var(--text-xs); letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-faint); margin-bottom: var(--space-1); }
+.panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.01em; color: var(--color-text); }
+.panel-desc { margin: 0; font-family: var(--font-ui); font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--color-text-muted); max-width: 560px; }
+.archive-toolbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
+.archive-search { flex: 1; min-width: 200px; height: 36px; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-line); color: var(--color-text-faint); font-size: var(--text-sm); background: var(--color-surface-raised); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.archive-search:focus-within { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); color: var(--color-text-muted); }
+.archive-search svg { width: 15px; height: 15px; flex: none; }
+.archive-search input { width: 100%; border: none; outline: none; background: transparent; font: inherit; color: var(--color-text); }
+.archive-list { display: flex; flex-direction: column; gap: var(--space-4); }
+.archive-card .setting-card { margin-bottom: 0; }
+.archive-workspace { display: flex; align-items: center; gap: var(--space-2); margin: 0 2px var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.archive-workspace svg { width: 16px; height: 16px; color: var(--color-text-faint); flex: none; }
+.archive-workspace .path { font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-workspace .count { margin-left: auto; color: var(--color-text-faint); font-weight: var(--weight-regular); font-size: var(--text-xs); flex: none; }
+.archive-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-line); }
+.archive-row:first-child { border-top: none; }
+.archive-row:hover { background: var(--color-surface-sunken); }
+.archive-meta { min-width: 0; }
+.archive-name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-mono); }
+.archive-draining { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-accent-hover); font-size: var(--text-sm); }
+.archive-empty { padding: var(--space-6) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-xl); color: var(--color-text-faint); font-size: var(--text-sm); text-align: center; background: var(--color-bg); }
+@media (max-width: 640px) {
+  .archive-toolbar { flex-direction: column; align-items: stretch; }
+  .archive-search { min-width: 0; }
+}
+/* Enlarge the settings frame a bit (Dialog `xl` = 760px wide, fixed-height
+   680px). Scoped to this dialog only. */
+:deep(.ui-dialog) { width: min(980px, 96vw); }
+:deep(.ui-dialog--fixed-height) { height: min(780px, calc(100vh - var(--space-8) * 2)); }
 </style>

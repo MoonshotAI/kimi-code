@@ -33,6 +33,10 @@ export async function writeSessionState(sessionDir: string, input: StateWriteInp
     title: finalTitle,
     isCustomTitle,
     lastPrompt: input.lastUserPrompt.slice(0, 200),
+    additionalDirs:
+      input.oldState.additional_dirs?.length === 0
+        ? undefined
+        : input.oldState.additional_dirs,
     agents: {
       main: {
         // kimi-core's `Session.resume()` treats `agents.main.homedir` as the
@@ -52,6 +56,13 @@ export async function writeSessionState(sessionDir: string, input: StateWriteInp
       kimi_cli_wire_protocol: input.wireProtocolFromOld,
       imported_at: new Date().toISOString(),
       archived: input.oldState.archived ?? false,
+      vscode_legacy_approval:
+        input.oldState.approval === undefined
+          ? undefined
+          : {
+              yolo: input.oldState.approval.yolo ?? false,
+              afk: input.oldState.approval.afk ?? false,
+            },
     },
   };
 

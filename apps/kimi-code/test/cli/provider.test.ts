@@ -668,7 +668,7 @@ describe('kimi provider catalog add', () => {
         },
       },
       defaultModel: 'other/main',
-      defaultThinking: true,
+      thinking: { enabled: true },
     } as unknown as KimiConfig;
     const { harness, current, setConfigCalls } = makeHarness(initial);
     const { deps, stdout, exitCodes } = makeDeps(harness);
@@ -692,7 +692,7 @@ describe('kimi provider catalog add', () => {
     // The unrelated provider's model survives, and remains the default.
     expect(finalConfig.models?.['other/main']).toBeDefined();
     expect(finalConfig.defaultModel).toBe('other/main');
-    expect(finalConfig.defaultThinking).toBe(true);
+    expect(finalConfig.thinking?.enabled).toBe(true);
     // The patch sent over `setConfig` must explicitly carry the preserved default.
     expect(setConfigCalls[0]?.defaultModel).toBe('other/main');
     expect(stdout.join('')).toContain('Imported Anthropic (anthropic)');
@@ -760,7 +760,7 @@ describe('kimi provider catalog add', () => {
         },
       },
       defaultModel: 'anthropic/claude-opus-4-7',
-      defaultThinking: true,
+      thinking: { enabled: true },
     } as unknown as KimiConfig;
     const { harness, current } = makeHarness(initial);
     const { deps, exitCodes } = makeDeps(harness);
@@ -773,19 +773,19 @@ describe('kimi provider catalog add', () => {
     expect(current().providers['anthropic']?.apiKey).toBe('sk-rotated');
     // Previous default and thinking flag must survive the re-import.
     expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
-    expect(current().defaultThinking).toBe(true);
+    expect(current().thinking?.enabled).toBe(true);
   });
 
-  it('preserves default_thinking when --default-model is supplied to a thinking-capable model', async () => {
+  it('preserves thinking.enabled when --default-model is supplied to a thinking-capable model', async () => {
     // Regression test for the codex P2: `applyCatalogProvider` always
-    // assigns `defaultThinking` from `options.thinking`. Hardcoding `false`
+    // assigns `thinking.enabled` from `options.thinking`. Hardcoding `false`
     // silently disabled thinking even when the user previously had it on
     // and is just importing a known provider. The handler now threads the
     // previous value through.
     mockRegistryFetch(CATALOG_BODY);
     const initial: KimiConfig = {
       providers: {},
-      defaultThinking: true,
+      thinking: { enabled: true },
     } as unknown as KimiConfig;
     const { harness, current, setConfigCalls } = makeHarness(initial);
     const { deps, exitCodes } = makeDeps(harness);
@@ -799,20 +799,20 @@ describe('kimi provider catalog add', () => {
 
     expect(exitCodes).toEqual([]);
     expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
-    expect(current().defaultThinking).toBe(true);
-    expect(setConfigCalls[0]?.defaultThinking).toBe(true);
+    expect(current().thinking?.enabled).toBe(true);
+    expect(setConfigCalls[0]?.thinking?.enabled).toBe(true);
   });
 
-  it('does not persist default_thinking=false for first-time setup with --default-model', async () => {
+  it('does not persist thinking.enabled=false for first-time setup with --default-model', async () => {
     // Regression test for codex P2 follow-up: previously the handler fell
-    // back to `false` when `defaultThinking` was unset, but
-    // `resolveThinkingLevel` treats `defaultThinking === false` as an
+    // back to `false` when `thinking.enabled` was unset, but
+    // `resolveThinkingEffort` treats `thinking.enabled === false` as an
     // explicit "off" request. A fresh `kimi provider catalog add
     // anthropic --default-model claude-opus-4-7` must NOT silently disable
-    // thinking — it should leave `defaultThinking` unset so the runtime
+    // thinking — it should leave `thinking.enabled` unset so the runtime
     // uses the per-model default.
     mockRegistryFetch(CATALOG_BODY);
-    // Note: `defaultThinking` is omitted on purpose to model a fresh user.
+    // Note: `thinking.enabled` is omitted on purpose to model a fresh user.
     const { harness, current, setConfigCalls } = makeHarness({
       providers: {},
     } as KimiConfig);
@@ -829,8 +829,8 @@ describe('kimi provider catalog add', () => {
     expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
     // Must NOT be `false`. `undefined` lets the runtime resolver pick the
     // per-model default; `false` would force `'off'`.
-    expect(current().defaultThinking).toBeUndefined();
-    expect(setConfigCalls[0]?.defaultThinking).toBeUndefined();
+    expect(current().thinking?.enabled).toBeUndefined();
+    expect(setConfigCalls[0]?.thinking?.enabled).toBeUndefined();
   });
 
   it('drops a stale default_model when the catalog refresh no longer contains it', async () => {

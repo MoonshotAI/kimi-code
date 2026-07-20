@@ -3,8 +3,10 @@
 
 import type { KimiApiConfig } from '../config';
 import { buildRestUrl, buildWsUrl } from '../config';
+import { traceKeyEvent } from '../../debug/trace';
 import type {
   AppConfig,
+  AppGoal,
   AppMessage,
   AppMessageRole,
   AppModel,
@@ -15,7 +17,6 @@ import type {
   AppSessionCursor,
   AppSessionRuntimeStatus,
   AppSessionSnapshot,
-  AppSessionStatus,
   AppTask,
   AppTaskStatus,
   AppTerminal,
@@ -26,6 +27,7 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  OAuthLoginStartResult,
   Page,
   PageRequest,
   PromptSubmission,
@@ -39,6 +41,7 @@ import {
   toAppConfig,
   toAppEvent,
   toAppFsEntry,
+  toAppGoal,
   toAppMessage,
   toAppModel,
   toAppProvider,
@@ -48,20 +51,20 @@ import {
   toWireApprovalResponse,
   toWirePromptSubmission,
   toWireQuestionResponse,
-  toWireSessionStatus,
   toAppWorkspace,
   wireEventSeq,
   wireEventSessionId,
 } from './mappers';
 import type {
   WireAuthResult,
-  WireBackgroundTask,
+  WireTask,
   WireConfig,
   WireEvent,
   WireFileMeta,
   WireFsBrowseResult,
   WireFsEntry,
   WireFsHomeResult,
+  WireGoalSnapshot,
   WireMessage,
   WireModel,
   WireOAuthCancelResult,
@@ -83,6 +86,53 @@ import type {
 } from './wire';
 import { DaemonEventSocket } from './ws';
 
+function safeExportFileName(contentDisposition: string | undefined, fallback: string): string {
+  if (contentDisposition === undefined) return fallback;
+  let candidate: string | undefined;
+  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(contentDisposition)?.[1]?.trim();
+  if (encoded !== undefined) {
+    try {
+      candidate = decodeURIComponent(encoded.replaceAll(/^"|"$/g, ''));
+    } catch {
+      return fallback;
+    }
+  } else {
+    candidate =
+      /filename\s*=\s*"([^"]*)"/i.exec(contentDisposition)?.[1] ??
+      /filename\s*=\s*([^;]+)/i.exec(contentDisposition)?.[1]?.trim();
+  }
+  if (
+    candidate === undefined ||
+    candidate.length === 0 ||
+    candidate.length > 200 ||
+    candidate === '.' ||
+    candidate === '..' ||
+    /[\u0000-\u001F\u007F/\\]/.test(candidate) ||
+    !candidate.toLowerCase().endsWith('.zip')
+  ) {
+    return fallback;
+  }
+  return candidate;
+}
+
+function errorTraceMetadata(err: unknown): Record<string, string | number | undefined> {
+  if (typeof err !== 'object' || err === null) return { errorName: typeof err };
+  const value = err as {
+    name?: unknown;
+    code?: unknown;
+    requestId?: unknown;
+    phase?: unknown;
+    status?: unknown;
+  };
+  return {
+    errorName: typeof value.name === 'string' ? value.name : 'Error',
+    errorCode: typeof value.code === 'number' ? value.code : undefined,
+    requestId: typeof value.requestId === 'string' ? value.requestId : undefined,
+    phase: typeof value.phase === 'string' ? value.phase : undefined,
+    httpStatus: typeof value.status === 'number' ? value.status : undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Wire response shapes for endpoints not in shared wire.ts
 // ---------------------------------------------------------------------------
@@ -98,6 +148,9 @@ interface WireMeta {
   started_at: string;
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
+  dangerous_bypass_auth?: boolean;
+  /** Engine generation serving the API; older (v1) servers omit the field. */
+  backend?: 'v1' | 'v2';
 }
 
 interface WireAbortResult {
@@ -270,6 +323,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
     startedAt: string;
     capabilities: Record<string, boolean>;
     openInApps: string[];
+    dangerousBypassAuth: boolean;
+    /** Engine generation: 'v2' = kap-server / agent-core-v2; absent ⇒ 'v1'. */
+    backend: 'v1' | 'v2';
   }> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
@@ -278,6 +334,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
       startedAt: data.started_at,
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
+      dangerousBypassAuth: data.dangerous_bypass_auth === true,
+      backend: data.backend === 'v2' ? 'v2' : 'v1',
     };
   }
 
@@ -287,9 +345,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async listSessions(
     input?: PageRequest & {
-      status?: AppSessionStatus;
+      busy?: boolean;
       workspaceId?: string;
       includeArchive?: boolean;
+      archivedOnly?: boolean;
       excludeEmpty?: boolean;
     },
   ): Promise<Page<AppSession>> {
@@ -297,8 +356,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
       before_id: input?.beforeId,
       after_id: input?.afterId,
       page_size: input?.pageSize,
-      status: input?.status ? toWireSessionStatus(input.status) : undefined,
+      busy: input?.busy,
       include_archive: input?.includeArchive,
+      archived_only: input?.archivedOnly,
       exclude_empty: input?.excludeEmpty,
       // PRESUMED — daemon supports ?workspace_id= once the registry ships; it
       // ignores unknown query params until then, so this is safe to always send.
@@ -392,7 +452,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
     return {
       model: data.model && data.model.length > 0 ? data.model : null,
-      thinkingLevel: data.thinking_level,
+      thinkingEffort: data.thinking_level,
       permission: data.permission,
       planMode: data.plan_mode === true,
       swarmMode: data.swarm_mode === true,
@@ -400,6 +460,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
       maxContextTokens: data.max_context_tokens ?? 0,
       contextUsage: data.context_usage ?? 0,
     };
+  }
+
+  /**
+   * GET /sessions/{id}/goal — the session's current goal, or null when no goal
+   * is active.
+   */
+  async getSessionGoal(sessionId: string): Promise<AppGoal | null> {
+    const data = await this.http.get<WireGoalSnapshot | null>(
+      `/sessions/${encodeURIComponent(sessionId)}/goal`,
+    );
+    return toAppGoal(data);
   }
 
   async getSessionWarnings(sessionId: string): Promise<WireSessionWarning[]> {
@@ -415,6 +486,16 @@ export class DaemonKimiWebApi implements KimiWebApi {
       {},
     );
     return data;
+  }
+
+  // POST /sessions/{id}:restore — clear the archived flag. The daemon returns
+  // the full restored session, so callers can merge it straight back into lists.
+  async restoreSession(sessionId: string): Promise<AppSession> {
+    const data = await this.http.post<WireSession>(
+      `/sessions/${encodeURIComponent(sessionId)}:restore`,
+      {},
+    );
+    return toAppSession(data);
   }
 
   // -------------------------------------------------------------------------
@@ -446,34 +527,74 @@ export class DaemonKimiWebApi implements KimiWebApi {
    * Rebuild flow: getSessionSnapshot() → seedSnapshot() → subscribe(cursor).
    */
   async getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot> {
-    const data = await this.http.get<WireSessionSnapshot>(
-      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+    const startedAt = Date.now();
+    traceKeyEvent('session:snapshot:start', { sessionId });
+    try {
+      const data = await this.http.get<WireSessionSnapshot>(
+        `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      );
+      const snapshot: AppSessionSnapshot = {
+        asOfSeq: data.as_of_seq,
+        epoch: data.epoch,
+        session: toAppSession(data.session),
+        // Snapshot messages are already chronological ascending.
+        messages: data.messages.items.map(toAppMessage),
+        hasMoreMessages: data.messages.has_more,
+        inFlightTurn:
+          data.in_flight_turn === null
+            ? null
+            : {
+                turnId: data.in_flight_turn.turn_id,
+                assistantText: data.in_flight_turn.assistant_text,
+                thinkingText: data.in_flight_turn.thinking_text,
+                runningTools: data.in_flight_turn.running_tools.map((t) => ({
+                  toolCallId: t.tool_call_id,
+                  name: t.name,
+                  args: t.args,
+                  description: t.description,
+                  lastProgress: t.last_progress,
+                })),
+                promptId: data.in_flight_turn.current_prompt_id,
+              },
+        pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
+        pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
+        // Older servers omit the roster entirely; treat as an empty roster.
+        subagents: (data.subagents ?? []).map(toAppTask),
+      };
+      traceKeyEvent('session:snapshot:accepted', {
+        sessionId,
+        busy: snapshot.session.busy,
+        seq: snapshot.asOfSeq,
+        messageCount: snapshot.messages.length,
+        durationMs: Date.now() - startedAt,
+      });
+      return snapshot;
+    } catch (error) {
+      traceKeyEvent('session:snapshot:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        ...errorTraceMetadata(error),
+      });
+      throw error;
+    }
+  }
+
+  async exportSession(
+    sessionId: string,
+    webLog?: string,
+  ): Promise<{ blob: Blob; fileName: string }> {
+    const webLogBytes = webLog === undefined ? 0 : new TextEncoder().encode(webLog).byteLength;
+    const webLogEntries = webLog === undefined || webLog.length === 0 ? 0 : webLog.split('\n').length;
+    const result = await this.http.postZip(
+      `/sessions/${encodeURIComponent(sessionId)}/export`,
+      { web_log: webLog },
+      { web_log_bytes: webLogBytes, web_log_entries: webLogEntries },
     );
+    const fallback = `${sessionId}.zip`;
     return {
-      asOfSeq: data.as_of_seq,
-      epoch: data.epoch,
-      session: toAppSession(data.session),
-      // Snapshot messages are already chronological ascending.
-      messages: data.messages.items.map(toAppMessage),
-      hasMoreMessages: data.messages.has_more,
-      inFlightTurn:
-        data.in_flight_turn === null
-          ? null
-          : {
-              turnId: data.in_flight_turn.turn_id,
-              assistantText: data.in_flight_turn.assistant_text,
-              thinkingText: data.in_flight_turn.thinking_text,
-              runningTools: data.in_flight_turn.running_tools.map((t) => ({
-                toolCallId: t.tool_call_id,
-                name: t.name,
-                args: t.args,
-                description: t.description,
-                lastProgress: t.last_progress,
-              })),
-              promptId: data.in_flight_turn.current_prompt_id,
-            },
-      pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
-      pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
+      blob: result.blob,
+      fileName: safeExportFileName(result.contentDisposition, fallback),
     };
   }
 
@@ -485,15 +606,39 @@ export class DaemonKimiWebApi implements KimiWebApi {
     sessionId: string,
     input: PromptSubmission,
   ): Promise<PromptSubmitResult> {
-    const data = await this.http.post<WirePromptSubmitResult>(
-      `/sessions/${encodeURIComponent(sessionId)}/prompts`,
-      toWirePromptSubmission(input),
-    );
-    return {
-      promptId: data.prompt_id,
-      userMessageId: data.user_message_id,
-      status: data.status,
-    };
+    const startedAt = Date.now();
+    traceKeyEvent('prompt:start', {
+      sessionId,
+      contentCount: input.content.length,
+      mediaCount: input.content.filter((part) =>
+        part.type === 'image' || part.type === 'video' || part.type === 'file'
+      ).length,
+    });
+    try {
+      const data = await this.http.post<WirePromptSubmitResult>(
+        `/sessions/${encodeURIComponent(sessionId)}/prompts`,
+        toWirePromptSubmission(input),
+      );
+      traceKeyEvent('prompt:accepted', {
+        sessionId,
+        promptId: data.prompt_id,
+        status: data.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return {
+        promptId: data.prompt_id,
+        userMessageId: data.user_message_id,
+        status: data.status,
+      };
+    } catch (error) {
+      traceKeyEvent('prompt:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        ...errorTraceMetadata(error),
+      });
+      throw error;
+    }
   }
 
   // POST /sessions/{id}/prompts:steer — steer daemon-queued prompts into the
@@ -646,7 +791,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const query: Record<string, string | undefined> = {
       status: status,
     };
-    const data = await this.http.get<{ items: WireBackgroundTask[] }>(
+    const data = await this.http.get<{ items: WireTask[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/tasks`,
       query,
     );
@@ -662,7 +807,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       with_output: input?.withOutput,
       output_bytes: input?.outputBytes,
     };
-    const data = await this.http.get<WireBackgroundTask>(
+    const data = await this.http.get<WireTask>(
       `/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}`,
       query,
     );
@@ -714,14 +859,26 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   // -------------------------------------------------------------------------
-  // Skills — session-scoped slash-invocable skills
+  // Skills — slash-invocable skills (session- or workspace-scoped)
   // GET  /sessions/{id}/skills              → { skills: WireSkillDescriptor[] }
+  // GET  /workspaces/{id}/skills            → { skills: WireSkillDescriptor[] } (no session)
   // POST /sessions/{id}/skills/{name}:activate body { args? } → { activated, skill_name }
   // -------------------------------------------------------------------------
 
   async listSkills(sessionId: string): Promise<AppSkill[]> {
     const data = await this.http.get<{ skills: WireSkillDescriptor[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/skills`,
+    );
+    return (data.skills ?? []).map((s) => ({
+      name: s.name,
+      description: s.description,
+      source: s.source,
+    }));
+  }
+
+  async listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]> {
+    const data = await this.http.get<{ skills: WireSkillDescriptor[] }>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/skills`,
     );
     return (data.skills ?? []).map((s) => ({
       name: s.name,
@@ -973,8 +1130,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   /**
    * Register a workspace by folder path.
-   * PRESUMED — POST /api/v1/workspaces { root, name? }. On error this throws so
-   * the composable can fall back to a locally-derived workspace from the path.
+   * PRESUMED — POST /api/v1/workspaces { root, name? }. Throws on error (e.g.
+   * path not found) so the caller can surface it to the user.
    */
   async addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace> {
     const body: Record<string, unknown> = { root: input.root };
@@ -992,6 +1149,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   /**
+   * Rename a workspace (display name only).
+   * PATCH /api/v1/workspaces/:id { name }. On error this throws.
+   */
+  async updateWorkspace(id: string, input: { name: string }): Promise<AppWorkspace> {
+    const data = await this.http.patch<WireWorkspace>(
+      `/workspaces/${encodeURIComponent(id)}`,
+      { name: input.name },
+    );
+    return toAppWorkspace(data);
+  }
+
+  /**
    * Browse directories under `path` (defaults to $HOME on the daemon).
    * PRESUMED — GET /api/v1/fs:browse?path=. On error returns an empty path so
    * the picker can distinguish "browse failed" from "directory has no children".
@@ -1006,8 +1175,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
           name: e.name,
           path: e.path,
           isDir: e.is_dir,
-          isGitRepo: e.is_git_repo,
-          branch: e.branch,
         })),
       };
     } catch {
@@ -1065,26 +1232,21 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.delete<{ deleted: true }>(`/providers/${encodeURIComponent(id)}`);
   }
 
-  async refreshProvider(id: string): Promise<AppProvider> {
-    // PRESUMED endpoint: POST /v1/providers/{id}:refresh → WireProvider
-    const data = await this.http.post<WireProvider>(
+  async refreshProvider(id: string): Promise<ProviderRefreshResult> {
+    const data = await this.http.post<WireProviderRefreshResult>(
       `/providers/${encodeURIComponent(id)}:refresh`,
     );
-    return toAppProvider(data);
+    return toProviderRefreshResult(data);
+  }
+
+  async refreshAllProviders(): Promise<ProviderRefreshResult> {
+    const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh');
+    return toProviderRefreshResult(data);
   }
 
   async refreshOAuthProviderModels(): Promise<ProviderRefreshResult> {
     const data = await this.http.post<WireProviderRefreshResult>('/providers:refresh_oauth');
-    return {
-      changed: data.changed.map((item) => ({
-        providerId: item.provider_id,
-        providerName: item.provider_name,
-        added: item.added,
-        removed: item.removed,
-      })),
-      unchanged: data.unchanged,
-      failed: data.failed,
-    };
+    return toProviderRefreshResult(data);
   }
 
   // -------------------------------------------------------------------------
@@ -1106,7 +1268,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
       thinking: 'thinking',
       planMode: 'plan_mode',
       yolo: 'yolo',
-      defaultThinking: 'default_thinking',
       defaultPermissionMode: 'default_permission_mode',
       defaultPlanMode: 'default_plan_mode',
       permission: 'permission',
@@ -1151,27 +1312,24 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async startOAuthLogin(): Promise<{
-    flowId: string;
-    provider: string;
-    verificationUri: string;
-    verificationUriComplete: string;
-    userCode: string;
-    expiresIn: number;
-    interval: number;
-    status: 'pending';
-    expiresAt: string;
-  }> {
+  async startOAuthLogin(): Promise<OAuthLoginStartResult> {
     const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
+    if (data.status === 'authenticated') {
+      return {
+        flowId: data.flow_id,
+        provider: data.provider,
+        status: 'authenticated',
+      };
+    }
     return {
       flowId: data.flow_id,
       provider: data.provider,
+      status: 'pending',
       verificationUri: data.verification_uri,
       verificationUriComplete: data.verification_uri_complete,
       userCode: data.user_code,
       expiresIn: data.expires_in,
       interval: data.interval,
-      status: data.status,
       expiresAt: data.expires_at,
     };
   }
@@ -1224,6 +1382,13 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return buildRestUrl(this.config.serverHttpUrl, `/files/${encodeURIComponent(fileId)}`);
   }
 
+  /** Fetch a file's bytes with the Bearer credential attached. Use this (not
+   *  getFileUrl) when the bytes feed a <video>/<img> src: the browser loads
+   *  those natively without the Authorization header, so the URL alone 401s. */
+  async getFileBlob(fileId: string): Promise<Blob> {
+    return this.http.getBlob(`/files/${encodeURIComponent(fileId)}`);
+  }
+
   // -------------------------------------------------------------------------
   // WebSocket events
   // -------------------------------------------------------------------------
@@ -1265,6 +1430,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
         const { type, seq, session_id: sessionId, payload, offset } = frame;
         const appEvents = projector.project(type, payload, sessionId, { offset });
         for (const appEvent of appEvents) {
+          const turnId = (payload as { turnId?: unknown } | null)?.turnId;
+          const stream =
+            appEvent.type === 'assistantDelta' &&
+            typeof turnId === 'number' &&
+            typeof offset === 'number' &&
+            (type === 'assistant.delta' || type === 'thinking.delta')
+              ? {
+                  turnId,
+                  offset,
+                  kind: type === 'assistant.delta' ? ('text' as const) : ('thinking' as const),
+                }
+              : undefined;
           // historyCompacted from the projector is either a compaction signal
           // (reason auto_compact — no reload, the divider marker handles it) or
           // a delta-gap recovery (reason delta_gap — a real resync, routed to
@@ -1272,7 +1449,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
           if (appEvent.type === 'historyCompacted' && !isCompactionReason(appEvent.reason)) {
             handlers.onResync(sessionId, seq);
           }
-          handlers.onEvent(appEvent, { sessionId, seq });
+          handlers.onEvent(appEvent, { sessionId, seq, stream });
         }
       },
 
@@ -1315,11 +1492,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
       seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void {
         // Rebuild the projector's mid-turn state from the snapshot. The
-        // resulting AppEvents (running status + partially-streamed assistant
-        // message) flow through the SAME onEvent path as live events, so the
-        // rendering layer needs no special handling. When there is no
-        // in-flight turn we only reset, so stale turn state can't leak into
-        // the freshly-loaded message list.
+        // resulting AppEvent (the partially-streamed assistant message) flows
+        // through the SAME onEvent path as live events, so the rendering layer
+        // needs no special handling; session status comes from the snapshot's
+        // authoritative session record. When there is no in-flight turn we
+        // only reset, so stale turn state can't leak into the freshly-loaded
+        // message list.
         if (snapshot.inFlightTurn === null) {
           projector.reset(sessionId);
           return;
@@ -1357,9 +1535,28 @@ export class DaemonKimiWebApi implements KimiWebApi {
       markSideChannelAgent(agentId: string): void {
         projector.markSideChannelAgent(agentId);
       },
+      health(): { connected: boolean; open: boolean; stale: boolean } {
+        return socket.health();
+      },
+      reconnect(): void {
+        socket.reconnect();
+      },
       close(): void {
         socket.close();
       },
     };
   }
+}
+
+function toProviderRefreshResult(data: WireProviderRefreshResult): ProviderRefreshResult {
+  return {
+    changed: data.changed.map((item) => ({
+      providerId: item.provider_id,
+      providerName: item.provider_name,
+      added: item.added,
+      removed: item.removed,
+    })),
+    unchanged: data.unchanged,
+    failed: data.failed,
+  };
 }

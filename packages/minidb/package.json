@@ -1,0 +1,50 @@
+{
+  "name": "@moonshot-ai/minidb",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A pure-Node.js embedded key-value database mixing Redis-style in-memory KV with SQLite-style durable persistence (WAL + snapshot).",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "homepage": "https://github.com/MoonshotAI/kimi-code/tree/main/packages/minidb#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "directory": "packages/minidb"
+  },
+  "bugs": {
+    "url": "https://github.com/MoonshotAI/kimi-code/issues"
+  },
+  "keywords": [
+    "kimi",
+    "database",
+    "key-value",
+    "embedded",
+    "wal",
+    "snapshot"
+  ],
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./cluster": {
+      "types": "./src/cluster/index.ts",
+      "default": "./src/cluster/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "bench": "node --import tsx bench/bench.ts",
+    "bench:cluster": "node --import tsx bench/cluster.ts",
+    "clean": "rm -rf dist"
+  }
+}

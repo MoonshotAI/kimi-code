@@ -3,6 +3,7 @@ import {
   moveInOrder,
   reconcileWorkspaceOrder,
   sortByWorkspaceOrder,
+  sortWorkspacesByRecent,
 } from '../src/lib/workspaceOrder';
 
 describe('reconcileWorkspaceOrder', () => {
@@ -59,6 +60,39 @@ describe('sortByWorkspaceOrder', () => {
   it('does not mutate the input array', () => {
     const copy = [...items];
     sortByWorkspaceOrder(items, ['c', 'a', 'b']);
+    expect(items).toEqual(copy);
+  });
+});
+
+describe('sortWorkspacesByRecent', () => {
+  const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+  it('orders workspaces by most-recent activity first', () => {
+    const lastEditedAt = new Map<string, number>([
+      ['a', 100],
+      ['b', 300],
+      ['c', 200],
+    ]);
+    expect(sortWorkspacesByRecent(items, lastEditedAt).map((x) => x.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('places workspaces without a timestamp (no sessions) at the end', () => {
+    const lastEditedAt = new Map<string, number>([['b', 100]]);
+    expect(sortWorkspacesByRecent(items, lastEditedAt).map((x) => x.id)).toEqual(['b', 'a', 'c']);
+  });
+
+  it('keeps relative order when timestamps tie (stable sort)', () => {
+    const lastEditedAt = new Map<string, number>([
+      ['a', 100],
+      ['b', 100],
+      ['c', 100],
+    ]);
+    expect(sortWorkspacesByRecent(items, lastEditedAt).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does not mutate the input array', () => {
+    const copy = [...items];
+    sortWorkspacesByRecent(items, new Map([['c', 1]]));
     expect(items).toEqual(copy);
   });
 });

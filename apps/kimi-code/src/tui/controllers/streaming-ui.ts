@@ -536,6 +536,7 @@ export class StreamingUIController {
     this.disposeAndClearPendingToolComponents();
     this._pendingAgentGroup = null;
     this._pendingReadGroup = null;
+    this.resetToolCallState();
   }
 
   resetToolCallState(): void {
@@ -559,9 +560,15 @@ export class StreamingUIController {
 
     const next = this.host.shiftQueuedMessage();
     if (next !== undefined) {
+      // The message is out of the queue but not yet sent. Mark the dispatch
+      // pending *before* setAppState — that call synchronously retries
+      // queued-goal promotion, which would otherwise see an empty queue and an
+      // idle phase and start a goal ahead of this message.
+      state.queuedMessageDispatchPending = true;
       this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
       setTimeout(() => {
+        state.queuedMessageDispatchPending = false;
         sendQueued(next);
       }, 0);
       return;
@@ -589,6 +596,7 @@ export class StreamingUIController {
       turnId: this._currentTurnId,
       renderMode: 'markdown' as const,
       content: '',
+      modelText: true,
     };
     const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
@@ -615,7 +623,11 @@ export class StreamingUIController {
   }
 
   onThinkingUpdate(fullText: string): void {
-    if (fullText.length === 0 && this._activeThinkingComponent === undefined) return;
+    // Skip thinking that carries nothing visible — empty (e.g. encrypted
+    // reasoning) or whitespace-only (a model occasionally streams a single
+    // space as thinking). Session replay funnels through here as well, so a
+    // stored whitespace-only think part never becomes a bare bullet line.
+    if (fullText.trim().length === 0 && this._activeThinkingComponent === undefined) return;
     const { state } = this.host;
     if (this._activeThinkingComponent === undefined) {
       this._pendingAgentGroup = null;
@@ -723,13 +735,16 @@ export class StreamingUIController {
     const block = new CompactionComponent(state.ui, instruction, currentWorkingTip()?.text);
     this._activeCompactionBlock = block;
     state.transcriptContainer.addChild(block);
+    if (state.toolOutputExpanded) {
+      block.setExpanded(true);
+    }
     state.ui.requestRender();
   }
 
-  endCompaction(tokensBefore?: number, tokensAfter?: number): void {
+  endCompaction(tokensBefore?: number, tokensAfter?: number, summary?: string): void {
     const block = this._activeCompactionBlock;
     if (block === undefined) return;
-    block.markDone(tokensBefore, tokensAfter);
+    block.markDone(tokensBefore, tokensAfter, summary);
     this._activeCompactionBlock = undefined;
     this.host.state.ui.requestRender();
   }

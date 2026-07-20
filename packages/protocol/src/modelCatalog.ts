@@ -6,6 +6,8 @@ export const modelCatalogItemSchema = z.object({
   display_name: z.string().min(1).optional(),
   max_context_size: z.number().int().min(1),
   capabilities: z.array(z.string()).optional(),
+  support_efforts: z.array(z.string()).optional(),
+  default_effort: z.string().optional(),
 });
 export type ModelCatalogItem = z.infer<typeof modelCatalogItemSchema>;
 

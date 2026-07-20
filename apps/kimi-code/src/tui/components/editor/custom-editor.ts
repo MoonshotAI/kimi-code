@@ -11,12 +11,12 @@ import {
   visibleWidth,
   type SelectItem,
   type TUI,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
-
 import { printableChar } from '#/tui/utils/printable-key';
+import { isInsideTmux } from '#/tui/utils/terminal-notification';
 
 import { extractAtPrefix } from './file-mention-provider';
 import { WrappingSelectList } from './wrapping-select-list';
@@ -47,6 +47,11 @@ interface AutocompleteInternals {
 
 interface AutocompleteListFactoryInternals {
   createAutocompleteList?: (prefix: string, items: SelectItem[]) => SelectList;
+}
+
+interface AutocompleteTriggerInternals {
+  tryTriggerAutocomplete: (explicitTab?: boolean) => void;
+  requestAutocomplete: (options: { force: boolean; explicitTab: boolean }) => void;
 }
 
 // Mirror pi-tui's private SLASH_COMMAND_SELECT_LIST_LAYOUT
@@ -109,14 +114,17 @@ function stripSgr(s: string): string {
   return s.replace(ANSI_SGR, '');
 }
 
-function getNewlineInput(data: string): string | undefined {
-  if (data === '\n' || data === '\u001B\r' || data === '\u001B[13;2~') return data;
-  if (matchesKey(data, Key.ctrl('j'))) return '\n';
-  return undefined;
+interface CustomEditorOptions {
+  disablePasteBurst?: boolean;
 }
 
 export class CustomEditor extends Editor {
   public onEscape?: () => void;
+  /**
+   * Fired for every input that is not a lone Escape. Used to disarm a pending
+   * double-Esc so only two consecutive Escape presses trigger the shortcut.
+   */
+  public onNonEscapeInput?: () => void;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
@@ -127,7 +135,6 @@ export class CustomEditor extends Editor {
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
   public onUndo?: () => void;
-  public onInsertNewline?: () => void;
   public onTextPaste?: () => void;
   /**
    * Called when ↑ is pressed in an empty editor. Return `true` to consume
@@ -156,19 +163,20 @@ export class CustomEditor extends Editor {
   private consumingPaste = false;
   private consumeBuffer = '';
   private argumentHints: ReadonlyMap<string, string> = new Map();
+  private autocompleteWasShowing = false;
 
   setArgumentHints(hints: ReadonlyMap<string, string>): void {
     this.argumentHints = hints;
   }
 
-  constructor(tui: TUI) {
+  constructor(tui: TUI, options: CustomEditorOptions = {}) {
     // paddingX: 4 reserves column 0 for the left vertical border (│),
     // column 1 as a single space between border and prompt, column 2 for
     // the `>` prompt token, and column 3 as the space between prompt and
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
     const theme = createEditorTheme();
-    super(tui, theme, { paddingX: 4 });
+    super(tui, theme, { paddingX: 4, disablePasteBurst: options.disablePasteBurst });
 
     // pi-tui keeps `createAutocompleteList` private; shadow it with an
     // instance property so slash command menus render descriptions wrapped
@@ -188,6 +196,27 @@ export class CustomEditor extends Editor {
       }
       return new SelectList(items, this.getAutocompleteMaxVisible(), theme.selectList);
     };
+
+    // pi-tui auto-triggers autocomplete for `/` (and letters in a slash
+    // context) with force:false, which routes through the slash-command
+    // branch. In bash mode `/` is a path separator, not a command prefix, so
+    // shadow the trigger to request file path completion (force:true) instead.
+    // Prompt mode keeps the original force:false behaviour. `tryTriggerAutocomplete`
+    // is private in pi-tui's typings but a plain prototype method at runtime.
+    const triggerInternals = this as unknown as AutocompleteTriggerInternals;
+    triggerInternals.tryTriggerAutocomplete = (explicitTab = false) => {
+      triggerInternals.requestAutocomplete({ force: this.inputMode === 'bash', explicitTab });
+    };
+  }
+
+  override setDisablePasteBurst(disabled: boolean): void {
+    super.setDisablePasteBurst(disabled);
+  }
+
+  public setInputMode(mode: 'prompt' | 'bash'): void {
+    if (this.inputMode === mode) return;
+    this.inputMode = mode;
+    this.onInputModeChange?.(mode);
   }
 
   private expandPasteMarkerAtCursor(): boolean {
@@ -229,13 +258,44 @@ export class CustomEditor extends Editor {
     (this as unknown as AutocompleteInternals).cancelAutocomplete();
   }
 
+  // Force a full re-render when the autocomplete dropdown closes, so the editor
+  // snaps back to the bottom instead of sitting where the taller dropdown left it.
+  // Only worthwhile when the session content already overflows one screen; below
+  // that a full clear + home would pull the editor to the top and leave a blank
+  // tail. Always skipped inside tmux, whose own reflow handles the shrink.
+  private requestFullRenderOnAutocompleteClose(): void {
+    if (isInsideTmux()) return;
+    const { columns, rows } = this.tui.terminal;
+    // Redraw when content fills or overflows the viewport. An exact fill (==
+    // rows) is safe to clear (no blank tail) and still needs the redraw: the
+    // differential renderer keeps the old viewport offset after a shrink.
+    if (this.tui.render(columns).length < rows) return;
+    this.tui.requestRender(true);
+  }
+
+  // Detect an autocomplete open→close edge from a render frame and force a full
+  // re-render. Running from render() (not handleInput) also catches asynchronous
+  // closes — e.g. Backspace deleting the leading `/`, where pi-tui only cancels
+  // the menu once the provider re-query resolves. The render request is deferred
+  // to a microtask so the overflow probe inside the helper does not re-enter
+  // render() synchronously.
+  private trackAutocompleteCloseForFullRender(): void {
+    const showing = this.isShowingAutocomplete();
+    const closed = this.autocompleteWasShowing && !showing;
+    this.autocompleteWasShowing = showing;
+    if (closed) {
+      queueMicrotask(() => this.requestFullRenderOnAutocompleteClose());
+    }
+  }
+
   override render(width: number): string[] {
+    this.trackAutocompleteCloseForFullRender();
     const lines = super.render(width);
     if (lines.length < 3) return lines;
     const firstContentIdx = 1;
     const isBash = this.inputMode === 'bash';
     const text = this.getText().trimStart();
-    if (text.startsWith('/')) {
+    if (text.startsWith('/') && !isBash) {
       // Paint only the FIRST editor content line; multi-line slash commands
       // are not a thing in practice.
       const original = lines[firstContentIdx];
@@ -275,6 +335,8 @@ export class CustomEditor extends Editor {
   }
 
   private computeArgumentHint(): string | undefined {
+    // Argument hints describe slash commands, which do not exist in bash mode.
+    if (this.inputMode === 'bash') return undefined;
     const text = this.getText();
     const match = /^\/(\S+)( ?)$/.exec(text);
     if (match === null) return undefined;
@@ -294,6 +356,12 @@ export class CustomEditor extends Editor {
     const normalized = normalizeCapsLockedCtrl(data);
     if (isKeyRelease(normalized)) {
       return;
+    }
+
+    // Any input other than a lone Escape breaks a pending double-Esc sequence,
+    // so the shortcut only fires for two consecutive Escape presses.
+    if (!matchesKey(normalized, Key.escape)) {
+      this.onNonEscapeInput?.();
     }
 
     // When a paste marker was just expanded, discard the trailing bracketed
@@ -329,12 +397,21 @@ export class CustomEditor extends Editor {
       }
       if (this.onPasteImage !== undefined) {
         const handler = this.onPasteImage;
-        void handler().then((handled) => {
-          if (!handled) {
-            this.onTextPaste?.();
-            super.handleInput.call(this, normalized);
-          }
-        });
+        const pasteAsText = (): void => {
+          this.onTextPaste?.();
+          super.handleInput.call(this, normalized);
+        };
+        void handler().then(
+          (handled) => {
+            if (!handled) pasteAsText();
+          },
+          () => {
+            // A rejecting image-paste handler must not leak an unhandled
+            // rejection (the CLI turns those into a silent exit) — treat it
+            // the same as "no image available" and fall back to text paste.
+            pasteAsText();
+          },
+        );
         return;
       }
     }
@@ -398,13 +475,6 @@ export class CustomEditor extends Editor {
     ) {
       this.inputMode = 'prompt';
       this.onInputModeChange?.('prompt');
-      return;
-    }
-
-    const newlineInput = getNewlineInput(normalized);
-    if (newlineInput !== undefined) {
-      this.onInsertNewline?.();
-      super.handleInput(newlineInput);
       return;
     }
 
@@ -485,10 +555,24 @@ export class CustomEditor extends Editor {
     // Reopen path / argument completion right after a `/` is typed
     // (e.g. `/add-dir /` or an `@dir/` mention).
     if (textBeforeCursor.endsWith('/')) {
-      const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
       const isAtMention = extractAtPrefix(textBeforeCursor) !== null;
-      if (isSlashArgument || isAtMention) {
+      if (isAtMention) {
         trigger();
+      } else if (this.inputMode === 'bash') {
+        // In bash mode `/` is a path separator, not a slash command. A bare
+        // leading `/` is already handled by the tryTriggerAutocomplete shadow
+        // in the constructor; this branch covers the inline case (e.g. `ls /`,
+        // `cat /etc/`, `/add-dir/`) that pi-tui never auto-triggers. force:true
+        // is required so pi-tui's own slash-command handling is bypassed —
+        // force:false would let it pop up subcommand completions.
+        if (textBeforeCursor.trimStart() !== '/') {
+          editor.requestAutocomplete?.({ force: true, explicitTab: false });
+        }
+      } else {
+        const isSlashArgument = textBeforeCursor.startsWith('/') && textBeforeCursor.includes(' ');
+        if (isSlashArgument) {
+          trigger();
+        }
       }
       return;
     }
@@ -496,7 +580,10 @@ export class CustomEditor extends Editor {
     // After accepting a slash command name via Tab, pi-tui inserts a trailing
     // space and closes the menu without triggering argument completion. Reopen
     // it so subcommands (e.g. `/goal ` → status/pause/…) show immediately.
+    // Skipped in bash mode: `/` is a path there, and force:false would let
+    // pi-tui's own slash-command handling pop up subcommand completions.
     if (
+      this.inputMode !== 'bash' &&
       textBeforeCursor.endsWith(' ') &&
       textBeforeCursor.startsWith('/') &&
       textBeforeCursor.includes(' ')
@@ -554,10 +641,7 @@ function goalCommandPathRanges(
   return ranges;
 }
 
-function readTokenRange(
-  visible: string,
-  start: number,
-): { start: number; end: number } | null {
+function readTokenRange(visible: string, start: number): { start: number; end: number } | null {
   let tokenStart = start;
   while (tokenStart < visible.length && isTokenSpace(visible[tokenStart])) tokenStart++;
   if (tokenStart >= visible.length) return null;
@@ -705,8 +789,7 @@ export function wrapWithSideBorders(
     const firstCh = line[0];
     const lastCh = line.at(-1);
     const head = firstCh === ' ' ? paint('│') : (firstCh ?? '');
-    const tail =
-      line.length > 1 && lastCh === ' ' ? paint('│') : (lastCh ?? '');
+    const tail = line.length > 1 && lastCh === ' ' ? paint('│') : (lastCh ?? '');
     if (line.length === 1) return head;
     return head + line.slice(1, -1) + tail;
   });

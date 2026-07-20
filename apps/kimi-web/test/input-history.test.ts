@@ -117,28 +117,28 @@ describe('useInputHistory — recall', () => {
   });
 });
 
-describe('useInputHistory — caretAtFirstLine', () => {
+describe('useInputHistory — caretAtTextStart', () => {
   it('is true at the very start of the text', () => {
     const { textarea, history } = setup('hello\nworld', 0);
     textarea.value = 'hello\nworld';
-    expect(history.caretAtFirstLine()).toBe(true);
+    expect(history.caretAtTextStart()).toBe(true);
   });
 
-  it('is true when the caret sits before any newline', () => {
+  it('is false when the caret is on the first line but not at the start', () => {
     const { textarea, history } = setup('hello\nworld', 3);
     textarea.value = 'hello\nworld';
-    expect(history.caretAtFirstLine()).toBe(true);
+    expect(history.caretAtTextStart()).toBe(false);
   });
 
   it('is false once the caret is past the first newline', () => {
     const { textarea, history } = setup('hello\nworld', 8);
     textarea.value = 'hello\nworld';
-    expect(history.caretAtFirstLine()).toBe(false);
+    expect(history.caretAtTextStart()).toBe(false);
   });
 
   it('is true for an empty composer', () => {
     const { history } = setup('', 0);
-    expect(history.caretAtFirstLine()).toBe(true);
+    expect(history.caretAtTextStart()).toBe(true);
   });
 });
 

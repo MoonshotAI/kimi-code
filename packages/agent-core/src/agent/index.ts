@@ -1,17 +1,25 @@
 import { join } from 'pathe';
+import { randomUUID } from 'node:crypto';
 
 import { normalizeAdditionalDirs } from '../config';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
-import { generate } from '@moonshot-ai/kosong';
+import { generate, type ChatProvider } from '@moonshot-ai/kosong';
 
-import type { EnabledPluginSessionStart } from '#/plugin';
+import type { EnabledPluginSessionStart, PluginCommandDef } from '#/plugin';
+import { expandCommandArguments } from '../plugin/commands';
+import type { PluginCommandOrigin } from './context';
 
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
-import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
+import { ImageLimits } from '../tools/support/image-limits';
+import {
+  prepareSystemPromptContext,
+  type PreparedSystemPromptContext,
+  type ResolvedAgentProfile,
+} from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -48,6 +56,7 @@ import { TurnFlow } from './turn';
 import { KosongLLM } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
+import { LlmRequestRecorder } from './llm-request-recorder';
 import { resolveCompletionBudget } from '../utils/completion-budget';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
@@ -63,6 +72,13 @@ export interface AgentOptions {
   readonly kaos: Kaos;
   readonly config?: KimiConfig;
   readonly homedir?: string;
+  /**
+   * Session-owned directory for pre-compression image originals
+   * (`sessionMediaOriginalsDir(sessionDir)`), threaded to media-producing
+   * paths (MCP tool results) so readback originals live with the session
+   * rather than in the shared temp-dir fallback.
+   */
+  readonly mediaOriginalsDir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
@@ -79,9 +95,13 @@ export interface AgentOptions {
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
+  readonly pluginCommands?: readonly PluginCommandDef[];
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  /** Owner-scoped [image] limits; a standalone Agent gets env/built-in defaults. */
+  readonly imageLimits?: ImageLimits;
   readonly replay?: ReplayBuilderOptions;
   readonly additionalDirs?: readonly string[];
+  readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 }
 
 export class Agent {
@@ -94,9 +114,11 @@ export class Agent {
 
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
+  readonly mediaOriginalsDir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly toolServices?: ToolServices;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
+  readonly pluginCommands: readonly PluginCommandDef[];
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
   readonly subagentHost?: SessionSubagentHost;
@@ -105,8 +127,10 @@ export class Agent {
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
   readonly experimentalFlags: ExperimentalFlagResolver;
+  readonly imageLimits: ImageLimits;
 
   readonly llmRequestLogger: LlmRequestLogger;
+  readonly llmRequestRecorder: LlmRequestRecorder;
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
@@ -126,16 +150,39 @@ export class Agent {
   readonly goal: GoalMode;
   readonly replayBuilder: ReplayBuilder;
 
+  /**
+   * Print-mode (`kimi -p`) only: when true and the agent ends a turn while
+   * background subagents (`kind === 'agent'`) are still running, the turn loop
+   * holds the turn open and idle-waits until they finish, flushing their
+   * completions into the turn so the model can react before the run exits. Set
+   * by the session for print runs; defaults to false everywhere else.
+   */
+  printDrainAgentTasksOnStop = false;
+
   private additionalDirs: readonly string[];
+  private activeProfile?: ResolvedAgentProfile;
+  private brandHome?: string;
+  private readonly emittedThinkingEffortWarnings = new Set<string>();
+  private readonly pendingThinkingEffortWarnings: Array<{
+    readonly code: string;
+    readonly message: string;
+    readonly modelAlias: string | undefined;
+    readonly model: string;
+    readonly effort: string;
+    readonly knownEfforts: string | undefined;
+  }> = [];
+  private readonly systemPromptContextProvider?: (() => Promise<PreparedSystemPromptContext>) | undefined;
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
     this._kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
+    this.mediaOriginalsDir = options.mediaOriginalsDir;
     this.rpc = options.rpc;
     this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
+    this.pluginCommands = options.pluginCommands ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
@@ -144,9 +191,12 @@ export class Agent {
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
+    this.imageLimits = options.imageLimits ?? new ImageLimits();
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
+    this.systemPromptContextProvider = options.systemPromptContextProvider;
 
     this.llmRequestLogger = new LlmRequestLogger(this.log);
+    this.llmRequestRecorder = new LlmRequestRecorder(this);
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
@@ -198,19 +248,53 @@ export class Agent {
     }
   }
 
+  /**
+   * Single decision point for select_tools progressive disclosure. All three
+   * gates must be open: the model has the `dynamically_loaded_tools`
+   * capability (message-level tool declarations), the model declares
+   * `tool_use` (a model without tool use loading tools dynamically is a
+   * contradiction), and the `tool-select` experimental flag is on. Every
+   * consumer — top-level tools[] convergence, select_tools registration,
+   * manifest announcements, projection shaping — reads this instead of
+   * re-deriving the conditions, so degradation is lossless: any closed gate
+   * reproduces the inline behavior byte-for-byte.
+   */
+  get toolSelectEnabled(): boolean {
+    const capability = this.config.modelCapabilities;
+    return (
+      capability.dynamically_loaded_tools === true &&
+      capability.tool_use &&
+      this.experimentalFlags.enabled('tool-select')
+    );
+  }
+
   get generate(): typeof generate {
     return async (provider, systemPrompt, tools, history, callbacks, options) => {
       const { requestLogFields, generateOptions } = splitGenerateOptions(options);
       const modelAlias = this.config.modelAlias;
       const run = (requestOptions: Parameters<typeof generate>[5]) => {
-        this.llmRequestLogger.logRequest({
-          provider,
-          modelAlias,
-          systemPrompt,
-          tools,
-          messages: history,
-          fields: requestLogFields,
-        });
+        // Mirror kosong generate()'s pre-flight abort check: a call whose
+        // signal is already aborted never reaches the wire (generate throws
+        // before dispatching), so it must not leave a request trace or a
+        // diagnostic log line claiming a request was sent.
+        if (requestOptions?.signal?.aborted !== true) {
+          this.warnAboutAnthropicThinkingEffort(provider, modelAlias);
+          this.llmRequestLogger.logRequest({
+            provider,
+            modelAlias,
+            systemPrompt,
+            tools,
+            messages: history,
+            fields: requestLogFields,
+          });
+          this.llmRequestRecorder.record({
+            provider,
+            systemPrompt,
+            tools,
+            messages: history,
+            fields: requestLogFields,
+          });
+        }
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
       };
       if (generateOptions?.auth !== undefined) {
@@ -227,6 +311,107 @@ export class Agent {
         return run({ ...generateOptions, auth });
       });
     };
+  }
+
+  private warnAboutAnthropicThinkingEffort(
+    provider: ChatProvider,
+    modelAlias: string | undefined,
+  ): void {
+    if (provider.name !== 'anthropic') return;
+    const effort = provider.thinkingEffort;
+    if (effort === null || effort === 'on') return;
+
+    let warning:
+      | { readonly code: string; readonly message: string; readonly knownEfforts?: string }
+      | undefined;
+    try {
+      const resolved =
+        modelAlias === undefined
+          ? undefined
+          : this.modelProvider?.resolveProviderConfig(modelAlias);
+      if (resolved === undefined) return;
+
+      if (effort === 'off') {
+        if (resolved.alwaysThinking !== true) return;
+        warning = {
+          code: 'anthropic-thinking-cannot-disable',
+          message: `Model "${provider.modelName}" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.`,
+        };
+      } else {
+        const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
+        if (supportEfforts === undefined || supportEfforts.length === 0) return;
+        if (supportEfforts.includes(effort)) return;
+        warning = {
+          code: 'anthropic-thinking-effort-not-listed',
+          message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`,
+          knownEfforts: supportEfforts.join(','),
+        };
+      }
+    } catch {
+      // Capability diagnostics must never turn an otherwise sendable request
+      // into a client-side failure.
+      return;
+    }
+
+    if (warning === undefined) return;
+    const key = [warning.code, modelAlias, provider.modelName, effort, warning.knownEfforts].join(
+      '\u0000',
+    );
+    if (this.emittedThinkingEffortWarnings.has(key)) return;
+    this.emittedThinkingEffortWarnings.add(key);
+    const pending = {
+      code: warning.code,
+      message: warning.message,
+      modelAlias,
+      model: provider.modelName,
+      effort,
+      knownEfforts: warning.knownEfforts,
+    };
+    if (this.records.restoring) {
+      this.pendingThinkingEffortWarnings.push(pending);
+      return;
+    }
+    this.publishAnthropicThinkingEffortWarning(pending);
+  }
+
+  private publishAnthropicThinkingEffortWarning(
+    warning: (typeof this.pendingThinkingEffortWarnings)[number],
+  ): void {
+    try {
+      this.log.warn(warning.message, {
+        modelAlias: warning.modelAlias,
+        model: warning.model,
+        effort: warning.effort,
+        knownEfforts: warning.knownEfforts,
+      });
+    } catch {
+      // Diagnostics must never block resume or request dispatch.
+    }
+    try {
+      const delivery = this.rpc?.emitEvent?.({
+        type: 'warning',
+        code: warning.code,
+        message: warning.message,
+      });
+      void delivery?.catch(() => {});
+    } catch {
+      // Diagnostics must never block resume or request dispatch.
+    }
+  }
+
+  private flushPendingAnthropicThinkingEffortWarnings(): void {
+    for (const warning of this.pendingThinkingEffortWarnings.splice(0)) {
+      this.publishAnthropicThinkingEffortWarning(warning);
+    }
+  }
+
+  warnAboutCurrentAnthropicThinkingEffort(): void {
+    try {
+      if (!this.config.hasProvider) return;
+      this.warnAboutAnthropicThinkingEffort(this.config.provider, this.config.modelAlias);
+    } catch {
+      // A capability warning must never make config replay or session resume fail.
+    }
   }
 
   get llm(): KosongLLM {
@@ -248,7 +433,41 @@ export class Agent {
     });
   }
 
-  useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
+  useProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+    brandHome?: string,
+  ): void {
+    this.setActiveProfile(profile, brandHome);
+    this.updateSystemPromptFromProfile(profile, context);
+    this.tools.setActiveTools(profile.tools);
+  }
+
+  setActiveProfile(profile: ResolvedAgentProfile, brandHome?: string): void {
+    this.activeProfile = profile;
+    this.brandHome = brandHome;
+  }
+
+  /**
+   * Re-render the system prompt with freshly gathered runtime context (cwd
+   * listing, AGENTS.md, additional-dirs info, skill list). Called after
+   * compaction so the post-compaction turns do not keep a snapshot captured
+   * at session bootstrap. Invalidates the prompt-cache prefix by design.
+   */
+  async refreshSystemPrompt(): Promise<void> {
+    if (this.activeProfile === undefined) return;
+    const context = this.systemPromptContextProvider === undefined
+      ? await prepareSystemPromptContext(this.kaos, this.brandHome, {
+          additionalDirs: this.additionalDirs,
+        })
+      : await this.systemPromptContextProvider();
+    this.updateSystemPromptFromProfile(this.activeProfile, context);
+  }
+
+  private updateSystemPromptFromProfile(
+    profile: ResolvedAgentProfile,
+    context?: PreparedSystemPromptContext,
+  ): void {
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
@@ -258,11 +477,11 @@ export class Agent {
       additionalDirsInfo: context?.additionalDirsInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
-    this.tools.setActiveTools(profile.tools);
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
     const result = await this.records.replay(options);
+    this.flushPendingAnthropicThinkingEffortWarnings();
     try {
       this.replayBuilder.postRestoring = true;
       this.goal.normalizeAfterReplay();
@@ -290,19 +509,27 @@ export class Agent {
       },
       cancel: (payload) => {
         if (this.turn.hasActiveTurn) {
-          this.telemetry.track('cancel', { from: 'streaming' });
+          this.telemetry.track('cancel', {
+            from: 'streaming',
+            trace_id: this.turn.activeRequestTraceId(),
+          });
         }
         this.turn.cancel(payload.turnId);
       },
       undoHistory: (payload) => {
         this.context.undo(payload.count);
+        this.telemetry.track('conversation_undo', { count: payload.count });
       },
       setThinking: (payload) => {
-        const wasEnabled = this.config.thinkingLevel !== 'off';
-        this.config.update({ thinkingLevel: payload.level });
-        const enabled = this.config.thinkingLevel !== 'off';
-        if (enabled !== wasEnabled) {
-          this.telemetry.track('thinking_toggle', { enabled });
+        const previousEffort = this.config.thinkingEffort;
+        this.config.setThinkingEffort(payload.effort);
+        const effort = this.config.thinkingEffort;
+        if (effort !== previousEffort) {
+          this.telemetry.track('thinking_toggle', {
+            enabled: effort !== 'off',
+            effort,
+            from: previousEffort,
+          });
         }
       },
       setPermission: (payload) => {
@@ -356,7 +583,10 @@ export class Agent {
       },
       cancelCompaction: () => {
         if (this.fullCompaction.isCompacting) {
-          this.telemetry.track('cancel', { from: 'compacting' });
+          this.telemetry.track('cancel', {
+            from: 'compacting',
+            trace_id: this.fullCompaction.lastTraceId,
+          });
         }
         this.fullCompaction.cancel();
       },
@@ -376,11 +606,50 @@ export class Agent {
       clearContext: () => {
         this.context.clear();
       },
+      importContext: (payload) => {
+        if (this.turn.hasActiveTurn || this.fullCompaction.isCompacting) {
+          throw new KimiError(
+            ErrorCodes.TURN_AGENT_BUSY,
+            'Cannot import context while the agent is busy',
+          );
+        }
+        this.context.importContext(payload.content, payload.source);
+      },
       activateSkill: (payload) => {
         if (this.skills === null) {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${payload.name}" was not found`);
         }
         this.skills.activate(payload);
+      },
+      activatePluginCommand: (payload) => {
+        const def = this.pluginCommands.find(
+          (d) => d.pluginId === payload.pluginId && d.name === payload.commandName,
+        );
+        if (def === undefined) {
+          throw new KimiError(
+            ErrorCodes.REQUEST_INVALID,
+            `Plugin command "${payload.pluginId}:${payload.commandName}" was not found`,
+          );
+        }
+        const commandArgs = payload.args ?? '';
+        const expanded = expandCommandArguments(def.body, commandArgs);
+        const origin: PluginCommandOrigin = {
+          kind: 'plugin_command',
+          activationId: randomUUID(),
+          pluginId: payload.pluginId,
+          commandName: payload.commandName,
+          commandArgs: payload.args,
+          trigger: 'user-slash',
+        };
+        this.emitEvent({
+          type: 'plugin_command.activated',
+          activationId: origin.activationId,
+          pluginId: origin.pluginId,
+          commandName: origin.commandName,
+          commandArgs: origin.commandArgs,
+          trigger: origin.trigger,
+        });
+        this.turn.prompt([{ type: 'text', text: expanded }], origin);
       },
       startBtw: () => this.subagentHost!.startBtw(),
       createGoal: (payload) => this.goal.createGoal(payload),
@@ -388,6 +657,9 @@ export class Agent {
       pauseGoal: () => this.goal.pauseGoal(),
       resumeGoal: () => this.goal.resumeGoal(),
       cancelGoal: () => this.goal.cancelGoal(),
+      // `cron` is null for subagents, which never schedule; report an empty
+      // list rather than failing the RPC so callers can poll uniformly.
+      getCronTasks: () => ({ tasks: this.cron?.listTaskSnapshots() ?? [] }),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),
@@ -404,7 +676,7 @@ export class Agent {
     void this.rpc?.emitEvent?.(event);
   }
 
-  emitStatusUpdated(): void {
+  emitStatusUpdated(includeThinkingEffort = false): void {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
@@ -420,6 +692,7 @@ export class Agent {
     this.emitEvent({
       type: 'agent.status.updated',
       model,
+      thinkingEffort: includeThinkingEffort ? this.config.thinkingEffort : undefined,
       contextTokens,
       maxContextTokens,
       contextUsage,

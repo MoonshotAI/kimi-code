@@ -137,6 +137,9 @@ function makeHost({
       availableModels: {},
       availableProviders: {},
     },
+    editor: {
+      setDisablePasteBurst: vi.fn(),
+    },
     theme: {
       palette: {
         success: '#00ff00',

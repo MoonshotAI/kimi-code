@@ -52,11 +52,11 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput', () => {
       const session = await harness.createSession({ id: 'ses_bg_empty_id', workDir });
       await expect(session.getBackgroundTaskOutput('')).rejects.toMatchObject({
         name: 'KimiError',
-        code: 'background.task_id_empty',
+        code: 'task.task_id_empty',
       } satisfies Partial<KimiError>);
       await expect(session.stopBackgroundTask('')).rejects.toMatchObject({
         name: 'KimiError',
-        code: 'background.task_id_empty',
+        code: 'task.task_id_empty',
       } satisfies Partial<KimiError>);
     } finally {
       await harness.close();

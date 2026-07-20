@@ -10,12 +10,13 @@ describe('metaResponseSchema', () => {
       file_upload: true,
       fs_query: true,
       mcp: true,
-      background_tasks: true,
+      tasks: true,
       terminal: true,
     },
     server_id: '01HXYZABCDEFGHJKMNPQRSTVWX',
     started_at: '2026-06-04T10:30:00.000Z',
     open_in_apps: ['finder', 'vscode'] as const,
+    dangerous_bypass_auth: false,
   };
 
   it('round-trips a well-formed payload', () => {
@@ -24,6 +25,7 @@ describe('metaResponseSchema', () => {
     expect(parsed.capabilities.websocket).toBe(true);
     expect(parsed.server_id).toBe('01HXYZABCDEFGHJKMNPQRSTVWX');
     expect(parsed.started_at).toBe('2026-06-04T10:30:00.000Z');
+    expect(parsed.dangerous_bypass_auth).toBe(false);
   });
 
   it('normalizes started_at to UTC Z with millisecond precision', () => {
@@ -53,6 +55,31 @@ describe('metaResponseSchema', () => {
   it('rejects missing started_at', () => {
     const { started_at: _omit, ...rest } = sample;
     expect(metaResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects missing dangerous_bypass_auth', () => {
+    const { dangerous_bypass_auth: _omit, ...rest } = sample;
+    expect(metaResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('accepts dangerous_bypass_auth = true', () => {
+    const parsed = metaResponseSchema.parse({ ...sample, dangerous_bypass_auth: true });
+    expect(parsed.dangerous_bypass_auth).toBe(true);
+  });
+
+  it('accepts backend = v2', () => {
+    const parsed = metaResponseSchema.parse({ ...sample, backend: 'v2' });
+    expect(parsed.backend).toBe('v2');
+  });
+
+  it('accepts a missing backend (treated as v1)', () => {
+    const parsed = metaResponseSchema.parse(sample);
+    expect(parsed.backend).toBeUndefined();
+  });
+
+  it('rejects an unknown backend value', () => {
+    const bad = { ...sample, backend: 'v3' };
+    expect(metaResponseSchema.safeParse(bad).success).toBe(false);
   });
 
   it('rejects a capability set with the wrong boolean literal', () => {

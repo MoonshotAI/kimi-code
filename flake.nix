@@ -64,17 +64,21 @@
       workspacePaths = [
         ./packages/acp-adapter
         ./packages/agent-core
-        ./packages/server
-        ./packages/server-e2e
+        ./packages/agent-core-v2
+        ./packages/kap-server
         ./packages/kaos
-        ./packages/kimi-migration-legacy
+        ./packages/klient
         ./packages/kosong
         ./packages/migration-legacy
+        ./packages/minidb
         ./packages/node-sdk
         ./packages/oauth
+        ./packages/pi-tui
         ./packages/protocol
         ./packages/telemetry
         ./apps/kimi-code
+        ./apps/vscode
+        ./apps/kimi-inspect
         ./apps/kimi-web
         ./apps/vis
         ./apps/vis/server
@@ -85,22 +89,26 @@
       workspaceNames = [
         "@moonshot-ai/acp-adapter"
         "@moonshot-ai/agent-core"
-        "@moonshot-ai/server"
-        "@moonshot-ai/server-e2e"
+        "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/kap-server"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
+        "@moonshot-ai/minidb"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
+        "@moonshot-ai/klient"
+        "@moonshot-ai/pi-tui"
         "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
+        "kimi-code"
+        "@moonshot-ai/kimi-inspect"
         "@moonshot-ai/kimi-web"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"
         "kimi-code-docs"
-        "kimi-migration-legacy"
       ];
     in
     {
@@ -150,7 +158,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-w/mEQrb5gNn4S5jZ95vO9uy4u/JB3wFbUfIZDcWqTXU=";
+              hash = "sha256-+pzJfoWJwVXIUU8oc56LVpfNjSY6MABID5g11Cm92xw=";
             };
 
             nativeBuildInputs = [

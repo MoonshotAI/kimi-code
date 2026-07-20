@@ -216,6 +216,15 @@ describe('SetGoalBudgetTool', () => {
     expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBe(30 * 60 * 1000);
   });
 
+  it('reports no current goal instead of throwing when no goal exists', async () => {
+    const tool = new SetGoalBudgetTool(fakeAgent());
+
+    const result = await executeTool(tool, ctx({ value: 20, unit: 'turns' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('Goal budget not set: no current goal.');
+  });
+
   it('rounds fractional turn and token budgets before setting them', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
@@ -247,20 +256,75 @@ describe('SetGoalBudgetTool', () => {
     expect(huge.output).toContain('not a reasonable goal budget');
     expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBeNull();
   });
+
+  it('stops the batch and turn when the new budget is already exhausted', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.incrementTurn(); // turnsUsed = 1
+    const tool = new SetGoalBudgetTool(fakeAgent({ goal: store }));
+
+    const execution = tool.resolveExecution({ value: 1, unit: 'turns' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    expect(execution.stopBatchAfterThis).toBe(true);
+
+    const result = await execution.execute({ turnId: '0', toolCallId: 'call_1', signal });
+    expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('will stop now');
+    expect(store.getGoal().goal?.budget.overBudget).toBe(true);
+  });
+
+  it('does not stop when the new budget leaves room', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.incrementTurn(); // turnsUsed = 1
+    const tool = new SetGoalBudgetTool(fakeAgent({ goal: store }));
+
+    const execution = tool.resolveExecution({ value: 5, unit: 'turns' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    expect(execution.stopBatchAfterThis).toBeFalsy();
+
+    const result = await execution.execute({ turnId: '0', toolCallId: 'call_1', signal });
+    expect(result.stopTurn).toBeFalsy();
+    expect(result.output).toBe('Goal budget set: 5 turns.');
+  });
 });
 
 describe('UpdateGoalTool', () => {
   it('guards against premature blocked status', () => {
     const description = new UpdateGoalTool(fakeAgent()).description.toLowerCase();
-    // codex spec.rs:80 wording (without the 3-turn machinery kimi lacks).
+    // Reserve blocked for genuine impasses, not ordinary unfinished work.
+    expect(description).toContain('genuine impasse');
+    expect(description).toContain('3 consecutive goal turns');
+    expect(description).toContain('fresh blocked audit');
+    expect(description).toContain('impossible, unsafe, or contradictory');
+    expect(description).toContain('same turn instead of running more goal turns');
     expect(description).toContain('hard, slow');
+    expect(description).toContain('needs more goal turns');
     // UpdateGoal also injects the completion/blocked outcome prompt, so it does
     // more than "only record the status".
     expect(description).not.toContain('only records the status');
   });
 
-  // Terminal paths append follow-up reminders, so the agent needs a context
-  // exposing appendSystemReminder.
+  it('exposes the blocked-audit rule in the status parameter schema', () => {
+    const statusDescription =
+      ((new UpdateGoalTool(fakeAgent()).parameters as {
+        properties: Record<string, { description?: string }>;
+      }).properties['status']?.description) ?? '';
+    expect(statusDescription).toContain('3 consecutive goal turns');
+    expect(statusDescription).toContain('impossible, unsafe, or contradictory objectives');
+  });
+
+  it('discourages calling UpdateGoal after a non-terminal work slice', () => {
+    const description = new UpdateGoalTool(fakeAgent()).description;
+    expect(description).toContain('Most active goal turns should not call this tool');
+    expect(description).toContain('end the turn normally without calling UpdateGoal');
+    expect(description).toContain('actual objective and every explicit requirement');
+    expect(description).toContain('weak or indirect evidence');
+    expect(description).toContain('budget is nearly exhausted');
+  });
+
+  // Keep a capturing context here to prove terminal paths no longer append a
+  // separate reminder; the outcome prompt is returned as the tool result.
   function agentWithContext(
     store: GoalMode,
     reminders: Array<{ readonly content: string; readonly origin: unknown }> = [],
@@ -276,14 +340,30 @@ describe('UpdateGoalTool', () => {
     } as unknown as Agent;
   }
 
-  it('accepts only active / complete / paused / blocked', () => {
-    for (const status of ['active', 'complete', 'paused', 'blocked']) {
+  it('accepts only active / complete / blocked', () => {
+    for (const status of ['active', 'complete', 'blocked']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);
     }
     expect(UpdateGoalToolInputSchema.safeParse({ status: 'blocked', reason: 'x' }).success).toBe(false);
-    for (const status of ['impossible', 'cancelled', '']) {
+    for (const status of ['paused', 'impossible', 'cancelled', '']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(false);
     }
+  });
+
+  it('forbids model-driven goal pauses', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const tool = new UpdateGoalTool(agentWithContext(store));
+    const validator = compileToolArgsValidator(tool.parameters);
+
+    expect(validateToolArgs(validator, { status: 'paused' })).not.toBeNull();
+
+    const execution = tool.resolveExecution({ status: 'paused' } as never);
+    expect(execution).toMatchObject({
+      isError: true,
+      output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+    });
+    expect(store.getGoal().goal?.status).toBe('active');
   });
 
   it('`complete` marks the goal complete and clears it (transient)', async () => {
@@ -296,11 +376,10 @@ describe('UpdateGoalTool', () => {
     );
     expect(result.isError).toBeFalsy();
     expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('Goal completed successfully.');
+    expect(result.output).toContain('Write a concise final message for the user');
     expect(store.getGoal().goal).toBeNull();
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_completion' });
-    expect(reminders[0]?.content).toContain('Goal completed successfully.');
-    expect(reminders[0]?.content).toContain('Write a concise final message for the user');
+    expect(reminders).toHaveLength(0);
   });
 
   it('`blocked` marks the goal blocked (resumable) and asks for a blocker reason', async () => {
@@ -312,23 +391,11 @@ describe('UpdateGoalTool', () => {
       ctx({ status: 'blocked' }),
     );
     expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('Goal blocked.');
+    expect(result.output).toContain('concrete blocker');
     expect(store.getGoal().goal?.status).toBe('blocked');
     expect(store.getGoal().goal?.terminalReason).toBeUndefined();
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_blocked' });
-    expect(reminders[0]?.content).toContain('Goal blocked.');
-    expect(reminders[0]?.content).toContain('concrete blocker');
-  });
-
-  it('`paused` marks the goal paused', async () => {
-    const store = makeStore();
-    await store.createGoal({ objective: 'work' });
-    const result = await executeTool(
-      new UpdateGoalTool(agentWithContext(store)),
-      ctx({ status: 'paused' }),
-    );
-    expect(result.stopTurn).toBe(true);
-    expect(store.getGoal().goal?.status).toBe('paused');
+    expect(reminders).toHaveLength(0);
   });
 
   it('`active` resumes a paused goal', async () => {
@@ -340,6 +407,23 @@ describe('UpdateGoalTool', () => {
     expect(result.output).toBe('Goal resumed.');
     expect(store.getGoal().goal?.status).toBe('active');
   });
+
+  it.each([
+    ['active', 'Goal not resumed: no current goal.'],
+    ['complete', 'Goal not completed: no active goal.'],
+    ['blocked', 'Goal not blocked: no active goal.'],
+  ] as const)('reports a no-goal result for `%s` without stopping the turn', async (status, output) => {
+    const tool = new UpdateGoalTool(agentWithContext(makeStore()));
+    const execution = tool.resolveExecution({ status });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+
+    expect(execution.stopBatchAfterThis).toBeFalsy();
+    const result = await execution.execute({ turnId: '0', toolCallId: 'call_1', signal });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.stopTurn).toBeFalsy();
+    expect(result.output).toBe(output);
+  });
 });
 
 describe('ToolManager goal tool registration', () => {
@@ -348,7 +432,7 @@ describe('ToolManager goal tool registration', () => {
       type,
     });
     // configure() gives the agent a provider so builtin tools can initialize.
-    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget'] });
+    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] });
     // Re-run registration so the gate reads the scoped flag resolver state.
     ctxAgent.agent.tools.initializeBuiltinTools();
     return ctxAgent.agent.tools.loopTools.map((tool) => tool.name);
@@ -356,8 +440,9 @@ describe('ToolManager goal tool registration', () => {
 
   it('exposes goal tools to the main agent', () => {
     const names = loopToolNames('main');
-    expect(names).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
-    expect(names).not.toContain('SetGoalBudget');
+    expect(names).toEqual(
+      expect.arrayContaining(['CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal']),
+    );
   });
 
   it('does not expose goal tools to subagents even when enabled', () => {
@@ -365,9 +450,10 @@ describe('ToolManager goal tool registration', () => {
     expect(names).not.toContain('CreateGoal');
     expect(names).not.toContain('GetGoal');
     expect(names).not.toContain('SetGoalBudget');
+    expect(names).not.toContain('UpdateGoal');
   });
 
-  it('hides goal mutation tools until a goal exists, then exposes them', async () => {
+  it('keeps goal mutation tools visible across goal lifecycle states', async () => {
     const store = makeStore();
     const ctxAgent = testAgent({
       type: 'main',
@@ -375,17 +461,16 @@ describe('ToolManager goal tool registration', () => {
     });
     ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] });
     ctxAgent.agent.tools.initializeBuiltinTools();
-    // No goal yet -> mutation tools are filtered out of the model's tool list.
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('SetGoalBudget');
-    // Once a goal exists, it appears.
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
+
     await store.createGoal({ objective: 'work' });
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
 
     await store.markComplete({}, 'model');
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
-    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('SetGoalBudget');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
   });
 });
 

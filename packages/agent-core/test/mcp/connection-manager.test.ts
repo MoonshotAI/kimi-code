@@ -34,7 +34,6 @@ import { createScriptedGenerate } from '../agent/harness';
 const here = import.meta.dirname;
 const stdioFixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
 const cwdStdioFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
-const slowStdioFixture = join(here, 'fixtures', 'slow-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
 const MOCK_PROVIDER: ProviderConfig = {
@@ -161,6 +160,14 @@ describe('McpConnectionManager', () => {
       const resolved = cm.resolved('filtered');
       expect(resolved).toBeDefined();
       expect([...(resolved?.enabledNames ?? [])]).toEqual(['echo']);
+      // The raw tools/list result stays verbatim and unfiltered — the
+      // allow-list only gates registration, not the discovery trace.
+      const rawNames = resolved?.rawTools.map((tool) => tool.name) ?? [];
+      expect(rawNames).toContain('echo');
+      expect(rawNames).toContain('boom');
+      for (const rawTool of resolved?.rawTools ?? []) {
+        expect(rawTool.inputSchema).toBeDefined();
+      }
       const entry = cm.get('filtered');
       expect(entry?.toolCount).toBe(1);
     } finally {
@@ -210,7 +217,7 @@ describe('McpConnectionManager', () => {
     cm.onStatusChange((entry) => {
       seen.push({ name: entry.name, status: entry.status });
     });
-    const delayedMockServer = `setTimeout(() => import(${JSON.stringify(pathToFileURL(stdioFixture).href)}), 250)`;
+    const delayedMockServer = `setTimeout(() => import(${JSON.stringify(pathToFileURL(stdioFixture).href)}), 160)`;
 
     const connect = cm.connectAll({
       slow: {
@@ -222,7 +229,9 @@ describe('McpConnectionManager', () => {
     });
 
     try {
-      await sleep(50);
+      // Let the first attempt get in-flight, then supersede it: reconnect
+      // must land before the delayed child finishes its 160ms startup.
+      await sleep(40);
       await cm.reconnect('slow');
       await connect;
 
@@ -358,7 +367,7 @@ describe('McpConnectionManager', () => {
     }
   }, 7000);
 
-  it('flips HTTP servers into needs-auth when the server returns 401 and no static token is set', async () => {
+  it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
     const server: HttpServer = createHttpServer((_req, res) => {
       res.writeHead(401, {
         'content-type': 'application/json',
@@ -376,6 +385,8 @@ describe('McpConnectionManager', () => {
         gated: {
           transport: 'http',
           url: `http://127.0.0.1:${port}/mcp`,
+          headers: { 'X-Tenant': 'example' },
+          auth: 'oauth',
           startupTimeoutMs: 5_000,
         },
       });
@@ -764,6 +775,12 @@ describe('Session MCP startup', () => {
 
   it('does not block main agent creation on slow MCP startup', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-startup-'));
+    // The child never completes the MCP handshake — it idles, keeping startup
+    // in-flight — but exits the instant the parent closes stdin, so
+    // session.close() does not wait out the SDK transport's close grace. The
+    // 800ms idle keeps startup pending long enough that a createMain blocked
+    // on MCP would lose the 500ms race below.
+    const idleServer = `process.stdin.on('end', () => process.exit(0)); process.stdin.resume(); setTimeout(() => {}, 800)`;
     const session = new Session({
       id: 'test-mcp-slow',
       kaos: testKaos.withCwd(tmp),
@@ -774,7 +791,7 @@ describe('Session MCP startup', () => {
           slow: {
             transport: 'stdio',
             command: process.execPath,
-            args: [slowStdioFixture],
+            args: ['-e', idleServer],
             startupTimeoutMs: 2_000,
           },
         },
@@ -785,7 +802,7 @@ describe('Session MCP startup', () => {
     try {
       const result = await Promise.race([
         create.then(() => 'resolved' as const),
-        sleep(1_000).then(() => 'blocked' as const),
+        sleep(500).then(() => 'blocked' as const),
       ]);
       expect(result).toBe('resolved');
     } finally {
@@ -871,7 +888,7 @@ describe('Session MCP startup', () => {
         cwd: tmp,
         modelAlias: 'mock-model',
         systemPrompt: 'test system prompt',
-        thinkingLevel: 'off',
+        thinkingEffort: 'off',
       });
       // This bare agent gets no profile, so grant MCP access explicitly.
       agent.tools.setActiveTools(['mcp__*']);

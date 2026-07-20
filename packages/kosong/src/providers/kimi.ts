@@ -1,4 +1,5 @@
 import { normalizeKimiToolSchema } from './kimi-schema';
+import { parseTraceId } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import type {
   ChatProvider,
@@ -6,6 +7,7 @@ import type {
   GenerateOptions,
   MaxCompletionTokensOptions,
   ProviderRequestAuth,
+  ResponseFormat,
   StreamedMessage,
   ThinkingEffort,
   VideoUploadInput,
@@ -27,7 +29,6 @@ import {
   normalizeOpenAIFinishReason,
   type OpenAIContentPart,
   type OpenAIToolParam,
-  reasoningEffortToThinkingEffort,
   toolToOpenAI,
 } from './openai-common';
 import {
@@ -67,13 +68,13 @@ export interface GenerationKwargs {
   presence_penalty?: number | undefined;
   frequency_penalty?: number | undefined;
   stop?: string | string[] | undefined;
-  reasoning_effort?: string | undefined;
   prompt_cache_key?: string | undefined;
   extra_body?: ExtraBody;
 }
 
 export interface ThinkingConfig {
   type?: 'enabled' | 'disabled';
+  effort?: string;
   keep?: unknown;
   [key: string]: unknown;
 }
@@ -93,6 +94,8 @@ interface OpenAIMessage {
   tool_call_id?: string | undefined;
   name?: string | undefined;
   reasoning_content?: string | undefined;
+  /** Message-level tool declarations (`messages[].tools`), see convertMessage. */
+  tools?: OpenAIToolParam[] | undefined;
 }
 
 interface OpenAIToolCallOut {
@@ -110,12 +113,14 @@ function isEffectivelyEmptyContent(parts: ContentPart[]): boolean {
   return true;
 }
 
-function convertMessage(message: Message): OpenAIMessage {
+function convertMessage(message: Message, preservedThinkingEnabled: boolean): OpenAIMessage {
   let reasoningContent = '';
+  let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
 
   for (const part of message.content) {
     if (part.type === 'think') {
+      hasReasoningPart = true;
       reasoningContent += part.think;
     } else {
       nonThinkParts.push(part);
@@ -162,8 +167,18 @@ function convertMessage(message: Message): OpenAIMessage {
     result.tool_call_id = message.toolCallId;
   }
 
-  if (reasoningContent) {
+  if (hasReasoningPart || (preservedThinkingEnabled && message.role === 'assistant')) {
     result.reasoning_content = reasoningContent;
+  }
+
+  // Message-level tool declarations: a system message carrying `tools` loads
+  // those definitions mid-conversation (`messages[].tools` in the Kimi
+  // contract; each entry is a full OpenAI-compatible tool param). Reusing
+  // convertTool keeps schema normalization and the `$` builtin_function
+  // branch identical to the top-level `tools[]` path. Such a message carries
+  // no `content` — the empty-content branch above already omits the field.
+  if (message.tools !== undefined && message.tools.length > 0) {
+    result.tools = message.tools.map((tool) => convertTool(tool));
   }
 
   return result;
@@ -182,6 +197,21 @@ function convertTool(tool: Tool): OpenAIToolParam {
     function: {
       ...converted.function,
       parameters: normalizeKimiToolSchema(tool.parameters),
+    },
+  };
+}
+
+function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
+  if (format.type === 'json_object') {
+    return { type: 'json_object' };
+  }
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: format.jsonSchema.name,
+      schema: format.jsonSchema.schema,
+      strict: format.jsonSchema.strict,
+      description: format.jsonSchema.description,
     },
   };
 }
@@ -226,6 +256,7 @@ class KimiStreamedMessage implements StreamedMessage {
   constructor(
     response: OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
     isStream: boolean,
+    private readonly _traceId: string | null,
   ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(
@@ -252,6 +283,10 @@ class KimiStreamedMessage implements StreamedMessage {
     return this._rawFinishReason;
   }
 
+  get traceId(): string | null {
+    return this._traceId;
+  }
+
   async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
     yield* this._iter;
   }
@@ -276,7 +311,7 @@ class KimiStreamedMessage implements StreamedMessage {
 
     // reasoning_content (Moonshot proprietary)
     const rc = (message as unknown as Record<string, unknown>)['reasoning_content'];
-    if (typeof rc === 'string' && rc) {
+    if (typeof rc === 'string') {
       yield { type: 'think', think: rc } satisfies StreamedMessagePart;
     }
 
@@ -334,7 +369,7 @@ class KimiStreamedMessage implements StreamedMessage {
 
         // reasoning_content (Moonshot proprietary)
         const rc = (delta as unknown as Record<string, unknown>)['reasoning_content'];
-        if (typeof rc === 'string' && rc) {
+        if (typeof rc === 'string') {
           yield { type: 'think', think: rc } satisfies StreamedMessagePart;
         }
 
@@ -358,6 +393,15 @@ class KimiStreamedMessage implements StreamedMessage {
 }
 export class KimiChatProvider implements ChatProvider {
   readonly name: string = 'kimi';
+
+  /**
+   * See {@link ChatProvider.maxCompletionTokens}. Mirrors the request-time
+   * normalization: `max_completion_tokens` wins over the legacy `max_tokens`
+   * alias.
+   */
+  get maxCompletionTokens(): number | undefined {
+    return this._generationKwargs.max_completion_tokens ?? this._generationKwargs.max_tokens;
+  }
 
   private _model: string;
   private _stream: boolean;
@@ -414,7 +458,11 @@ export class KimiChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    return reasoningEffortToThinkingEffort(this._generationKwargs.reasoning_effort);
+    const thinking = this._generationKwargs.extra_body?.thinking;
+    if (thinking === undefined) return null;
+    if (thinking.type === 'disabled') return 'off';
+    // A model that enables thinking without an effort is treated as boolean ("on").
+    return thinking.effort ?? 'on';
   }
 
   get modelParameters(): Record<string, unknown> {
@@ -435,9 +483,12 @@ export class KimiChatProvider implements ChatProvider {
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }
+    const thinking = this._generationKwargs.extra_body?.thinking;
+    const preservedThinkingEnabled =
+      thinking?.keep === 'all' && thinking.type !== 'disabled';
     const normalizedHistory = normalizeToolCallIdsForProvider(history, KIMI_TOOL_CALL_ID_POLICY);
     for (const msg of normalizedHistory) {
-      messages.push(convertMessage(msg));
+      messages.push(convertMessage(msg, preservedThinkingEnabled));
     }
 
     const kwargs: Record<string, unknown> = {
@@ -475,6 +526,9 @@ export class KimiChatProvider implements ChatProvider {
       ...requestKwargs,
       ...(extraBody as Record<string, unknown> | undefined),
     };
+    if (options?.responseFormat !== undefined) {
+      createParams['response_format'] = responseFormatToOpenAI(options.responseFormat);
+    }
 
     if (tools.length > 0) {
       createParams['tools'] = tools.map((t) => convertTool(t));
@@ -486,41 +540,49 @@ export class KimiChatProvider implements ChatProvider {
 
     try {
       const client = this._createClient(options?.auth);
-      // Use type assertion via unknown because we pass Moonshot-proprietary fields
-      // (reasoning_effort, thinking) that don't exist in the OpenAI type definitions.
-      const response = (await client.chat.completions.create(
-        createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-        options?.signal ? { signal: options.signal } : undefined,
-      )) as unknown as OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
-      return new KimiStreamedMessage(response, this._stream);
+      // Use type assertion via unknown because we pass the Moonshot-proprietary
+      // `thinking` field (via extra_body) that doesn't exist in the OpenAI type definitions.
+      options?.onRequestSent?.();
+      // `withResponse()` resolves as soon as the response headers arrive
+      // (before the stream body), so the KFC `x-trace-id` header is available
+      // even for a stream the caller later cancels mid-flight.
+      const { data, response } = await client.chat.completions
+        .create(
+          createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+          options?.signal ? { signal: options.signal } : undefined,
+        )
+        .withResponse();
+      return new KimiStreamedMessage(
+        data as unknown as
+          | OpenAI.Chat.ChatCompletion
+          | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
+        this._stream,
+        parseTraceId(response.headers),
+      );
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }
   }
 
   withThinking(effort: ThinkingEffort): KimiChatProvider {
-    const thinking: ThinkingConfig = {
-      type: effort === 'off' ? 'disabled' : 'enabled',
-    };
-    let reasoningEffort: string | undefined;
-    switch (effort) {
-      case 'off':
-        reasoningEffort = undefined;
-        break;
-      case 'low':
-        reasoningEffort = 'low';
-        break;
-      case 'medium':
-        reasoningEffort = 'medium';
-        break;
-      case 'high':
-      case 'xhigh':
-      case 'max':
-        reasoningEffort = 'high';
-        break;
+    let thinking: ThinkingConfig;
+    if (effort === 'off') {
+      thinking = { type: 'disabled' };
+    } else {
+      thinking = effort === 'on' ? { type: 'enabled' } : { type: 'enabled', effort };
     }
-    return this._withGenerationKwargs({ reasoning_effort: reasoningEffort }).withExtraBody({
-      thinking,
+    // Replace extra_body.thinking wholesale so a stale `effort` from a previous
+    // withThinking call can never linger on a disabled or non-effort thinking
+    // object — but carry over a `keep` set earlier via withExtraBody (the
+    // KIMI_MODEL_THINKING_KEEP path applies keep after withThinking and merges
+    // on top, so it is unaffected either way).
+    const oldExtra = this._generationKwargs.extra_body ?? {};
+    const keep = oldExtra.thinking?.keep;
+    if (keep !== undefined) {
+      thinking = { ...thinking, keep };
+    }
+    return this._withGenerationKwargs({
+      extra_body: { ...oldExtra, thinking },
     });
   }
 

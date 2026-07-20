@@ -3,12 +3,13 @@
  *
  * Layout:
  *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
- *   Line 2: context: XX.X% (tokens/max)
+ *   Line 2: context: N% (tokens/max)
  */
 
-import type { Component } from '@earendil-works/pi-tui';
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
+import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
+import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
@@ -22,7 +23,11 @@ import {
   type GitStatus,
   type GitStatusCache,
 } from '#/utils/git/git-status';
-import { safeUsageRatio } from '#/utils/usage/usage-format';
+import {
+  formatTokenCount,
+  usagePercent,
+  usagePercentFromRatio,
+} from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
@@ -132,7 +137,8 @@ function formatBadgeElapsed(ms: number): string {
 
 function modelDisplayName(state: AppState): string {
   const model = state.availableModels[state.model];
-  return model?.displayName ?? model?.model ?? state.model;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.displayName ?? effective?.model ?? state.model;
 }
 
 function shortenCwd(path: string): string {
@@ -152,22 +158,18 @@ function shortenCwd(path: string): string {
   return `…/${tail}`;
 }
 
-function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function safeUsage(usage: number): number {
-  return safeUsageRatio(usage);
-}
-
+/**
+ * Footer context readout. Percent comes from the exact token counts when
+ * both are known (the ratio can lag a step behind); otherwise it falls
+ * back to the precomputed ratio. Counts use the shared 1024-based
+ * formatter.
+ */
 function formatContextStatus(usage: number, tokens?: number, maxTokens?: number): string {
-  const pct = `${(safeUsage(usage) * 100).toFixed(1)}%`;
-  if (maxTokens && maxTokens > 0 && tokens !== undefined) {
-    return `context: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
+  if (maxTokens !== undefined && maxTokens > 0 && tokens !== undefined) {
+    const pct = String(usagePercent(tokens, maxTokens));
+    return `context: ${pct}% (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
   }
-  return `context: ${pct}`;
+  return `context: ${String(usagePercentFromRatio(usage))}%`;
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
@@ -262,7 +264,18 @@ export class FooterComponent implements Component {
 
     const model = modelDisplayName(state);
     if (model) {
-      const thinkingLabel = state.thinking ? ' thinking' : '';
+      const effort = state.thinkingEffort;
+      const rawCurrentModel = state.availableModels[state.model];
+      const currentModel = rawCurrentModel === undefined ? undefined : effectiveModelAlias(rawCurrentModel);
+      // Only effort-capable models (those declaring support_efforts) show the
+      // concrete effort; legacy boolean models keep the plain "thinking" suffix.
+      const hasEfforts = (currentModel?.supportEfforts?.length ?? 0) > 0;
+      const thinkingLabel =
+        effort !== 'off'
+          ? hasEfforts && effort !== 'on'
+            ? ` thinking: ${effort}`
+            : ' thinking'
+          : '';
       const modelLabel = `${model}${thinkingLabel}`;
       let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
       if (isRainbowDancing()) {
@@ -364,6 +377,13 @@ export class FooterComponent implements Component {
       return;
     }
 
+    if (this.goalTimer !== null) {
+      clearInterval(this.goalTimer);
+      this.goalTimer = null;
+    }
+  }
+
+  dispose(): void {
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;

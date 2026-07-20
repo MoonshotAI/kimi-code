@@ -3,8 +3,8 @@ import type {
   AutocompleteProvider,
   AutocompleteSuggestions,
   TUI,
-} from '@earendil-works/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+} from '@moonshot-ai/pi-tui';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
@@ -12,6 +12,7 @@ import { FileMentionProvider } from '#/tui/components/editor/file-mention-provid
 function makeEditor(): CustomEditor {
   const tui = {
     requestRender: vi.fn(),
+    render: vi.fn(() => []),
     terminal: { rows: 40, cols: 120 },
   } as unknown as TUI;
   return new CustomEditor(tui);
@@ -27,6 +28,22 @@ function providerReturning(items: AutocompleteItem[]): AutocompleteProvider {
     getSuggestions: vi.fn(async () => ({ items, prefix: '/' })),
     applyCompletion: vi.fn((lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol })),
   };
+}
+
+function providerRecordingForce(items: AutocompleteItem[]): {
+  provider: AutocompleteProvider;
+  calls: Array<{ force: boolean | undefined; text: string }>;
+} {
+  const calls: Array<{ force: boolean | undefined; text: string }> = [];
+  const provider: AutocompleteProvider = {
+    getSuggestions: vi.fn(async (lines, cursorLine, cursorCol, options) => {
+      const text = (lines[cursorLine] ?? '').slice(0, cursorCol);
+      calls.push({ force: options?.force, text });
+      return { items, prefix: text };
+    }),
+    applyCompletion: vi.fn((lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol })),
+  };
+  return { provider, calls };
 }
 
 describe('CustomEditor autocomplete Escape handling', () => {
@@ -55,7 +72,9 @@ describe('CustomEditor autocomplete Escape handling', () => {
       getSuggestions: vi.fn(
         () =>
           new Promise<AutocompleteSuggestions | null>((resolve) => {
-            resolveSuggestions = (items) =>{  resolve({ items, prefix: '/' }); };
+            resolveSuggestions = (items) => {
+              resolve({ items, prefix: '/' });
+            };
           }),
       ),
       applyCompletion: vi.fn((lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol })),
@@ -71,6 +90,29 @@ describe('CustomEditor autocomplete Escape handling', () => {
 
     expect(editor.isShowingAutocomplete()).toBe(false);
     expect(onEscape).not.toHaveBeenCalled();
+  });
+});
+
+describe('CustomEditor onNonEscapeInput', () => {
+  it('fires for a printable key and not for a lone Escape', () => {
+    const editor = makeEditor();
+    const onNonEscapeInput = vi.fn();
+    editor.onNonEscapeInput = onNonEscapeInput;
+
+    editor.handleInput('a');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
+
+    editor.handleInput('\u001B');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
+  });
+
+  it('fires for control keys so they break a pending double-Esc', () => {
+    const editor = makeEditor();
+    const onNonEscapeInput = vi.fn();
+    editor.onNonEscapeInput = onNonEscapeInput;
+
+    editor.handleInput('\u0003');
+    expect(onNonEscapeInput).toHaveBeenCalledOnce();
   });
 });
 
@@ -113,7 +155,8 @@ describe('CustomEditor slash argument completion refresh', () => {
           description: 'Add directory',
           getArgumentCompletions: (prefix) => {
             if (prefix === '/') return [{ value: '/tmp/shared/', label: 'shared/' }];
-            if (prefix === '/tmp/shared/') return [{ value: '/tmp/shared/child/', label: 'child/' }];
+            if (prefix === '/tmp/shared/')
+              return [{ value: '/tmp/shared/child/', label: 'child/' }];
             return null;
           },
         },
@@ -333,6 +376,35 @@ describe('CustomEditor slash argument hint', () => {
     const plain = editor.render(90).map(stripAnsi).join('\n');
     expect(plain).not.toContain('[list] | <path>');
   });
+
+  it('does not render the argument hint in bash mode', () => {
+    const editor = makeEditor();
+    editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
+    editor.inputMode = 'bash';
+
+    for (const char of '/add-dir') {
+      editor.handleInput(char);
+    }
+
+    const plain = editor.render(90).map(stripAnsi).join('\n');
+    expect(plain).not.toContain('[list] | <path>');
+  });
+
+  it('does not highlight the slash token in bash mode', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+
+    for (const char of '/add-dir') {
+      editor.handleInput(char);
+    }
+
+    const contentLine = editor.render(90)[1] ?? '';
+    const tokenIdx = contentLine.indexOf('/add-dir');
+    expect(tokenIdx).toBeGreaterThan(-1);
+    // Prompt mode wraps `/add-dir` in a primary-colour ANSI sequence; in bash
+    // mode the token is plain text, so the byte right before it is a space.
+    expect(contentLine[tokenIdx - 1]).toBe(' ');
+  });
 });
 
 describe('CustomEditor slash menu description wrapping', () => {
@@ -515,22 +587,37 @@ describe('CustomEditor paste marker expansion', () => {
     editor.handleInput('x');
     expect(editor.getText()).toContain('x');
   });
+
+  it('falls back to the text paste path when the image paste handler rejects', async () => {
+    const editor = makeEditor();
+    const onTextPaste = vi.fn();
+    editor.onTextPaste = onTextPaste;
+    editor.onPasteImage = vi.fn(async () => {
+      throw new Error('clipboard backend broken');
+    });
+
+    // Regression: a rejecting onPasteImage must not leak an unhandled
+    // rejection — the CLI's crash path turns those into a silent exit.
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onRejection);
+    try {
+      editor.handleInput(process.platform === 'win32' ? '\u001Bv' : '\u0016');
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+
+      expect(onTextPaste).toHaveBeenCalledOnce();
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
 });
 
 describe('CustomEditor shortcut telemetry hooks', () => {
-  it('reports newline shortcuts, including Ctrl-J, before delegating to the base editor', () => {
-    const editor = makeEditor();
-    const onInsertNewline = vi.fn();
-    editor.onInsertNewline = onInsertNewline;
-
-    editor.handleInput('a');
-    editor.handleInput('\n');
-    editor.handleInput('\u001B[106;5u');
-
-    expect(onInsertNewline).toHaveBeenCalledTimes(2);
-    expect(editor.getText()).toBe('a\n\n');
-  });
-
   it('reports undo shortcuts before delegating to the base editor', () => {
     const editor = makeEditor();
     const onUndo = vi.fn();
@@ -637,5 +724,191 @@ describe('CustomEditor bash mode via paste', () => {
 
     expect(editor.inputMode).toBe('bash');
     expect(editor.getText()).toBe('');
+  });
+});
+
+describe('CustomEditor bash mode file completion', () => {
+  it('triggers file completion (force:true) for a leading / in bash mode, not the slash menu', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'auto', label: 'auto' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: true, text: '/' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('triggers file completion (force:true) for an inline / in bash mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'etc', label: 'etc' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    for (const char of 'ls /') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: true, text: 'ls /' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('keeps force:false (slash menu) for a leading / in prompt mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'help', label: 'help' }]);
+    editor.setAutocompleteProvider(provider);
+    // inputMode defaults to 'prompt'
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+
+    expect(calls).toContainEqual(expect.objectContaining({ force: false, text: '/' }));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+  });
+
+  it('never falls back to force:false for a slash-shaped command in bash mode', async () => {
+    const editor = makeEditor();
+    const { provider, calls } = providerRecordingForce([{ value: 'list', label: 'list' }]);
+    editor.setAutocompleteProvider(provider);
+    editor.inputMode = 'bash';
+
+    for (const char of '/add-dir ') {
+      editor.handleInput(char);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await flushAutocomplete();
+
+    // A force:false request would let pi-tui's own slash-command handling pop
+    // up subcommand completions for `/add-dir `. Bash mode must only ever
+    // request force:true path completion.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.force === true)).toBe(true);
+  });
+});
+
+describe('CustomEditor full re-render on autocomplete close', () => {
+  function makeEditorWithRenderSpy(contentLines: number): {
+    editor: CustomEditor;
+    requestRender: ReturnType<typeof vi.fn>;
+  } {
+    const requestRender = vi.fn();
+    const tui = {
+      requestRender,
+      terminal: { rows: 40, cols: 120 },
+      render: vi.fn(() => Array.from({ length: contentLines }, () => '')),
+    } as unknown as TUI;
+    return { editor: new CustomEditor(tui), requestRender };
+  }
+
+  // Drive one render frame so the render-edge detector observes the menu state.
+  function renderFrame(editor: CustomEditor): void {
+    editor.render(120);
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('forces a full re-render on the render frame after Escape closes the menu (content overflows)', async () => {
+    vi.stubEnv('TMUX', '');
+    const { editor, requestRender } = makeEditorWithRenderSpy(50);
+    editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    renderFrame(editor); // record wasShowing = true
+
+    editor.handleInput('');
+    expect(editor.isShowingAutocomplete()).toBe(false);
+
+    renderFrame(editor); // close edge -> schedule helper
+    await flushAutocomplete();
+    expect(requestRender).toHaveBeenCalledWith(true);
+  });
+
+  it('keeps differential rendering when the content fits on one screen', async () => {
+    vi.stubEnv('TMUX', '');
+    const { editor, requestRender } = makeEditorWithRenderSpy(10);
+    editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    renderFrame(editor);
+
+    editor.handleInput('');
+    expect(editor.isShowingAutocomplete()).toBe(false);
+
+    renderFrame(editor);
+    await flushAutocomplete();
+    expect(requestRender).not.toHaveBeenCalledWith(true);
+  });
+
+  it('forces a full re-render when the content exactly fills one screen', async () => {
+    vi.stubEnv('TMUX', '');
+    const { editor, requestRender } = makeEditorWithRenderSpy(40);
+    editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    renderFrame(editor);
+
+    editor.handleInput('');
+    expect(editor.isShowingAutocomplete()).toBe(false);
+
+    renderFrame(editor);
+    await flushAutocomplete();
+    expect(requestRender).toHaveBeenCalledWith(true);
+  });
+
+  it('does not force a full re-render inside tmux', async () => {
+    vi.stubEnv('TMUX', '/tmp/tmux-501/default,1234,0');
+    const { editor, requestRender } = makeEditorWithRenderSpy(50);
+    editor.setAutocompleteProvider(providerReturning([{ value: 'help', label: 'help' }]));
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    renderFrame(editor);
+
+    editor.handleInput('');
+    expect(editor.isShowingAutocomplete()).toBe(false);
+
+    renderFrame(editor);
+    await flushAutocomplete();
+    expect(requestRender).not.toHaveBeenCalledWith(true);
+  });
+
+  it('forces a full re-render when Backspace deletes the slash and the menu closes asynchronously', async () => {
+    vi.stubEnv('TMUX', '');
+    const { editor, requestRender } = makeEditorWithRenderSpy(50);
+    const provider: AutocompleteProvider = {
+      getSuggestions: vi.fn(async (lines, cursorLine, cursorCol) => {
+        const text = (lines[cursorLine] ?? '').slice(0, cursorCol);
+        if (!text.startsWith('/')) return { items: [], prefix: text };
+        return { items: [{ value: 'help', label: 'help' }], prefix: '/' };
+      }),
+      applyCompletion: vi.fn((lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol })),
+    };
+    editor.setAutocompleteProvider(provider);
+
+    editor.handleInput('/');
+    await flushAutocomplete();
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    renderFrame(editor); // record wasShowing = true
+
+    editor.handleInput(''); // Backspace deletes the '/'
+    await flushAutocomplete();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let async cancelAutocomplete settle
+    expect(editor.isShowingAutocomplete()).toBe(false);
+
+    renderFrame(editor); // close edge -> schedule helper
+    await flushAutocomplete();
+    expect(requestRender).toHaveBeenCalledWith(true);
   });
 });

@@ -3,23 +3,65 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
+import {
+  fetchDevBackendState,
+  initialDevBackendState,
+  shortOrigin,
+  switchDevBackend,
+  type BackendName,
+  type DevBackendState,
+} from '../api/devBackend';
 import { copyTextToClipboard } from '../lib/clipboard';
-import { loadCollapsedWorkspaces, saveCollapsedWorkspaces } from '../lib/storage';
-import { moveInOrder, type DropPosition } from '../lib/workspaceOrder';
+import {
+  loadCollapsedWorkspaces,
+  saveCollapsedWorkspaces,
+} from '../lib/storage';
+import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
-import SessionRow from './SessionRow.vue';
+import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
+import { isMacosDesktop } from '../lib/desktopFlag';
+import IconButton from './ui/IconButton.vue';
+import Icon from './ui/Icon.vue';
+import Kbd from './ui/Kbd.vue';
+import Menu from './ui/Menu.vue';
+import MenuItem from './ui/MenuItem.vue';
+import Pill from './ui/Pill.vue';
 
 const { t } = useI18n();
 
 // Dev-only affordance: when the page is served by the Vite dev server, the
-// logo turns yellow and the backend host:port is appended to the title —
-// handy for telling several dev tabs apart. In production this is all inert.
+// logo turns yellow and a backend pill next to the brand shows the engine
+// generation reported by /meta (v1 = older server binary, v2 = kap-server)
+// plus the endpoint the dev proxy forwards to — click it to switch presets
+// without restarting Vite. In production this is all inert.
 const isDev = import.meta.env.DEV;
-const endpoint = isDev ? serverEndpointLabel() : '';
+const devBackend = ref<DevBackendState | null>(isDev ? initialDevBackendState() : null);
+if (isDev) {
+  onMounted(async () => {
+    const live = await fetchDevBackendState();
+    if (live) devBackend.value = live;
+  });
+}
+// host:port of the server the dev proxy currently forwards to (fallback: the
+// build-time label when the dev endpoints are unavailable).
+const endpoint = computed(() => {
+  if (!isDev) return '';
+  const current = devBackend.value?.current;
+  return current ? shortOrigin(current) : serverEndpointLabel();
+});
+const backendNames: BackendName[] = ['default', 'multi'];
+function presetUrl(name: BackendName): string {
+  const url = devBackend.value?.presets[name] ?? '';
+  return url ? shortOrigin(url) : '';
+}
+function isCurrentBackend(name: BackendName): boolean {
+  const state = devBackend.value;
+  return state !== null && state.current === state.presets[name];
+}
 
 const props = withDefaults(
   defineProps<{
@@ -28,20 +70,33 @@ const props = withDefaults(
     sessions: Session[];
     groups: WorkspaceGroupType[];
     activeId: string;
+    /** Current workspace sort mode — drives the section-header sort button. */
+    workspaceSortMode: WorkspaceSortMode;
+    /** Backend engine generation from /meta — dev-only badge next to the brand. */
+    backend?: 'v1' | 'v2';
     attentionBySession?: Record<string, number>;
     /** Per-session pending counts split by kind, for the coloured tags. */
     pendingBySession?: Record<string, { approvals: number; questions: number }>;
     unreadBySession?: Record<string, boolean>;
     /** Width (px) of the session column, driven by the App resize handle. */
     colWidth?: number;
+    /** True when the sidebar is collapsed: the container animates to width 0
+     *  (content keeps `colWidth` and is clipped), then hides itself. */
+    collapsed?: boolean;
+    /** True while the resize handle is dragged — disables the width transition
+     *  so the sidebar follows the pointer 1:1. */
+    dragging?: boolean;
   }>(),
   {
     activeWorkspace: null,
     activeWorkspaceId: null,
+    backend: 'v1',
     attentionBySession: () => ({}),
     pendingBySession: () => ({}),
     unreadBySession: () => ({}),
     colWidth: 220,
+    collapsed: false,
+    dragging: false,
   },
 );
 
@@ -50,14 +105,15 @@ const emit = defineEmits<{
   create: [];
   createInWorkspace: [workspaceId: string];
   selectWorkspace: [workspaceId: string];
-  selectWorkspaces: [ids: string[]];
   addWorkspace: [];
   rename: [id: string, title: string];
   archive: [id: string];
   fork: [id: string];
+  export: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
+  setWorkspaceSortMode: [mode: WorkspaceSortMode];
   loadMoreSessions: [workspaceId: string];
   loadAllSessions: [];
   openSettings: [];
@@ -65,37 +121,43 @@ const emit = defineEmits<{
 }>();
 
 // ---------------------------------------------------------------------------
-// Session search (title + last prompt, instant client-side filter)
+// Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
-const searchQuery = ref('');
+const showSearch = ref(false);
+const sessionSearchKeys = isAppleShortcutPlatform() ? ['⌘', 'K'] : ['Ctrl', 'K'];
 
-const trimmedQuery = computed(() => searchQuery.value.trim());
-const isSearching = computed(() => trimmedQuery.value.length > 0);
-
-const searchResults = computed<Session[]>(() => {
-  const q = trimmedQuery.value.toLowerCase();
-  if (!q) return [];
-  return props.sessions.filter((s) => {
-    const title = (s.title ?? '').toLowerCase();
-    const last = (s.lastPrompt ?? '').toLowerCase();
-    return title.includes(q) || last.includes(q);
-  });
-});
-
-function clearSearch(): void {
-  searchQuery.value = '';
+function openSearch(): void {
+  // Sessions are loaded per-workspace (first page only); lazily drain the rest
+  // so the dialog's client-side filter covers everything.
+  emit('loadAllSessions');
+  showSearch.value = true;
 }
 
-function onSelectResult(sessionId: string): void {
-  clearSearch();
-  onSelectSession(sessionId);
+function onSearchKeydown(e: KeyboardEvent): void {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openSearch();
+  }
 }
 
-// Sessions are loaded per-workspace (first page only). The first time the user
-// searches, lazily drain the rest so the client-side filter covers everything.
-watch(isSearching, (active) => {
-  if (active) emit('loadAllSessions');
-});
+onMounted(() => window.addEventListener('keydown', onSearchKeydown));
+onBeforeUnmount(() => window.removeEventListener('keydown', onSearchKeydown));
+
+function isAppleShortcutPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (/Mac|iPod|iPhone|iPad/.test(navigator.platform)) return true;
+
+  const userAgentData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  return userAgentData?.platform === 'macOS' || userAgentData?.platform === 'iOS';
+}
+
+// Scroll-linked header seam: the .search-wrap bottom border/shadow only appears
+// once the session list has actually scrolled, so an unscrolled list shows no
+// abrupt boundary.
+const sessionsScrolled = ref(false);
+function onSessionsScroll(e: Event): void {
+  sessionsScrolled.value = (e.target as HTMLElement).scrollTop > 0;
+}
 
 // ---------------------------------------------------------------------------
 // Collapse groups
@@ -112,6 +174,56 @@ function toggleCollapse(id: string): void {
   else next.add(id);
   collapsedIds.value = next;
   saveCollapsedWorkspaces(next);
+}
+
+function collapseAllWorkspaces(): void {
+  const next = new Set(props.groups.map((g) => g.workspace.id));
+  collapsedIds.value = next;
+  saveCollapsedWorkspaces(next);
+}
+
+function expandAllWorkspaces(): void {
+  const next = new Set<string>();
+  collapsedIds.value = next;
+  saveCollapsedWorkspaces(next);
+}
+
+// True when every workspace is collapsed — drives the single toggle button's
+// icon (expand when fully collapsed, collapse otherwise) and action.
+const allCollapsed = computed(
+  () =>
+    props.groups.length > 0 &&
+    props.groups.every((g) => collapsedIds.value.has(g.workspace.id)),
+);
+
+// ---------------------------------------------------------------------------
+// In-group expand / collapse (show-more pagination)
+// ---------------------------------------------------------------------------
+// Tracks which workspace groups are "expanded" past their first page. Ephemeral
+// (not persisted): a refresh reloads only the first page, so everything starts
+// collapsed. Loading more expands automatically; the user can collapse back to
+// the first page without losing the already-loaded data.
+const expandedIds = ref<Set<string>>(new Set());
+
+function isExpanded(id: string): boolean {
+  return expandedIds.value.has(id);
+}
+
+function toggleExpand(id: string): void {
+  const next = new Set(expandedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedIds.value = next;
+}
+
+function onLoadMore(id: string): void {
+  // Loading more should reveal the new rows immediately.
+  if (!expandedIds.value.has(id)) {
+    const next = new Set(expandedIds.value);
+    next.add(id);
+    expandedIds.value = next;
+  }
+  emit('loadMoreSessions', id);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,30 +274,14 @@ function onGroupDrop(targetId: string): void {
   emit('reorderWorkspaces', next);
 }
 
-// ---------------------------------------------------------------------------
-// Shift-multi-select workspaces
-// ---------------------------------------------------------------------------
-const selectedIds = ref<Set<string>>(new Set());
-
 function handleGhClick(wsId: string, e: MouseEvent): void {
-  if (e.shiftKey) {
-    e.stopPropagation();
-    const next = new Set(selectedIds.value);
-    if (next.has(wsId)) next.delete(wsId);
-    else next.add(wsId);
-    selectedIds.value = next;
-    emit('selectWorkspaces', Array.from(next));
-    return;
-  }
-  // Normal click: clear multi-selection then toggle collapse
-  selectedIds.value = new Set();
-  emit('selectWorkspaces', []);
+  // Ignore clicks that land on the group's action buttons (kebab / add); those
+  // have their own handlers and must not also toggle collapse.
+  if ((e.target as Element).closest('.gh-more, .gh-add')) return;
   toggleCollapse(wsId);
 }
 
 function onSelectSession(sessionId: string): void {
-  selectedIds.value = new Set();
-  emit('selectWorkspaces', []);
   emit('select', sessionId);
 }
 
@@ -233,25 +329,15 @@ function onUpdateRenameValue(value: string): void {
 const ghMenuOpen = ref(false);
 const ghMenuTarget = ref<WorkspaceView | null>(null);
 const ghMenuStyle = ref<Record<string, string>>({});
-const ghMenuRef = ref<HTMLElement | null>(null);
+const ghMenuRef = ref<InstanceType<typeof Menu> | null>(null);
 
 function onGhMenuDocClick(e: MouseEvent): void {
-  if (ghMenuRef.value && !ghMenuRef.value.contains(e.target as Node)) {
+  if (ghMenuRef.value?.el && !ghMenuRef.value.el.contains(e.target as Node)) {
     closeGhMenu();
   }
 }
 
 function openGhMenu(ws: WorkspaceView, e: MouseEvent): void {
-  if (e.shiftKey) {
-    // shift+right-click = multi-select (same as shift+click)
-    e.stopPropagation();
-    const next = new Set(selectedIds.value);
-    if (next.has(ws.id)) next.delete(ws.id);
-    else next.add(ws.id);
-    selectedIds.value = next;
-    emit('selectWorkspaces', Array.from(next));
-    return;
-  }
   e.preventDefault();
   e.stopPropagation();
   ghMenuTarget.value = ws;
@@ -267,7 +353,6 @@ function closeGhMenu(): void {
   ghMenuOpen.value = false;
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   ghMenuTarget.value = null;
-  disarmDeleteWs();
 }
 
 function copyPathFromMenu(): void {
@@ -287,47 +372,21 @@ function startRenameFromMenu(): void {
 function deleteFromMenu(): void {
   const ws = ghMenuTarget.value;
   if (!ws) return;
-  if (!armDeleteWs(ws.id)) return; // first click arms ("confirm?"), keep menu open
-  emit('deleteWorkspace', ws.id);
   closeGhMenu();
-}
-
-// ---------------------------------------------------------------------------
-// Two-step workspace delete (shared by the kebab menu and the context menu):
-// the first click arms the item — it turns into a "confirm" label — and a
-// second click within 2.5s actually deletes; otherwise the item reverts.
-// ---------------------------------------------------------------------------
-const deleteArmedWsId = ref<string | null>(null);
-let deleteArmTimer: ReturnType<typeof setTimeout> | undefined;
-
-function disarmDeleteWs(): void {
-  clearTimeout(deleteArmTimer);
-  deleteArmedWsId.value = null;
-}
-
-/** Returns true when the delete is confirmed (second click while armed). */
-function armDeleteWs(id: string): boolean {
-  if (deleteArmedWsId.value === id) {
-    disarmDeleteWs();
-    return true;
-  }
-  clearTimeout(deleteArmTimer);
-  deleteArmedWsId.value = id;
-  deleteArmTimer = setTimeout(() => {
-    deleteArmedWsId.value = null;
-  }, 2500);
-  return false;
+  // The modal confirm + async delete live in App.vue (confirmDeleteWorkspace).
+  emit('deleteWorkspace', ws.id);
 }
 
 // ---------------------------------------------------------------------------
 // Workspace inline more-menu (kebab, hover-triggered). Rendered position:fixed
-// and anchored to the ⋯ button so the scrolling session list can't clip it;
-// it doesn't follow the anchor, so scroll/resize simply close it.
+// and anchored to the ⋯ button so the scrolling session list can't clip it.
+// It stays open on scroll (so a streaming turn doesn't dismiss it) and closes
+// on outside-click or window resize.
 // ---------------------------------------------------------------------------
 const wsMenuOpenId = ref<string | null>(null);
 const wsMenuTarget = ref<WorkspaceView | null>(null);
 const wsMenuStyle = ref<Record<string, string>>({});
-const wsMenuRef = ref<HTMLElement | null>(null);
+const wsMenuRef = ref<InstanceType<typeof Menu> | null>(null);
 
 function onWsMenuDocClick(e: MouseEvent): void {
   const target = e.target as Element;
@@ -344,10 +403,9 @@ async function toggleWsMenu(ws: WorkspaceView, e: MouseEvent): Promise<void> {
   wsMenuTarget.value = ws;
   wsMenuOpenId.value = ws.id;
   document.addEventListener('mousedown', onWsMenuDocClick);
-  document.addEventListener('scroll', closeWsMenu, true);
   window.addEventListener('resize', closeWsMenu);
   await nextTick();
-  const menu = wsMenuRef.value;
+  const menu = wsMenuRef.value?.el;
   const r = btn.getBoundingClientRect();
   const gap = 4;
   const margin = 8;
@@ -368,9 +426,7 @@ async function toggleWsMenu(ws: WorkspaceView, e: MouseEvent): Promise<void> {
 function closeWsMenu(): void {
   wsMenuOpenId.value = null;
   wsMenuTarget.value = null;
-  disarmDeleteWs();
   document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('scroll', closeWsMenu, true);
   window.removeEventListener('resize', closeWsMenu);
 }
 
@@ -385,17 +441,138 @@ function startRenameWs(ws: WorkspaceView): void {
 }
 
 function deleteWs(ws: WorkspaceView): void {
-  if (!armDeleteWs(ws.id)) return; // first click arms ("confirm?"), keep menu open
-  emit('deleteWorkspace', ws.id);
   closeWsMenu();
+  // The modal confirm + async delete live in App.vue (confirmDeleteWorkspace).
+  emit('deleteWorkspace', ws.id);
+}
+
+// ---------------------------------------------------------------------------
+// Workspace section overflow menu (the ⋯ in the WORKSPACES header). Holds the
+// sort mode and the "show paths" toggle as text items with a check mark for the
+// active one. Anchored to the trigger via position:fixed so the scrolling list
+// can't clip it.
+// ---------------------------------------------------------------------------
+const sectionMenuOpen = ref(false);
+const sectionMenuStyle = ref<Record<string, string>>({});
+const sectionMenuRef = ref<InstanceType<typeof Menu> | null>(null);
+
+function onSectionMenuDocClick(e: MouseEvent): void {
+  const target = e.target as Element;
+  if (target.closest('.side-section-kebab') || target.closest('.section-menu')) return;
+  closeSectionMenu();
+}
+
+async function toggleSectionMenu(e: MouseEvent): Promise<void> {
+  if (sectionMenuOpen.value) {
+    closeSectionMenu();
+    return;
+  }
+  const btn = e.currentTarget as HTMLElement;
+  sectionMenuOpen.value = true;
+  document.addEventListener('mousedown', onSectionMenuDocClick);
+  window.addEventListener('resize', closeSectionMenu);
+  await nextTick();
+  const menu = sectionMenuRef.value?.el;
+  const r = btn.getBoundingClientRect();
+  const gap = 4;
+  const margin = 8;
+  const menuH = menu?.offsetHeight ?? 0;
+  const menuW = menu?.offsetWidth ?? 0;
+  let top = r.bottom + gap;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
+  }
+  let left = r.right - menuW;
+  if (left < margin) left = margin;
+  sectionMenuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
+
+function closeSectionMenu(): void {
+  sectionMenuOpen.value = false;
+  document.removeEventListener('mousedown', onSectionMenuDocClick);
+  window.removeEventListener('resize', closeSectionMenu);
+}
+
+function chooseSortMode(mode: WorkspaceSortMode): void {
+  emit('setWorkspaceSortMode', mode);
+  closeSectionMenu();
+}
+
+// ---------------------------------------------------------------------------
+// Dev backend switcher menu (the pill next to the brand). Dev-only: repoints
+// the Vite dev proxy at the other engine, then reloads so every client state
+// (REST, WS, /meta) re-initializes against the new backend.
+// ---------------------------------------------------------------------------
+const backendMenuOpen = ref(false);
+const backendMenuStyle = ref<Record<string, string>>({});
+const backendMenuRef = ref<InstanceType<typeof Menu> | null>(null);
+
+function onBackendMenuDocClick(e: MouseEvent): void {
+  const target = e.target as Element;
+  if (target.closest('.ch-backend') || target.closest('.backend-menu')) return;
+  closeBackendMenu();
+}
+
+async function toggleBackendMenu(e: MouseEvent): Promise<void> {
+  if (devBackend.value === null) return;
+  if (backendMenuOpen.value) {
+    closeBackendMenu();
+    return;
+  }
+  const btn = e.currentTarget as HTMLElement;
+  backendMenuOpen.value = true;
+  document.addEventListener('mousedown', onBackendMenuDocClick);
+  window.addEventListener('resize', closeBackendMenu);
+  await nextTick();
+  const menu = backendMenuRef.value?.el;
+  const r = btn.getBoundingClientRect();
+  const gap = 4;
+  const margin = 8;
+  const menuH = menu?.offsetHeight ?? 0;
+  let top = r.bottom + gap;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
+  }
+  backendMenuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(Math.max(margin, r.left))}px`,
+  };
+}
+
+function closeBackendMenu(): void {
+  backendMenuOpen.value = false;
+  document.removeEventListener('mousedown', onBackendMenuDocClick);
+  window.removeEventListener('resize', closeBackendMenu);
+}
+
+async function chooseBackend(name: BackendName): Promise<void> {
+  if (isCurrentBackend(name)) {
+    closeBackendMenu();
+    return;
+  }
+  const next = await switchDevBackend(name);
+  if (next === null) {
+    console.warn('[kimi-web] dev backend switch failed:', name);
+    closeBackendMenu();
+    return;
+  }
+  // Full reload: every client channel (REST base state, WS, /meta) must
+  // re-initialize against the new backend — a soft swap would leave stale
+  // session streams subscribed through the old target.
+  window.location.reload();
 }
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onGhMenuDocClick, true);
   document.removeEventListener('mousedown', onWsMenuDocClick);
-  document.removeEventListener('scroll', closeWsMenu, true);
+  document.removeEventListener('mousedown', onSectionMenuDocClick);
+  document.removeEventListener('mousedown', onBackendMenuDocClick);
   window.removeEventListener('resize', closeWsMenu);
-  clearTimeout(deleteArmTimer);
+  window.removeEventListener('resize', closeSectionMenu);
+  window.removeEventListener('resize', closeBackendMenu);
 });
 
 // Logo easter-egg: clicking the Kimi mark plays one quick blink. It's a one-shot
@@ -416,132 +593,128 @@ function blinkOnce(): void {
   clearTimeout(blinkTimer);
   blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
+
+// Logo long-press easter-egg: holding the Kimi mark for 1 second opens the
+// design system as a full-screen overlay. A short click still just blinks.
+// Pointer capture keeps the hold alive even if the pointer drifts off the mark.
+const DesignSystemView = defineAsyncComponent(
+  () => import('../views/DesignSystemView.vue'),
+);
+const showDesignSystem = ref(false);
+const EGG_HOLD_MS = 1000;
+let logoPressTimer: ReturnType<typeof setTimeout> | undefined;
+let logoLongPressed = false;
+
+function onLogoPointerDown(event: PointerEvent): void {
+  logoLongPressed = false;
+  clearTimeout(logoPressTimer);
+  (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+  logoPressTimer = setTimeout(() => {
+    logoLongPressed = true;
+    showDesignSystem.value = true;
+  }, EGG_HOLD_MS);
+}
+
+function onLogoPointerUp(event: PointerEvent): void {
+  clearTimeout(logoPressTimer);
+  const el = event.currentTarget as HTMLElement;
+  if (el.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId);
+}
+
+function onLogoClick(): void {
+  if (logoLongPressed) {
+    logoLongPressed = false;
+    return;
+  }
+  blinkOnce();
+}
+
+onBeforeUnmount(() => {
+  clearTimeout(logoPressTimer);
+});
 </script>
 
 <template>
-  <aside class="side">
+  <aside
+    class="side"
+    :class="{ 'macos-desktop': isMacosDesktop, collapsed, 'no-anim': dragging }"
+    :style="{ width: collapsed ? '0px' : colWidth + 'px' }"
+  >
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
-      <!-- Header: logo + settings (no hard border — flows into workspace list) -->
+      <!-- Header: brand + collapse. The collapse button lives INSIDE the header
+           on non-mac platforms (right-aligned); on macOS desktop the brand is
+           hidden (traffic lights own that corner) and the header is just a
+           window-drag strip — there the toggle is App.vue's resident floating
+           button beside the traffic lights. -->
       <div class="ch">
         <div class="ch-brand">
-          <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="blinkOnce">
-            <defs>
-              <mask id="kimiEyes" maskUnits="userSpaceOnUse">
-                <rect x="0" y="0" width="32" height="22" fill="#fff" />
-                <g class="ch-eyes" fill="#000">
-                  <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
-                  <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
-                </g>
-              </mask>
-            </defs>
-            <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
-          </svg>
-          <span class="ch-name">Kimi Code<span v-if="isDev" class="ch-endpoint"> · {{ endpoint }}</span></span>
+          <template v-if="!isMacosDesktop">
+            <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+              <defs>
+                <mask id="kimiEyes" maskUnits="userSpaceOnUse">
+                  <rect x="0" y="0" width="32" height="22" fill="#fff" />
+                  <g class="ch-eyes" fill="#000">
+                    <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
+                    <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
+                  </g>
+                </mask>
+              </defs>
+              <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
+            </svg>
+            <span class="ch-name">Kimi Code</span>
+            <Pill
+              v-if="isDev"
+              class="ch-backend"
+              :clickable="devBackend !== null"
+              :title="t('sidebar.backendTitle', { backend, endpoint })"
+              @click="toggleBackendMenu"
+            >
+              <span class="ch-backend-kind" :class="`is-${backend}`">{{ backend }}</span>
+              <span class="ch-backend-ep"> · {{ endpoint }}</span>
+              <Icon v-if="devBackend !== null" name="chevron-down" size="sm" />
+            </Pill>
+          </template>
         </div>
-        <button
-          type="button"
-          class="collapse-btn"
-          :title="t('sidebar.collapseSidebar')"
-          :aria-label="t('sidebar.collapseSidebar')"
+        <IconButton
+          v-if="!isMacosDesktop"
+          class="ch-collapse"
+          size="sm"
+          :label="t('sidebar.collapseSidebar')"
           @click.stop="emit('collapse')"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M11 6h9" />
-            <path d="M11 12h9" />
-            <path d="M11 18h9" />
-            <path d="M7 9l-3 3 3 3" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="settings-btn"
-          :title="t('settings.title')"
-          :aria-label="t('settings.title')"
-          @click.stop="emit('openSettings')"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" />
-          </svg>
-        </button>
-      </div>
-
-      <!-- Session search -->
-      <div class="search">
-        <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="7" cy="7" r="5" />
-          <path d="M11 11l3 3" />
-        </svg>
-        <input
-          v-model="searchQuery"
-          class="search-input"
-          type="text"
-          :placeholder="t('sidebar.searchPlaceholder')"
-          :aria-label="t('sidebar.searchPlaceholder')"
-          @keydown.esc.stop="clearSearch"
-        />
-        <button
-          v-if="isSearching"
-          type="button"
-          class="search-clear"
-          :title="t('sidebar.searchClear')"
-          :aria-label="t('sidebar.searchClear')"
-          @click.stop="clearSearch"
-        >
-          <svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-            <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
-          </svg>
-        </button>
+          <Icon name="panel-collapse" />
+        </IconButton>
       </div>
 
       <!-- New chat + new workspace buttons -->
       <div class="btn-wrap">
-        <button class="btn-new-chat" @click.stop="emit('create')">
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 2.5h8a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8.5l-2.5 2V11.5H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z" />
-          </svg>
+        <button class="btn-new-chat" type="button" @click.stop="emit('create')">
+          <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
         </button>
-        <button
+        <IconButton
           v-if="showNewWorkspaceButton"
-          type="button"
-          class="btn-new-ws"
-          :title="t('sidebar.newWorkspace')"
-          :aria-label="t('sidebar.newWorkspace')"
+          size="sm"
+          :label="t('sidebar.newWorkspace')"
           @click.stop="emit('addWorkspace')"
         >
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-            <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
-            <path d="M1 5.5h12"/>
-          </svg>
-        </button>
+          <Icon name="folder" />
+        </IconButton>
       </div>
 
-      <!-- Search results (flat, across all workspaces) -->
-      <div v-if="isSearching" class="sessions">
-        <template v-if="searchResults.length > 0">
-          <SessionRow
-            v-for="s in searchResults"
-            :key="s.id"
-            :session="s"
-            :active="s.id === activeId"
-            :approval-count="pendingBySession[s.id]?.approvals ?? 0"
-            :question-count="pendingBySession[s.id]?.questions ?? 0"
-            :unread="unreadBySession[s.id] ?? false"
-            @select="onSelectResult($event)"
-            @rename="(id, title) => emit('rename', id, title)"
-            @archive="emit('archive', $event)"
-            @fork="emit('fork', $event)"
-          />
-        </template>
-        <div v-else class="empty">
-          {{ t('sidebar.searchNoResults') }}
-        </div>
+      <!-- Session search — opens the Spotlight-style search dialog. Last fixed
+           row above the list, so it carries the scroll-linked seam. -->
+      <div class="search-wrap" :class="{ 'search-wrap--scrolled': sessionsScrolled }">
+        <button class="search" type="button" @click="openSearch">
+          <Icon class="search-icon" name="search" />
+          <span class="search-input">{{ t('sidebar.search') }}</span>
+          <Kbd :keys="sessionSearchKeys" />
+        </button>
       </div>
 
       <!-- Session list — grouped by workspace -->
-      <div v-else class="sessions">
+      <div class="sessions" @scroll="onSessionsScroll">
         <!-- Empty state — only when no workspace is registered at all; empty
              workspaces still render their group header (with the + button). -->
         <div v-if="groups.length === 0" class="empty">
@@ -549,6 +722,30 @@ function blinkOnce(): void {
         </div>
 
         <template v-else>
+          <div class="side-section-label">
+            <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
+            <div class="side-section-actions">
+              <IconButton
+                class="side-section-toggle"
+                size="sm"
+                :label="allCollapsed ? t('sidebar.expandAll') : t('sidebar.collapseAll')"
+                @click.stop="allCollapsed ? expandAllWorkspaces() : collapseAllWorkspaces()"
+              >
+                <Icon v-if="allCollapsed" name="expand" />
+                <Icon v-else name="collapse" />
+              </IconButton>
+              <IconButton
+                class="side-section-toggle side-section-kebab"
+                size="sm"
+                :label="t('sidebar.options')"
+                aria-haspopup="menu"
+                :aria-expanded="sectionMenuOpen"
+                @click.stop="toggleSectionMenu($event)"
+              >
+                <Icon name="dots-horizontal" />
+              </IconButton>
+            </div>
+          </div>
           <div
             v-for="g in groups"
             :key="g.workspace.id"
@@ -564,7 +761,6 @@ function blinkOnce(): void {
               :group="g"
               :active-workspace-id="activeWorkspaceId"
               :active-id="activeId"
-              :selected-ids="selectedIds"
               :renaming-id="renamingId"
               :rename-value="renameValue"
               :rename-input-ref="getRenameInputRef()"
@@ -573,6 +769,7 @@ function blinkOnce(): void {
               :ws-menu-open-id="wsMenuOpenId"
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
+              :is-expanded="isExpanded"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
               @toggle-ws-menu="toggleWsMenu"
@@ -581,7 +778,9 @@ function blinkOnce(): void {
               @rename-session="(id, title) => emit('rename', id, title)"
               @archive-session="(id) => emit('archive', id)"
               @fork-session="(id) => emit('fork', id)"
-              @load-more="(id) => emit('loadMoreSessions', id)"
+              @export-session="(id) => emit('export', id)"
+              @load-more="onLoadMore"
+              @toggle-expand="toggleExpand"
               @confirm-rename="confirmRenameWorkspace"
               @cancel-rename="cancelRenameWorkspace"
               @update-rename-value="onUpdateRenameValue"
@@ -591,68 +790,142 @@ function blinkOnce(): void {
           </div>
         </template>
       </div>
+
+      <!-- Footer: settings entry pinned under the session list -->
+      <div class="side-footer">
+        <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
+          <Icon name="settings" />
+          <span>{{ t('settings.title') }}</span>
+        </button>
+      </div>
     </div>
 
     <!-- Workspace right-click menu (position:fixed) -->
-    <div
+    <Menu
       v-if="ghMenuOpen"
       ref="ghMenuRef"
       class="gh-menu"
       :style="ghMenuStyle"
       @click.stop
     >
-      <button type="button" class="ghm-item" @click="copyPathFromMenu">
-        {{ t('sidebar.copyPath') }}
-      </button>
-      <button type="button" class="ghm-item" @click="startRenameFromMenu">
-        {{ t('sidebar.rename') }}
-      </button>
-      <button type="button" class="ghm-item del" @click="deleteFromMenu">
-        {{ ghMenuTarget && deleteArmedWsId === ghMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </button>
-    </div>
+      <MenuItem @click="copyPathFromMenu">{{ t('sidebar.copyPath') }}</MenuItem>
+      <MenuItem @click="startRenameFromMenu">{{ t('sidebar.rename') }}</MenuItem>
+      <MenuItem danger @click="deleteFromMenu">{{ t('sidebar.removeWorkspace') }}</MenuItem>
+    </Menu>
 
     <!-- Workspace kebab menu (position:fixed, anchored to the ⋯ button so the
          scrolling session list cannot clip it) -->
-    <div
+    <Menu
       v-if="wsMenuOpenId !== null && wsMenuTarget"
       ref="wsMenuRef"
       class="ws-menu"
       :style="wsMenuStyle"
       @click.stop
     >
-      <button class="ws-menu-item" @click.stop="copyWsPath(wsMenuTarget)">
-        {{ t('sidebar.copyPath') }}
-      </button>
-      <div class="ws-menu-divider" />
-      <button class="ws-menu-item" @click.stop="startRenameWs(wsMenuTarget)">
-        {{ t('sidebar.rename') }}
-      </button>
-      <div class="ws-menu-divider" />
-      <button class="ws-menu-item del" @click.stop="deleteWs(wsMenuTarget)">
-        {{ deleteArmedWsId === wsMenuTarget.id ? t('sidebar.confirm') : t('sidebar.removeWorkspace') }}
-      </button>
-    </div>
+      <MenuItem @click="copyWsPath(wsMenuTarget)">{{ t('sidebar.copyPath') }}</MenuItem>
+      <MenuItem separator />
+      <MenuItem @click="startRenameWs(wsMenuTarget)">{{ t('sidebar.rename') }}</MenuItem>
+      <MenuItem separator />
+      <MenuItem danger @click="deleteWs(wsMenuTarget)">{{ t('sidebar.removeWorkspace') }}</MenuItem>
+    </Menu>
+    <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
+    <Menu
+      v-if="sectionMenuOpen"
+      ref="sectionMenuRef"
+      class="section-menu"
+      :style="sectionMenuStyle"
+      @click.stop
+    >
+      <MenuItem @click="chooseSortMode('manual')">
+        <span class="section-menu-check">
+          <Icon v-if="workspaceSortMode === 'manual'" name="check" size="sm" />
+        </span>
+        {{ t('sidebar.sortManual') }}
+      </MenuItem>
+      <MenuItem @click="chooseSortMode('recent')">
+        <span class="section-menu-check">
+          <Icon v-if="workspaceSortMode === 'recent'" name="check" size="sm" />
+        </span>
+        {{ t('sidebar.sortRecent') }}
+      </MenuItem>
+    </Menu>
+    <!-- Dev backend switcher menu (position:fixed, anchored to the brand pill) -->
+    <Menu
+      v-if="backendMenuOpen"
+      ref="backendMenuRef"
+      class="backend-menu"
+      :style="backendMenuStyle"
+      @click.stop
+    >
+      <MenuItem v-for="name in backendNames" :key="name" @click="chooseBackend(name)">
+        <span class="section-menu-check">
+          <Icon v-if="isCurrentBackend(name)" name="check" size="sm" />
+        </span>
+        <span class="backend-menu-name">{{ name }}</span>
+        <span class="backend-menu-url">{{ presetUrl(name) }}</span>
+      </MenuItem>
+    </Menu>
+    <!-- Session search dialog (Cmd/Ctrl+K) -->
+    <SearchSessionsDialog
+      v-if="showSearch"
+      :sessions="sessions"
+      :active-id="activeId"
+      @select="onSelectSession"
+      @close="showSearch = false"
+    />
+    <!-- Keep inside <aside>: a top-level <Teleport> makes Sidebar multi-root,
+         which breaks v-show on the host (Vue can't apply display:none to a
+         Fragment). Teleport still renders to body regardless of placement. -->
+    <Teleport to="body">
+      <DesignSystemView v-if="showDesignSystem" @close="showDesignSystem = false" />
+    </Teleport>
   </aside>
 </template>
 
 <style scoped>
 .side {
-  border-right: 1px solid var(--line);
-  background: var(--panel);
+  /* Sidebar sits on its own surface (--color-sidebar-bg, one step off --bg);
+     the 1px hairline on .col still separates it from the conversation pane. */
+  background: var(--color-sidebar-bg);
   display: flex;
   flex-direction: row;
+  /* Anchor content to the right edge: while the container width animates to 0
+     the fixed-width column slides out to the left and is clipped, instead of
+     reflowing. Mirrors the right-side preview panel (App.vue .global-preview). */
+  justify-content: flex-end;
+  overflow: hidden;
   min-width: 0;
   height: 100%;
-  /* Alignment contract, inherited by SessionRow and the theme overrides in
-     style.css: text in the workspace header, the path line and session rows
-     all starts at --sb-pad-x + --sb-gutter + --sb-gap from the sidebar edge. */
-  --sb-pad-x: 16px;  /* row horizontal padding */
-  --sb-gutter: 20px; /* leading icon slot (14px folder icon + 6px margin) */
-  --sb-gap: 6px;     /* gap between the icon slot and the text */
+  transition:
+    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0.28s;
+  /* Alignment contract, inherited by SessionRow and WorkspaceGroup:
+     - row boxes (hover/selected pills) sit --sb-inset from the sidebar edges;
+     - text/icons start at --sb-pad-x = --sb-inset + 8px row padding;
+     - row titles start at --sb-pad-x + --sb-gutter + --sb-gap. */
+  --sb-inset: var(--space-3);  /* row box inset from the sidebar edge */
+  --sb-pad-x: var(--space-5);  /* content start x (inset + row padding) */
+  --sb-gutter: 16px;           /* leading icon slot (matches the 16px folder icon, so the session title aligns under the workspace name) */
+  --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
+  /* Row hover wash — global --color-hover (lighter than the selected fill;
+     both translucent, so they sit on any surface). */
+  --sb-hover: var(--color-hover);
+}
+/* While dragging the resize handle, follow the pointer 1:1 (same pattern as
+   .global-preview.no-anim in App.vue). */
+.side.no-anim {
+  transition: none;
+}
+/* Fully collapsed: width 0 (animated), then drop out of hit-testing / tab
+   order once the transition ends (visibility interpolates to hidden at the
+   end when collapsing, and back to visible immediately when expanding). */
+.side.collapsed {
+  visibility: hidden;
 }
 
-/* Session column. Width is set inline from the App resize handle. */
+/* Session column. Width is set inline from the App resize handle; it stays
+   fixed while the collapsing container clips it. Carries the sidebar's right
+   hairline so the border is clipped away together with the content. */
 .col {
   flex: none;
   min-width: 0;
@@ -660,19 +933,38 @@ function blinkOnce(): void {
   flex-direction: column;
   min-height: 0;
   width: 100%;
+  box-sizing: border-box;
+  border-right: 1px solid var(--line);
   container-type: inline-size;
   container-name: sidebar-col;
 }
 
-/* Header: logo + settings (no border — flows into the workspace list). */
+/* Header: brand strip (no border — flows into the workspace list). On non-mac
+   platforms the brand sits on the left and the collapse button on the right
+   (justify-content: space-between); on macOS desktop the brand is hidden and
+   the header is a window-drag strip (see below). min-height keeps the 26px
+   control row (50px total with padding) so the list below starts at a stable
+   y. */
 .ch {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: var(--space-3);
+  min-height: calc(26px + 2 * var(--space-3));
   width: 100%;
   box-sizing: border-box;
+}
+/* macOS desktop: the window uses a hidden title bar, so the traffic lights
+   float over the top-left of the sidebar and the resident toggle sits beside
+   them. The header renders no content here (brand hidden) — it is purely a
+   window-drag strip. */
+.side.macos-desktop .ch {
+  padding-left: 80px;
+  -webkit-app-region: drag;
+}
+.side.macos-desktop .ch-brand {
+  display: none;
 }
 .ch-logo {
   height: 22px;
@@ -681,6 +973,7 @@ function blinkOnce(): void {
   display: block;
   cursor: pointer;
   user-select: none;
+  touch-action: none;
   transition: transform 0.18s ease;
 }
 .ch-logo:hover {
@@ -690,7 +983,7 @@ function blinkOnce(): void {
    glance. `--logo` is read by the mark's `fill`; overriding it on the svg
    recolors just this instance. */
 .ch-logo.is-dev {
-  --logo: #f5b301;
+  --logo: var(--color-logo-dev);
 }
 .ch-brand {
   display: flex;
@@ -699,124 +992,123 @@ function blinkOnce(): void {
   min-width: 0;
   /* Take the row's slack so the action buttons group together on the right. */
   flex: 1;
+  user-select: none;
+  touch-action: none;
 }
 .ch-name {
   font-size: var(--ui-font-size);
   font-weight: 500;
   line-height: 22px;
-  color: var(--ink);
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Dev-only: backend host:port appended to the title. Kept secondary so the
-   product name still leads. */
-.ch-endpoint {
-  color: var(--muted);
+/* Dev-only backend pill next to the brand: shows the engine generation from
+   /meta (v1 / v2) and opens the dev-proxy preset switcher menu. v2 is
+   accent-colored so it reads differently at a glance. */
+.ch-backend {
+  flex: none;
+  min-width: 0;
+}
+.ch-backend-kind {
   font-family: var(--mono);
-  font-weight: 400;
-  font-size: calc(var(--ui-font-size) - 1px);
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+.ch-backend-kind.is-v2 {
+  color: var(--color-accent);
+}
+.ch-backend-ep {
+  font-family: var(--mono);
+  color: var(--color-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* In narrow sidebars the product name drops out so the logo keeps its fixed
-   size and the action buttons remain reachable. */
+/* Responsive brand row: below 320px the pill's endpoint drops out (the v1/v2
+   kind + chevron stay — the full target is one tooltip away); below 250px the
+   product name also drops out so the logo and action buttons keep their room. */
+@container sidebar-col (max-width: 320px) {
+  .ch-backend-ep { display: none; }
+}
 @container sidebar-col (max-width: 250px) {
   .ch-name { display: none; }
 }
-.settings-btn,
-.collapse-btn {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: none;
-  border: none;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
-}
-.settings-btn:hover,
-.collapse-btn:hover { background: var(--soft); color: var(--ink); }
-.settings-btn:focus-visible,
-.collapse-btn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
 
-/* Action buttons */
- .btn-wrap {
+/* Action buttons — first row of the actions group (New chat + search): rows
+   inside the group stack flush (0 gap, same rhythm as the session list rows);
+   the group's bottom gap lives on .search-wrap. */
+.btn-wrap {
   display: flex;
-  gap: 8px;
-  padding: 0 12px 8px;
-}
-.btn-wrap button {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 9px 10px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  font-weight: 400;
-  line-height: 1;
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-.btn-wrap button svg { flex: none; }
-.btn-wrap button:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 1px;
-}
-.btn-wrap button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  gap: 8px;
+  padding: 0 var(--sb-inset);
 }
 .btn-new-chat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex: 1;
-  gap: 10px;
-  color: var(--dim);
+  min-width: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  border: 1px solid var(--line);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+  text-align: left;
 }
-.btn-new-chat:hover {
-  background: var(--panel);
-  border-color: var(--bd);
-  color: var(--ink);
-}
-.btn-new-ws {
-  flex: none;
-  justify-content: center;
-  aspect-ratio: 1;
-  padding: 9px 10px;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--line);
-}
-.btn-new-ws:hover {
-  background: var(--panel);
-  border-color: var(--bd);
-  color: var(--dim);
+.btn-new-chat:hover { background: var(--sb-hover); }
+.btn-new-chat:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.btn-new-chat svg { flex: none; }
+.btn-new-chat span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Session search */
+/* Session search — the wrapper is the last fixed row above the list and
+   carries the scroll-linked seam: its bottom border/shadow only appear once
+   the session list has actually scrolled, so an unscrolled list shows no
+   abrupt boundary. */
+.search-wrap {
+  padding: 0 var(--sb-inset);
+  position: relative;
+  z-index: 1;
+  background: var(--color-sidebar-bg);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+.search-wrap--scrolled {
+  border-bottom-color: var(--line);
+  box-shadow: var(--shadow-sm);
+}
 .search {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 12px 8px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--muted);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.search:focus-within {
-  border-color: var(--bd);
-  color: var(--ink);
+.search:hover { background: var(--sb-hover); }
+.search:focus-visible {
+  background: var(--sb-hover);
+  color: var(--color-text);
+  outline: 2px solid var(--color-accent-bd);
+  outline-offset: -2px;
 }
 .search-icon {
   flex: none;
@@ -824,137 +1116,156 @@ function blinkOnce(): void {
 .search-input {
   flex: 1;
   min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 1px);
-}
-.search-input::placeholder {
-  color: var(--faint);
-}
-.search-clear {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-}
-.search-clear:hover {
-  background: var(--soft);
-  color: var(--ink);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Sessions */
+/* Sessions — owns the vertical padding around the list (the 12px gap to the
+   search row above and the bottom breathing room). Scrolled content passes
+   through the top padding and clips at the .search-wrap seam. Scrollbar: the
+   4px ::-webkit-scrollbar below; standard scrollbar-width would kill it on
+   Chromium (see the global scrollbar block in style.css). */
 .sessions {
   flex: 1;
   overflow-y: auto;
-  padding: 0 0 8px;
+  padding: var(--space-3) var(--sb-inset);
   min-height: 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
 }
 .sessions::-webkit-scrollbar { width: 4px; }
 .sessions::-webkit-scrollbar-track { background: transparent; }
 .sessions::-webkit-scrollbar-thumb {
-  background: var(--line);
-  border-radius: 2px;
+  /* Neutral, text-derived translucency — adapts to both schemes and sits
+     quietly on the sidebar surface (no accent tint on hover). */
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  border-radius: var(--radius-full);
 }
-.sessions::-webkit-scrollbar-thumb:hover { background: var(--bd); }
+.sessions::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--color-text) 25%, transparent); }
+
+/* Footer — settings entry pinned under the session list. Same list-style
+   control family as search / New chat (full-width, left-aligned, hover
+   sunken — not a Button). */
+.side-footer {
+  flex: none;
+  padding: var(--space-2) var(--sb-inset);
+  border-top: 1px solid var(--line);
+}
+.btn-settings {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+  text-align: left;
+}
+.btn-settings:hover { background: var(--sb-hover); }
+.btn-settings:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.btn-settings svg { flex: none; }
+.btn-settings span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Section label — heads the workspace list below the action buttons. Aligns
+   with the rows' leading inset (--sb-pad-x) so it reads as the list's title. */
+.side-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 var(--space-3) var(--space-1) var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+  text-transform: uppercase;
+  color: var(--faint);
+  user-select: none;
+}
+.side-section-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-section-toggle {
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.side-section-label:hover .side-section-toggle,
+.side-section-label:focus-within .side-section-toggle {
+  opacity: 1;
+}
+.side-section-toggle:hover {
+  color: var(--dim);
+}
+.side-section-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+.side-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 
 /* Workspace drag-to-reorder: a line at the top (drop-before) or bottom
    (drop-after) of the group under the cursor marks where the dragged workspace
    will land. Inset shadows avoid layout shift. */
-.ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
-.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--blue); }
+.ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
+.ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
 
 .empty {
-  padding: 24px 12px;
+  padding: var(--space-6) var(--space-3);
   text-align: center;
   color: var(--faint);
   font-size: calc(var(--ui-font-size) - 3px);
   line-height: 1.6;
 }
 
-/* Workspace kebab dropdown menu — fixed so the scroll container can't clip it;
-   anchored to the ⋯ trigger from toggleWsMenu(). */
-.ws-menu {
+/* Workspace menus — surface + items come from Menu / MenuItem; only the
+   fixed positioning stays here (anchored to the ⋯ trigger / cursor). */
+.ws-menu,
+.gh-menu,
+.section-menu,
+.backend-menu {
   position: fixed;
   top: 0;
   left: 0;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  z-index: 200;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  overflow: hidden;
-  min-width: 88px;
+  z-index: var(--z-dropdown);
 }
-.ws-menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
+
+/* Check slot for the section overflow menu — fixed width so unchecked items
+   keep their text aligned with the checked one. */
+.section-menu-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+}
+
+/* Backend switcher menu rows: mono engine name + muted preset URL. */
+.backend-menu-name {
   font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--ink);
-  padding: 6px 12px;
+  font-weight: 500;
 }
-.ws-menu-item:hover { background: var(--panel2); }
-
-/* Danger items (delete workspace) — red in both light and dark schemes. */
-.ws-menu-item.del,
-.ghm-item.del { color: var(--err); }
-.ws-menu-item.del:hover,
-.ghm-item.del:hover {
-  background: color-mix(in srgb, var(--err) 10%, transparent);
-}
-
-.ws-menu-divider {
-  height: 1px;
-  background: var(--line);
-  margin: 2px 0;
-}
-
-/* ---------------------------------------------------------------------------
-   Workspace right-click menu (position:fixed)
-   --------------------------------------------------------------------------- */
-.gh-menu {
-  position: fixed;
-  top: 0;
-  left: 0;
-  min-width: 140px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-  padding: 4px;
-  z-index: 200;
-}
-.ghm-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: var(--ui-font-size-xs);
-  color: var(--text);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-.ghm-item:hover {
-  background: var(--soft);
+.backend-menu-url {
+  margin-left: 8px;
+  font-family: var(--mono);
+  color: var(--color-text-muted);
 }
 
 </style>

@@ -128,6 +128,17 @@ describe('MCP OAuth credential identity', () => {
     expect(service.hasTokens('linear', 'https://second.example.com/mcp')).toBe(false);
   });
 
+  it('removes stored credentials when a server authorization is reset', () => {
+    const service = new McpOAuthService({ store: new JsonFileStore(dir) });
+    service
+      .getProvider('linear', 'https://mcp.example.com/mcp')
+      .saveTokens(token('access-token'));
+
+    service.invalidate('linear', 'https://mcp.example.com/mcp');
+
+    expect(service.hasTokens('linear', 'https://mcp.example.com/mcp')).toBe(false);
+  });
+
   it('uses stored client redirect URI when no active OAuth callback is running', () => {
     const provider = new McpOAuthClientProvider({
       serverName: 'notion',

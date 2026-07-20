@@ -1,4 +1,4 @@
-import { visibleWidth, type TUI } from '@earendil-works/pi-tui';
+import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ThinkingComponent } from '#/tui/components/messages/thinking';

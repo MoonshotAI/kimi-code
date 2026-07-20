@@ -1,4 +1,4 @@
-import type { Component, Focusable } from '@earendil-works/pi-tui';
+import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type {
   AgentStatusUpdatedEvent,
   AssistantDeltaEvent,
@@ -17,6 +17,7 @@ import type {
   Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
+  PluginCommandActivatedEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -134,6 +135,7 @@ export class SessionEventHandler {
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
 
   renderedSkillActivationIds: Set<string> = new Set();
+  renderedPluginCommandActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
@@ -150,6 +152,7 @@ export class SessionEventHandler {
     this.backgroundTaskTranscriptedTerminal.clear();
     this.subAgentEventHandler.resetRuntimeState();
     this.renderedSkillActivationIds.clear();
+    this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
@@ -256,6 +259,7 @@ export class SessionEventHandler {
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
       case 'skill.activated': this.handleSkillActivated(event); break;
+      case 'plugin_command.activated': this.handlePluginCommandActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
       case 'compaction.started': this.handleCompactionBegin(event); break;
@@ -329,8 +333,11 @@ export class SessionEventHandler {
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
-    if (event.reason === 'filtered') {
+    if (event.reason === 'failed' && event.error?.code === 'provider.filtered') {
       this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
+    }
+    if (event.reason === 'blocked') {
+      this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
     }
     const todos = this.host.state.todoPanel.getTodos();
     if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
@@ -422,7 +429,11 @@ export class SessionEventHandler {
     if (reason === 'error') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
-      this.host.showStatus('Interrupted by user', 'error');
+      if (event.message === undefined || event.message === '') {
+        this.host.showStatus('Interrupted by user', 'error');
+      } else {
+        this.host.showError(event.message);
+      }
       return;
     }
     this.host.showError(
@@ -434,6 +445,15 @@ export class SessionEventHandler {
 
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     const { state, streamingUI } = this.host;
+    // Encrypted / redacted reasoning (e.g. Kimi over the Anthropic-compatible
+    // protocol) streams thinking deltas whose visible text is empty — only an
+    // opaque signature rides along. Models also occasionally stream whitespace-
+    // only thinking (e.g. a single space). Such deltas carry nothing to render,
+    // so switching into the `thinking` pane mode here would stop the "waiting"
+    // moon spinner while no ThinkingComponent is ever created (it needs visible
+    // text), leaving a blank, spinner-less gap until the first real text/tool
+    // token arrives. Keep the moon up until actual thinking text shows up.
+    if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
     streamingUI.appendThinkingDelta(event.delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
@@ -596,6 +616,7 @@ export class SessionEventHandler {
       patch.permissionMode = event.permission;
     }
     if (event.model !== undefined) patch.model = event.model;
+    if (event.thinkingEffort !== undefined) patch.thinkingEffort = event.thinkingEffort;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
@@ -726,7 +747,8 @@ export class SessionEventHandler {
       (session === undefined || this.host.session === session) &&
       !this.host.aborted &&
       this.host.state.appState.streamingPhase === 'idle' &&
-      this.host.state.queuedMessages.length === 0
+      this.host.state.queuedMessages.length === 0 &&
+      !this.host.state.queuedMessageDispatchPending
     );
   }
 
@@ -939,6 +961,25 @@ export class SessionEventHandler {
     });
   }
 
+  private handlePluginCommandActivated(event: PluginCommandActivatedEvent): void {
+    if (this.renderedPluginCommandActivationIds.has(event.activationId)) return;
+    this.renderedPluginCommandActivationIds.add(event.activationId);
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'plugin_command',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: `/${event.pluginId}:${event.commandName}`,
+      pluginCommandData: {
+        activationId: event.activationId,
+        pluginId: event.pluginId,
+        commandName: event.commandName,
+        args: event.commandArgs,
+        trigger: event.trigger,
+      },
+    });
+  }
+
   private handleCompactionBegin(event: CompactionStartedEvent): void {
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
     this.host.setAppState({
@@ -953,7 +994,11 @@ export class SessionEventHandler {
     event: CompactionCompletedEvent,
     sendQueued: (item: QueuedMessage) => void,
   ): void {
-    this.host.streamingUI.endCompaction(event.result.tokensBefore, event.result.tokensAfter);
+    this.host.streamingUI.endCompaction(
+      event.result.tokensBefore,
+      event.result.tokensAfter,
+      event.result.summary,
+    );
     this.finishCompaction(sendQueued);
   }
 
@@ -968,14 +1013,18 @@ export class SessionEventHandler {
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn) {
+      const next = this.host.shiftQueuedMessage();
+      if (next !== undefined) {
+        this.host.state.queuedMessageDispatchPending = true;
+      }
       this.host.setAppState({
         isCompacting: false,
         streamingPhase: 'idle',
       });
       this.host.resetLivePane();
-      const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {
         setTimeout(() => {
+          this.host.state.queuedMessageDispatchPending = false;
           sendQueued(next);
         }, 0);
       }

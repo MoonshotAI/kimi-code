@@ -21,6 +21,7 @@ interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];
   readonly finishReason?: FinishReason | null | undefined;
   readonly rawFinishReason?: string | null | undefined;
+  readonly traceId?: string | null | undefined;
 }
 
 export function createScriptedGenerate() {
@@ -36,11 +37,13 @@ export function createScriptedGenerate() {
     readonly parts?: readonly StreamedMessagePart[] | undefined;
     readonly finishReason?: FinishReason | null | undefined;
     readonly rawFinishReason?: string | null | undefined;
+    readonly traceId?: string | null | undefined;
   }) {
     responses.push({
       parts: structuredClone(input.parts ?? []),
       ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
       ...(input.rawFinishReason !== undefined ? { rawFinishReason: input.rawFinishReason } : {}),
+      ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
     });
   }
 
@@ -55,11 +58,16 @@ export function createScriptedGenerate() {
 
     const input = normalizeGenerateInput({
       systemPrompt,
-      tools: tools.map(({ name, description, parameters }) => ({
-        name,
-        description,
-        parameters,
-      })),
+      // Mirror kosong generate(): deferred tools are stripped before the
+      // provider builds the request, so the recorded "wire" tools must not
+      // contain them either.
+      tools: tools
+        .filter((tool) => tool.deferred !== true)
+        .map(({ name, description, parameters }) => ({
+          name,
+          description,
+          parameters,
+        })),
       history: structuredClone(history),
     });
     calls.push(input);
@@ -80,6 +88,10 @@ export function createScriptedGenerate() {
 
     const inferredFinishReason: FinishReason = toolCalls.length > 0 ? 'tool_calls' : 'completed';
     const finishReason = response.finishReason ?? inferredFinishReason;
+    const traceId = response.traceId ?? null;
+    // Mirror kosong generate(): the trace id callback fires before the stream
+    // is drained, as soon as the response headers arrive.
+    options?.onTraceId?.(traceId);
     return {
       id: `mock-${String(calls.length)}`,
       message,
@@ -91,6 +103,7 @@ export function createScriptedGenerate() {
       },
       finishReason,
       rawFinishReason: response.rawFinishReason ?? defaultRawFinishReason(finishReason),
+      traceId,
     };
   };
 

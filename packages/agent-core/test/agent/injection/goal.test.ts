@@ -117,6 +117,18 @@ describe('GoalInjector content', () => {
     expect(text).toContain('turns 0/5');
   });
 
+  it('formats wall-clock budgets of an hour or more with an hours unit', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.setBudgetLimits(
+      { budgetLimits: { wallClockBudgetMs: 2 * 60 * 60 * 1000 } },
+      'model',
+    );
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('2h00m');
+    expect(text).not.toContain('120m00s');
+  });
+
   it('uses the within-budget band below 75 percent', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
@@ -162,8 +174,30 @@ describe('GoalInjector content', () => {
     await store.createGoal({ objective: 'fix the bugs' });
     const text = (await injectOnce(store))!;
     expect(text).toContain('Goal mode is iterative');
-    expect(text).toContain('one coherent slice of work');
+    expect(text).toContain('one bounded, useful slice of work');
+    expect(text).toContain('end the turn normally without calling UpdateGoal');
+    expect(text).toContain('Completion audit');
+    expect(text).toContain('actual objective and every explicit requirement');
+    expect(text).toContain('weak or indirect evidence');
     expect(text).toContain('Do not mark complete after only producing a plan');
+    expect(text).toContain('budget is nearly exhausted');
+  });
+
+  it('reserves blocked for genuine impasses rather than ordinary unfinished work', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'finish the migration' });
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('Blocked audit');
+    expect(text).toContain('do not call UpdateGoal with `blocked` the first time');
+    expect(text).toContain('only for a genuine impasse');
+    expect(text).toContain('missing credentials or permissions');
+    expect(text).toContain('3 consecutive goal turns');
+    expect(text).toContain('fresh blocked audit');
+    expect(text).toContain('Exception: if the objective itself is impossible, unsafe, or contradictory');
+    expect(text).toContain('do not run more goal turns just to satisfy the audit');
+    expect(text).toContain('would benefit from clarification');
+    expect(text).toContain('do not keep reporting the blocker while leaving the goal active');
+    expect(text).toContain('needs more goal turns');
   });
 
   it('tells the model to decide simple or impossible goals in the same turn', async () => {

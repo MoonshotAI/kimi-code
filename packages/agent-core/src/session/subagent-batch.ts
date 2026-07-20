@@ -622,7 +622,7 @@ export class SubagentBatch<T> {
       attempt.controller.abort(task.signal?.reason);
     };
     const timeout =
-      task.timeout === undefined
+      task.timeout === undefined || task.timeout <= 0
         ? undefined
         : setTimeout(() => {
             attempt.timedOut = true;

@@ -7,6 +7,12 @@ import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import Button from '../ui/Button.vue';
+import IconButton from '../ui/IconButton.vue';
+import Icon from '../ui/Icon.vue';
+import Menu from '../ui/Menu.vue';
+import MenuItem from '../ui/MenuItem.vue';
+import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
 
@@ -94,13 +100,13 @@ const lastTarget = computed(() => visibleTargets.value.find((t) => t.id === last
 
 // Menu state
 const menuOpen = ref(false);
-const triggerRef = ref<HTMLButtonElement | null>(null);
-const menuRef = ref<HTMLElement | null>(null);
+const triggerRef = ref<InstanceType<typeof IconButton> | null>(null);
+const menuRef = ref<InstanceType<typeof Menu> | null>(null);
 const menuStyle = ref<Record<string, string>>({});
 
 function onDocClick(e: MouseEvent): void {
   const target = e.target as Node;
-  if (menuRef.value?.contains(target) || triggerRef.value?.contains(target)) return;
+  if (menuRef.value?.el?.contains(target) || triggerRef.value?.el?.contains(target)) return;
   closeMenu();
 }
 
@@ -115,11 +121,10 @@ async function openMenu(): Promise<void> {
   }
   menuOpen.value = true;
   document.addEventListener('mousedown', onDocClick);
-  document.addEventListener('scroll', onScrollResize, true);
   window.addEventListener('resize', onScrollResize);
   await nextTick();
-  const btn = triggerRef.value;
-  const menu = menuRef.value;
+  const btn = triggerRef.value?.el;
+  const menu = menuRef.value?.el;
   if (!btn || !menu) return;
   const r = btn.getBoundingClientRect();
   const gap = 4;
@@ -141,13 +146,11 @@ async function openMenu(): Promise<void> {
 function closeMenu(): void {
   menuOpen.value = false;
   document.removeEventListener('mousedown', onDocClick);
-  document.removeEventListener('scroll', onScrollResize, true);
   window.removeEventListener('resize', onScrollResize);
 }
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', onDocClick);
-  document.removeEventListener('scroll', onScrollResize, true);
   window.removeEventListener('resize', onScrollResize);
 });
 
@@ -174,91 +177,73 @@ async function copyPath(): Promise<void> {
 
 <template>
   <div v-if="isMac" class="open-group">
-    <span
-      class="open-label"
-      :class="{ muted: !hasWorkDir }"
-      :title="workDir ?? ''"
-    >
-      <svg
-        viewBox="0 0 16 16"
-        width="12"
-        height="12"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.6"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
+    <Tooltip :text="workDir ?? ''">
+      <span
+        class="open-label"
+        :class="{ muted: !hasWorkDir }"
       >
-        <path d="M2 12V5a1 1 0 0 1 1-1h2l2-2 2 2h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
-        <path d="M4 10h8" />
-      </svg>
-      <span class="open-path">{{ displayPath }}</span>
-    </span>
+        <Icon name="folder" size="sm" />
+        <span class="open-path">{{ displayPath }}</span>
+      </span>
+    </Tooltip>
 
-    <button
-      type="button"
-      class="open-btn open-quick"
-      :disabled="!hasWorkDir"
-      :title="lastTarget ? `Open in ${lastTarget.label}` : t('header.openInEditor')"
-      @click.stop="handleQuickOpen"
-    >
-      {{ t('header.openInEditorShort') }}
-    </button>
+    <Tooltip :text="lastTarget ? `Open in ${lastTarget.label}` : t('header.openInEditor')">
+      <Button
+        size="sm"
+        variant="secondary"
+        :disabled="!hasWorkDir"
+        @click.stop="handleQuickOpen"
+      >
+        {{ t('header.openInEditorShort') }}
+      </Button>
+    </Tooltip>
 
-    <button
+    <IconButton
       ref="triggerRef"
-      type="button"
-      class="open-btn open-caret"
+      size="sm"
       :class="{ open: menuOpen }"
       :disabled="!hasWorkDir"
-      :title="t('header.chooseOpenApp')"
-      :aria-label="t('header.chooseOpenApp')"
+      :label="t('header.chooseOpenApp')"
       @click.stop="openMenu"
     >
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <polyline points="4,6 8,10 12,6" />
-      </svg>
-    </button>
+      <Icon name="chevron-down" size="sm" />
+    </IconButton>
 
-    <div
+    <Menu
       v-if="menuOpen"
       ref="menuRef"
       class="open-menu"
       :style="menuStyle"
       @click.stop
     >
-      <button
+      <MenuItem
         v-for="target in visibleTargets"
         :key="target.id"
-        type="button"
-        class="om-item"
-        :class="{ last: target.id === lastTargetId }"
-        @click.stop="handleOpenTarget(target.id)"
+        :active="target.id === lastTargetId"
+        @click="handleOpenTarget(target.id)"
       >
         <span class="om-label">{{ target.label }}</span>
         <span v-if="target.id === lastTargetId" class="om-last">Last used</span>
-      </button>
-      <div class="om-divider" />
-      <button type="button" class="om-item" @click.stop="copyPath">
-        <span>{{ copiedPath ? t('header.copied') : t('header.copyPath') }}</span>
-      </button>
-    </div>
+      </MenuItem>
+      <MenuItem separator />
+      <MenuItem @click="copyPath">
+        {{ copiedPath ? t('header.copied') : t('header.copyPath') }}
+      </MenuItem>
+    </Menu>
   </div>
 
   <!-- Non-mac fallback: maintain the previous simple open-in-editor button -->
-  <button
-    v-else
-    type="button"
-    class="open-fallback"
-    :title="t('header.openInEditor')"
-    @click="emit('openInApp', 'vscode')"
-  >
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M9 2h5v5M14 2 7 9M12 9.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3.5" />
-    </svg>
-    <span class="open-fallback-label">{{ t('header.openInEditorShort') }}</span>
-  </button>
+  <Tooltip :text="t('header.openInEditor')">
+    <button
+      v-else
+      type="button"
+      class="open-fallback"
+      @click="emit('openInApp', 'vscode')"
+    >
+      <Icon name="external-link" size="sm" />
+      <span class="open-fallback-label">{{ t('header.openInEditorShort') }}</span>
+    </button>
+  </Tooltip>
 </template>
 
 <style scoped>
@@ -271,7 +256,7 @@ async function copyPath(): Promise<void> {
   overflow: hidden;
   background: var(--bg);
   font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
+  font-size: var(--text-base);
 }
 .open-label {
   display: inline-flex;
@@ -288,69 +273,17 @@ async function copyPath(): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.open-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  border: none;
-  border-left: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--dim);
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  padding: 4px 8px;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.open-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.open-btn:not(:disabled):hover { background: var(--soft); color: var(--ink); }
-.open-btn.open { background: var(--soft); color: var(--ink); }
-.open-quick { padding: 4px 10px; }
-.open-caret { padding: 4px 6px; }
-.open-caret svg { flex: none; }
-
 .open-menu {
   position: fixed;
   top: 0;
   left: 0;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  z-index: 200;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  overflow: hidden;
-  min-width: 150px;
+  z-index: var(--z-dropdown);
 }
-.om-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--ink);
-  padding: 6px 12px;
-}
-.om-item:hover { background: var(--panel2); }
 .om-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .om-last {
   flex: none;
   font-size: max(9px, calc(var(--ui-font-size) - 4px));
   color: var(--muted);
-}
-.om-divider {
-  height: 1px;
-  background: var(--line);
-  margin: 2px 0;
 }
 
 .open-fallback {
@@ -367,10 +300,10 @@ async function copyPath(): Promise<void> {
   padding: 0;
   cursor: pointer;
 }
-.open-fallback:hover { color: var(--ink); }
+.open-fallback:hover { color: var(--color-text); }
 .open-fallback svg { flex: none; }
 
-@media (max-width: 900px) {
+@media (max-width: 980px) {
   .open-fallback-label,
   .open-path,
   .open-quick { display: none; }

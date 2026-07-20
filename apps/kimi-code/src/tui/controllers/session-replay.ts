@@ -37,10 +37,12 @@ import {
   replayBackgroundProjection,
   replayEntry,
   skillActivationFromOrigin,
+  pluginCommandFromOrigin,
   toolCallFromReplayMessage,
   toolResultOutput,
   type ReplayRenderContext,
   type SkillActivationProjection,
+  type PluginCommandProjection,
 } from '../utils/message-replay';
 import type { StreamingUIController } from './streaming-ui';
 import type { SessionEventHandler } from './session-event-handler';
@@ -322,6 +324,14 @@ export class SessionReplayRenderer {
       }
       return;
     }
+    const pluginCommand = pluginCommandFromOrigin(message.origin);
+    if (pluginCommand !== undefined) {
+      this.renderPluginCommand(context, pluginCommand);
+      if (message.origin?.kind === 'plugin_command' && message.origin.trigger === 'user-slash') {
+        this.advanceTurn(context);
+      }
+      return;
+    }
 
     this.advanceTurn(context);
     this.host.appendTranscriptEntry(
@@ -419,6 +429,32 @@ export class SessionReplayRenderer {
     });
   }
 
+  private renderPluginCommand(
+    context: ReplayRenderContext,
+    command: PluginCommandProjection,
+  ): void {
+    const { sessionEventHandler } = this.host;
+    if (context.pluginCommandActivationIds.has(command.activationId)) return;
+    if (sessionEventHandler.renderedPluginCommandActivationIds.has(command.activationId)) return;
+    context.pluginCommandActivationIds.add(command.activationId);
+    sessionEventHandler.renderedPluginCommandActivationIds.add(command.activationId);
+    this.host.appendTranscriptEntry({
+      ...replayEntry(
+        context,
+        'plugin_command',
+        `/${command.pluginId}:${command.commandName}`,
+        'plain',
+      ),
+      pluginCommandData: {
+        activationId: command.activationId,
+        pluginId: command.pluginId,
+        commandName: command.commandName,
+        args: command.commandArgs,
+        trigger: command.trigger,
+      },
+    });
+  }
+
   private renderCompaction(context: ReplayRenderContext, record: CompactionReplayRecord): void {
     this.flushAssistant(context);
     if (record.result === undefined) return;
@@ -436,6 +472,7 @@ export class SessionReplayRenderer {
     this.host.appendTranscriptEntry({
       ...replayEntry(context, 'status', 'Compaction complete', 'plain'),
       compactionData: {
+        summary: record.result.summary,
         tokensBefore: record.result.tokensBefore,
         tokensAfter: record.result.tokensAfter,
         instruction: record.instruction,
@@ -532,7 +569,7 @@ export class SessionReplayRenderer {
     if (mode === 'yolo') {
       this.host.appendTranscriptEntry(
         replayEntry(context, 'status', 'YOLO mode: ON', 'notice', {
-          detail: 'All actions will be approved automatically. Use with caution.',
+          detail: 'Tool actions auto-approved; the agent may still ask you questions.',
         }),
       );
       return;

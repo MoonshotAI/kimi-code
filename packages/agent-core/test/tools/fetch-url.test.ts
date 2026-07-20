@@ -134,6 +134,22 @@ describe('FetchURLTool', () => {
     expect((result as { message?: string }).message).toContain('Output is truncated');
   });
 
+  it('keeps the citation reminder at the front so truncation cannot drop it', async () => {
+    const tool = new FetchURLTool(fakeFetcher('x'.repeat(60_000)));
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-cite',
+      args: { url: 'https://example.com/large' },
+      signal,
+    });
+    const out = toolContentString(result);
+    // Body was truncated, yet the reminder — which rides in the front note —
+    // must survive.
+    expect(out).toContain('[...truncated]');
+    expect(out).toContain('cite');
+    expect(out).toContain('[title](url)');
+  });
+
   it('returns error when fetcher throws', async () => {
     const fetcher: UrlFetcher = {
       fetch: vi.fn().mockRejectedValue(new Error('timeout')),

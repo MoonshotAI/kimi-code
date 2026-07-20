@@ -1,4 +1,4 @@
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -17,7 +17,7 @@ const appState: AppState = {
   sessionTitle: null,
   model: 'kimi-k2',
   permissionMode: 'manual',
-  thinking: false,
+  thinkingEffort: 'off',
   contextUsage: 0,
   contextTokens: 0,
   maxContextTokens: 0,

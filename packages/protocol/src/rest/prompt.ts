@@ -10,7 +10,8 @@
  *            }
  *     Reply: PromptSubmitResult { prompt_id, user_message_id, status, content, created_at }
  *            status='running' when sent immediately, status='queued' when
- *            another prompt is already active.
+ *            another prompt is already active, status='blocked' when rejected
+ *            before a turn is launched.
  *
  *   GET /v1/sessions/{sid}/prompts
  *     Reply: { active: PromptItem | null, queued: PromptItem[] }
@@ -31,14 +32,10 @@ import { z } from 'zod';
 import { messageContentSchema } from '../message';
 import { isoDateTimeSchema } from '../time';
 
-export const promptThinkingSchema = z.enum([
-  'off',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-]);
+// Accept any non-empty, model-declared effort string. Providers normalize
+// unrecognized efforts on the wire, so the REST layer must not reject a value
+// the catalog advertises via `support_efforts`.
+export const promptThinkingSchema = z.string().min(1);
 export type PromptThinking = z.infer<typeof promptThinkingSchema>;
 
 export const promptPermissionModeSchema = z.enum(['manual', 'yolo', 'auto']);
@@ -58,7 +55,7 @@ export const promptSubmissionSchema = z.object({
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 
-export const promptStatusSchema = z.enum(['running', 'queued']);
+export const promptStatusSchema = z.enum(['running', 'queued', 'blocked']);
 export type PromptStatus = z.infer<typeof promptStatusSchema>;
 
 export const promptItemSchema = z.object({
@@ -102,6 +99,7 @@ export interface PromptCompletedEventPayload {
   readonly sessionId: string;
   readonly promptId: string;
   readonly finishedAt: string;
+  readonly reason?: 'completed' | 'failed' | 'blocked';
 }
 
 export interface PromptAbortedEventPayload {

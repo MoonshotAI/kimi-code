@@ -16,6 +16,7 @@ import ProviderManager from './components/settings/ProviderManager.vue';
 import LoginDialog from './components/dialogs/LoginDialog.vue';
 import SettingsDialog from './components/settings/SettingsDialog.vue';
 import AddWorkspaceDialog from './components/dialogs/AddWorkspaceDialog.vue';
+import ConfirmDialogHost from './components/dialogs/ConfirmDialogHost.vue';
 import StatusPanel from './components/chat/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
@@ -26,25 +27,55 @@ import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useConfirmDialog } from './composables/useConfirmDialog';
+import type { PromptAttachment } from './composables/useKimiWebClient';
+import type { TurnAttachment } from './types';
 import { useAuthGate } from './composables/useAuthGate';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
 import { useDetailPanel } from './composables/useDetailPanel';
 import { useIsMobile } from './composables/useIsMobile';
+import { openDialogCount } from './composables/dialogStack';
+import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
+import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
+import { stripSkillPrefix } from './lib/slashCommands';
+import Button from './components/ui/Button.vue';
+import IconButton from './components/ui/IconButton.vue';
+import Icon from './components/ui/Icon.vue';
+import InternalBuildBanner from './components/InternalBuildBanner.vue';
+import { isMacosDesktop } from './lib/desktopFlag';
 
-// Hydrate the server-transport credential (fragment token or sessionStorage)
+// Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
-const hasServerCredential = initServerAuth();
-const showServerAuth = ref(!hasServerCredential);
+initServerAuth();
+// Stays false until the server actually rejects us with 401/40101. Starting
+// from "no credential ⇒ prompt" flashed the token dialog for a frame in
+// `--dangerous-bypass-auth` mode, before /meta had advertised the bypass.
+const authRequired = ref(false);
 let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
+// When the server runs with `--dangerous-bypass-auth`, `/meta` advertises it
+// and we skip the token prompt entirely — there is no credential to enter.
+const showServerAuth = computed(
+  () => !client.dangerousBypassAuth.value && authRequired.value,
+);
 provide('resolveImage', client.resolveImageUrl);
+// Live swarm member roster for the inline AgentSwarm tool card. Sourced from the
+// AppTask store so the card shows each subagent's live phase; on refresh the
+// tasks are gone and the card falls back to the parsed tool result. Includes
+// single-member "swarms" (e.g. AgentSwarm with one resume_agent_ids entry),
+// which buildSwarmGroups filters out for the badge counter.
+provide(
+  'resolveSwarmMembers',
+  (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
+);
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.
 const debugEnabled = isTraceEnabled();
@@ -82,14 +113,31 @@ const { showAuthGate, blinkAuthLogo } = useAuthGate({ client, authLogoRef });
 // spinner while the agent is running so activity is visible at a glance.
 usePageTitle({ running, showAuthGate });
 
-// Thinking is on/off (TUI parity — no effort-level cycling). The /thinking
-// command flips between off and the backend default effort ('high').
-function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
-  return current === 'off' ? 'high' : 'off';
+// The /thinking slash command has no popover anchor, so it steps to the next
+// segment for the active model (effort models cycle through their declared
+// levels; boolean models flip on/off; unsupported stays off).
+function nextThinkingLevel(current: ThinkingLevel | undefined): ThinkingLevel {
+  // Identity is the model id — display/model names can collide across providers.
+  const model = client.models.value.find((m) => m.id === client.status.value.modelId);
+  const segs = segmentsFor(model);
+  // No stored preference means the model default is in effect — cycle from
+  // there; a level the model doesn't declare (indexOf → -1) starts the cycle
+  // at the first segment.
+  const idx = segs.indexOf(effectiveThinkingLevel(model, current));
+  const next = segs[(idx + 1) % segs.length] ?? segs[0] ?? 'off';
+  return commitLevel(model, next);
 }
 
-// First-run onboarding (theme / language / welcome greeting). Shown until the
-// user finishes it once; re-openable from the settings popover.
+// Status panel (/status) renders current client state only — show the
+// effective thinking level so "no preference" reads as the model default that
+// will actually run, not a blank.
+const statusPanelThinking = computed<ThinkingLevel>(() => {
+  const model = client.models.value.find((m) => m.id === client.status.value.modelId);
+  return effectiveThinkingLevel(model, client.thinking.value);
+});
+
+// First-run onboarding (language + welcome greeting). Shown until the user
+// finishes it once; re-openable from the settings popover.
 const showOnboarding = ref(!client.onboarded.value);
 function completeOnboarding(): void {
   client.setOnboarded(true);
@@ -99,19 +147,59 @@ function openOnboarding(): void {
   showOnboarding.value = true;
 }
 
+// iOS Safari does not shrink `dvh` for the on-screen keyboard. Instead it pans
+// the visual viewport (offsetTop > 0) to reveal the focused field, which a
+// 100dvh in-flow shell cannot follow: the dock ends up behind the keyboard, or
+// the page shows a blank band past the shell's bottom edge. Pin the shell to
+// the VISUAL viewport instead: position:fixed + top/height mirrored from
+// visualViewport (height shrinks with the keyboard, offsetTop tracks the pan).
+// No-ops on desktop, where offsetTop is 0 and height equals innerHeight.
+let appHeightRaf = 0;
+function setAppHeight(): void {
+  const vv = window.visualViewport;
+  const root = document.documentElement.style;
+  root.setProperty('--app-height', `${vv?.height ?? window.innerHeight}px`);
+  root.setProperty('--app-top', `${vv?.offsetTop ?? 0}px`);
+}
+function syncAppHeight(): void {
+  if (appHeightRaf) return;
+  appHeightRaf = requestAnimationFrame(() => {
+    appHeightRaf = 0;
+    setAppHeight();
+  });
+}
+
 onMounted(() => {
+  // Register the 401 listener before the first requests go out, so a token
+  // rejection during the initial load() can never be missed.
+  offAuthRequired = onAuthRequired(() => {
+    authRequired.value = true;
+    // The server now demands a token, so any cached "bypass" state from a
+    // previous mode is stale — drop it so the token prompt can show.
+    client.clearDangerousBypassAuth();
+  });
   void client.load();
   loadSidebarCollapsed();
+  setAppHeight();
+  window.visualViewport?.addEventListener('resize', syncAppHeight);
+  window.visualViewport?.addEventListener('scroll', syncAppHeight);
+  window.addEventListener('resize', syncAppHeight);
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
-  offAuthRequired = onAuthRequired(() => {
-    showServerAuth.value = true;
-  });
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  window.visualViewport?.removeEventListener('resize', syncAppHeight);
+  window.visualViewport?.removeEventListener('scroll', syncAppHeight);
+  window.removeEventListener('resize', syncAppHeight);
+  if (appHeightRaf) {
+    cancelAnimationFrame(appHeightRaf);
+    appHeightRaf = 0;
+  }
+  document.documentElement.style.removeProperty('--app-height');
+  document.documentElement.style.removeProperty('--app-top');
   if (offAuthRequired !== null) {
     offAuthRequired();
     offAuthRequired = null;
@@ -176,6 +264,7 @@ const {
   sidebarMax,
   sessionColWidth,
   sidebarCollapsed,
+  sidebarDragging,
   sideWidth,
   loadSidebarCollapsed,
   toggleSidebarCollapse,
@@ -222,18 +311,10 @@ const {
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
 
-// Shift-multi-selected workspace ids; when >1 are selected the main pane
-// shows a "coming soon" placeholder instead of the conversation.
-const selectedWorkspaceIds = ref<string[]>([]);
-const hasMultiSelect = computed(() => selectedWorkspaceIds.value.length > 1);
-
-function handleSelectWorkspaces(ids: string[]): void {
-  selectedWorkspaceIds.value = ids;
-}
-
 // Dialog visibility refs
 const showModelPicker = ref(false);
 const showProviders = ref(false);
+
 const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
@@ -241,24 +322,30 @@ const showSettings = ref(false);
 
 type SubmitPayload = {
   text: string;
-  attachments: { fileId: string; kind: 'image' | 'video' }[];
+  attachments: PromptAttachment[];
 };
 const pendingWorkspaceSubmit = ref<SubmitPayload | null>(null);
+// Inline error shown inside the add-workspace picker after the daemon rejects
+// a path. Kept separate from the global toast so the feedback is visible above
+// the picker's backdrop and persists until the user retries or closes.
+const addWorkspaceError = ref<string | null>(null);
 
 // Any of these modal/overlay layers, when open, owns Escape. The global
 // capture-phase handler must NOT close a background side panel out from under an
 // open dialog — otherwise Escape dismisses the panel behind the dialog and the
 // dialog's own Escape handler never fires. New top-level dialogs go here too.
-const anyOverlayOpen = computed<boolean>(() =>
-  showModelPicker.value ||
-  showProviders.value ||
-  showLogin.value ||
-  showAddWorkspace.value ||
-  showStatusPanel.value ||
-  showSettings.value ||
-  showOnboarding.value ||
-  showMobileSwitcher.value ||
-  showMobileSettings.value,
+const anyOverlayOpen = computed<boolean>(
+  () =>
+    openDialogCount.value > 0 ||
+    showModelPicker.value ||
+    showProviders.value ||
+    showLogin.value ||
+    showAddWorkspace.value ||
+    showStatusPanel.value ||
+    showSettings.value ||
+    showOnboarding.value ||
+    showMobileSwitcher.value ||
+    showMobileSettings.value,
 );
 
 // Loading state for model/provider fetches
@@ -273,8 +360,10 @@ async function openModelPicker(): Promise<void> {
   modelsUnavailable.value = false;
   showModelPicker.value = true;
   try {
-    await client.refreshOAuthProviderModels();
-    await client.loadModels();
+    // Full refresh first (every refreshable provider, not just OAuth), so the
+    // list always reflects the live catalog — the WS model-catalog event that
+    // used to keep the cache warm is no longer forwarded by the daemon.
+    await client.refreshAllProviders();
   } catch {
     modelsUnavailable.value = true;
   } finally {
@@ -301,19 +390,68 @@ function openLogin(): void {
 
 async function handleSelectModel(modelId: string): Promise<void> {
   showModelPicker.value = false;
-  await client.setModel(modelId);
+  // Same semantics as the composer dropdown rows: the overlay is just the
+  // "more models" continuation of the same flow, so it must also bump the
+  // global default (see handleComposerSelectModel).
+  await handleComposerSelectModel(modelId);
+}
+
+async function handleComposerSelectModel(modelId: string): Promise<void> {
+  // Primary action: switch the active session's model via POST /sessions/{id}/profile
+  // (same as the model picker overlay). Awaited so the model pill reflects the
+  // result and failures surface. In the onboarding draft this just stores the
+  // pick for the first session.
+  const switched = await client.setModel(modelId);
+
+  // Side effect: also bump the daemon-wide default model via POST /config so
+  // new sessions inherit the choice. Fire-and-forget — it must not block the UI
+  // or mask the session switch. Only after a confirmed switch (a stale/invalid
+  // alias must not become the global default), and skip when it already
+  // matches the default.
+  if (switched && modelId !== client.defaultModel.value) {
+    void client.updateConfig({ defaultModel: modelId });
+  }
 }
 
 async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
   await client.addProvider(input);
 }
 
-async function handleDeleteProvider(id: string): Promise<void> {
-  await client.deleteProvider(id);
-}
-
 async function handleRefreshProvider(id: string): Promise<void> {
   await client.refreshProvider(id);
+}
+
+// Destructive session/workspace/provider actions confirm through the shared
+// modal here (the menu components only emit the intent). Each passes its work
+// as the dialog `action`, so the dialog stays open with a loading state until
+// the operation settles. All three client calls toast their own errors and
+// never reject.
+async function confirmArchiveSession(id: string): Promise<void> {
+  await confirm({
+    title: t('sidebar.archive'),
+    message: t('sidebar.archiveConfirm'),
+    variant: 'danger',
+    action: () => client.archiveSession(id),
+  });
+}
+
+async function confirmDeleteWorkspace(id: string): Promise<void> {
+  const name = client.workspacesView.value.find((w) => w.id === id)?.name ?? id;
+  await confirm({
+    title: t('sidebar.removeWorkspace'),
+    message: t('workspace.removeWorkspaceConfirm', { name }),
+    variant: 'danger',
+    action: () => client.deleteWorkspace(id),
+  });
+}
+
+async function confirmDeleteProvider(id: string): Promise<void> {
+  await confirm({
+    title: t('providers.delete'),
+    message: t('providers.confirmDelete'),
+    variant: 'danger',
+    action: () => client.deleteProvider(id),
+  });
 }
 
 async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
@@ -350,10 +488,13 @@ async function handleLoginSuccess(): Promise<void> {
 
 // Edit + resend the last user message: undo the latest exchange on the daemon,
 // then drop that message's text back into the composer for editing.
-async function handleEditMessage(text: string): Promise<void> {
+async function handleEditMessage(payload: {
+  text: string;
+  attachments?: TurnAttachment[];
+}): Promise<void> {
   await client.undo(1);
   await nextTick();
-  conversationPaneRef.value?.loadComposerForEdit(text);
+  conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.attachments);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
@@ -371,7 +512,7 @@ function handleCommand(cmd: string): void {
     if (arg === 'on') client.setSwarmMode(true);
     else if (arg === 'off') client.setSwarmMode(false);
     else if (arg) { client.setSwarmMode(true); void client.sendPrompt(arg); }
-    else client.toggleSwarmMode();
+    else void client.toggleSwarmMode();
     return;
   }
   // `/goal <objective>` creates a goal (and submits it); `/goal pause|resume|cancel`
@@ -406,16 +547,12 @@ function handleCommand(cmd: string): void {
     case '/fork':
       void client.forkSession();
       break;
+    case '/export':
+      void client.exportSession();
+      break;
     case '/undo':
       void client.undo();
       break;
-    case '/permission': {
-      // Cycle manual → auto → yolo → manual
-      const current = client.permission.value;
-      const next = current === 'manual' ? 'auto' : current === 'auto' ? 'yolo' : 'manual';
-      client.setPermission(next);
-      break;
-    }
     case '/plan':
       client.togglePlanMode();
       break;
@@ -429,30 +566,30 @@ function handleCommand(cmd: string): void {
       // No popover anchor from a slash command — step to the next level.
       client.setThinking(nextThinkingLevel(client.thinking.value));
       break;
-    case '/help':
-      client.dismissWarning(-1);
-      break;
     case '/status':
       showStatusPanel.value = true;
-      break;
-    case '/model':
-      void openModelPicker();
-      break;
-    case '/provider':
-      void openProviders();
       break;
     case '/login':
       openLogin();
       break;
     default: {
       // Not a built-in command → treat it as a session skill activation
-      // (the user picked `/<skill>` from the menu, or typed `/<skill> args`).
-      // The daemon answers an unknown name with skill.not_found, surfaced as a
-      // warning, so a stray slash is harmless.
+      // (the user picked `/skill:<skill>` from the menu, or typed
+      // `/<skill> args`). Strip the `skill:` display prefix — the REST API
+      // takes the bare skill name. The daemon answers an unknown name with
+      // skill.not_found, surfaced as a warning, so a stray slash is harmless.
+      // With no active session, create one first (same path as the first
+      // prompt) so the activation isn't silently dropped on the new-session
+      // screen.
       const space = cmd.indexOf(' ');
-      const name = (space === -1 ? cmd : cmd.slice(0, space)).slice(1);
+      const name = stripSkillPrefix((space === -1 ? cmd : cmd.slice(0, space)).slice(1));
       const args = space === -1 ? undefined : cmd.slice(space + 1).trim() || undefined;
-      if (name) void client.activateSkill(name, args);
+      if (!name) break;
+      if (!client.activeSessionId.value && client.activeWorkspaceId.value) {
+        void client.startSessionAndActivateSkill(client.activeWorkspaceId.value, name, args);
+      } else {
+        void client.activateSkill(name, args);
+      }
       break;
     }
   }
@@ -466,6 +603,10 @@ function handleUnqueue(index: number): void {
 // textarea; here we just remove it from the queue so it isn't sent twice.
 function handleEditQueued(index: number): void {
   client.unqueue(index);
+}
+
+function handleReorderQueue(payload: { from: number; to: number }): void {
+  client.reorderQueue(payload.from, payload.to);
 }
 
 async function handleSubmit(payload: SubmitPayload): Promise<void> {
@@ -483,8 +624,17 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
 }
 
 async function handleAddWorkspace(root: string): Promise<void> {
+  addWorkspaceError.value = null;
+  const added = await client.addWorkspaceByPath(root);
+  // Keep the picker open (and the pending submission intact) when the daemon
+  // rejects the path so the user can retry with a valid one. The error is shown
+  // inline in the picker. Closing via Escape goes through handleCloseAddWorkspace,
+  // which drops the pending prompt.
+  if (!added) {
+    addWorkspaceError.value = t('workspace.addFailed');
+    return;
+  }
   showAddWorkspace.value = false;
-  await client.addWorkspaceByPath(root);
   const pending = pendingWorkspaceSubmit.value;
   pendingWorkspaceSubmit.value = null;
   const wsId = client.activeWorkspaceId.value;
@@ -495,6 +645,7 @@ async function handleAddWorkspace(root: string): Promise<void> {
 
 function handleCloseAddWorkspace(): void {
   pendingWorkspaceSubmit.value = null;
+  addWorkspaceError.value = null;
   showAddWorkspace.value = false;
 }
 
@@ -552,26 +703,27 @@ function openPr(url: string): void {
           <h1>{{ t('app.authPageTitle') }}</h1>
           <p>{{ t('app.authPageMessage') }}</p>
         </div>
-        <button type="button" class="auth-page-btn" @click="openLogin">
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M6 3h5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6" />
-            <path d="M9 8H2" />
-            <path d="M5 5l3 3-3 3" />
-          </svg>
+        <Button class="auth-page-btn" variant="primary" @click="openLogin">
+          <Icon name="log-in" size="md" />
           <span>{{ t('app.authPageLogin') }}</span>
-        </button>
+        </Button>
       </div>
     </section>
     <div
       v-else
       class="app"
-      :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile }"
-      :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewPanelWidth + 'px' }"
+      :class="{
+        mobile: isMobile,
+        'sidebar-collapsed': sidebarCollapsed && !isMobile,
+        'macos-desktop': isMacosDesktop,
+      }"
+      :style="{ '--preview-w': previewPanelWidth + 'px' }"
     >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
-        v-show="!sidebarCollapsed"
+        :collapsed="sidebarCollapsed"
+        :dragging="sidebarDragging"
         :col-width="sideWidth"
         :active-workspace="client.visibleWorkspace.value"
         :active-workspace-id="client.activeWorkspaceId.value"
@@ -581,47 +733,36 @@ function openPr(url: string): void {
         :attention-by-session="client.attentionBySession.value"
         :pending-by-session="client.pendingBySession.value"
         :unread-by-session="client.unreadBySession.value"
+        :workspace-sort-mode="client.workspaceSortMode.value"
+        :backend="client.backend.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
         @select-workspace="client.openWorkspace($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
-        @archive="(id) => client.archiveSession(id)"
+        @archive="confirmArchiveSession($event)"
         @fork="(id) => client.forkSession(id)"
+        @export="(id) => client.exportSession(id)"
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
-        @delete-workspace="(id) => client.deleteWorkspace(id)"
+        @delete-workspace="confirmDeleteWorkspace($event)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
+        @set-workspace-sort-mode="client.setWorkspaceSortMode($event)"
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
         @load-all-sessions="void client.loadAllSessions()"
-        @select-workspaces="handleSelectWorkspaces"
         @open-settings="showSettings = true"
         @collapse="toggleSidebarCollapse"
       />
       <ResizeHandle
         v-show="!sidebarCollapsed"
+        class="side-handle"
         :storage-key="SIDEBAR_WIDTH_KEY"
         :default-width="SIDEBAR_DEFAULT"
         :min="SIDEBAR_MIN"
         :max="sidebarMax"
         @update:width="sessionColWidth = $event"
+        @update:dragging="sidebarDragging = $event"
       />
-      <div v-if="sidebarCollapsed" class="sidebar-rail">
-        <button
-          type="button"
-          class="sidebar-expand-btn"
-          :title="t('sidebar.expandSidebar')"
-          :aria-label="t('sidebar.expandSidebar')"
-          @click="toggleSidebarCollapse"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 6h9" />
-            <path d="M4 12h9" />
-            <path d="M4 18h9" />
-            <path d="M17 9l3 3-3 3" />
-          </svg>
-        </button>
-      </div>
     </template>
 
     <!-- Mobile navigation: slim top bar (switcher + settings sheets). -->
@@ -637,10 +778,8 @@ function openPr(url: string): void {
     />
 
     <ConversationPane
-      v-if="!hasMultiSelect"
       ref="conversationPaneRef"
       :mobile="isMobile"
-      :modern="client.theme.value === 'modern' || client.theme.value === 'kimi'"
       :turns="client.turns.value"
       :session-id="client.activeSessionId.value"
       :approvals="client.pendingApprovals.value"
@@ -649,7 +788,6 @@ function openPr(url: string): void {
       :tasks="client.tasks.value"
       :todos="client.todos.value"
       :goal="client.goal.value"
-      :swarms="client.swarms.value"
       :activation-badges="client.activationBadges.value"
       :status="client.status.value"
       :thinking="client.thinking.value"
@@ -660,11 +798,15 @@ function openPr(url: string): void {
       :starred-ids="client.starredModelIds.value"
       :skills="client.skills.value"
       :questions="client.questions.value"
+      :pending-question-actions="client.pendingQuestionActions"
+      :pending-approval-actions="client.pendingApprovalActions"
       :running="running"
+      :turn-active="client.turnActive.value"
       :queued="client.queued.value"
       :search-files="client.searchFiles"
       :upload-image="client.uploadImage"
-      :sending="client.isSending.value"
+      :working="client.working.value"
+      :starting="client.isStartingFirstPrompt.value"
       :fast-moon="client.fastMoon.value"
       :file-reload-key="client.activeSessionId.value"
       :session-loading="client.sessionLoading.value"
@@ -680,7 +822,7 @@ function openPr(url: string): void {
       :active-workspace-id="client.activeWorkspaceId.value"
       :session-title="activeSessionTitle"
       :pr="client.activePullRequest.value"
-      :beta-toc="client.betaToc.value"
+      :conversation-toc="client.conversationToc.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
@@ -695,6 +837,7 @@ function openPr(url: string): void {
       @interrupt="client.abortCurrentPrompt()"
       @unqueue="handleUnqueue"
       @edit-queued="handleEditQueued"
+      @reorder-queue="handleReorderQueue"
       @set-permission="client.setPermission($event)"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"
@@ -705,10 +848,11 @@ function openPr(url: string): void {
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
-      @archive-session="(id) => client.archiveSession(id)"
+      @archive-session="confirmArchiveSession($event)"
+      @export-session="(id) => client.exportSession(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
-      @select-model="client.setModel($event)"
+      @select-model="handleComposerSelectModel($event)"
       @open-file="openFilePreview($event)"
       @open-media="openMediaPreview($event)"
       @open-thinking="openThinkingPanel($event)"
@@ -718,14 +862,29 @@ function openPr(url: string): void {
       @edit-message="handleEditMessage"
     />
 
-    <!-- Multi-workspace selection placeholder -->
-    <div v-else class="coming-soon">
-      <span class="cs-icon">🚧</span>
-      <span class="cs-text">{{ t('app.comingSoon') }}</span>
-    </div>
+    <!-- Sidebar toggle — floating only when the in-header control can't serve:
+         on macOS desktop it's RESIDENT (always rendered beside the traffic
+         lights, the sidebar slides underneath and only the glyph swaps, so it
+         never moves or flashes); on Windows/web the collapse button lives
+         inside the sidebar header, so this floating button only appears while
+         COLLAPSED (to re-expand the sidebar). It must come AFTER
+         ConversationPane in the DOM: Electron computes the window-drag region
+         in tree order (drag rects union, no-drag rects subtract), so a no-drag
+         element placed before the ChatHeader drag region would have its hole
+         painted back over — making the button an inert drag area. -->
+    <IconButton
+      v-if="!isMobile && (isMacosDesktop || sidebarCollapsed)"
+      class="sidebar-toggle-btn"
+      size="sm"
+      :label="sidebarCollapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')"
+      @click="toggleSidebarCollapse"
+    >
+      <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
+    </IconButton>
 
     <ResizeHandle
       v-if="sidePanelVisible && !isMobile"
+      class="preview-handle"
       :storage-key="PREVIEW_WIDTH_KEY"
       :default-width="previewDefaultWidth"
       :min="PREVIEW_MIN"
@@ -807,6 +966,11 @@ function openPr(url: string): void {
       />
     </aside>
 
+    <!-- Internal-build tag — pinned to the app's bottom-right corner, above
+         whatever pane happens to be there. Purely informational: pointer
+         events pass through so it never blocks clicks. -->
+    <InternalBuildBanner class="internal-build-fab" />
+
     <!-- Model Picker overlay -->
     <ModelPicker
       v-if="showModelPicker"
@@ -823,31 +987,35 @@ function openPr(url: string): void {
     <!-- Settings page (modal) -->
     <SettingsDialog
       v-if="showSettings"
-      :theme="client.theme.value"
       :color-scheme="client.colorScheme.value"
+      :accent="client.accent.value"
       :ui-font-size="client.uiFontSize.value"
       :auth-ready="client.authReady.value"
       :account-model="client.defaultModel.value"
       :notify="client.notifyOnComplete.value"
       :notify-question="client.notifyOnQuestion.value"
+      :notify-approval="client.notifyOnApproval.value"
       :notify-permission="client.notifyPermission.value"
       :sound="client.soundOnComplete.value"
-      :beta-toc="client.betaToc.value"
+      :conversation-toc="client.conversationToc.value"
       :config="client.config.value"
       :models="client.models.value"
       :config-saving="configSaving"
       :server-version="client.serverVersion.value"
-      @set-theme="client.setTheme($event)"
+      :backend="client.backend.value"
       @set-color-scheme="client.setColorScheme($event)"
+      @set-accent="client.setAccent($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-notify="client.setNotifyOnComplete($event)"
       @set-notify-question="client.setNotifyOnQuestion($event)"
+      @set-notify-approval="client.setNotifyOnApproval($event)"
       @set-sound="client.setSoundOnComplete($event)"
-      @set-beta-toc="client.setBetaToc($event)"
+      @set-conversation-toc="client.setConversationToc($event)"
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
       @logout="client.logout"
       @open-onboarding="() => { showSettings = false; openOnboarding(); }"
+      @open-providers="() => { showSettings = false; openProviders(); }"
       @close="showSettings = false"
     />
 
@@ -859,7 +1027,7 @@ function openPr(url: string): void {
       :unavailable="providersUnavailable"
       @add="handleAddProvider($event)"
       @refresh="handleRefreshProvider($event)"
-      @delete="handleDeleteProvider($event)"
+      @delete="confirmDeleteProvider($event)"
       @open-login="() => { showProviders = false; openLogin(); }"
       @close="showProviders = false"
     />
@@ -868,7 +1036,7 @@ function openPr(url: string): void {
     <StatusPanel
       v-if="showStatusPanel"
       :status="client.status.value"
-      :thinking="client.thinking.value"
+      :thinking="statusPanelThinking"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :cost-usd="client.sessionCost.value"
@@ -881,20 +1049,21 @@ function openPr(url: string): void {
       :browse-fs="client.browseFs"
       :get-fs-home="client.getFsHome"
       :default-path="client.visibleWorkspace.value?.root ?? client.status.value.cwd"
+      :error="addWorkspaceError"
       @add="handleAddWorkspace($event)"
       @close="handleCloseAddWorkspace"
     />
 
     <!-- Global connecting splash on first load (until the daemon round-trips) -->
     <Transition name="gload-fade">
-      <GlobalLoading v-if="!client.initialized.value" />
+      <GlobalLoading v-if="!client.initialized.value" :issue="client.connectIssue.value" />
     </Transition>
 
-    <!-- First-run onboarding overlay (theme / language / welcome greeting) -->
+    <!-- First-run onboarding overlay (language + welcome greeting). Held back
+         until the first load settled so it can't cover the connecting splash
+         (it teleports to <body> and would float above the retry error). -->
     <Onboarding
-      v-if="showOnboarding && !showAuthGate"
-      :theme="client.theme.value"
-      @set-theme="client.setTheme($event)"
+      v-if="client.initialized.value && showOnboarding && !showAuthGate"
       @complete="completeOnboarding"
       @skip="completeOnboarding"
     />
@@ -904,6 +1073,9 @@ function openPr(url: string): void {
 
     <!-- KAP/daemon debug panel (opt-in, ?debug=1) -->
     <DebugPanel v-if="debugEnabled" />
+
+    <!-- Global modal-confirmation host (driven by useConfirmDialog) -->
+    <ConfirmDialogHost />
 
     <!-- Mobile switcher bottom-sheet: workspace groups + sessions (mirrors the
          desktop sidebar) -->
@@ -920,8 +1092,8 @@ function openPr(url: string): void {
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
       @rename="(id, title) => client.renameSession(id, title)"
-      @archive="(id) => client.archiveSession(id)"
-      @delete-workspace="(id) => client.deleteWorkspace(id)"
+      @archive="confirmArchiveSession($event)"
+      @delete-workspace="confirmDeleteWorkspace($event)"
       @load-more="(id) => void client.loadMoreSessions(id)"
     />
 
@@ -931,23 +1103,22 @@ function openPr(url: string): void {
       v-model="showMobileSettings"
       :status="client.status.value"
       :thinking="client.thinking.value"
+      :models="client.models.value"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
-      :theme="client.theme.value"
       :color-scheme="client.colorScheme.value"
       :ui-font-size="client.uiFontSize.value"
       :auth-ready="client.authReady.value"
-      :beta-toc="client.betaToc.value"
+      :conversation-toc="client.conversationToc.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
       @toggle-plan="client.togglePlanMode()"
       @toggle-swarm="client.toggleSwarmMode()"
       @set-permission="client.setPermission($event)"
-      @set-theme="client.setTheme($event)"
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
-      @set-beta-toc="client.setBetaToc($event)"
+      @set-conversation-toc="client.setConversationToc($event)"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />
@@ -970,7 +1141,17 @@ function openPr(url: string): void {
 .gload-fade-leave-to { opacity: 0; }
 
 .app-shell {
+  /* Pinned to the visual viewport (see setAppHeight): --app-top tracks iOS's
+     keyboard pan and --app-height shrinks with the keyboard, so the shell
+     always covers exactly the visible area. Fixed positioning keeps it out of
+     the document flow that iOS pans. */
+  position: fixed;
+  top: var(--app-top, 0px);
+  left: 0;
+  right: 0;
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -984,7 +1165,7 @@ function openPr(url: string): void {
   justify-content: center;
   padding: 32px;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--color-text);
   box-sizing: border-box;
 }
 .auth-page-inner {
@@ -1016,9 +1197,9 @@ function openPr(url: string): void {
   font-family: var(--sans);
   font-size: 30px;
   line-height: 1.15;
-  font-weight: 650;
+  font-weight: 500;
   letter-spacing: 0;
-  color: var(--ink);
+  color: var(--color-text);
 }
 .auth-page-copy p {
   margin: 0;
@@ -1027,43 +1208,23 @@ function openPr(url: string): void {
   line-height: 1.55;
   color: var(--dim);
 }
-.auth-page-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 8px 14px;
-  border: 1px solid var(--blue);
-  border-radius: 8px;
-  background: var(--blue);
-  color: var(--bg);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  cursor: pointer;
-}
-.auth-page-btn:hover {
-  background: var(--blue2);
-  border-color: var(--blue2);
-}
-.auth-page-btn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
 .app {
-  --side-w: 248px;
   --preview-w: 460px;
   flex: 1;
   min-height: 0;
+  position: relative;
   display: grid;
-  /* sidebar (rail + resizable session column) | 0-width handle | conversation.
-     The 4px ResizeHandle overflows its zero-width track via negative margins so
-     the whole strip is grabbable without consuming layout space. */
-  /* The right-panel track is PERMANENT (auto = follows the aside's width, 0
-     when closed) — opening animates the aside's width, so the conversation
-     column is squeezed over smoothly instead of snapping to a new template. */
-  grid-template-columns: var(--side-w) 0 minmax(0, 1fr) 0 auto;
+  /* sidebar | 0-width handle | conversation | 0-width handle | right panel.
+     The 4px ResizeHandles overflow their zero-width tracks via negative margins
+     so the whole strip is grabbable without consuming layout space. */
+  /* Both side tracks are PERMANENT (auto = follows the aside's width, 0 when
+     closed/collapsed) — opening or collapsing animates the aside's width, so
+     the conversation column is squeezed over smoothly instead of snapping to a
+     new template. Every column is pinned explicitly (grid-column 1–5) so a
+     display:none handle can't shift auto-placement. */
+  grid-template-columns: auto 0 minmax(0, 1fr) 0 auto;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--color-text);
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -1075,44 +1236,50 @@ function openPr(url: string): void {
   min-width: 0;
 }
 
-/* Collapsed sidebar rail: keeps a slim, dedicated grid track so the expand
-   button never overlaps the conversation header or squeezes the main pane. */
-.sidebar-rail {
-  grid-column: 1;
-  display: flex;
-  justify-content: center;
-  padding-top: 8px;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+/* Pin every desktop grid child to its track so auto-placement can never
+   reshuffle columns when a handle is display:none (v-show/v-if). */
+.app > .side { grid-column: 1; }
+.side-handle { grid-column: 2; }
+.app:not(.mobile) > .con { grid-column: 3; }
+.preview-handle { grid-column: 4; }
+
+/* Sidebar toggle — floating button pinned to the top-left corner. On macOS
+   desktop it is resident (rendered in both states beside the traffic lights);
+   on Windows/web it only appears while the sidebar is collapsed (the collapse
+   button lives inside the sidebar header). While collapsed the conversation
+   header pads left so its content clears the button (global block below). */
+.sidebar-toggle-btn {
+  position: absolute;
+  /* Vertically centered in the 48px conversation header. */
+  top: 11px;
+  left: 16px;
+  z-index: var(--z-sticky);
+  /* Fade in on appearance (Windows/web: only rendered while collapsed, so
+     this plays as the sidebar finishes sliding away). macOS disables it. */
+  animation: sidebar-toggle-btn-in 0.18s var(--ease-out) 0.12s backwards;
+  /* Floats over the macOS-desktop window-drag header; keep it clickable. */
+  -webkit-app-region: no-drag;
 }
-.sidebar-expand-btn {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: none;
-  border: none;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  padding: 0;
+/* macOS desktop (hidden title bar): resident beside the floating traffic
+   lights (green light's right edge ≈ 68px; 72 keeps a gap that matches the
+   lights' own 8px rhythm); no entrance animation since it never appears. */
+.app.macos-desktop .sidebar-toggle-btn {
+  left: 72px;
+  animation: none;
 }
-.sidebar-expand-btn:hover {
-  background: var(--soft);
-  color: var(--ink);
-}
-.sidebar-expand-btn:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
+@keyframes sidebar-toggle-btn-in {
+  from { opacity: 0; }
 }
 
-/* The collapsed rail occupies track 1; keep the main pane pinned to the
-   conversation track even though the sidebar/handle are display:none. */
-.app.sidebar-collapsed > .con,
-.app.sidebar-collapsed > .coming-soon {
-  grid-column: 3;
+/* Internal-build tag pinned to the app's bottom-right corner (desktop app
+   only — the component renders nothing elsewhere). Informational: never
+   intercepts pointer input. */
+.internal-build-fab {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: var(--z-sticky);
+  pointer-events: none;
 }
 
 /* Mobile single-column shell: slim top bar (auto) over the full-width
@@ -1150,42 +1317,26 @@ function openPr(url: string): void {
 .global-preview.mobile {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--z-sticky);
   width: auto;
   transition: none;
-  border-top: 2px solid var(--ink);
+  border-top: 2px solid var(--color-text);
 }
-
-/* Multi-workspace selection placeholder */
-.coming-soon {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  height: 100%;
-  color: var(--muted);
-  font-family: var(--mono);
-}
-/* Fixed icon glyph size — not part of the UI font scale. */
-.cs-icon { font-size: 32px; }
-.cs-text { font-size: var(--ui-font-size); }
 
 @media (max-width: 640px) {
   .auth-page {
     align-items: flex-start;
     padding:
-      max(48px, env(safe-area-inset-top))
-      max(20px, env(safe-area-inset-right))
-      max(24px, env(safe-area-inset-bottom))
-      max(20px, env(safe-area-inset-left));
+      max(48px, var(--safe-top))
+      max(20px, var(--safe-right))
+      max(24px, var(--safe-bottom))
+      max(20px, var(--safe-left));
   }
   .auth-page-copy h1 {
     font-size: 26px;
   }
   .auth-page-btn {
     width: 100%;
-    justify-content: center;
   }
 }
 </style>
@@ -1196,5 +1347,20 @@ function openPr(url: string): void {
      share the same 48px height as the conversation header so the hairline reads as
      one continuous line across the layout. */
   --panel-head-h: 48px;
+}
+
+/* Sidebar collapsed (desktop): the conversation header pads left so its
+   content clears the floating sidebar toggle (.sidebar-toggle-btn) — and the
+   macOS traffic lights on desktop builds. Animated in step with the sidebar
+   width transition. Cross-component rule (ChatHeader renders the header), so
+   it lives in this global block. */
+.app:not(.mobile) .chat-header {
+  transition: padding-left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.app.sidebar-collapsed .chat-header {
+  padding-left: 52px;
+}
+.app.sidebar-collapsed.macos-desktop .chat-header {
+  padding-left: 108px;
 }
 </style>

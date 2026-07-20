@@ -1,4 +1,4 @@
-import { visibleWidth, type TUI } from '@earendil-works/pi-tui';
+import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -186,7 +186,7 @@ describe('ToolCallComponent', () => {
     component.appendLiveOutput('line2\n');
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Using Bash');
+    expect(out).toContain('Running a command');
     expect(out).toContain('line1');
     expect(out).toContain('line2');
   });
@@ -209,12 +209,12 @@ describe('ToolCallComponent', () => {
     });
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Used Bash');
+    expect(out).toContain('Ran a command');
     expect(out).toContain('final-only');
     expect(out).not.toContain('streamed-only');
   });
 
-  describe('in-flight Bash command preview (args finalized, no result yet)', () => {
+  describe('Bash command preview', () => {
     const longCommand = Array.from({ length: 15 }, (_, i) => `echo step${String(i + 1)}`).join(
       '\n',
     );
@@ -226,7 +226,7 @@ describe('ToolCallComponent', () => {
       );
 
       const collapsed = strip(component.render(100).join('\n'));
-      expect(collapsed).toContain('Using Bash');
+      expect(collapsed).toContain('Running a command');
       expect(collapsed).toContain('echo step1');
       expect(collapsed).toContain('echo step10');
       expect(collapsed).not.toContain('echo step11');
@@ -238,7 +238,7 @@ describe('ToolCallComponent', () => {
       expect(expanded).toContain('echo step15');
     });
 
-    it('yields command rendering to the result renderer once the result lands', () => {
+    it('keeps the command preview after the result lands to avoid a height collapse', () => {
       const component = new ToolCallComponent(
         { id: 'call_bash_done', name: 'Bash', args: { command: longCommand } },
         undefined,
@@ -249,16 +249,41 @@ describe('ToolCallComponent', () => {
 
       component.setResult({ tool_call_id: 'call_bash_done', output: 'done', is_error: false });
 
-      // Collapsed result view delegates to shellExecutionResultRenderer, which
-      // hides the command — so the in-flight buildCallPreview preview must be
-      // gone, otherwise the command would render twice when expanded.
+      // Collapsed result view still shows the command preview (capped at
+      // COMMAND_PREVIEW_LINES) so a multi-line command with short output does
+      // not collapse the card. The command is owned by buildCallPreview, so it
+      // must appear exactly once — the result renderer no longer renders it.
       const out = strip(component.render(100).join('\n'));
-      expect(out).toContain('Used Bash');
-      expect(out).not.toContain('$ echo step1');
+      expect(out).toContain('Ran a command');
+      expect(out).toContain('$ echo step1');
+      expect(out).toContain('echo step10');
+      expect(out).not.toContain('echo step11');
+      expect(out).toContain('done');
+      expect(out.split('$ echo step1').length - 1).toBe(1);
+
+      component.setExpanded(true);
+      const expanded = strip(component.render(100).join('\n'));
+      expect(expanded).toContain('echo step11');
+      expect(expanded).toContain('echo step15');
+    });
+
+    it('keeps the command preview when the command produces no output', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_bash_empty', name: 'Bash', args: { command: 'mkdir -p a/b/c\necho done' } },
+        { tool_call_id: 'call_bash_empty', output: '', is_error: false },
+      );
+
+      // buildContent early-returns on empty output, but the command preview
+      // (owned by buildCallPreview) must still render so the card does not
+      // collapse to just the header.
+      const out = strip(component.render(100).join('\n'));
+      expect(out).toContain('Ran a command');
+      expect(out).toContain('$ mkdir -p a/b/c');
+      expect(out).toContain('echo done');
     });
   });
 
-  it('hides tool output bodies that start with a <system tag', () => {
+  it('hides tool output bodies that start with a <system-reminder tag', () => {
     const reminderOutput =
       '<system-reminder>\nThe task tools have not been used recently.\n</system-reminder>';
     const component = new ToolCallComponent(
@@ -275,7 +300,7 @@ describe('ToolCallComponent', () => {
     );
 
     const collapsed = strip(component.render(100).join('\n'));
-    expect(collapsed).toContain(`${STATUS_BULLET}Used Bash`);
+    expect(collapsed).toContain(`${STATUS_BULLET}Ran a command`);
     expect(collapsed).not.toContain('system-reminder');
     expect(collapsed).not.toContain('task tools');
 
@@ -285,7 +310,7 @@ describe('ToolCallComponent', () => {
     expect(expanded).not.toContain('task tools');
   });
 
-  it('hides <system-prefixed output even when the tool result is an error', () => {
+  it('hides <system-reminder-prefixed output even when the tool result is an error', () => {
     const component = new ToolCallComponent(
       {
         id: 'call_hidden_err',
@@ -302,6 +327,29 @@ describe('ToolCallComponent', () => {
     const out = strip(component.render(100).join('\n'));
     expect(out).not.toContain('system-reminder');
     expect(out).not.toContain('do not show');
+  });
+
+  it('renders output that merely starts with a literal <system> tag', () => {
+    // Tool metadata no longer travels inside `output` (it rides the result's
+    // `note` side channel), so real output starting with the literal tag —
+    // a file that contains it, an MCP tool's text — must stay visible.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_literal',
+        name: 'Bash',
+        args: { command: 'cat notes.txt' },
+      },
+      {
+        tool_call_id: 'call_literal',
+        output: '<system>literal text from a user file</system>\nsecond line',
+        is_error: false,
+      },
+    );
+
+    component.setExpanded(true);
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('<system>literal text from a user file</system>');
+    expect(out).toContain('second line');
   });
 
   it('renders AgentSwarm results as a one-line summary without raw XML', () => {
@@ -520,6 +568,34 @@ describe('ToolCallComponent', () => {
 
     const header = strip(component.render(100).join('\n')).split('\n')[1] ?? '';
     expect(header).toContain('Current plan · Approved: Pragmatic refactor');
+  });
+
+  it('header chips Auto-approved when ExitPlanMode was auto-approved without user review', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_exit_auto',
+        name: 'ExitPlanMode',
+        args: {},
+      },
+      {
+        tool_call_id: 'call_exit_auto',
+        output:
+          'Exited plan mode. Plan mode deactivated. All tools are now available.\n' +
+          'Note: this plan was auto-approved without user review — the user has NOT explicitly approved it.\n' +
+          'Plan saved to: /tmp/plan.md\n\n' +
+          '## Plan (auto-approved, not user-reviewed):\n# Auto Plan\n\n1. Do the thing.',
+        is_error: false,
+      },
+    );
+
+    const out = strip(component.render(100).join('\n'));
+    const header = out.split('\n')[1] ?? '';
+    expect(header).toMatch(/Current plan · Auto-approved\s*$/);
+    // The plan body renders from the auto-approved marker; the engine-side
+    // note above the marker must not leak into the rendered plan box.
+    expect(out).toContain('Auto Plan');
+    expect(out).toContain('1. Do the thing.');
+    expect(out).not.toContain('Note: this plan was auto-approved');
   });
 
   it('renders Rejected in the plan box title and keeps revise feedback visible', () => {
@@ -929,14 +1005,15 @@ describe('ToolCallComponent', () => {
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Explore Agent Running (explore project xxx) · 1 tool · 10s');
     expect(out).toContain('Using Read (apps/kimi-code/src/tui/utils/background-agent-status.ts)');
+    // Thinking and text are mutually exclusive in the active window: the most
+    // recently streamed (text) wins, so thinking is hidden entirely.
     expect(out).not.toContain('think1');
-    expect(out).toContain('think2');
-    expect(out).toContain('think3');
-    expect(out).toContain('◌ think2');
+    expect(out).not.toContain('think2');
+    expect(out).not.toContain('think3');
     expect(out).not.toContain('answer1');
-    expect(out).not.toContain('answer2');
+    expect(out).toContain('answer2');
     expect(out).toContain('answer3');
-    expect(out).toContain('└ answer3');
+    expect(out).toContain('│ answer3');
 
     vi.setSystemTime(22_000);
     component.onSubagentCompleted({ resultSummary: 'summary fallback' });
@@ -950,7 +1027,7 @@ describe('ToolCallComponent', () => {
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Explore Agent Completed (explore project xxx) · 1 tool · 12s');
     expect(out).not.toContain('think3');
-    expect(out).toContain('└ answer3');
+    expect(out).toContain('│ answer3');
     expect(out).not.toContain('Used Agent');
     expect(out).not.toContain('parent duplicate result');
     expect(out).not.toContain('summary fallback');
@@ -1000,7 +1077,7 @@ describe('ToolCallComponent', () => {
     component.dispose();
   });
 
-  it('keeps the single subagent tool area to the latest four activities', () => {
+  it('summarizes subagent tools as a count plus the current tool', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const component = new ToolCallComponent(
@@ -1030,16 +1107,17 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(120).join('\n'));
     expect(out).toContain('Explore Agent Running (inspect tools) · 5 tools · 0s');
-    expect(out).not.toContain('file1.ts');
-    expect(out).toContain('Used Read (file2.ts)');
-    expect(out).toContain('Used Read (file3.ts)');
-    expect(out).toContain('Used Read (file4.ts)');
-    expect(out).not.toContain('… Using Grep (auth)');
-    expect(out).toContain('• Using Grep (auth)');
+    // Only the current (most recent ongoing) tool appears in the summary line.
     expect(out).toContain('Using Grep (auth)');
+    // No per-tool activity rows are rendered.
+    expect(out).not.toContain('file1.ts');
+    expect(out).not.toContain('file2.ts');
+    expect(out).not.toContain('file3.ts');
+    expect(out).not.toContain('file4.ts');
+    expect(out).not.toContain('Used Read');
   });
 
-  it('keeps the single subagent tool window stable when older tools update', () => {
+  it('keeps the subagent tool summary pinned to the most recent tool', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const component = new ToolCallComponent(
@@ -1075,14 +1153,16 @@ describe('ToolCallComponent', () => {
     });
 
     const out = strip(component.render(120).join('\n'));
+    // The updated/finished older tool must not surface in the summary.
     expect(out).not.toContain('file1-updated.ts');
-    expect(out).toContain('Using Read (file2.ts)');
-    expect(out).toContain('Using Read (file3.ts)');
-    expect(out).toContain('Using Read (file4.ts)');
+    expect(out).not.toContain('file2.ts');
+    expect(out).not.toContain('file3.ts');
+    expect(out).not.toContain('file4.ts');
+    // Only the most recent ongoing tool is shown.
     expect(out).toContain('Using Read (file5.ts)');
   });
 
-  it('wraps single subagent thinking and output with hanging indentation', () => {
+  it('wraps the single subagent active window with a hanging gutter', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const component = new ToolCallComponent(
@@ -1099,23 +1179,16 @@ describe('ToolCallComponent', () => {
       runInBackground: false,
     });
     component.appendSubagentText(
-      'thinking words that should wrap with a clean hanging indent',
-      'thinking',
-    );
-    component.appendSubagentText(
       'output words that should also wrap with a clean hanging indent',
       'text',
     );
 
-    const lines = strip(component.render(34).join('\n')).split('\n');
-    // Thinking is scrolled to its last two display rows, so the head of the
-    // wrapped paragraph drops and the ◌ marker hangs on the first kept row.
-    expect(lines.some((l) => l.includes('◌ wrap with a clean hanging'))).toBe(true);
-    expect(lines.join('\n')).not.toContain('thinking words that should');
-    expect(lines).toContain('    indent                        ');
-    // Output keeps its full hanging-indent wrap (unchanged behavior).
-    expect(lines).toContain('  └ output words that should also ');
-    expect(lines).toContain('    wrap with a clean hanging     ');
+    const joined = strip(component.render(34).join('\n'));
+    // The two-row window drops the head of the wrapped paragraph.
+    expect(joined).not.toContain('output words that should');
+    // Every kept row carries the `│` gutter as a hanging indent.
+    expect(joined).toContain('│ wrap with a clean hanging');
+    expect(joined).toContain('│ indent');
   });
 
   it('scrolls single subagent thinking to the last two display rows', () => {
@@ -1146,7 +1219,7 @@ describe('ToolCallComponent', () => {
     expect(lines.join('\n')).not.toContain('seg00');
   });
 
-  it('shows and truncates a single subagent Bash tool output', () => {
+  it('shows a two-row tail of an ongoing subagent Bash output', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const component = new ToolCallComponent(
@@ -1168,25 +1241,25 @@ describe('ToolCallComponent', () => {
       args: { command: 'ls -la' },
     });
     const output = Array.from({ length: 10 }, (_, i) => `bash-line-${String(i)}`).join('\n');
-    component.finishSubToolCall({ tool_call_id: 'sub_bash:cmd', output, is_error: false });
+    component.appendSubToolLiveOutput('sub_bash:cmd', output);
 
     let out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Used Bash (ls -la)');
-    expect(out).toContain('bash-line-0');
-    expect(out).toContain('bash-line-2');
-    expect(out).not.toContain('bash-line-3');
-    expect(out).toContain('... (7 more lines)');
-    // Subagent output is fixed-truncated: no ctrl+o promise.
+    expect(out).toContain('Using Bash (ls -la)');
+    // The active window keeps only the last two rows of live output.
+    expect(out).toContain('bash-line-8');
+    expect(out).toContain('bash-line-9');
+    expect(out).not.toContain('bash-line-7');
+    // No ctrl+o promise for the subagent window.
     expect(out).not.toContain('ctrl+o');
 
-    // The global ctrl+o expand toggle must NOT expand subagent output.
+    // The global ctrl+o expand toggle must NOT expand the window.
     component.setExpanded(true);
     out = strip(component.render(120).join('\n'));
-    expect(out).not.toContain('bash-line-9');
-    expect(out).toContain('... (7 more lines)');
+    expect(out).toContain('bash-line-9');
+    expect(out).not.toContain('bash-line-7');
   });
 
-  it('truncates unknown subagent tool output but leaves recognized tools as rows', () => {
+  it('shows live output for generic subagent tools but not for recognized ones', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const component = new ToolCallComponent(
@@ -1202,6 +1275,7 @@ describe('ToolCallComponent', () => {
       agentName: 'explore',
       runInBackground: false,
     });
+    // A finished recognized tool: its output body never reaches the window.
     component.appendSubToolCall({
       id: 'sub_mixed:read',
       name: 'Read',
@@ -1212,23 +1286,22 @@ describe('ToolCallComponent', () => {
       output: 'recognized-read-body\nhidden-read-line',
       is_error: false,
     });
+    // An ongoing generic (MCP) tool: its live output is the active stream.
     component.appendSubToolCall({
       id: 'sub_mixed:mcp',
       name: 'mcp__server__do',
       args: {},
     });
     const mcpOut = Array.from({ length: 5 }, (_, i) => `mcp-line-${String(i)}`).join('\n');
-    component.finishSubToolCall({ tool_call_id: 'sub_mixed:mcp', output: mcpOut, is_error: false });
+    component.appendSubToolLiveOutput('sub_mixed:mcp', mcpOut);
 
     const out = strip(component.render(120).join('\n'));
-    // Recognized tool: activity row only, no output body.
-    expect(out).toContain('Used Read (foo.ts)');
+    // Recognized tool output never appears.
     expect(out).not.toContain('recognized-read-body');
-    // Unknown/MCP tool: truncated output body, no ctrl+o promise.
-    expect(out).toContain('mcp-line-0');
-    expect(out).toContain('mcp-line-2');
-    expect(out).not.toContain('mcp-line-3');
-    expect(out).toContain('... (2 more lines)');
+    // Generic tool output shows as the two-row active window tail.
+    expect(out).toContain('mcp-line-3');
+    expect(out).toContain('mcp-line-4');
+    expect(out).not.toContain('mcp-line-2');
     expect(out).not.toContain('ctrl+o');
   });
 
@@ -1254,9 +1327,38 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(120).join('\n'));
     expect(out).toContain('Explore Agent Failed (check failure) · 0 tools · 3s');
-    expect(out).toContain('└ subagent exceeded max_steps');
+    expect(out).toContain('│ subagent exceeded max_steps');
     expect(out).not.toContain('Using Agent');
     expect(out).not.toContain('Used Agent');
+  });
+
+  it('keeps the same card height between running and done', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_height',
+        name: 'Agent',
+        args: { description: 'height stable' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_height',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({ id: 'sub_height:read', name: 'Read', args: { path: 'a.ts' } });
+    component.appendSubagentText('short answer', 'text');
+
+    const runningLines = strip(component.render(120).join('\n')).split('\n').length;
+
+    component.onSubagentCompleted({ resultSummary: 'short answer' });
+    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false });
+
+    const doneLines = strip(component.render(120).join('\n')).split('\n').length;
+
+    expect(doneLines).toBe(runningLines);
   });
 
   describe('background agent terminal state vs spawn-success ToolResult', () => {

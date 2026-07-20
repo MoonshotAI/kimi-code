@@ -17,9 +17,7 @@ export const NATIVE_TARGETS = Object.freeze(
     SUPPORTED_TARGETS.map((t) => {
       const deps = resolveTargetDeps(t);
       const clipboardTarget = deps.find((d) => d.id === 'clipboard-target')?.resolvedName;
-      const koffiNativeFile = deps.find((d) => d.id === 'koffi')?.nativeFileRelatives?.[0];
-      const koffiTriplet = koffiNativeFile?.match(/koffi\/([^/]+)\/koffi\.node$/)?.[1] ?? null;
-      return [t, { clipboardPackage: clipboardTarget, koffiTriplet }];
+      return [t, { clipboardPackage: clipboardTarget }];
     }),
   ),
 );
@@ -161,16 +159,19 @@ async function collectPackageFiles({
   packageName,
   packageRoot,
   includeNativeFiles,
+  includeEntryJs = true,
   nativeFileRelatives = [],
 }) {
   const packageJsonPath = join(packageRoot, 'package.json');
   const packageJson = await readJson(packageJsonPath);
   const selected = new Set([packageJsonPath]);
 
-  const entry = resolvePackageEntry(packageRoot, packageJson);
-  if (entry !== null) {
-    selected.add(entry);
-    await addRuntimeDependencyFiles(packageRoot, entry, selected);
+  if (includeEntryJs) {
+    const entry = resolvePackageEntry(packageRoot, packageJson);
+    if (entry !== null) {
+      selected.add(entry);
+      await addRuntimeDependencyFiles(packageRoot, entry, selected);
+    }
   }
 
   for (const nativeFileRelative of nativeFileRelatives) {
@@ -250,6 +251,7 @@ export async function collectNativeAssets({ appRoot, target }) {
       packageName: dep.resolvedName,
       packageRoot,
       includeNativeFiles: dep.collect === 'native-files',
+      includeEntryJs: dep.collect !== 'native-file-only',
       nativeFileRelatives: dep.nativeFileRelatives,
     });
     const result = await packageManifestEntries({

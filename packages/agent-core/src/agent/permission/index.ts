@@ -166,6 +166,7 @@ export class PermissionManager {
           duration_ms: Date.now() - startedAt,
           session_cache_written: false,
           has_feedback: false,
+          trace_id: context.traceId,
         });
         void this.agent.hooks?.fireAndForgetTrigger?.('PermissionResult', {
           matcherValue: name,
@@ -230,6 +231,7 @@ export class PermissionManager {
       duration_ms: Date.now() - startedAt,
       session_cache_written: sessionApprovalRule !== undefined,
       has_feedback: response.feedback !== undefined && response.feedback.length > 0,
+      trace_id: context.traceId,
     });
 
     const resolved = result.resolveApproval?.(response);
@@ -301,6 +303,9 @@ export class PermissionManager {
         : `Tool "${toolName}" was not run because the user rejected the approval request.`;
     if (this.agent.type === 'sub') {
       return `${prefix}${suffix} Try a different approach — don't retry the same call, don't attempt to bypass the restriction.`;
+    }
+    if (result.decision === 'rejected') {
+      return `${prefix}${suffix} Do not re-attempt the exact same call — think about why it was rejected, then adjust your approach or ask the user what they would prefer.`;
     }
     return `${prefix}${suffix}`;
   }

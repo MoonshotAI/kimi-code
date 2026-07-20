@@ -10,11 +10,9 @@ export const STORAGE_KEYS = {
   // useKimiWebClient
   permission: 'kimi-web.permission',
   activeWorkspace: 'kimi-active-workspace',
-  thinking: 'kimi-web.thinking',
   planMode: 'kimi-web.plan-mode',
   swarmMode: 'kimi-web.swarm-mode',
   goalMode: 'kimi-web.goal-mode',
-  theme: 'kimi-web.theme',
   uiFontSize: 'kimi-web.ui-font-size',
   starredModels: 'kimi-web.starred-models',
   unread: 'kimi-web.unread',
@@ -24,9 +22,15 @@ export const STORAGE_KEYS = {
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
   workspaceOrder: 'kimi-web.workspace-order',
-  betaToc: 'kimi-web.beta-toc',
+  workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
+  workspaceSort: 'kimi-web.workspace-sort',
+  // Conversation outline (TOC). The value keeps the legacy `beta-toc` name so
+  // users who explicitly turned it off while it was experimental keep their
+  // preference after it became on-by-default.
+  conversationToc: 'kimi-web.beta-toc',
   notifyOnComplete: 'kimi-web.notify-on-complete',
   notifyOnQuestion: 'kimi-web.notify-on-question',
+  notifyOnApproval: 'kimi-web.notify-on-approval',
   soundOnComplete: 'kimi-web.sound-on-complete',
   inputHistory: 'kimi-web.input-history',
   // cross-file
@@ -39,6 +43,8 @@ export const STORAGE_KEYS = {
   // deprecated cleanups (kept so the removals still fire for old users)
   codeFont: 'kimi-web.code-font',
   contentAlign: 'kimi-web.content-align',
+  theme: 'kimi-web.theme',
+  thinking: 'kimi-web.thinking',
 } as const;
 
 /** Per-session composer draft key. */
@@ -157,4 +163,39 @@ export function loadWorkspaceOrder(): string[] {
 
 export function saveWorkspaceOrder(ids: Iterable<string>): void {
   safeSetJson(STORAGE_KEYS.workspaceOrder, Array.from(ids));
+}
+
+/**
+ * Local display-name overrides for workspaces the daemon cannot rename — today
+ * that is derived workspaces (a cwd with sessions that was never explicitly
+ * registered), which `PATCH /workspaces/:id` rejects with 404. Keyed by
+ * workspace root (stable across the derived → registered transition) and
+ * applied on top of the daemon list so the rename survives a refresh. Cleared
+ * once the daemon accepts a rename for that root.
+ */
+export function loadWorkspaceNameOverrides(): Record<string, string> {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.workspaceNameOverrides);
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [root, name] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof name === 'string') out[root] = name;
+  }
+  return out;
+}
+
+export function saveWorkspaceNameOverrides(overrides: Record<string, string>): void {
+  safeSetJson(STORAGE_KEYS.workspaceNameOverrides, overrides);
+}
+
+/**
+ * Sidebar workspace sort mode preference (`'manual'` or `'recent'`). Stored as
+ * a raw string with no enum check here — the call site narrows it to
+ * `WorkspaceSortMode`. Returns null when unset or storage is unavailable.
+ */
+export function loadWorkspaceSort(): string | null {
+  return safeGetString(STORAGE_KEYS.workspaceSort);
+}
+
+export function saveWorkspaceSort(mode: string): void {
+  safeSetString(STORAGE_KEYS.workspaceSort, mode);
 }

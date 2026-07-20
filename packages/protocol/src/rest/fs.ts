@@ -264,7 +264,7 @@ export type FsGitStatusRequest = z.infer<typeof fsGitStatusRequestSchema>;
 
 export const fsPullRequestSchema = z.object({
   number: z.number().int().positive(),
-  state: z.enum(['open', 'merged', 'closed']),
+  state: z.enum(['open', 'merged', 'closed', 'draft']),
   url: z.string().url(),
 });
 export type FsPullRequest = z.infer<typeof fsPullRequestSchema>;

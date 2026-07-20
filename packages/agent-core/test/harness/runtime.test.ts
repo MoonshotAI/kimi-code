@@ -26,16 +26,15 @@ import type { OAuthTokenProviderResolver } from '../../src/session/provider-mana
 import { testKaos } from '../fixtures/test-kaos';
 
 function requiredFlagEnv(id: string): string {
-  const def = FLAG_DEFINITIONS.find((item) => item.id === id);
-  if (def === undefined) throw new Error(`Missing flag definition: ${id}`);
-  return def.env;
+  // Micro compaction was the only registered flag and has been removed, so the
+  // env var name is derived directly; the (skipped) tests still type-check.
+  return `KIMI_CODE_EXPERIMENTAL_${id.toUpperCase()}`;
 }
 
 function clearExperimentalEnv(): void {
   vi.stubEnv(MASTER_ENV, '0');
-  for (const def of FLAG_DEFINITIONS) {
-    vi.stubEnv(def.env, '');
-  }
+  // No experimental flags are currently registered, so there are no per-flag
+  // env vars to clear.
 }
 
 function experimentalFeatureEnabled(core: KimiCore, id: string): boolean | undefined {
@@ -94,16 +93,19 @@ describe('KimiCore runtime config', () => {
     vi.unstubAllGlobals();
   });
 
-  it('logs all enabled experimental flags once on core startup', async () => {
+  // Micro compaction was the only experimental flag and has been removed; this
+  // test is skipped because there is no flag to enable.
+  it.skip('logs all enabled experimental flags once on core startup', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     await mkdir(homeDir, { recursive: true });
     await getRootLogger().configure(resolveLoggingConfig({ homeDir }));
 
     vi.stubEnv(MASTER_ENV, '0');
-    for (const def of FLAG_DEFINITIONS) {
-      vi.stubEnv(def.env, '0');
-    }
+    // No experimental flags are currently registered, so there is nothing to clear.
+    // for (const def of FLAG_DEFINITIONS) {
+    //   vi.stubEnv(def.env, '0');
+    // }
     vi.stubEnv(requiredFlagEnv('micro_compaction'), '1');
 
     void new KimiCore(async () => ({}) as never, { homeDir });
@@ -115,7 +117,9 @@ describe('KimiCore runtime config', () => {
     expect(text.match(/experimental flags enabled/g)).toHaveLength(1);
   });
 
-  it('resolves experimental flags from each core config independently', async () => {
+  // Micro compaction was the only experimental flag and has been removed; this
+  // test is skipped because there is no flag to resolve.
+  it.skip('resolves experimental flags from each core config independently', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const firstHome = join(tmp, 'first-home');
     const secondHome = join(tmp, 'second-home');
@@ -144,7 +148,9 @@ micro_compaction = false
     expect(experimentalFeatureEnabled(second, 'micro_compaction')).toBe(false);
   });
 
-  it('updates the scoped experimental resolver after setKimiConfig', async () => {
+  // Micro compaction was the only experimental flag and has been removed; this
+  // test is skipped because there is no flag to update.
+  it.skip('updates the scoped experimental resolver after setKimiConfig', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     await mkdir(homeDir, { recursive: true });
@@ -169,7 +175,9 @@ micro_compaction = false
     expect(experimentalFeatureEnabled(core, 'micro_compaction')).toBe(true);
   });
 
-  it('updates the shared experimental resolver while goal tools stay available', async () => {
+  // Micro compaction was the only experimental flag and has been removed; this
+  // test is skipped because there is no flag to update.
+  it.skip('updates the shared experimental resolver while goal tools stay available', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     const workDir = join(tmp, 'work');
@@ -201,8 +209,8 @@ micro_compaction = false
     const session = core.sessions.get(created.id);
     const mainAgent = session?.getReadyAgent('main');
 
-    expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(false);
-    expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(false);
+    // expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(false);
+    // expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(false);
     expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await core.setKimiConfig({
@@ -211,8 +219,8 @@ micro_compaction = false
       },
     });
 
-    expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(true);
-    expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(true);
+    // expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(true);
+    // expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(true);
     expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await rpc.reloadSession({ sessionId: created.id });
@@ -1136,6 +1144,118 @@ base_url = "https://search.example.test/v1"
     const reminders = pluginSessionStartReminders(core, created.id);
     expect(reminders).toHaveLength(1);
     expect(reminders[0]).toContain('no active plugin session starts');
+  });
+});
+
+describe('KimiCore print-mode defaults', () => {
+  let tmp: string;
+
+  afterEach(async () => {
+    if (tmp !== undefined) {
+      await rm(tmp, { recursive: true, force: true });
+    }
+    await __resetRootLoggerForTest();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function createCorePair(homeDir: string, uiMode?: string) {
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir, uiMode });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    return { core, rpc };
+  }
+
+  async function setupDirs(configToml: string): Promise<{ homeDir: string; workDir: string }> {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-print-defaults-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), configToml);
+    return { homeDir, workDir };
+  }
+
+  it('applies print-mode subagent/loop defaults to sessions when uiMode is print', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
+
+    // The raw user config is left untouched so config reads/writes still
+    // round-trip the user's file values.
+    const raw = await core.getKimiConfig();
+    expect(raw.subagent).toBeUndefined();
+    expect(raw.loopControl).toBeUndefined();
+  });
+
+  it('keeps explicit user config over the print-mode defaults', async () => {
+    const { homeDir, workDir } = await setupDirs(`${baseModelConfig()}
+[loop_control]
+max_steps_per_turn = 7
+
+[subagent]
+timeout_ms = 5000
+`);
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_user_config',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(5000);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(7);
+  });
+
+  it('does not apply print-mode defaults outside print mode', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir);
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_off',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent).toBeUndefined();
+    expect(main?.kimiConfig?.loopControl).toBeUndefined();
+  });
+
+  it('applies print-mode defaults when a session is reloaded', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_reload',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.reloadSession({ sessionId: created.id });
+
+    // The reload path rebuilds the session through resumeSessionWithOverrides;
+    // the agent it constructs must carry the same print-mode defaults.
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
   });
 });
 

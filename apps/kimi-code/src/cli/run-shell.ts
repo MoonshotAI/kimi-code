@@ -1,9 +1,10 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   createKimiHarness,
+  flushDiagnosticLogsSync,
   log,
   type KimiHarness,
   type TelemetryClient,
@@ -25,6 +26,7 @@ import { KimiTUI } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { combineStartupNotice } from '#/tui/utils/startup';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
+import { restoreTerminalModes } from '#/utils/terminal-restore';
 
 import type { CLIOptions } from './options';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
@@ -61,6 +63,7 @@ export async function runShell(
   const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
+    skillDirs: opts.skillsDirs,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
@@ -133,6 +136,67 @@ export async function runShell(
     trackLifecycleForSession(tui.getCurrentSessionId(), event, properties);
   };
 
+  let savedStty: string | undefined;
+  try {
+    // stty operates on the terminal behind stdin, so stdin must be the TTY —
+    // piping /dev/null (ignore) makes stty fail with "not a tty".
+    const saved = execSync('stty -g', {
+      encoding: 'utf8',
+      stdio: ['inherit', 'pipe', 'ignore'],
+    });
+    savedStty = typeof saved === 'string' ? saved.trim() : undefined;
+    execSync('stty -ixon', { stdio: ['inherit', 'ignore', 'ignore'] });
+  } catch {
+    /* ignore */
+  }
+  const restoreStty = (): void => {
+    if (savedStty === undefined) return;
+    const args = savedStty.split(/\s+/).filter((arg) => arg.length > 0);
+    if (args.length === 0) return;
+    spawnSync('stty', args, { stdio: ['inherit', 'ignore', 'ignore'] });
+  };
+
+  // If we crash without going through KimiTUI.stop(), the terminal is left in
+  // raw mode with a hidden cursor and XON/XOFF flow control disabled. Restore
+  // both before exiting so the user's shell is usable afterwards.
+  const emergencyExit = (exitCode: number): void => {
+    // The crash log above is only enqueued into the async sink; flush it
+    // synchronously or the `process.exit()` below would drop the one line that
+    // explains why we crashed. Best-effort: an exit path must never throw.
+    try {
+      flushDiagnosticLogsSync();
+    } catch {
+      /* ignore */
+    }
+    restoreTerminalModes();
+    restoreStty();
+    process.exit(exitCode);
+  };
+  const onUncaughtException = (error: unknown): void => {
+    try {
+      log.error('uncaughtException, restoring terminal and exiting', { error: String(error) });
+    } catch {
+      /* ignore */
+    }
+    emergencyExit(1);
+  };
+  const onUnhandledRejection = (reason: unknown): void => {
+    try {
+      log.error('unhandledRejection, restoring terminal and exiting', { reason: String(reason) });
+    } catch {
+      /* ignore */
+    }
+    emergencyExit(1);
+  };
+  process.on('uncaughtException', onUncaughtException);
+  process.on('unhandledRejection', onUnhandledRejection);
+  // Remove the crash handlers once the TUI exits cleanly so repeated runShell()
+  // calls in the same process (e.g. tests) don't accumulate process listeners.
+  const removeCrashHandlers = (): void => {
+    process.off('uncaughtException', onUncaughtException);
+    process.off('unhandledRejection', onUnhandledRejection);
+  };
+
   tui.onExit = async (exitCode = 0) => {
     const sessionId = tui.getCurrentSessionId();
     const hasContent = tui.hasSessionContent();
@@ -151,13 +215,17 @@ export async function runShell(
     if (hints.length > 0) {
       process.stderr.write(`\n${hints.join('\n')}\n`);
     }
+    removeCrashHandlers();
+    restoreStty();
+    if (tui.exitForegroundTask !== undefined) {
+      // `/web` starting a new server: the TUI has shut down cleanly; hand the
+      // terminal to the foreground server instead of exiting. The task runs
+      // until the server stops (Ctrl+C), then this process exits.
+      await tui.exitForegroundTask(exitCode);
+      return;
+    }
     process.exit(exitCode);
   };
-  try {
-    execSync('stty -ixon', { stdio: 'ignore' });
-  } catch {
-    /* ignore */
-  }
   try {
     const initStartedAt = Date.now();
     await tui.start();
@@ -171,6 +239,7 @@ export async function runShell(
       mcp_ms: mcpMs,
     });
   } catch (error) {
+    removeCrashHandlers();
     setCrashPhase('shutdown');
     trackLifecycle('exit', { duration_ms: Date.now() - startedAt });
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });

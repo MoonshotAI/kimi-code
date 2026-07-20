@@ -382,6 +382,48 @@ function buildJpeg(width: number, height: number): Buffer {
   return Buffer.concat([soi, app0, sof0]);
 }
 
+/**
+ * A minimal EXIF APP1 segment: 'Exif\0\0' + TIFF header + IFD0 holding a
+ * single Orientation (0x0112) SHORT entry, in the requested byte order.
+ */
+function exifApp1(orientation: number, byteOrder: 'II' | 'MM'): Buffer {
+  const le = byteOrder === 'II';
+  const tiff = Buffer.alloc(26);
+  tiff.write(byteOrder, 0, 'latin1');
+  const u16 = (value: number, offset: number): void => {
+    if (le) tiff.writeUInt16LE(value, offset);
+    else tiff.writeUInt16BE(value, offset);
+  };
+  const u32 = (value: number, offset: number): void => {
+    if (le) tiff.writeUInt32LE(value, offset);
+    else tiff.writeUInt32BE(value, offset);
+  };
+  u16(42, 2);
+  u32(8, 4); // offset of IFD0
+  u16(1, 8); // one directory entry
+  u16(0x0112, 10); // tag: Orientation
+  u16(3, 12); // type: SHORT
+  u32(1, 14); // count
+  u16(orientation, 18); // value, left-aligned in the 4-byte field
+  u32(0, 22); // no next IFD
+  const body = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+  const header = Buffer.alloc(4);
+  header.writeUInt16BE(0xff_e1, 0);
+  header.writeUInt16BE(body.length + 2, 2);
+  return Buffer.concat([header, body]);
+}
+
+/** A JPEG whose EXIF APP1 sits between SOI and the remaining segments. */
+function buildJpegWithOrientation(
+  width: number,
+  height: number,
+  orientation: number,
+  byteOrder: 'II' | 'MM' = 'II',
+): Buffer {
+  const jpeg = buildJpeg(width, height);
+  return Buffer.concat([jpeg.subarray(0, 2), exifApp1(orientation, byteOrder), jpeg.subarray(2)]);
+}
+
 describe('sniffImageDimensions', () => {
   const cases: ReadonlyArray<{
     name: string;
@@ -441,6 +483,50 @@ describe('sniffImageDimensions', () => {
     // A non-square frame proves the SOF0 reader does not transpose axes.
     const data = buildJpeg(100, 700);
     expect(sniffImageDimensions(data)).toEqual({ width: 100, height: 700 });
+  });
+
+  describe('JPEG EXIF orientation (dimensions are display-space)', () => {
+    it.each([5, 6, 7, 8])('swaps width/height for transposing orientation %i', (orientation) => {
+      // Orientations 5-8 rotate/transpose at decode time: a 120x80 sensor
+      // frame displays as 80x120. The sniff must report the display space —
+      // the space decoded images, crop regions, and captions live in.
+      const data = buildJpegWithOrientation(120, 80, orientation);
+      expect(sniffImageDimensions(data)).toEqual({ width: 80, height: 120, transposed: true });
+    });
+
+    it.each([1, 2, 3, 4])('keeps width/height for non-transposing orientation %i', (orientation) => {
+      const data = buildJpegWithOrientation(120, 80, orientation);
+      expect(sniffImageDimensions(data)).toEqual({ width: 120, height: 80 });
+    });
+
+    it('honors big-endian (MM) TIFF byte order', () => {
+      const data = buildJpegWithOrientation(120, 80, 6, 'MM');
+      expect(sniffImageDimensions(data)).toEqual({ width: 80, height: 120, transposed: true });
+    });
+
+    it('ignores out-of-range orientation values', () => {
+      expect(sniffImageDimensions(buildJpegWithOrientation(120, 80, 0))).toEqual({
+        width: 120,
+        height: 80,
+      });
+      expect(sniffImageDimensions(buildJpegWithOrientation(120, 80, 9))).toEqual({
+        width: 120,
+        height: 80,
+      });
+    });
+
+    it('survives a truncated APP1 payload without throwing', () => {
+      // Declared APP1 length points past the actual TIFF bytes. Whatever
+      // the sniff returns (unswapped dims or null), it must not throw.
+      const jpeg = buildJpeg(120, 80);
+      const app1 = exifApp1(6, 'II');
+      const truncated = Buffer.concat([
+        jpeg.subarray(0, 2),
+        app1.subarray(0, 10),
+        jpeg.subarray(2),
+      ]);
+      expect(() => sniffImageDimensions(truncated)).not.toThrow();
+    });
   });
 
   describe('truncated / malformed input returns null without throwing', () => {

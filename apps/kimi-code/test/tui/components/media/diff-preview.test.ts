@@ -155,6 +155,22 @@ describe('renderDiffLinesClustered', () => {
     expect(text).toContain('ctrl+o to expand');
   });
 
+  it('respects oldStart and newStart for line numbers', () => {
+    const text = stripAnsi(
+      renderDiffLinesClustered('A\nB\nC', 'A\nX\nC', 'f.ts', {
+        contextLines: 1,
+        oldStart: 10,
+        newStart: 20,
+      }).join('\n'),
+    );
+    // Context lines keep the new (post-edit) line numbers from newStart;
+    // deleted lines use oldStart; added lines use newStart.
+    expect(text).toContain('  20   A');
+    expect(text).toContain('  11 - B');
+    expect(text).toContain('  21 + X');
+    expect(text).toContain('  22   C');
+  });
+
   it('truncates at cluster boundary and appends the ctrl+o footer when maxLines is set', () => {
     const oldLines: string[] = [];
     for (let i = 1; i <= 50; i++) oldLines.push(`L${String(i)}`);

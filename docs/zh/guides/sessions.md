@@ -22,7 +22,7 @@ Kimi Code CLI 把每次对话持久化为一个「会话」，保留消息历史
 ```
 
 - `state.json`：会话标题、创建时间等元数据。
-- `agents/*/wire.jsonl`：Agent 事件流，用于会话恢复和回放。
+- `agents/*/wire.jsonl`：Agent 事件流，用于会话恢复和回放；同时记录发给模型的请求轨迹（工具 schema、请求参数、MCP 工具清单），便于调试。
 
 ::: warning 注意
 `sessions/` 目录下的文件请勿手动编辑，否则可能导致会话无法正常恢复。
@@ -107,6 +107,10 @@ kimi export <sessionId> -o ~/Desktop/my-session.zip
 
 - **`/export-debug-zip`**：产生与 `kimi export` 相同的调试 ZIP。
 - **`/export-md`**（别名 `/export`）：导出为人类可读的 Markdown 对话记录，适合分享或存档。可选接收路径参数；不带参数时写入工作目录下的 `kimi-export-<short-id>-<timestamp>.md`。
+
+在 web UI 中，`/export` 会把当前会话下载为诊断 ZIP。压缩包包含持久化的会话数据、诊断日志，以及记录浏览器关键事件且大小有上限、只含元数据的 `logs/kimi-web.jsonl`；提示词正文、WebSocket 内容和 console 参数不会写入这份浏览器日志。这里的 web 命令与上面的 TUI `/export` 别名行为不同。
+
+浏览器需要先把 ZIP 缓存在内存中再保存，因此 web 导出上限为 64 MiB。更大的会话请使用 `kimi export <sessionId>` 或 TUI 的 `/export-debug-zip`。
 
 ::: tip 提示
 导出文件可能包含代码、命令输出和路径等敏感信息，分享前请先确认内容。

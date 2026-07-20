@@ -7,7 +7,7 @@
  * the richer completion card (the `/goal` box), not this marker.
  */
 
-import { truncateToWidth, type Component } from '@earendil-works/pi-tui';
+import { truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 import type { GoalChange } from '@moonshot-ai/kimi-code-sdk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';

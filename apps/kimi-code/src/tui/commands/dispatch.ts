@@ -1,4 +1,4 @@
-import type { Component, Focusable } from '@earendil-works/pi-tui';
+import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
@@ -21,10 +21,12 @@ import type {
 import { formatErrorMessage } from '../utils/event-payload';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
+import { handleCopyCommand } from './copy';
 import {
   handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
+  handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -60,11 +62,13 @@ import { handleWebCommand } from './web';
 
 export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
+export { handleCopyCommand } from './copy';
 export { handleAddDirCommand } from './add-dir';
 export {
   handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
+  handleEffortCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,
@@ -133,12 +137,26 @@ export interface SlashCommandHost {
   // Dispatch
   stop(exitCode?: number): Promise<void>;
   setExitOpenUrl(url: string): void;
+  /**
+   * Register a task that takes over the process after the TUI has shut down
+   * (instead of exiting): the runner awaits it and only exits when it returns.
+   * Used by `/web` to keep a freshly started server attached to this terminal
+   * until Ctrl+C.
+   */
+  setExitForegroundTask(task: (exitCode: number) => Promise<void>): void;
   showHelpPanel(): void;
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  activatePluginCommand(
+    session: Session,
+    pluginId: string,
+    commandName: string,
+    args: string,
+  ): void;
   readonly skillCommandMap: Map<string, string>;
+  readonly pluginCommandMap: Map<string, string>;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -164,6 +182,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
   const intent = resolveSlashCommandInput({
     input,
     skillCommandMap: host.skillCommandMap,
+    pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
   });
@@ -193,6 +212,20 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
         skill_name: intent.skillName,
       });
       host.sendSkillActivation(session, intent.skillName, intent.args);
+      return;
+    }
+    case 'plugin-command': {
+      if (host.state.appState.model.trim().length === 0) {
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      const session = host.session;
+      if (session === undefined) {
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      host.track('input_command', { command: `${intent.pluginId}:${intent.commandName}` });
+      host.activatePluginCommand(session, intent.pluginId, intent.commandName, intent.args);
       return;
     }
     case 'message':
@@ -270,6 +303,9 @@ async function handleBuiltInSlashCommand(
     case 'model':
       await handleModelCommand(host, args);
       return;
+    case 'effort':
+      await handleEffortCommand(host, args);
+      return;
     case 'provider':
       await handleProviderCommand(host);
       return;
@@ -323,6 +359,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'export-debug-zip':
       await handleExportDebugZipCommand(host);
+      return;
+    case 'copy':
+      await handleCopyCommand(host);
       return;
     case 'login':
       await handleLoginCommand(host);

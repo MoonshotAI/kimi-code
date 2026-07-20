@@ -5,6 +5,7 @@ import type {
   PermissionMode,
   ProviderConfig,
   PromptPart,
+  ThinkingEffort,
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -33,7 +34,10 @@ export interface AppState {
   /** 'bash' when the editor is in `!` shell-command mode. */
   inputMode: 'prompt' | 'bash';
   swarmMode: boolean;
-  thinking: boolean;
+  /** Live thinking effort of the active session (e.g. 'off', 'on', 'high');
+   * mirrors the runtime. The single source of truth for the thinking state in
+   * the TUI. */
+  thinkingEffort: ThinkingEffort;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
@@ -44,6 +48,8 @@ export interface AppState {
   theme: ThemeName;
   version: string;
   editorCommand: string | null;
+  /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
+  disablePasteBurst?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   availableModels: Record<string, ModelAlias>;
@@ -113,6 +119,7 @@ export interface BackgroundAgentStatusData {
 
 export interface CompactionTranscriptData {
   readonly result?: 'cancelled';
+  readonly summary?: string;
   readonly tokensBefore?: number;
   readonly tokensAfter?: number;
   readonly instruction?: string;
@@ -139,10 +146,19 @@ export type TranscriptEntryKind =
   | 'thinking'
   | 'status'
   | 'skill_activation'
+  | 'plugin_command'
   | 'cron'
   | 'goal';
 
 export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
+
+export interface PluginCommandTranscriptData {
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly args?: string;
+  readonly trigger: 'user-slash';
+}
 
 export interface TranscriptEntry {
   id: string;
@@ -150,6 +166,13 @@ export interface TranscriptEntry {
   turnId?: string;
   renderMode: 'markdown' | 'plain' | 'notice';
   content: string;
+  /**
+   * True only for entries holding real model-authored text (created by the
+   * assistant stream). Derived cards — hook results, goal completions, goal
+   * reminders — share kind 'assistant' but are not replies, so /copy must
+   * skip them.
+   */
+  modelText?: boolean;
   color?: ColorToken;
   detail?: string;
   /** Optional override for the leading bullet of a 'user' message entry. An empty string suppresses the bullet entirely (used by shell-command echoes so `$` replaces the sparkles marker). */
@@ -164,6 +187,7 @@ export interface TranscriptEntry {
   skillName?: string;
   skillArgs?: string;
   skillTrigger?: SkillActivationTrigger;
+  pluginCommandData?: PluginCommandTranscriptData;
 }
 
 export type LivePaneMode =
@@ -187,6 +211,18 @@ export interface QueuedMessage {
   /** `bash` for a `!` shell command queued while another command is running;
    *  undefined (=`prompt`) for a normal message. */
   readonly mode?: 'prompt' | 'bash';
+}
+
+/**
+ * One unit of Ctrl-S steer input: a queued message or the editor draft,
+ * with the media parts extracted at submit/paste time so images and video
+ * tags survive the steer path (which accepts full prompt parts, not just
+ * text).
+ */
+export interface SteerInputItem {
+  readonly text: string;
+  readonly parts?: readonly PromptPart[];
+  readonly imageAttachmentIds?: readonly number[];
 }
 
 export const INITIAL_LIVE_PANE: LivePaneState = {

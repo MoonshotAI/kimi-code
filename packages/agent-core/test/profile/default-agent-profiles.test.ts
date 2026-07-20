@@ -42,11 +42,15 @@ describe('default agent profiles', () => {
 
   it('lists the goal tools on the agent profile but not on subagent profiles', () => {
     const agentTools = DEFAULT_AGENT_PROFILES['agent']?.tools ?? [];
-    expect(agentTools).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
+    expect(agentTools).toEqual(
+      expect.arrayContaining(['CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal']),
+    );
     for (const name of ['coder', 'explore', 'plan']) {
       const tools = DEFAULT_AGENT_PROFILES[name]?.tools ?? [];
       expect(tools).not.toContain('CreateGoal');
       expect(tools).not.toContain('GetGoal');
+      expect(tools).not.toContain('SetGoalBudget');
+      expect(tools).not.toContain('UpdateGoal');
     }
   });
 
@@ -58,15 +62,19 @@ describe('default agent profiles', () => {
     ).toThrow(/Embedded agent profile source missing: profile\/default\/missing\.md/);
   });
 
-  it('omits the Skills section for subagent profiles that lack the Skill tool', () => {
-    // The root agent has the Skill tool, so the Skills section and listing render.
-    const agentPrompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(promptContext) ?? '';
-    expect(agentPrompt).toContain('# Skills');
-    expect(agentPrompt).toContain('- test-skill: does things');
+  it('omits the Skills section only for profiles that lack the Skill tool', () => {
+    // The root agent and coder have the Skill tool, so the Skills section and
+    // listing render in their prompts.
+    for (const name of ['agent', 'coder']) {
+      expect(DEFAULT_AGENT_PROFILES[name]?.tools).toContain('Skill');
+      const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';
+      expect(prompt).toContain('# Skills');
+      expect(prompt).toContain('- test-skill: does things');
+    }
 
-    // Subagents (coder/explore/plan) lack the Skill tool, so neither the section
-    // heading nor the skill listing should appear in their prompt.
-    for (const name of ['coder', 'explore', 'plan']) {
+    // explore/plan lack the Skill tool, so neither the section heading nor the
+    // skill listing should appear in their prompts.
+    for (const name of ['explore', 'plan']) {
       const tools = DEFAULT_AGENT_PROFILES[name]?.tools ?? [];
       expect(tools).not.toContain('Skill');
       const prompt = DEFAULT_AGENT_PROFILES[name]?.systemPrompt(promptContext) ?? '';

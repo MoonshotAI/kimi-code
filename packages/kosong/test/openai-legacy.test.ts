@@ -1,6 +1,7 @@
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { OpenAILegacyChatProvider } from '#/providers/openai-legacy';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -42,6 +43,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -52,7 +54,7 @@ async function captureRequestBody(
       return Promise.resolve(makeChatCompletionResponse());
     });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -603,6 +605,39 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['max_tokens']).toBe(2048);
     });
 
+    it('maps json_schema response format to response_format', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['response_format']).toEqual({
+        type: 'json_schema',
+        json_schema: {
+          name: 'contact',
+          schema,
+          strict: true,
+          description: undefined,
+        },
+      });
+    });
+
     it('withMaxCompletionTokens sets max_tokens on the cloned provider', async () => {
       const original = createProvider();
       const provider = original.withMaxCompletionTokens(1024);
@@ -654,6 +689,9 @@ describe('OpenAILegacyChatProvider', () => {
 
       // 1000000 - 30000 = 970000, clamped to 131072
       expect(body['max_tokens']).toBe(131072);
+      // The exposed effective cap matches the ceiling-clamped wire value —
+      // the request trace records this field.
+      expect(provider.maxCompletionTokens).toBe(131072);
     });
   });
 
@@ -670,6 +708,9 @@ describe('OpenAILegacyChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
       expect(body['max_tokens']).toBe(1024);
+      // The constructor-level cap is on the wire without any budget
+      // application, so the exposed cap must reflect it too.
+      expect(provider.maxCompletionTokens).toBe(1024);
     });
 
     it('does not inject max_tokens when maxTokens option is omitted', async () => {
@@ -882,7 +923,7 @@ describe('OpenAILegacyChatProvider', () => {
       },
     );
 
-    it('.withThinking("max") maps to xhigh without model-specific clamping', async () => {
+    it('.withThinking("max") passes max through verbatim', async () => {
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -906,9 +947,87 @@ describe('OpenAILegacyChatProvider', () => {
         history,
       );
 
-      expect(openAIChatModel['reasoning_effort']).toBe('xhigh');
-      expect(openAIProModel['reasoning_effort']).toBe('xhigh');
-      expect(deepSeekModel['reasoning_effort']).toBe('xhigh');
+      expect(openAIChatModel['reasoning_effort']).toBe('max');
+      expect(openAIProModel['reasoning_effort']).toBe('max');
+      expect(deepSeekModel['reasoning_effort']).toBe('max');
+    });
+
+    it('passes max through verbatim', async () => {
+      const provider = createProvider({ model: 'kimi-for-coding' }).withThinking('max');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('max');
+      expect(provider.thinkingEffort).toBe('max');
+    });
+
+    it('passes concrete effort strings through verbatim', async () => {
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      for (const requested of ['xhigh', 'medium', 'extreme'] as const) {
+        const body = await captureRequestBody(
+          createProvider({ model: 'kimi-for-coding' }).withThinking(requested),
+          '',
+          [],
+          history,
+        );
+        expect(body['reasoning_effort']).toBe(requested);
+      }
+    });
+
+    it('does not filter concrete efforts through a client-side allow-list', async () => {
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const provider = createProvider({
+        model: 'kimi-for-coding',
+      });
+
+      const maxBody = await captureRequestBody(provider.withThinking('max'), '', [], history);
+      const xhighBody = await captureRequestBody(provider.withThinking('xhigh'), '', [], history);
+
+      expect(maxBody['reasoning_effort']).toBe('max');
+      expect(xhighBody['reasoning_effort']).toBe('xhigh');
+    });
+
+    it('.withThinking("off") sends no reasoning_effort and reports "off"', async () => {
+      const provider = createProvider().withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('.withThinking("on") sends no reasoning_effort without ThinkPart history and reports "on"', async () => {
+      const provider = createProvider().withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('on');
+    });
+
+    it('reports a null thinkingEffort until withThinking is called', () => {
+      expect(createProvider().thinkingEffort).toBeNull();
+    });
+
+    it('.withThinking("off") clears a concrete effort set earlier', async () => {
+      const provider = createProvider().withThinking('high').withThinking('off');
+      expect(provider.thinkingEffort).toBe('off');
+
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      expect(body['reasoning_effort']).toBeUndefined();
     });
   });
 
@@ -1000,6 +1119,52 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(body['reasoning_effort']).toBe('high');
     });
+
+    it('does not auto-inject reasoning_effort when thinking was explicitly turned off', async () => {
+      // An explicit withThinking('off') is not the same as "never configured":
+      // with thinking off, auto-injection must not silently switch reasoning
+      // back on (or leak reasoning_effort to models that reject the field).
+      const provider = createProvider({ model: 'some-model' }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'How are you?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('still auto-injects reasoning_effort for an explicit "on"', async () => {
+      // 'on' keeps the #1616 behavior: thinking enabled without a concrete
+      // effort still pairs reasoning_effort with ThinkPart history so strict
+      // OpenAI-compatible gateways don't 400.
+      const provider = createProvider({ model: 'some-model' }).withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'How are you?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('medium');
+      expect(provider.thinkingEffort).toBe('on');
+    });
   });
 
   describe('default reasoning protocol (no explicit reasoningKey)', () => {
@@ -1028,6 +1193,27 @@ describe('OpenAILegacyChatProvider', () => {
         role: 'assistant',
         content: 'answer',
         reasoning_content: 'inner monologue',
+      });
+    });
+
+    it('serializes an explicitly empty ThinkPart to reasoning_content', async () => {
+      const provider = createProvider({ model: 'deepseek-reasoner' });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [
+            { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+          ],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toMatchObject({
+        role: 'assistant',
+        reasoning_content: '',
       });
     });
 
@@ -1088,6 +1274,28 @@ describe('OpenAILegacyChatProvider', () => {
         { type: 'think', think: ' think 2' },
         { type: 'text', text: 'final' },
       ]);
+    });
+
+    it('yields an empty ThinkPart from an explicitly empty streaming reasoning field', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'deepseek-reasoner',
+        apiKey: 'test-key',
+        stream: true,
+      });
+
+      async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: '' } }] };
+      }
+
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockResolvedValue(mockedStream());
+
+      const stream = await provider.generate('', [], []);
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([{ type: 'think', think: '' }]);
     });
 
     it('treats blank reasoning_key as unset so defaults still apply', async () => {
@@ -1435,6 +1643,26 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
       { type: 'think', think: 'Some thinking here.' },
       { type: 'text', text: 'Final answer' },
     ]);
+  });
+
+  it('yields an empty ThinkPart when the non-stream reasoning field is explicitly empty', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'deepseek-reasoner',
+      apiKey: 'test-key',
+      stream: false,
+      reasoningKey: 'reasoning_content',
+    });
+
+    const parts = await collectFromMockedResponse(
+      provider,
+      makeNonStreamResponse({
+        role: 'assistant',
+        content: null,
+        reasoning_content: '',
+      }),
+    );
+
+    expect(parts).toEqual([{ type: 'think', think: '' }]);
   });
 
   it('non-stream response yields ToolCall parts when tool_calls present', async () => {

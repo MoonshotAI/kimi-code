@@ -23,7 +23,7 @@ const optionalRuntimeRequires = new Set([
   'utf-8-validate',
 ]);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
-const handledNativeRuntimeRequires = new Set(['koffi']);
+const handledNativeRuntimeRequires = new Set();
 
 function isAllowedSpecifier(specifier) {
   if (builtins.has(specifier) || specifier.startsWith('node:')) return true;
@@ -46,7 +46,7 @@ function executableLines() {
 }
 
 for (const line of executableLines()) {
-  for (const match of line.matchAll(/\brequire\(\s*["']([^"']+)["']\s*\)/g)) {
+  for (const match of line.matchAll(/(?<![.\w])require\(\s*["']([^"']+)["']\s*\)/g)) {
     const specifier = match[1];
     if (specifier.startsWith('.') || specifier.startsWith('/')) {
       if (optionalRelativeRuntimeRequires.has(specifier)) continue;

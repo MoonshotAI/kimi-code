@@ -1,4 +1,4 @@
-import type { TUI } from '@earendil-works/pi-tui';
+import type { TUI } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

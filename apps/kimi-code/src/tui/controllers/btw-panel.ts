@@ -1,4 +1,4 @@
-import { Spacer } from '@earendil-works/pi-tui';
+import { Spacer } from '@moonshot-ai/pi-tui';
 import type {
   Event,
   KimiHarness,
@@ -196,14 +196,17 @@ export class BtwPanelController {
 }
 
 function formatBtwTurnEnd(event: TurnEndedEvent): string {
-  if (event.error !== undefined) {
-    return `[${event.error.code}] ${event.error.message}`;
-  }
   if (event.reason === 'cancelled') {
     return 'Interrupted by user';
   }
-  if (event.reason === 'filtered') {
+  if (event.error?.code === 'provider.filtered') {
     return 'Provider safety policy blocked the response.';
+  }
+  if (event.error !== undefined) {
+    return `[${event.error.code}] ${event.error.message}`;
+  }
+  if (event.reason === 'blocked') {
+    return 'Prompt hook blocked the request.';
   }
   return `BTW turn ended with reason: ${event.reason}`;
 }

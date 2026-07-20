@@ -1,4 +1,4 @@
-import type { Terminal } from '@earendil-works/pi-tui';
+import type { Terminal } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 

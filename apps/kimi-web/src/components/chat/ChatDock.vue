@@ -3,22 +3,28 @@
 <!-- pending question/approval cards, and the composer. Only rendered inside a -->
 <!-- chat-pane group so it never leaks into files/tasks/preview/btw panes. -->
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
 import GoalStrip from './GoalStrip.vue';
 import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
 import TodoCard from './TodoCard.vue';
-import QueuePane from './QueuePane.vue';
+import Icon from '../ui/Icon.vue';
+import Pill from '../ui/Pill.vue';
 
 const props = defineProps<{
   sessionId?: string;
   running?: boolean;
+  /** True while the empty-composer first prompt is being created + submitted.
+   *  Covers the gap where draft-session creation already selected the new
+   *  session (empty state → dock) before the first prompt is submitted. */
+  starting?: boolean;
   queued?: QueuedPromptView[];
   searchFiles?: (q: string) => Promise<FileItem[]>;
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
@@ -33,7 +39,7 @@ const props = defineProps<{
   skills?: AppSkill[];
   goal?: AppGoal | null;
   goalExpandSignal?: number;
-  dockPanel: 'bash' | 'subagent' | 'todos' | 'queue' | null;
+  dockPanel: 'bash' | 'subagent' | 'todos' | null;
   bashTasks: TaskItem[];
   subagentTasks: TaskItem[];
   bashRunning: number;
@@ -42,17 +48,19 @@ const props = defineProps<{
   hasDockWork: boolean;
   todos?: TodoView[];
   pendingQuestion?: UIQuestion;
+  /** Action kind in flight for the visible question (drives loading state). */
+  questionBusyKind?: 'answer' | 'dismiss';
   pendingApproval?: { approvalId: string; block: ApprovalBlock; agentName?: string };
+  /** True while the visible approval has a respond in flight. */
+  approvalBusy?: boolean;
   mobile?: boolean;
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   command: [cmd: string];
   interrupt: [];
-  unqueue: [index: number];
-  editQueued: [index: number];
   setPermission: [mode: PermissionMode];
   setThinking: [level: ThinkingLevel];
   togglePlan: [];
@@ -70,27 +78,37 @@ const emit = defineEmits<{
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
   cancelTask: [taskId: string];
-  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'queue'];
+  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos'];
   'close-dock-panel': [];
+  /** A background subagent chip was clicked — open its live detail panel. */
+  openAgent: [taskId: string];
 }>();
 
 const { t } = useI18n();
-const composerRef = ref<{ loadForEdit: (value: string) => void; focus: () => void } | null>(null);
+const composerRef = ref<{
+  loadForEdit: (value: string) => boolean;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
+  focus: () => void;
+} | null>(null);
 const workPanelRef = ref<HTMLElement | null>(null);
 const workbarRef = ref<HTMLElement | null>(null);
+const dockRef = ref<HTMLElement | null>(null);
 
-function loadForEdit(value: string): void {
-  composerRef.value?.loadForEdit(value);
+function loadForEdit(value: string): boolean {
+  // The nested Composer is only rendered in ChatDock's v-else — when a pending
+  // question or approval is shown it is unmounted, so report unavailability so
+  // the caller doesn't dequeue a prompt it can't actually load.
+  if (!composerRef.value) return false;
+  composerRef.value.loadForEdit(value);
+  return true;
+}
+
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
+  composerRef.value?.loadAttachmentsForEdit(atts);
 }
 
 function focus(): void {
   composerRef.value?.focus();
-}
-
-function handleEditQueued(index: number): void {
-  const text = props.queued?.[index]?.text ?? '';
-  if (text) loadForEdit(text);
-  emit('editQueued', index);
 }
 
 function onDocumentMouseDown(event: MouseEvent): void {
@@ -112,17 +130,36 @@ watch(
   { immediate: true },
 );
 
+let dockResizeObserver: ResizeObserver | null = null;
+
+function publishDockHeight(): void {
+  // Border-box height of the dock, exposed so fixed overlays (e.g. toasts) can
+  // anchor just above the composer. offsetHeight includes the dock's own
+  // safe-area padding, so consumers don't need to add safe-bottom again.
+  const height = dockRef.value?.offsetHeight ?? 0;
+  document.documentElement.style.setProperty('--dock-h', `${height}px`);
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'function' || !dockRef.value) return;
+  dockResizeObserver = new ResizeObserver(publishDockHeight);
+  dockResizeObserver.observe(dockRef.value);
+  publishDockHeight();
+});
+
 onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('mousedown', onDocumentMouseDown, true);
   }
+  dockResizeObserver?.disconnect();
+  dockResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, focus });
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 </script>
 
 <template>
-  <div class="chat-dock" :class="[mobile ? 'align-mobile' : 'align-center']" @click.stop>
+  <div ref="dockRef" class="chat-dock" :class="[mobile ? 'align-mobile' : 'align-center']" @click.stop>
     <Transition name="dock-panel">
       <div
         ref="workPanelRef"
@@ -149,19 +186,6 @@ defineExpose({ loadForEdit, focus });
           >
             {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
           </span>
-          <span
-            v-else-if="dockPanel === 'queue'"
-            class="dock-work-tab static"
-          >
-            {{ t('tasks.dockQueue') }} · {{ queued?.length ?? 0 }}
-          </span>
-          <button
-            v-if="dockPanel === 'queue' && running"
-            type="button"
-            class="dock-queue-steer"
-            :title="t('composer.steerTitle')"
-            @click="emit('steer', { text: '', attachments: [] })"
-          >{{ t('composer.steerNow') }}</button>
         </div>
         <div class="dock-work-body">
           <TasksPane
@@ -173,20 +197,11 @@ defineExpose({ loadForEdit, focus });
             v-else-if="dockPanel === 'subagent'"
             :tasks="subagentTasks"
             @cancel="emit('cancelTask', $event)"
+            @open="emit('openAgent', $event)"
           />
           <TodoCard
             v-else-if="dockPanel === 'todos'"
             :todos="todos ?? []"
-            inline
-          />
-          <QueuePane
-            v-else
-            :queued="queued ?? []"
-            :running="running"
-            inline
-            @steer="emit('steer', { text: '', attachments: [] })"
-            @unqueue="emit('unqueue', $event)"
-            @edit-queued="handleEditQueued"
           />
         </div>
       </div>
@@ -199,73 +214,43 @@ defineExpose({ loadForEdit, focus });
       @control-goal="emit('controlGoal', $event)"
     />
     <div v-if="hasDockWork" ref="workbarRef" class="dock-workbar">
-      <button
+      <Pill
         v-if="bashTasks.length > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'bash' }"
+        :active="dockPanel === 'bash'"
         :aria-pressed="dockPanel === 'bash'"
         @click="emit('toggle-dock-panel', 'bash')"
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <circle cx="8" cy="8" r="5.5" />
-          <path d="M8 4.5V8l2.5 1.5" />
-        </svg>
+        <Icon name="clock" size="md" />
         <span>{{ t('tasks.dockBash') }}</span>
         <span class="dw-count">(<b>{{ bashTasks.length }}</b>)</span>
-      </button>
-      <button
+      </Pill>
+      <Pill
         v-if="subagentTasks.length > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'subagent' }"
+        :active="dockPanel === 'subagent'"
         :aria-pressed="dockPanel === 'subagent'"
         @click="emit('toggle-dock-panel', 'subagent')"
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M8 2l1.5 4.5L14 8l-4.5 1.5L8 14l-1.5-4.5L2 8l4.5-1.5z" />
-        </svg>
+        <Icon name="sparkles" size="md" />
         <span>{{ t('tasks.dockSubagent') }}</span>
         <span class="dw-count">(<b>{{ subagentTasks.length }}</b>)</span>
-      </button>
-      <button
+      </Pill>
+      <Pill
         v-if="(todos?.length ?? 0) > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'todos' }"
+        :active="dockPanel === 'todos'"
         :aria-pressed="dockPanel === 'todos'"
         @click="emit('toggle-dock-panel', 'todos')"
       >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M3 4.5l1.5 1.5L7 3.5" />
-          <path d="M8.5 5h4" />
-          <path d="M3 11l1.5 1.5L7 10" />
-          <path d="M8.5 11.5h4" />
-        </svg>
+        <Icon name="check-list" size="md" />
         <span>{{ t('tasks.dockTodos') }}</span>
         <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
-      </button>
-      <button
-        v-if="(queued?.length ?? 0) > 0"
-        type="button"
-        class="dock-work-chip"
-        :class="{ on: dockPanel === 'queue' }"
-        :aria-pressed="dockPanel === 'queue'"
-        @click="emit('toggle-dock-panel', 'queue')"
-      >
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M2 4l6 4 6-4" />
-          <rect x="2" y="4" width="12" height="8" rx="1.5" />
-        </svg>
-        <span>{{ t('tasks.dockQueue') }}</span>
-        <span class="dw-count">(<b>{{ queued?.length ?? 0 }}</b>)</span>
-      </button>
+      </Pill>
     </div>
 
     <QuestionCard
       v-if="pendingQuestion"
       :key="pendingQuestion.questionId"
       :question="pendingQuestion"
+      :busy-kind="questionBusyKind"
       @answer="(qid, resp) => emit('answer', qid, resp)"
       @dismiss="emit('dismiss', $event)"
     />
@@ -275,6 +260,7 @@ defineExpose({ loadForEdit, focus });
       class="dock-approval"
       :block="pendingApproval.block"
       :agent-name="pendingApproval.agentName"
+      :busy="approvalBusy"
       @decide="emit('approval', pendingApproval!.approvalId, $event)"
     />
     <Composer
@@ -290,10 +276,12 @@ defineExpose({ loadForEdit, focus });
       :plan-mode="planMode"
       :swarm-mode="swarmMode"
       :goal-mode="goalMode"
+      :goal="goal"
       :activation-badges="activationBadges"
       :models="models"
       :starred-ids="starredIds"
       :skills="skills"
+      :starting="starting"
       @submit="emit('submit', $event)"
       @steer="emit('steer', $event)"
       @command="emit('command', $event)"
@@ -325,8 +313,8 @@ defineExpose({ loadForEdit, focus });
   padding-right: var(--panes-scrollbar-width, 0px);
   flex: none;
   position: relative;
-  background: var(--bg);
-  z-index: 10;
+  background: var(--color-bg);
+  z-index: var(--z-sticky);
 }
 .chat-dock.align-center { margin-left: auto; margin-right: auto; }
 .chat-dock.align-left { margin-left: 0; margin-right: auto; }
@@ -337,10 +325,9 @@ defineExpose({ loadForEdit, focus });
   left: 16px;
   right: calc(16px + var(--panes-scrollbar-width, 0px));
   bottom: 100%;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
   margin-bottom: 7px;
   max-height: min(360px, 50vh);
   display: flex;
@@ -352,36 +339,21 @@ defineExpose({ loadForEdit, focus });
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--color-line);
 }
 .dock-work-tab {
-  font-size: 12px;
+  font-size: var(--text-base);
   font-weight: 500;
-  color: var(--ink);
+  color: var(--color-text);
   padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--bg);
-  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
 }
 .dock-work-tab.static {
   background: transparent;
   border-color: transparent;
   padding-left: 2px;
-}
-.dock-queue-steer {
-  margin-left: auto;
-  background: none;
-  border: 1px solid var(--blueln);
-  border-radius: 3px;
-  padding: 2px 8px;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--blue2);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.dock-queue-steer:hover {
-  background: var(--bluebg);
 }
 .dock-work-body {
   padding: 8px 10px;
@@ -396,20 +368,6 @@ defineExpose({ loadForEdit, focus });
 .dock-work-body :deep(.taskspane .tp-head) {
   display: none;
 }
-.dock-work-body :deep(.todo-card.tab-mode) {
-  border: none;
-  background: transparent;
-  padding: 0;
-}
-.dock-work-body :deep(.todo-card.tab-mode .tc-list) {
-  max-height: none;
-}
-.dock-work-body :deep(.queue-pane) {
-  padding: 0;
-}
-.dock-work-body :deep(.queue-pane.tab-mode .queue-list) {
-  max-height: none;
-}
 
 .dock-workbar {
   display: flex;
@@ -417,33 +375,8 @@ defineExpose({ loadForEdit, focus });
   gap: 6px;
   padding: 4px var(--dock-inline-right) 2px var(--dock-inline-left);
 }
-.dock-work-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  cursor: pointer;
-}
-.dock-work-chip:hover,
-.dock-work-chip.on {
-  background: var(--hover-bg);
-  color: var(--ink);
-}
-.dock-work-chip svg {
-  flex: none;
-}
-.dock-work-chip b {
-  font-weight: 600;
-  color: var(--ink);
-}
-.dock-work-chip .dw-count {
-  margin-left: 1px;
-}
+.dock-workbar .dw-count { margin-left: 1px; }
+.dock-workbar .dw-count b { font-weight: 500; }
 
 .dock-approval {
   margin-top: 8px;
@@ -451,12 +384,10 @@ defineExpose({ loadForEdit, focus });
 
 @media (max-width: 640px) {
   .chat-dock {
-    --dock-inline-left: max(12px, env(safe-area-inset-left));
-    --dock-inline-right: max(12px, env(safe-area-inset-right));
-  }
-  .chat-dock.align-mobile {
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    /* Inline (landscape) safe-area lives here only; the inner composer /
+       workbar read --dock-inline-* so the inset is applied exactly once. */
+    --dock-inline-left: max(12px, var(--safe-left));
+    --dock-inline-right: max(12px, var(--safe-right));
   }
   .dock-work-panel {
     left: 10px;

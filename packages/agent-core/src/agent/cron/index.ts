@@ -1,1 +1,1 @@
-export { CronManager, type CronManagerOptions } from './manager';
+export { CronManager, type CronManagerOptions, type CronTaskSnapshot } from './manager';

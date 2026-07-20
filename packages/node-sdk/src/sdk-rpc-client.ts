@@ -37,6 +37,12 @@ export interface SDKRpcClientOptions {
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
+  /**
+   * Host UI mode (`'print'` for `kimi -p`, `'cli'` for the TUI, ...). Forwarded
+   * to the v1 core, which applies print-mode config defaults when it is
+   * `'print'`.
+   */
+  readonly uiMode?: string;
 }
 
 export class SDKRpcClient extends SDKRpcClientBase {
@@ -78,6 +84,7 @@ export class SDKRpcClient extends SDKRpcClientBase {
       skillDirs: options.skillDirs,
       telemetry: this.telemetry,
       appVersion: this.identity?.version,
+      uiMode: options.uiMode,
     });
     this.ready = sdkRpc(new ClientAPI(this));
   }
@@ -139,6 +146,7 @@ export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
     telemetry: rpc.telemetry,
     ensureConfigFile: () => rpc.ensureConfigFile(),
     onClose: () => rpc.close(),
+    imageLimits: rpc.core.imageLimits,
     sessionStartedProperties: options.sessionStartedProperties,
   });
 }

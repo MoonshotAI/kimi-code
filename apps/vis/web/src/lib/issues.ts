@@ -4,6 +4,10 @@
 // Detection rules for the new agent-core wire protocol:
 //   - tool.call without paired tool.result (orphan tool.call)
 //   - tool.result without preceding tool.call (orphan tool.result)
+//   - tool.result with isError (tool failed)
+//   - tool.result with truncated output (model saw partial output)
+//   - step.end finishReason 'filtered' (provider blocked the response)
+//   - step.end finishReason 'max_tokens' (response cut at the output cap)
 //   - step.begin without paired step.end (incomplete step)
 //   - full_compaction.begin without complete/cancel (incomplete compaction)
 //   - plan_mode.enter without exit/cancel (still in plan mode)
@@ -18,6 +22,10 @@ export type IssueSeverity = 'error' | 'warning' | 'info';
 export type IssueKind =
   | 'orphan_tool_call'
   | 'missing_tool_result'
+  | 'tool_error'
+  | 'tool_truncated'
+  | 'model_filtered'
+  | 'model_max_tokens'
   | 'incomplete_step'
   | 'incomplete_compaction'
   | 'active_plan_mode'
@@ -78,6 +86,25 @@ export function computeIssues(
               detail: 'no preceding tool.call seen',
             });
           }
+          // Runtime failure / partial-output signals carried on the result.
+          if (ev.result.isError === true) {
+            out.push({
+              severity: 'error',
+              kind: 'tool_error',
+              lineNo,
+              summary: `${open?.name ?? 'tool'}#${ev.toolCallId.slice(-8)} returned an error`,
+              detail: ev.result.message,
+            });
+          }
+          if (ev.result.truncated === true) {
+            out.push({
+              severity: 'info',
+              kind: 'tool_truncated',
+              lineNo,
+              summary: `${open?.name ?? 'tool'}#${ev.toolCallId.slice(-8)} output truncated`,
+              detail: 'the model saw a paged/dropped partial result',
+            });
+          }
         } else if (ev.type === 'step.begin') {
           stepBeginByUuid.set(ev.uuid, {
             lineNo,
@@ -86,6 +113,23 @@ export function computeIssues(
           });
         } else if (ev.type === 'step.end') {
           stepBeginByUuid.delete(ev.uuid);
+          if (ev.finishReason === 'filtered') {
+            out.push({
+              severity: 'error',
+              kind: 'model_filtered',
+              lineNo,
+              summary: `step ${ev.step} response filtered by the provider`,
+              detail: ev.rawFinishReason ?? ev.providerFinishReason,
+            });
+          } else if (ev.finishReason === 'max_tokens') {
+            out.push({
+              severity: 'warning',
+              kind: 'model_max_tokens',
+              lineNo,
+              summary: `step ${ev.step} hit the output token cap`,
+              detail: 'the response was cut short at max_tokens',
+            });
+          }
         }
         break;
       }

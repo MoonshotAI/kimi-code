@@ -11,20 +11,104 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
-// The builtin single-subagent spawn tool (collaboration/agent.ts). Detected by
-// name so a subagent renders as an AgentCard from the persisted transcript
-// alone — i.e. it survives a refresh even when the live task record (which only
-// background subagents persist) is gone. Swarms use 'AgentSwarm' and are handled
-// via buildSwarmGroups, so they are deliberately NOT matched here.
-const SUBAGENT_TOOL_RE = /^agent$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
 const MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">$/;
+// A user-uploaded image/video reaches the transcript (after the server resolves
+// it) as a self-contained text tag: `<video path="/cache/<fileId>.mp4"></video>`.
+// The tag is its own content part, so anchoring keeps ordinary prose from
+// matching; the closing tag is optional because ReadMediaFile emits the bare
+// opening tag as a standalone part.
+const USER_MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">(?:<\/\1>)?$/;
 const SYSTEM_MIME_RE = /Mime type:\s*([^.\s]+)/i;
 const SYSTEM_SIZE_RE = /Size:\s*(\d+)\s*bytes/i;
 const SYSTEM_DIMENSIONS_RE = /Original dimensions:\s*(\d+)x(\d+)\s*pixels/i;
+// agent-core inlines a single model-facing `<system>` caption next to a
+// compressed image upload (buildImageCompressionCaption), which rides along as
+// a text part of the persisted user message. That one caption is harness
+// metadata, not something the user typed, and its raw markup must never reach
+// the bubble (or the edit/preview text derived from `turn.text`). The TUI and
+// agent-core strip ONLY that caption — anchored on its fixed opening
+// `<system>Image compressed to fit model limits:` (see
+// extractImageCompressionCaptions in agent-core) — and reroute it through the
+// hidden system-reminder injection. Mirror that narrow targeting here: a
+// literal `<system>…</system>` the user pasted themselves (e.g. an XML / prompt
+// example) is their own text, not harness metadata, so it survives untouched.
+const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
+const CAPTION_PATTERN = /<system>Image compressed to fit model limits:[\s\S]*?<\/system>/g;
+
+function stripImageCompressionCaptions(text: string): string {
+  if (!text.includes(CAPTION_OPENING)) return text;
+  return text.replace(CAPTION_PATTERN, '');
+}
+
+function unescapeAttr(value: string): string {
+  // &amp; last so a doubly-escaped value isn't decoded twice.
+  return value
+    .replaceAll('&quot;', '"')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+/** Parse a `<video|image|audio path="…"></video>` text part. */
+function mediaPathTag(text: string): { kind: 'image' | 'video' | 'audio'; path: string } | null {
+  const m = USER_MEDIA_PATH_TAG_RE.exec(text.trim());
+  if (!m) return null;
+  return { kind: m[1] as 'image' | 'video' | 'audio', path: unescapeAttr(m[2]!) };
+}
+
+/** The server materializes uploads into `<cacheDir>/<fileId>.<ext>` (see
+ *  materializeVideoToCache in the server prompts route). The browser can't play
+ *  a server-local path, but the same bytes are served at getFileUrl(fileId), so
+ *  recover the fileId from the cache filename to build a playable URL. Returns
+ *  undefined when the basename isn't shaped like a file-store id (`f_…`) — e.g.
+ *  TUI cache names (`<uuid>-<label>`) or legacy `/tmp/foo.mp4` paths — so the
+ *  caller leaves the raw tag as text instead of fabricating a broken /files url.
+ *
+ *  File-store ids come in two shapes: v1 `f_`<26-char ULID> (no hyphens) and
+ *  v2 `f_`<randomUUID> (32 hex chars + 4 hyphens). */
+const FILE_STORE_ID_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/;
+/** Same two id shapes, anchored at the start of a `<fileId>-<name>` basename.
+    Splitting on the first '-' instead would truncate v2 UUID ids at their
+    first inner hyphen. */
+const FILE_STORE_ID_AT_START_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?=-)/;
+function fileIdFromCachePath(p: string): string | undefined {
+  const base = p.split(/[\\/]/).at(-1) ?? '';
+  const dot = base.lastIndexOf('.');
+  const id = dot > 0 ? base.slice(0, dot) : base;
+  return FILE_STORE_ID_RE.test(id) ? id : undefined;
+}
+
+/** A generic file attachment comes back from the server as a text notice (see
+ *  resolvePromptMediaFiles in the kap-server prompts route):
+ *    Attached file "<name>" (<mime>, <n> bytes): <dir>/<fileId>-<name> — open it with the Read tool
+ *  Recover the chip from the notice instead of dumping it — absolute server
+ *  path and all — into the bubble. The fileId is matched by shape at the start
+ *  of the basename (ULID or UUID, see FILE_STORE_ID_AT_START_RE). Inline-base64
+ *  attachments are content-hash named (no fileId): they still become a chip so
+ *  the notice stays hidden, just without bytes to open. */
+const ATTACHED_FILE_NOTICE_RE =
+  /^Attached file "(.+)" \(([^,]+), (\d+) bytes\): (.+) — open it with the Read tool$/;
+
+function attachedFileNotice(
+  text: string,
+): { name: string; mediaType: string; size: number; fileId?: string } | null {
+  const m = ATTACHED_FILE_NOTICE_RE.exec(text.trim());
+  if (!m) return null;
+  const base = (m[4] ?? '').split(/[\\/]/).at(-1) ?? '';
+  const id = FILE_STORE_ID_AT_START_RE.exec(base)?.[0];
+  return {
+    name: m[1]!,
+    mediaType: m[2]!,
+    size: Number(m[3]),
+    fileId: id !== undefined && FILE_STORE_ID_RE.test(id) ? id : undefined,
+  };
+}
 
 function bytesFromBase64(b64: string): number {
   if (b64.length === 0) return 0;
@@ -139,7 +223,7 @@ function normalizeToolOutput(output: unknown): string[] | undefined {
   return [JSON.stringify(output)];
 }
 
-function toAgentMember(task: AppTask): AgentMember {
+export function toAgentMember(task: AppTask): AgentMember {
   return {
     id: task.id,
     toolCallId: task.parentToolCallId,
@@ -151,72 +235,10 @@ function toAgentMember(task: AppTask): AgentMember {
     status: task.status,
     summary: task.outputPreview,
     outputLines: task.outputLines,
+    text: task.text,
     suspendedReason: task.suspendedReason,
     swarmIndex: task.swarmIndex,
   };
-}
-
-/** Parse the Agent tool's input (object or JSON string) into the fields an
-    AgentCard needs. Tolerant of missing/garbled input. */
-function parseAgentToolInput(input: unknown): {
-  description?: string;
-  subagentType?: string;
-  prompt?: string;
-} {
-  let obj: Record<string, unknown> | null = null;
-  if (typeof input === 'string') {
-    try {
-      const parsed = JSON.parse(input);
-      if (parsed && typeof parsed === 'object') obj = parsed as Record<string, unknown>;
-    } catch {
-      obj = null;
-    }
-  } else if (input && typeof input === 'object') {
-    obj = input as Record<string, unknown>;
-  }
-  if (!obj) return {};
-  return {
-    description: typeof obj['description'] === 'string' ? obj['description'] : undefined,
-    subagentType: typeof obj['subagent_type'] === 'string' ? obj['subagent_type'] : undefined,
-    prompt: typeof obj['prompt'] === 'string' ? obj['prompt'] : undefined,
-  };
-}
-
-/** Build an AgentMember from an `Agent` tool call + its result, used when no
-    live subagent task is available (e.g. after a refresh). The result text is
-    the subagent's full output — richer detail than a task's short preview. */
-function agentMemberFromToolUse(
-  toolCallId: string,
-  input: unknown,
-  result: { output: unknown; isError: boolean } | undefined,
-  sessionActive: boolean,
-): AgentMember {
-  const parsed = parseAgentToolInput(input);
-  const phase: AgentMember['phase'] = result
-    ? result.isError
-      ? 'failed'
-      : 'completed'
-    : sessionActive
-      ? 'working'
-      : 'completed';
-  const summaryLines = result ? normalizeToolOutput(result.output) : undefined;
-  return {
-    id: toolCallId,
-    toolCallId,
-    name: parsed.description && parsed.description.length > 0 ? parsed.description : 'Sub Agent',
-    subagentType: parsed.subagentType,
-    prompt: parsed.prompt,
-    phase,
-    status: result ? (result.isError ? 'failed' : 'completed') : sessionActive ? 'running' : 'completed',
-    summary: summaryLines && summaryLines.length > 0 ? summaryLines.join('\n') : undefined,
-  };
-}
-
-function sortAgentTasks(a: AppTask, b: AppTask): number {
-  const ai = a.swarmIndex ?? Number.MAX_SAFE_INTEGER;
-  const bi = b.swarmIndex ?? Number.MAX_SAFE_INTEGER;
-  if (ai !== bi) return ai - bi;
-  return a.createdAt.localeCompare(b.createdAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -360,18 +382,93 @@ interface Group {
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
   /**
-   * Content signatures already folded into this group, used to drop a duplicate
-   * assistant message. The same logical reply can reach us under two different
-   * ids — e.g. the streamed copy plus the persisted copy after a reload — and
-   * since both share the promptId they'd otherwise merge and render the text +
-   * tool cards twice. Dedupe by exact content so a turn shows each reply once.
+   * Normalized signatures already folded into this group, used to drop a
+   * duplicate assistant message. The same logical reply can reach us under two
+   * different ids — e.g. the streamed copy plus the persisted copy after a
+   * reload — and since both share the promptId they'd otherwise merge and
+   * render the text + tool cards twice. Dedupe by normalized content (see
+   * `contentSig` / `covers`) so a turn shows each reply once.
    */
-  seenSigs: Set<string>;
+  foldedSigs: ContentSig[];
 }
 
 // ---------------------------------------------------------------------------
 // messagesToTurns
 // ---------------------------------------------------------------------------
+
+/**
+ * Pull the prompt body out of a cron-fire envelope. Server-side, a cron
+ * injection reaches the transcript as a user message whose text is wrapped in
+ * `<cron-fire …>\n<prompt>\n…\n</prompt>\n</cron-fire>` (see renderCronFireXml
+ * in agent-core). We surface only the inner prompt, mirroring the TUI's
+ * extractCronPrompt / stripCronEnvelope.
+ */
+function extractCronPrompt(text: string): string {
+  const open = '<prompt>\n';
+  const close = '\n</prompt>';
+  const start = text.indexOf(open);
+  const end = text.lastIndexOf(close);
+  if (start >= 0 && end >= start + open.length) {
+    return text.slice(start + open.length, end);
+  }
+  return stripCronEnvelope(text);
+}
+
+function stripCronEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<cron-fire ') &&
+    lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
+}
+
+function cronOriginKind(msg: AppMessage): 'cron_job' | 'cron_missed' | undefined {
+  const origin = msg.metadata?.['origin'] as { kind?: string } | undefined;
+  if (origin?.kind === 'cron_job' || origin?.kind === 'cron_missed') return origin.kind;
+  return undefined;
+}
+
+function cronPromptText(msg: AppMessage): string {
+  const raw = msg.content
+    .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n');
+  return extractCronPrompt(raw);
+}
+
+function buildCronData(
+  msg: AppMessage,
+  kind: 'cron_job' | 'cron_missed',
+): { text: string; cron: CronTurnData } {
+  const origin = (msg.metadata?.['origin'] ?? {}) as Record<string, unknown>;
+  const text = cronPromptText(msg);
+  if (kind === 'cron_missed') {
+    return {
+      text,
+      cron: { missedCount: typeof origin['count'] === 'number' ? origin['count'] : undefined },
+    };
+  }
+  return {
+    text,
+    cron: {
+      jobId: typeof origin['jobId'] === 'string' ? origin['jobId'] : undefined,
+      cron: typeof origin['cron'] === 'string' ? origin['cron'] : undefined,
+      recurring: typeof origin['recurring'] === 'boolean' ? origin['recurring'] : undefined,
+      coalescedCount: typeof origin['coalescedCount'] === 'number' ? origin['coalescedCount'] : undefined,
+      stale: typeof origin['stale'] === 'boolean' ? origin['stale'] : undefined,
+    },
+  };
+}
+
+function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_missed'): ChatTurn {
+  const { text, cron } = buildCronData(msg, kind);
+  return { id: msg.id, role: 'cron', no, text, createdAt: msg.createdAt, cron };
+}
+
 
 /**
  * Whether a USER-role message should be shown. Mirrors the TUI's
@@ -386,6 +483,7 @@ function isDisplayableUserMessage(msg: AppMessage): boolean {
   const kind = origin?.kind;
   if (kind === undefined || kind === 'user') return true;
   if (kind === 'skill_activation') return origin?.trigger === 'user-slash';
+  if (kind === 'plugin_command') return origin?.trigger === 'user-slash';
   return false;
 }
 
@@ -409,6 +507,7 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
   );
 }
 
+
 /** Extract the plan file path from an ExitPlanMode tool result. The approved
  *  output contains `Plan saved to: <path>`; this survives a page reload (unlike
  *  the ephemeral plan_review approval display), so the tool card can still link
@@ -420,6 +519,57 @@ function parsePlanSavedPath(output: string[] | undefined): string | undefined {
     if (line.startsWith(marker)) return line.slice(marker.length).trim();
   }
   return undefined;
+}
+
+/**
+ * Normalize an assistant message's content for duplicate detection. The same
+ * logical reply reaches us as both a persisted transcript message and a
+ * streamed copy (live deltas, or a resync seed from `in_flight_turn`), and the
+ * two differ in ways that must not defeat the dedup: the persisted thinking
+ * part may carry a provider `signature`, the seeded tool card may carry
+ * progress `outputLines`, and the seeded copy concatenates each stream into a
+ * single part instead of keeping the model's part boundaries. Reduce to the
+ * concatenated stream text plus sorted tool-call ids — a toolCallId is unique
+ * per call, so identical id sets mean the same logical message.
+ */
+interface ContentSig {
+  text: string;
+  thinking: string;
+  toolIds: string[];
+  rest: string[];
+}
+
+function contentSig(content: AppMessage['content']): ContentSig {
+  let text = '';
+  let thinking = '';
+  const toolIds: string[] = [];
+  const rest: string[] = [];
+  for (const c of content) {
+    if (c.type === 'text') text += c.text;
+    else if (c.type === 'thinking') thinking += c.thinking;
+    else if (c.type === 'toolUse') toolIds.push(c.toolCallId);
+    else rest.push(JSON.stringify(c));
+  }
+  toolIds.sort();
+  rest.sort();
+  return { text, thinking, toolIds, rest };
+}
+
+/**
+ * Whether an already-folded message's signature fully covers `incoming` —
+ * i.e. `incoming` is a duplicate of it. Subset, not equality: a resync seed
+ * carries only the still-running tools of a parallel batch (finished ones
+ * left `running_tools`), so its id set is a strict subset of the persisted
+ * message's. Empty text/thinking in `incoming` adds nothing and counts as
+ * covered.
+ */
+function covers(folded: ContentSig, incoming: ContentSig): boolean {
+  if (incoming.text !== '' && incoming.text !== folded.text) return false;
+  if (incoming.thinking !== '' && incoming.thinking !== folded.thinking) return false;
+  return (
+    incoming.toolIds.every((id) => folded.toolIds.includes(id)) &&
+    incoming.rest.every((j) => folded.rest.includes(j))
+  );
 }
 
 export function messagesToTurns(
@@ -434,7 +584,6 @@ export function messagesToTurns(
    * spinning forever after the turn already finished.
    */
   sessionActive = true,
-  subagentTasks: AppTask[] = [],
   /** Preserved `plan_review` displays keyed by toolCallId — used to link the
    *  ExitPlanMode tool card back to the plan file after the approval resolves. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
@@ -446,33 +595,6 @@ export function messagesToTurns(
   const approvalByTool = new Map<string, AppApprovalRequest>();
   for (const a of approvals) {
     approvalByTool.set(a.toolCallId, a);
-  }
-
-  const subagentsByTool = new Map<string, AppTask[]>();
-  for (const task of subagentTasks) {
-    if (task.kind !== 'subagent') continue;
-    const keys = [task.parentToolCallId, task.id].filter((key): key is string => typeof key === 'string' && key.length > 0);
-    for (const key of keys) {
-      const list = subagentsByTool.get(key) ?? [];
-      list.push(task);
-      subagentsByTool.set(key, list);
-    }
-  }
-  for (const [key, list] of subagentsByTool.entries()) {
-    subagentsByTool.set(key, list.toSorted(sortAgentTasks));
-  }
-
-  // Index every tool result by its tool-call id. When an `Agent` tool call has
-  // no live subagent task (the common case after a refresh — foreground
-  // subagents are never persisted as background tasks), we rebuild its AgentCard
-  // straight from the transcript, and the result text comes from this map.
-  const toolResultByCallId = new Map<string, { output: unknown; isError: boolean }>();
-  for (const msg of messages) {
-    for (const c of msg.content) {
-      if (c.type === 'toolResult') {
-        toolResultByCallId.set(c.toolCallId, { output: c.output, isError: Boolean(c.isError) });
-      }
-    }
   }
 
   let pendingGroup: Group | null = null;
@@ -532,38 +654,10 @@ export function messagesToTurns(
           else g.blocks.push({ kind: 'thinking', thinking: c.thinking });
         }
       } else if (c.type === 'toolUse') {
-        const agentTasks = subagentsByTool.get(c.toolCallId);
-        if (agentTasks && agentTasks.length > 0) {
-          // A multi-member swarm (subagents sharing a parent tool-call, each with
-          // a swarmIndex) renders as its OWN SwarmCard in the chat flow — see
-          // buildSwarmGroups, same membership test. Don't ALSO render it inline
-          // here, or the swarm shows up twice ("two blocks").
-          const swarmMembers = agentTasks.filter((t) => t.swarmIndex !== undefined);
-          if (swarmMembers.length > 1) continue;
-          const members = agentTasks.map(toAgentMember);
-          if (members.length === 1) {
-            g.blocks.push({ kind: 'agent', member: members[0]! });
-          } else {
-            g.blocks.push({ kind: 'agentGroup', members });
-          }
-          continue;
-        }
-
-        // No live task, but this IS a single-subagent spawn (`Agent` tool):
-        // rebuild the AgentCard from the persisted tool call + result so the
-        // subagent keeps its rich card after a refresh instead of degrading to
-        // a plain tool card.
-        if (SUBAGENT_TOOL_RE.test(c.toolName)) {
-          const member = agentMemberFromToolUse(
-            c.toolCallId,
-            c.input,
-            toolResultByCallId.get(c.toolCallId),
-            sessionActive,
-          );
-          g.blocks.push({ kind: 'agent', member });
-          continue;
-        }
-
+        // Single `Agent` subagent spawns and all other tools render as a normal
+        // tool card: the card shows the fixed args (prompt / description) plus
+        // the final result when expanded, while a subagent's live progress
+        // streams in the right-side detail panel (sourced from the task).
         const pendingApproval = approvalByTool.get(c.toolCallId);
         const toolCall: ToolCall = {
           id: c.toolCallId,
@@ -607,19 +701,41 @@ export function messagesToTurns(
     }
   }
 
+  /**
+   * Fold the volatile extras of a dropped duplicate into the group: a resync
+   * seed's tool cards carry live progress (`outputLines` from
+   * `in_flight_turn.running_tools[].last_progress`) that the persisted copy
+   * lacks — without this, a mid-tool refresh blanks the card's latest output
+   * until the next progress frame. Never overwrite output a tool result
+   * already settled.
+   */
+  function mergeVolatileExtras(g: Group, content: AppMessage['content']): void {
+    for (const c of content) {
+      if (c.type !== 'toolUse' || !c.outputLines?.length) continue;
+      const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
+      if (idx === -1) continue;
+      const tool = g.tools[idx]!;
+      if (tool.output !== undefined) continue;
+      const updated: ToolCall = { ...tool, output: c.outputLines };
+      g.tools[idx] = updated;
+      const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
+      if (blk && blk.kind === 'tool') blk.tool = updated;
+    }
+  }
+
   function resolveMediaUrl(
     c: AppMessage['content'][number],
-  ): { url: string; kind: 'image' | 'video' } | undefined {
+  ): { url: string; kind: 'image' | 'video'; fileId?: string } | undefined {
     if (c.type === 'image' || c.type === 'video') {
       const kind = c.type;
       const src = c.source;
       if (src.kind === 'url') return { url: src.url, kind };
       if (src.kind === 'base64') return { url: `data:${src.mediaType};base64,${src.data}`, kind };
-      if (src.kind === 'file' && getFileUrl) return { url: getFileUrl(src.fileId), kind };
+      if (src.kind === 'file' && getFileUrl) return { url: getFileUrl(src.fileId), kind, fileId: src.fileId };
     }
     if (c.type === 'file' && getFileUrl) {
-      if (c.mediaType.startsWith('image/')) return { url: getFileUrl(c.fileId), kind: 'image' };
-      if (c.mediaType.startsWith('video/')) return { url: getFileUrl(c.fileId), kind: 'video' };
+      if (c.mediaType.startsWith('image/')) return { url: getFileUrl(c.fileId), kind: 'image', fileId: c.fileId };
+      if (c.mediaType.startsWith('video/')) return { url: getFileUrl(c.fileId), kind: 'video', fileId: c.fileId };
     }
     return undefined;
   }
@@ -653,40 +769,117 @@ export function messagesToTurns(
 
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
+      const cronKind = cronOriginKind(msg);
+      // A cron injection always renders as its own standalone turn: agent-core
+      // buffers steer input while a turn is in flight and only injects it at the
+      // turn boundary, so the cron message does not land between a tool use and
+      // its result in practice.
       flushGroup();
+      if (cronKind !== undefined) {
+        turns.push(buildCronTurn(msg, no++, cronKind));
+        continue;
+      }
       // Hide system-injected user turns (TUI parity) — they end the previous
       // assistant turn but aren't rendered as a user bubble.
       if (!isDisplayableUserMessage(msg)) continue;
 
       const origin = msg.metadata?.['origin'] as
-        | { kind?: string; skillName?: string; skillArgs?: string; trigger?: string }
+        | {
+            kind?: string;
+            skillName?: string;
+            skillArgs?: string;
+            pluginId?: string;
+            commandName?: string;
+            commandArgs?: string;
+            trigger?: string;
+          }
         | undefined;
       const isSkillActivation =
         origin?.kind === 'skill_activation' && origin?.trigger === 'user-slash';
+      const isPluginCommand =
+        origin?.kind === 'plugin_command' && origin?.trigger === 'user-slash';
 
       const textParts: string[] = [];
-      const images: { url: string; alt?: string; kind: 'image' | 'video' }[] = [];
+      const attachments: TurnAttachment[] = [];
       for (const c of msg.content) {
         if (c.type === 'text') {
           if (isSkillActivation) {
             // Skill activation messages carry the raw XML block; we strip it and
             // surface only the user-provided args as the "user input" text.
             textParts.push(origin.skillArgs ?? '');
+          } else if (isPluginCommand) {
+            // Plugin command turns carry the expanded body; surface only the
+            // user-provided args, mirroring skill activations.
+            textParts.push(origin.commandArgs ?? '');
           } else {
-            textParts.push(c.text);
+            // A video/image upload comes back from the server as a
+            // `<video path="…"></video>` text tag (see resolvePromptMediaFiles).
+            // Render it as an attachment instead of dumping the raw tag into the
+            // bubble — recover the fileId from the cache filename so the browser
+            // gets a playable URL via getFileUrl.
+            const tag = mediaPathTag(c.text);
+            if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
+              const fileId = fileIdFromCachePath(tag.path);
+              if (fileId) {
+                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
+                continue;
+              }
+            }
+            // A generic file upload comes back as an "Attached file …" notice;
+            // recover the chip the same way (see attachedFileNotice).
+            const attached = attachedFileNotice(c.text);
+            if (attached) {
+              attachments.push({
+                kind: 'file',
+                // No recoverable fileId (inline-base64 upload) → no URL: the
+                // chip renders name/size but stays non-clickable.
+                url: attached.fileId && getFileUrl ? getFileUrl(attached.fileId) : '',
+                fileId: attached.fileId,
+                name: attached.name,
+                mediaType: attached.mediaType,
+                size: attached.size,
+              });
+              continue;
+            }
+            const stripped = stripImageCompressionCaptions(c.text);
+            if (stripped !== c.text && stripped.trim().length === 0) continue;
+            textParts.push(stripped);
           }
         }
         const media = resolveMediaUrl(c);
-        if (media) images.push({ url: media.url, kind: media.kind, alt: c.type === 'file' ? c.name : undefined });
+        if (media) {
+          attachments.push({
+            url: media.url,
+            kind: media.kind,
+            name: c.type === 'file' ? c.name : undefined,
+            fileId: media.fileId,
+          });
+          continue;
+        }
+        // Non-media files (pdf/zip/yaml/…) carry no playable URL, but the chip
+        // still renders them with name/size and a download action.
+        if (c.type === 'file' && getFileUrl) {
+          attachments.push({
+            kind: 'file',
+            url: getFileUrl(c.fileId),
+            fileId: c.fileId,
+            name: c.name,
+            mediaType: c.mediaType || undefined,
+            size: c.size,
+          });
+        }
       }
       turns.push({
         id: msg.id,
         role: 'user',
         no: no++,
         text: textParts.join('\n'),
-        images: images.length > 0 ? images : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
         skillActivation: isSkillActivation
           ? { name: origin.skillName!, args: origin.skillArgs }
+          : undefined,
+        pluginCommand: isPluginCommand
+          ? { pluginId: origin.pluginId!, commandName: origin.commandName!, args: origin.commandArgs }
           : undefined,
         createdAt: msg.createdAt,
       });
@@ -721,7 +914,7 @@ export function messagesToTurns(
         blocks: [],
         approval: undefined,
         approvalId: undefined,
-        seenSigs: new Set<string>(),
+        foldedSigs: [],
         durationMs: msg.durationMs,
       };
     } else if (pendingGroup !== null && pendingGroup.promptId === undefined && pid !== undefined) {
@@ -733,10 +926,15 @@ export function messagesToTurns(
 
     // Drop an assistant message whose content was already folded into this group
     // (a duplicate streamed-vs-persisted copy sharing the promptId), so the turn
-    // doesn't render the same text + tools twice.
-    const sig = JSON.stringify(msg.content);
-    if (group.promptId !== undefined && group.seenSigs.has(sig)) continue;
-    group.seenSigs.add(sig);
+    // doesn't render the same text + tools twice. The duplicate can still carry
+    // volatile extras the persisted copy lacks (tool progress), so merge those
+    // into the existing cards before dropping it.
+    const sig = contentSig(msg.content);
+    if (group.promptId !== undefined && group.foldedSigs.some((folded) => covers(folded, sig))) {
+      mergeVolatileExtras(group, msg.content);
+      continue;
+    }
+    group.foldedSigs.push(sig);
 
     absorbContent(group, msg.content);
   }

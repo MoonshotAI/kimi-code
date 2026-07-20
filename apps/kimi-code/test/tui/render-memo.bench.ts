@@ -16,7 +16,7 @@
 
 import { bench, describe } from 'vitest';
 
-import type { Component } from '@earendil-works/pi-tui';
+import type { Component } from '@moonshot-ai/pi-tui';
 
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';

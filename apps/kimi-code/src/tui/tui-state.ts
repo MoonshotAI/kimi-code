@@ -2,7 +2,7 @@ import {
   Container,
   ProcessTerminal,
   TUI,
-} from '@earendil-works/pi-tui';
+} from '@moonshot-ai/pi-tui';
 
 import { FooterComponent } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
@@ -10,6 +10,7 @@ import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
 import { TodoPanelComponent } from './components/chrome/todo-panel';
 import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
+import { DEFAULT_TUI_CONFIG } from './config';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
 import { currentTheme, type Theme } from './theme';
@@ -51,6 +52,13 @@ export interface TUIState {
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
   queuedMessages: QueuedMessage[];
+  /**
+   * True while a queued user message has been shifted out of
+   * {@link queuedMessages} but its deferred send has not run yet. The queue
+   * looks empty during this window, so queued-goal promotion must also check
+   * this flag to avoid starting a goal ahead of the user's earlier message.
+   */
+  queuedMessageDispatchPending: boolean;
   swarmModeEntry: 'manual' | 'task' | undefined;
 }
 
@@ -60,11 +68,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   const ui = new TUI(terminal);
-  // Content shrinks (e.g. a tall inline image is replaced by a short
-  // placeholder or text) can leave stale rows behind because pi-tui's
-  // differential renderer does not clear them by default. Enable clearing so
-  // artifacts like duplicated input boxes do not accumulate.
-  ui.setClearOnShrink(true);
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
@@ -73,7 +76,9 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const btwPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const editor = new CustomEditor(ui);
+  const editor = new CustomEditor(ui, {
+    disablePasteBurst: initialAppState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
+  });
   const footer = new FooterComponent({ ...initialAppState }, () => {
     ui.requestRender();
   });
@@ -105,6 +110,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     tasksBrowser: undefined,
     externalEditorRunning: false,
     queuedMessages: [],
+    queuedMessageDispatchPending: false,
     swarmModeEntry: undefined,
   };
 }

@@ -3,7 +3,12 @@ import { join } from 'node:path';
 
 import { KIMI_CODE_FLOW_CONFIG } from './constants';
 import { OAuthUnauthorizedError } from './errors';
-import { assertKimiHostIdentity, createKimiDeviceHeaders, type KimiHostIdentity } from './identity';
+import {
+  assertKimiHostIdentity,
+  createKimiDefaultHeaders,
+  createKimiDeviceHeaders,
+  type KimiHostIdentity,
+} from './identity';
 import {
   fetchSubmitFeedback,
   kimiCodeFeedbackUrl,
@@ -92,6 +97,7 @@ export type AuthManagedUsageResult =
       readonly kind: 'ok';
       readonly summary: ParsedManagedUsage['summary'];
       readonly limits: ParsedManagedUsage['limits'];
+      readonly extraUsage: ParsedManagedUsage['extraUsage'];
     }
   | FetchManagedUsageError;
 
@@ -107,6 +113,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     'now' | 'sleep' | 'deviceCodeTimeoutMs' | 'refreshThreshold' | 'onRefresh'
   >;
   private readonly managers = new Map<string, OAuthManager>();
+  private _identityHeaders: Record<string, string> | undefined;
 
   constructor(options: KimiOAuthToolkitOptions<TConfig>) {
     this.identity =
@@ -187,6 +194,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
           oauthHost,
           preserveDefaultModel: hadToken,
           fetchImpl: this.fetchImpl,
+          headers: this.identityHeaders(),
         });
       try {
         provision = await provisionWithToken(accessToken);
@@ -284,6 +292,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
         kind: 'ok',
         summary: result.parsed.summary,
         limits: result.parsed.limits,
+        extraUsage: result.parsed.extraUsage,
       };
     } catch (error) {
       return {
@@ -416,6 +425,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     oauthHost?: string | undefined,
   ): string {
     return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
+  }
+
+  private identityHeaders(): Record<string, string> | undefined {
+    if (this.identity === undefined) return undefined;
+    this._identityHeaders ??= createKimiDefaultHeaders({
+      homeDir: this.homeDir,
+      ...this.identity,
+    });
+    return this._identityHeaders;
   }
 }
 

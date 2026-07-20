@@ -81,7 +81,7 @@ max_steps_per_turn = "nope"
     // Write paths stay strict: changing settings on top of a broken file
     // must fail with a short, actionable message — not raw validation JSON —
     // and must leave the file untouched.
-    const write = core.setKimiConfig({ defaultThinking: true });
+    const write = core.setKimiConfig({ thinking: { enabled: true } });
     await expect(write).rejects.toThrow(/fix it first/i);
     await expect(write).rejects.toThrow(/kimi doctor/);
     await expect(write).rejects.not.toThrow(/invalid_type/);
@@ -102,9 +102,72 @@ max_steps_per_turn = "nope"
     expect(degraded.warnings.some((w) => w.includes('Invalid TOML'))).toBe(true);
     expect(degraded.warnings.some((w) => w.includes('previous'))).toBe(true);
 
-    await writeFile(configPath, `default_thinking = true\n${VALID_TOML}`, 'utf-8');
+    await writeFile(configPath, `[thinking]\nenabled = true\n${VALID_TOML}`, 'utf-8');
     const adopted = await core.getKimiConfig({ reload: true });
-    expect(adopted.defaultThinking).toBe(true);
+    expect(adopted.thinking?.enabled).toBe(true);
     await expect(core.getConfigDiagnostics({})).resolves.toEqual({ warnings: [] });
+  });
+});
+
+describe('KimiCore imageLimits scoping', () => {
+  it('two cores keep independent [image] limits and only follow their own reloads', async () => {
+    const homeA = await makeHome(`${VALID_TOML}
+[image]
+max_edge_px = 800
+read_byte_budget = 65536
+`);
+    const homeB = await makeHome(`${VALID_TOML}
+[image]
+max_edge_px = 1600
+`);
+    const coreA = makeCore(homeA);
+    const coreB = makeCore(homeB);
+
+    // Baseline: each core resolves its own [image] section.
+    expect(coreA.imageLimits.maxEdgePx()).toBe(800);
+    expect(coreA.imageLimits.readByteBudget()).toBe(65536);
+    expect(coreB.imageLimits.maxEdgePx()).toBe(1600);
+    expect(coreB.imageLimits.readByteBudget()).toBe(256 * 1024);
+
+    // Reloading B must not restamp A (the module-global regression).
+    await writeFile(
+      path.join(homeB, 'config.toml'),
+      `${VALID_TOML}
+[image]
+max_edge_px = 1000
+read_byte_budget = 32768
+`,
+      'utf-8',
+    );
+    await coreB.getKimiConfig({ reload: true });
+    expect(coreB.imageLimits.maxEdgePx()).toBe(1000);
+    expect(coreB.imageLimits.readByteBudget()).toBe(32768);
+    expect(coreA.imageLimits.maxEdgePx()).toBe(800);
+    expect(coreA.imageLimits.readByteBudget()).toBe(65536);
+  });
+
+  it('reloading [image] takes effect on the core instance immediately', async () => {
+    const home = await makeHome(VALID_TOML);
+    const core = makeCore(home);
+    expect(core.imageLimits.maxEdgePx()).toBe(2000);
+
+    await writeFile(
+      path.join(home, 'config.toml'),
+      `${VALID_TOML}
+[image]
+max_edge_px = 1400
+read_byte_budget = 131072
+`,
+      'utf-8',
+    );
+    await core.getKimiConfig({ reload: true });
+    expect(core.imageLimits.maxEdgePx()).toBe(1400);
+    expect(core.imageLimits.readByteBudget()).toBe(131072);
+
+    // Removing the section clears back to built-ins.
+    await writeFile(path.join(home, 'config.toml'), VALID_TOML, 'utf-8');
+    await core.getKimiConfig({ reload: true });
+    expect(core.imageLimits.maxEdgePx()).toBe(2000);
+    expect(core.imageLimits.readByteBudget()).toBe(256 * 1024);
   });
 });

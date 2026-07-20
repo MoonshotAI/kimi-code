@@ -2,11 +2,14 @@ import {
   APIConnectionError,
   APITimeoutError,
   ChatProviderError,
+  classifyBaseApiError,
   normalizeAPIStatusError,
+  parseRetryAfterMs,
+  parseTraceId,
 } from '#/errors';
 import { extractText } from '#/message';
 import type { ContentPart, Message } from '#/message';
-import type { FinishReason, ThinkingEffort } from '#/provider';
+import type { FinishReason } from '#/provider';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import {
@@ -84,22 +87,6 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
     },
   };
 }
-// `terminated` is the undici signature for an SSE/HTTP body stream that is
-// dropped mid-flight (common with Node's native fetch on long reasoning
-// streams). It surfaces as a raw `TypeError: terminated`, so it must be
-// recognized here as a transport-layer connection failure.
-const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
-const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
-
-function classifyBaseApiError(message: string): ChatProviderError {
-  if (TIMEOUT_RE.test(message)) {
-    return new APITimeoutError(message);
-  }
-  if (NETWORK_RE.test(message)) {
-    return new APIConnectionError(message);
-  }
-  return new ChatProviderError(`Error: ${message}`);
-}
 
 /**
  * Convert an OpenAI SDK error (or raw Error) to a kosong `ChatProviderError`.
@@ -118,7 +105,13 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
   // APIError with a status code => status error
   if (error instanceof OpenAIAPIError && typeof error.status === 'number') {
     const reqId = error.requestID ?? null;
-    return normalizeAPIStatusError(error.status, error.message, reqId);
+    return normalizeAPIStatusError(
+      error.status,
+      error.message,
+      reqId,
+      parseRetryAfterMs(error.headers),
+      parseTraceId(error.headers),
+    );
   }
   // Base APIError with no status and no body => transport-layer failure.
   // When the error has a body (e.g. SSE error events from the server),
@@ -160,53 +153,7 @@ export function isFunctionToolCall<T extends { type: string }>(
 ): tc is T & FunctionToolCallShape {
   return tc.type === 'function';
 }
-/**
- * Map kosong `ThinkingEffort` to OpenAI `reasoning_effort` string.
- */
-export function thinkingEffortToReasoningEffort(effort: ThinkingEffort): string | undefined {
-  switch (effort) {
-    case 'off':
-      return undefined;
-    case 'low':
-      return 'low';
-    case 'medium':
-      return 'medium';
-    case 'high':
-      return 'high';
-    case 'xhigh':
-    case 'max':
-      return 'xhigh';
-    default:
-      throw new Error(`Unknown thinking effort: ${String(effort)}`);
-  }
-}
 
-/**
- * Map OpenAI `reasoning_effort` string back to kosong `ThinkingEffort`.
- */
-export function reasoningEffortToThinkingEffort(
-  reasoning: string | undefined,
-): ThinkingEffort | null {
-  if (reasoning === undefined || reasoning === null) {
-    return null;
-  }
-  switch (reasoning) {
-    case 'low':
-    case 'minimal':
-      return 'low';
-    case 'medium':
-      return 'medium';
-    case 'high':
-      return 'high';
-    case 'xhigh':
-    case 'max':
-      return 'xhigh';
-    case 'none':
-      return 'off';
-    default:
-      return 'off';
-  }
-}
 /**
  * Extract `TokenUsage` from an OpenAI-compatible usage object.
  */

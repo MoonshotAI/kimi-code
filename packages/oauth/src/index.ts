@@ -32,7 +32,9 @@ export {
   createKimiDeviceHeaders,
   createKimiDeviceId,
   createKimiUserAgent,
+  KIMI_CODE_CUSTOM_HEADERS_ENV,
   KIMI_CODE_PLATFORM,
+  parseKimiCodeCustomHeaders,
   readKimiDeviceId,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
@@ -40,6 +42,7 @@ export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 export { KIMI_CODE_FLOW_CONFIG } from './constants';
 
 export {
+  applyManagedApiKeyProviderModels,
   applyManagedKimiCodeLogoutConfig,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
@@ -55,6 +58,7 @@ export {
   resolveKimiCodeOAuthKey,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  toManagedModelAlias,
 } from './managed-kimi-code';
 export type {
   FetchManagedKimiCodeModelsOptions,
@@ -78,6 +82,7 @@ export {
   formatDuration,
   formatResetTime,
   isManagedKimiCode,
+  isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
   kimiCodeUsageUrl,
   parseManagedUsagePayload,
@@ -143,6 +148,7 @@ export type {
   CustomRegistryProviderEntry,
   CustomRegistryProviderType,
   CustomRegistrySource,
+  FetchCustomRegistryOptions,
 } from './custom-registry';
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
@@ -157,3 +163,12 @@ export type {
   KimiOAuthTokenRef,
   KimiOAuthToolkitOptions,
 } from './toolkit';
+
+export { refreshProviderModels } from './refreshProviderModels';
+export type {
+  ProviderChange,
+  RefreshProviderHost,
+  RefreshProviderOptions,
+  RefreshProviderScope,
+  RefreshResult,
+} from './refreshProviderModels';

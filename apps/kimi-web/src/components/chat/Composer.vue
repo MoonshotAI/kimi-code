@@ -1,19 +1,37 @@
 <!-- apps/kimi-web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
+import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
-import { buildSlashItems, parseSlash } from '../../lib/slashCommands';
+import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '../../lib/slashCommands';
+import { formatTokens } from '../../lib/formatTokens';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../../types';
-import type { AppModel, AppSkill, ThinkingLevel } from '../../api/types';
-import { modelThinkingAvailability } from '../../lib/modelThinking';
+import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
+import {
+  commitLevel,
+  effectiveThinkingLevel,
+  effortLabel,
+  isThinkingOn,
+  modelThinkingAvailability,
+  segmentsFor,
+} from '../../lib/modelThinking';
 import { useInputHistory } from '../../composables/useInputHistory';
 import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
-import { useAttachmentUpload } from '../../composables/useAttachmentUpload';
+import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
+import { openFileAttachment } from '../../lib/openFileAttachment';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
+import Spinner from '../ui/Spinner.vue';
+import Button from '../ui/Button.vue';
+import IconButton from '../ui/IconButton.vue';
+import Icon from '../ui/Icon.vue';
+import ContextRing from '../ui/ContextRing.vue';
+import Tooltip from '../ui/Tooltip.vue';
+import AttachmentChip from './AttachmentChip.vue';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -21,6 +39,9 @@ import { useAttachmentUpload } from '../../composables/useAttachmentUpload';
 
 const props = withDefaults(defineProps<{
   running?: boolean;
+  /** True while the empty-composer first prompt is being created + submitted.
+   *  Disables the textarea and swaps the send button for a spinner. */
+  starting?: boolean;
   /** Active session id — scopes the persisted unsent draft (per session). */
   sessionId?: string;
   queued?: QueuedPromptView[];
@@ -33,6 +54,7 @@ const props = withDefaults(defineProps<{
   planMode?: boolean;
   swarmMode?: boolean;
   goalMode?: boolean;
+  goal?: AppGoal | null;
   activationBadges?: ActivationBadges;
   /** Available models for the quick-switch dropdown. */
   models?: AppModel[];
@@ -44,6 +66,7 @@ const props = withDefaults(defineProps<{
   hideContext?: boolean;
 }>(), {
   running: false,
+  starting: false,
   queued: () => [],
   searchFiles: undefined,
   uploadImage: undefined,
@@ -53,14 +76,20 @@ const props = withDefaults(defineProps<{
 });
 
 const placeholder = computed(() =>
-  props.goalMode ? t('status.goalPlaceholder') : t('composer.placeholder')
+  props.starting
+    ? t('composer.starting')
+    : props.running
+      ? t('composer.placeholderRunning')
+      : props.goalMode
+        ? t('status.goalPlaceholder')
+        : t('composer.placeholder')
 );
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
   /** Steer the composer text (+ any queued prompts, merged by the parent)
       into the RUNNING turn — TUI ctrl+s. */
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   command: [cmd: string];
   interrupt: [];
   setPermission: [mode: PermissionMode];
@@ -78,7 +107,7 @@ const emit = defineEmits<{
   selectModel: [modelId: string];
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 // ---------------------------------------------------------------------------
 // Textarea + per-session draft persistence — see useComposerDraft.
@@ -126,11 +155,9 @@ function collapseAndRefit(): void {
 // box has grown past it (multi-line content) — keeps the empty composer
 // uncluttered. While expanded it always shows so the user can collapse back.
 //
-// The resting height equals the textarea's computed `min-height`, which varies
-// by theme (the modern/kimi global override in style.css sets 40px; the scoped
-// default is 56px). We read it from the element instead of hard-coding so the
-// threshold matches whatever theme is active.
-const RESTING_HEIGHT_FALLBACK_PX = 56;
+// The resting height equals the textarea's computed `min-height` (set in
+// style.css). We read it from the element instead of hard-coding.
+const RESTING_HEIGHT_FALLBACK_PX = 36;
 function restingHeightPx(el: HTMLTextAreaElement): number {
   if (typeof getComputedStyle === 'undefined') return RESTING_HEIGHT_FALLBACK_PX;
   const min = Number.parseFloat(getComputedStyle(el).minHeight);
@@ -232,6 +259,7 @@ const {
   handleDragLeave,
   handleDrop,
   clearAfterSubmit,
+  loadAttachments,
 } = useAttachmentUpload({ uploadImage: () => props.uploadImage, sessionId: () => props.sessionId });
 
 // Silence noUnusedLocals: fileInputRef is used as a template ref (ref="fileInputRef").
@@ -263,7 +291,27 @@ function focus(): void {
   // or if focus is triggered during an animation/transition.
   textareaRef.value?.focus({ preventScroll: true });
 }
-defineExpose({ loadForEdit, focus });
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
+  loadAttachments(atts);
+}
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
+
+// Build the wire-bound attachment payload: images/videos only need the fileId,
+// while file parts also carry name/mediaType/size for the daemon's file shape.
+function toPromptAttachment(a: Attachment): PromptAttachment {
+  return { fileId: a.fileId!, kind: a.kind, name: a.name, mediaType: a.mediaType, size: a.size };
+}
+
+// Chip primary action: media opens the lightbox preview; a generic file opens
+// in a new tab (browser-renderable types) or downloads, once its upload has
+// completed and produced a daemon file id.
+function onAttachmentActivate(att: Attachment): void {
+  if (att.kind === 'file') {
+    if (att.fileId !== undefined) void openFileAttachment(att.fileId, att.name, att.mediaType);
+    return;
+  }
+  openAttachmentPreview(att);
+}
 
 function handleSubmit(): void {
   const trimmed = text.value.trim();
@@ -286,11 +334,14 @@ function handleSubmit(): void {
   // If it's a known slash command, keep the optional tail as command input
   // instead of submitting it as normal chat text. This covers `/goal <task>`,
   // `/swarm <task>`, `/btw <question>`, slash skills with args, and bare
-  // commands such as `/model`.
+  // commands such as `/model`. A hand-typed bare skill name (`/deploy`) also
+  // resolves to its prefixed menu entry (`/skill:deploy`), mirroring the TUI.
   if (trimmed) {
     const parsed = parseSlash(trimmed);
     const known = parsed
-      ? buildSlashItems(props.skills).some((item) => item.name === parsed.cmd)
+      ? buildSlashItems(props.skills).some(
+          (item) => item.name === parsed.cmd || item.name === `/${SKILL_COMMAND_PREFIX}${parsed.cmd.slice(1)}`,
+        )
       : false;
     if (parsed && known) {
       text.value = '';
@@ -304,7 +355,7 @@ function handleSubmit(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
+    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
   };
 
   // Revoke object URLs and drop the submitted attachments.
@@ -334,7 +385,7 @@ function handleSteer(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
+    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
   };
   clearAfterSubmit();
   history.push(trimmed);
@@ -451,17 +502,23 @@ function handleKeydown(e: KeyboardEvent): void {
 
   // History recall (shell-style ↑/↓) — see useInputHistory for the machinery.
   //
-  // ENTERING history: a plain ArrowUp only recalls when the caret is on the
-  // first line, so editing a multi-line draft with the arrows still works.
+  // Disabled entirely in the expanded editor: that mode is for composing long
+  // multi-line text, so the arrows always move the caret within the draft and
+  // never jump to a previous message.
+  //
+  // ENTERING history: a plain ArrowUp only recalls when the caret is at the
+  // very start of the text, so editing a multi-line draft with the arrows
+  // still works — ArrowUp moves the caret within the draft until it reaches
+  // the top, instead of jumping to a previous message mid-navigation.
   // ONCE BROWSING, the arrows walk history directly, regardless of where the
   // caret landed — a recalled multi-line entry leaves the caret at its end, and
-  // the old "must be on the first line" gate then trapped it there, so further
+  // the old "must be at the start" gate then trapped it there, so further
   // ArrowUp did nothing ("only one step back"). Walking freely while browsing
   // fixes that; typing exits history (handleInput resets browsing), after which
   // the arrows move the caret normally again.
-  if (!slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+  if (!expanded.value && !slashOpen.value && !mentionOpen.value && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
     const browsing = history.isBrowsing();
-    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtFirstLine())) {
+    if (e.key === 'ArrowUp' && history.hasHistory() && (browsing || history.caretAtTextStart())) {
       e.preventDefault();
       history.recallOlder();
       return;
@@ -490,7 +547,10 @@ function handleKeydown(e: KeyboardEvent): void {
 // Computed
 // ---------------------------------------------------------------------------
 
-const sendLabel = computed(() => props.running ? t('composer.interrupt') : t('composer.send'));
+// Send is always "send" — while running it enqueues (handled upstream by
+// sendPrompt). Interrupt lives on a separate Stop button so the two can never
+// be confused.
+const sendLabel = computed(() => t('composer.send'));
 const hasUpload = computed(() => !!props.uploadImage);
 
 // ---------------------------------------------------------------------------
@@ -505,6 +565,7 @@ function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;
   if (dropdownOpen.value) {
     permDropdownOpen.value = false;
+    closeModes();
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -522,6 +583,7 @@ function togglePermDropdown(): void {
   permDropdownOpen.value = !permDropdownOpen.value;
   if (permDropdownOpen.value) {
     dropdownOpen.value = false;
+    closeModes();
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -546,50 +608,72 @@ onUnmounted(() => {
   document.removeEventListener('click', onDocClick, true);
 });
 
-// Context formatting
-const kFmt = (n: number) => `${Math.round(n / 1000)}k`;
 // Clamped to 0–100: ctxUsed can momentarily exceed ctxMax (estimates), and
-// ctxMax can be 0 before the first status fetch — both broke the ring.
+// ctxMax can be 0 before the first status fetch — both broke the ring. ceil
+// (not round) so a session under 0.5% usage still shows a sliver of arc —
+// Math.round floored it to an empty, "no data"-looking ring.
 const pct = computed(() => {
   const max = props.status?.ctxMax ?? 0;
   if (max <= 0) return 0;
-  return Math.min(100, Math.max(0, Math.round(((props.status?.ctxUsed ?? 0) / max) * 100)));
+  return Math.min(100, Math.max(0, Math.ceil(((props.status?.ctxUsed ?? 0) / max) * 100)));
 });
 
 const ctxTooltip = computed(() => {
-  const used = (props.status?.ctxUsed ?? 0).toLocaleString();
-  const max = (props.status?.ctxMax ?? 0).toLocaleString();
+  const used = formatTokens(props.status?.ctxUsed ?? 0);
+  const max = formatTokens(props.status?.ctxMax ?? 0);
   return t('status.ctxTooltip', { used, max, pct: pct.value });
 });
 
 const showCompact = computed(() => pct.value >= 80);
 
 // Thinking toggle
-const currentModel = computed(() => {
-  const raw = props.status?.modelId ?? props.status?.model ?? '';
-  return props.models?.find((m) =>
-    m.id === raw ||
-    m.model === raw ||
-    m.displayName === props.status?.model,
-  );
-});
+// Identity is the model id — display/model names can collide across providers.
+const currentModel = computed(() =>
+  props.models?.find((m) => m.id === props.status?.modelId),
+);
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
-const thinkingToggleable = computed(() => thinkingAvailability.value === 'toggle');
-const thinkingOn = computed(() => {
-  if (thinkingAvailability.value === 'always-on') return true;
-  if (thinkingAvailability.value === 'unsupported') return false;
-  return (props.thinking ?? 'off') !== 'off';
+const thinkingSegments = computed(() => segmentsFor(currentModel.value));
+// The client resolves the level per model (the model's stored pick when still
+// declared, else the catalog default), so what arrives here is valid for the
+// active model and highlights its segment. An undeclared level can only appear
+// transiently, before the catalog loads, and simply highlights no segment.
+const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
+const activeThinkingSegment = computed(() => {
+  const segs = thinkingSegments.value;
+  return segs.includes(thinkingLevel.value) ? thinkingLevel.value : '';
 });
-function toggleThinking(): void {
-  if (!thinkingToggleable.value) return;
-  emit('setThinking', thinkingOn.value ? 'off' : 'high');
+const thinkingOn = computed(() => isThinkingOn(thinkingLevel.value));
+// Single-segment (always-on boolean) or unsupported models can't be changed.
+const thinkingReadonly = computed(
+  () => thinkingAvailability.value === 'unsupported' || thinkingSegments.value.length <= 1,
+);
+// Footer-style suffix: effort models show the concrete level; boolean models
+// keep the plain "thinking" tag; off shows nothing.
+const thinkingSuffix = computed(() => {
+  if (!thinkingOn.value) return '';
+  const hasEfforts = (currentModel.value?.supportEfforts?.length ?? 0) > 0;
+  const level = thinkingLevel.value;
+  if (hasEfforts && level !== 'on') return t('composer.thinkingSuffixEffort', { level });
+  return t('composer.thinkingSuffix');
+});
+function setThinkingSegment(draft: string): void {
+  if (thinkingReadonly.value) return;
+  emit('setThinking', commitLevel(currentModel.value, draft));
+}
+function thinkingSegmentLabel(segment: string): string {
+  if (segment === 'on') return t('status.thinkingOn');
+  if (segment === 'off') return t('status.thinkingOff');
+  return effortLabel(segment);
 }
 
 // Plan toggle
 const planOn = computed(() => props.planMode === true);
 const swarmOn = computed(() => props.swarmMode === true);
-const goalActive = computed(() => props.activationBadges?.goal !== null);
+const goalStatus = computed(() => props.goal?.status ?? props.activationBadges?.goal?.status ?? null);
+const goalActive = computed(() => goalStatus.value !== null && goalStatus.value !== 'complete');
 const goalArmed = computed(() => goalActive.value || props.goalMode === true);
+const goalCanPause = computed(() => goalStatus.value === 'active');
+const goalCanResume = computed(() => goalStatus.value === 'paused' || goalStatus.value === 'blocked');
 
 // Modes selector (plan / goal / swarm) — the popover that replaces the bare
 // "plan" pill. Plan/Swarm are real client toggles; goal reflects agent-driven
@@ -615,6 +699,9 @@ function toggleModes(): void {
     closeModes();
     return;
   }
+  // Keep the toolbar menus mutually exclusive so they never overlap.
+  closeDropdown();
+  closePermDropdown();
   const r = modesRef.value?.getBoundingClientRect();
   if (r) {
     modesMenuStyle.value = {
@@ -628,9 +715,90 @@ function toggleModes(): void {
 // Permission modes
 const PERM_MODES: { mode: PermissionMode; color: string; labelKey: string; descKey: string }[] = [
   { mode: 'manual', color: 'var(--dim)', labelKey: 'status.permissionManual', descKey: 'status.permissionManualDesc' },
-  { mode: 'yolo', color: 'var(--warn)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
-  { mode: 'auto', color: 'var(--err)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
+  { mode: 'yolo', color: 'var(--color-warning)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
+  { mode: 'auto', color: 'var(--color-danger)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
 ];
+const MODE_DESC_KEYS = ['status.planDesc', 'status.swarmDesc', 'status.goalDesc'] as const;
+
+const menuMeasureRef = ref<HTMLElement | null>(null);
+const permissionDescriptionWidth = ref('');
+const modeDescriptionWidth = ref('');
+function menuDescStyle(width: string): Record<string, string> {
+  const style: Record<string, string> = {};
+  if (width) style['--composer-menu-desc-width'] = width;
+  return style;
+}
+const permissionMenuStyle = computed<Record<string, string>>(() => menuDescStyle(permissionDescriptionWidth.value));
+const modeMenuMeasureStyle = computed<Record<string, string>>(() => menuDescStyle(modeDescriptionWidth.value));
+const modesMenuInlineStyle = computed<Record<string, string>>(() => ({
+  ...modesMenuStyle.value,
+  ...modeMenuMeasureStyle.value,
+}));
+let menuMeasureFrame: number | null = null;
+
+function cssPx(value: string): number {
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function canvasFont(style: CSSStyleDeclaration): string {
+  return `${style.fontStyle || 'normal'} ${style.fontWeight || '400'} ${style.fontSize} ${style.fontFamily}`;
+}
+
+function letterSpacingPx(style: CSSStyleDeclaration): number {
+  return style.letterSpacing === 'normal' ? 0 : cssPx(style.letterSpacing);
+}
+
+function measureTextWidth(text: string, style: CSSStyleDeclaration): number {
+  if (!text) return 0;
+  const prepared = prepareWithSegments(text, canvasFont(style), {
+    letterSpacing: letterSpacingPx(style),
+  });
+  return measureNaturalWidth(prepared);
+}
+
+function measureMenuDescriptions(): void {
+  const probe = menuMeasureRef.value?.querySelector<HTMLElement>('.pd-desc');
+  if (!probe) return;
+  const style = getComputedStyle(probe);
+  const permissionWidth = Math.max(
+    0,
+    ...PERM_MODES.map((opt) => measureTextWidth(t(opt.descKey), style)),
+  );
+  const modeWidth = Math.max(
+    0,
+    ...MODE_DESC_KEYS.map((key) => measureTextWidth(t(key), style)),
+  );
+  permissionDescriptionWidth.value = permissionWidth > 0 ? `${Math.ceil(permissionWidth)}px` : '';
+  modeDescriptionWidth.value = modeWidth > 0 ? `${Math.ceil(modeWidth)}px` : '';
+}
+
+function scheduleMenuDescriptionMeasure(): void {
+  if (typeof window === 'undefined') return;
+  if (menuMeasureFrame !== null) {
+    window.cancelAnimationFrame(menuMeasureFrame);
+  }
+  void nextTick(() => {
+    menuMeasureFrame = window.requestAnimationFrame(() => {
+      menuMeasureFrame = null;
+      measureMenuDescriptions();
+    });
+  });
+}
+
+watch(locale, scheduleMenuDescriptionMeasure, { immediate: true });
+
+onMounted(() => {
+  scheduleMenuDescriptionMeasure();
+  void document.fonts?.ready.then(scheduleMenuDescriptionMeasure);
+});
+
+onUnmounted(() => {
+  if (menuMeasureFrame !== null) {
+    window.cancelAnimationFrame(menuMeasureFrame);
+    menuMeasureFrame = null;
+  }
+});
 
 function choosePermission(mode: PermissionMode): void {
   emit('setPermission', mode);
@@ -680,40 +848,29 @@ function selectModel(modelId: string): void {
   >
     <!-- Attachment chips (above the input row) -->
     <div v-if="attachments.length > 0" class="att-strip">
-      <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
-        <!-- Thumbnail (video shows its first frame; an icon overlays it) -->
-        <button type="button" class="att-preview" :title="t('composer.previewAttachment', { name: att.name })" @click="openAttachmentPreview(att)">
-          <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
-          <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
-          <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg>
-          </span>
-        </button>
-        <!-- Name + status -->
-        <span class="att-name">{{ att.name }}</span>
-        <!-- Spinner while uploading -->
-        <span v-if="att.uploading" class="att-spinner" :aria-label="t('composer.uploading')">
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="8" cy="8" r="6" stroke-opacity="0.25"/>
-            <path d="M8 2 A6 6 0 0 1 14 8" stroke-linecap="round">
-              <animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="0.8s" repeatCount="indefinite"/>
-            </path>
-          </svg>
-        </span>
-        <!-- Error indicator -->
-        <span v-else-if="att.error" class="att-err-icon" :title="t('composer.uploadFailed')">
-          <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><circle cx="6" cy="6" r="5"/><line x1="6" y1="3.5" x2="6" y2="6.5"/><circle cx="6" cy="8.5" r="0.5" fill="currentColor"/></svg>
-        </span>
-        <!-- Remove button -->
-        <button class="att-rm" :title="t('composer.removeNamed', { name: att.name })" @click="removeAttachment(att.localId)">
-          <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.6" xmlns="http://www.w3.org/2000/svg"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-        </button>
-      </div>
+      <AttachmentChip
+        v-for="att in attachments"
+        :key="att.localId"
+        :kind="att.kind"
+        :name="att.name"
+        :url="att.previewUrl"
+        :file-id="att.fileId"
+        :media-type="att.mediaType"
+        :size="att.size"
+        :uploading="att.uploading"
+        :error="att.error"
+        removable
+        :remove-label="t('composer.removeNamed', { name: att.name })"
+        @activate="onAttachmentActivate(att)"
+        @remove="removeAttachment(att.localId)"
+      />
     </div>
 
     <div v-if="previewAttachment" class="att-lightbox" @click.self="closeAttachmentPreview">
       <div class="att-lightbox-card">
-        <button type="button" class="att-lightbox-close" :title="t('model.close')" @click="closeAttachmentPreview">✕</button>
+        <Tooltip :text="t('model.close')">
+          <button type="button" class="att-lightbox-close" @click="closeAttachmentPreview">✕</button>
+        </Tooltip>
         <video
           v-if="previewAttachment.kind === 'video'"
           class="att-lightbox-media"
@@ -755,79 +912,31 @@ function selectModel(modelId: string): void {
             v-model="text"
             class="ph"
             :placeholder="placeholder"
+            :disabled="starting"
             rows="1"
             @keydown="handleKeydown"
             @compositionstart="handleCompositionStart"
             @compositionend="handleCompositionEnd"
             @input="handleInput"
           />
-
-          <div class="send-col">
-            <button
-              v-if="expanded || isGrown"
-              class="expand-btn"
-              type="button"
-              :aria-label="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
-              :title="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
-              @click="toggleExpand"
-            >
-              <svg v-if="expanded" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M4 14h6v6" />
-                <path d="M20 10h-6V4" />
-                <path d="M14 10l7-7" />
-                <path d="M3 21l7-7" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M15 3h6v6" />
-                <path d="M9 21H3v-6" />
-                <path d="M21 3l-7 7" />
-                <path d="M3 21l7-7" />
-              </svg>
-            </button>
-            <button
-              class="send"
-              :class="{ aborting: running }"
-              :aria-label="sendLabel"
-              :title="running ? t('composer.interruptTitle') : sendLabel"
-              @click="running ? emit('interrupt') : handleSubmit()"
-            >
-              <svg
-                class="send-icon"
-                :class="{ hidden: running }"
-                viewBox="0 0 16 16"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M8 3l6 5.5M8 3L2 8.5M8 3v10" />
-              </svg>
-              <svg
-                class="send-icon"
-                :class="{ hidden: !running }"
-                viewBox="0 0 16 16"
-                width="14"
-                height="14"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <rect x="3" y="3" width="10" height="10" rx="1.5" />
-              </svg>
-            </button>
-          </div>
+          <button
+            v-if="expanded || isGrown"
+            class="expand-btn"
+            type="button"
+            :aria-label="expanded ? t('composer.collapseTitle') : t('composer.expandTitle')"
+            @click="toggleExpand"
+          >
+            <Icon v-if="expanded" name="collapse" size="sm" />
+            <Icon v-else name="expand" size="sm" />
+          </button>
         </div>
       </div>
 
-      <!-- Hidden file input -->
+      <!-- Hidden file input (no accept filter — any file type can be attached) -->
       <input
         v-if="hasUpload"
         ref="fileInputRef"
         type="file"
-        accept="image/*,video/*"
         multiple
         class="file-input-hidden"
         @change="handleFileInputChange"
@@ -835,21 +944,20 @@ function selectModel(modelId: string): void {
 
       <!-- Bottom toolbar — split into individual controls -->
       <div ref="toolbarRef" class="toolbar">
+        <div ref="menuMeasureRef" class="menu-measure" aria-hidden="true">
+          <span class="pd-desc" />
+        </div>
+
         <!-- Left: attach + permission + plan -->
         <div class="toolbar-left">
-          <button
+          <IconButton
             v-if="hasUpload"
-            class="attach-btn"
-            :title="t('composer.attachImage')"
-            type="button"
+            size="md"
+            :label="t('composer.attachFile')"
             @click="openFilePicker"
           >
-            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-              <rect x="2" y="3" width="12" height="10" rx="1.5"/>
-              <circle cx="5" cy="6" r="1.2"/>
-              <path d="M2 10.5l3-2.5L8 11l2.5-2L14 11"/>
-            </svg>
-          </button>
+            <Icon name="attachment" />
+          </IconButton>
 
           <!-- Permission pill — click to open dropdown -->
           <span
@@ -858,14 +966,19 @@ function selectModel(modelId: string): void {
             :class="['perm-' + status.permission, { open: permDropdownOpen }]"
             role="button"
             tabindex="0"
-            :title="t('status.permissionTooltip')"
             @click.stop="togglePermDropdown"
             @keydown.enter="togglePermDropdown"
             @keydown.space.prevent="togglePermDropdown"
           >{{ permLabel }}</span>
 
           <!-- Permission dropdown — anchored to the toolbar left side -->
-          <div v-if="permDropdownOpen && status" class="perm-dropdown" role="menu" @click.stop>
+          <div
+            v-if="permDropdownOpen && status"
+            class="perm-dropdown"
+            :style="permissionMenuStyle"
+            role="menu"
+            @click.stop
+          >
             <button
               v-for="opt in PERM_MODES"
               :key="opt.mode"
@@ -874,7 +987,7 @@ function selectModel(modelId: string): void {
               role="menuitem"
               @click="choosePermission(opt.mode)"
             >
-              <span class="pd-check"><svg v-if="opt.mode === status.permission" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+              <span class="pd-check"><Icon v-if="opt.mode === status.permission" name="check" size="sm" /></span>
               <span class="pd-info">
                 <span class="pd-name" :style="{ color: opt.color }">{{ t(opt.labelKey) }}</span>
                 <span class="pd-desc">{{ t(opt.descKey) }}</span>
@@ -887,8 +1000,7 @@ function selectModel(modelId: string): void {
             <button
               type="button"
               class="mode-pill"
-              :class="{ on: anyModeActive }"
-              :title="t('status.modesTooltip')"
+              :class="{ on: anyModeActive, open: modesOpen }"
               @click.stop="toggleModes"
             >
               <span class="mode-label">{{ t('status.modesLabel') }}</span>
@@ -897,15 +1009,23 @@ function selectModel(modelId: string): void {
               <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
             </button>
 
-            <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuStyle">
+            <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuInlineStyle" role="menu">
               <!-- Plan — functional client toggle -->
-              <button type="button" class="mode-row" :class="{ on: planOn }" @click="emit('togglePlan')">
-                <span class="mode-row-name">{{ t('status.planLabel') }}</span>
+              <button type="button" class="mode-row" :class="{ on: planOn }" role="menuitem" @click="emit('togglePlan')">
+                <span class="mode-row-icon"><Icon name="file-edit" size="sm" /></span>
+                <span class="mode-row-info">
+                  <span class="mode-row-name">{{ t('status.planLabel') }}</span>
+                  <span class="mode-row-desc">{{ t('status.planDesc') }}</span>
+                </span>
                 <span class="mode-switch" :class="{ on: planOn }"><span class="mode-knob" /></span>
               </button>
               <!-- Swarm — functional client toggle -->
-              <button type="button" class="mode-row" :class="{ on: swarmOn }" @click="emit('toggleSwarm')">
-                <span class="mode-row-name">{{ t('status.swarmLabel') }}</span>
+              <button type="button" class="mode-row" :class="{ on: swarmOn }" role="menuitem" @click="emit('toggleSwarm')">
+                <span class="mode-row-icon"><Icon name="sparkles" size="sm" /></span>
+                <span class="mode-row-info">
+                  <span class="mode-row-name">{{ t('status.swarmLabel') }}</span>
+                  <span class="mode-row-desc">{{ t('status.swarmDesc') }}</span>
+                </span>
                 <span class="mode-switch" :class="{ on: swarmOn }"><span class="mode-knob" /></span>
               </button>
               <!-- Goal — lifecycle controls when active; switch is on when active or armed. -->
@@ -913,22 +1033,46 @@ function selectModel(modelId: string): void {
                 <button
                   type="button"
                   class="mode-row-main"
-                  @click="goalActive ? emit('controlGoal', 'cancel') : emit('toggleGoal')"
+                  role="menuitem"
+                  @click="goalActive ? emit('focusGoal') : emit('toggleGoal')"
                 >
-                  <span class="mode-row-name">{{ t('status.goalLabel') }}</span>
+                  <span class="mode-row-icon"><Icon name="target" size="sm" /></span>
+                  <span class="mode-row-info">
+                    <span class="mode-row-name">{{ t('status.goalLabel') }}</span>
+                    <span class="mode-row-desc">{{ t('status.goalDesc') }}</span>
+                  </span>
                   <span v-if="!goalActive" class="mode-switch" :class="{ on: props.goalMode }"><span class="mode-knob" /></span>
                 </button>
                 <div v-if="goalActive" class="mode-row-actions">
-                  <button
-                    type="button"
+                  <Button
+                    v-if="goalCanPause"
+                    size="sm"
+                    variant="secondary"
                     class="mode-row-action"
                     @click="emit('controlGoal', 'pause')"
-                  >{{ t('status.goalPause') }}</button>
-                  <button
-                    type="button"
+                  >
+                    <Icon name="pause" size="sm" />
+                    <span>{{ t('status.goalPause') }}</span>
+                  </Button>
+                  <Button
+                    v-if="goalCanResume"
+                    size="sm"
+                    variant="primary"
                     class="mode-row-action"
                     @click="emit('controlGoal', 'resume')"
-                  >{{ t('status.goalResume') }}</button>
+                  >
+                    <Icon name="play" size="sm" />
+                    <span>{{ t('status.goalResume') }}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger-soft"
+                    class="mode-row-action"
+                    @click="emit('controlGoal', 'cancel')"
+                  >
+                    <Icon name="close" size="sm" />
+                    <span>{{ t('status.goalCancel') }}</span>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -941,31 +1085,21 @@ function selectModel(modelId: string): void {
           <!-- Compact chip when context is high -->
           <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
 
-          <!-- Context meter — circular ring + token count -->
-          <span v-if="status && !hideContext" class="ctx-group" :title="ctxTooltip">
-            <svg class="ctx-ring" viewBox="0 0 20 20" aria-hidden="true">
-              <circle
-                class="ctx-ring-track"
-                cx="10"
-                cy="10"
-                r="7"
-                fill="none"
-                stroke-width="2.5"
-              />
-              <circle
-                class="ctx-ring-fill"
-                cx="10"
-                cy="10"
-                r="7"
-                fill="none"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                :stroke-dasharray="`${2 * Math.PI * 7}`"
-                :stroke-dashoffset="`${2 * Math.PI * 7 * (1 - pct / 100)}`"
-              />
-            </svg>
-            <span class="ctx-num">{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</span>
-          </span>
+          <!-- Context meter — circular ring only; the full usage (used/max/pct)
+               lives in the tooltip. The ring is aria-hidden, so the trigger
+               exposes those numbers via aria-label; focusable so keyboard and
+               switch-control users reach the same tooltip hover users see. -->
+          <Tooltip :text="ctxTooltip">
+            <span
+              v-if="status && !hideContext"
+              class="ctx-group"
+              role="img"
+              tabindex="0"
+              :aria-label="ctxTooltip"
+            >
+              <ContextRing :pct="pct" />
+            </span>
+          </Tooltip>
 
           <!-- Model pill — click to open quick-switch dropdown -->
           <span
@@ -974,15 +1108,33 @@ function selectModel(modelId: string): void {
             :class="{ open: dropdownOpen }"
             role="button"
             tabindex="0"
-            :title="t('status.modelTooltip')"
             @click.stop="toggleDropdown"
             @keydown.enter="toggleDropdown"
             @keydown.space.prevent="toggleDropdown"
           >
             <b>{{ status.model }}</b>
-            <span v-if="thinkingOn" class="think-suffix">{{ t('composer.thinkingSuffix') }}</span>
-            <svg class="cv" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+            <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
+            <Icon class="cv" name="chevron-down" size="sm" />
           </span>
+          <Tooltip v-if="running" :text="t('composer.interruptTitle')">
+            <button
+              class="stop"
+              :aria-label="t('composer.interrupt')"
+              @click="emit('interrupt')"
+            >
+              <Icon name="stop" size="sm" />
+            </button>
+          </Tooltip>
+          <button
+            class="send"
+            :class="{ 'is-starting': starting }"
+            :aria-label="sendLabel"
+            :disabled="starting"
+            @click="handleSubmit()"
+          >
+            <Spinner v-if="starting" size="sm" />
+            <Icon v-else name="send" size="sm" />
+          </button>
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->
@@ -997,10 +1149,10 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><svg v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
             <span class="md-provider">{{ m.provider }}</span>
-            <svg class="md-star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            <Icon class="md-star" name="star" size="sm" />
           </button>
 
           <div v-if="starredOtherModels.length > 0" class="md-divider" />
@@ -1015,26 +1167,41 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><svg v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
-            <svg v-if="isStarred(m.id)" class="md-star" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" />
           </button>
 
           <div v-if="providerModels.length > 0" class="md-divider" />
 
-          <!-- Thinking toggle -->
-          <button
-            class="md-row md-row-toggle"
-            role="menuitem"
-            :class="{ 'is-on': thinkingOn, 'is-disabled': !thinkingToggleable }"
-            :disabled="!thinkingToggleable"
-            @click="toggleThinking()"
-          >
-            <span class="md-check"><svg v-if="thinkingOn" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.5 3.5L13 4.5"/></svg></span>
+          <!-- Thinking level — segmented control. Effort models show every
+               declared level; boolean models show On/Off; unsupported shows a note. -->
+          <div class="md-thinking" :class="{ 'is-readonly': thinkingReadonly }">
             <span class="md-name">{{ t('status.thinkingLabel') }}</span>
-            <span v-if="thinkingAvailability === 'always-on'" class="md-note">{{ t('status.planOn') }}</span>
-            <span v-else-if="thinkingAvailability === 'unsupported'" class="md-note">{{ t('status.modeNotSupported') }}</span>
-          </button>
+            <span
+              v-if="thinkingAvailability === 'unsupported'"
+              class="md-note"
+            >{{ t('status.modeNotSupported') }}</span>
+            <div
+              v-else
+              class="effort-segments"
+              role="group"
+              :aria-label="t('status.thinkingLabel')"
+            >
+              <button
+                v-for="seg in thinkingSegments"
+                :key="seg"
+                type="button"
+                class="effort-seg"
+                :class="{ 'is-active': seg === activeThinkingSegment }"
+                :disabled="thinkingReadonly"
+                @click="setThinkingSegment(seg)"
+              >{{ thinkingSegmentLabel(seg) }}</button>
+            </div>
+          </div>
+
+          <div class="md-divider" />
+          <div class="md-cache-note">{{ t('status.cacheNote') }}</div>
 
           <div class="md-divider" />
 
@@ -1044,6 +1211,16 @@ function selectModel(modelId: string): void {
           </button>
         </div>
       </div>
+  </div>
+  <!-- Full-window drop target affordance: shown while files are dragged anywhere
+       over the app (document-level listeners in useAttachmentUpload). Pure CSS
+       show/hide — a Vue <Transition> can strand an invisible node when the drag
+       ends before the enter transition starts. -->
+  <div class="drop-overlay" :class="{ show: isDragOver }" aria-hidden="true">
+    <div class="drop-card">
+      <Icon name="file-plus" size="lg" />
+      <span>{{ t('composer.dropToAttach') }}</span>
+    </div>
   </div>
 </div>
 </template>
@@ -1056,22 +1233,65 @@ function selectModel(modelId: string): void {
 }
 
 .composer.drag-over {
-  background: var(--soft);
+  background: var(--color-accent-soft);
+}
+
+/* Full-window drop overlay: pointer-events none — the document-level handlers
+   in useAttachmentUpload receive the drop, the overlay is purely visual. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-bg) 72%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-base) ease,
+    visibility var(--duration-base);
+}
+.drop-overlay.show {
+  opacity: 1;
+  visibility: visible;
+}
+.drop-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-lg);
+  border: 1.5px dashed var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-size: var(--ui-font-size-lg);
+  font-weight: var(--weight-medium);
+  box-shadow: var(--shadow-md);
 }
 
 /* Main composer card */
 .composer-card {
+  --composer-send-size: 32px;
+  --composer-send-inset: var(--space-2);
   position: relative;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
+  corner-shape: superellipse(1.5);
   background: var(--bg);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  box-shadow: var(--shadow-md);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer-card:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md), 0 0 0 3px var(--color-accent-soft);
 }
 
 
 
-/* Attachment strip */
+/* Attachment strip — the chip itself is the shared AttachmentChip; this is
+   only the row layout above the input. */
 .att-strip {
   display: flex;
   flex-wrap: wrap;
@@ -1079,111 +1299,10 @@ function selectModel(modelId: string): void {
   padding: 4px 0 6px;
 }
 
-.att-chip {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--panel2);
-  border: 1px solid var(--bd);
-  border-radius: 4px;
-  padding: 3px 6px 3px 4px;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--text);
-  max-width: 220px;
-}
-
-.att-preview {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  padding: 0;
-  cursor: zoom-in;
-  flex: none;
-}
-.att-preview:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-/* Play glyph over a video thumbnail so it reads as a video, not a still. */
-.att-video-badge {
-  position: absolute;
-  left: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  pointer-events: none;
-}
-
-.att-chip.att-error {
-  border-color: var(--err);
-  color: var(--err);
-}
-
-.att-thumb {
-  width: 28px;
-  height: 28px;
-  object-fit: cover;
-  border-radius: 2px;
-  flex-shrink: 0;
-  background: var(--line2);
-}
-
-.att-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-
-.att-spinner {
-  display: flex;
-  align-items: center;
-  color: var(--blue);
-  flex-shrink: 0;
-}
-
-.att-err-icon {
-  display: flex;
-  align-items: center;
-  color: var(--err);
-  flex-shrink: 0;
-}
-
-.att-rm {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  padding: 1px;
-  cursor: pointer;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.att-rm:hover {
-  color: var(--err);
-}
-
 .att-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 260;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1204,12 +1323,12 @@ function selectModel(modelId: string): void {
   max-height: calc(100vh - 96px);
   border-radius: 6px;
   background: var(--bg);
-  box-shadow: 0 12px 42px rgba(0,0,0,0.22);
+  box-shadow: var(--shadow-xl);
   object-fit: contain;
 }
 .att-lightbox-name {
   max-width: 100%;
-  color: #fff;
+  color: var(--color-text-on-accent);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2px);
   overflow: hidden;
@@ -1225,7 +1344,7 @@ function selectModel(modelId: string): void {
   border: 1px solid rgba(255,255,255,0.45);
   border-radius: 50%;
   background: rgba(20,23,28,0.82);
-  color: #fff;
+  color: var(--color-text-on-accent);
   cursor: pointer;
 }
 
@@ -1237,25 +1356,17 @@ function selectModel(modelId: string): void {
 /* Wrapper that establishes a positioning context for the popup menus */
 .cin-wrap {
   position: relative;
-  padding: 10px 12px 8px;
+  padding: 14px 16px 8px;
 }
 
 /* Input row */
 .input-row {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
 
-/* Right column: expand toggle stacked above the send button */
-.send-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
+/* Expand toggle — top-right of the textarea */
 .expand-btn {
   width: 22px;
   height: 22px;
@@ -1273,24 +1384,28 @@ function selectModel(modelId: string): void {
 
 .expand-btn:hover {
   background: var(--panel2);
-  color: var(--ink);
+  color: var(--color-text);
 }
 
 .expand-btn:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
 .ph {
   color: var(--faint);
+  /* Keep the caret at the normal text colour even when the field is empty:
+     the empty state sets `color` to `--faint` (so the placeholder feels soft),
+     and an unset caret inherits that faint colour and nearly disappears. */
+  caret-color: var(--color-text);
   flex: 1;
   border: none;
   outline: none;
   resize: none;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
+  font-family: var(--font-ui);
+  font-size: var(--content-font-size);
   background: transparent;
-  min-height: 56px;
+  min-height: 36px;
   max-height: calc(100vh / 4);
   overflow-y: auto;
   line-height: 1.5;
@@ -1302,7 +1417,7 @@ function selectModel(modelId: string): void {
 }
 
 .ph:not(:placeholder-shown) {
-  color: var(--ink);
+  color: var(--color-text);
 }
 
 /* Expanded editor: a tall composing area at ~70% of the viewport — clearly
@@ -1318,8 +1433,8 @@ function selectModel(modelId: string): void {
 .compact-chip {
   background: none;
   border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--warn);
+  border-radius: var(--radius-xs);
+  color: var(--color-warning);
   font-family: var(--mono);
   font-size: var(--ui-font-size);
   padding: 0 4px;
@@ -1330,52 +1445,93 @@ function selectModel(modelId: string): void {
 }
 .compact-chip:hover { background: var(--panel2); }
 
-/* Send button — circular icon (morphs into the abort square while running) */
+/* Send button — circular accent icon. Always "send"; while running it enqueues
+   (handled upstream). Interrupt is a separate Stop button so the two are never
+   confused. */
 .send {
-  width: 30px;
-  height: 30px;
+  width: var(--composer-send-size);
+  height: var(--composer-send-size);
   border-radius: 50%;
-  background: var(--blue);
-  color: var(--bg); /* on-accent text — readable in dark + mono-dark */
+  background: var(--color-accent);
+  color: var(--color-text-on-accent); /* white on accent — readable in light and dark */
   border: none;
+  box-shadow: var(--shadow-xs);
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
+  margin-left: var(--space-2);
   transition: background 0.25s ease, transform 0.12s ease;
   position: relative;
 }
 
 .send:hover {
-  background: var(--blue2);
+  background: var(--color-accent-hover);
 }
 
 .send:active {
   transform: scale(0.92);
 }
 
+.send:disabled {
+  cursor: not-allowed;
+  opacity: 0.88;
+}
+
+.send:disabled:active {
+  transform: none;
+}
+
+/* Spinner-on-accent: recolor the ring so the arc reads on the accent fill.
+   Spinner.vue styles are scoped, so pierce them with :deep(). */
+.send.is-starting :deep(.ui-spinner) {
+  color: var(--color-text-on-accent);
+}
+
+.send.is-starting :deep(.ui-spinner__track) {
+  stroke: rgba(255, 255, 255, 0.32);
+}
+
 .send svg {
   flex: none;
+  width: var(--p-ic-lg);
+  height: var(--p-ic-lg);
 }
 
-.send-icon {
-  position: absolute;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+/* Stop button — sibling of Send, shown only while running. Red at rest so the
+   destructive action is easy to spot; fills solid danger on hover. Kept softer
+   than the accent Send so Send stays the primary action. */
+.stop {
+  width: var(--composer-send-size);
+  height: var(--composer-send-size);
+  border-radius: 50%;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-bd);
+  box-shadow: var(--shadow-xs);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
 }
-
-.send-icon.hidden {
-  opacity: 0;
-  transform: scale(0.7);
-  pointer-events: none;
+.stop:hover {
+  background: var(--color-danger);
+  color: var(--color-text-on-accent);
+  border-color: var(--color-danger);
 }
-
-.send.aborting {
-  background: var(--err);
+.stop:active {
+  transform: scale(0.92);
 }
-.send.aborting:hover {
-  background: color-mix(in srgb, var(--err) 85%, #000);
+.stop svg {
+  flex: none;
+  width: var(--p-ic-lg);
+  height: var(--p-ic-lg);
 }
 
 /* Bottom toolbar */
@@ -1383,10 +1539,17 @@ function selectModel(modelId: string): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px 4px;
-  background: color-mix(in srgb, var(--panel2), black 1.5%);
+  padding: 6px var(--composer-send-inset) var(--composer-send-inset);
   position: relative;
-  border-radius: 0 0 var(--r-md) var(--r-md);
+}
+
+.menu-measure {
+  position: absolute;
+  width: max-content;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .toolbar-left,
@@ -1398,34 +1561,6 @@ function selectModel(modelId: string): void {
   overflow: hidden;
 }
 
-/* Attach button (pill style, matches permission/plan) */
-.attach-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  font-size: var(--ui-font-size);
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.1s, color 0.15s;
-  font-family: var(--sans);
-  background: none;
-  border: none;
-  flex-shrink: 0;
-  line-height: 1;
-}
-.attach-icon {
-  display: block;
-  flex: none;
-}
-
-.attach-btn:hover {
-  background: var(--soft);
-}
-
 /* Permission pill */
 .perm-pill {
   display: inline-flex;
@@ -1434,58 +1569,42 @@ function selectModel(modelId: string): void {
   padding: 2px 7px;
   border-radius: 6px;
   font-size: var(--ui-font-size);
-  color: var(--text);
+  color: var(--color-text);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s, color 0.15s;
-  font-family: var(--sans);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-medium);
 }
 .perm-pill:hover {
-  background: var(--soft);
+  background: var(--color-surface-sunken);
 }
 .perm-pill.open {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 .perm-pill.perm-manual {
   color: var(--dim);
 }
 .perm-pill.perm-yolo {
-  color: var(--warn);
+  color: var(--color-warning);
 }
 .perm-pill.perm-auto {
-  color: var(--err);
+  color: var(--color-danger);
 }
 
-/* Context group — circular ring + num */
+/* Context group — circular ring. Focusable for keyboard / switch access to its
+   aria-label and tooltip (see template), so it needs a focus ring. */
 .ctx-group {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  padding: 2px 0;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
 }
-
-.ctx-ring {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  transform: rotate(-90deg);
-}
-
-.ctx-ring-track {
-  stroke: var(--line);
-}
-
-.ctx-ring-fill {
-  stroke: var(--blue);
-  transition: stroke-dashoffset 0.3s ease, stroke 0.3s ease;
-}
-
-.ctx-num {
-  font-size: var(--ui-font-size);
-  color: var(--muted);
-  font-family: var(--mono);
-  line-height: 16px;
+.ctx-group:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 /* Model pill */
@@ -1496,8 +1615,10 @@ function selectModel(modelId: string): void {
   padding: 2px 7px;
   border-radius: 6px;
   font-size: var(--ui-font-size);
-  line-height: 16px;
+  line-height: var(--leading-normal);
   color: var(--dim);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s;
@@ -1505,15 +1626,15 @@ function selectModel(modelId: string): void {
   overflow: hidden;
 }
 .model-pill:hover {
-  background: var(--soft);
-  color: var(--blue2);
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
 }
 .model-pill.open {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 .model-pill b {
   font-weight: 500;
-  color: var(--text);
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1521,7 +1642,7 @@ function selectModel(modelId: string): void {
   max-width: 280px;
 }
 .model-pill .think-suffix {
-  color: var(--blue);
+  color: var(--color-accent);
   font-weight: 500;
   flex-shrink: 0;
 }
@@ -1531,7 +1652,7 @@ function selectModel(modelId: string): void {
 }
 .model-pill:hover .cv,
 .model-pill.open .cv {
-  color: var(--blue2);
+  color: var(--color-accent-hover);
 }
 
 /* Model dropdown — anchored to the toolbar right edge */
@@ -1539,25 +1660,26 @@ function selectModel(modelId: string): void {
   position: absolute;
   bottom: calc(100% + 4px);
   right: 10px;
-  z-index: 60;
+  z-index: var(--z-dropdown);
   min-width: 200px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 1px;
+  font-family: var(--font-ui);
 }
 
 .md-section {
   padding: 4px 7px 2px;
-  font-size: var(--ui-font-size);
+  font-size: var(--text-xs);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 500;
+  letter-spacing: 0;
+  font-weight: var(--weight-semibold);
 }
 
 .md-row {
@@ -1568,21 +1690,21 @@ function selectModel(modelId: string): void {
   background: none;
   border: none;
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   font-size: var(--ui-font-size);
-  color: var(--text);
+  color: var(--color-text);
   padding: 5px 7px;
   border-radius: 6px;
   text-align: left;
 }
-.md-row:hover { background: var(--soft); }
+.md-row:hover { background: var(--color-surface-sunken); }
 .md-row:disabled {
   cursor: default;
   opacity: 0.58;
 }
 .md-row:disabled:hover { background: none; }
-.md-row.is-current { color: var(--ink); }
-.md-row.is-on { color: var(--blue); }
+.md-row.is-current { color: var(--color-text); background: var(--color-accent-soft); }
+.md-row.is-on { color: var(--color-accent); }
 .md-note {
   margin-left: auto;
   color: var(--muted);
@@ -1590,18 +1712,18 @@ function selectModel(modelId: string): void {
 }
 
 .md-row-more {
-  color: var(--blue);
+  color: var(--color-accent);
   font-weight: 500;
 }
 .md-row-more:hover {
-  background: var(--soft);
+  background: var(--color-accent-soft);
 }
 
 .md-check {
   width: 14px;
   flex: none;
-  color: var(--blue);
-  font-weight: 700;
+  color: var(--color-accent);
+  font-weight: 500;
   display: flex;
   justify-content: center;
 }
@@ -1626,18 +1748,96 @@ function selectModel(modelId: string): void {
   margin: 3px 0;
 }
 
+/* Thinking level segmented control — sits inside the model dropdown. */
+.md-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border-radius: var(--radius-sm);
+}
+.md-thinking .md-name {
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size);
+  color: var(--color-text);
+  flex: none;
+}
+.md-thinking .md-note {
+  margin-left: auto;
+}
+.effort-segments {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+}
+.effort-seg {
+  appearance: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1;
+  color: var(--color-text-muted);
+  padding: 4px 9px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.effort-seg:hover:not(:disabled):not(.is-active) {
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+.effort-seg:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+.effort-seg.is-active {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  box-shadow: var(--shadow-xs);
+  font-weight: 500;
+}
+.effort-seg:disabled {
+  cursor: default;
+}
+.md-thinking.is-readonly .effort-segments {
+  opacity: 0.62;
+}
+.md-cache-note {
+  /* width:0 + min-width:100% — the note never widens the shrink-to-fit
+     dropdown, but always fills its width and wraps there naturally. */
+  width: 0;
+  min-width: 100%;
+  padding: 2px 7px 4px;
+  color: var(--muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.4;
+}
+.md-thinking.is-readonly .effort-seg.is-active {
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  box-shadow: none;
+}
+
 /* Permission dropdown — anchored to the toolbar left side */
 .perm-dropdown {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 10px;
-  z-index: 60;
+  z-index: var(--z-dropdown);
   min-width: 220px;
-  max-width: 280px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  width: max-content;
+  max-width: calc(100vw - var(--space-8));
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   padding: 5px;
   display: flex;
   flex-direction: column;
@@ -1645,9 +1845,11 @@ function selectModel(modelId: string): void {
 }
 
 .pd-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: 14px var(--composer-menu-desc-width, max-content);
+  column-gap: 7px;
+  row-gap: 2px;
+  align-items: start;
   width: 100%;
   background: none;
   border: none;
@@ -1656,45 +1858,52 @@ function selectModel(modelId: string): void {
   border-radius: 6px;
   text-align: left;
 }
-.pd-row:hover { background: var(--soft); }
-.pd-row.is-current { background: var(--soft); }
+.pd-row:hover { background: var(--color-surface-sunken); }
+.pd-row.is-current { background: var(--color-accent-soft); }
 
 .pd-check {
+  grid-column: 1;
+  grid-row: 1;
   width: 14px;
-  flex: none;
-  color: var(--blue);
-  font-weight: 700;
+  min-height: 1lh;
+  color: var(--color-accent);
+  font-size: var(--ui-font-size);
+  font-weight: var(--weight-medium);
   display: flex;
+  align-items: center;
   justify-content: center;
-  margin-top: 1px;
+  line-height: var(--leading-normal);
 }
 
 .pd-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
+  display: contents;
 }
 
 .pd-name {
-  font-family: var(--sans);
+  grid-column: 2;
+  grid-row: 1;
+  font-family: var(--font-ui);
   font-size: var(--ui-font-size);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-normal);
 }
 
 .pd-desc {
-  font-family: var(--sans);
-  font-size: var(--ui-font-size);
+  grid-column: 2;
+  grid-row: 2;
+  width: var(--composer-menu-desc-width, auto);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   color: var(--muted);
-  line-height: 1.4;
+  line-height: var(--leading-normal);
 }
 
 /* Toggle pills (Thinking / Plan) */
 /* Modes selector (plan / goal / swarm) — replaces the old plan pill + badges.
    z-index lifts the whole control (incl. its upward-opening menu) above the
    composer input row, which otherwise paints over the menu. */
-.modes { position: relative; display: inline-flex; z-index: 30; }
+.modes { position: relative; display: inline-flex; z-index: var(--z-sticky); }
 .mode-pill {
   display: inline-flex;
   align-items: center;
@@ -1704,65 +1913,110 @@ function selectModel(modelId: string): void {
   background: none;
   border-radius: 6px;
   font-size: var(--ui-font-size);
-  font-family: var(--sans);
-  color: var(--text);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s, color 0.15s;
 }
-.mode-pill:hover { background: var(--soft); }
-.mode-pill.on { background: var(--soft); color: var(--blue2); }
+.mode-pill:hover { background: var(--color-surface-sunken); }
+.mode-pill.on { background: var(--color-accent-soft); color: var(--color-accent-hover); }
+.mode-pill.open { background: var(--color-accent-soft); }
 .mode-label { flex: none; }
 .mode-tag {
   flex: none;
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--blue2);
+  color: var(--color-accent-hover);
   background: var(--bg);
-  border: 1px solid var(--bd);
+  border: 1px solid var(--color-accent-bd);
   border-radius: 999px;
   padding: 0 6px;
   line-height: 16px;
 }
-.mode-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); flex: none; }
+.mode-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); flex: none; }
 
 .modes-menu {
   position: fixed;
-  z-index: 200;
+  z-index: var(--z-dropdown);
   min-width: 220px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
-  padding: 4px;
+  width: max-content;
+  max-width: calc(100vw - var(--space-8));
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .mode-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 14px var(--composer-menu-desc-width, max-content);
+  column-gap: 7px;
+  row-gap: 2px;
+  align-items: start;
   width: 100%;
-  padding: 7px 10px;
+  padding: 6px 7px;
   border: none;
   background: none;
   border-radius: 6px;
   cursor: pointer;
-  font-family: var(--sans);
+  font-family: var(--font-ui);
   text-align: left;
 }
-.mode-row:hover:not(:disabled) { background: var(--panel2); }
+.mode-row:hover:not(:disabled) { background: var(--color-surface-sunken); }
 .mode-row:disabled { cursor: not-allowed; opacity: 0.45; }
-.mode-row-name { font-size: var(--ui-font-size-sm); color: var(--ink); }
+.mode-row-info {
+  display: contents;
+}
+.mode-row-icon {
+  grid-column: 1;
+  grid-row: 1;
+  width: 14px;
+  min-height: 1lh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: var(--ui-font-size);
+  line-height: var(--leading-normal);
+}
+.mode-row-name {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: var(--ui-font-size);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+  line-height: var(--leading-normal);
+}
+.mode-row-desc {
+  grid-column: 2;
+  grid-row: 2;
+  width: var(--composer-menu-desc-width, auto);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+  line-height: var(--leading-normal);
+}
 .mode-row-not-supported {
   margin-left: auto;
   font-size: var(--ui-font-size-xs);
   color: var(--muted);
 }
-.mode-row.on .mode-row-name { color: var(--blue2); font-weight: 600; }
+.mode-row.on {
+  background: var(--color-accent-soft);
+}
+.mode-row.on .mode-row-name { color: var(--color-accent-hover); }
+.mode-row.on .mode-row-icon { color: var(--color-accent-hover); }
 .mode-row-meta { font-family: var(--mono); font-size: calc(var(--ui-font-size) - 3px); color: var(--muted); }
 .mode-row:disabled .mode-row-meta { color: var(--faint); }
 .mode-switch {
-  flex: none;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
   width: 34px;
   height: 19px;
   border-radius: 999px;
@@ -1771,7 +2025,7 @@ function selectModel(modelId: string): void {
   position: relative;
   transition: background 0.15s;
 }
-.mode-switch.on { background: var(--blue); border-color: var(--blue); }
+.mode-switch.on { background: var(--color-accent); border-color: var(--color-accent); }
 .mode-knob {
   position: absolute;
   top: 1px;
@@ -1780,60 +2034,90 @@ function selectModel(modelId: string): void {
   height: 15px;
   border-radius: 50%;
   background: var(--bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-xs);
   transition: transform 0.15s;
 }
 .mode-switch.on .mode-knob { transform: translateX(15px); }
 
 .mode-row-goal {
-  flex-wrap: wrap;
+  --mode-row-icon-col: 14px;
+  --mode-row-col-gap: 7px;
+  --mode-row-pad-x: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   cursor: default;
   padding: 0;
   gap: 0;
 }
 .mode-row-goal:hover { background: transparent; }
+.mode-row-goal.on {
+  background: var(--color-accent-soft);
+}
 .mode-row-main {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: var(--mode-row-icon-col) var(--composer-menu-desc-width, max-content);
+  column-gap: var(--mode-row-col-gap);
+  row-gap: 2px;
+  align-items: start;
   width: 100%;
-  padding: 7px 10px;
+  padding: 6px var(--mode-row-pad-x);
   border: none;
   background: none;
   border-radius: 6px;
   cursor: pointer;
-  font-family: var(--sans);
+  font-family: var(--font-ui);
   text-align: left;
 }
-.mode-row-main:hover { background: var(--panel2); }
-.mode-row-goal.on .mode-row-main .mode-row-name { color: var(--blue2); font-weight: 600; }
+.mode-row-main:hover { background: var(--color-surface-sunken); }
+.mode-row-goal.on .mode-row-main .mode-row-name { color: var(--color-accent-hover); }
 .mode-row-actions {
   display: flex;
-  gap: 6px;
-  flex: 1 1 100%;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-start;
+  padding: 0 var(--mode-row-pad-x) var(--mode-row-pad-x)
+    calc(var(--mode-row-pad-x) + var(--mode-row-icon-col) + var(--mode-row-col-gap));
 }
 .mode-row-action {
-  padding: 3px 8px;
-  border-radius: 5px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--ink);
-  font-size: calc(var(--ui-font-size) - 3px);
-  cursor: pointer;
+  flex: none;
 }
-.mode-row-action:hover:not(:disabled) { background: var(--panel2); }
-.mode-row-action:disabled { opacity: 0.5; cursor: default; }
+.mode-row-action :deep(.ui-button__content) { gap: var(--space-1); }
 .mode-row-input {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--bg);
-  color: var(--ink);
+  color: var(--color-text);
   font-size: var(--ui-font-size-xs);
+}
+
+/* ---- Narrow composer toolbar ----------------------------------------------
+   Below a wide desktop the chat column can be narrower than the full toolbar
+   needs — with the sidebar open on a small window, and on phones. The desktop
+   toolbar shows every control on one row and toolbar-left / toolbar-right are
+   overflow:hidden, so without shedding ink the row clips its own content. The
+   context ring stays visible at every width (it is the live context-pressure
+   signal; the exact numbers live in its tooltip), the model name truncates
+   earlier, and the permission label is capped so the ring and the send button
+   are never squeezed out. Mobile (≤640px) additionally hides perm / modes via
+   the rules below (those live in MobileSettingsSheet there). */
+@media (max-width: 980px) {
+  /* Model name was budgeted for a wide card (280px); trim it so the ring and
+     send button are not squeezed out on a narrow column. */
+  .model-pill b {
+    max-width: 130px;
+  }
+  /* Permission label is short (manual/yolo/auto); cap it defensively so a
+     longer label can never push the toolbar past its container. */
+  .perm-pill {
+    max-width: 104px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* ---- Mobile composer (prototype): round attach + rounded panel input +
@@ -1843,12 +2127,12 @@ function selectModel(modelId: string): void {
   .composer {
     padding:
       9px
-      var(--dock-inline-right, max(12px, env(safe-area-inset-right)))
-      max(24px, env(safe-area-inset-bottom))
-      var(--dock-inline-left, max(12px, env(safe-area-inset-left)));
+      var(--dock-inline-right, max(12px, var(--safe-right)))
+      max(24px, var(--safe-bottom))
+      var(--dock-inline-left, max(12px, var(--safe-left)));
   }
   .composer-card {
-    border-radius: 14px;
+    --composer-send-size: 36px;
     max-width: 100%;
   }
   .input-row {
@@ -1857,9 +2141,9 @@ function selectModel(modelId: string): void {
   }
   /* Send → 36px round (hide the SVG arrow, show only the ::after glyph) */
   .send {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
+    width: var(--composer-send-size);
+    height: var(--composer-send-size);
+    min-width: var(--composer-send-size);
     padding: 0;
     border-radius: 50%;
     font-size: 0;
@@ -1876,19 +2160,35 @@ function selectModel(modelId: string): void {
     line-height: 1;
     color: var(--bg);
   }
-  .send.aborting::after {
+  /* Stop → 36px round "■" glyph to match the mobile Send sizing. */
+  .stop {
+    width: var(--composer-send-size);
+    height: var(--composer-send-size);
+    min-width: var(--composer-send-size);
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0;
+    align-self: flex-end;
+    position: relative;
+  }
+  .stop svg {
+    display: none;
+  }
+  .stop::after {
     content: "■";
     /* Fixed icon glyph size — not part of the UI font scale. */
-    font-size: 14px;
+    font-size: 17px;
+    line-height: 1;
   }
 
-  /* Mobile toolbar: hide secondary controls; only attach + model stay visible.
-     Permission / plan / context live in the MobileSettingsSheet. The /compact
-     chip stays: it is the ONLY context-pressure signal on a phone (it appears
-     at ≥80% usage) and tapping it triggers compaction directly. */
+  /* Mobile toolbar: hide secondary controls; attach / context ring / model /
+     send stay visible. Permission + plan move into the MobileSettingsSheet.
+     The context ring stays at every width by design — it is the live
+     context-pressure signal on a phone (the exact numbers live in the ring's
+     tooltip). The /compact chip also stays so compaction is one tap away at
+     ≥80% usage. */
   .perm-pill,
-  .modes,
-  .ctx-group {
+  .modes {
     display: none;
   }
 
@@ -1901,7 +2201,7 @@ function selectModel(modelId: string): void {
   }
 
   /* Bump mobile font sizes +2px and pin input at 16px to prevent iOS zoom.
-     Height (min 56px / max one quarter of the viewport) is inherited from the
+     Height (min 36px / max one quarter of the viewport) is inherited from the
      base .ph rule so the box auto-grows the same way on touch and desktop. */
   .ph {
     /* Pinned at 16px to prevent iOS auto-zoom on focus (not part of UI font scale). */
@@ -1931,16 +2231,29 @@ function selectModel(modelId: string): void {
   .md-section {
     font-size: var(--ui-font-size);
   }
+  .md-thinking {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .md-thinking .effort-segments {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .md-thinking .effort-seg {
+    flex: 1;
+    padding: 5px 6px;
+  }
   .pd-name {
     font-size: var(--ui-font-size);
   }
   .pd-desc {
-    font-size: var(--ui-font-size);
+    font-size: var(--text-xs);
   }
 }
 
-/* NOTE: Modern-theme composer overrides live in src/style.css (global), NOT here.
-   Scoped `:global(html[data-theme=modern]) .cin` rules did NOT reliably win the
-   cascade against the base `.cin` (the input stayed square + mono), so they were
-   moved to the global sheet where they apply. */
+/* NOTE: Composer overrides live in src/style.css (global), NOT here. Scoped
+   `.cin` rules did NOT reliably win the cascade against the base `.cin` (the
+   input stayed square + mono), so they were moved to the global sheet where they
+   apply. */
 </style>

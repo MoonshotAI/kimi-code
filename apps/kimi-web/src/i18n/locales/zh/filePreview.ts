@@ -24,6 +24,7 @@ export default {
   binaryNoPreview: '二进制文件 · {mime} · {size} 字节 · 暂不预览',
   unknownType: '未知类型',
   copyCode: '复制代码',
+  enlargeImage: '放大图片',
   errors: {
     emptyPath: '文件路径为空',
     unsupportedPath: '不支持预览 URL 或远程路径',

@@ -2,11 +2,32 @@ import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
-import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
-import { estimateTokensForMessages } from '../../utils/tokens';
-import { escapeXml } from '../../utils/xml-escape';
-import type { CompactionResult } from '../compaction';
-import { project, trimTrailingOpenToolExchange } from './projector';
+import type { LoopRecordedEvent } from '../../loop';
+import { extractImageCompressionCaptions } from '../../tools/support/image-compress';
+import { estimateTokens, estimateTokensForMessages } from '../../utils/tokens';
+import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
+import {
+  COMPACT_USER_MESSAGE_MAX_TOKENS,
+  COMPACTION_ELISION_VARIANT,
+  buildCompactionElisionText,
+  collectCompactableUserMessages,
+  isRealUserInput,
+  selectCompactionUserMessages,
+  selectRecentUserMessages,
+  type CompactionInput,
+  type CompactionResult,
+} from '../compaction';
+import {
+  captureMediaStripSnapshot,
+  degradeOlderMediaParts,
+  MEDIA_DEGRADE_KEEP_RECENT,
+  project,
+  stripMediaPartsBySnapshot,
+  type ProjectionAnomaly,
+  type ProjectOptions,
+  trimTrailingOpenToolExchange,
+} from './projector';
+import { stripDynamicToolContext } from './dynamic-tools';
 import {
   USER_PROMPT_ORIGIN,
   type AgentContextData,
@@ -15,14 +36,14 @@ import {
 } from './types';
 
 export * from './types';
+export * from './dynamic-tools';
 
-const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
-const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
-const TOOL_EMPTY_ERROR_STATUS =
-  '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
-const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
+
+const IMPORT_CONTEXT_GUIDANCE =
+  'This is a prior conversation history that may be relevant to the current session. ' +
+  'Please review this context and use it to inform your responses.';
 
 // Invariant: _history must not contain an unresolved tool call exchange except
 // at the tail. When the tail is unresolved, pendingToolResultIds is exactly the
@@ -36,6 +57,9 @@ export class ContextMemory {
   private pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
   private _lastAssistantAt: number | null = null;
+  // Signature of the last logged set of projection repairs, so a repair that
+  // recurs identically on every send is logged once rather than per step.
+  private lastProjectionRepairSignature: string | null = null;
 
   constructor(protected readonly agent: Agent) {}
 
@@ -48,9 +72,23 @@ export class ContextMemory {
     origin: PromptOrigin = USER_PROMPT_ORIGIN,
   ): void {
     if (content.length === 0) return;
+    // Prompt ingestion (server upload/base64 route, TUI paste, ACP) annotates
+    // a compressed image with an inline `<system>` caption next to the image.
+    // Left inside the user message, that raw markup is user-visible in every
+    // history projection (TUI replay, vis, export). Reroute each caption
+    // through the built-in system-reminder injection — hidden by its
+    // `injection` origin — and keep only the real user content here.
+    const { captions, parts } =
+      origin.kind === 'user'
+        ? splitImageCompressionCaptions(content)
+        : { captions: [], parts: [...content] };
+    for (const caption of captions) {
+      this.appendSystemReminder(caption, { kind: 'injection', variant: 'image_compression' });
+    }
+    if (parts.length === 0) return;
     this.appendMessage({
       role: 'user',
-      content: [...content],
+      content: parts,
       toolCalls: [],
       origin,
     });
@@ -142,6 +180,73 @@ export class ContextMemory {
     this._lastAssistantAt = null;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
+    this.agent.tools.onContextCleared();
+    this.agent.emitStatusUpdated();
+  }
+
+  importContext(content: string, source: string): void {
+    if (content.trim().length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Imported context cannot be empty', {
+        details: { reason: 'import_content_empty' },
+      });
+    }
+    const normalizedSource = source.trim();
+    if (normalizedSource.length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Imported context source cannot be empty', {
+        details: { reason: 'import_source_empty' },
+      });
+    }
+
+    const message: ContextMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text:
+            `<system>The user has imported context from ${escapeXml(normalizedSource)}. ` +
+            `${IMPORT_CONTEXT_GUIDANCE}</system>`,
+        },
+        {
+          type: 'text',
+          text:
+            `<imported_context source="${escapeXmlAttr(normalizedSource)}">\n` +
+            `${content}\n</imported_context>`,
+        },
+      ],
+      toolCalls: [],
+      origin: USER_PROMPT_ORIGIN,
+    };
+    const currentTokenCount = this.tokenCountWithPending;
+    const importTokenCount = estimateTokensForMessages([message]);
+    const totalTokenCount = currentTokenCount + importTokenCount;
+    const maxContextTokens = this.agent.config.modelCapabilities.max_context_tokens;
+    if (maxContextTokens > 0 && totalTokenCount > maxContextTokens) {
+      throw new KimiError(
+        ErrorCodes.CONTEXT_OVERFLOW,
+        'Imported content is too large for the current model context ' +
+          `(~${String(importTokenCount)} import tokens + ${String(currentTokenCount)} existing ` +
+          `= ~${String(totalTokenCount)} total > ${String(maxContextTokens)} token limit). ` +
+          'Please import a smaller file or session.',
+        {
+          details: {
+            reason: 'import_context_overflow',
+            importTokenCount,
+            currentTokenCount,
+            totalTokenCount,
+            maxContextTokens,
+          },
+        },
+      );
+    }
+
+    this.appendMessage(message);
+    this.updateTokenCount(totalTokenCount);
+  }
+
+  updateTokenCount(tokenCount: number): void {
+    this.agent.records.logRecord({ type: 'context.update_token_count', tokenCount });
+    this._tokenCount = tokenCount;
+    this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.emitStatusUpdated();
   }
 
@@ -172,7 +277,7 @@ export class ContextMemory {
         this._tokenCount -= estimateTokensForMessages([message]);
       }
 
-      if (isRealUserPrompt(message)) {
+      if (isRealUserInput(message)) {
         removedUserCount++;
         if (removedUserCount >= count) break;
       }
@@ -205,7 +310,67 @@ export class ContextMemory {
     }
   }
 
-  applyCompaction(result: CompactionResult): void {
+  applyCompaction(input: CompactionInput): CompactionResult {
+    // Single derivation point for the post-compaction shape: the kept user
+    // messages (verbatim, within the token budget — the oldest head plus the
+    // most recent tail, with an elision marker between them when the pool
+    // overflowed), followed by a user-role summary. `tokensAfter` and the
+    // kept-count fields are derived here from the actual `_history` so the
+    // live context, the wire record, and the transcript reducer all agree —
+    // re-deriving them elsewhere (e.g. from the full transcript, which still
+    // holds the untruncated originals of messages the live context truncated)
+    // would diverge.
+    const compactableUserMessages = collectCompactableUserMessages(this._history);
+    // Records written before the head/tail split carry `keptUserMessageCount`
+    // but no `keptHeadUserMessageCount`; they were produced by the tail-only
+    // selection, so restore must reproduce that exact selection or the rebuilt
+    // history would diverge from the persisted counts the transcript reducer
+    // relies on. (A new-code record without elision restores identically under
+    // either selection, so gating on the head field alone is sufficient.)
+    const restoreTailOnly =
+      this.agent.records.restoring !== null && input.keptHeadUserMessageCount === undefined;
+    const selection = restoreTailOnly
+      ? {
+          head: [],
+          tail: selectRecentUserMessages(compactableUserMessages, COMPACT_USER_MESSAGE_MAX_TOKENS),
+          elided: false,
+          omittedTokens: 0,
+        }
+      : selectCompactionUserMessages(compactableUserMessages);
+    const elisionMessage: ContextMessage | null = selection.elided
+      ? {
+          role: 'user',
+          content: [{ type: 'text', text: buildCompactionElisionText(selection.omittedTokens) }],
+          toolCalls: [],
+          origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
+        }
+      : null;
+    const keptMessages: ContextMessage[] =
+      elisionMessage === null
+        ? [...selection.head, ...selection.tail]
+        : [...selection.head, elisionMessage, ...selection.tail];
+    // Live compaction omits these so they are derived from the actual
+    // `_history`; restore passes the persisted record so its historical values
+    // are preserved verbatim. Older wire records did not have `contextSummary`,
+    // so their `summary` remains the model-context text during restore.
+    const contextSummary = input.contextSummary ?? input.summary;
+    const tokensAfter =
+      input.tokensAfter ??
+      estimateTokens(contextSummary) + estimateTokensForMessages(keptMessages);
+    const keptUserMessageCount =
+      input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
+    const keptHeadUserMessageCount =
+      input.keptHeadUserMessageCount ?? (selection.elided ? selection.head.length : undefined);
+    const result: CompactionResult = {
+      summary: input.summary,
+      contextSummary,
+      compactedCount: input.compactedCount,
+      tokensBefore: input.tokensBefore,
+      tokensAfter,
+      keptUserMessageCount,
+      keptHeadUserMessageCount,
+      droppedCount: input.droppedCount,
+    };
     this.agent.records.logRecord({
       type: 'context.apply_compaction',
       ...result,
@@ -213,27 +378,54 @@ export class ContextMemory {
     this.agent.replayBuilder.patchLast('compaction', {
       result: {
         summary: result.summary,
+        contextSummary: result.contextSummary,
         compactedCount: result.compactedCount,
         tokensBefore: result.tokensBefore,
         tokensAfter: result.tokensAfter,
+        keptUserMessageCount: result.keptUserMessageCount,
+        keptHeadUserMessageCount: result.keptHeadUserMessageCount,
+        droppedCount: result.droppedCount,
       },
     });
-    this._history = [
-      {
-        role: 'assistant',
-        content: [{ type: 'text', text: result.summary }],
-        toolCalls: [],
-        origin: { kind: 'compaction_summary' },
-      },
-      ...this._history.slice(result.compactedCount),
-    ];
+    const summaryMessage: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: contextSummary }],
+      toolCalls: [],
+      origin: { kind: 'compaction_summary' },
+    };
+    // Wire backward-compat: a pre-rework `context.apply_compaction` record (which
+    // has no `keptUserMessageCount`) used `[summary, ...history.slice(compactedCount)]`
+    // semantics and kept a verbatim recent tail. Reproduce that shape on restore
+    // so resuming a session compacted by an older version does not silently drop
+    // the recent assistant/tool tail beyond `compactedCount`. Gated on
+    // `records.restoring`, so the live/forward path — which always sets
+    // `contextSummary` and `keptUserMessageCount` — is unaffected.
+    //
+    // The cut can land inside a tool exchange, leaving the tail starting with an
+    // orphan `tool` result whose assistant is now in the summarized prefix. The
+    // history is kept faithful to the wire records (so the transcript reducer's
+    // fold length stays in sync); the projector drops the orphan at the wire
+    // boundary — see `dropOrphanToolResults` — so a strict provider still gets a
+    // valid request without mutating the stored history here.
+    const isLegacyRestore =
+      this.agent.records.restoring !== null &&
+      input.keptUserMessageCount === undefined &&
+      input.compactedCount < this._history.length;
+    this._history = isLegacyRestore
+      ? [summaryMessage, ...this._history.slice(input.compactedCount)]
+      : [...keptMessages, summaryMessage];
     this.openSteps.clear();
-    this.flushDeferredMessagesIfToolExchangeClosed();
+    this.pendingToolResultIds.clear();
+    // Drop deferred messages (mostly injections/system reminders) instead of
+    // flushing them: initial context is rebuilt every turn.
+    this.deferredMessages = [];
     this._tokenCount = result.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.microCompaction.reset();
-    this.agent.injection.onContextCompacted(result.compactedCount);
+    this.agent.injection.onContextCompacted();
+    this.agent.tools.onContextCompacted();
     this.agent.emitStatusUpdated();
+    return result;
   }
 
   data(): AgentContextData {
@@ -256,12 +448,140 @@ export class ContextMemory {
     return this._history;
   }
 
-  project(messages: readonly ContextMessage[]): Message[] {
-    return project(this.agent.microCompaction.compact(messages));
+  project(messages: readonly ContextMessage[], options?: ProjectOptions): Message[] {
+    // Shape for the current model BEFORE projecting: a model without the
+    // dynamically-loaded-tools capability must not see dynamic-tool schema
+    // messages or loadable-tools announcements (the canonical history keeps
+    // them; only this outgoing view is shaped). Must run pre-projection —
+    // project() strips `origin`, the only anchor for the announcements.
+    // setModel never rewrites history, so a mid-session switch
+    // degrades/upgrades losslessly.
+    const shaped = this.agent.toolSelectEnabled ? messages : stripDynamicToolContext(messages);
+    const anomalies: ProjectionAnomaly[] = [];
+    const result = project(this.agent.microCompaction.compact(shaped), {
+      ...options,
+      onAnomaly: (anomaly) => {
+        anomalies.push(anomaly);
+        options?.onAnomaly?.(anomaly);
+      },
+    });
+    this.reportProjectionRepairs(anomalies);
+    return result;
+  }
+
+  // Surface the projector's wire-repairs so a silently-mangled history leaves a
+  // trace instead of being papered over. Deduped by signature: a repair that
+  // recurs identically every send (e.g. a persistently lost result re-synthesized
+  // each turn) logs once, not per step. Trailing-tail synthesis is excluded — it
+  // is the expected close of an in-flight call under `synthesizeMissing`
+  // (compaction / strict resend), not a defect.
+  private reportProjectionRepairs(anomalies: readonly ProjectionAnomaly[]): void {
+    const notable = anomalies.filter(
+      (anomaly) => !(anomaly.kind === 'tool_result_synthesized' && anomaly.trailing),
+    );
+    if (notable.length === 0) {
+      this.lastProjectionRepairSignature = null;
+      return;
+    }
+    const signature = notable
+      .map((anomaly) => ('toolCallId' in anomaly ? `${anomaly.kind}:${anomaly.toolCallId}` : anomaly.kind))
+      .toSorted()
+      .join('|');
+    if (signature === this.lastProjectionRepairSignature) return;
+    this.lastProjectionRepairSignature = signature;
+
+    let reordered = 0;
+    let synthesized = 0;
+    let droppedOrphan = 0;
+    let duplicateCallsDropped = 0;
+    let duplicateResultsDropped = 0;
+    let leadingDropped = 0;
+    let assistantsMerged = 0;
+    let whitespaceDropped = 0;
+    for (const anomaly of notable) {
+      if (anomaly.kind === 'tool_result_reordered') reordered += 1;
+      else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
+      else if (anomaly.kind === 'orphan_tool_result_dropped') droppedOrphan += 1;
+      else if (anomaly.kind === 'duplicate_tool_call_dropped') duplicateCallsDropped += 1;
+      else if (anomaly.kind === 'duplicate_tool_result_dropped') duplicateResultsDropped += 1;
+      else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
+      else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
+      else whitespaceDropped += 1;
+    }
+    const toolCallIds = [
+      ...new Set(
+        notable.flatMap((anomaly) => ('toolCallId' in anomaly ? [anomaly.toolCallId] : [])),
+      ),
+    ].slice(0, 5);
+    this.agent.log.warn('repaired the request to keep it wire-valid', {
+      reordered,
+      synthesized,
+      droppedOrphan,
+      duplicateCallsDropped,
+      duplicateResultsDropped,
+      leadingDropped,
+      assistantsMerged,
+      whitespaceDropped,
+      toolCallIds,
+    });
+    this.agent.telemetry.track('context_projection_repaired', {
+      reordered,
+      synthesized,
+      dropped_orphan: droppedOrphan,
+      duplicate_calls_dropped: duplicateCallsDropped,
+      duplicate_results_dropped: duplicateResultsDropped,
+      leading_dropped: leadingDropped,
+      assistants_merged: assistantsMerged,
+      whitespace_dropped: whitespaceDropped,
+    });
   }
 
   get messages(): Message[] {
-    return this.project(this.history);
+    // The normal wire projection. `dropOrphanResults` is on for every
+    // request-building projection (here, `strictMessages`, and the compaction
+    // summarizer): a stray result with no matching call anywhere is wire-invalid
+    // on strict providers and useless to the model, so it never reaches the
+    // provider — while fragment projections (e.g. token estimation of a history
+    // slice) leave it alone.
+    return this.project(this.history, { dropOrphanResults: true });
+  }
+
+  // Last-resort projection for the post-400 strict resend: close every open tool
+  // call (including a trailing in-flight one), drop stray tool results, dedupe
+  // duplicate tool call ids (with their extra results), drop a leading non-user
+  // message, and merge consecutive assistant turns, so the request is
+  // wire-compliant for strict providers no matter how the history was mangled.
+  // Only used when the provider has already rejected the normal projection —
+  // see the adjacency fallback in `turn-step`.
+  get strictMessages(): Message[] {
+    return this.project(this.history, {
+      synthesizeMissing: true,
+      dropOrphanResults: true,
+      dedupeDuplicateToolCalls: true,
+      dropLeadingNonUser: true,
+      mergeConsecutiveAssistants: true,
+    });
+  }
+
+  // Fallback projection for the post-413 media-degraded resend: the normal
+  // wire projection with all but the most recent media parts replaced by text
+  // markers, so a request body bloated by accumulated base64 media fits the
+  // provider's size limit. Purely read-side — the history keeps its media —
+  // and only used when the provider has already rejected the normal
+  // projection as too large; see the request-too-large fallback in
+  // `turn-step`.
+  get mediaDegradedMessages(): Message[] {
+    return degradeOlderMediaParts(this.messages, MEDIA_DEGRADE_KEEP_RECENT);
+  }
+
+  /**
+   * Compatibility projection that strips every media part visible now. Turn
+   * recovery uses its own captured snapshot so newly produced media can pass;
+   * direct callers retain the historical all-current-media behavior here.
+   */
+  get mediaStrippedMessages(): Message[] {
+    const messages = this.messages;
+    return stripMediaPartsBySnapshot(messages, captureMediaStripSnapshot(messages));
   }
 
   useProjectedHistoryFrom(source: ContextMemory): void {
@@ -271,7 +591,15 @@ export class ContextMemory {
 
   finishResume(): void {
     this.openSteps.clear();
-    this.closePendingToolResults();
+    const closed = this.closePendingToolResults();
+    if (closed.length > 0) {
+      // Routine end-of-resume close of a genuinely interrupted trailing call
+      // (e.g. the process died mid-tool), logged for traceability.
+      this.agent.log.info('closed interrupted tool calls at end of resume', {
+        closed: closed.length,
+        toolCallIds: closed.slice(0, 5),
+      });
+    }
   }
 
   // Synthesize interrupted tool results for any still-open tool calls, closing
@@ -280,9 +608,11 @@ export class ContextMemory {
   // exactly where it occurred — otherwise it would keep `hasOpenToolExchange`
   // true and strand every later message in `deferredMessages`, so only the
   // trailing exchange ends up aligned. `finishResume` runs the same routine once
-  // more to close a genuine trailing interruption at end of resume.
-  private closePendingToolResults(): void {
-    if (this.pendingToolResultIds.size === 0) return;
+  // more to close a genuine trailing interruption at end of resume, and
+  // `closeAbandonedToolExchange` reuses it (with a live-turn message) as the
+  // turn-end teardown. Returns the ids it closed; callers own the logging.
+  private closePendingToolResults(output: string = TOOL_INTERRUPTED_ON_RESUME_OUTPUT): string[] {
+    if (this.pendingToolResultIds.size === 0) return [];
     const interruptedToolCallIds = [...this.pendingToolResultIds];
     for (const toolCallId of interruptedToolCallIds) {
       this.appendLoopEvent({
@@ -290,11 +620,25 @@ export class ContextMemory {
         parentUuid: toolCallId,
         toolCallId,
         result: {
-          output: TOOL_INTERRUPTED_ON_RESUME_OUTPUT,
+          output,
           isError: true,
         },
       });
     }
+    return interruptedToolCallIds;
+  }
+
+  /**
+   * Defensive teardown for a live turn that ended — normally, cancelled, or
+   * failed — while recorded tool calls were still awaiting results (e.g. the
+   * batch's result dispatch died after a `tool.call` was already recorded).
+   * Synthesizes an error result for each dangling call so the exchange closes:
+   * left open, it would keep `hasOpenToolExchange` true and strand every later
+   * message in `deferredMessages`, silently swallowing user input. No-op when
+   * the exchange is already closed. Returns the number of calls it closed.
+   */
+  closeAbandonedToolExchange(output: string): number {
+    return this.closePendingToolResults(output).length;
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
@@ -308,7 +652,16 @@ export class ContextMemory {
         // earlier step were interrupted (the invariant guarantees this never
         // happens live, so this is a no-op outside replay). Close them in place
         // before opening the new step so mid-history gaps stay aligned.
-        this.closePendingToolResults();
+        const closed = this.closePendingToolResults();
+        if (closed.length > 0) {
+          // A mid-history gap means results were lost before this boundary —
+          // a genuine defect worth investigating, unlike the expected trailing
+          // interruption `finishResume` closes.
+          this.agent.log.warn('closed unresolved tool calls at a step boundary', {
+            closed: closed.length,
+            toolCallIds: closed.slice(0, 5),
+          });
+        }
         const message: ContextMessage = {
           role: 'assistant',
           content: [],
@@ -369,7 +722,12 @@ export class ContextMemory {
           id: event.toolCallId,
           name: event.name,
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
+          extras: event.extras,
         });
+        if (event.display !== undefined) {
+          openStep.toolCallDisplays ??= {};
+          openStep.toolCallDisplays[event.toolCallId] = event.display;
+        }
         this.pendingToolResultIds.add(event.toolCallId);
         return;
       }
@@ -378,11 +736,16 @@ export class ContextMemory {
         // closed in place at a step boundary (a stale duplicate from an older
         // tail-only finishResume), or its call is gone.
         if (!this.pendingToolResultIds.has(event.toolCallId)) return;
-        const message = createToolMessage(event.toolCallId, toolResultOutputForModel(event.result));
+        // History stores the fact verbatim: the tool's own output plus the
+        // structured isError/note fields. Model-facing status text (error
+        // prefix, empty placeholder) and the note are rendered only at LLM
+        // projection time (see tool-result-render.ts).
+        const message = createToolMessage(event.toolCallId, event.result.output);
         this.pushHistory({
           ...message,
           role: 'tool',
           isError: event.result.isError,
+          note: event.result.note,
         });
         this.pendingToolResultIds.delete(event.toolCallId);
         this.flushDeferredMessagesIfToolExchangeClosed();
@@ -432,43 +795,33 @@ export class ContextMemory {
   }
 }
 
-function toolResultOutputForModel(result: ExecutableToolResult): string | ContentPart[] {
-  const output = result.output;
-  if (typeof output === 'string') {
-    if (result.isError === true) {
-      if (output.length === 0) return TOOL_EMPTY_ERROR_STATUS;
-      if (output.trimStart().startsWith('<system>ERROR:')) return output;
-      return `${TOOL_ERROR_STATUS}\n${output}`;
+// Split inline image-compression captions (see buildImageCompressionCaption)
+// out of user prompt content. A caption may be a standalone text part (server
+// route, ACP) or merged into an adjacent text segment (TUI paste), so each
+// text part is scanned rather than matched whole. Text left empty once its
+// captions are removed is dropped entirely.
+function splitImageCompressionCaptions(content: readonly ContentPart[]): {
+  captions: readonly string[];
+  parts: ContentPart[];
+} {
+  const captions: string[] = [];
+  const parts: ContentPart[] = [];
+  for (const part of content) {
+    if (part.type !== 'text') {
+      parts.push(part);
+      continue;
     }
-    return isEmptyOutputText(output) ? TOOL_EMPTY_STATUS : output;
+    const extracted = extractImageCompressionCaptions(part.text);
+    if (extracted.captions.length === 0) {
+      parts.push(part);
+      continue;
+    }
+    captions.push(...extracted.captions);
+    if (extracted.text.trim().length > 0) {
+      parts.push({ type: 'text', text: extracted.text });
+    }
   }
-
-  if (output.length === 0) {
-    return [
-      {
-        type: 'text',
-        text: result.isError === true ? TOOL_EMPTY_ERROR_STATUS : TOOL_EMPTY_STATUS,
-      },
-    ];
-  }
-  if (result.isError === true) {
-    return [{ type: 'text', text: TOOL_ERROR_STATUS }, ...output];
-  }
-  return output;
-}
-
-function isEmptyOutputText(output: string): boolean {
-  return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
-}
-
-function isRealUserPrompt(message: ContextMessage): boolean {
-  if (message.role !== 'user') return false;
-  const origin = message.origin;
-  if (origin === undefined || origin.kind === 'user') return true;
-  if (origin.kind === 'skill_activation') {
-    return origin.trigger === 'user-slash';
-  }
-  return false;
+  return { captions, parts };
 }
 
 function formatUndoUnavailableMessage(

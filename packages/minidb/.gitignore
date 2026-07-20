@@ -1,0 +1,9 @@
+# External reference implementations (not part of the package)
+references/
+
+# Runtime database files produced by minidb during tests / local runs
+*.wal
+*.snapshot
+*.snapshot.tmp
+*.wal.tmp
+data/

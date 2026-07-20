@@ -78,10 +78,11 @@ export function useTaskPoller(
               bytes: withOutput.outputBytes,
             });
           }
+          // Only a definitive response marks the task as fetched — a transient
+          // failure must leave it eligible for a later backfill.
+          fetchedTerminalTaskOutputIds.add(task.id);
         } catch {
           // Task may have finished between listTasks and getTask; ignore.
-        } finally {
-          fetchedTerminalTaskOutputIds.add(task.id);
         }
       }),
     );
@@ -92,7 +93,15 @@ export function useTaskPoller(
     rawState.tasksBySession = {
       ...rawState.tasksBySession,
       [sessionId]: existing.map((t) => {
-        const polled = outputByTaskId.get(t.id);
+        // Output was fetched by REST task id; a background subagent row folded
+        // into its WS agent-id row (keepLiveSubagents) is matched via
+        // backgroundTaskId, otherwise its final output would be dropped here
+        // and never refetched (the REST id is already marked as fetched).
+        const polled =
+          outputByTaskId.get(t.id) ??
+          (t.backgroundTaskId !== undefined
+            ? outputByTaskId.get(t.backgroundTaskId)
+            : undefined);
         if (!polled) return t;
         return { ...t, outputPreview: polled.preview, outputBytes: polled.bytes };
       }),
@@ -145,12 +154,13 @@ export function useTaskPoller(
               bytes: withOutput.outputBytes,
             });
           }
-        } catch {
-          // Task may have finished between listTasks and getTask; ignore.
-        } finally {
+          // Mark as fetched only on a definitive response; a transient failure
+          // stays eligible for the next poll.
           if (isTerminal) {
             fetchedTerminalTaskOutputIds.add(task.id);
           }
+        } catch {
+          // Task may have finished between listTasks and getTask; ignore.
         }
       }),
     );
@@ -163,8 +173,9 @@ export function useTaskPoller(
       const polled = outputByTaskId.get(fresh.id);
       return {
         ...fresh,
-        // Preserve any WS-driven outputLines (future taskProgress events).
+        // Preserve any WS-driven outputLines / streamed text (future taskProgress events).
         outputLines: old?.outputLines,
+        text: old?.text,
         outputPreview: polled?.preview ?? old?.outputPreview,
         outputBytes: polled?.bytes ?? old?.outputBytes,
       };

@@ -29,7 +29,7 @@ export const AgentSwarmToolInputSchema = z
       .min(1)
       .optional()
       .describe(
-        'Subagent type used for every spawned subagent. Defaults to coder when omitted.',
+        'Subagent type used for every new subagent spawned from items; defaults to coder when omitted. Resumed subagents always keep their original type, so passing subagent_type together with resume_agent_ids is allowed — it only affects the item-based spawns.',
       ),
     prompt_template: z
       .string()
@@ -91,6 +91,9 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   constructor(
     private readonly subagentHost: SessionSubagentHost,
     private readonly swarmMode: SwarmMode,
+    // `0` = no timeout, preserved on purpose (`0 ?? DEFAULT` stays `0`);
+    // SubagentBatch arms no timer for non-positive timeouts.
+    private readonly subagentTimeoutMs?: number,
   ) {}
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
@@ -145,7 +148,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         runInBackground: false,
         swarmItem: spec.item,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
       };
       if (spec.kind === 'resume') {
         return {

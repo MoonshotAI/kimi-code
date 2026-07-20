@@ -111,6 +111,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -132,6 +133,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -169,6 +171,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'print',
@@ -201,6 +204,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -236,6 +240,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -255,6 +260,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -295,6 +301,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -333,6 +340,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: forked.id,
         properties: {
+          client_id: null,
           client_name: 'kimi-code-cli',
           client_version: '0.0.0-test',
           ui_mode: 'shell',
@@ -368,6 +376,7 @@ describe('KimiHarness.createSession transport link', () => {
         event: 'session_started',
         sessionId: session.id,
         properties: {
+          client_id: null,
           client_name: null,
           client_version: null,
           ui_mode: 'shell',
@@ -578,6 +587,84 @@ effort = "medium"
     expect(coreSessionIds(harness)).toEqual([]);
   });
 
+  it('permanently deletes an active session', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_delete_active', workDir });
+      const [summary] = await harness.listSessions({ sessionId: session.id });
+
+      await harness.deleteSession(session.id);
+
+      expect(harness.getSession(session.id)).toBeUndefined();
+      await expect(harness.listSessions({ sessionId: session.id })).resolves.toEqual([]);
+      expect(existsSync(summary!.sessionDir)).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('returns session.not_found when deleteSession targets a missing id', async () => {
+    const homeDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      await expect(harness.deleteSession('ses_delete_missing')).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'session.not_found',
+      } satisfies Partial<KimiError>);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('allows a deleted session id to be created again', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const sessionId = 'ses_delete_recreate';
+
+    try {
+      await harness.createSession({ id: sessionId, workDir });
+      await harness.deleteSession(sessionId);
+
+      const recreated = await harness.createSession({ id: sessionId, workDir });
+
+      expect(recreated.id).toBe(sessionId);
+      await expect(harness.listSessions({ sessionId })).resolves.toHaveLength(1);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('preserves a legacy source directory referenced by session metadata', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const legacySourceDir = await makeTempDir();
+    const markerPath = join(legacySourceDir, 'legacy-marker.txt');
+    await writeFile(markerPath, 'legacy source remains', 'utf-8');
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+
+    try {
+      const session = await harness.createSession({
+        id: 'ses_delete_migrated',
+        workDir,
+        metadata: { kimi_cli_source_path: legacySourceDir },
+      });
+
+      await harness.deleteSession(session.id);
+
+      await expect(readFile(markerPath, 'utf-8')).resolves.toBe('legacy source remains');
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('applies initial thinking and permission runtime options', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
@@ -599,11 +686,11 @@ effort = "medium"
           homeDir,
           session.id,
           'config.update',
-          (event) => event['thinkingLevel'] === 'low',
+          (event) => event['thinkingEffort'] === 'low',
         ),
       ).resolves.toMatchObject({
         type: 'config.update',
-        thinkingLevel: 'low',
+        thinkingEffort: 'low',
       });
       await expect(
         waitForAgentWireEvent(

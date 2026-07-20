@@ -39,6 +39,7 @@ Type `!` in an empty input box to enter shell mode and run terminal commands dir
 | `Ctrl-V` | Paste an image or video from the clipboard (Unix / macOS) |
 | `Alt-V` | Paste an image or video from the clipboard (Windows) |
 | `Ctrl--` | Undo |
+| `Esc` `Esc` | Open the undo selector (double-press while idle) |
 
 Pressing `Ctrl-G` opens an external editor, selected according to the following priority:
 
@@ -66,9 +67,9 @@ Pressing `Ctrl-S` causes the model to see your message at the next interruptible
 
 | Shortcut | Function |
 | --- | --- |
-| `Ctrl-O` | Expand or collapse tool output |
+| `Ctrl-O` | Expand or collapse tool output and compaction summaries |
 
-When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views.
+When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views. After compaction, the same shortcut shows or hides the compaction summary in the compaction block.
 
 ## Approval Panel
 

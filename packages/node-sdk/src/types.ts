@@ -24,6 +24,7 @@ export type {
   BackgroundTaskStatus,
   ConfigDiagnostics,
   ContextMessage,
+  CronTaskSnapshot,
   ExperimentalFeatureState,
   ExperimentalFlagMap,
   ExperimentalFlagSource,
@@ -32,6 +33,7 @@ export type {
   GoalBudgetReport,
   GoalChange,
   GoalChangeStats,
+  GetCronTasksResult,
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,
@@ -43,6 +45,7 @@ export type {
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  PluginCommandDef,
   PluginGithubMetadata,
   PluginGithubRef,
   PluginInfo,
@@ -61,11 +64,13 @@ export type {
   SkillSummary,
   ThinkingConfig,
   ToolInfo,
+  GlobalMcpServerConfig as McpServerConfig,
+  GlobalMcpServerTestResult as McpTestResult,
 } from '@moonshot-ai/agent-core';
 
 export type { KimiHostIdentity, OAuthRefreshOutcome };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
-export type { ContentPart, Role, ToolCall } from '@moonshot-ai/kosong';
+export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
 
@@ -103,6 +108,14 @@ export interface CreateSessionOptions {
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
   readonly sessionStartedProperties?: TelemetryProperties;
+  /**
+   * Print-mode (`kimi -p`) only: when the main agent ends a turn while
+   * background subagents (`kind === 'agent'`) are still running, hold the turn
+   * open and idle-wait until they all finish, flushing their completions into
+   * the turn so the model can react before the run exits. Ignored by
+   * interactive / SDK sessions.
+   */
+  readonly drainAgentTasksOnStop?: boolean;
 }
 
 export interface RenameSessionInput {
@@ -115,6 +128,8 @@ export interface ResumeSessionInput {
   readonly kaos?: Kaos | undefined;
   readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Include persisted subagent states in the returned replay snapshot. */
+  readonly includeSubagents?: boolean;
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 
@@ -129,6 +144,8 @@ export interface AddAdditionalDirInput {
 }
 
 export interface AddAdditionalDirOptions {
+  /** When true, share the directory through workspace local config. When false,
+   * keep it scoped to this session while still restoring it on session resume. */
   readonly persist: boolean;
 }
 
@@ -137,6 +154,11 @@ export interface ForkSessionInput {
   readonly forkId?: string;
   readonly title?: string;
   readonly metadata?: JsonObject;
+  /**
+   * Zero-based index of the user-visible turn to retain through. Omit it to
+   * preserve the existing full-session fork behavior.
+   */
+  readonly turnIndex?: number;
 }
 
 export interface ExportSessionInput {
@@ -164,6 +186,18 @@ export interface ListSessionsOptions {
 
 export interface GetConfigOptions {
   readonly reload?: boolean | undefined;
+}
+
+export interface AuthenticateMcpServerOptions {
+  readonly onAuthorizationUrl: (
+    url: string,
+  ) => void | boolean | PromiseLike<void | boolean>;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
+export interface TestMcpServerOptions {
+  readonly cwd?: string;
 }
 
 export interface CompactOptions {
@@ -197,7 +231,7 @@ export interface SessionUsage {
 
 export interface SessionStatus {
   readonly model?: string;
-  readonly thinkingLevel: string;
+  readonly thinkingEffort: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;
   readonly swarmMode?: boolean | undefined;

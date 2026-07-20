@@ -27,7 +27,8 @@ import { PathSecurityError } from '../tools/policies/path-access';
 import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
-import type { LLM, LLMChatResponse } from './llm';
+import { parseToolCallArguments } from './tool-args-parse';
+import type { LLM, LLMChatResponse, LLMRequestTrace } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
 import type {
@@ -44,6 +45,18 @@ import type {
 const GRACE_TIMEOUT_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
+
+/**
+ * Output for a tool call the step never executed: the provider stream broke
+ * off (paused / overloaded / token limit), so running the call — whose
+ * arguments may be truncated mid-stream — would be unsafe. The wording tells
+ * the model the call did not run and invites a clean re-issue instead of
+ * assumptions about the outcome.
+ */
+const UNEXECUTED_TOOL_CALL_OUTPUT =
+  'This tool call was not executed: the model response ended before tool execution could start ' +
+  '(the provider stream was interrupted). Do not assume the tool ran — ' +
+  're-issue the call if it is still needed.';
 
 const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
 
@@ -62,6 +75,8 @@ function abortedToolOutput(toolName: string, signal: AbortSignal): string {
 
 export interface ToolCallStepContext {
   readonly tools?: readonly ExecutableTool[] | undefined;
+  /** See RunTurnInput.describeMissingTool. */
+  readonly describeMissingTool?: ((name: string) => string | undefined) | undefined;
   readonly hooks?: LoopHooks | undefined;
   readonly log?: Logger | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
@@ -70,6 +85,7 @@ export interface ToolCallStepContext {
   readonly turnId: string;
   readonly currentStep: number;
   readonly stepUuid: string;
+  readonly trace: LLMRequestTrace;
 }
 
 interface ToolCallBatchContext extends ToolCallStepContext {
@@ -125,7 +141,7 @@ export async function runToolCallBatch(
 ): Promise<ToolCallBatchResult> {
   if (response.toolCalls.length === 0) return { stopTurn: false };
   const batchStep: ToolCallBatchContext = { ...step, toolCalls: response.toolCalls };
-  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step.tools, toolCall));
+  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step, toolCall));
   const scheduler = new ToolScheduler<PendingToolResult>();
   const pendingResults: Array<Promise<PendingToolResult>> = [];
   let stopTurn = false;
@@ -157,6 +173,7 @@ export async function runToolCallBatch(
         parentUuid: result.toolCall.id,
         toolCallId: result.toolCall.id,
         result: result.result,
+        traceId: step.trace.traceId,
       });
     }
   } finally {
@@ -169,35 +186,82 @@ export async function runToolCallBatch(
 }
 
 /**
+ * Record tool calls from a response the step will NOT execute: the provider
+ * stream broke off (paused / overloaded / token limit), so running the calls
+ * — whose arguments may be truncated mid-stream — would be unsafe. Dropping
+ * them silently is not an option either: it loses the model's intent and,
+ * when the response carried no other usable content, persists an assistant
+ * message strict providers reject as empty. Each call is recorded with
+ * sanitized arguments (unparseable JSON, e.g. truncated by an interrupted
+ * stream, becomes `{}`) and immediately closed with a synthetic error result,
+ * so the exchange stays wire-valid and the model learns the calls never ran.
+ */
+export async function recordUnexecutedToolCalls(
+  step: ToolCallStepContext,
+  response: LLMChatResponse,
+): Promise<void> {
+  for (const toolCall of response.toolCalls) {
+    const parsedArgs = parseToolCallArguments(toolCall.arguments);
+    if (parsedArgs.parseFailed) {
+      step.log?.debug('recording unexecuted tool call with unparseable arguments', {
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        rawLength: toolCall.arguments?.length ?? 0,
+        error: parsedArgs.error,
+      });
+    }
+    await step.dispatchEvent({
+      type: 'tool.call',
+      uuid: toolCall.id,
+      turnId: step.turnId,
+      step: step.currentStep,
+      stepUuid: step.stepUuid,
+      toolCallId: toolCall.id,
+      name: toolCall.name,
+      args: parsedArgs.data,
+      extras: toolCall.extras,
+      traceId: step.trace.traceId,
+    });
+    await step.dispatchEvent({
+      type: 'tool.result',
+      parentUuid: toolCall.id,
+      toolCallId: toolCall.id,
+      result: { output: UNEXECUTED_TOOL_CALL_OUTPUT, isError: true },
+      traceId: step.trace.traceId,
+    });
+  }
+}
+
+/**
  * Provider-order validation pass. It does not run hooks, spawn tools, or write
  * events. Validator compilation may populate the local cache.
  */
 function preflightToolCall(
-  tools: readonly ExecutableTool[] | undefined,
+  step: Pick<ToolCallStepContext, 'tools' | 'describeMissingTool' | 'log'>,
   toolCall: ToolCall,
 ): PreflightedToolCall {
   const toolName = toolCall.name;
   const parsedArgs = parseToolCallArguments(toolCall.arguments);
-  const args = parsedArgs.success ? parsedArgs.data : {};
-  const tool = tools?.find((candidate) => candidate.name === toolName);
+  const tool = step.tools?.find((candidate) => candidate.name === toolName);
   if (tool === undefined) {
     return {
       kind: 'rejected',
       toolCall,
       toolName,
-      args,
-      output: `Tool "${toolName}" not found`,
+      args: parsedArgs.data,
+      output: step.describeMissingTool?.(toolName) ?? `Tool "${toolName}" not found`,
     };
   }
-  if (!parsedArgs.success) {
-    return {
-      kind: 'rejected',
-      toolCall,
+
+  if (parsedArgs.parseFailed) {
+    step.log?.debug('tool args JSON parse failed', {
       toolName,
-      args,
-      output: `Invalid args for tool "${toolName}": malformed JSON in arguments: ${parsedArgs.error}`,
-    };
+      toolCallId: toolCall.id,
+      rawLength: toolCall.arguments?.length ?? 0,
+      error: parsedArgs.error,
+    });
   }
+
   const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
   if (validationError !== null) {
     return {
@@ -209,21 +273,6 @@ function preflightToolCall(
     };
   }
   return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
-}
-
-function parseToolCallArguments(
-  raw: string | null,
-):
-  | { readonly success: true; readonly data: unknown }
-  | { readonly success: false; readonly error: string } {
-  if (raw === null || raw.length === 0) {
-    return { success: true, data: {} };
-  }
-  try {
-    return { success: true, data: JSON.parse(raw) as unknown };
-  } catch (error) {
-    return { success: false, error: errorMessage(error) };
-  }
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
@@ -380,6 +429,7 @@ async function runPrepareToolExecutionHook(
       args,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -434,6 +484,7 @@ async function runAuthorizeToolExecutionHook(
       execution,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -516,6 +567,7 @@ async function finalizePendingToolResult(
       result: pendingResult.result,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -564,6 +616,7 @@ async function executeTool(
   const executePromise = execution.execute({
     turnId,
     toolCallId: toolCall.id,
+    traceId: step.trace.traceId,
     metadata,
     signal,
     onUpdate: (update) => {
@@ -671,12 +724,19 @@ function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
+  // Rebuild keeps the persisted contract only: `note` rides into the record
+  // (the model reads it at projection), while `stopTurn`/`message` are
+  // loop/UI-local and are dropped here. Tools are arbitrary JS, so this is
+  // also where the note contract (string | undefined) is enforced: a
+  // malformed or empty note is discarded — the tool's actual output is
+  // still valid, and everything downstream trusts the contract.
+  const base: { output: typeof output; note?: string; truncated?: true } = { output };
+  if (typeof r.note === 'string' && r.note.length > 0) base.note = r.note;
+  if (r.truncated === true) base.truncated = true;
   if (r.isError === true) {
-    return r.truncated === true
-      ? { output, isError: true, truncated: true }
-      : { output, isError: true };
+    return { ...base, isError: true };
   }
-  return r.truncated === true ? { output, truncated: true } : { output };
+  return base;
 }
 
 function makeToolResult(
@@ -727,5 +787,7 @@ async function dispatchToolCall(
     args,
     description: displayFields?.description,
     display: displayFields?.display,
+    extras: toolCall.extras,
+    traceId: step.trace.traceId,
   });
 }

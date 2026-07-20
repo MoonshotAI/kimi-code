@@ -35,7 +35,7 @@ const isFoldable = computed(() => props.foldable && paragraphs.value.length > 1)
 const open = computed(() => props.streaming || !isFoldable.value);
 
 /** Last non-empty paragraph, shown as the collapsed teaser. */
-const teaser = computed(() => paragraphs.value.pop() ?? '');
+const teaser = computed(() => paragraphs.value.at(-1) ?? '');
 
 const bodyEl = ref<HTMLElement | null>(null);
 
@@ -91,7 +91,7 @@ watch(
 .tc-wrap {
   display: grid;
   grid-template-rows: 1fr 0fr;
-  transition: grid-template-rows 0.25s ease;
+  transition: grid-template-rows var(--duration-slow) var(--ease-out);
   cursor: pointer;
 }
 .tc-wrap.is-collapsed {
@@ -99,37 +99,40 @@ watch(
 }
 .tc-anim,
 .prev-anim {
+  /* min-height: 0 is required for the 0fr/1fr grid collapse to actually shrink
+     below the tracks' content. Without it, an inner scroll container (`.tc`,
+     overflow-y: auto) contributes its content as the automatic minimum, so the
+     row keeps its streaming height and never collapses to the short teaser —
+     most visible on iOS Safari. */
   overflow: hidden;
+  min-height: 0;
 }
 
 /* Hover hints clickability (opens the full text in the side panel) */
 .tc-wrap.is-collapsed:hover .prev {
-  color: var(--text);
+  color: var(--color-text);
 }
 .tc-wrap:not(.is-collapsed):hover .tc {
-  color: var(--dim);
+  color: var(--color-text-muted);
 }
 
 .prev {
-  color: var(--faint);
-  font-size: var(--ui-font-size);
-  font-family: var(--mono);
-  line-height: 1.7;
+  color: var(--color-text-faint);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
+  font-weight: 425;
   white-space: pre-wrap;
   word-break: break-word;
   display: block;
 }
 
 .tc {
-  font-family: var(--mono);
-  font-size: var(--ui-font-size);
-  font-style: normal;
-  color: var(--muted);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
+  font-weight: 425;
+  color: var(--color-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
-  line-height: 1.7;
-  max-height: calc(1.7em * 5);
+  max-height: calc(var(--leading-relaxed) * 1em * 5);
   overflow-y: auto;
 }
 
@@ -138,12 +141,12 @@ watch(
   margin: 0;
 }
 .mob .tc {
-  color: var(--faint);
-  line-height: 1.6;
-  max-height: calc(1.6em * 5);
+  color: var(--color-text-faint);
+  line-height: var(--leading-normal);
+  max-height: calc(var(--leading-normal) * 1em * 5);
 }
 .mob .prev {
-  color: var(--faint);
-  line-height: 1.6;
+  color: var(--color-text-faint);
+  line-height: var(--leading-normal);
 }
 </style>
