@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { resolveKimiHome } from '#/config/path';
 import { McpServerConfigSchema, type McpServerConfig } from '#/config/schema';
 import { ErrorCodes, KimiError } from '#/errors';
+import { isWindowsAbsolutePath } from '../utils/guards';
 import { z } from 'zod';
 
 const McpJsonFileSchema = z.object({
@@ -29,7 +30,7 @@ export async function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): Prom
   return {
     user: join(kimiHome, 'mcp.json'),
     projectRoot: join(projectRoot, '.mcp.json'),
-    project: join(kimiHome, 'mcp-project.json'),
+    project: join(input.cwd, '.kimi-code', 'mcp.json'),
   };
 }
 
@@ -151,10 +152,6 @@ function resolvePath(base: string, value: string): string {
     return win32.resolve(value).replaceAll('\\', '/');
   }
   return isAbsolute(value) ? normalize(value) : resolve(base, value);
-}
-
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
 function isFileNotFound(error: unknown): boolean {
