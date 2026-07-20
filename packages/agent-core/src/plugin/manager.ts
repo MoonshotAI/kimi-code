@@ -175,7 +175,7 @@ export class PluginManager {
   async remove(id: string): Promise<void> {
     const key = normalizePluginId(id);
     if (!this.records.delete(key)) {
-      throw new Error(`Plugin "${id}" is not installed`);
+      return;
     }
     await this.persist();
   }
@@ -187,7 +187,14 @@ export class PluginManager {
     const errors: Array<{ id: string; message: string }> = [];
     for (const entry of file.plugins) {
       try {
-        next.set(entry.id, await this.materialize(entry));
+        const record = await this.materialize(entry);
+        next.set(entry.id, record);
+        if (record.state === 'error') {
+          const message =
+            record.diagnostics?.find((d) => d.severity === 'error')?.message ??
+            'failed to load plugin';
+          errors.push({ id: entry.id, message });
+        }
       } catch (error) {
         errors.push({ id: entry.id, message: (error as Error).message });
       }

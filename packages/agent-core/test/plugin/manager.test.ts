@@ -1027,7 +1027,7 @@ describe('PluginManager', () => {
     await manager.load();
     await manager.install(root);
     const managedRoot = await managedPluginRoot(home, 'demo');
-    await fsRm(managedRoot, { recursive: true, force: true });
+    await rm(managedRoot, { recursive: true, force: true });
     const summary = await manager.reload();
     expect(summary.errors).toHaveLength(1);
     expect(manager.get('demo')?.state).toBe('error');

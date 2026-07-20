@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -58,7 +59,9 @@ export async function writeInstalled(
   const dir = path.join(kimiHomeDir, 'plugins');
   await mkdir(dir, { recursive: true });
   const final = path.join(dir, 'installed.json');
-  const tmp = `${final}.tmp`;
+  // Unique tmp name: concurrent writers must not share one tmp path, or the
+  // later rename fails with ENOENT once the earlier writer moves it into place.
+  const tmp = `${final}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
   await rename(tmp, final);
 }
