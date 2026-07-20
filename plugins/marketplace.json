@@ -11,6 +11,15 @@
       "source": "./official/kimi-datasource"
     },
     {
+      "id": "kimi-vercel",
+      "tier": "official",
+      "displayName": "Vercel",
+      "version": "0.1.0",
+      "description": "Vercel deployment and project management tools.",
+      "keywords": ["vercel", "deploy", "hosting", "frontend", "mcp"],
+      "source": "./official/kimi-vercel"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",
