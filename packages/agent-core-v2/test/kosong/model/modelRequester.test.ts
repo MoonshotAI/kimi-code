@@ -3,7 +3,7 @@
  * ChatProvider (the adapter registry is stubbed to return it, so no wire I/O
  * happens):
  *
- *  - `LLMCallParams` map 1:1 onto `GenerateOptions` (cacheKey / sampling /
+ *  - `ModelRequestParams` map 1:1 onto `GenerateOptions` (cacheKey / sampling /
  *    thinking effort+keep / budget + window-clamp companions), with auth
  *    threaded per attempt;
  *  - the event stream carries parts, usage, finish, and timing;
@@ -30,7 +30,7 @@ import { emptyUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { ProtocolErrors } from '#/kosong/protocol/errors';
 import type { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import type { Model } from '#/kosong/model/catalog';
-import type { LLMEvent } from '#/kosong/model/modelRequester';
+import type { ModelRequestEvent } from '#/kosong/model/modelRequester';
 import { effectiveMaxCompletionTokens } from '#/kosong/model/modelRequester';
 import { buildStreamTiming, ModelRequesterImpl } from '#/kosong/model/modelRequesterImpl';
 
@@ -135,8 +135,8 @@ const staticAuth = (apiKey?: string): Model['authProvider'] => ({
     Promise.resolve(apiKey === undefined ? undefined : { apiKey }),
 });
 
-async function collect(stream: AsyncIterable<LLMEvent>): Promise<LLMEvent[]> {
-  const events: LLMEvent[] = [];
+async function collect(stream: AsyncIterable<ModelRequestEvent>): Promise<ModelRequestEvent[]> {
+  const events: ModelRequestEvent[] = [];
   for await (const event of stream) events.push(event);
   return events;
 }
@@ -144,7 +144,7 @@ async function collect(stream: AsyncIterable<LLMEvent>): Promise<LLMEvent[]> {
 const INPUT = { systemPrompt: 'sys', tools: [], messages: [] };
 
 describe('ModelRequesterImpl request execution', () => {
-  it('maps LLMCallParams onto GenerateOptions 1:1', async () => {
+  it('maps ModelRequestParams onto GenerateOptions 1:1', async () => {
     const provider = new FakeChatProvider();
     const requester = new ModelRequesterImpl(modelWith(staticAuth('sk-1')), registryReturning(provider));
     const signal = AbortSignal.timeout(1000);

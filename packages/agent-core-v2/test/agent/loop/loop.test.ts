@@ -3,7 +3,8 @@ import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService } from '#/index';
-import { IAgentLLMRequesterService, type LLMStreamTiming } from '#/agent/llmRequester/llmRequester';
+import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
@@ -991,7 +992,7 @@ function nextTurnMessage(text: string): MessageStepRequest {
 }
 
 function createTimingRequester(): IAgentLLMRequesterService {
-  const timing: LLMStreamTiming = {
+  const timing: ModelRequestTiming = {
     firstTokenLatencyMs: 100,
     streamDurationMs: 200,
     requestBuildMs: 30,

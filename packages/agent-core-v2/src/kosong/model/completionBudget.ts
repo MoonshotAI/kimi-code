@@ -4,7 +4,7 @@
  * The budget no longer morphs a Model (there is no `applyCompletionBudget`):
  * the caller resolves a `CompletionBudgetConfig`, folds it into a per-turn cap
  * with `computeCompletionBudgetCap`, and passes the result through
- * `LLMCallParams` (`maxCompletionTokens` + the window-clamp companions). The
+ * `ModelRequestParams` (`maxCompletionTokens` + the window-clamp companions). The
  * wire base clamps the cap against the context window before any dialect
  * ceiling applies.
  *
@@ -13,14 +13,14 @@
  * its messages — with explicit messages the budget is not tightened against
  * the current context. `completionBudgetParams` is the single fold point that
  * keeps this honest.
+ *
+ * The `CompletionBudgetConfig` / `CompletionBudgetParams` types live in
+ * `model.types.ts` with the domain's other shared data types.
  */
 
 import type { ModelCapability } from '#/kosong/contract/capability';
 
-export interface CompletionBudgetConfig {
-  readonly hardCap?: number;
-  readonly fallback?: number;
-}
+import type { CompletionBudgetConfig, CompletionBudgetParams } from './model.types';
 
 const MIN_FLOOR = 1;
 const DEFAULT_UNKNOWN_CONTEXT_FALLBACK = 32000;
@@ -54,14 +54,8 @@ export function computeCompletionBudgetCap(args: {
   return Math.max(MIN_FLOOR, cap);
 }
 
-export interface CompletionBudgetParams {
-  readonly maxCompletionTokens: number;
-  readonly usedContextTokens?: number;
-  readonly maxContextTokens?: number;
-}
-
 /**
- * Fold a resolved budget into the `LLMCallParams` slice the requester sends.
+ * Fold a resolved budget into the `ModelRequestParams` slice the requester sends.
  * `usedContextTokens` must be the measured in-context tokens, and must be
  * passed ONLY when the caller did not explicitly override the request
  * messages (see the module header); it is forwarded verbatim.

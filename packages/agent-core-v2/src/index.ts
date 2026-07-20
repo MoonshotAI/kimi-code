@@ -98,13 +98,12 @@ import '#/kosong/model/thinking';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';
-export * from '#/kosong/model/modelOverrides';
+export * from '#/kosong/model/model.types';
 export * from '#/kosong/model/modelService';
 export * from '#/kosong/model/thinking';
 export * from '#/kosong/model/catalog';
 export * from '#/kosong/model/catalogService';
 export * from '#/kosong/model/modelRequester';
-export type { LLMEvent as ModelRequestEvent } from '#/kosong/model/modelRequester';
 import '#/kosong/catalog/configSection';
 // Phase-7 export-surface backfill: `ModelCatalogConfig` / `MODEL_CATALOG_SECTION`
 // live in the configSection side-effect module but the edge (kap-server's

@@ -28,7 +28,7 @@ import type { ProviderConfig } from '../provider/provider';
 import { getProviderDefinition } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
-import type { ResolvedModelAuthMaterial } from './modelAuth';
+import type { ResolvedModelAuthMaterial } from './model.types';
 
 // ---------------------------------------------------------------------------
 // Inspection payload

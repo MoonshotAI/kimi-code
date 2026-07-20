@@ -122,7 +122,7 @@ import { WireService } from '#/wire/wireService';
 import { IModelService } from '#/kosong/model/model';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
-import type { LLMCallParams, ModelRequester } from '#/kosong/model/modelRequester';
+import type { ModelRequestParams, ModelRequester } from '#/kosong/model/modelRequester';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
 import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
@@ -848,7 +848,7 @@ class ConfigBackedModelCatalog extends ModelCatalog {
       request: (
         input: Parameters<ModelRequester['request']>[0],
         signal?: AbortSignal,
-        params?: LLMCallParams,
+        params?: ModelRequestParams,
       ) => requester.request(input, signal, { cacheKey, ...params }),
     };
   }

@@ -4,12 +4,12 @@
  * This is the ONLY production code that calls
  * `IProtocolAdapterRegistry.createChatProvider`: it lazily composes exactly
  * one immutable ChatProvider per Model (on first use) and caches it for the
- * Model's lifetime; every per-turn variation arrives as `LLMCallParams` and
+ * Model's lifetime; every per-turn variation arrives as `ModelRequestParams` and
  * is mapped onto `GenerateOptions` (overlay order inside the bases:
  * `cacheKey → sampling → thinking → maxCompletionTokens`).
  *
  * The driver itself turns per-turn input (systemPrompt / tools / messages)
- * into the `LLMEvent` stream via the contract's `generate(...)`, measures
+ * into the `ModelRequestEvent` stream via the contract's `generate(...)`, measures
  * stream timing (`buildStreamTiming`), and owns the auth-refresh replay: a
  * 401 against a refreshable (OAuth) auth provider triggers one forced token
  * refresh and exactly one replay; a 401 that survives the replay means the
@@ -36,7 +36,13 @@ import { translateProviderError } from '#/kosong/protocol/errors';
 import type { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 
 import type { AuthProvider, Model } from './catalog';
-import type { LLMCallParams, LLMEvent, LLMRequestInput, ModelRequester } from './modelRequester';
+import type {
+  ModelRequestEvent,
+  ModelRequestInput,
+  ModelRequestParams,
+  ModelRequester,
+  ModelRequestTiming,
+} from './modelRequester';
 
 export class ModelRequesterImpl implements ModelRequester {
   private cachedChatProvider: ChatProvider | undefined;
@@ -61,11 +67,11 @@ export class ModelRequesterImpl implements ModelRequester {
   }
 
   request(
-    input: LLMRequestInput,
+    input: ModelRequestInput,
     signal?: AbortSignal,
-    params?: LLMCallParams,
-  ): AsyncIterable<LLMEvent> {
-    const queue = new AsyncEventQueue<LLMEvent>();
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent> {
+    const queue = new AsyncEventQueue<ModelRequestEvent>();
     void this.runRequest(input, signal, queue, params).then(
       () => queue.end(),
       (error) => queue.fail(error),
@@ -90,10 +96,10 @@ export class ModelRequesterImpl implements ModelRequester {
   }
 
   private async runRequest(
-    input: LLMRequestInput,
+    input: ModelRequestInput,
     signal: AbortSignal | undefined,
-    queue: AsyncEventQueue<LLMEvent>,
-    params?: LLMCallParams,
+    queue: AsyncEventQueue<ModelRequestEvent>,
+    params?: ModelRequestParams,
   ): Promise<void> {
     signal?.throwIfAborted();
     const provider = this.resolveChatProvider();
@@ -225,29 +231,18 @@ function isUnauthorizedStatusError(error: unknown): error is APIStatusError {
   return error instanceof APIStatusError && error.statusCode === 401;
 }
 
+/** Writable view of `ModelRequestTiming`, used to build the timing incrementally. */
+type MutableModelRequestTiming = { -readonly [K in keyof ModelRequestTiming]: ModelRequestTiming[K] };
+
 export function buildStreamTiming(
   requestStartedAt: number,
   requestSentAt: number | undefined,
   firstChunkAt: number,
   streamEndedAt: number | undefined,
   decodeStats: StreamDecodeStats | undefined,
-): {
-  firstTokenLatencyMs: number;
-  streamDurationMs: number;
-  requestBuildMs?: number;
-  serverFirstTokenMs?: number;
-  serverDecodeMs?: number;
-  clientConsumeMs?: number;
-} {
+): ModelRequestTiming {
   const outputEndedAt = streamEndedAt ?? Date.now();
-  const timing: {
-    firstTokenLatencyMs: number;
-    streamDurationMs: number;
-    requestBuildMs?: number;
-    serverFirstTokenMs?: number;
-    serverDecodeMs?: number;
-    clientConsumeMs?: number;
-  } = {
+  const timing: MutableModelRequestTiming = {
     firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
     streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
   };

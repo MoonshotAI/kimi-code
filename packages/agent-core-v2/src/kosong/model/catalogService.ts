@@ -88,8 +88,8 @@ import {
   effectiveModelConfig,
   nonEmpty,
   resolveModelAuthMaterial,
-  type ResolvedModelAuthMaterial,
 } from './modelAuth';
+import type { ResolvedModelAuthMaterial } from './model.types';
 import type { ModelRequester } from './modelRequester';
 import { ModelRequesterImpl } from './modelRequesterImpl';
 import { drivesThinkingThroughTraits } from './thinking';

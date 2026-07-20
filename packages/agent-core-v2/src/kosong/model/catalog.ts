@@ -6,7 +6,7 @@
  * talk about one configured model: endpoint, auth closure, wire protocol,
  * wire-facing name, headers, capability matrix, and budget knobs. It is NOT
  * a request executor and carries no `with*` morphs — per-turn intent flows
- * through `LLMCallParams` on `ModelRequester.request(...)` instead (see
+ * through `ModelRequestParams` on `ModelRequester.request(...)` instead (see
  * `modelRequester.ts`). Construction happens exactly once per config
  * generation, in `ModelCatalog` (`catalogService.ts`) — the only place that
  * assembles Models.

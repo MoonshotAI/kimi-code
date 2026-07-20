@@ -25,17 +25,12 @@ import {
   inferAnthropicModelProfile,
   matchKnownAnthropicModelProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
-import type { OAuthRef, ProviderConfig } from '../provider/provider';
+import type { ProviderConfig } from '../provider/provider';
 import { explainProviderEndpoint } from '../provider/providerDefinition';
 
 import type { ModelRecord } from './model';
+import type { ResolvedModelAuthMaterial } from './model.types';
 import { drivesThinkingThroughTraits } from './thinking';
-
-export interface ResolvedModelAuthMaterial {
-  readonly apiKey?: string;
-  readonly oauth?: OAuthRef;
-  readonly oauthProviderKey?: string;
-}
 
 /**
  * The Model → Provider credential precedence chain. When `trace` is given,

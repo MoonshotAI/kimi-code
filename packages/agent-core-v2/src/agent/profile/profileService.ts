@@ -30,8 +30,8 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
 import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { type LLMCallParams } from '#/kosong/model/modelRequester';
-import { type ModelOverrides } from '#/kosong/model/modelOverrides';
+import { type ModelOverrides } from '#/kosong/model/model.types';
+import { type ModelRequestParams } from '#/kosong/model/modelRequester';
 import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import {
   drivesThinkingThroughTraits,
@@ -291,7 +291,7 @@ export class AgentProfileService implements IAgentProfileService {
     };
   }
 
-  resolveRequestParams(): LLMCallParams {
+  resolveRequestParams(): ModelRequestParams {
     const model = this.tryResolveRawModel();
     const thinking = this.resolveThinkingState(model);
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);

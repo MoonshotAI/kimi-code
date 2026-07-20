@@ -15,7 +15,7 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
-import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
@@ -701,7 +701,7 @@ function findAPIStatusError(error: unknown): APIStatusError | undefined {
   return undefined;
 }
 
-function collectSummary(finish: LLMRequestFinish): CompactionAttemptResult {
+function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult {
   if (finish.providerFinishReason === 'truncated') {
     throw new CompactionTruncatedError();
   }

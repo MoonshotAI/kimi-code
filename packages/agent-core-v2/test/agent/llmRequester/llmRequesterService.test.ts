@@ -48,8 +48,8 @@ import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import {
-  type LLMEvent,
-  type LLMRequestInput,
+  type ModelRequestEvent,
+  type ModelRequestInput,
   type ModelRequester,
 } from '#/kosong/model/modelRequester';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -78,7 +78,7 @@ function createRequester(
   calls: { value: number },
   firstCallError?: Error | null,
   subsequentCallErrors: readonly Error[] = [],
-  capturedInputs?: LLMRequestInput[],
+  capturedInputs?: ModelRequestInput[],
 ): ModelRequester {
   const model: Model = {
     id: 'm',
@@ -291,7 +291,7 @@ describe('AgentLLMRequesterService strict resend', () => {
     const requester = createRequester({ value: 0 });
     Object.defineProperty(requester, 'request', {
       value: async function* () {
-        const events: LLMEvent[] = [];
+        const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
         throw new APIStatusError(401, 'unauthorized');
       },
@@ -494,7 +494,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
   it('keeps new recovery media visible on later snapshot-stripped steps', async () => {
     const calls = { value: 0 };
-    const capturedInputs: LLMRequestInput[] = [];
+    const capturedInputs: ModelRequestInput[] = [];
     const oldUrl = 'data:image/png;base64,REJECTED';
     const newUrl = 'data:image/png;base64,SMALL';
     const imageMessage = (url: string, id: string): Message => ({
@@ -734,7 +734,7 @@ describe('AgentLLMRequesterService trace id', () => {
           rawFinishReason: 'stop',
           id: 'resp-1',
           traceId: 'trace-req-1',
-        } satisfies LLMEvent;
+        } satisfies ModelRequestEvent;
       },
     });
     const { service } = createService(requester, passthroughProjector);
@@ -761,7 +761,7 @@ describe('AgentLLMRequesterService trace id', () => {
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* () {
-        const events: LLMEvent[] = [];
+        const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
         throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-1');
       },
@@ -793,7 +793,7 @@ describe('AgentLLMRequesterService trace id', () => {
           | { onTraceId?: (traceId: string | null) => void }
           | undefined;
         requestOptions?.onTraceId?.('trace-mid-stream');
-        const events: LLMEvent[] = [];
+        const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
         throw new APIEmptyResponseError('no content, no tool calls');
       },
@@ -812,7 +812,7 @@ describe('AgentLLMRequesterService trace id', () => {
     let attempts = 0;
     Object.defineProperty(requester, 'request', {
       value: async function* (...args: unknown[]) {
-        const events: LLMEvent[] = [];
+        const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
         attempts += 1;
         const requestOptions = args[2] as

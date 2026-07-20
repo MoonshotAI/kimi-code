@@ -40,7 +40,7 @@ import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
-import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
@@ -764,7 +764,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     turnId: number,
     currentStep: number,
     stepUuid: string,
-    response: LLMRequestFinish,
+    response: AgentLLMRequestFinish,
   ): void {
     for (const part of response.message.content) {
       this.context.appendLoopEvent({
@@ -783,7 +783,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     signal: AbortSignal,
     currentStep: number,
     stepUuid: string,
-    response: LLMRequestFinish,
+    response: AgentLLMRequestFinish,
     trace: LLMRequestTrace,
   ): Promise<FinishReason> {
     let finishReason = response.providerFinishReason ?? 'completed';
@@ -829,7 +829,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     signal: AbortSignal,
     currentStep: number,
     stepUuid: string,
-    response: LLMRequestFinish,
+    response: AgentLLMRequestFinish,
     finishReason: FinishReason,
     markStepStarted: () => void,
   ): void {
@@ -893,7 +893,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     stepId: string,
     usage: TokenUsage,
     finishReason: string,
-    response: LLMRequestFinish,
+    response: AgentLLMRequestFinish,
   ): void {
     this.eventBus.publish({
       type: 'turn.step.completed',

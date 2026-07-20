@@ -1,8 +1,8 @@
 /**
  * `kosong/model` domain (L2) — the `ModelRequester` contract: per-turn input,
- * streamed events, and the per-turn intent carrier `LLMCallParams`.
+ * streamed events, and the per-turn intent carrier `ModelRequestParams`.
  *
- * `LLMCallParams` is how every per-turn intent reaches the wire: prompt-cache
+ * `ModelRequestParams` is how every per-turn intent reaches the wire: prompt-cache
  * key, sampling overrides, thinking effort/keep, and the completion-token
  * budget (with its window-clamp companions). It is deliberately dialect-free —
  * each wire dialect encodes (or silently drops) an intent in its own hooks.
@@ -24,14 +24,23 @@ import type { TokenUsage } from '#/kosong/contract/usage';
 
 import type { Model } from './catalog';
 
-export interface LLMRequestInput {
+export interface ModelRequestInput {
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
   readonly messages: readonly Message[];
   readonly responseFormat?: ResponseFormat;
 }
 
-export type LLMEvent =
+export interface ModelRequestTiming {
+  readonly firstTokenLatencyMs: number;
+  readonly streamDurationMs: number;
+  readonly requestBuildMs?: number;
+  readonly serverFirstTokenMs?: number;
+  readonly serverDecodeMs?: number;
+  readonly clientConsumeMs?: number;
+}
+
+export type ModelRequestEvent =
   | { readonly type: 'part'; readonly part: StreamedMessagePart }
   | { readonly type: 'usage'; readonly usage: TokenUsage; readonly model?: string }
   | {
@@ -42,21 +51,13 @@ export type LLMEvent =
       readonly id?: string;
       readonly traceId?: string;
     }
-  | {
-      readonly type: 'timing';
-      readonly firstTokenLatencyMs: number;
-      readonly streamDurationMs: number;
-      readonly requestBuildMs?: number;
-      readonly serverFirstTokenMs?: number;
-      readonly serverDecodeMs?: number;
-      readonly clientConsumeMs?: number;
-    };
+  | ({ readonly type: 'timing' } & ModelRequestTiming);
 
 /**
  * Per-turn intent for one `ModelRequester.request(...)`. Every field is
  * optional; an absent field simply does not reach the wire.
  */
-export interface LLMCallParams {
+export interface ModelRequestParams {
   /**
    * Prompt-cache key for this turn (typically derived from the session id).
    * Each dialect encodes it (`prompt_cache_key`, `metadata.user_id`) or
@@ -96,10 +97,10 @@ export interface ModelRequester {
   readonly model: Model;
 
   request(
-    input: LLMRequestInput,
+    input: ModelRequestInput,
     signal?: AbortSignal,
-    params?: LLMCallParams,
-  ): AsyncIterable<LLMEvent>;
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent>;
 
   uploadVideo?(
     input: string | VideoUploadInput,
@@ -112,6 +113,6 @@ export interface ModelRequester {
  * the params alone (the requester folds the budget into params up front, so
  * recording code never has to read provider state back).
  */
-export function effectiveMaxCompletionTokens(params?: LLMCallParams): number | undefined {
+export function effectiveMaxCompletionTokens(params?: ModelRequestParams): number | undefined {
   return params?.maxCompletionTokens;
 }

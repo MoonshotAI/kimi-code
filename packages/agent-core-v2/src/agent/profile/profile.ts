@@ -1,7 +1,7 @@
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
-import type { LLMCallParams } from '#/kosong/model/modelRequester';
+import type { ModelRequestParams } from '#/kosong/model/modelRequester';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';
@@ -110,7 +110,7 @@ export interface IAgentProfileService {
    * sampling overrides, thinking effort/keep. Wire encoding is each dialect's
    * own business — the profile never branches on protocol or vendor.
    */
-  resolveRequestParams(): LLMCallParams;
+  resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;
   hasModel(): boolean;

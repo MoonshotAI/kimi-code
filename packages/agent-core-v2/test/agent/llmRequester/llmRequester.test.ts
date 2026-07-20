@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   IAgentLLMRequesterService,
-  type LLMRequestFinish,
+  type AgentLLMRequestFinish,
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
@@ -642,8 +642,8 @@ function userMessage(text: string) {
 }
 
 async function collectLLMRequest(
-  request: (onPart: (part: StreamedMessagePart) => void) => Promise<LLMRequestFinish>,
-): Promise<{ parts: StreamedMessagePart[]; finish: LLMRequestFinish }> {
+  request: (onPart: (part: StreamedMessagePart) => void) => Promise<AgentLLMRequestFinish>,
+): Promise<{ parts: StreamedMessagePart[]; finish: AgentLLMRequestFinish }> {
   const parts: StreamedMessagePart[] = [];
   const finish = await request((part) => {
     parts.push(part);

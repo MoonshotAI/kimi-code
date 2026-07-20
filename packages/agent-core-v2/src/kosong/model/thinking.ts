@@ -22,13 +22,14 @@
 
 import { z } from 'zod';
 
-import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { IProtocolAdapterRegistry, Protocol } from '#/kosong/protocol/protocol';
 
 import { type ConfigStripEnv, envBindings } from '../../app/config/config';
 import { registerConfigSection } from '../../app/config/configSectionContributions';
 import { getProviderDefinitions } from '../provider/providerDefinition';
+
+import type { ModelThinkingMetadata, ThinkingDefaults } from './model.types';
 
 // ---------------------------------------------------------------------------
 // `thinking` config section (side-effect registration)
@@ -131,19 +132,6 @@ export function requiresStrictThinkingValidation(
 // ---------------------------------------------------------------------------
 // Effort resolution (pure)
 // ---------------------------------------------------------------------------
-
-export interface ThinkingDefaults {
-  readonly enabled?: boolean;
-  readonly effort?: string;
-}
-
-export interface ModelThinkingMetadata {
-  readonly capabilities?: ModelCapability | readonly string[];
-  readonly adaptiveThinking?: boolean;
-  readonly alwaysThinking?: boolean;
-  readonly supportEfforts?: readonly string[];
-  readonly defaultEffort?: string;
-}
 
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
