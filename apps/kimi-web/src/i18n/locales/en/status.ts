@@ -62,4 +62,12 @@ export default {
   activityAwaitingQuestion: 'Awaiting answer',
   interrupt: 'Interrupt',
   runningShort: 'in progress',
+  // Plan quota card (5h / weekly windows)
+  quotaTitle: 'Plan usage',
+  quotaRefresh: 'Refresh',
+  quotaRefreshing: 'Refreshing…',
+  quotaRetry: 'Retry',
+  quotaUsed: '{pct}% used',
+  quotaWeeklyLabel: 'Weekly',
+  quotaUnavailable: 'Unavailable',
 } as const;

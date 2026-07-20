@@ -697,6 +697,23 @@ export interface AppSessionWarning {
   severity: 'info' | 'warning' | 'error';
 }
 
+export interface AppManagedUsageRow {
+  label: string;
+  used: number;
+  limit: number;
+  resetHint?: string;
+}
+
+export interface AppManagedUsageResult {
+  kind: 'ok' | 'error';
+  /** Weekly window (1w); null when the platform returns no summary. */
+  summary: AppManagedUsageRow | null;
+  /** Window limits, incl. the 5h one. */
+  limits: AppManagedUsageRow[];
+  /** Present only when kind === 'error'. */
+  message?: string;
+}
+
 export interface KimiWebApi {
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
   getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; backend: 'v1' | 'v2' }>;
@@ -801,6 +818,8 @@ export interface KimiWebApi {
   } | null>;
   cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
+  /** Managed plan quota (5h/weekly windows) — GET /usages. */
+  getManagedUsage(): Promise<AppManagedUsageResult>;
 }
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */

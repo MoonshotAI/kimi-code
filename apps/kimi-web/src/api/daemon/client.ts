@@ -7,6 +7,7 @@ import { traceKeyEvent } from '../../debug/trace';
 import type {
   AppConfig,
   AppGoal,
+  AppManagedUsageResult,
   AppMessage,
   AppMessageRole,
   AppModel,
@@ -83,6 +84,7 @@ import type {
   WireSessionSnapshot,
   WireWorkspace,
   WireLogoutResult,
+  WireManagedUsageResult,
 } from './wire';
 import { DaemonEventSocket } from './ws';
 
@@ -1357,6 +1359,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
   async logout(): Promise<{ loggedOut: boolean }> {
     const data = await this.http.post<WireLogoutResult>('/oauth/logout', {});
     return { loggedOut: data.logged_out };
+  }
+
+  async getManagedUsage(): Promise<AppManagedUsageResult> {
+    const data = await this.http.get<WireManagedUsageResult>('/usages');
+    if (data.kind === 'error') {
+      return { kind: 'error', summary: null, limits: [], message: data.message };
+    }
+    return { kind: 'ok', summary: data.summary, limits: data.limits };
   }
 
   // -------------------------------------------------------------------------

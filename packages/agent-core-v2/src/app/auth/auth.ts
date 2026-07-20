@@ -11,6 +11,7 @@
  */
 
 import type {
+  AuthManagedUsageResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,
@@ -62,6 +63,8 @@ export interface IOAuthToolkit {
     oauthRef?: KimiOAuthTokenRef,
   ): Promise<string | undefined>;
   tokenProvider(providerName?: string, oauthRef?: KimiOAuthTokenRef): BearerTokenProvider;
+  /** Plan quota (5h/weekly windows) for the managed provider. */
+  getManagedUsage(providerName?: string): Promise<AuthManagedUsageResult>;
 }
 
 export const IOAuthToolkit: ServiceIdentifier<IOAuthToolkit> =

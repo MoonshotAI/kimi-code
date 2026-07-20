@@ -94,6 +94,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
+  isManagedUsageProvider,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
@@ -230,6 +231,8 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     goal: null,
     mcpServersSummary: null,
     banner: undefined,
+    managedUsage: undefined,
+    managedUsageError: null,
   };
 }
 
@@ -1547,6 +1550,39 @@ export class KimiTUI {
       goal: goalResult.goal,
     });
     this.syncAdditionalDirs(session);
+    void this.refreshManagedUsage();
+  }
+
+  /**
+   * Pull the plan quota (5h/weekly windows) for the managed provider and cache
+   * it in appState so the footer can render it persistently. Fire-and-forget:
+   * failures land in `managedUsageError` and never block session sync.
+   */
+  async refreshManagedUsage(): Promise<void> {
+    const alias = this.state.appState.model;
+    const providerKey = this.state.appState.availableModels[alias]?.provider;
+    if (!isManagedUsageProvider(providerKey)) {
+      if (
+        this.state.appState.managedUsage !== undefined ||
+        this.state.appState.managedUsageError != null
+      ) {
+        this.setAppState({ managedUsage: undefined, managedUsageError: null });
+      }
+      return;
+    }
+    try {
+      const res = await this.harness.auth.getManagedUsage(providerKey);
+      if (res.kind === 'error') {
+        this.setAppState({ managedUsage: null, managedUsageError: res.message });
+        return;
+      }
+      this.setAppState({
+        managedUsage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage },
+        managedUsageError: null,
+      });
+    } catch (error) {
+      this.setAppState({ managedUsage: null, managedUsageError: formatErrorMessage(error) });
+    }
   }
 
   // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed

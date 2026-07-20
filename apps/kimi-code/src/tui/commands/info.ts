@@ -121,6 +121,7 @@ interface ManagedUsageResult {
 export async function showUsage(host: SlashCommandHost): Promise<void> {
   const sessionUsage = await loadSessionUsageReport(host);
   const managedUsage = await loadManagedUsageReport(host);
+  syncManagedUsageToState(host, managedUsage);
   const reportArgs = {
     sessionUsage: sessionUsage.usage,
     sessionUsageError: sessionUsage.error,
@@ -140,6 +141,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     loadRuntimeStatusReport(host),
     loadManagedUsageReport(host),
   ]);
+  syncManagedUsageToState(host, managedUsage);
   const appState = host.state.appState;
   const reportArgs = {
     version: appState.version,
@@ -214,4 +216,19 @@ async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUs
     return { error: res.message };
   }
   return { usage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage } };
+}
+
+/**
+ * Mirror the latest managed-usage fetch into appState so the footer quota
+ * readout refreshes at the same time as the /usage or /status panel.
+ */
+function syncManagedUsageToState(
+  host: SlashCommandHost,
+  result: ManagedUsageResult | undefined,
+): void {
+  if (result === undefined) return;
+  host.setAppState({
+    managedUsage: result.usage ?? null,
+    managedUsageError: result.error ?? null,
+  });
 }

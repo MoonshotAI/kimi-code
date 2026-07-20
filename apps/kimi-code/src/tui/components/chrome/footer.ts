@@ -25,9 +25,11 @@ import {
 } from '#/utils/git/git-status';
 import {
   formatTokenCount,
+  ratioSeverity,
   usagePercent,
   usagePercentFromRatio,
 } from '#/utils/usage/usage-format';
+import type { ManagedUsageReport, ManagedUsageRow } from '../messages/usage-panel';
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
@@ -170,6 +172,43 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
     return `context: ${pct}% (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
   }
   return `context: ${String(usagePercentFromRatio(usage))}%`;
+}
+
+type SeverityToken = 'success' | 'warning' | 'error';
+
+function severityToken(sev: 'ok' | 'warn' | 'danger'): SeverityToken {
+  return sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
+}
+
+/**
+ * Footer plan-quota readout, e.g. `5h: 40% 1w: 12%`. Compact enough to share
+ * line 2 with the context meter. The weekly summary row comes first (summary
+ * slot), then each window limit (incl. the 5h one) in arrival order. Every
+ * window is coloured by its own severity so a near-cap 5h limit stands out
+ * even when the weekly budget is comfortable.
+ */
+function formatManagedUsageStatus(
+  usage: ManagedUsageReport | null | undefined,
+  error: string | null | undefined,
+  colors: ColorPalette,
+): string | null {
+  if (error !== null && error !== undefined) {
+    return chalk.hex(colors.error)(`quota: ${error}`);
+  }
+  if (usage === null || usage === undefined) return null;
+
+  const rows: ManagedUsageRow[] = [];
+  if (usage.summary !== null) rows.push(usage.summary);
+  rows.push(...usage.limits);
+  if (rows.length === 0) return null;
+
+  const parts = rows.map((row) => {
+    const pct = usagePercent(row.used, row.limit);
+    const label = row.label.replace(/\s+limit$/i, '');
+    const token = severityToken(ratioSeverity(row.limit > 0 ? row.used / row.limit : 0));
+    return chalk.hex(colors[token])(`${label}: ${String(pct)}%`);
+  });
+  return parts.join(' ');
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
@@ -332,26 +371,31 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
+    // ── Line 2: transient hint / plan quota (bottom-left) + context (right) ──
     const contextText = formatContextStatus(
       state.contextUsage,
       state.contextTokens,
       state.maxContextTokens,
     );
     const contextWidth = visibleWidth(contextText);
+    // A transient hint (e.g. the exit double-tap prompt) outranks the quota
+    // readout for the left slot — it is short-lived and user-actionable.
+    const quotaText = this.transientHint
+      ? null
+      : formatManagedUsageStatus(state.managedUsage, state.managedUsageError, colors);
+    const leftText = this.transientHint
+      ? chalk.hex(colors.warning).bold(this.transientHint)
+      : quotaText;
     let line2: string;
-    if (this.transientHint) {
-      const maxHintWidth = Math.max(0, width - contextWidth - 1);
-      const shownHint =
-        visibleWidth(this.transientHint) <= maxHintWidth
-          ? this.transientHint
-          : truncateToWidth(this.transientHint, maxHintWidth, '…');
-      const hintWidth = visibleWidth(shownHint);
-      const pad = Math.max(0, width - hintWidth - contextWidth);
-      line2 =
-        chalk.hex(colors.warning).bold(shownHint) +
-        ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
+    if (leftText !== null) {
+      const maxLeftWidth = Math.max(0, width - contextWidth - 1);
+      const shownLeft =
+        visibleWidth(leftText) <= maxLeftWidth
+          ? leftText
+          : truncateToWidth(leftText, maxLeftWidth, '…');
+      const leftWidth = visibleWidth(shownLeft);
+      const pad = Math.max(0, width - leftWidth - contextWidth);
+      line2 = shownLeft + ' '.repeat(pad) + chalk.hex(colors.text)(contextText);
     } else {
       const leftPad = Math.max(0, width - contextWidth);
       line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);

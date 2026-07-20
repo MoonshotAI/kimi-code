@@ -483,6 +483,26 @@ export interface WireLogoutResult {
 }
 
 // ---------------------------------------------------------------------------
+// Managed usage wire DTOs (`GET /usages`)
+// ---------------------------------------------------------------------------
+
+export interface WireManagedUsageRow {
+  label: string;
+  used: number;
+  limit: number;
+  resetHint?: string;
+}
+
+export type WireManagedUsageResult =
+  | {
+      kind: 'ok';
+      summary: WireManagedUsageRow | null;
+      limits: WireManagedUsageRow[];
+      extraUsage: unknown;
+    }
+  | { kind: 'error'; message: string };
+
+// ---------------------------------------------------------------------------
 // File upload wire DTOs
 // ---------------------------------------------------------------------------
 

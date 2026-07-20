@@ -22,6 +22,7 @@ import {
 import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
+import QuotaCard from './QuotaCard.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
 import IconButton from './ui/IconButton.vue';
@@ -712,6 +713,9 @@ onBeforeUnmount(() => {
           <Kbd :keys="sessionSearchKeys" />
         </button>
       </div>
+
+      <!-- Plan quota — persistent 5h/weekly indicator above the session list -->
+      <QuotaCard />
 
       <!-- Session list — grouped by workspace -->
       <div class="sessions" @scroll="onSessionsScroll">

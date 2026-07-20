@@ -10,6 +10,7 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import type { NotificationsConfig, UpgradePreferences } from './config';
+import type { ManagedUsageReport } from './components/messages/usage-panel';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
 
@@ -60,6 +61,10 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+  /** Cached plan quota (5h/weekly windows) for the footer; undefined until first fetch. */
+  managedUsage?: ManagedUsageReport | null;
+  /** Last managed-usage fetch error, surfaced in the footer instead of percentages. */
+  managedUsageError?: string | null;
 }
 
 export interface ToolCallBlockData {

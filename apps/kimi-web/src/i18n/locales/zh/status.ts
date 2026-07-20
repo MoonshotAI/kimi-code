@@ -62,4 +62,12 @@ export default {
   activityAwaitingQuestion: '等待回答',
   interrupt: '中断',
   runningShort: '进行中',
+  // 套餐配额卡片（5 小时 / 每周窗口）
+  quotaTitle: '套餐用量',
+  quotaRefresh: '刷新',
+  quotaRefreshing: '刷新中…',
+  quotaRetry: '重试',
+  quotaUsed: '已用 {pct}%',
+  quotaWeeklyLabel: '每周',
+  quotaUnavailable: '不可用',
 };
