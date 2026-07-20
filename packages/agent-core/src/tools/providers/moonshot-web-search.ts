@@ -55,13 +55,13 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
 
   async search(
     query: string,
-    options?: { toolCallId?: string },
+    options?: { toolCallId?: string; signal?: AbortSignal },
   ): Promise<WebSearchResult[]> {
     const body = { text_query: query };
     const bodyJson = JSON.stringify(body);
 
     const toolCallId = options?.toolCallId;
-    const response = await this.post(bodyJson, toolCallId);
+    const response = await this.post(bodyJson, toolCallId, options?.signal);
 
     if (response.status === 401) {
       const detail = await safeReadText(response);
@@ -92,7 +92,11 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
     });
   }
 
-  private async post(bodyJson: string, toolCallId: string | undefined): Promise<Response> {
+  private async post(
+    bodyJson: string,
+    toolCallId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<Response> {
     const accessToken = await this.resolveApiKey();
     return this.fetchImpl(this.baseUrl, {
       method: 'POST',
@@ -106,6 +110,7 @@ export class MoonshotWebSearchProvider implements WebSearchProvider {
         ...this.customHeaders,
       },
       body: bodyJson,
+      signal,
     });
   }
 

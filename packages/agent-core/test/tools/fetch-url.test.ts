@@ -75,6 +75,7 @@ describe('FetchURLTool', () => {
     expect(toolContentString(result)).toContain('Hello, world!');
   });
 
+
   it('surfaces the extraction mode in the model-visible output', async () => {
     const tool = new FetchURLTool(fakeFetcher('Article body', 'extracted'));
     const result = await executeTool(tool, {
@@ -165,7 +166,7 @@ describe('FetchURLTool', () => {
     expect(toolContentString(result)).toContain('timeout');
   });
 
-  it('passes the tool call id to the fetcher', async () => {
+  it('passes the tool call id and abort signal to the fetcher', async () => {
     const fetcher = fakeFetcher('content');
     const tool = new FetchURLTool(fetcher);
     await executeTool(tool, {
@@ -176,6 +177,7 @@ describe('FetchURLTool', () => {
     });
     expect(fetcher.fetch).toHaveBeenCalledWith('https://example.com', {
       toolCallId: 'c4',
+      signal,
     });
   });
 

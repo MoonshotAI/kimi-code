@@ -393,3 +393,18 @@ describe('LocalFetchURLProvider connection pinning', () => {
     expect(asUndiciAgent(dispatcher).closed).toBe(true);
   });
 });
+
+describe('LocalFetchURLProvider abort signal', () => {
+  it("forwards the caller's abort signal to the underlying fetch", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(htmlResponse('body', 'text/plain'));
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+    const controller = new AbortController();
+
+    await provider.fetch('https://example.com/page', { signal: controller.signal });
+
+    const init = fetchImpl.mock.calls[0]![1] as RequestInit;
+    expect(init.signal).toBe(controller.signal);
+  });
+});
