@@ -121,25 +121,19 @@ describe('ConfigService config.toml lock-in-RMW', () => {
       expect(toml).toContain(`[beta_side${i}]`);
     }
 
-    // Each container's own watcher reloads the other side's sections.
-    await waitFor(() => {
-      for (let i = 0; i < rounds; i++) if (b.get(`alphaSide${i}`) === undefined) return false;
-      return true;
-    });
-    await waitFor(() => {
-      for (let i = 0; i < rounds; i++) if (a.get(`betaSide${i}`) === undefined) return false;
-      return true;
-    });
+    await a.reload();
+    await b.reload();
     expect(b.get('alphaSide0')).toEqual({ v: 0 });
     expect(a.get('betaSide3')).toEqual({ v: 3 });
   });
 
-  it('releases config.toml.lock after the critical section and leaves no stale files', async () => {
+  it('releases config.toml.lock after the critical section and keeps the sentinel', async () => {
     const config = createContainer();
     await config.set('alphaSection', { one: 1 });
     await config.set('betaSection', { two: 2 });
 
-    expect(existsSync(join(homeDir, 'config.toml.lock'))).toBe(false);
+    expect(existsSync(join(homeDir, 'config.toml.lock'))).toBe(true);
+    expect(existsSync(join(homeDir, 'config.toml.lock.owner.json'))).toBe(false);
     expect(readdirSync(homeDir).filter((entry) => entry.includes('.stale.'))).toEqual([]);
   });
 
@@ -150,7 +144,7 @@ describe('ConfigService config.toml lock-in-RMW', () => {
 
     expect(readFileSync(configPath, 'utf8')).toContain('[alpha_section]');
     expect(existsSync(join(homeDir, 'custom.toml'))).toBe(false);
-    expect(existsSync(`${configPath}.lock`)).toBe(false);
+    expect(existsSync(`${configPath}.lock`)).toBe(true);
   });
 
   it('fails set() with storage.locked while another holder is stuck, leaving config.toml intact', async () => {
@@ -159,7 +153,6 @@ describe('ConfigService config.toml lock-in-RMW', () => {
     const victim = new CrossProcessLockService({
       selfPid: 1001,
       instanceId: 'victim',
-      probeProcess: () => ({ alive: true }),
       now: () => nowValue,
       newLockId: () => `victim-${++lockSeq}`,
       sleep: (ms) => {
@@ -174,7 +167,6 @@ describe('ConfigService config.toml lock-in-RMW', () => {
     const attacker = new CrossProcessLockService({
       selfPid: 2002,
       instanceId: 'attacker',
-      probeProcess: () => ({ alive: true }),
       newLockId: () => 'attacker-lock',
     });
     const lockPath = join(homeDir, 'config.toml.lock');
@@ -188,6 +180,6 @@ describe('ConfigService config.toml lock-in-RMW', () => {
     } finally {
       handle.release();
     }
-    expect(existsSync(lockPath)).toBe(false);
+    expect(existsSync(lockPath)).toBe(true);
   });
 });

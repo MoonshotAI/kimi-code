@@ -397,11 +397,11 @@ long-run behavior:
 | `soak.test.js` | sustained ops + heap stability (opt-in: `SOAK=30 npm run test:e2e`) |
 
 The **cluster suite** (`test/cluster/*.test.ts`) covers the `ClusterDb`
-sharding layer: topology/routing, merged scans, lock contention and lease
-renewal in-process, cross-shard indexes/compaction, true multi-process
+sharding layer: topology/routing, merged scans, lock contention and bounded
+lock handoff in-process, cross-shard indexes/compaction, true multi-process
 scenarios (concurrent writers on disjoint and shared shards, live cross-process
-read visibility, read/write storms) and crash takeovers (`kill -9` → contiguous
-recovery + stale-lock handoff).
+read visibility, read/write storms) and crash recovery (`kill -9` → contiguous
+recovery + kernel-lock reacquisition).
 
 ## Design in one paragraph
 
@@ -419,13 +419,11 @@ source-code study behind each choice.
 ## Concurrency & multi-process
 
 minidb is **single-writer**. Opening a directory for writing acquires an exclusive
-lock file (`db.lock`); a second writer is rejected with a `LockError`. A lock is
-taken over only when its owner PID is dead — or when the PID has been recycled by
-an unrelated process (detected via the recorded process start time) — never
-merely because it is old. Takeover renames the stale file aside
-(`db.lock.stale.<lock_id>`) instead of deleting it, and every acquire/release
-re-reads the file and compares its unique token, so a superseded owner that
-wakes up late can never delete the new holder's lock.
+kernel lock on `db.lock`; a second writer is rejected with a `LockError`. The
+writer keeps the file descriptor or handle open for its lifetime, and the OS
+releases the lock automatically when the process exits. The `db.lock` sentinel
+is permanent: it is never deleted, renamed, or replaced during acquisition or
+release.
 
 ```js
 // second process: throws LockError
@@ -479,8 +477,8 @@ await db.close();
   `search` merge per-shard results (text scores are per-shard). Index
   management acquires every shard writer — run it from one process, off the
   hot path.
-- Crash recovery is per shard: a lock left by a dead PID is taken over by the
-  next opener, exactly like single MiniDb.
+- Crash recovery is per shard: process exit releases the kernel lock, so the
+  next opener can acquire the existing sentinel exactly like single MiniDb.
 
 `crossShard: '2pc'` is reserved for a future two-phase commit and is rejected
 today. Performance numbers across process/shard counts: run

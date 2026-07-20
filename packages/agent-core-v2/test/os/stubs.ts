@@ -32,7 +32,6 @@ export function stubCrossProcessLock(): ICrossProcessLockService {
       lockPath,
       lockId: 'stub-lock',
       checkHeld: () => !released,
-      update: () => {},
       release: () => {
         if (released) return;
         released = true;

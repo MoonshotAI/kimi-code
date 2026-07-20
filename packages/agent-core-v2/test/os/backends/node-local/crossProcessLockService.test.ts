@@ -1,144 +1,53 @@
 /**
- * `crossProcessLock` domain — integration tests for the node-local lock
- * service against a real temporary directory.
+ * `crossProcessLock` domain — node-local kernel-lock integration tests.
  *
- * Every test constructs the service with the full fake seam (clock, self pid,
- * process probe, token source, sleep) and asserts the on-disk file names and
- * snake_case payload keys, not just in-memory state. Dead-pid simulation for
- * the real probe uses `0x7fffffff` (guaranteed ESRCH), mirroring kap-server's
- * lock tests. Timed tests use real short sleep; the fake clock is advanced by
- * hand where the protocol depends on wall-clock values.
+ * Exercises permanent sentinels, diagnostic owner metadata, fail-fast and
+ * waiting acquisition, and release behavior against a real temporary
+ * directory.
  */
 
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CrossProcessLockService } from '#/os/backends/node-local/crossProcessLockService';
-import { createNodeProcessProbe } from '#/os/backends/node-local/processProbe';
 import {
   CrossProcessLockErrorCode,
+  type CrossProcessLockServiceDeps,
   type ICrossProcessLockHandle,
-  type ProcessProbe,
 } from '#/os/interface/crossProcessLock';
-
-const SELF_PID = 1001;
-const OTHER_PID = 2002;
-/** Max signed-32 pid; the kernel never allocates it, so `kill(pid, 0)` → ESRCH. */
-const DEAD_PID = 0x7fffffff;
-
-const realSleep = (ms: number): Promise<void> =>
-  new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 
 let tmpDir: string;
 let lockPath: string;
-let nowValue: number;
-let lockSeq: number;
-let attemptSeq: number;
 const handles: ICrossProcessLockHandle[] = [];
 
-function track<T extends ICrossProcessLockHandle>(handle: T): T {
-  handles.push(handle);
-  return handle;
-}
-
-function probeFor(live: ReadonlyMap<number, string | undefined>): ProcessProbe {
-  return (pid) => {
-    if (!live.has(pid)) return { alive: false };
-    const startedAt = live.get(pid);
-    return startedAt === undefined
-      ? { alive: true }
-      : { alive: true, processStartedAt: startedAt };
-  };
-}
-
-interface FakeServiceOptions {
-  selfPid?: number;
-  instanceId?: string;
-  probe?: ProcessProbe;
-  now?: () => number;
-  beforeStaleIsolation?: () => void | Promise<void>;
-  sleep?: (ms: number) => Promise<void>;
-}
-
-function makeService(options: FakeServiceOptions = {}): CrossProcessLockService {
-  const selfPid = options.selfPid ?? SELF_PID;
+function service(
+  instanceId: string,
+  pid: number,
+  deps: Pick<CrossProcessLockServiceDeps, 'now' | 'sleep'> = {},
+): CrossProcessLockService {
+  let sequence = 0;
   return new CrossProcessLockService({
-    selfPid,
-    instanceId: options.instanceId ?? 'inst-self',
-    probeProcess: options.probe ?? probeFor(new Map([[selfPid, 'self-start']])),
-    now: options.now ?? (() => nowValue),
-    newLockId: () => `lockid-${++lockSeq}`,
-    newAttemptId: () => `attempt-${++attemptSeq}`,
-    beforeStaleIsolation: options.beforeStaleIsolation,
-    sleep: options.sleep ?? realSleep,
+    ...deps,
+    instanceId,
+    selfPid: pid,
+    newLockId: () => `${instanceId}-${++sequence}`,
   });
 }
 
-function liveWorld(): Map<number, string | undefined> {
-  return new Map<number, string | undefined>([
-    [SELF_PID, 'self-start'],
-    [OTHER_PID, 'other-start'],
-  ]);
+function ownerPath(): string {
+  return `${lockPath}.owner.json`;
 }
 
-function writePayload(payload: Record<string, unknown>): void {
-  writeFileSync(lockPath, JSON.stringify(payload));
-}
-
-interface DiskLockJson {
-  lock_id?: string;
-  instance_id?: string;
-  pid?: number;
-  process_started_at?: string;
-  address?: string;
-  heartbeat_at?: number;
-  port?: number;
-  [extra: string]: unknown;
-}
-
-function readDisk(): DiskLockJson {
-  return JSON.parse(readFileSync(lockPath, 'utf8')) as DiskLockJson;
-}
-
-function backdate(path: string, ageMs: number): void {
-  const t = (Date.now() - ageMs) / 1000;
-  utimesSync(path, t, t);
-}
-
-function findStalePath(lockId: string): string {
-  const prefix = `lock.stale.${lockId}.`;
-  const name = readdirSync(tmpDir).find((entry) => entry.startsWith(prefix));
-  expect(name).toBeDefined();
-  return join(tmpDir, name!);
-}
-
-async function waitFor(cond: () => boolean, timeoutMs = 3_000): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (cond()) return;
-    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out');
-    await realSleep(10);
-  }
+function readOwner(): Record<string, unknown> {
+  return JSON.parse(readFileSync(ownerPath(), 'utf8')) as Record<string, unknown>;
 }
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'cplock-test-'));
-  lockPath = join(tmpDir, 'lock');
-  nowValue = 1_000_000;
-  lockSeq = 0;
-  attemptSeq = 0;
+  tmpDir = mkdtempSync(join(tmpdir(), 'kimi-kernel-lock-'));
+  lockPath = join(tmpDir, 'resource.lock');
 });
 
 afterEach(() => {
@@ -146,567 +55,128 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('acquire / release', () => {
-  it('writes the snake_case payload with extras flat, and release removes the file', async () => {
-    const svc = makeService();
-    const handle = track(
-      await svc.acquire(lockPath, {
-        address: '127.0.0.1:58627',
-        extraPayload: { port: 58627, role: 'primary' },
-      }),
-    );
-    expect(handle.lockId).toBe('lockid-1');
-    expect(readDisk()).toEqual({
-      lock_id: 'lockid-1',
-      instance_id: 'inst-self',
-      pid: SELF_PID,
-      process_started_at: 'self-start',
-      address: '127.0.0.1:58627',
-      port: 58627,
-      role: 'primary',
-    });
-
-    handle.release();
-    expect(existsSync(lockPath)).toBe(false);
-  });
-
-  it('omits optional keys when the platform cannot provide them', async () => {
-    const svc = makeService({ probe: () => ({ alive: true }) });
-    const handle = track(await svc.acquire(lockPath));
-    expect(readDisk()).toEqual({
-      lock_id: 'lockid-1',
-      instance_id: 'inst-self',
-      pid: SELF_PID,
-    });
-  });
-
-  it('creates missing parent directories and release is idempotent', async () => {
-    const nested = join(tmpDir, 'a', 'b', 'lock');
-    const svc = makeService();
-    const handle = track(await svc.acquire(nested));
-    expect(existsSync(nested)).toBe(true);
-    handle.release();
-    handle.release();
-    expect(existsSync(nested)).toBe(false);
-  });
-
-  it('release never unlinks a foreign lock', async () => {
-    const svc = makeService();
-    const handle = track(await svc.acquire(lockPath));
-    handle.release();
-    writePayload({ lock_id: 'someone-else', instance_id: 'x', pid: OTHER_PID });
-    handle.release();
+describe('CrossProcessLockService', () => {
+  it('keeps a permanent sentinel and treats owner metadata as diagnostic state', async () => {
+    const lock = service('alpha', 1001);
+    expect(lock.inspect(lockPath)).toEqual({ state: 'free' });
     expect(existsSync(lockPath)).toBe(true);
-    expect(readDisk().lock_id).toBe('someone-else');
-  });
-});
 
-describe('held vs takeover', () => {
-  it('a live identity-matching holder blocks acquisition with OS_LOCK_HELD', async () => {
-    writePayload({
-      lock_id: 'old-id',
-      instance_id: 'inst-other',
-      pid: OTHER_PID,
-      process_started_at: 'other-start',
+    const handle = await lock.acquire(lockPath, {
+      address: 'http://127.0.0.1:58627',
     });
-    const svc = makeService({ probe: probeFor(liveWorld()) });
-    const before = readFileSync(lockPath, 'utf8');
+    handles.push(handle);
 
-    await expect(svc.acquire(lockPath)).rejects.toMatchObject({
-      code: CrossProcessLockErrorCode.Held,
-      details: { reason: 'held' },
-    });
-    expect(readFileSync(lockPath, 'utf8')).toBe(before);
-    expect(readdirSync(tmpDir)).toEqual(['lock']);
-  });
-
-  it('takes over a dead holder with rename isolation', async () => {
-    const live = liveWorld();
-    const probe = probeFor(live);
-    const oldHandle = track(
-      await makeService({ selfPid: OTHER_PID, instanceId: 'inst-other', probe }).acquire(
-        lockPath,
-        { extraPayload: { port: 1 } },
-      ),
-    );
-    const oldDisk = JSON.parse(readFileSync(lockPath, 'utf8')) as Record<string, unknown>;
-
-    live.delete(OTHER_PID);
-    const handle = track(await makeService({ probe }).acquire(lockPath));
-
-    const stalePath = findStalePath('lockid-1');
-    expect(JSON.parse(readFileSync(stalePath, 'utf8'))).toEqual(oldDisk);
-    expect(readDisk().lock_id).toBe('lockid-2');
-    expect(handle.lockId).toBe('lockid-2');
-
-    expect(oldHandle.checkHeld()).toBe(false);
-    oldHandle.release();
-    expect(existsSync(lockPath)).toBe(true);
-    expect(readDisk().lock_id).toBe('lockid-2');
-  });
-
-  it('treats a live pid with mismatched identity as stale (pid reused)', async () => {
-    writePayload({
-      lock_id: 'old-id',
-      instance_id: 'inst-other',
-      pid: OTHER_PID,
-      process_started_at: 'original-start',
-    });
-    const live = liveWorld();
-    live.set(OTHER_PID, 'reused-start');
-    const svc = makeService({ probe: probeFor(live) });
-
-    expect(svc.inspect(lockPath)).toMatchObject({
-      state: 'stale',
-      staleReason: 'pid-reused',
-    });
-    track(await svc.acquire(lockPath));
-    expect(existsSync(findStalePath('old-id'))).toBe(true);
-    expect(readDisk().lock_id).toBe('lockid-1');
-  });
-
-  it('refuses takeover when the holder identity is unavailable (conservative held)', async () => {
-    writePayload({
-      lock_id: 'old-id',
-      instance_id: 'inst-other',
-      pid: OTHER_PID,
-      process_started_at: 'original-start',
-    });
-    const live = liveWorld();
-    live.set(OTHER_PID, undefined);
-    const svc = makeService({ probe: probeFor(live) });
-
-    expect(svc.inspect(lockPath)).toMatchObject({ state: 'held', unavailableReason: 'held' });
-    await expect(svc.acquire(lockPath)).rejects.toMatchObject({
-      code: CrossProcessLockErrorCode.Held,
-    });
-    expect(readDisk().lock_id).toBe('old-id');
-    expect(readdirSync(tmpDir)).toEqual(['lock']);
-  });
-
-  it('takes over a legacy payload without lock_id, renamed aside as unknown', async () => {
-    writePayload({ pid: OTHER_PID, started_at: '1', port: 58627 });
-    const svc = makeService();
-
-    expect(svc.inspect(lockPath)).toMatchObject({
-      state: 'stale',
-      staleReason: 'holder-dead',
-      payload: { lockId: '', pid: OTHER_PID, port: 58627 },
-    });
-    track(await svc.acquire(lockPath));
-    expect(existsSync(findStalePath('unknown'))).toBe(true);
-    expect(readDisk().lock_id).toBe('lockid-1');
-  });
-
-  it('never lets two delayed stale contenders both return ownership', async () => {
-    writePayload({
-      lock_id: 'old-id',
-      instance_id: 'inst-dead',
-      pid: DEAD_PID,
-    });
-    const probe = probeFor(liveWorld());
-    let enterIsolation!: () => void;
-    const isolationEntered = new Promise<void>((resolvePromise) => {
-      enterIsolation = resolvePromise;
-    });
-    let resumeIsolation!: () => void;
-    const isolationPaused = new Promise<void>((resolvePromise) => {
-      resumeIsolation = resolvePromise;
-    });
-    let pauseCount = 0;
-    const contenderA = makeService({
-      probe,
-      now: Date.now,
-      beforeStaleIsolation: async () => {
-        pauseCount += 1;
-        if (pauseCount !== 1) return;
-        enterIsolation();
-        await isolationPaused;
-      },
-    });
-    const contenderB = makeService({
-      selfPid: OTHER_PID,
-      instanceId: 'inst-b',
-      probe,
-      now: Date.now,
-    });
-
-    const acquireA = contenderA.acquire(lockPath, { creationWindowMs: 500 });
-    await isolationEntered;
-    const acquireB = contenderB.acquire(lockPath, { creationWindowMs: 500 });
-    await waitFor(() => readDisk().lock_id === 'lockid-1');
-    resumeIsolation();
-
-    const outcomes = await Promise.allSettled([acquireA, acquireB]);
-    const fulfilled = outcomes.filter(
-      (outcome): outcome is PromiseFulfilledResult<ICrossProcessLockHandle> =>
-        outcome.status === 'fulfilled',
-    );
-    const rejected = outcomes.filter(
-      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
-    );
-    expect(fulfilled).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]?.reason).toMatchObject({ code: CrossProcessLockErrorCode.Lost });
-    track(fulfilled[0]!.value);
-    expect(readDisk().lock_id).toBe(fulfilled[0]!.value.lockId);
-    expect(readdirSync(tmpDir).filter((entry) => entry.startsWith('lock.intent.'))).toEqual([]);
-  });
-
-  it('settles against the contender snapshot without waiting for later arrivals', async () => {
-    const olderIntent = `${lockPath}.intent.older`;
-    const laterIntent = `${lockPath}.intent.later`;
-    writeFileSync(
-      olderIntent,
-      JSON.stringify({ pid: OTHER_PID, process_started_at: 'other-start' }),
-    );
-    let sleepCount = 0;
-    const svc = makeService({
-      probe: probeFor(liveWorld()),
-      sleep: async () => {
-        sleepCount += 1;
-        writeFileSync(
-          laterIntent,
-          JSON.stringify({ pid: OTHER_PID, process_started_at: 'other-start' }),
-        );
-        rmSync(olderIntent, { force: true });
-      },
-    });
-
-    const handle = track(await svc.acquire(lockPath, { creationWindowMs: 500 }));
-
-    expect(sleepCount).toBe(1);
-    expect(handle.checkHeld()).toBe(true);
-    expect(existsSync(laterIntent)).toBe(true);
-  });
-
-  it('ignores a settled intent left behind after cleanup failure', async () => {
-    writeFileSync(
-      `${lockPath}.intent.orphan`,
-      JSON.stringify({ intent_id: 'orphan', state: 'settled', pid: OTHER_PID }),
-    );
-
-    const handle = track(await makeService({ probe: probeFor(liveWorld()) }).acquire(lockPath));
-
-    expect(handle.lockId).toBe('lockid-1');
-    expect(handle.checkHeld()).toBe(true);
-  });
-});
-
-describe('creation window', () => {
-  it('an empty file inside the window is creating', async () => {
-    writeFileSync(lockPath, '');
-    const svc = makeService({ now: () => Date.now() });
-
-    expect(svc.inspect(lockPath)).toMatchObject({ state: 'creating' });
-    await expect(svc.acquire(lockPath)).rejects.toMatchObject({
-      code: CrossProcessLockErrorCode.Held,
-      details: { reason: 'creating' },
-    });
-    expect(readFileSync(lockPath, 'utf8')).toBe('');
-    expect(readdirSync(tmpDir)).toEqual(['lock']);
-  });
-
-  it('an empty file past the window is taken over as stale', async () => {
-    writeFileSync(lockPath, '');
-    backdate(lockPath, 10_000);
-    const svc = makeService({ now: () => Date.now() });
-
-    expect(svc.inspect(lockPath)).toMatchObject({
-      state: 'stale',
-      staleReason: 'creation-window-expired',
-    });
-    track(await svc.acquire(lockPath));
-    expect(existsSync(findStalePath('unknown'))).toBe(true);
-    expect(readDisk().lock_id).toBe('lockid-1');
-  });
-
-  it('an unparseable file follows the same window', async () => {
-    writeFileSync(lockPath, '{oops');
-    const svc = makeService({ now: () => Date.now() });
-
-    expect(svc.inspect(lockPath)).toMatchObject({ state: 'creating' });
-    backdate(lockPath, 10_000);
-    expect(svc.inspect(lockPath)).toMatchObject({
-      state: 'stale',
-      staleReason: 'creation-window-expired',
-    });
-    track(await svc.acquire(lockPath));
-    expect(existsSync(findStalePath('unknown'))).toBe(true);
-    expect(readDisk().instance_id).toBe('inst-self');
-  });
-});
-
-describe('heartbeat mode', () => {
-  it('beats heartbeat_at into the disk payload through the kept fd', async () => {
-    const svc = makeService();
-    const handle = track(
-      await svc.acquire(lockPath, { heartbeat: { intervalMs: 20, ttlMs: 60_000 } }),
-    );
-    expect(readDisk().heartbeat_at).toBe(1_000_000);
-
-    nowValue = 1_000_500;
-    await waitFor(() => readDisk().heartbeat_at === 1_000_500);
-    handle.release();
-    expect(existsSync(lockPath)).toBe(false);
-  });
-
-  it('a taken-over holder detects the loss on its next beat and fires onLost exactly once', async () => {
-    const live = liveWorld();
-    const probe = probeFor(live);
-    let lostCount = 0;
-    const oldHandle = track(
-      await makeService({ probe }).acquire(lockPath, {
-        heartbeat: { intervalMs: 20, ttlMs: 60_000 },
-        onLost: () => {
-          lostCount += 1;
-        },
-      }),
-    );
-
-    live.delete(SELF_PID);
-    track(
-      await makeService({ selfPid: OTHER_PID, instanceId: 'inst-b', probe }).acquire(lockPath),
-    );
-
-    await waitFor(() => lostCount === 1);
-    await realSleep(100);
-    expect(lostCount).toBe(1);
-    expect(oldHandle.checkHeld()).toBe(false);
-    expect(readDisk().lock_id).toBe('lockid-2');
-  });
-
-  it('a silent heartbeat with a live identity-matching pid is holder-unresponsive, never seized', async () => {
-    writePayload({
-      lock_id: 'old-id',
-      instance_id: 'inst-other',
-      pid: OTHER_PID,
-      process_started_at: 'other-start',
-      heartbeat_at: nowValue - 10_000,
-    });
-    const svc = makeService({ probe: probeFor(liveWorld()) });
-    const before = readFileSync(lockPath, 'utf8');
-
-    await expect(
-      svc.acquire(lockPath, { heartbeat: { intervalMs: 100, ttlMs: 5_000 } }),
-    ).rejects.toMatchObject({
-      code: CrossProcessLockErrorCode.Held,
-      details: { reason: 'holder-unresponsive' },
-    });
-    expect(readFileSync(lockPath, 'utf8')).toBe(before);
-    expect(readdirSync(tmpDir)).toEqual(['lock']);
-  });
-
-  it('a fresh heartbeat with a live holder is a plain held', async () => {
-    writePayload({
-      lock_id: 'old-id',
-      instance_id: 'inst-other',
-      pid: OTHER_PID,
-      process_started_at: 'other-start',
-      heartbeat_at: nowValue - 100,
-    });
-    const svc = makeService({ probe: probeFor(liveWorld()) });
-
-    await expect(
-      svc.acquire(lockPath, { heartbeat: { intervalMs: 100, ttlMs: 5_000 } }),
-    ).rejects.toMatchObject({
-      code: CrossProcessLockErrorCode.Held,
-      details: { reason: 'held' },
-    });
-    expect(readDisk().lock_id).toBe('old-id');
-  });
-});
-
-describe('acquireWithWait / withLock', () => {
-  it('a waiting acquirer obtains the lock after the holder releases', async () => {
-    const live = liveWorld();
-    const probe = probeFor(live);
-    const holder = track(await makeService({ probe }).acquire(lockPath));
-
-    const waiter = makeService({
-      selfPid: OTHER_PID,
-      instanceId: 'inst-b',
-      probe,
-      now: () => Date.now(),
-    });
-    const acquired: string[] = [];
-    const pending = waiter.withLock(
-      lockPath,
-      { wait: { timeoutMs: 5_000, retryIntervalMs: 5 } },
-      (handle) => {
-        acquired.push(handle.lockId);
-        return 'done';
-      },
-    );
-    await realSleep(50);
-    holder.release();
-
-    await expect(pending).resolves.toBe('done');
-    expect(acquired).toEqual(['lockid-2']);
-    expect(existsSync(lockPath)).toBe(false);
-  });
-
-  it('a waiting acquirer gives up with OS_LOCK_WAIT_TIMEOUT', async () => {
-    const live = liveWorld();
-    const probe = probeFor(live);
-    track(await makeService({ probe }).acquire(lockPath));
-
-    const waiter = makeService({
-      selfPid: OTHER_PID,
-      instanceId: 'inst-b',
-      probe,
-      now: () => Date.now(),
-    });
-    await expect(
-      waiter.acquireWithWait(lockPath, { wait: { timeoutMs: 100, retryIntervalMs: 5 } }),
-    ).rejects.toMatchObject({ code: CrossProcessLockErrorCode.WaitTimeout });
-    expect(readDisk().lock_id).toBe('lockid-1');
-  });
-});
-
-describe('update', () => {
-  it('rewrites extras and re-stamps the protocol keys', async () => {
-    const svc = makeService();
-    const handle = track(await svc.acquire(lockPath, { extraPayload: { port: 1 } }));
-
-    handle.update((payload) => ({
-      ...payload,
-      port: 58627,
-      lockId: 'evil',
-      instanceId: 'evil',
-      pid: 9999,
-    }));
-    expect(readDisk()).toEqual({
-      lock_id: 'lockid-1',
-      instance_id: 'inst-self',
-      pid: SELF_PID,
-      process_started_at: 'self-start',
-      port: 58627,
-    });
-    expect(handle.lockId).toBe('lockid-1');
-  });
-
-  it('a later update keeps the extras the heartbeat rewrites', async () => {
-    const svc = makeService();
-    const handle = track(
-      await svc.acquire(lockPath, {
-        heartbeat: { intervalMs: 20, ttlMs: 60_000 },
-        extraPayload: { port: 1 },
-      }),
-    );
-    handle.update((payload) => ({ ...payload, port: 58627 }));
-    nowValue = 1_000_700;
-    await waitFor(
-      () => readDisk().port === 58627 && readDisk().heartbeat_at === 1_000_700,
-    );
-    expect(readDisk()).toMatchObject({
-      lock_id: 'lockid-1',
-      port: 58627,
-      heartbeat_at: 1_000_700,
-    });
-    handle.release();
-  });
-
-  it('update after a takeover throws OS_LOCK_LOST', async () => {
-    const live = liveWorld();
-    const probe = probeFor(live);
-    const oldHandle = track(
-      await makeService({ probe }).acquire(lockPath, { extraPayload: { port: 1 } }),
-    );
-    live.delete(SELF_PID);
-    track(
-      await makeService({ selfPid: OTHER_PID, instanceId: 'inst-b', probe }).acquire(lockPath),
-    );
-
-    expect(() => {
-      oldHandle.update((payload) => ({ ...payload, port: 2 }));
-    }).toThrowError(expect.objectContaining({ code: CrossProcessLockErrorCode.Lost }));
-    expect(readDisk().lock_id).toBe('lockid-2');
-    expect(readDisk().port).toBeUndefined();
-  });
-
-  it('update detects a takeover that happens after its initial token check', async () => {
-    const svc = makeService();
-    const handle = track(await svc.acquire(lockPath, { extraPayload: { port: 1 } }));
-    const oldPath = `${lockPath}.old`;
-
-    expect(() => {
-      handle.update((payload) => {
-        renameSync(lockPath, oldPath);
-        writeFileSync(
-          lockPath,
-          JSON.stringify({
-            lock_id: 'foreign-lock',
-            instance_id: 'foreign-instance',
-            pid: OTHER_PID,
-          }),
-        );
-        return { ...payload, port: 2 };
-      });
-    }).toThrowError(expect.objectContaining({ code: CrossProcessLockErrorCode.Lost }));
-    expect(readDisk().lock_id).toBe('foreign-lock');
-  });
-});
-
-describe('inspect', () => {
-  it('free when the file is missing', () => {
-    const svc = makeService();
-    expect(svc.inspect(lockPath)).toEqual({ state: 'free' });
-  });
-
-  it('held with payload passthrough for a live holder', () => {
-    writePayload({
-      lock_id: 'x',
-      instance_id: 'inst-other',
-      pid: OTHER_PID,
-      process_started_at: 'other-start',
-      address: '127.0.0.1:1',
-      port: 58627,
-    });
-    const svc = makeService({ probe: probeFor(liveWorld()) });
-
-    expect(svc.inspect(lockPath)).toMatchObject({
+    expect(lock.inspect(lockPath)).toEqual({
       state: 'held',
-      unavailableReason: 'held',
       payload: {
-        lockId: 'x',
-        instanceId: 'inst-other',
-        pid: OTHER_PID,
-        processStartedAt: 'other-start',
-        address: '127.0.0.1:1',
-        port: 58627,
+        lockId: 'alpha-1',
+        instanceId: 'alpha',
+        pid: 1001,
+        address: 'http://127.0.0.1:58627',
       },
     });
+    expect(readOwner()).toEqual({
+      lock_id: 'alpha-1',
+      instance_id: 'alpha',
+      pid: 1001,
+      address: 'http://127.0.0.1:58627',
+    });
+
+    handle.release();
+    expect(existsSync(lockPath)).toBe(true);
+    expect(existsSync(ownerPath())).toBe(false);
+    expect(lock.inspect(lockPath)).toEqual({ state: 'free' });
   });
 
-  it('stale holder-dead for a gone pid', () => {
-    writePayload({ lock_id: 'x', instance_id: 'inst-other', pid: OTHER_PID });
-    const svc = makeService();
-    expect(svc.inspect(lockPath)).toMatchObject({
-      state: 'stale',
-      staleReason: 'holder-dead',
-      payload: { lockId: 'x', pid: OTHER_PID },
+  it('rejects a second holder in the same process', async () => {
+    const first = await service('alpha', 1001).acquire(lockPath);
+    handles.push(first);
+
+    await expect(service('beta', 2002).acquire(lockPath)).rejects.toMatchObject({
+      code: CrossProcessLockErrorCode.Held,
+      details: { path: lockPath, reason: 'held' },
     });
   });
-});
 
-describe('createNodeProcessProbe', () => {
-  it('reports the current process alive with a stable identity token', () => {
-    const probe = createNodeProcessProbe();
-    const first = probe(process.pid);
-    expect(first.alive).toBe(true);
-    // Modern macOS exposes no named per-pid starttime OID, so the token is
-    // legitimately absent on darwin; linux always has one via /proc.
-    if (process.platform === 'linux') {
-      expect(first.processStartedAt).toBeDefined();
-    }
-    if (first.processStartedAt !== undefined) {
-      expect(probe(process.pid).processStartedAt).toBe(first.processStartedAt);
-    }
+  it('reports creating when a holder has no readable owner metadata', async () => {
+    const lock = service('alpha', 1001);
+    const handle = await lock.acquire(lockPath);
+    handles.push(handle);
+    writeFileSync(ownerPath(), '{');
+
+    expect(lock.inspect(lockPath)).toEqual({ state: 'creating' });
   });
 
-  it('reports a guaranteed-absent pid dead, without a token', () => {
-    const probe = createNodeProcessProbe();
-    expect(probe(DEAD_PID)).toEqual({ alive: false });
+  it('waits until the holder releases', async () => {
+    const first = await service('alpha', 1001).acquire(lockPath);
+    handles.push(first);
+    setTimeout(() => first.release(), 20);
+
+    const second = await service('beta', 2002).acquireWithWait(lockPath, {
+      wait: { timeoutMs: 500, retryIntervalMs: 5 },
+    });
+    handles.push(second);
+    expect(second.checkHeld()).toBe(true);
+  });
+
+  it('times out waiting for a held lock', async () => {
+    const first = await service('alpha', 1001).acquire(lockPath);
+    handles.push(first);
+
+    await expect(
+      service('beta', 2002).acquireWithWait(lockPath, {
+        wait: { timeoutMs: 15, retryIntervalMs: 5 },
+      }),
+    ).rejects.toMatchObject({ code: CrossProcessLockErrorCode.WaitTimeout });
+  });
+
+  it('releases a lock acquired as the wait deadline expires', async () => {
+    const first = await service('alpha', 1001).acquire(lockPath);
+    handles.push(first);
+    const times = [0, 0, 9, 10];
+    const sleepDurations: number[] = [];
+    const waiter = service('beta', 2002, {
+      now: () => times.shift() ?? 10,
+      sleep: async (ms) => {
+        sleepDurations.push(ms);
+        first.release();
+      },
+    });
+
+    const result = await waiter
+      .acquireWithWait(lockPath, { wait: { timeoutMs: 10, retryIntervalMs: 100 } })
+      .then(
+        (handle) => ({ status: 'acquired' as const, handle }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      );
+
+    if (result.status === 'acquired') handles.push(result.handle);
+    expect(sleepDurations).toEqual([10]);
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') {
+      expect(result.error).toMatchObject({ code: CrossProcessLockErrorCode.WaitTimeout });
+    }
+    expect(waiter.inspect(lockPath)).toEqual({ state: 'free' });
+  });
+
+  it('withLock releases after the callback throws', async () => {
+    const lock = service('alpha', 1001);
+    await expect(
+      lock.withLock(lockPath, { wait: { timeoutMs: 100 } }, () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+
+    const next = await service('beta', 2002).acquire(lockPath);
+    handles.push(next);
+    expect(next.checkHeld()).toBe(true);
+  });
+
+  it('release is idempotent and checkHeld fails closed afterwards', async () => {
+    const handle = await service('alpha', 1001).acquire(lockPath);
+    handle.release();
+    handle.release();
+
+    expect(handle.checkHeld()).toBe(false);
   });
 });

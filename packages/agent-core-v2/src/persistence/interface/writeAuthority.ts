@@ -3,7 +3,7 @@
  *
  * Defines `ISessionWriteAuthority`, the per-session lease proof that a Store
  * write must re-verify immediately before its bytes hit storage (the
- * pre-commit lease re-read is the hard gate and must fail closed), and the App-scoped
+ * pre-commit kernel-handle check is the hard gate and must fail closed), and the App-scoped
  * `IWriteAuthorityRegistry` the `AppendLogStore` resolves authorities through.
  * The registry never creates semantics of its own: it only maps `sessionId`
  * to the authority the session lifecycle registered, so a write for a
@@ -21,7 +21,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 
 export interface ISessionWriteAuthority {
   readonly sessionId: string;
-  /** Re-reads the lease payload and compares the held lock token. Throws
+  /** Checks the held kernel-lock handle. Throws
       `Error2(session.lease_lost)` when this instance no longer holds the
       lease; must be called immediately before any durable write. */
   assertWritable(): void;

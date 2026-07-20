@@ -8,10 +8,14 @@
  * frame `details` field, verbatim in both directions. Clients branch on
  * `kind`; within `held-by-peer` the `phase` tells the client what to do next:
  *
- *   - creating                lease file observed mid-creation; retry shortly
+ *   - creating                kernel lock held before owner metadata is visible; retry shortly
  *   - routable                holder is live and registered an address; client may redirect
- *   - holder-unresponsive     holder pid alive but heartbeat stale; retry later
+ *   - holder-unresponsive     legacy heartbeat-based server response; retry later
  *   - held-by-local-instance  holder has no address (local/embedded engine); terminal, do not retry
+ *
+ * Current kernel-lock servers emit `creating`, `routable`, or
+ * `held-by-local-instance`. `holder-unresponsive` remains in the wire schema
+ * so current clients can still understand older servers.
  */
 import { z } from 'zod';
 
@@ -28,7 +32,7 @@ export const heldByPeerDetailsSchema = z.object({
   phase: sessionOwnershipPhaseSchema,
   /** Present only when phase === 'routable'. */
   address: z.string().optional(),
-  /** Retry hint (ms) for 'creating' / 'holder-unresponsive'. */
+  /** Retry hint (ms) for `creating` or legacy `holder-unresponsive`. */
   retry_after_ms: z.number().int().nonnegative().optional(),
 });
 export type HeldByPeerDetails = z.infer<typeof heldByPeerDetailsSchema>;

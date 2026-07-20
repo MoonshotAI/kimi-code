@@ -2,17 +2,17 @@
  * `sessionLease` domain (L6) — the per-session write lease.
  *
  * Defines `ISessionLeaseService`, the Session-scope seeded capability that
- * state writers use to re-verify they still own the session's durable state,
+ * state writers use to verify they still own the session's durable state,
  * and the `SessionLease` object that satisfies it: an App-owned wrapper
  * (`SessionLifecycleService` builds it; it is deliberately not a DI service)
  * around the cross-process lock handle at
- * `<homeDir>/session-leases/<sessionId>.json`. `assertWritable` is the hard
- * gate: it synchronously re-reads the on-disk lease payload and
- * compares the held `lockId` — a mismatch fails closed with
+ * `<homeDir>/session-leases/<sessionId>.lock`. `assertWritable` is the hard
+ * gate: it checks the live kernel-lock handle — a released or replaced
+ * sentinel fails closed with
  * `session.lease_lost`, marks the lease lost, and fires the loss callback
  * exactly once so the owning session tears itself down. Release order is the
- * lifecycle's business; `release()` only forwards to the token-guarded lock
- * release (a foreign payload is never unlinked) and is idempotent.
+ * lifecycle's business; `release()` only forwards to the idempotent kernel
+ * lock release.
  *
  * No default is registered for `ISessionLeaseService`: every production
  * session scope is seeded by `sessionLifecycle` via {@link sessionLeaseSeed};
@@ -28,10 +28,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import type { ICrossProcessLockHandle } from '#/os/interface/crossProcessLock';
 import type { ISessionWriteAuthority } from '#/persistence/interface/writeAuthority';
 
-export const SESSION_LEASE_HEARTBEAT_INTERVAL_MS = 2000;
-export const SESSION_LEASE_TTL_MS = 6000;
 export const LEASE_CREATING_RETRY_AFTER_MS = 1000;
-export const HOLDER_UNRESPONSIVE_RETRY_AFTER_MS = 2000;
 
 /** `details` payload of `session.held_by_peer` errors; the zod twin lives in
     packages/protocol (`sessionOwnershipDetailsSchema`) and the shapes must
@@ -62,9 +59,8 @@ export interface ISessionLeaseService {
 
   /** The held lease identity; `undefined` once the lease is released. */
   readonly info: ISessionLeaseInfo | undefined;
-  /** Hard gate, synchronously re-reads the lease payload (see the file
-      header). Throws `Error2(session.lease_lost)` when this instance no
-      longer holds the lease — including after `release()`. */
+  /** Hard gate. Throws `Error2(session.lease_lost)` when this instance no
+      longer holds the kernel lease — including after `release()`. */
   assertWritable(): void;
 }
 
@@ -117,8 +113,6 @@ export class SessionLease implements ISessionWriteAuthority, ISessionLeaseServic
     }
   }
 
-  /** Forwards the lock handle's heartbeat loss detection into the lease's
-      own once-only loss path; also driven directly by `assertWritable`. */
   markLost(): void {
     this._lost = true;
     if (this._lossFired) return;
@@ -134,7 +128,7 @@ export class SessionLease implements ISessionWriteAuthority, ISessionLeaseServic
 }
 
 export function sessionLeasePath(homeDir: string, sessionId: string): string {
-  return join(homeDir, 'session-leases', `${sessionId}.json`);
+  return join(homeDir, 'session-leases', `${sessionId}.lock`);
 }
 
 export function sessionLeaseSeed(lease: SessionLease): ScopeSeed {

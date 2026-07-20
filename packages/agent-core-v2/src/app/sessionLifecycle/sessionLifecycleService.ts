@@ -102,13 +102,10 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import {
   type HeldByPeerDetails,
-  HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
   LEASE_CREATING_RETRY_AFTER_MS,
   SessionLease,
   sessionLeasePath,
   sessionLeaseSeed,
-  SESSION_LEASE_HEARTBEAT_INTERVAL_MS,
-  SESSION_LEASE_TTL_MS,
 } from '#/session/sessionLease/sessionLease';
 import { ISessionLeaseContactProvider } from '#/session/sessionLease/sessionLeaseContactProvider';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -869,29 +866,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async acquireSessionLease(sessionId: string): Promise<SessionLease> {
     const leasePath = sessionLeasePath(this.bootstrap.homeDir, sessionId);
     const contact = this.leaseContact.contact();
-    let lease: SessionLease | undefined;
     try {
-      const prior = this.locks.inspect(leasePath);
       const handle = await this.locks.acquire(leasePath, {
-        heartbeat: {
-          intervalMs: SESSION_LEASE_HEARTBEAT_INTERVAL_MS,
-          ttlMs: SESSION_LEASE_TTL_MS,
-        },
         address: contact.type === 'address' ? contact.address : undefined,
-        onLost: () => {
-          lease?.markLost();
-        },
       });
-      lease = new SessionLease(sessionId, handle, (id) => {
+      const lease = new SessionLease(sessionId, handle, (id) => {
         this.onLeaseLost(id);
       });
       this.telemetry.track2('session_lease_acquired', { session_id: sessionId });
-      if (prior.state === 'stale') {
-        this.telemetry.track2('session_lease_takeover', {
-          session_id: sessionId,
-          previous: prior.staleReason ?? 'unknown',
-        });
-      }
       return lease;
     } catch (error) {
       if (
@@ -912,9 +894,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       session_id: sessionId,
       phase: details.phase,
     });
-    if (details.phase === 'holder-unresponsive') {
-      this.telemetry.track2('session_lease_holder_unresponsive', { session_id: sessionId });
-    }
     throw new Error2(
       ErrorCodes.SESSION_HELD_BY_PEER,
       `session ${sessionId} is held by another instance (${details.phase})`,
@@ -925,14 +904,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private heldByPeerDetails(inspection: CrossProcessLockInspection): HeldByPeerDetails {
     if (inspection.state === 'held' && inspection.payload !== undefined) {
       const payload = inspection.payload;
-      const heartbeatAt = payload.heartbeatAt;
-      if (heartbeatAt !== undefined && Date.now() - heartbeatAt > SESSION_LEASE_TTL_MS) {
-        return {
-          kind: 'held-by-peer',
-          phase: 'holder-unresponsive',
-          retry_after_ms: HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
-        };
-      }
       if (payload.address !== undefined && this.flags.enabled(MULTI_SERVER_FLAG_ID)) {
         return { kind: 'held-by-peer', phase: 'routable', address: payload.address };
       }

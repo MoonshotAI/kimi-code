@@ -23,7 +23,7 @@ const optionalRuntimeRequires = new Set([
   'utf-8-validate',
 ]);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
-const handledNativeRuntimeRequires = new Set();
+const handledNativeRuntimeRequires = new Set(['fs-ext-extra-prebuilt']);
 
 function isAllowedSpecifier(specifier) {
   if (builtins.has(specifier) || specifier.startsWith('node:')) return true;

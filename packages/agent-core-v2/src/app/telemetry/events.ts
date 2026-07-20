@@ -954,7 +954,7 @@ export const telemetryEventDefinitions = {
   }),
   session_lease_takeover: defineTelemetryEvent<SessionLeaseTakeoverEvent>({
     owner: 'kimi-code',
-    comment: "A session's write lease is taken over from a stale (dead) holder.",
+    comment: 'Legacy stale-lease takeover event retained for telemetry schema stability.',
     properties: {
       session_id: 'Session the lease covers',
       previous: 'Stale reason observed before takeover (holder-dead, pid-reused, …)',
@@ -970,7 +970,7 @@ export const telemetryEventDefinitions = {
   }),
   session_lease_holder_unresponsive: defineTelemetryEvent<SessionLeaseHolderUnresponsiveEvent>({
     owner: 'kimi-code',
-    comment: "A session's lease holder is alive but its heartbeat is past TTL (frozen).",
+    comment: 'Legacy heartbeat-liveness event retained for telemetry schema stability.',
     properties: { session_id: 'Session whose holder is unresponsive' },
   }),
   session_dirty_abort: defineTelemetryEvent<SessionDirtyAbortEvent>({

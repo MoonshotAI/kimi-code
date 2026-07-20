@@ -2,8 +2,9 @@
  * Phase-2 session-ownership verification matrix — multi-process e2e over real
  * REST boundaries (design `.tmp/refactor-watch-design-v2.md` §3.10).
  *
- * One session write lease per session under `<home>/session-leases/<id>.json`
- * (heartbeat 2000ms, TTL 6000ms — real-time constants, wait with polling).
+ * One session write lease per session under `<home>/session-leases/<id>.lock`.
+ * The permanent sentinel is protected by a kernel lock; the sibling
+ * `<id>.lock.owner.json` document only advertises holder metadata.
  * Materializing routes on a peer-held session answer HTTP 200 with envelope
  * `code 40921 session.held_by_peer` + ownership details. kap-server's own e2e
  * already pins the dual-open envelope schema and graceful-close takeover; the
@@ -16,18 +17,13 @@
  *      `*.jsonl` byte-integrity sweep of the shared home (no torn records) and
  *      a single-lease assertion.
  *   2. SIGSTOP → no takeover, SIGCONT → clean continuation (subprocess pair):
- *      a stopped holder keeps its lease past the heartbeat TTL; B is refused
- *      with phase `holder-unresponsive` (retry_after_ms 2000), the lease
- *      `lock_id` never changes and no `*.stale.*` sibling appears. After
- *      SIGCONT the holder serves the session again and B drops back to
- *      `routable` once the heartbeat refreshes.
- *   3. kill -9 → dead-pid takeover with data intact (subprocess pair): after
- *      the holder dies and is reaped, B's resume poll succeeds (transient
- *      observations are schema-valid 40921s, never `routable` into the dead
- *      address), the lease is re-acquired with a NEW lock_id and B's
- *      pid/address, and A's payload is rename-isolated to
- *      `<id>.json.stale.<lockIdA>` next to it. `GET /sessions/{id}` on B
- *      returns the same session; the JSONL sweep stays clean.
+ *      a stopped holder keeps the kernel lock indefinitely; B remains refused
+ *      with phase `routable`, the `lock_id` stays stable, and the original
+ *      holder resumes cleanly after SIGCONT.
+ *   3. kill -9 → kernel release with data intact (subprocess pair): after the
+ *      holder dies and is reaped, B acquires the released kernel lock with a
+ *      NEW lock_id and overwrites owner metadata in place. The sentinel stays
+ *      put, no stale sibling is created, and the session remains intact.
  *
  * Every subprocess scenario ends with dispose() + an explicit pid-dead check
  * (ESRCH) so no child server can linger across tests.
@@ -36,7 +32,7 @@ import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { SESSION_LEASE_TTL_MS, sessionLeasePath } from '@moonshot-ai/agent-core-v2';
+import { sessionLeasePath } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode, sessionOwnershipDetailsSchema } from '@moonshot-ai/protocol';
 import { describe, expect, it } from 'vitest';
 
@@ -49,8 +45,6 @@ import {
 import { createCaseLogger } from './log.js';
 
 const SESSION_OWNERSHIP_HELD_BY_PEER = 40921;
-/** Pinned wire hint for `holder-unresponsive` (design §3.10 Phase-2 row). */
-const HOLDER_UNRESPONSIVE_RETRY_AFTER_MS = 2000;
 
 describe('session ownership: concurrent dual materialization race (in-process pair)', () => {
   it(
@@ -90,10 +84,10 @@ describe('session ownership: concurrent dual materialization race (in-process pa
           }
         }
 
-        // Exactly one lease file for the session, still A's, lock id stable.
+        // The permanent sentinel and owner metadata remain stable under A.
         const leaseFilenames = await listLeaseFilenames(pair.home);
-        const related = leaseFilenames.filter((name) => name.startsWith(`${sessionId}.json`));
-        expect(related).toEqual([`${sessionId}.json`]);
+        const related = leaseFilenames.filter((name) => name.startsWith(`${sessionId}.lock`));
+        expect(related).toEqual([`${sessionId}.lock`, `${sessionId}.lock.owner.json`]);
         const after = await readLease(pair.home, sessionId);
         expect(after?.['lock_id']).toBe(lockId);
         expect(after?.['address']).toBe(pair.urlA);
@@ -110,7 +104,7 @@ describe('session ownership: concurrent dual materialization race (in-process pa
 
 describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
   it(
-    'a stopped holder is never taken over past the TTL; after SIGCONT it resumes cleanly',
+    'a stopped holder keeps the kernel lock; after SIGCONT it resumes cleanly',
     { timeout: 150_000 },
     async () => {
       const log = createCaseLogger('session-ownership/sigstop-sigcont');
@@ -135,18 +129,7 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
         holderStopped = true;
         log('SIGSTOP sent', { pid: pair.a.pid });
 
-        // Wait (real time) until the frozen heartbeat is older than the TTL:
-        // from now on a peer inspecting the lease MUST see the holder as
-        // unresponsive — and MUST NOT take the lease over (pid still alive
-        // with matching identity).
-        const stale = await pollUntil(async () => {
-          const lease = await readLease(pair.home, sessionId);
-          const heartbeatAt = lease?.['heartbeat_at'];
-          if (typeof heartbeatAt !== 'number') return undefined;
-          const ageMs = Date.now() - heartbeatAt;
-          return ageMs > SESSION_LEASE_TTL_MS ? { heartbeatAt, ageMs } : undefined;
-        }, `lease heartbeat older than TTL (${SESSION_LEASE_TTL_MS}ms)`, 15_000, 250);
-        log('heartbeat now stale while A is stopped', stale);
+        await sleep(300);
 
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           const b = await getEnvelope(pair.b.baseUrl, warningsPath(sessionId));
@@ -160,17 +143,18 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
           expect(b.body.code).toBe(SESSION_OWNERSHIP_HELD_BY_PEER);
           expect(details).toEqual({
             kind: 'held-by-peer',
-            phase: 'holder-unresponsive',
-            retry_after_ms: HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
+            phase: 'routable',
+            address: pair.a.baseUrl,
           });
           if (attempt === 1) await sleep(300);
         }
 
-        // No takeover happened: same lock id, no rename-isolated sibling.
+        // No takeover happened: same lock id and the same two permanent files.
         expect((await readLease(pair.home, sessionId))?.['lock_id']).toBe(lockIdA);
         const filenames = await listLeaseFilenames(pair.home);
-        expect(filenames.filter((name) => name.startsWith(`${sessionId}.json`))).toEqual([
-          `${sessionId}.json`,
+        expect(filenames.filter((name) => name.startsWith(`${sessionId}.lock`))).toEqual([
+          `${sessionId}.lock`,
+          `${sessionId}.lock.owner.json`,
         ]);
 
         process.kill(pair.a.pid, 'SIGCONT');
@@ -188,8 +172,7 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
           code: aResumed.body.code,
         });
 
-        // B stays refused; once the resumed heartbeat lands it returns to
-        // `routable` (never code 0, never anything but schema-valid 40921).
+        // B stays refused and remains routable to the original holder.
         const transcript: Array<{ code: number; details: unknown }> = [];
         const routable = await pollUntil(async () => {
           const res = await getEnvelope(pair.b.baseUrl, warningsPath(sessionId));
@@ -198,7 +181,7 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
           return details.kind === 'held-by-peer' && details.phase === 'routable'
             ? details
             : undefined;
-        }, 'B back to 40921 routable after SIGCONT', 15_000, 500);
+        }, 'B remains 40921 routable after SIGCONT', 15_000, 500);
         log('B observations after SIGCONT', { transcript, final: routable });
         for (const entry of transcript) {
           expect(entry.code).toBe(SESSION_OWNERSHIP_HELD_BY_PEER);
@@ -209,7 +192,7 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
           address: pair.a.baseUrl,
         });
 
-        // Still the original lease; no stale sibling ever appeared.
+        // Still the original kernel lease; no stale sibling ever appeared.
         expect((await readLease(pair.home, sessionId))?.['lock_id']).toBe(lockIdA);
         const swept = await assertJsonlIntegrity(pair.home);
         log('byte-integrity sweep', swept);
@@ -234,12 +217,12 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
   );
 });
 
-describe('session ownership: kill -9 dead-pid takeover (subprocess pair)', () => {
+describe('session ownership: kill -9 kernel release (subprocess pair)', () => {
   it(
-    'B takes over via rename isolation with a new lock id and serves the intact session',
+    'B acquires the released kernel lock with a new lock id and serves the intact session',
     { timeout: 120_000 },
     async () => {
-      const log = createCaseLogger('session-ownership/sigkill-takeover');
+      const log = createCaseLogger('session-ownership/sigkill-kernel-release');
       const pair = await spawnServerProcessPair();
       try {
         await Promise.all([
@@ -255,61 +238,34 @@ describe('session ownership: kill -9 dead-pid takeover (subprocess pair)', () =>
         log('holder lease before SIGKILL', { sessionId, lease: leaseA });
 
         pair.a.kill('SIGKILL');
-        // Await real death (zombie reaped): ESRCH is the takeover precondition.
+        // Await real death (zombie reaped): the kernel has released A's lock.
         const exited = await waitForPidExit(pair.a.pid, 10_000);
         log('SIGKILL delivered', { pid: pair.a.pid, exited });
         expect(exited).toBe(true);
 
-        // B's resume poll: may observe schema-valid 40921s transiently; must
-        // converge to success and must never be routed to the dead address.
-        const transcript: Array<{ elapsedMs: number; code: number; details: unknown }> = [];
-        const startedAt = Date.now();
-        const success = await pollUntil(async () => {
-          const res = await getEnvelope(pair.b.baseUrl, warningsPath(sessionId));
-          transcript.push({
-            elapsedMs: Date.now() - startedAt,
-            code: res.body.code,
-            details: res.body.details,
-          });
-          return res.body.code === 0 ? res : undefined;
-        }, 'B resume succeeds after dead-pid takeover', 20_000, 500);
-        log('B resume transcript after kill -9', transcript);
+        // Once A is gone, B acquires the released lock on its first request.
+        const success = await getEnvelope(pair.b.baseUrl, warningsPath(sessionId));
         log('B resume success', { status: success.status, code: success.body.code });
+        expect(success.status).toBe(200);
+        expect(success.body.code).toBe(0);
 
-        for (const entry of transcript) {
-          if (entry.code === 0) continue;
-          expect(entry.code).toBe(SESSION_OWNERSHIP_HELD_BY_PEER);
-          const details = sessionOwnershipDetailsSchema.parse(entry.details);
-          expect(details.kind).toBe('held-by-peer');
-          if (details.kind === 'held-by-peer') {
-            expect(details.phase).not.toBe('routable');
-          }
-        }
-
-        // Takeover evidence: new lock id, B's pid + address, and A's payload
-        // rename-isolated next to the live lease.
+        // Re-acquisition evidence: new lock id and B's metadata, written next
+        // to the unchanged permanent sentinel.
         const leaseB = await readLease(pair.home, sessionId);
-        log('lease after takeover', leaseB);
+        log('lease after kernel release', leaseB);
         expect(typeof leaseB?.['lock_id']).toBe('string');
         expect(leaseB?.['lock_id']).not.toBe(lockIdA);
         expect(leaseB?.['pid']).toBe(pair.b.pid);
         expect(leaseB?.['address']).toBe(pair.b.baseUrl);
 
-        const staleName = `${sessionId}.json.stale.${String(lockIdA)}`;
-        const stale = JSON.parse(
-          await readFile(join(pair.home, 'session-leases', staleName), 'utf8'),
-        ) as Record<string, unknown>;
-        log('rename-isolated stale lease', { staleName, stale });
-        expect(stale['lock_id']).toBe(lockIdA);
-        expect(stale['pid']).toBe(pair.a.pid);
         const related = (await listLeaseFilenames(pair.home)).filter((name) =>
-          name.startsWith(`${sessionId}.json`),
+          name.startsWith(`${sessionId}.lock`),
         );
-        expect(related).toEqual([`${sessionId}.json`, staleName].sort());
+        expect(related).toEqual([`${sessionId}.lock`, `${sessionId}.lock.owner.json`]);
 
-        // The session survived the handover intact.
+        // The session survived the holder change intact.
         const session = await getEnvelope<SessionWire>(pair.b.baseUrl, `/sessions/${sessionId}`);
-        log('GET /sessions/{id} on B after takeover', session.body);
+        log('GET /sessions/{id} on B after kernel release', session.body);
         expect(session.status).toBe(200);
         expect(session.body.code).toBe(0);
         expect(session.body.data?.id).toBe(sessionId);
@@ -563,10 +519,12 @@ function startSessionsTreeKicker(sessionsRoot: string, intervalMs = 250): () => 
 
 type LeasePayload = Record<string, unknown>;
 
-/** Read `<home>/session-leases/<sessionId>.json`; undefined when absent. */
+/** Read diagnostic owner metadata; undefined when no holder has published it. */
 async function readLease(home: string, sessionId: string): Promise<LeasePayload | undefined> {
   try {
-    return JSON.parse(await readFile(sessionLeasePath(home, sessionId), 'utf8')) as LeasePayload;
+    return JSON.parse(
+      await readFile(`${sessionLeasePath(home, sessionId)}.owner.json`, 'utf8'),
+    ) as LeasePayload;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;

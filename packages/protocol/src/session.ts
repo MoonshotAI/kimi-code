@@ -79,13 +79,12 @@ export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'ques
 export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
 
 /**
- * Per-session holder annotation joined from `session-leases/<id>.json` by the
- * session list route (multi-instance shared home). `self` = this instance
- * holds the write lease (the session is materialized here), `peer` = another
- * instance holds it (`address` is its reachable base URL when the holder
- * advertised one — the redirect target), `none` = no lease on disk (the
- * session is materialized nowhere). Purely display/redirect metadata: the
- * lease file stays the authority and is re-checked on every materialization.
+ * Per-session holder annotation derived from the kernel lock on
+ * `session-leases/<id>.lock` plus its optional `.owner.json` routing metadata.
+ * `self` = this instance holds the lock (the session is materialized here),
+ * `peer` = another instance holds it (`address` is its advertised base URL),
+ * `none` = no process holds the lock. Purely display/redirect metadata: the
+ * live kernel lock is the authority and is re-checked on materialization.
  */
 export const sessionOwnershipSchema = z.object({
   held_by: z.enum(['self', 'peer', 'none']),

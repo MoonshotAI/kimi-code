@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tryAcquireKernelFileLock } from '@moonshot-ai/kernel-file-lock';
 
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1420,7 +1421,11 @@ describe('SessionLifecycleService', () => {
     }
 
     function leaseFile(root: string, sessionId: string): string {
-      return join(root, 'session-leases', `${sessionId}.json`);
+      return join(root, 'session-leases', `${sessionId}.lock`);
+    }
+
+    function leaseOwnerFile(root: string, sessionId: string): string {
+      return `${leaseFile(root, sessionId)}.owner.json`;
     }
 
     async function createError(
@@ -1439,7 +1444,7 @@ describe('SessionLifecycleService', () => {
       const svc = build(realInstanceSeeds(root));
       const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
-      const payload = JSON.parse(await readFile(leaseFile(root, 's1'), 'utf8'));
+      const payload = JSON.parse(await readFile(leaseOwnerFile(root, 's1'), 'utf8'));
       const lease = h.accessor.get(ISessionLeaseService);
       expect(lease.info).toEqual({ sessionId: 's1', lockId: payload.lock_id });
       expect(() => lease.assertWritable()).not.toThrow();
@@ -1464,7 +1469,8 @@ describe('SessionLifecycleService', () => {
       expect(svc.get('s1')).toBeUndefined();
       expect(svc.list()).toEqual([]);
       expect(registry.resolve('s1')).toBeUndefined();
-      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      await expect(stat(leaseFile(root, 's1'))).resolves.toBeDefined();
+      await expect(stat(leaseOwnerFile(root, 's1'))).rejects.toThrow();
       expect(disposedSessionServices).toBeGreaterThan(0);
     });
 
@@ -1544,91 +1550,35 @@ describe('SessionLifecycleService', () => {
       }
     });
 
-    it('reports holder-unresponsive for a live holder with a stale heartbeat', async () => {
+    it('reports the creating phase while the kernel holder publishes owner metadata', async () => {
+      const root = await makeTmpRoot();
+      const handle = tryAcquireKernelFileLock(leaseFile(root, 's1'))!;
+      try {
+        const svc = build(realInstanceSeeds(root));
+        const error = await createError(svc, 's1');
+        expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
+        expect(error.details).toEqual({
+          kind: 'held-by-peer',
+          phase: 'creating',
+          retry_after_ms: 1000,
+        });
+      } finally {
+        handle.release();
+      }
+    });
+
+    it('ignores legacy payload contents when no process holds the kernel lock', async () => {
       const root = await makeTmpRoot();
       await mkdir(join(root, 'session-leases'), { recursive: true });
       await writeFile(
         leaseFile(root, 's1'),
-        JSON.stringify({
-          lock_id: 'old-token',
-          instance_id: 'inst-old',
-          pid: process.pid,
-          heartbeat_at: Date.now() - 60_000,
-        }),
-      );
-      const svc = build(realInstanceSeeds(root));
-      const error = await createError(svc, 's1');
-      expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
-      expect(error.details).toEqual({
-        kind: 'held-by-peer',
-        phase: 'holder-unresponsive',
-        retry_after_ms: 2000,
-      });
-      expect(telemetryRecords).toContainEqual({
-        event: 'session_lease_holder_unresponsive',
-        properties: { session_id: 's1' },
-      });
-    });
-
-    it('reports the creating phase for a lease file inside its creation window', async () => {
-      const root = await makeTmpRoot();
-      await mkdir(join(root, 'session-leases'), { recursive: true });
-      await writeFile(leaseFile(root, 's1'), '');
-      const svc = build(realInstanceSeeds(root));
-      const error = await createError(svc, 's1');
-      expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
-      expect(error.details).toEqual({ kind: 'held-by-peer', phase: 'creating', retry_after_ms: 1000 });
-    });
-
-    it('takes over the lease of a dead holder and reports session_lease_takeover', async () => {
-      const root = await makeTmpRoot();
-      await mkdir(join(root, 'session-leases'), { recursive: true });
-      await writeFile(
-        leaseFile(root, 's1'),
-        JSON.stringify({
-          lock_id: 'dead-token',
-          instance_id: 'inst-dead',
-          pid: 0x7fffffff,
-          heartbeat_at: 1,
-        }),
+        JSON.stringify({ lock_id: 'legacy-token', instance_id: 'legacy', pid: 0x7fffffff }),
       );
       const svc = build(realInstanceSeeds(root));
       const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
       expect(h.id).toBe('s1');
-      expect(telemetryRecords).toContainEqual({
-        event: 'session_lease_takeover',
-        properties: { session_id: 's1', previous: 'holder-dead' },
-      });
-      const payload = JSON.parse(await readFile(leaseFile(root, 's1'), 'utf8'));
-      expect(payload.lock_id).not.toBe('dead-token');
-    });
-
-    it('tears the session down when a peer takes over its lease', async () => {
-      const root = await makeTmpRoot();
-      const { seeds, appendLog } = realAlsSeeds(root);
-      const svc = build(seeds);
-      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
-
-      const leasePath = leaseFile(root, 's1');
-      const payload = JSON.parse(await readFile(leasePath, 'utf8'));
-      await writeFile(leasePath, JSON.stringify({ ...payload, lock_id: 'peer-token' }));
-
-      const agentScopeStr = 'sessions/wd_stub/s1/agents/main';
-      appendLog.append(agentScopeStr, 'wire.jsonl', { type: 'metadata' });
-      await expect(appendLog.flush()).rejects.toMatchObject({
-        code: ErrorCodes.SESSION_LEASE_LOST,
-      });
-
-      await waitFor(() => svc.get('s1') === undefined);
-
-      appendLog.append(agentScopeStr, 'wire.jsonl', { type: 'metadata' });
-      await expect(appendLog.flush()).rejects.toMatchObject({
-        code: ErrorCodes.SESSION_LEASE_LOST,
-      });
-      await expect(stat(join(root, agentScopeStr))).rejects.toThrow();
-      // The token-guarded release never unlinks the peer's lease file.
-      const remaining = JSON.parse(await readFile(leasePath, 'utf8'));
-      expect(remaining.lock_id).toBe('peer-token');
+      const payload = JSON.parse(await readFile(leaseOwnerFile(root, 's1'), 'utf8'));
+      expect(payload.lock_id).not.toBe('legacy-token');
     });
 
     it('fork acquires a distinct target lease; releasing the source does not fence the target', async () => {
@@ -1652,8 +1602,8 @@ describe('SessionLifecycleService', () => {
       const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
       expect(target.id).toBe('dst');
 
-      const srcPayload = JSON.parse(await readFile(leaseFile(root, 'src'), 'utf8'));
-      const dstPayload = JSON.parse(await readFile(leaseFile(root, 'dst'), 'utf8'));
+      const srcPayload = JSON.parse(await readFile(leaseOwnerFile(root, 'src'), 'utf8'));
+      const dstPayload = JSON.parse(await readFile(leaseOwnerFile(root, 'dst'), 'utf8'));
       expect(dstPayload.lock_id).not.toBe(srcPayload.lock_id);
 
       appendLog.append('sessions/wd_stub/src/agents/main', 'wire.jsonl', { n: 1 });
@@ -1687,7 +1637,8 @@ describe('SessionLifecycleService', () => {
 
       const disk = await readFile(join(root, agentScopeStr, 'wire.jsonl'), 'utf8');
       expect(disk).toBe('{"tail":true}\n');
-      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      await expect(stat(leaseFile(root, 's1'))).resolves.toBeDefined();
+      await expect(stat(leaseOwnerFile(root, 's1'))).rejects.toThrow();
     });
 
     it('keeps authority and lease when the session durability barrier fails', async () => {
@@ -1741,7 +1692,8 @@ describe('SessionLifecycleService', () => {
       await svc.forceAbort('s1');
 
       expect(registry.resolve('s1')).toBeUndefined();
-      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      await expect(stat(leaseFile(root, 's1'))).resolves.toBeDefined();
+      await expect(stat(leaseOwnerFile(root, 's1'))).rejects.toThrow();
       const successor = await new CrossProcessLockService().acquire(leaseFile(root, 's1'));
       successor.release();
       expect(telemetryRecords).toContainEqual({
@@ -1777,7 +1729,8 @@ describe('SessionLifecycleService', () => {
       await blockedStarted;
 
       await svc.close('s1');
-      await expect(stat(leaseFile(root, 's1'))).rejects.toThrow();
+      await expect(stat(leaseFile(root, 's1'))).resolves.toBeDefined();
+      await expect(stat(leaseOwnerFile(root, 's1'))).rejects.toThrow();
       await expect(stat(leaseFile(root, 's10'))).resolves.toBeDefined();
 
       releaseBlocked();

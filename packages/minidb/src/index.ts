@@ -146,8 +146,6 @@ export interface OpenOptions {
   recovery?: RecoveryMode;
   readOnly?: boolean;
   onLockFail?: 'readonly';
-  /** Absolute bound for the underlying lock acquisition settle phase. */
-  lockAcquireTimeoutMs?: number;
   /** Where to keep value bulk. 'memory' keeps values in RAM; 'disk' keeps only
    *  value pointers in RAM and reads values from the snapshot/WAL on demand. */
   valueMode?: ValueModeSetting;
@@ -292,11 +290,7 @@ export class MiniDb<V = unknown> {
       db.lock = new LockFile(path.join(db.dir, 'db.lock'), {
         onLost: () => db.markLockLost(),
       });
-      const deadline =
-        opts.lockAcquireTimeoutMs === undefined
-          ? undefined
-          : Date.now() + Math.max(0, opts.lockAcquireTimeoutMs);
-      const got = await db.lock.acquire(deadline);
+      const got = await db.lock.acquire();
       if (!got) {
         if (opts.onLockFail === 'readonly') {
           db.readOnly = true;
@@ -1614,9 +1608,7 @@ export class MiniDb<V = unknown> {
 
   // ---- maintenance --------------------------------------------------------
 
-  /** Refresh the write lock's timestamp (see {@link LockFile.renew}). No-op
-   *  for a read-only instance. Exposed for lease-style holders such as the
-   *  cluster shard pool, which renew on a timer to prove liveness. */
+  /** Verify that this process still holds the database's kernel lock. */
   async renewLock(): Promise<void> {
     if (this.lock === null) return;
     await this.lock.renew();
@@ -1675,6 +1667,7 @@ export class MiniDb<V = unknown> {
   }
   private ensureWritable(): void {
     if (this.readOnly) throw new Error('MiniDb is open in read-only mode');
+    this.lock?.assertHeld();
     if (this.lockLossError !== null) throw this.lockLossError;
   }
 

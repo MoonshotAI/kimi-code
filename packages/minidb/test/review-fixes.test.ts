@@ -84,24 +84,21 @@ test('expired keys are removed from secondary indexes', async () => {
   }
 });
 
-test('a writer that loses its lock cannot write into a successor generation', async () => {
+test('editing the sentinel payload cannot create a successor generation', async () => {
   const dir = await tmpDir();
   try {
     const oldWriter = await MiniDb.open({ dir, valueCodec: 'string', autoCompact: false });
     await oldWriter.set('generation', 'old');
 
-    await fs.writeFile(
-      path.join(dir, 'db.lock'),
-      JSON.stringify({ pid: 0x7fffffff, ts: Date.now(), lock_id: 'successor-generation' }),
+    await fs.writeFile(path.join(dir, 'db.lock'), 'successor-generation');
+    await assert.doesNotReject(() => oldWriter.renewLock());
+    await assert.rejects(
+      () => MiniDb.open({ dir, valueCodec: 'string', autoCompact: false }),
+      /locked/,
     );
-    await assert.rejects(oldWriter.renewLock(), /write lock was lost/);
+    await oldWriter.set('generation', 'old-again');
+    assert.equal(oldWriter.get('generation'), 'old-again');
 
-    const newWriter = await MiniDb.open({ dir, valueCodec: 'string', autoCompact: false });
-    await newWriter.set('generation', 'new');
-    await assert.rejects(oldWriter.set('generation', 'old-again'), /write lock was lost/);
-    assert.equal(newWriter.get('generation'), 'new');
-
-    await newWriter.close();
     await oldWriter.close();
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

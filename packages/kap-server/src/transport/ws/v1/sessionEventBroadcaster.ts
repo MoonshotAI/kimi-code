@@ -64,9 +64,7 @@ import {
   ISessionIndex,
   ISessionLifecycleService,
   MAIN_AGENT_ID,
-  HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
   LEASE_CREATING_RETRY_AFTER_MS,
-  SESSION_LEASE_TTL_MS,
   sessionLeasePath,
 } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -385,14 +383,6 @@ export class SessionEventBroadcaster {
     }
     if (inspection.state !== 'held' || inspection.payload === undefined) return undefined;
 
-    const heartbeatAt = inspection.payload.heartbeatAt;
-    if (heartbeatAt !== undefined && Date.now() - heartbeatAt > SESSION_LEASE_TTL_MS) {
-      return {
-        kind: 'held-by-peer',
-        phase: 'holder-unresponsive',
-        retry_after_ms: HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
-      };
-    }
     if (inspection.payload.address !== undefined) {
       return { kind: 'held-by-peer', phase: 'routable', address: inspection.payload.address };
     }

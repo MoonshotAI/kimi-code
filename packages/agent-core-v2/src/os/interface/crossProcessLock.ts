@@ -1,181 +1,77 @@
 /**
- * `crossProcessLock` domain (L1) — cross-process exclusive file-lock contract.
+ * `crossProcessLock` domain (L1) — cross-process exclusive lock contract.
  *
- * Defines `ICrossProcessLockService`, the single lock protocol that replaces the
- * repo's ad-hoc lockfiles.
- * One JSON lock file per resource, created with `O_EXCL`. Protocol invariants:
- *
- * - Token-guarded: every acquire generates a fresh `lockId` (ulid); release,
- *   heartbeat and payload rewrites re-read the file and compare `lockId` before
- *   touching it, so a late operation never clobbers a newer holder's lock.
- * - Live PID is never taken over: a lock whose owner pid is alive and whose
- *   `processStartedAt` identity matches is held, even when its heartbeat has
- *   gone silent (`alive-unresponsive` — alert, never seize). Pid death, or a
- *   pid whose identity no longer matches (pid reused by a new process), makes
- *   the lock stale.
- * - Every acquisition attempt registers a process-owned contender intent before
- *   inspecting the lock. A creator does not return until every older in-flight
- *   contender has either completed or disappeared. This closes the delayed
- *   stale-observer race where a contender could quarantine a newer generation
- *   after its creator had already returned.
- * - Creation window: an empty or unparseable file younger than the creation
- *   window is "creating" (treated as held, no address yet); only past the
- *   window may it be treated as stale.
- * - The fd opened by the winning `O_EXCL` create stays open for the handle's
- *   lifetime. Heartbeat and payload updates write only through that fd, so a
- *   holder that lost the public path can never overwrite its successor.
- *
- * The on-disk JSON is flat and snake_case, matching operator-facing lock
- * conventions; the six known protocol keys map to the camelCase fields of
- * `CrossProcessLockPayload`, and any additional adapter-owned keys pass
- * through untouched. Bound at App scope; the Node implementation lives in
- * `os/backends/node-local/crossProcessLockService.ts`.
+ * Defines the App-scoped lock service used by durable read-modify-write
+ * transactions and long-lived session leases. The lock path is a permanent
+ * sentinel whose inode is never removed or replaced; ownership is enforced by
+ * the operating system through an exclusive advisory lock held on an open file
+ * descriptor. A separate owner document carries operator-facing metadata and
+ * is never consulted for lock correctness.
  */
 
+import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
-import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface CrossProcessLockPayload {
-  /** Unique token of this acquire; every mutation must be guarded by it. */
   lockId: string;
-  /** Identity of the acquiring instance (per-service ulid by default). */
   instanceId: string;
   pid: number;
-  /** Opaque platform identity token for pid-reuse detection (macOS `sysctl
-      kern.proc.starttime`, Linux `/proc/<pid>/stat` field 22); compared by
-      equality only, never parsed. Absent when the platform cannot provide it. */
-  processStartedAt?: string;
-  /** Contact address for instances that run a network service. */
   address?: string;
-  /** Last heartbeat wall-clock ms; present only in heartbeat modes. */
-  heartbeatAt?: number;
-  /** Adapter-owned extra fields, kept flat on disk (e.g. server lock `port`). */
-  [extra: string]: unknown;
-}
-
-export interface CrossProcessLockHeartbeatOptions {
-  /** Milliseconds between heartbeat writes. */
-  readonly intervalMs: number;
-  /** Milliseconds of heartbeat silence after which a *dead-identity* holder is
-      observable as unresponsive; a live, identity-matching pid is still never
-      taken over — the ttl only feeds the `alive-unresponsive` verdict. */
-  readonly ttlMs: number;
 }
 
 export interface CrossProcessLockWaitOptions {
-  /** Give up and throw `OS_LOCK_WAIT_TIMEOUT` after this many ms. */
   readonly timeoutMs: number;
-  /** Delay between acquisition attempts; small default when omitted. */
   readonly retryIntervalMs?: number;
 }
 
 export interface CrossProcessLockAcquireOptions {
-  /** Heartbeat mode. Omit for pid-only locks. */
-  readonly heartbeat?: CrossProcessLockHeartbeatOptions;
-  /** Milliseconds an empty/unparseable lock file counts as "creating" rather
-      than stale. Default 5000 for heartbeat-less modes. */
-  readonly creationWindowMs?: number;
-  /** Contact address recorded in the payload. */
   readonly address?: string;
-  /** Extra flat fields written into the lock JSON (adapter-owned, snake_case). */
-  readonly extraPayload?: Record<string, unknown>;
-  /** Called once when a heartbeat-mode lock detects it has lost ownership
-      (payload token no longer matches). Not called for pid-only locks. */
-  readonly onLost?: () => void;
 }
 
-export type CrossProcessLockUnavailableReason =
-  /** Live, identity-matching owner (or, heartbeat mode, silently frozen). */
-  | 'held'
-  /** Empty/unparseable file still inside its creation window. */
-  | 'creating'
-  /** Heartbeat-mode lock whose heartbeatAt is past ttl while the owner pid is
-      alive and identity-matching. Never taken over; surfaced for alerting. */
-  | 'holder-unresponsive';
-
-export type CrossProcessLockStaleReason =
-  /** Owner pid no longer exists. */
-  | 'holder-dead'
-  /** Owner pid alive but `processStartedAt` differs — pid was reused. */
-  | 'pid-reused'
-  /** Empty/unparseable file older than the creation window. */
-  | 'creation-window-expired';
-
 export interface CrossProcessLockInspection {
-  readonly state: 'free' | 'creating' | 'held' | 'stale';
-  /** Present whenever the file existed and parsed. */
+  readonly state: 'free' | 'creating' | 'held';
   readonly payload?: CrossProcessLockPayload;
-  readonly unavailableReason?: CrossProcessLockUnavailableReason;
-  readonly staleReason?: CrossProcessLockStaleReason;
 }
 
 export interface ICrossProcessLockHandle {
   readonly lockPath: string;
   readonly lockId: string;
-  /** True while the on-disk payload still carries this handle's `lockId`. */
   checkHeld(): boolean;
-  /** Token-guarded payload rewrite (`port` updates and the like). Re-reads
-      and compares `lockId` first; protocol fields (`lockId`/`instanceId`/`pid`)
-      are re-stamped, mutator output cannot change them. Throws
-      `OS_LOCK_LOST` when the token no longer matches. */
-  update(mutate: (payload: CrossProcessLockPayload) => Record<string, unknown>): void;
-  /** Token-guarded unlink. Idempotent; a missing or foreign-owned file is
-      left untouched. Stops the heartbeat when present. */
   release(): void;
 }
 
 export interface ICrossProcessLockService {
   readonly _serviceBrand: undefined;
 
-  /** Fail-fast acquisition. Throws `OS_LOCK_HELD` carrying the
-      `CrossProcessLockUnavailableReason` when a live owner stands in the way;
-      takes over stale locks per protocol. */
   acquire(
     lockPath: string,
     options?: CrossProcessLockAcquireOptions,
   ): Promise<ICrossProcessLockHandle>;
 
-  /** Blocking acquisition for short critical sections (lock-in-RMW): retries
-      while the lock is held/creating until `wait.timeoutMs` elapses. */
   acquireWithWait(
     lockPath: string,
     options: CrossProcessLockAcquireOptions & { wait: CrossProcessLockWaitOptions },
   ): Promise<ICrossProcessLockHandle>;
 
-  /** `acquireWithWait` + `fn` + guaranteed release, for read-modify-write
-      critical sections. */
   withLock<T>(
     lockPath: string,
     options: CrossProcessLockAcquireOptions & { wait: CrossProcessLockWaitOptions },
     fn: (handle: ICrossProcessLockHandle) => T | Promise<T>,
   ): Promise<T>;
 
-  /** Read-only probe; never mutates the file. */
-  inspect(lockPath: string, options?: Pick<CrossProcessLockAcquireOptions, 'creationWindowMs'>): CrossProcessLockInspection;
+  inspect(lockPath: string): CrossProcessLockInspection;
 }
 
 export const ICrossProcessLockService: ServiceIdentifier<ICrossProcessLockService> =
   createDecorator<ICrossProcessLockService>('crossProcessLockService');
 
-/** Process probing seam, injectable for tests. `alive` follows `kill(pid,0)`
-    semantics (EPERM counts as alive); `processStartedAt` is the opaque identity
-    token. A probing failure must return the conservative `{alive: true}`. */
-export type ProcessProbe = (pid: number) => {
-  alive: boolean;
-  processStartedAt?: string;
-};
-
-/** Test seam: every clock, pid, probe and token source is replaceable. */
 export interface CrossProcessLockServiceDeps {
   readonly now?: () => number;
   readonly selfPid?: number;
-  readonly probeProcess?: ProcessProbe;
   readonly newLockId?: () => string;
-  readonly newAttemptId?: () => string;
   readonly instanceId?: string;
   readonly sleep?: (ms: number) => Promise<void>;
-  readonly beforeStaleIsolation?: () => void | Promise<void>;
 }
 
 export const OsLockErrors = {
@@ -197,7 +93,7 @@ export const OsLockErrors = {
       public: true,
     },
     'os.lock.lost': {
-      title: 'Lock ownership was lost to another process',
+      title: 'Lock ownership was lost',
       retryable: false,
       public: true,
     },

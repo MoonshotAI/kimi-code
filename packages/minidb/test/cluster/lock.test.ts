@@ -1,8 +1,8 @@
 // test/cluster/lock.test.js
 //
 // Lock semantics inside one process: same-shard writer contention with
-// acquire timeout, per-shard independence, read-only coexistence, lock lease
-// renewal, and writer handoff after close.
+// acquire timeout, per-shard independence, read-only coexistence, stable
+// sentinels, and writer handoff after close.
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -11,7 +11,7 @@ import path from 'node:path';
 import { ClusterDb } from '../../src/cluster/index.js';
 import { shardDirName } from '../../src/cluster/utils.js';
 import { tmpDir, rmrf } from '../e2e/helpers/tmp.js';
-import { keyOnShard, sleep } from './helpers.js';
+import { keyOnShard } from './helpers.js';
 
 test('two writers contend on the same shard; loser times out with LockError', async () => {
   const dir = await tmpDir('minidb-cluster-');
@@ -91,20 +91,19 @@ test('read-only instance coexists with a live writer and sees its commits', asyn
   }
 });
 
-test('lock lease: db.lock timestamp advances while a writer is held', async () => {
+test('a cached writer keeps a stable sentinel without renewal writes', async () => {
   const dir = await tmpDir('minidb-cluster-');
   try {
-    const db = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json', lockRenewMs: 80, lockHoldMs: 0 });
+    const db = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json', lockHoldMs: 0 });
     const key = keyOnShard('lease', 1, 4);
-    await db.set(key, { v: 1 }); // grabs shard 1 and starts the lease timer
+    await db.set(key, { v: 1 });
 
     const lockPath = path.join(dir, shardDirName(1, 4), 'db.lock');
-    const read = async () => JSON.parse(await fs.readFile(lockPath, 'utf8')) as { pid: number; ts: number };
-    const first = await read();
-    assert.equal(first.pid, process.pid);
-    await sleep(300);
-    const second = await read();
-    assert.ok(second.ts > first.ts, `timestamp renewed (${first.ts} -> ${second.ts})`);
+    const first = await fs.stat(lockPath);
+    assert.equal(await fs.readFile(lockPath, 'utf8'), '');
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    const second = await fs.stat(lockPath);
+    assert.equal(second.mtimeMs, first.mtimeMs);
     await db.close();
   } finally {
     await rmrf(dir);

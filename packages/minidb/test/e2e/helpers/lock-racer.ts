@@ -1,6 +1,6 @@
 // test/e2e/helpers/lock-racer.ts
 //
-// Child-side counterpart of the lock-takeover stress test. Sits in a loop;
+// Child-side counterpart of the kernel-lock stress test. Sits in a loop;
 // for each round it waits for `go-<round>` to appear in the gate directory,
 // then races to acquire the lock and prints "R<round> <pid> <0|1>".
 

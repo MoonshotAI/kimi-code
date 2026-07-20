@@ -1,14 +1,12 @@
 /**
  * `sessionLease` domain — unit tests for the per-session write lease.
  *
- * Runs against the real node-local cross-process lock service (pid-only
- * handles: no heartbeat timers) rooted at a mkdtemp home, asserting on-disk
- * lease payload contents, the once-only loss notification, the idempotent
- * token-guarded release, and the contact-provider seed semantics (default
- * local, seed override wins — the exact production wiring).
+ * Runs against the real node-local kernel-lock service rooted at a mkdtemp
+ * home, asserting permanent sentinel behavior, the once-only loss
+ * notification, idempotent release, and contact-provider seed semantics.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -22,12 +20,9 @@ import {
   sessionLeaseContactSeed,
 } from '#/session/sessionLease/sessionLeaseContactProvider';
 import {
-  HOLDER_UNRESPONSIVE_RETRY_AFTER_MS,
   LEASE_CREATING_RETRY_AFTER_MS,
   SessionLease,
   sessionLeasePath,
-  SESSION_LEASE_HEARTBEAT_INTERVAL_MS,
-  SESSION_LEASE_TTL_MS,
 } from '#/session/sessionLease/sessionLease';
 
 let tmpDir: string;
@@ -79,17 +74,11 @@ describe('SessionLease', () => {
     lease.release();
   });
 
-  it('fails closed with session.lease_lost once the payload no longer carries its token', async () => {
+  it('fires the loss notification once and then fails closed', async () => {
     const onLost = vi.fn();
     const lease = await acquire('s1', onLost);
-    writeFileSync(
-      sessionLeasePath(tmpDir, 's1'),
-      JSON.stringify({ lock_id: 'peer-token', pid: process.pid }),
-    );
-
-    expect(lease.checkHeld()).toBe(false);
+    lease.markLost();
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
-    // Loss fires exactly once across every detection path.
     expect(onLost).toHaveBeenCalledTimes(1);
     expect(onLost).toHaveBeenCalledWith('s1');
     lease.markLost();
@@ -98,40 +87,25 @@ describe('SessionLease', () => {
     expect(onLost).toHaveBeenCalledTimes(1);
   });
 
-  it('release is idempotent, unlinks the owned file, and later assertions throw', async () => {
+  it('release is idempotent, keeps the sentinel, and later assertions throw', async () => {
     const lease = await acquire();
     lease.release();
     lease.release();
 
     expect(lease.released).toBe(true);
     expect(lease.info).toBeUndefined();
-    expect(existsSync(sessionLeasePath(tmpDir, 's1'))).toBe(false);
+    expect(existsSync(sessionLeasePath(tmpDir, 's1'))).toBe(true);
+    expect(existsSync(`${sessionLeasePath(tmpDir, 's1')}.owner.json`)).toBe(false);
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
   });
 
-  it('release never unlinks a payload owned by a peer', async () => {
-    const lease = await acquire();
-    writeFileSync(
-      sessionLeasePath(tmpDir, 's1'),
-      JSON.stringify({ lock_id: 'peer-token', pid: process.pid }),
-    );
-    lease.release();
-
-    expect(lease.released).toBe(true);
-    const payload = JSON.parse(readFileSync(sessionLeasePath(tmpDir, 's1'), 'utf8'));
-    expect(payload.lock_id).toBe('peer-token');
-  });
-
-  it('exported constants pin the documented protocol timings', () => {
-    expect(SESSION_LEASE_HEARTBEAT_INTERVAL_MS).toBe(2000);
-    expect(SESSION_LEASE_TTL_MS).toBe(6000);
+  it('exports only the retry delay for an owner metadata creation window', () => {
     expect(LEASE_CREATING_RETRY_AFTER_MS).toBe(1000);
-    expect(HOLDER_UNRESPONSIVE_RETRY_AFTER_MS).toBe(2000);
   });
 
   it('sessionLeasePath lives under <home>/session-leases/', () => {
     expect(sessionLeasePath('/home/kimi', 'abc')).toBe(
-      join('/home/kimi', 'session-leases', 'abc.json'),
+      join('/home/kimi', 'session-leases', 'abc.lock'),
     );
   });
 });

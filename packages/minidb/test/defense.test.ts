@@ -12,7 +12,7 @@ import net from 'node:net';
 import { WAL } from '../src/wal.js';
 import { encodeFrame, decodeBatchOps, TYPE_SET } from '../src/codec.js';
 import { MiniDb } from '../src/index.js';
-import { LockFile, LOCK_CREATION_WINDOW_MS } from '../src/lockfile.js';
+import { LockFile } from '../src/lockfile.js';
 import { startServer } from '../src/server.js';
 
 async function tmpDir() {
@@ -113,52 +113,38 @@ test('WAL open and close are idempotent', async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-// --- LockFile stale / corrupt handling -------------------------------------
+// --- LockFile kernel ownership ---------------------------------------------
 
 test('LockFile.acquire returns false when a live process holds the lock', async () => {
   const dir = await tmpDir();
   const p = path.join(dir, 'db.lock');
   const a = new LockFile(p);
   assert.equal(await a.acquire(), true);
-  // A live owner whose identity cannot be cross-checked is never taken over.
-  const b = new LockFile(p, { probeProcess: () => ({ alive: true, processStartedAt: undefined }) });
+  const b = new LockFile(p);
   assert.equal(await b.acquire(), false);
   await a.release();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('an unparseable lock file inside the creation window counts as held', async () => {
+test('arbitrary sentinel contents are ignored when no kernel lock is held', async () => {
   const dir = await tmpDir();
   const p = path.join(dir, 'db.lock');
   await fs.writeFile(p, 'not-json');
-  // Fresh garbage may be a live creator mid-write: treated as held, so this
-  // second writer is refused rather than taking over.
   const b = new LockFile(p);
-  assert.equal(await b.acquire(), false);
+  assert.equal(await b.acquire(), true);
+  await b.release();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('an unparseable lock file past the creation window is taken over', async () => {
+test('MiniDb opens over a legacy lock payload without renaming the sentinel', async () => {
   const dir = await tmpDir();
   const p = path.join(dir, 'db.lock');
-  await fs.writeFile(p, 'not-json');
-  const past = new Date(Date.now() - LOCK_CREATION_WINDOW_MS - 1000);
-  await fs.utimes(p, past, past);
+  await fs.writeFile(p, JSON.stringify({ pid: 0x7fffffff, ts: Date.now() }));
   const db = await MiniDb.open({ dir, valueCodec: 'string' });
   await db.set('a', '1');
   assert.equal(db.get('a'), '1');
-  // The takeover quarantined the garbage file instead of deleting it.
-  assert.ok((await fs.readdir(dir)).includes('db.lock.stale.unknown'));
   await db.close();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-test('a lock file with a non-numeric pid is treated as stale', async () => {
-  const dir = await tmpDir();
-  await fs.writeFile(path.join(dir, 'db.lock'), JSON.stringify({ pid: 'abc' }));
-  const db = await MiniDb.open({ dir, valueCodec: 'string' });
-  assert.equal(db.readOnly, false);
-  await db.close();
+  assert.equal((await fs.readdir(dir)).some((entry) => entry.includes('.stale.')), false);
   await fs.rm(dir, { recursive: true, force: true });
 });
 

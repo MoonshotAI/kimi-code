@@ -2,8 +2,9 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 import { getEmbeddedNativeAssetManifest, getNativePackageRoot } from './native-assets';
+import { loadNativePackage } from './native-require';
 
-const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui'];
+const smokePackages = ['@mariozechner/clipboard', '@moonshot-ai/pi-tui', 'fs-ext-extra-prebuilt'];
 
 // Verify pi-tui's native helper can actually be loaded through the module hook.
 // pi-tui computes native helper paths from process.execPath and require()s them;
@@ -34,6 +35,13 @@ function smokePiTuiNativeLoad(): void {
   }
 }
 
+function smokeKernelFileLockNativeLoad(): void {
+  const binding = loadNativePackage<{ flockSync?: unknown }>('fs-ext-extra-prebuilt');
+  if (binding === null || typeof binding.flockSync !== 'function') {
+    throw new Error('fs-ext-extra-prebuilt loaded but flockSync is unavailable.');
+  }
+}
+
 export function runNativeAssetSmokeIfRequested(): boolean {
   if (process.env['KIMI_CODE_NATIVE_ASSET_SMOKE'] !== '1') return false;
 
@@ -49,6 +57,7 @@ export function runNativeAssetSmokeIfRequested(): boolean {
       }
     }
     smokePiTuiNativeLoad();
+    smokeKernelFileLockNativeLoad();
     process.stdout.write(`Native asset smoke passed: ${manifest.target}\n`);
     process.exit(0);
   } catch (error) {

@@ -107,7 +107,7 @@ describe('multi-server session ownership (session.held_by_peer → 40921)', () =
       // Lease file: A advertises the URL it actually bound (post-listen swap
       // of the contact ref), so a contended peer knows where to redirect.
       const lease = JSON.parse(
-        await readFile(sessionLeasePath(home as string, sessionId), 'utf8'),
+        await readFile(`${sessionLeasePath(home as string, sessionId)}.owner.json`, 'utf8'),
       ) as Record<string, unknown>;
       expect(lease['address']).toBe(addressA);
       expect(typeof lease['lock_id']).toBe('string');

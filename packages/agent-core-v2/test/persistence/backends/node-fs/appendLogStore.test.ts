@@ -7,7 +7,7 @@
  * test/persistence/backends/node-fs/appendLogStore.test.ts`.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -733,13 +733,6 @@ describe('AppendLogStore', () => {
       );
     }
 
-    function foreignPayload(tmp: string, sessionId: string): void {
-      writeFileSync(
-        sessionLeasePath(tmp, sessionId),
-        JSON.stringify({ lock_id: 'peer-token', pid: process.pid }),
-      );
-    }
-
     it('parses the session id out of session and agent scopes only', () => {
       expect(sessionIdFromScope('')).toBeUndefined();
       expect(sessionIdFromScope('sessions')).toBeUndefined();
@@ -762,7 +755,7 @@ describe('AppendLogStore', () => {
         appendAttempts++;
         return originalAppend(...args);
       };
-      foreignPayload(tmpDir, 's1');
+      lease.release();
 
       store.append(SESSION_SCOPE, KEY, { n: 1 });
       await expect(store.flush()).rejects.toMatchObject({
@@ -786,7 +779,7 @@ describe('AppendLogStore', () => {
         writeAttempts++;
         return originalWrite(...args);
       };
-      foreignPayload(tmpDir, 's1');
+      lease.release();
 
       await expect(store.rewrite(SESSION_SCOPE, KEY, [{ n: 1 }])).rejects.toMatchObject({
         code: ErrorCodes.SESSION_LEASE_LOST,
