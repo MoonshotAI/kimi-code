@@ -105,32 +105,49 @@ export function effectiveThinkingLevel(
 }
 
 /**
+ * Effort levels eligible for persistence to config.toml, on the canonical
+ * scale `low/medium/high/xhigh/max` — the same mapping the TUI persists
+ * (thinkingEffortToConfig). `max` and any level outside the scale (custom
+ * provider-declared names) are session-only: they work at runtime but only
+ * the boolean toggle is persisted, so the most expensive tier never becomes
+ * the global default for every new session.
+ */
+export const PERSISTABLE_THINKING_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh'];
+
+/**
  * Project a thinking level onto the daemon's `[thinking]` config section —
- * the same mapping the TUI persists (thinkingEffortToConfig): only the boolean
- * `enabled` flag is persisted. Picking a model or thinking level no longer
- * records the concrete effort; boolean models resolve back to 'on' at runtime
- * and effort-capable models fall back to their own default effort.
+ * the same mapping the TUI persists (thinkingEffortToConfig): 'off' disables
+ * thinking, boolean 'on' records only `enabled` (boolean models resolve back
+ * to 'on' at runtime), and a concrete effort is recorded as the global
+ * default when it is in {@link PERSISTABLE_THINKING_EFFORTS}.
  */
 export function thinkingLevelToConfig(level: ThinkingLevel): {
   enabled: boolean;
+  effort?: string;
 } {
-  return { enabled: level !== 'off' };
+  if (level === 'off') return { enabled: false };
+  if (level === 'on') return { enabled: true };
+  if (PERSISTABLE_THINKING_EFFORTS.includes(level)) return { enabled: true, effort: level };
+  return { enabled: true };
 }
 
 /**
  * Thinking level to use when the user picks a model in the switcher.
  * Mirrors the TUI model picker: re-selecting the current model keeps the live
  * level untouched (including "no preference"). Switching onto a different model
- * pre-selects that model's catalog default level. The carried-over level is
- * never coerced onto the target model.
+ * restores that model's own stored pick when the model still declares it
+ * (per-model seed), and otherwise pre-selects the model's default level.
+ * The carried-over level is never coerced onto the target model.
  */
 export function thinkingLevelForModelSwitch(
   model: ModelThinkingInfo | undefined,
   currentLevel: ThinkingLevel | undefined,
   isSwitch: boolean,
+  storedLevel?: ThinkingLevel,
 ): ThinkingLevel | undefined {
   // Target model unknown (catalog not loaded yet): keep the current level
   // as-is rather than guessing at capabilities.
   if (!isSwitch || model === undefined) return currentLevel;
+  if (storedLevel !== undefined && levelDeclaredBy(model, storedLevel)) return storedLevel;
   return defaultThinkingLevelFor(model);
 }

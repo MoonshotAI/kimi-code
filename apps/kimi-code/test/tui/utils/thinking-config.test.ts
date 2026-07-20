@@ -9,12 +9,17 @@ import {
 describe('thinkingEffortToConfig', () => {
   it.each([
     ['off', { enabled: false }],
-    // Only the boolean `enabled` flag is persisted — selecting a model or
-    // thinking mode in the TUI no longer records the concrete effort.
+    // 'on' is the boolean-model on-signal, not a declared effort. It must not
+    // be persisted as `thinking.effort` — boolean models have no effort concept
+    // and resolve back to 'on' at runtime via defaultThinkingEffortFor.
     ['on', { enabled: true }],
-    ['low', { enabled: true }],
-    ['high', { enabled: true }],
+    // Whitelisted levels persist as the global default; 'max' and unknown
+    // names are session-only and record only the boolean toggle.
+    ['low', { enabled: true, effort: 'low' }],
+    ['high', { enabled: true, effort: 'high' }],
+    ['xhigh', { enabled: true, effort: 'xhigh' }],
     ['max', { enabled: true }],
+    ['ultra', { enabled: true }],
   ] as const)('maps %s → %o', (effort, expected) => {
     expect(thinkingEffortToConfig(effort)).toEqual(expected);
   });
