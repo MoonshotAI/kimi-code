@@ -25,16 +25,22 @@ export interface Envelope<T> {
   stack?: string;
 }
 
+let stackTracesEnabled = false;
+
+/** Enable stack traces in error envelopes (debug/loopback only). */
+export function enableEnvelopeStackTraces(): void {
+  stackTracesEnabled = true;
+}
+
 export function okEnvelope<T>(data: T, requestId: string): Envelope<T> {
   return { code: 0, msg: 'success', data, request_id: requestId };
 }
 
 /**
- * Build an error envelope. When `stack` is provided it is surfaced verbatim on
- * the wire so operators can see where a thrown error originated; when omitted
- * (or `undefined`) the field is absent and the wire shape stays byte-identical
- * to the original `{ code, msg, data: null, request_id }` — `JSON.stringify`
- * drops `undefined` properties, so callers that have no stack are unaffected.
+ * Build an error envelope. Stack traces are only included when
+ * `enableEnvelopeStackTraces()` has been called (loopback + debug mode);
+ * otherwise the `stack` parameter is ignored to prevent information
+ * disclosure on non-loopback binds.
  */
 export function errEnvelope(
   code: number,
@@ -42,5 +48,5 @@ export function errEnvelope(
   requestId: string,
   stack?: string,
 ): Envelope<null> {
-  return { code, msg, data: null, request_id: requestId, stack };
+  return { code, msg, data: null, request_id: requestId, stack: stackTracesEnabled ? stack : undefined };
 }

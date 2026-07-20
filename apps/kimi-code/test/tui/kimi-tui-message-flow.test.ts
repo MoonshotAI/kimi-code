@@ -72,6 +72,63 @@ vi.mock('../../src/feedback/upload', () => ({
 // browser window.
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
+// Load the full English locale JSON so the mock resolves all keys.
+const { enLocale, resolveKey, interpolate } = vi.hoisted(() => {
+  const { join } = require('path');
+  const { readFileSync } = require('fs');
+  const jsonPath = join(__dirname, '../../src/i18n/locales/en.json');
+  const json = JSON.parse(readFileSync(jsonPath, 'utf-8'));
+  function resolve(key: string): string | undefined {
+    const parts = key.split('.');
+    let obj: unknown = json;
+    for (const part of parts) {
+      if (obj === null || obj === undefined || typeof obj !== 'object') {
+        // Fallback: try the last key part as a flat lookup in tui.messages
+        const lastName = parts[parts.length - 1];
+        const msgs = (json as Record<string, unknown>).tui as Record<string, unknown> | undefined;
+        if (msgs) {
+          const msgObj = (msgs as Record<string, unknown>).messages as Record<string, unknown> | undefined;
+          if (msgObj && typeof msgObj[lastName] === 'string') return msgObj[lastName] as string;
+        }
+        return undefined;
+      }
+      obj = (obj as Record<string, unknown>)[part];
+    }
+    return typeof obj === 'string' ? obj : undefined;
+  }
+  function interpolate(msg: string, params?: Record<string, string | number>): string {
+    if (!params) return msg;
+    let result = msg;
+    for (const [k, v] of Object.entries(params)) {
+      result = result.replaceAll(`{{${k}}}`, String(v));
+    }
+    return result;
+  }
+  return { enLocale: json, resolveKey: resolve, interpolate };
+});
+
+vi.mock('#/i18n', () => ({
+  t: (key: string, params?: Record<string, string | number>) => {
+    const msg = resolveKey(key);
+    return msg !== undefined ? interpolate(msg, params) : key;
+  },
+  setLocale: vi.fn(),
+  getLocale: () => 'en',
+  getEngine: () => 'js',
+  createI18n: () => ({
+    t: (key: string, params?: Record<string, string | number>) => {
+      const msg = resolveKey(key);
+      return msg !== undefined ? interpolate(msg, params) : key;
+    },
+    setLocale: vi.fn(),
+    getLocale: () => 'en',
+    getEngine: () => 'js',
+    createI18n: vi.fn(),
+    translateBatch: vi.fn(),
+  }),
+  translateBatch: vi.fn(),
+}));
+
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
 

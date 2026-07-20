@@ -3,6 +3,7 @@ import * as nodePath from 'node:path';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 import { normalizeWorkDir } from '#/session/store/workdir-key';
+import { isWindowsAbsolutePath } from '../../utils/guards';
 
 export interface SessionIndexEntry {
   readonly sessionId: string;
@@ -131,8 +132,4 @@ function isPathInside(parent: string, child: string): boolean {
   }
   const rel = relative(resolve(parent), resolve(child));
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
-}
-
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }

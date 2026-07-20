@@ -146,7 +146,10 @@ export function installTerminalThemeTracking(
   state.terminal.write(OSC11_QUERY);
   state.terminal.write(QUERY_TERMINAL_THEME);
 
+  let disposed = false;
   return () => {
+    if (disposed) return;
+    disposed = true;
     disposeInputListener();
     state.terminal.write(DISABLE_TERMINAL_THEME_REPORTING);
   };

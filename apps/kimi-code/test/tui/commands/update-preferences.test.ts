@@ -5,6 +5,24 @@ import { darkColors } from '#/tui/theme/colors';
 
 const mocks = vi.hoisted(() => ({
   saveTuiConfig: vi.fn(),
+  t: (key: string, params?: Record<string, string | number>) => {
+    const translations: Record<string, string> = {
+      'tui.dialogs.config.configAutoUpdateSet': `Automatic updates ${String(params?.state ?? '')}.`,
+      'tui.dialogs.config.configAutoUpdateAlready': `Automatic updates already ${String(params?.state ?? '')}.`,
+      'tui.dialogs.config.configAutoUpdateSaveFailed': 'Failed to save automatic update setting: {{error}}',
+      'tui.dialogs.config.configAutoUpdateEnabled': 'enabled',
+      'tui.dialogs.config.configAutoUpdateDisabled': 'disabled',
+      'tui.dialogs.config.configPermissionUnchanged': 'Permission mode unchanged: {{mode}}.',
+      'tui.dialogs.config.configPermissionMode': 'Permission mode: {{mode}}',
+    };
+    return translations[key] ?? key;
+  },
+}));
+
+vi.mock('#/i18n', () => ({
+  t: mocks.t,
+  setLocale: vi.fn(),
+  getLocale: () => 'en',
 }));
 
 vi.mock('../../../src/tui/config', async () => {

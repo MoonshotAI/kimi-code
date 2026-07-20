@@ -22,6 +22,7 @@ import {
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import { createAsyncApiDocument } from './protocol/asyncapi';
+import { enableEnvelopeStackTraces } from './protocol/envelope';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
@@ -170,6 +171,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
   const enableTerminals = exposureClass === 'loopback' || opts.allowRemoteTerminals === true;
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
+  if (debugEndpoints) enableEnvelopeStackTraces();
   const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
   const authFailureLimiter =
     exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });

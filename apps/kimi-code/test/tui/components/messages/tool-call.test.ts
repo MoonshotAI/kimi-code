@@ -8,6 +8,119 @@ import { darkColors } from '#/tui/theme/colors';
 
 import { captureProcessWrite } from '../../../helpers/process';
 
+vi.mock('#/i18n', () => {
+  const translations: Record<string, string> = {
+    // ── tool-call.ts ──
+    'tui.messages.toolCall.detachHint': 'Press Ctrl+B to run in background',
+    'tui.messages.toolCall.backgroundLost': 'Background agent lost (session restarted before completion)',
+    'tui.messages.toolCall.backgroundKilled': 'Background agent killed',
+    'tui.messages.toolCall.backgroundTimedOut': 'Background agent timed out',
+    'tui.messages.toolCall.backgroundFailed': 'Background agent failed',
+    'tui.messages.toolCall.tokenCount': '{{count}} tok',
+    'tui.messages.toolCall.byteSizeB': '{{count}} B',
+    'tui.messages.toolCall.byteSizeKB': '{{count}} KB',
+    'tui.messages.toolCall.byteSizeMB': '{{count}} MB',
+    'tui.messages.toolCall.elapsedSeconds': '{{count}}s',
+    'tui.messages.toolCall.elapsedMinutes': '{{minutes}}m {{seconds}}s',
+    'tui.messages.toolCall.subAgentDefault': 'SubAgent',
+    'tui.messages.toolCall.subAgentSuffix': 'Agent',
+    'tui.messages.toolCall.currentPlan': 'Current plan',
+    'tui.messages.toolCall.approved': 'Approved',
+    'tui.messages.toolCall.approvedWithOption': 'Approved: {{option}}',
+    'tui.messages.toolCall.rejected': 'Rejected',
+    'tui.messages.toolCall.suggestionLabel': '↪ Suggestion',
+    'tui.messages.toolCall.couldNotCollectInput': 'Could not collect your input',
+    'tui.messages.toolCall.startedBackgroundQuestion': 'Started background question',
+    'tui.messages.toolCall.collectedAnswers': 'Collected your answers',
+    'tui.messages.toolCall.startingBackgroundQuestion': 'Starting background question',
+    'tui.messages.toolCall.waitingForInput': 'Waiting for your input',
+    'tui.messages.toolCall.userDismissedQuestion': 'User dismissed the question.',
+    'tui.messages.toolCall.ranCommand': 'Ran a command',
+    'tui.messages.toolCall.runningCommand': 'Running a command',
+    'tui.messages.toolCall.used': 'Used',
+    'tui.messages.toolCall.using': 'Using',
+    'tui.messages.toolCall.toolDefault': 'Tool',
+    'tui.messages.toolCall.includeIgnored': 'include ignored',
+    'tui.messages.toolCall.subagentWithName': 'subagent {{name}} ({{id}})',
+    'tui.messages.toolCall.subagentNoName': 'subagent ({{id}})',
+    'tui.messages.toolCall.phaseQueued': 'queued',
+    'tui.messages.toolCall.phaseStarting': 'starting…',
+    'tui.messages.toolCall.phaseRunning': 'running',
+    'tui.messages.toolCall.phaseDone': 'done',
+    'tui.messages.toolCall.phaseFailed': 'failed',
+    'tui.messages.toolCall.phaseBackgrounded': 'backgrounded',
+    'tui.messages.toolCall.toolCount_one': '{{count}} tool',
+    'tui.messages.toolCall.toolCount_other': '{{count}} tools',
+    'tui.messages.toolCall.singleSubagentCompleted': 'Completed{{description}}{{stats}}',
+    'tui.messages.toolCall.singleSubagent.completed': 'Completed',
+    'tui.messages.toolCall.singleSubagent.failed': 'Failed',
+    'tui.messages.toolCall.singleSubagent.running': 'Running',
+    'tui.messages.toolCall.singleSubagent.backgrounded': 'Backgrounded',
+    'tui.messages.toolCall.singleSubagent.queued': 'Queued',
+    'tui.messages.toolCall.singleSubagent.starting': 'Starting',
+    'tui.messages.toolCall.singleSubagent.toolCount': '{{n}} tool(s)',
+    'tui.messages.toolCall.argumentsTruncated': 'Tool call arguments truncated by max_tokens — call never executed.',
+    'tui.messages.toolCall.moreLinesHint': '... ({{remaining}} more lines, {{total}} total, ctrl+o to expand)',
+    'tui.messages.toolCall.preparingChanges': 'Preparing changes{{target}}... {{size}} · {{elapsed}} elapsed',
+    'tui.messages.toolCall.preparingChangesTarget': ' for {{filePath}}',
+    'tui.messages.toolCall.truncatedMarker': '[...truncated]',
+    'tui.messages.toolCall.agentSwarmLabel': 'Agent swarm: ',
+    'tui.messages.toolCall.completedStatus': '{{count}} completed',
+    'tui.messages.toolCall.failedStatus': '{{count}} failed',
+    'tui.messages.toolCall.abortedStatus': '{{count}} aborted',
+    'tui.messages.toolCall.completedPeriod': 'Completed.',
+    'tui.messages.toolCall.failedPeriod': 'Failed.',
+    'tui.messages.toolCall.abortedPeriod': 'Aborted.',
+    'tui.messages.toolCall.planAutoApproved': ' · Auto-approved',
+    'tui.messages.toolCall.verbUsed': 'Used',
+    'tui.messages.toolCall.verbTruncated': 'Truncated',
+    'tui.messages.toolCall.verbUsing': 'Using',
+    'tui.messages.toolCall.hiddenSubCall': '{{n}} more tool call(s) ...',
+    // ── goal.ts (tool-renderers/goal.ts) ──
+    'tui.messages.goalToolNoGoal': '  No current goal.',
+    'tui.messages.goalToolStatus': 'Goal {{status}}: {{objective}}',
+    'tui.messages.goalToolCouldNotStart': 'Could not start goal',
+    'tui.messages.goalToolStarted': 'Started goal',
+    'tui.messages.goalToolStarting': 'Starting goal',
+    'tui.messages.goalToolCouldNotCheck': 'Could not check goal',
+    'tui.messages.goalToolChecked': 'Checked goal',
+    'tui.messages.goalToolChecking': 'Checking goal',
+    'tui.messages.goalToolCouldNotSetBudget': 'Could not set goal budget',
+    'tui.messages.goalToolSetBudget': 'Set goal budget',
+    'tui.messages.goalToolSettingBudget': 'Setting goal budget',
+    'tui.messages.goalToolCouldNotReport': 'Could not report goal{{suffix}}',
+    'tui.messages.goalToolReported': 'Reported goal {{suffix}}',
+    'tui.messages.goalToolReporting': 'Reporting goal{{suffix}}',
+    // ── chip.ts ──
+    'tui.statusMessages.chipMatches': '{{count}} {{label}}',
+    'tui.statusMessages.chipNoMatches': 'no matches',
+    'tui.statusMessages.chipNoFiles': 'no files',
+    'tui.statusMessages.chipNoResults': 'no results',
+    'tui.statusMessages.chipWebResult': 'web result',
+    // ── truncated.ts ──
+    'tui.statusMessages.truncatedEarlierLines': '... ({{remaining}} earlier lines)',
+    'tui.statusMessages.truncatedMoreLines': '... ({{remaining}} more lines)',
+    'tui.statusMessages.truncatedMoreLinesExpandable': '... ({{remaining}} more lines, ctrl+o to expand)',
+    // ── plan-box.ts ──
+    'tui.messages.planBox.fallback': ' plan ',
+    'tui.messages.planBox.titlePrefix': ' plan: ',
+  };
+
+  return {
+    t: (key: string, params?: Record<string, string | number>) => {
+      let value = translations[key] ?? key;
+      if (params) {
+        for (const [k, v] of Object.entries(params)) {
+          value = value.replaceAll(`{{${k}}}`, String(v));
+        }
+      }
+      return value;
+    },
+    setLocale: vi.fn(),
+    getLocale: () => 'en',
+  };
+});
+
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
 
@@ -989,7 +1102,7 @@ describe('ToolCallComponent', () => {
     });
 
     let out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Explore Agent Queued (explore project xxx) · 0 tools · 0s');
+    expect(out).toContain('Explore Agent Queued (explore project xxx) · 0 tool(s) · 0s');
     expect(out).not.toContain('Using Agent');
     expect(out).not.toContain('Used Agent');
 
@@ -1003,7 +1116,7 @@ describe('ToolCallComponent', () => {
     });
 
     out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Explore Agent Running (explore project xxx) · 1 tool · 10s');
+    expect(out).toContain('Explore Agent Running (explore project xxx) · 1 tool(s) · 10s');
     expect(out).toContain('Using Read (apps/kimi-code/src/tui/utils/background-agent-status.ts)');
     // Thinking and text are mutually exclusive in the active window: the most
     // recently streamed (text) wins, so thinking is hidden entirely.
@@ -1025,7 +1138,7 @@ describe('ToolCallComponent', () => {
     vi.setSystemTime(30_000);
 
     out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Explore Agent Completed (explore project xxx) · 1 tool · 12s');
+    expect(out).toContain('Explore Agent Completed (explore project xxx) · 1 tool(s) · 12s');
     expect(out).not.toContain('think3');
     expect(out).toContain('│ answer3');
     expect(out).not.toContain('Used Agent');
@@ -1106,7 +1219,7 @@ describe('ToolCallComponent', () => {
     });
 
     const out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Explore Agent Running (inspect tools) · 5 tools · 0s');
+    expect(out).toContain('Explore Agent Running (inspect tools) · 5 tool(s) · 0s');
     // Only the current (most recent ongoing) tool appears in the summary line.
     expect(out).toContain('Using Grep (auth)');
     // No per-tool activity rows are rendered.
@@ -1326,7 +1439,7 @@ describe('ToolCallComponent', () => {
     component.onSubagentFailed({ error: 'subagent exceeded max_steps' });
 
     const out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Explore Agent Failed (check failure) · 0 tools · 3s');
+    expect(out).toContain('Explore Agent Failed (check failure) · 0 tool(s) · 3s');
     expect(out).toContain('│ subagent exceeded max_steps');
     expect(out).not.toContain('Using Agent');
     expect(out).not.toContain('Used Agent');

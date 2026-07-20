@@ -62,6 +62,13 @@ export interface SSHKaosOptions {
   keyContents?: string[];
   cwd?: string;
   /**
+   * Disable SSH host key verification. Defaults to `false` (host keys are
+   * verified). Only set to `true` for trusted networks / ephemeral hosts
+   * where known_hosts is unavailable — disabling it exposes the connection
+   * to man-in-the-middle attacks.
+   */
+  skipHostKeyVerification?: boolean;
+  /**
    * Pass-through for advanced ssh2 `ConnectConfig` fields such as `algorithms`,
    * `keepaliveInterval`, `readyTimeout`, `debug`, `tryKeyboard`, `agent`, etc.
    *
@@ -240,6 +247,12 @@ export class SSHProcess implements KaosProcess {
       });
       channel.on('exit', (code: number | null) => {
         this._exitCode = code ?? 1;
+      });
+      // Without an error listener, a channel error (e.g. connection reset)
+      // would leave the exit promise unresolved and wait() would hang forever.
+      channel.on('error', () => {
+        this._exitCode ??= 1;
+        resolve(this._exitCode);
       });
     });
   }
@@ -524,8 +537,10 @@ export class SSHKaos implements Kaos {
       }
     }
 
-    // Disable host key verification (like asyncssh known_hosts=None)
-    config.hostVerifier = () => true;
+    // Host key verification is on by default; callers must opt out explicitly.
+    if (options.skipHostKeyVerification === true) {
+      config.hostVerifier = () => true;
+    }
 
     const client = await connectClient(config);
     try {

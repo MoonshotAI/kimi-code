@@ -21,7 +21,10 @@ export function installTerminalFocusTracking(state: TUIState): () => void {
   );
   state.terminal.write(ENABLE_TERMINAL_FOCUS_REPORTING);
 
+  let disposed = false;
   return () => {
+    if (disposed) return;
+    disposed = true;
     disposeInputListener();
     state.terminal.write(DISABLE_TERMINAL_FOCUS_REPORTING);
     state.terminalState.focused = true;

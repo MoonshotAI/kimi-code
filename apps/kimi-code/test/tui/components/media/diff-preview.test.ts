@@ -1,10 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   computeDiffLines,
   renderDiffLines,
   renderDiffLinesClustered,
 } from '#/tui/components/media/diff-preview';
+
+vi.mock('#/i18n', () => ({
+  t: (key: string, params?: Record<string, string | number>): string => {
+    const translations: Record<string, string> = {
+      'tui.diffPreview.moreChangesHidden': '{{n}} more changes hidden',
+      'tui.diffPreview.unchangedLines': '{{n}} unchanged line(s) …',
+      'tui.diffPreview.moreChangesHiddenWithHint':
+        '{{n}} more changes hidden, {{hint}} to expand',
+    };
+    const msg = translations[key] ?? key;
+    if (!params) return msg;
+    let result = msg;
+    for (const [k, v] of Object.entries(params)) {
+      result = result.replaceAll(`{{${k}}}`, String(v));
+    }
+    return result;
+  },
+  setLocale: vi.fn(),
+  getLocale: () => 'en',
+}));
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -107,7 +127,7 @@ describe('renderDiffLinesClustered', () => {
     );
     expect(text).toContain('L2X');
     expect(text).toContain('L29X');
-    expect(text).toMatch(/… \d+ unchanged lines? …/);
+    expect(text).toMatch(/… \d+ unchanged line\(s\)? …/);
     // Middle untouched lines (e.g. L15) should not appear.
     expect(text).not.toContain('L15');
   });

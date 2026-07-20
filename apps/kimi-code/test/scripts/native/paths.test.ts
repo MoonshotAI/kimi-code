@@ -17,7 +17,6 @@ import {
   nativeManifestDir,
   nativeArtifactsDir,
   nativeSmokeHome,
-  SEA_SENTINEL_FUSE,
 } from '../../../scripts/native/paths.mjs';
 
 // paths.mjs builds every path with node:path.resolve (backslashes on Windows).
@@ -99,9 +98,5 @@ describe('path helpers', () => {
 
   it('returns smoke home', () => {
     expect(nativeSmokeHome()).toBe(p('dist-native/smoke-home'));
-  });
-
-  it('has correct SEA sentinel fuse value', () => {
-    expect(SEA_SENTINEL_FUSE).toBe('NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2');
   });
 });

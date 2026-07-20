@@ -3,6 +3,7 @@ import { dirname, join, normalize } from 'pathe';
 
 import { load as loadYaml } from 'js-yaml';
 
+import { isRecord } from '../utils/guards';
 import { resolveAgentProfiles } from './resolve';
 import { RawAgentProfileSchema, type RawAgentProfile, type ResolvedAgentProfile } from './types';
 
@@ -106,10 +107,6 @@ function readRequiredSource(sources: Readonly<Record<string, string>>, path: str
 
 function normalizeSourcePath(path: string): string {
   return normalize(path.replaceAll('\\', '/')).replace(/^\.\//, '');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isFileNotFound(error: unknown): boolean {

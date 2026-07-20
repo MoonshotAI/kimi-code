@@ -344,29 +344,27 @@ export async function compressImageForModel(
 
   // Try the Rust native codec first (PNG/JPEG/WebP). It is 10–100× faster
   // than jimp and handles the whole decode→resize→encode pipeline.
-  // EXIF-rotated JPEGs are deferred to jimp: the Rust image crate does not
-  // auto-apply EXIF orientation, so dimension reporting would be off.
-  if (dims?.transposed !== true) {
-    const nativeResult = await tryNativeCompressImage(bytes, normalizedMime, {
-      maxEdge,
-      byteBudget,
-      fallbackEdges: FALLBACK_EDGES_PX,
-      jpegQualitySteps: JPEG_QUALITY_STEPS,
+  // The native codec applies EXIF orientation during decode, so the
+  // reported dimensions are in display space — no separate guard needed.
+  const nativeResult = await tryNativeCompressImage(bytes, normalizedMime, {
+    maxEdge,
+    byteBudget,
+    fallbackEdges: FALLBACK_EDGES_PX,
+    jpegQualitySteps: JPEG_QUALITY_STEPS,
+  });
+  if (nativeResult !== undefined) {
+    if (!nativeResult.changed) return finish('passthrough_unhelpful', passthrough());
+    return finish('compressed', {
+      data: nativeResult.data,
+      mimeType: nativeResult.mimeType,
+      width: nativeResult.width,
+      height: nativeResult.height,
+      originalWidth: nativeResult.originalWidth,
+      originalHeight: nativeResult.originalHeight,
+      changed: true,
+      originalByteLength: bytes.length,
+      finalByteLength: nativeResult.finalByteLength,
     });
-    if (nativeResult !== undefined) {
-      if (!nativeResult.changed) return finish('passthrough_unhelpful', passthrough());
-      return finish('compressed', {
-        data: nativeResult.data,
-        mimeType: nativeResult.mimeType,
-        width: nativeResult.width,
-        height: nativeResult.height,
-        originalWidth: nativeResult.originalWidth,
-        originalHeight: nativeResult.originalHeight,
-        changed: true,
-        originalByteLength: bytes.length,
-        finalByteLength: nativeResult.finalByteLength,
-      });
-    }
   }
 
   // Native unavailable — passthrough the original image.

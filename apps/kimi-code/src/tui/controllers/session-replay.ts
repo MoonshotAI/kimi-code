@@ -44,6 +44,7 @@ import {
   type SkillActivationProjection,
   type PluginCommandProjection,
 } from '../utils/message-replay';
+import { t } from '#/i18n';
 import type { StreamingUIController } from './streaming-ui';
 import type { SessionEventHandler } from './session-event-handler';
 import type { TUIState } from '../tui-state';
@@ -86,7 +87,7 @@ export class SessionReplayRenderer {
     try {
       const main = session.getResumeState()?.agents['main'];
       if (main === undefined) {
-        this.host.showError('Session history is unavailable for this session.');
+        this.host.showError(t('tui.statusMessages.replaySessionUnavailable'));
         return false;
       }
 
@@ -97,7 +98,7 @@ export class SessionReplayRenderer {
       return true;
     } catch (error) {
       const message = formatErrorMessage(error);
-      this.host.showError(`Failed to replay session history: ${message}`);
+      this.host.showError(t('tui.statusMessages.replayFailed', { message }));
       return false;
     } finally {
       this.host.setAppState({ isReplaying: false });
@@ -215,7 +216,7 @@ export class SessionReplayRenderer {
         }
         context.suppressNextPlanModeOffNotice = false;
         this.host.appendTranscriptEntry(
-          replayEntry(context, 'status', `Plan mode: ${record.enabled ? 'ON' : 'OFF'}`, 'notice'),
+          replayEntry(context, 'status', record.enabled ? t('tui.statusMessages.replayPlanModeOn') : t('tui.statusMessages.replayPlanModeOff'), 'notice'),
         );
         return;
       case 'permission_updated':
@@ -421,7 +422,7 @@ export class SessionReplayRenderer {
     context.skillActivationIds.add(skill.activationId);
     sessionEventHandler.renderedSkillActivationIds.add(skill.activationId);
     this.host.appendTranscriptEntry({
-      ...replayEntry(context, 'skill_activation', `Activated skill: ${skill.skillName}`, 'plain'),
+      ...replayEntry(context, 'skill_activation', t('tui.statusMessages.replaySkillActivated', { skillName: skill.skillName }), 'plain'),
       skillActivationId: skill.activationId,
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
@@ -460,7 +461,7 @@ export class SessionReplayRenderer {
     if (record.result === undefined) return;
     if (record.result === 'cancelled') {
       this.host.appendTranscriptEntry({
-        ...replayEntry(context, 'status', 'Compaction cancelled', 'plain'),
+        ...replayEntry(context, 'status', t('tui.statusMessages.compactionCancelled'), 'plain'),
         compactionData: {
           result: 'cancelled',
           instruction: record.instruction,
@@ -470,7 +471,7 @@ export class SessionReplayRenderer {
     }
 
     this.host.appendTranscriptEntry({
-      ...replayEntry(context, 'status', 'Compaction complete', 'plain'),
+      ...replayEntry(context, 'status', t('tui.statusMessages.compactionComplete'), 'plain'),
       compactionData: {
         summary: record.result.summary,
         tokensBefore: record.result.tokensBefore,
@@ -486,7 +487,7 @@ export class SessionReplayRenderer {
     switch (change.kind) {
       case 'created':
         this.host.appendTranscriptEntry({
-          ...replayEntry(context, 'goal', 'Goal set', 'plain'),
+          ...replayEntry(context, 'goal', t('tui.statusMessages.goalSet'), 'plain'),
           goalData: { kind: 'created' },
         });
         return;
@@ -568,8 +569,8 @@ export class SessionReplayRenderer {
   private renderPermissionUpdate(context: ReplayRenderContext, mode: PermissionMode): void {
     if (mode === 'yolo') {
       this.host.appendTranscriptEntry(
-        replayEntry(context, 'status', 'YOLO mode: ON', 'notice', {
-          detail: 'Tool actions auto-approved; the agent may still ask you questions.',
+        replayEntry(context, 'status', t('tui.statusMessages.replayYoloModeOn'), 'notice', {
+          detail: t('tui.statusMessages.replayYoloModeOnSub'),
         }),
       );
       return;
@@ -578,7 +579,7 @@ export class SessionReplayRenderer {
       replayEntry(
         context,
         'status',
-        mode === 'manual' ? 'YOLO mode: OFF' : `Permission mode: ${mode}`,
+        mode === 'manual' ? t('tui.statusMessages.replayYoloModeOff') : t('tui.statusMessages.replayPermissionMode', { mode }),
         'notice',
       ),
     );
@@ -597,13 +598,13 @@ export class SessionReplayRenderer {
     const parts: string[] = [];
     switch (result.decision) {
       case 'approved':
-        parts.push(result.scope === 'session' ? 'Approved for session' : 'Approved');
+        parts.push(result.scope === 'session' ? t('tui.statusMessages.approvedForSession') : t('tui.statusMessages.approved'));
         break;
       case 'rejected':
-        parts.push('Rejected');
+        parts.push(t('tui.statusMessages.rejected'));
         break;
       case 'cancelled':
-        parts.push('Cancelled');
+        parts.push(t('tui.statusMessages.cancelled'));
         break;
     }
     parts.push(`: ${record.action}`);
@@ -628,15 +629,15 @@ export class SessionReplayRenderer {
     switch (result.decision) {
       case 'rejected':
         content =
-          result.selectedLabel === 'Revise' ? 'Plan sent back for revision' : 'Plan review rejected';
+          result.selectedLabel === 'Revise' ? t('tui.statusMessages.planSentBackForRevision') : t('tui.statusMessages.planReviewRejected');
         break;
       case 'cancelled':
-        content = 'Plan review cancelled';
+        content = t('tui.statusMessages.planReviewCancelled');
         break;
     }
     const detail =
       result.feedback !== undefined && result.feedback.length > 0
-        ? `Feedback: ${result.feedback}`
+        ? t('tui.statusMessages.replayFeedback', { feedback: result.feedback })
         : undefined;
     this.host.appendTranscriptEntry(replayEntry(context, 'status', content, 'notice', { detail }));
   }
@@ -726,14 +727,14 @@ function isResumeNormalizationGoalPause(change: GoalReplayLifecycleChange): bool
 function goalLifecycleReplayContent(change: GoalReplayLifecycleChange): string {
   switch (change.status) {
     case 'paused':
-      return 'Goal paused';
+      return t('tui.statusMessages.replayGoalPaused');
     case 'active':
-      return 'Goal resumed';
+      return t('tui.statusMessages.replayGoalResumed');
     case 'blocked':
-      return 'Goal blocked';
+      return t('tui.statusMessages.replayGoalBlocked');
     case 'complete':
     case undefined:
-      return 'Goal updated';
+      return t('tui.statusMessages.replayGoalUpdated');
   }
 }
 

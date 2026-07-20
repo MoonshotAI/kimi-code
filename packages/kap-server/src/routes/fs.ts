@@ -637,5 +637,5 @@ function parseRangeHeader(
 function sanitizeFilename(rel: string): string {
   const segs = rel.split('/');
   const base = segs[segs.length - 1] ?? rel;
-  return base.replace(/"/g, '\\"');
+  return base.replace(/[\x00-\x1f\x7f]/g, '').replace(/"/g, '\\"');
 }

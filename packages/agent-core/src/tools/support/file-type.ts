@@ -268,7 +268,14 @@ export function sniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions
   // Try the Rust native codec first (PNG/JPEG/GIF/BMP/WebP/HEIC).
   const native = tryNativeSniffImageDimensions(new Uint8Array(buf));
   if (native) {
-    return { width: native.width, height: native.height, transposed: native.transposed };
+    // Unlike the native *compressor* (image-compress.ts) which applies EXIF
+    // rotation during decode, the *sniffer* only reads raw pixel dimensions
+    // without consulting the EXIF orientation tag. For JPEGs that may be
+    // rotated we fall through to the pure-TS scanner which reads the EXIF
+    // tag and reports display-space dimensions.
+    if (native.transposed || !startsWith(buf, [0xff, 0xd8, 0xff])) {
+      return { width: native.width, height: native.height, transposed: native.transposed };
+    }
   }
 
   // PNG — IHDR is the first chunk; width/height are big-endian uint32

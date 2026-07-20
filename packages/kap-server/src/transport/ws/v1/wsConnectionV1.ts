@@ -190,6 +190,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private async onClientHello(frame: InboundFrame): Promise<void> {
+    if (this.gotClientHello) return;
     if (!(await this.authorize(frame))) return;
     this.gotClientHello = true;
 
@@ -225,6 +226,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private async onSubscribe(frame: InboundFrame): Promise<void> {
+    if (!this.gotClientHello) return;
     const payload = frame.payload ?? {};
     const sessionIds = asStringArray(payload['session_ids']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
@@ -271,6 +273,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private async onUnsubscribe(frame: InboundFrame): Promise<void> {
+    if (!this.gotClientHello) return;
     const payload = frame.payload ?? {};
     const sessionIds = asStringArray(payload['session_ids']);
     for (const sid of sessionIds) {
@@ -287,6 +290,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private async onWatchFs(frame: InboundFrame, isAdd: boolean): Promise<void> {
+    if (!this.gotClientHello) return;
     const payload = frame.payload ?? {};
     const sessionId = typeof payload['session_id'] === 'string' ? payload['session_id'] : '';
     const paths = asStringArray(payload['paths']);

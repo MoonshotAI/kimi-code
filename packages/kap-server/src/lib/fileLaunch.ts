@@ -209,7 +209,13 @@ export async function launchDetached(cmd: LaunchCommand): Promise<void> {
 function resolveEditorCommand(env: Record<string, string | undefined>): string | undefined {
   for (const key of ['KIMI_CODE_EDITOR', 'VISUAL', 'EDITOR']) {
     const value = env[key];
-    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const trimmed = value.trim();
+      // Reject values with shell injection metacharacters. Legitimate editor
+      // commands (e.g. "code --wait", "nvim -c 'set ft=md'") don't need these.
+      if (/[;|&`$\n\r]/.test(trimmed)) return undefined;
+      return trimmed;
+    }
   }
   return undefined;
 }

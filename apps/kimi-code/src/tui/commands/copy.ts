@@ -1,6 +1,7 @@
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { t } from '#/i18n';
 import type { SlashCommandHost } from './dispatch';
 
 /**
@@ -24,7 +25,7 @@ export function findLastAssistantText(entries: readonly TranscriptEntry[]): stri
 export async function handleCopyCommand(host: SlashCommandHost): Promise<void> {
   const text = findLastAssistantText(host.state.transcriptEntries);
   if (text.length === 0) {
-    host.showStatus('No assistant message to copy.', 'warning');
+    host.showStatus(t('tui.statusMessages.copyNoMessage'), 'warning');
     return;
   }
 
@@ -32,10 +33,10 @@ export async function handleCopyCommand(host: SlashCommandHost): Promise<void> {
     const method = await copyTextToClipboard(text);
     host.showStatus(
       method === 'native'
-        ? `Copied to clipboard (${String(text.length)} characters).`
-        : `Copied via terminal escape sequence (unverified, ${String(text.length)} characters).`,
+        ? t('tui.statusMessages.copyNative', { count: String(text.length) })
+        : t('tui.statusMessages.copyEscape', { count: String(text.length) }),
     );
   } catch (error) {
-    host.showError(`Failed to copy to clipboard: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.copyFailed', { error: formatErrorMessage(error) }));
   }
 }

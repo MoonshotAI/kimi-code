@@ -10,6 +10,59 @@ import type {
   RunMigrationInput,
 } from '@moonshot-ai/migration-legacy';
 
+vi.mock('#/i18n', () => ({
+  t: (key: string, params?: Record<string, string>) => {
+    const translations: Record<string, string> = {
+      'migration.badgeImported': '[imported]',
+      'migration.title': ' Migrate from kimi-cli',
+      'migration.foundExisting': ' Found an existing kimi-cli installation:',
+      'migration.ask1Title': 'Migrate this data to kimi-code?',
+      'migration.migrateNow': 'Migrate now',
+      'migration.askLater': 'Ask me later',
+      'migration.neverAgain': 'Never ask again',
+      'migration.navHintAsk': ' ↑/↓ move · ⏎ select · esc {{action}}',
+      'migration.ask2Title': 'Migrate chat sessions too? (they are bulky and slower)',
+      'migration.configOnly': 'Config only',
+      'migration.configPlusSessions': 'Config + {{count}} sessions',
+      'migration.configPlusAllSessions': 'Config + all sessions',
+      'migration.progressTitle': ' Migrating from kimi-cli',
+      'migration.progressTranslating': 'Translating sessions…  {{done}} / {{total}}',
+      'migration.stepLabelConfig': 'Config',
+      'migration.stepLabelMcp': 'MCP',
+      'migration.stepLabelReplHistory': 'REPL history',
+      'migration.stepLabelSessions': 'Sessions',
+      'migration.complete': ' Migration complete',
+      'migration.sessionsMigrated': '  ✓ {{count}} sessions migrated',
+      'migration.kindsMigrated': '  ✓ {{kinds}}',
+      'migration.pluginsNotSupported': '  ⚠ {{count}} kimi-cli plugins — not yet supported for migration',
+      'migration.oldDataKept': ' Old data kept at ~/.kimi/ — kimi-cli still works.',
+      'migration.continueHint': ' ⏎ continue to kimi-code',
+      'migration.hooksDropped': '  ⚠ {{count}} hooks dropped (incompatible)',
+      'migration.configParseError': '  ⚠ config.toml could not be parsed — review config.migrated-from-kimi-cli.toml',
+      'migration.mcpUnreadable': '  ⚠ mcp.json unreadable — review mcp.migrated-from-kimi-cli.json',
+      'migration.sessionsFailed': '  ⚠ {{count}} sessions failed to migrate',
+      'migration.contains': '     contains: {{items}}',
+      'migration.emptySessionsSkipped': '  {{count}} empty sessions skipped',
+      'migration.configConflicts': '  ⚠ {{count}} config conflicts kept yours: {{keys}}',
+      'migration.mcpNeedsAuth': '  ⚠ {{count}} MCP servers need re-authentication',
+      'migration.failed': ' Migration failed',
+      'migration.reason': ' Reason: {{reason}}',
+      'migration.retryHint': ' You can retry later by running "kimi migrate".',
+      'migration.neverAskAgain': 'Never ask again',
+      'migration.ask1TitleHint': 'Migrate this data to kimi-code?',
+    };
+    let value = translations[key] ?? key;
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        value = value.replaceAll(`{{${k}}}`, v);
+      }
+    }
+    return value;
+  },
+  setLocale: vi.fn(),
+  getLocale: () => 'en',
+}));
+
 function makePlan(over: Partial<MigrationPlan> = {}): MigrationPlan {
   return {
     sourceHome: '/x/.kimi',

@@ -6,6 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { win32 } from 'node:path';
 import { isAbsolute, resolve } from 'pathe';
 
+import { isWindowsAbsolutePath } from '../utils/guards';
 import {
   buildRequestOptions,
   KIMI_MCP_CLIENT_NAME,
@@ -242,10 +243,6 @@ export function resolveStdioCwd(configCwd: string | undefined, defaultCwd: strin
   }
   if (defaultCwd !== undefined && !isAbsolute(configCwd)) return resolve(defaultCwd, configCwd);
   return configCwd;
-}
-
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
 // Inherit the parent's env so PATH/HOME/etc. survive — otherwise `npx`/`uvx`

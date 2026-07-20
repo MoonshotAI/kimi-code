@@ -9,6 +9,20 @@ import type { FooterComponent } from '#/tui/components/chrome/footer';
 import { TERMINAL_FOCUS_IN, TERMINAL_FOCUS_OUT } from '#/tui/utils/terminal-focus';
 import { clipboardHasImage } from '#/utils/clipboard/clipboard-has-image';
 
+vi.mock('#/i18n', () => ({
+  t: (
+    key: string,
+    params?: Record<string, string | number>,
+  ): string => {
+    if (key === 'tui.messages.clipboardImageHint') {
+      return `Image in clipboard · ${String(params?.shortcut ?? 'Ctrl+V')} to paste`;
+    }
+    return key;
+  },
+  setLocale: vi.fn(),
+  getLocale: () => 'en',
+}));
+
 vi.mock('#/utils/clipboard/clipboard-has-image', () => ({
   clipboardHasImage: vi.fn(async () => false),
 }));

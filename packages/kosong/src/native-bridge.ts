@@ -314,7 +314,7 @@ function getApiKey(): string {
 }
 
 function getOpenAIApiKey(): string {
-  return process.env['OPENAI_API_KEY'] ?? process.env['ANTHROPIC_API_KEY'] ?? '';
+  return process.env['OPENAI_API_KEY'] ?? '';
 }
 
 /**

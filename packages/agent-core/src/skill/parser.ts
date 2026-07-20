@@ -7,6 +7,7 @@ import regexpEscape from 'regexp.escape';
 import type { SkillDefinition, SkillMetadata, SkillSource } from './types';
 import { isSupportedSkillType } from './types';
 import { escapeXmlTags } from '../utils/xml-escape';
+import { isRecord } from '../utils/guards';
 
 export class FrontmatterError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -289,8 +290,4 @@ function tokenizeArgs(raw: string): string[] {
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

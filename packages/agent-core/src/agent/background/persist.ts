@@ -16,6 +16,7 @@ import { appendFile, mkdir, open, stat } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
 import { createPerIdJsonStore, type PerIdJsonStore } from '../../utils/per-id-json-store';
+import { isRecord } from '../../utils/guards';
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from './task';
 
 /**
@@ -246,10 +247,6 @@ function isReadablePersistedTask(obj: unknown): obj is DiskPersistedTask {
 
 function isLegacyPersistedTask(task: DiskPersistedTask): task is LegacyPersistedTask {
   return 'task_id' in task;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function optionalNonEmptyString(value: string | undefined): string | undefined {

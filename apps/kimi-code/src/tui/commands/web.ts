@@ -1,33 +1,130 @@
 import chalk from 'chalk';
 
+import { listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
+
 import { splitTokenFragment } from '#/cli/sub/web/access-urls';
 import { formatReadyBanner, startServerForeground } from '#/cli/sub/web/run';
-import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/web/shared';
+import {
+  instanceConnectHost,
+  isServerHealthy,
+  parseServerOptions,
+  serverOrigin,
+  tryResolveServerToken,
+} from '#/cli/sub/web/shared';
+import { getVersion } from '#/cli/version';
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { t } from '#/i18n';
 
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
+import { getNoActiveSessionMessage } from '../constant/kimi-tui';
 import { darkColors } from '../theme/colors';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
+/** Picker value of the "start a new server" row (instance rows carry their serverId). */
+const NEW_SERVER_VALUE = '__new__';
+
+/** How long to wait for the chosen server to answer `/healthz`. */
+const HEALTH_TIMEOUT_MS = 1500;
+
 /**
  * `/web` — hand the current session off to the browser.
  *
- * Always starts a new server: the TUI shuts down and this process becomes the
- * server, running in the foreground attached to this terminal and taking the
- * next free port alongside any running ones. The session deep link opens from
- * the ready hook once the server is actually listening.
+ * Lists the live server instances from the registry (with their versions) and
+ * lets the user pick one to open the session on, or start a new server — the
+ * new one runs in the foreground attached to this terminal after the TUI
+ * exits, taking the next free port alongside the running ones. With no
+ * instance running there is nothing to pick, so it starts a new server
+ * directly. Either way the TUI shuts down once the session deep link is
+ * opened.
  */
 export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
+    return;
+  }
+  const sessionId = session.id;
+
+  const instances = await listLiveServerInstances();
+  if (instances.length === 0) {
+    // Nothing to pick: become the server right away, no picker needed.
+    startNewServerAfterExit(host, sessionId);
+    await host.stop();
     return;
   }
 
-  startNewServerAfterExit(host, session.id);
+  const options: ChoiceOption[] = instances.map((instance) => ({
+    value: instance.serverId,
+    label: serverOrigin(instanceConnectHost(instance), instance.port),
+    description: instanceDescription(instance),
+    descriptionTone:
+      instance.hostVersion !== undefined && instance.hostVersion !== getVersion()
+        ? 'warning'
+        : undefined,
+  }));
+  options.push({
+    value: NEW_SERVER_VALUE,
+    label: t('tui.statusMessages.webNewServer'),
+    description: t('tui.statusMessages.webNewServerDesc'),
+  });
+
+  const chosen = await new Promise<string | undefined>((resolve) => {
+    const picker = new ChoicePickerComponent({
+      title: t('tui.statusMessages.openInWebUi'),
+      options,
+      onSelect: (value) => {
+        resolve(value);
+      },
+      onCancel: () => {
+        resolve(undefined);
+      },
+    });
+    host.mountEditorReplacement(picker);
+  });
+  host.restoreEditor();
+  if (chosen === undefined) return;
+
+if (chosen === NEW_SERVER_VALUE) {
+    startNewServerAfterExit(host, sessionId);
+    await host.stop();
+    return;
+  }
+
+  const instance = instances.find((entry) => entry.serverId === chosen);
+  if (instance === undefined) return;
+  const origin = serverOrigin(instanceConnectHost(instance), instance.port);
+  if (!(await isServerHealthy(origin, HEALTH_TIMEOUT_MS))) {
+    host.showError(t('tui.statusMessages.webServerNotResponding', { origin }));
+    return;
+  }
+
+  // Resolve the persistent token so the opened browser auto-authenticates via
+  // the `#token=` fragment — matching the `kimi web` command. Show the URL
+  // and token in green under the status line so they can be copied before the
+  // terminal exits. Best-effort: an older/never-started server has no token
+  // file, so we fall back to the plain URL and skip the token line.
+  const token = tryResolveServerToken(getDataDir());
+  const url = webSessionUrl(origin, sessionId, token);
+  host.showStatus(t('tui.statusMessages.webOpenUrl', { url }), 'success');
+  if (token !== undefined) {
+    host.showStatus(t('tui.statusMessages.webToken', { token }), 'success');
+  }
+  openUrl(url);
+  host.setExitOpenUrl(url);
   await host.stop();
+}
+
+/** `version X · id Y` for the picker row; flags a CLI/server mismatch for the warning tone. */
+function instanceDescription(instance: ServerInstanceInfo): string {
+  if (instance.hostVersion === undefined) {
+    return t('tui.statusMessages.webVersionUnknown', { id: instance.serverId });
+  }
+  if (instance.hostVersion !== getVersion()) {
+    return t('tui.statusMessages.webVersionMismatch', { hostVersion: instance.hostVersion, cliVersion: getVersion(), id: instance.serverId });
+  }
+  return t('tui.statusMessages.webVersion', { hostVersion: instance.hostVersion, id: instance.serverId });
 }
 
 /**
@@ -49,13 +146,13 @@ function startNewServerAfterExit(host: SlashCommandHost, sessionId: string): voi
           // gate.
           const token = tryResolveServerToken(getDataDir());
           const url = webSessionUrl(origin, sessionId, token);
-          process.stdout.write(formatReadyBanner(origin, options.host, { token }));
+          process.stdout.write(formatReadyBanner(origin, options.host, { token, foreground: true }));
           process.stdout.write(`\n  ${sessionLine(url)}\n`);
           openUrl(url);
         },
       });
     } catch (error) {
-      process.stderr.write(`Failed to start server: ${formatErrorMessage(error)}\n`);
+      process.stderr.write(t('tui.statusMessages.failedToStartServer', { error: formatErrorMessage(error) }) + '\n');
       process.exit(1);
     }
   });
@@ -68,7 +165,7 @@ function sessionLine(url: string): string {
   const accent = (text: string): string => chalk.hex(darkColors.accent)(text);
   const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
   const [base, frag] = splitTokenFragment(url);
-  return `${label('Session:  ')}${accent(base)}${frag === '' ? '' : dim(frag)}`;
+  return `${label(t('tui.statusMessages.webSessionLabel'))}${accent(base)}${frag === '' ? '' : dim(frag)}`;
 }
 
 /**

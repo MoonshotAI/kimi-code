@@ -345,16 +345,18 @@ export class DaemonEventSocket {
       }
 
       case 'ping':
-        this.send({ type: 'pong', payload: { nonce: frame.payload.nonce } });
+        this.send({ type: 'pong', payload: { nonce: (frame.payload as { nonce?: unknown } | undefined)?.nonce } });
         break;
 
       case 'resync_required': {
-        const sid = frame.payload.session_id as string;
-        const epoch = frame.payload.epoch as string | undefined;
+        const payload = frame.payload as { session_id?: unknown; epoch?: unknown; current_seq?: unknown } | undefined;
+        if (typeof payload?.session_id !== 'string') break;
+        const sid = payload.session_id;
+        const epoch = payload.epoch as string | undefined;
         // Adopt the announced cursor so the next reconnect handshake doesn't
         // re-trigger the same resync before the snapshot reload lands.
-        this.subscriptions.set(sid, { seq: frame.payload.current_seq, epoch });
-        this.handlers.onResync(sid, frame.payload.current_seq, epoch);
+        this.subscriptions.set(sid, { seq: payload.current_seq as number, epoch });
+        this.handlers.onResync(sid, payload.current_seq as number, epoch);
         break;
       }
 
@@ -364,6 +366,7 @@ export class DaemonEventSocket {
         // must surface in the conversation. A connection-level control error
         // (no session_id) goes to onError.
         const sid = (frame as { session_id?: unknown }).session_id;
+        const payload = frame.payload as { code?: unknown; msg?: unknown; fatal?: unknown } | undefined;
         if (typeof sid === 'string' && this.handlers.onRawAgentEvent) {
           this.handlers.onRawAgentEvent({
             type: 'error',
@@ -373,7 +376,7 @@ export class DaemonEventSocket {
             payload: frame.payload,
           });
         } else {
-          this.handlers.onError(frame.payload.code, frame.payload.msg, frame.payload.fatal);
+          this.handlers.onError(payload?.code, payload?.msg, payload?.fatal);
         }
         break;
       }

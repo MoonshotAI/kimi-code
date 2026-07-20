@@ -62,6 +62,11 @@ async function postForm(
   deviceHeaders?: DeviceHeaders | undefined,
   options?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<{ status: number; data: Record<string, unknown> }> {
+  const parsedUrl = new URL(url);
+  const isLoopback = parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1' || parsedUrl.hostname === '::1';
+  if (parsedUrl.protocol !== 'https:' && !isLoopback) {
+    throw new OAuthError(`Refusing to send credentials to non-HTTPS OAuth endpoint: ${parsedUrl.origin}`);
+  }
   const timeoutMs = options?.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
   const body = new URLSearchParams(params).toString();
   // Compose a timeout signal with the optional caller signal.

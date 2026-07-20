@@ -581,13 +581,13 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(code).not.toBe(0);
   });
 
-  it('surfaces the originating stack trace on error', async () => {
+  it('does not leak stack traces to clients by default', async () => {
     const { body } = await call<null>('POST', rpc('session', ISessionMetadata, 'read', { sid: 'nope' }));
-    // Contract: error envelopes carry the thrown error's stack so operators can
-    // locate the source (the 40401 below originates in `dispatch`).
+    // Stack traces are only surfaced when --debug-endpoints is passed on a
+    // loopback bind; the default test server does not enable them.
     const json = JSON.stringify(body);
-    expect(json).toContain('"stack"');
-    expect(json).toContain('dispatch');
+    expect(json).not.toContain('"stack"');
+    expect(body.code).toBe(40401);
   });
 });
 

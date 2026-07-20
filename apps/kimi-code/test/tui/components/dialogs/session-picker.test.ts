@@ -3,6 +3,45 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPickerComponent } from '#/tui/components/dialogs/session-picker';
 
+vi.mock('#/i18n', () => ({
+  t: (key: string, params?: Record<string, string>) => {
+    const translations: Record<string, string> = {
+      'migration.badgeImported': '[imported]',
+      'tui.dialogs.sessionPicker.titleCwd': 'Sessions',
+      'tui.dialogs.sessionPicker.titleAll': 'All sessions',
+      'tui.dialogs.sessionPicker.loading': 'Loading sessions...',
+      'tui.dialogs.sessionPicker.empty': 'No sessions found.',
+      'tui.dialogs.sessionPicker.scopeHintAll': 'Ctrl+A all',
+      'tui.dialogs.sessionPicker.scopeHintCwd': 'Ctrl+A current cwd',
+      'tui.dialogs.sessionPicker.justNow': 'just now',
+      'tui.dialogs.sessionPicker.minutesAgo': '{{minutes}}m ago',
+      'tui.dialogs.sessionPicker.hoursAgo': '{{hours}}h ago',
+      'tui.dialogs.sessionPicker.daysAgo': '{{days}}d ago',
+      'tui.dialogs.sessionPicker.searchLabel': 'Search: ',
+      'tui.dialogs.sessionPicker.footerShowing': 'Showing {{from}}-{{to}} of {{totalSuffix}}',
+      'tui.dialogs.sessionPicker.footerLoadedMatches': '{{loaded}} loaded / {{total}} matches',
+      'tui.dialogs.sessionPicker.footerSessions': '{{count}} sessions',
+      'tui.dialogs.sessionPicker.footerLoadedSessions': '{{loaded}} loaded / {{total}} sessions',
+      'tui.dialogs.modelSelector.searchHint': '(type to search)',
+      'tui.dialogs.modelSelector.hintNavigate': '↑↓ navigate',
+      'tui.dialogs.modelSelector.hintBackspace': 'Backspace clear',
+      'tui.dialogs.modelSelector.hintSelect': 'Enter select',
+      'tui.dialogs.modelSelector.hintCancel': 'Esc cancel',
+      'tui.dialogs.modelSelector.noMatches': 'No matches',
+      'tui.labels.current': '← current',
+    };
+    let value = translations[key] ?? key;
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        value = value.replace(`{{${k}}}`, v);
+      }
+    }
+    return value;
+  },
+  setLocale: vi.fn(),
+  getLocale: () => 'en',
+}));
+
 function stripAnsi(text: string): string {
   return text.replaceAll(/\[[0-?]*[ -/]*[@-~]/g, '');
 }

@@ -24,6 +24,7 @@ import {
   type AgentRecord,
   type AgentRecordOf,
 } from '../../agent/records';
+import { isRecord, isWindowsAbsolutePath } from '../../utils/guards';
 
 const SessionSummaryStateSchema = z.object({
   archived: z.boolean().optional(),
@@ -989,19 +990,11 @@ function remapSessionPath(value: string, sourceDir: string, targetDir: string): 
   return join(targetDir, rel);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function areSameFsPath(left: string, right: string): boolean {
   if (isWindowsAbsolutePath(left) || isWindowsAbsolutePath(right)) {
     return nodePath.win32.resolve(left).toLowerCase() === nodePath.win32.resolve(right).toLowerCase();
   }
   return resolve(left) === resolve(right);
-}
-
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
 async function statIfExists(path: string): Promise<{ readonly mtimeMs: number } | undefined> {

@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { formatSessionLabel } from '#/migration/badge';
+
+vi.mock('#/i18n', () => ({
+  t: (key: string) => {
+    const translations: Record<string, string> = {
+      'migration.badgeImported': '[imported]',
+    };
+    return translations[key] ?? key;
+  },
+  setLocale: vi.fn(),
+  getLocale: () => 'en',
+}));
 
 describe('formatSessionLabel', () => {
   it('prepends [imported] when metadata.imported_from_kimi_cli === true', () => {

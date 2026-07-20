@@ -5,6 +5,7 @@ import { resolveKimiHome } from '#/config/path';
 import { McpServerConfigSchema, type McpServerConfig } from '#/config/schema';
 import { ErrorCodes, KimiError } from '#/errors';
 import { atomicWrite } from '#/utils/fs';
+import { isRecord } from '../utils/guards';
 
 export type GlobalMcpServerConfig = McpServerConfig & { readonly name: string };
 
@@ -158,8 +159,4 @@ function errorCode(error: unknown): unknown {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

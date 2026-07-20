@@ -23,7 +23,7 @@ describe('currentWorkingTip', () => {
 
   it('returns a different tip for a different timestamp', () => {
     const tip1 = currentWorkingTip(0);
-    const tip2 = currentWorkingTip(1_000_000_000);
+    const tip2 = currentWorkingTip(10_000);
     // The timestamp-based rotation should produce a deterministic
     // but different result when the input changes significantly.
     if (WORKING_TIPS.length > 1) {

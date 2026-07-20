@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { ChatProviderError } from '#/errors';
 import type { ProviderRequestAuth } from '#/provider';
 
@@ -91,11 +93,8 @@ export class AuthClientLRU<TClient> {
   }
 
   private fingerprint(value: string): string {
-    const len = value.length;
-    if (len === 0) return '0::';
-    const first = value.charAt(0);
-    const last = value.charAt(len - 1);
-    return `${len}:${first}...${last}`;
+    if (value.length === 0) return '0';
+    return createHash('sha256').update(value).digest('hex').slice(0, 16);
   }
 }
 

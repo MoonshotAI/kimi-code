@@ -789,6 +789,10 @@ export class KimiTUI {
     // stop() returns (or leak when stop() runs without process.exit).
     this.tasksBrowserController.close();
     this.btwPanelController.clear();
+    if (this.detachHintClearTimer !== undefined) {
+      clearTimeout(this.detachHintClearTimer);
+      this.detachHintClearTimer = undefined;
+    }
     this.stopActivitySpinner();
     this.streamingUI.disposeActiveCompactionBlock();
     this.streamingUI.resetToolUi();
@@ -1014,7 +1018,9 @@ export class KimiTUI {
         this.finishShellOutput(commandId, '', message, true);
         this.showError(t('tui.statusMessages.shellCommandFailed', { message: formatErrorMessage(error) }));
       },
-    );
+    ).catch((error: unknown) => {
+      this.finishShellOutput(commandId, '', formatErrorMessage(error), true);
+    });
   }
 
   handleShellOutput(event: { commandId: string; update: { kind: string; text?: string } }): void {
@@ -1295,9 +1301,7 @@ export class KimiTUI {
       return;
     }
     if (this.state.appState.streamingPhase === 'idle') {
-      for (const part of input) {
-        this.sendMessageInternal(session, part);
-      }
+      this.sendMessageInternal(session, input.join('\n\n'));
       return;
     }
 
@@ -1582,6 +1586,7 @@ export class KimiTUI {
 
   resetSessionRuntime(): void {
     this.aborted = false;
+    this.shellOutputStreams.clear();
     this.streamingUI.discardPending();
     this.state.queuedMessages = [];
     this.state.swarmModeEntry = undefined;

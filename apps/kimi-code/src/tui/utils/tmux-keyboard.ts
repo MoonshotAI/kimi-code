@@ -16,19 +16,24 @@ export async function detectTmuxKeyboardWarning(
 ): Promise<string | undefined> {
   if ((env['TMUX'] ?? '').length === 0) return undefined;
 
-  const [extendedKeys, extendedKeysFormat] = await Promise.all([
-    readTmuxOption('extended-keys'),
-    readTmuxOption('extended-keys-format'),
-  ]);
+  try {
+    const [extendedKeys, extendedKeysFormat] = await Promise.all([
+      readTmuxOption('extended-keys'),
+      readTmuxOption('extended-keys-format'),
+    ]);
 
-  if (extendedKeys === undefined) return undefined;
+    if (extendedKeys === undefined) return undefined;
 
-  if (extendedKeys !== 'on' && extendedKeys !== 'always') {
-    return TMUX_EXTENDED_KEYS_OFF_WARNING;
-  }
+    if (extendedKeys !== 'on' && extendedKeys !== 'always') {
+      return TMUX_EXTENDED_KEYS_OFF_WARNING;
+    }
 
-  if (extendedKeysFormat === 'xterm') {
-    return TMUX_EXTENDED_KEYS_FORMAT_XTERM_WARNING;
+    if (extendedKeysFormat === 'xterm') {
+      return TMUX_EXTENDED_KEYS_FORMAT_XTERM_WARNING;
+    }
+  } catch (err) {
+    console.debug('Failed to read tmux option:', err);
+    return undefined;
   }
 
   return undefined;

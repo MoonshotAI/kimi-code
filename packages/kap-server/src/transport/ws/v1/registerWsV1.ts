@@ -36,7 +36,7 @@ export interface RegisterWsV1Options {
 
 export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketServer {
   void core; // the broadcaster already holds the Core scope
-  const wss = new WebSocketServer({ noServer: true, handleProtocols: selectWsBearerProtocol });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024, handleProtocols: selectWsBearerProtocol });
   const { registry, broadcaster } = opts;
 
   wss.on('connection', (socket, req) => {

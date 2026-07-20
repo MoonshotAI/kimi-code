@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parseFrontmatter } from '../skill/parser';
+import { isRecord } from '../utils/guards';
 import type { PluginCommandDef } from './types';
 
 export function parseCommandText(input: {
@@ -71,8 +72,4 @@ function descriptionFromBody(body: string): string {
     .find((line) => line.length > 0);
   if (firstLine === undefined) return 'No description provided.';
   return firstLine.length > 240 ? `${firstLine.slice(0, 239)}…` : firstLine;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

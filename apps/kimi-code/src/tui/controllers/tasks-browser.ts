@@ -45,6 +45,8 @@ export type TasksBrowserState = {
 };
 
 export class TasksBrowserController {
+  private refreshing = false;
+
   constructor(private readonly host: TasksBrowserHost) {}
 
   async show(): Promise<void> {
@@ -198,28 +200,34 @@ export class TasksBrowserController {
   }
 
   private async refresh(opts: { silent?: boolean } = {}): Promise<void> {
-    const { state } = this.host;
-    const browser = state.tasksBrowser;
-    if (browser === undefined) return;
-
-    const session = this.host.session;
-    if (session === undefined) return;
-
-    let tasks: readonly BackgroundTaskInfo[];
+    if (this.refreshing) return;
+    this.refreshing = true;
     try {
-      tasks = await session.listBackgroundTasks({ activeOnly: false });
-    } catch (error) {
-      if (!opts.silent) {
-        this.flash(
-          t('tui.messages.tasksRefreshFailed', {
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        );
+      const { state } = this.host;
+      const browser = state.tasksBrowser;
+      if (browser === undefined) return;
+
+      const session = this.host.session;
+      if (session === undefined) return;
+
+      let tasks: readonly BackgroundTaskInfo[];
+      try {
+        tasks = await session.listBackgroundTasks({ activeOnly: false });
+      } catch (error) {
+        if (!opts.silent) {
+          this.flash(
+            t('tui.messages.tasksRefreshFailed', {
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+        return;
       }
-      return;
+      if (state.tasksBrowser !== browser) return;
+      this.pushProps(tasks);
+    } finally {
+      this.refreshing = false;
     }
-    if (state.tasksBrowser !== browser) return;
-    this.pushProps(tasks);
   }
 
   private pushProps(tasks: readonly BackgroundTaskInfo[]): void {

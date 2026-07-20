@@ -24,7 +24,7 @@ import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import type { Locale } from '#/i18n';
-import { getLocale, setLocale } from '#/i18n';
+import { getLocale, setLocale, t } from '#/i18n';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
@@ -38,11 +38,6 @@ import type { SlashCommandHost } from './dispatch';
 // ---------------------------------------------------------------------------
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
-
-const MODEL_SWITCH_CACHE_WARNING =
-  'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
-const EFFORT_SWITCH_CACHE_WARNING =
-  'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 
 /** True once the conversation has at least one user message: a switch from
  * then on resends the accumulated context, losing the cache. Shell-command
@@ -83,7 +78,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   const subcmd = args.trim().toLowerCase();
   if (subcmd === 'clear') {
     await session.clearPlan();
-    host.showNotice('Plan cleared');
+    host.showNotice(t('tui.statusMessages.planCleared'));
     return;
   }
 
@@ -92,7 +87,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   else if (subcmd === 'on') enabled = true;
   else if (subcmd === 'off') enabled = false;
   else {
-    host.showError(`Unknown plan subcommand: ${subcmd}`);
+    host.showError(t('tui.dialogs.config.configUnknownPlanSubcommand', { subcmd }));
     return;
   }
 
@@ -106,15 +101,15 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
     if (enabled) {
       const plan = await session.getPlan().catch(() => null);
       host.showNotice(
-        'Plan mode: ON',
-        plan?.path !== undefined ? `Plan will be created here: ${plan.path}` : undefined,
+        t('tui.statusMessages.planModeOn'),
+        plan?.path !== undefined ? t('tui.dialogs.config.configPlanPath', { path: plan.path }) : undefined,
       );
       return;
     }
-    host.showNotice('Plan mode: OFF');
+    host.showNotice(t('tui.statusMessages.planModeOff'));
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to set plan mode: ${msg}`);
+    host.showError(t('tui.statusMessages.failedToSetPlanMode', { msg }));
   }
 }
 
@@ -130,23 +125,23 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'yolo') {
-      host.showNotice('YOLO mode is already on');
+      host.showNotice(t('tui.statusMessages.yoloModeAlreadyOn'));
       return;
     }
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
+    host.showNotice(t('tui.statusMessages.yoloModeOn'), t('tui.statusMessages.yoloModeOnSub'));
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'yolo') {
-      host.showNotice('YOLO mode is already off');
+      host.showNotice(t('tui.statusMessages.yoloModeAlreadyOff'));
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
+    host.showNotice(t('tui.statusMessages.yoloModeOff'));
     return;
   }
 
@@ -154,11 +149,11 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'yolo') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
+    host.showNotice(t('tui.statusMessages.yoloModeOff'));
   } else {
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
+    host.showNotice(t('tui.statusMessages.yoloModeOn'), t('tui.statusMessages.yoloModeOnSub'));
   }
 }
 
@@ -174,23 +169,23 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'auto') {
-      host.showNotice('Auto mode is already on');
+      host.showNotice(t('tui.statusMessages.autoModeAlreadyOn'));
       return;
     }
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
+    host.showNotice(t('tui.statusMessages.autoModeOn'), t('tui.statusMessages.autoModeOnSub'));
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'auto') {
-      host.showNotice('Auto mode is already off');
+      host.showNotice(t('tui.statusMessages.autoModeAlreadyOff'));
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
+    host.showNotice(t('tui.statusMessages.autoModeOff'));
     return;
   }
 
@@ -198,11 +193,11 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'auto') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
+    host.showNotice(t('tui.statusMessages.autoModeOff'));
   } else {
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
+    host.showNotice(t('tui.statusMessages.autoModeOn'), t('tui.statusMessages.autoModeOnSub'));
   }
 }
 
@@ -234,7 +229,7 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
   if (!isBuiltInTheme(theme)) {
     const custom = await loadCustomThemeMerged(theme);
     if (custom === null) {
-      host.showError(`Unknown theme: ${theme}`);
+      host.showError(t('tui.statusMessages.unknownTheme', { theme }));
       return;
     }
   }
@@ -249,7 +244,7 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
-    host.showError(`Unknown model alias: ${alias}`);
+    host.showError(t('tui.dialogs.config.configUnknownModelAlias', { alias }));
     return;
   }
   showModelPicker(host, alias);
@@ -259,7 +254,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];
   if (model === undefined) {
-    host.showError('No model selected. Run /model to select one first.');
+    host.showError(t('tui.statusMessages.noModelSelected'));
     return;
   }
   const effective = effectiveModelForHost(host, model);
@@ -274,13 +269,13 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     const protocol = effective.protocol ?? providerType;
     if (protocol !== 'anthropic') {
       host.showError(
-        `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+        t('tui.dialogs.config.configUnsupportedEffort', { arg, alias, segments: segments.join(', ') }),
       );
       return;
     }
-    const knownEfforts = effective.supportEfforts?.join(', ') ?? 'none declared';
+    const knownEfforts = effective.supportEfforts?.join(', ') ?? t('tui.dialogs.config.configNoneDeclared');
     host.showStatus(
-      `Thinking effort "${arg}" is not listed for ${alias} (known: ${knownEfforts}). Sending "${arg}" unchanged; the configured provider will validate it.`,
+      t('tui.dialogs.config.configUnknownEffort', { arg, alias, knownEfforts }),
       'warning',
     );
   }
@@ -299,7 +294,7 @@ function showEffortPicker(
     new EffortSelectorComponent({
       efforts: segments,
       currentValue,
-      warning: hasConversationHistory(host) ? EFFORT_SWITCH_CACHE_WARNING : undefined,
+      warning: hasConversationHistory(host) ? t('tui.dialogs.config.configEffortCachedWarning') : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, effort, true);
@@ -343,10 +338,10 @@ async function refreshModelsForPicker(host: SlashCommandHost): Promise<void> {
     );
     if (result === undefined) return;
     for (const f of result.failed) {
-      host.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
+      host.showStatus(t('tui.dialogs.config.configSkippedRefreshing', { provider: f.provider, reason: f.reason }), 'warning');
     }
   } catch (error) {
-    host.showStatus(`Skipped refreshing models: ${formatErrorMessage(error)}`, 'warning');
+    host.showStatus(t('tui.dialogs.config.configSkippedRefreshingModels', { error: formatErrorMessage(error) }), 'warning');
   }
 }
 
@@ -369,7 +364,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 async function applyEditorChoice(host: SlashCommandHost, value: string): Promise<void> {
   const previous = host.state.appState.editorCommand ?? '';
   if (value === previous && value.length > 0) {
-    host.showStatus(`Editor unchanged: ${value.length > 0 ? value : 'auto-detect'}`);
+    host.showStatus(t('tui.dialogs.config.configEditorUnchanged', { value: value.length > 0 ? value : t('tui.dialogs.config.configEditorAutoDetect') }));
     return;
   }
 
@@ -381,7 +376,7 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
     });
   } catch (error) {
     host.showStatus(
-      `Failed to save editor: ${formatErrorMessage(error)}`,
+      t('tui.dialogs.config.configEditorSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -390,8 +385,8 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   host.setAppState({ editorCommand });
   host.showStatus(
     value.length > 0
-      ? `Editor set to "${value}".`
-      : 'Editor set to auto-detect ($VISUAL / $EDITOR).',
+      ? t('tui.dialogs.config.configEditorSet', { value })
+      : t('tui.dialogs.config.configEditorAutoSet'),
   );
 }
 
@@ -405,8 +400,8 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   const entries = Object.entries(models);
   if (entries.length === 0) {
     host.showNotice(
-      'No models configured',
-      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+      t('tui.statusMessages.noModelsConfigured'),
+      t('tui.statusMessages.noModelsConfiguredSub'),
     );
     return;
   }
@@ -416,7 +411,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
-      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
+      warning: hasConversationHistory(host) ? t('tui.dialogs.config.configModelCachedWarning') : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking, true);
@@ -439,7 +434,7 @@ async function performModelSwitch(
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    host.showError(t('tui.dialogs.config.configCannotSwitchWhileStreaming'));
     return;
   }
 
@@ -468,7 +463,7 @@ async function performModelSwitch(
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to switch model: ${msg}`);
+    host.showError(t('tui.statusMessages.switchModelFailed', { msg }));
     return;
   }
 
@@ -507,7 +502,7 @@ async function performModelSwitch(
       );
     } catch (error) {
       const msg = formatErrorMessage(error);
-      host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
+      host.showError(t('tui.dialogs.config.configModelSwitchedSaveFailed', { name: displayName, msg }));
       return;
     }
   }
@@ -515,16 +510,16 @@ async function performModelSwitch(
   let status: string;
   if (effectiveModelChanged) {
     status = persist
-      ? `Switched to ${displayName} with thinking ${effectiveEffort}.`
-      : `Switched to ${displayName} with thinking ${effectiveEffort} for this session only.`;
+      ? t('tui.dialogs.config.configModelSwitched', { name: displayName, effort: effectiveEffort })
+      : t('tui.dialogs.config.configModelSwitchedSession', { name: displayName, effort: effectiveEffort });
   } else if (effectiveEffortChanged) {
     status = persist
-      ? `Thinking set to ${effectiveEffort}.`
-      : `Thinking set to ${effectiveEffort} for this session only.`;
+      ? t('tui.dialogs.config.configThinkingSet', { effort: effectiveEffort })
+      : t('tui.dialogs.config.configThinkingSetSession', { effort: effectiveEffort });
   } else if (persist && persisted) {
-    status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
+    status = t('tui.dialogs.config.configModelSavedDefault', { name: displayName, effort: effectiveEffort });
   } else {
-    status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
+    status = t('tui.dialogs.config.configModelAlreadyUsing', { name: displayName, effort: effectiveEffort });
   }
   host.showStatus(status, 'success');
 }
@@ -576,7 +571,7 @@ function showThemePicker(host: SlashCommandHost): void {
 async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promise<void> {
   if (theme === host.state.appState.theme) {
     if (theme === 'auto') host.refreshTerminalThemeTracking();
-    host.showStatus(`Theme unchanged: "${theme}".`);
+    host.showStatus(t('tui.dialogs.config.configThemeUnchanged', { theme }));
     return;
   }
 
@@ -586,7 +581,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   if (!isBuiltInTheme(theme)) {
     const palette = await loadCustomThemeMerged(theme);
     if (palette === null) {
-      host.showStatus(`Theme "${theme}" could not be loaded.`, 'error');
+      host.showStatus(t('tui.dialogs.config.configThemeLoadFailed', { theme }), 'error');
       return;
     }
   }
@@ -598,7 +593,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
     });
   } catch (error) {
     host.showStatus(
-      `Failed to save theme: ${formatErrorMessage(error)}`,
+      t('tui.dialogs.config.configThemeSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -610,8 +605,8 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   await host.applyTheme(theme, resolved);
   host.refreshTerminalThemeTracking();
   host.track('theme_switch', { theme });
-  const detail = theme === 'auto' ? ` (tracking terminal; current: ${resolved})` : '';
-  host.showStatus(`Theme set to "${theme}"${detail}.`);
+  const detail = theme === 'auto' ? t('tui.dialogs.config.configThemeTracking', { resolved }) : '';
+  host.showStatus(t('tui.dialogs.config.configThemeSet', { theme, detail }));
 }
 
 export function showLocalePicker(host: SlashCommandHost): void {
@@ -631,7 +626,7 @@ export function showLocalePicker(host: SlashCommandHost): void {
 
 async function applyLocaleChoice(host: SlashCommandHost, locale: Locale): Promise<void> {
   if (locale === host.state.appState.locale) {
-    host.showStatus(`Language unchanged: "${locale}".`);
+    host.showStatus(t('tui.dialogs.config.configLanguageUnchanged', { locale }));
     return;
   }
 
@@ -642,7 +637,7 @@ async function applyLocaleChoice(host: SlashCommandHost, locale: Locale): Promis
     });
   } catch (error) {
     host.showStatus(
-      `Failed to save language preference: ${formatErrorMessage(error)}`,
+      t('tui.dialogs.config.configLanguageSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -650,7 +645,7 @@ async function applyLocaleChoice(host: SlashCommandHost, locale: Locale): Promis
 
   setLocale(locale);
   host.setAppState({ locale });
-  host.showStatus(`Language set to "${locale}". Restart to apply fully.`);
+  host.showStatus(t('tui.dialogs.config.configLanguageSet', { locale }));
 }
 
 export function showPermissionPicker(host: SlashCommandHost): void {
@@ -688,7 +683,7 @@ export async function showExperimentsPanel(host: SlashCommandHost): Promise<void
   try {
     features = await host.harness.getExperimentalFeatures();
   } catch (error) {
-    host.showError(`Failed to load experimental features: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.loadExperimentsFailed', { error: formatErrorMessage(error) }));
     return;
   }
   mountExperimentsPanel(host, features);
@@ -700,7 +695,7 @@ export async function applyExperimentalFeatureChanges(
 ): Promise<void> {
   if (changes.length === 0) {
     host.showStatus(
-      'No experimental feature changes to apply.',
+      t('tui.dialogs.config.configNoExperimentalChanges'),
       'textMuted',
     );
     return;
@@ -721,14 +716,14 @@ export async function applyExperimentalFeatureChanges(
       await host.session.reloadSession();
       await host.reloadCurrentSessionView(
         host.session,
-        'Experimental features updated. Session reloaded.',
+        t('tui.statusMessages.experimentalUpdatedSessionReloaded'),
       );
     } else {
-      host.showStatus('Experimental features updated.', 'success');
+      host.showStatus(t('tui.statusMessages.experimentalUpdated'), 'success');
     }
     host.track('experimental_features_apply', { changed: changes.length });
   } catch (error) {
-    host.showError(`Failed to update experimental features: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.updateExperimentsFailed', { error: formatErrorMessage(error) }));
   }
 }
 
@@ -766,7 +761,7 @@ export async function applyUpdatePreferenceChoice(
   autoInstall: boolean,
 ): Promise<void> {
   if (autoInstall === host.state.appState.upgrade.autoInstall) {
-    host.showStatus(`Automatic updates already ${autoInstall ? 'enabled' : 'disabled'}.`);
+    host.showStatus(t('tui.dialogs.config.configAutoUpdateAlready', { state: autoInstall ? t('tui.dialogs.config.configAutoUpdateEnabled') : t('tui.dialogs.config.configAutoUpdateDisabled') }));
     return;
   }
 
@@ -778,7 +773,7 @@ export async function applyUpdatePreferenceChoice(
     });
   } catch (error) {
     host.showStatus(
-      `Failed to save automatic update setting: ${formatErrorMessage(error)}`,
+      t('tui.dialogs.config.configAutoUpdateSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -786,12 +781,12 @@ export async function applyUpdatePreferenceChoice(
 
   host.setAppState({ upgrade });
   host.track('upgrade_preference_changed', { auto_install: autoInstall });
-  host.showStatus(`Automatic updates ${autoInstall ? 'enabled' : 'disabled'}.`);
+  host.showStatus(t('tui.dialogs.config.configAutoUpdateSet', { state: autoInstall ? t('tui.dialogs.config.configAutoUpdateEnabled') : t('tui.dialogs.config.configAutoUpdateDisabled') }));
 }
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
   if (mode === host.state.appState.permissionMode) {
-    host.showStatus(`Permission mode unchanged: ${mode}.`);
+    host.showStatus(t('tui.dialogs.config.configPermissionUnchanged', { mode }));
     return;
   }
 
@@ -799,12 +794,12 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
     await host.requireSession().setPermission(mode);
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to set permission mode: ${msg}`);
+    host.showError(t('tui.statusMessages.setPermissionFailed', { msg }));
     return;
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(`Permission mode: ${mode}`);
+  host.showNotice(t('tui.dialogs.config.configPermissionMode', { mode }));
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
@@ -839,13 +834,13 @@ async function handleGitHubTokenInput(host: SlashCommandHost): Promise<void> {
   const token = await promptApiKey(
     host,
     'GitHub',
-    ['Enter your GitHub personal access token (classic).'],
+    [t('tui.dialogs.config.configGithubTokenInput')],
   );
   if (token === undefined) return;
   try {
     await host.harness.setConfig({ experimental: { github_token: token } });
-    host.showStatus('GitHub token saved.', 'success');
+    host.showStatus(t('tui.dialogs.config.configGithubTokenSaved'), 'success');
   } catch (error) {
-    host.showError(`Failed to save GitHub token: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.dialogs.config.configGithubTokenSaveFailed', { error: formatErrorMessage(error) }));
   }
 }

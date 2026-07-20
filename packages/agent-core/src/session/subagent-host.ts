@@ -604,7 +604,8 @@ export class SessionSubagentHost {
    * tool's per-run timeout / user-cancel envelope covers the drain too.
    */
   private async drainChildBackgroundTasks(child: Agent, signal: AbortSignal): Promise<void> {
-    for (;;) {
+    const MAX_DRAIN_ITERATIONS = 50;
+    for (let i = 0; i < MAX_DRAIN_ITERATIONS; i++) {
       signal.throwIfAborted();
       await this.suppressChildTaskNotifications(child);
       await child.background.waitForActiveTasks(() => true, { signal });
