@@ -6,6 +6,7 @@ import type { ApprovalResponse, ContentPart } from "../../shared/legacy-sdk";
 import { getUserMessage } from "../../shared/errors";
 import type { ErrorPhase } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
+import { normalizeEffort } from "../runtime/kimi-runtime";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import { isWorkspacePathContained, relativeWorkspacePath } from "../utils/workspace-path";
 import { parseHostSlashCommand, runHostSlashCommand } from "./slash-command";
@@ -101,11 +102,23 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
   }
 
   try {
+    // Attach no longer overwrites session modes with the configured defaults
+    // (resumed sessions keep their own), so apply the model/effort that the
+    // composer submitted with this prompt before the turn starts.
     const status = await runtime.session.getStatus();
+    let model = status.model;
+    if (params.model && model !== params.model) {
+      await runtime.session.setModel(params.model);
+      model = params.model;
+    }
+    const effort = normalizeEffort(params.effort ?? (params.thinking === true ? "on" : "off"));
+    if (status.thinkingEffort !== effort) {
+      await runtime.session.setThinking(effort);
+    }
     if (params.planMode !== undefined && status.planMode !== params.planMode) {
       await runtime.session.setPlanMode(params.planMode);
     }
-    runtime.announceSessionStart(status.model);
+    runtime.announceSessionStart(model);
   } catch (error) {
     emitCaughtError(ctx, error, "preflight", runtime.id);
     return { done: false };
@@ -133,7 +146,10 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
 
 const abortChat: Handler<void, { aborted: boolean }> = async (_, ctx) => {
   const runtime = ctx.getSession();
-  if (runtime !== undefined) await runtime.cancel();
+  // Do not claim an abort when there is no runtime to cancel — the webview
+  // would otherwise show the task as stopped while the engine keeps running.
+  if (runtime === undefined) return { aborted: false };
+  await runtime.cancel();
   return { aborted: true };
 };
 

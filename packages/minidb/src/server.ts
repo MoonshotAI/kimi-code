@@ -42,6 +42,10 @@ class RespParser {
   *feed(chunk: Buffer): Generator<Buffer[]> {
     this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : chunk;
     if (this.buf.length > this.maxBuf) {
+      // Drop the buffered oversized request before reporting: without the
+      // reset every later chunk would fail with the same error and the giant
+      // buffer would be retained for the life of the connection.
+      this.buf = Buffer.alloc(0);
       throw new Error(`RESP request too large (>${this.maxBuf} bytes)`);
     }
     while (this.buf.length) {
@@ -164,21 +168,48 @@ export async function startServer({ dir, port = 6379, host = '127.0.0.1', fsyncP
   const db = (await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy })) as MiniDb<string>;
   const server = net.createServer((socket: Socket) => {
     const parser = new RespParser();
+    // Serialize per-connection processing: a new chunk's commands are queued
+    // behind the previous chunk's in-flight work, so replies always leave in
+    // request order. Without this, a slow command in one packet (e.g. SET with
+    // fsync 'always') let replies from the next packet overtake it, breaking
+    // pipelined clients.
+    let queue: Promise<void> = Promise.resolve();
+    // A client that resets the connection while a large reply is being written
+    // makes the next write fail with EPIPE/ECONNRESET. Without an 'error'
+    // listener that event becomes an uncaught exception and takes the whole
+    // process down, so swallow it: the connection is dead either way, and the
+    // queued work below skips further writes to it.
+    socket.on('error', () => {});
+    // Never write to a destroyed socket: write-after-destroy would just
+    // surface as another 'error' event on the dead connection.
+    const send = (res: string | Buffer): void => {
+      if (!socket.destroyed) socket.write(res);
+    };
     socket.on('data', (chunk: Buffer) => {
-      void (async () => {
+      queue = queue.then(async () => {
         try {
           for (const args of parser.feed(chunk)) {
-            const res = await handle(db, args);
+            if (socket.destroyed) return;
+            let res: string | Buffer | null;
+            try {
+              res = await handle(db, args);
+            } catch (e) {
+              // One failing command must not starve the replies of the
+              // commands already parsed from the same chunk.
+              res = reply.err((e as Error).message);
+            }
             if (res === null) {
               socket.end();
               return;
             }
-            socket.write(res);
+            send(res);
           }
         } catch (e) {
-          socket.write(reply.err((e as Error).message));
+          // Parser-level failure (e.g. oversized request): feed() has already
+          // reset its buffer, so the connection can keep serving new commands.
+          send(reply.err((e as Error).message));
         }
-      })();
+      });
     });
   });
 

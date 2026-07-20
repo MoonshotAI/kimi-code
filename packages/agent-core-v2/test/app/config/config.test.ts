@@ -9,6 +9,9 @@
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ToolCall } from '#/app/llmProtocol/message';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
@@ -423,6 +426,33 @@ describe('ConfigService env overlay (live)', () => {
 
     disposables.dispose();
   });
+
+  it('deletes a scalar section on replace(undefined) — set(undefined) cannot', async () => {
+    // Contract the refresh host relies on: an explicit undefined in a refresh
+    // patch must DELETE the section. `set()` deep-merges, so an undefined
+    // scalar patch resolves back to the base value; only `replace()` deletes.
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg'));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await config.replace('defaultModel', 'kimi-code/kimi-k2');
+    expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+
+    await config.set('defaultModel', undefined);
+    expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+
+    await config.replace('defaultModel', undefined);
+    expect(config.get<string>('defaultModel')).toBeUndefined();
+
+    disposables.dispose();
+  });
 });
 
 describe('skill config sections', () => {
@@ -681,3 +711,73 @@ function toolNames(value: unknown): string[] {
     })
     .filter((name): name is string => name !== null);
 }
+
+describe('ConfigService thinking effort max migration', () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'kimi-v2-cfg-migrate-'));
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  async function createMigratingConfig(toml: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap(homeDir));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  function readMarkers(): Record<string, string> {
+    return JSON.parse(readFileSync(join(homeDir, 'migrations-effort.json'), 'utf-8')) as Record<
+      string,
+      string
+    >;
+  }
+
+  it('rewrites a persisted max to high on first load and records the marker', async () => {
+    const { config, disposables } = await createMigratingConfig(
+      '[thinking]\nenabled = true\neffort = "max"\n',
+    );
+
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({
+      enabled: true,
+      effort: 'high',
+    });
+    expect(readMarkers()['thinking-effort-max-to-high']).toBeDefined();
+
+    disposables.dispose();
+  });
+
+  it('honors a hand-set max once the marker exists', async () => {
+    writeFileSync(
+      join(homeDir, 'migrations-effort.json'),
+      JSON.stringify({ 'thinking-effort-max-to-high': new Date().toISOString() }),
+    );
+    const { config, disposables } = await createMigratingConfig('[thinking]\neffort = "max"\n');
+
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'max' });
+
+    disposables.dispose();
+  });
+
+  it('records the marker even when nothing needs migrating', async () => {
+    const { config, disposables } = await createMigratingConfig('[thinking]\neffort = "low"\n');
+
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({ effort: 'low' });
+    expect(readMarkers()['thinking-effort-max-to-high']).toBeDefined();
+
+    disposables.dispose();
+  });
+});

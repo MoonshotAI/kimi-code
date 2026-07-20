@@ -6,6 +6,30 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.27.0 (2026-07-17)
+
+### Features
+
+- Add the /copy slash command to copy the last assistant message to the clipboard.
+- Using an API key for Kimi coding models now also fetches the latest model list automatically.
+
+### Polish
+
+- OAuth connection errors now include the underlying network cause (DNS, refused connection, TLS, or timeout) instead of a bare "fetch failed".
+
+### Bug Fixes
+
+- Fix repeated request rejections after an interrupted model response.
+- Fix the built-in URL fetch tool's network safeguards: crafted domains and redirect chains can no longer reach loopback or internal network services.
+- web: Fix LaTeX formulas rendering as garbled overlapping text when the web UI is accessed over the network.
+- web: Fix queued messages silently re-sending previously uploaded files when a session is reopened.
+- web: Remember the thinking level per model, fixing an empty, unresponsive thinking picker when the model doesn't support the stored level.
+- web: Fix duplicate workspace groups on Windows when the same folder is opened with different path spellings; its sessions now list under one merged group.
+- Fix AGENTS.md files installed as symbolic links being ignored by the web backend.
+- Fix Esc and Ctrl+C cancelling compaction instead of closing an open /btw panel.
+- Fix whitespace-only thinking content rendering as a blank line in the transcript.
+- Fix `/export-debug-zip` and `kimi export` overwriting the previous ZIP on repeated runs for the same session; the default filename now includes a timestamp.
+
 ## 0.26.0 (2026-07-16) Say hi to the BIIIG DAY!
 
 ### Polish

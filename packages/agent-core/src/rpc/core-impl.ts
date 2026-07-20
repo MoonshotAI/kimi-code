@@ -17,6 +17,7 @@ import {
   ensureKimiHome,
   loadRuntimeConfigSafe,
   mergeConfigPatch,
+  migrateThinkingEffortMaxToHigh,
   readConfigFileForUpdate,
   normalizeAdditionalDirs,
   readWorkspaceAdditionalDirs,
@@ -169,6 +170,15 @@ export interface KimiCoreOptions {
   readonly runtime?: ToolServices | undefined;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
+  /**
+   * Workspace-id resolver handed to the session store: the registered
+   * workspace id for the same physical root as a session's workDir (identity
+   * comparison folds case/slashes for Windows-shaped paths), so bucket
+   * derivation reuses the registered id instead of minting a split bucket.
+   * Wired by the services layer from the workspace registry; when omitted the
+   * store always mints (legacy behavior).
+   */
+  readonly resolveWorkspaceId?: (workDir: string) => Promise<string | undefined>;
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly appVersion?: string;
@@ -229,6 +239,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.appVersion = options.appVersion;
     this.printMode = options.uiMode === 'print';
     ensureKimiHome(this.homeDir);
+    // One-shot config migrations, before the first load (best-effort, never
+    // throws): rewrites a persisted thinking.effort "max" to "high" once.
+    migrateThinkingEffortMaxToHigh(this.configPath, this.homeDir);
     // Schema errors degrade (invalid sections are dropped with warnings) so a
     // typo cannot prevent startup, but a file that cannot be used at all —
     // TOML syntax error, unreadable — fails fast: defaults-only would start
@@ -248,7 +261,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       this.config.experimental,
     );
     this.imageLimits = new ImageLimits(process.env, this.config.image);
-    this.sessionStore = new SessionStore(this.homeDir);
+    this.sessionStore = new SessionStore(this.homeDir, {
+      resolveWorkspaceId: options.resolveWorkspaceId,
+    });
     this.globalMcpConfig = new GlobalMcpConfigStore(this.homeDir);
     this.globalMcpOAuth = new McpOAuthService({ kimiHomeDir: this.homeDir });
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });

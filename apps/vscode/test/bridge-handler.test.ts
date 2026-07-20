@@ -130,6 +130,22 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     expect(showLogs).not.toHaveBeenCalled();
   });
 
+  it("reports aborted: false when the view has no runtime to cancel", async () => {
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.AbortChat }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { aborted: false } });
+  });
+
+  it("cancels the view's runtime when aborting a chat", async () => {
+    const cancel = vi.fn(async () => undefined);
+    vi.spyOn(bridge.runtime, "getSessionForView").mockReturnValue({ cancel } as never);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.AbortChat }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { aborted: true } });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it.each(["missingMethod", "toString", "constructor", "__proto__"])(
     "does not dispatch the unknown or prototype method %s",
     async (method) => {

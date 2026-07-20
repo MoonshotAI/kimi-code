@@ -1,5 +1,12 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [[`44f3341`](https://github.com/MoonshotAI/kimi-code/commit/44f334191989183d21920f6867c405581347c748), [`44f3341`](https://github.com/MoonshotAI/kimi-code/commit/44f334191989183d21920f6867c405581347c748), [`44f3341`](https://github.com/MoonshotAI/kimi-code/commit/44f334191989183d21920f6867c405581347c748), [`44f3341`](https://github.com/MoonshotAI/kimi-code/commit/44f334191989183d21920f6867c405581347c748)]:
+  - @moonshot-ai/minidb@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

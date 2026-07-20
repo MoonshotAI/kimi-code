@@ -201,11 +201,18 @@ export class ModelCatalogService implements IModelCatalogService {
     if (patch.models !== undefined) {
       await this.config.replace(MODELS_SECTION, patch.models);
     }
-    if (patch.defaultModel !== undefined) {
-      await this.config.set(DEFAULT_MODEL_SECTION, patch.defaultModel);
+    // The refresh orchestrator always sends all four keys, so key presence is
+    // the write intent and an explicit `undefined` means CLEAR, not "leave
+    // alone". `set()` cannot express that — its deepMerge resolves an
+    // undefined patch back to the base value — so these go through `replace`,
+    // which deletes the section on undefined. Otherwise a default model (and
+    // its thinking setting) whose alias the upstream dropped would dangle in
+    // the user config forever.
+    if ('defaultModel' in patch) {
+      await this.config.replace(DEFAULT_MODEL_SECTION, patch.defaultModel);
     }
-    if (patch.thinking !== undefined) {
-      await this.config.set(THINKING_SECTION, patch.thinking);
+    if ('thinking' in patch) {
+      await this.config.replace(THINKING_SECTION, patch.thinking);
     }
     return this.readUserConfigShape();
   }

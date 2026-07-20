@@ -22,6 +22,9 @@ vi.mock("vscode", () => ({
     showWarningMessage: async () => undefined,
     showTextDocument: async () => undefined,
   },
+  workspace: {
+    getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }),
+  },
 }));
 
 import {
@@ -35,6 +38,7 @@ import {
   type UpdateMCPServerRequest,
 } from "../shared/legacy-sdk";
 import { configHandlers } from "../src/handlers/config.handler";
+import { chatHandlers } from "../src/handlers/chat.handler";
 import { mcpHandlers } from "../src/handlers/mcp.handler";
 import { parseHostSlashCommand, runHostSlashCommand } from "../src/handlers/slash-command";
 import type { HandlerContext } from "../src/handlers/types";
@@ -80,7 +84,7 @@ afterEach(async () => {
   }
 });
 
-async function createRuntimeRig(): Promise<RuntimeRig> {
+async function createRuntimeRig(extraAliases: readonly string[] = []): Promise<RuntimeRig> {
   const rootDir = await mkdtemp(join(tmpdir(), "kimi-vscode-harness-"));
   const homeDir = join(rootDir, "home");
   const workDir = join(rootDir, "workspace");
@@ -94,7 +98,7 @@ async function createRuntimeRig(): Promise<RuntimeRig> {
     await provider.close();
   };
 
-  await writeProviderConfig(homeDir, `${provider.baseUrl}/v1`);
+  await writeProviderConfig(homeDir, `${provider.baseUrl}/v1`, extraAliases);
   const version = await readExtensionVersion();
   const broadcasts: BroadcastRecord[] = [];
   const logs: LogRecord[] = [];
@@ -184,7 +188,23 @@ async function readExtensionVersion(): Promise<string> {
   return parsed.version;
 }
 
-async function writeProviderConfig(homeDir: string, baseUrl: string): Promise<void> {
+async function writeProviderConfig(
+  homeDir: string,
+  baseUrl: string,
+  extraAliases: readonly string[] = [],
+): Promise<void> {
+  const extra = extraAliases
+    .map(
+      (alias) => `
+[models."${alias}"]
+provider = "local"
+model = "mock-model"
+max_context_size = 128000
+capabilities = ["thinking"]
+support_efforts = ["low", "high"]
+`,
+    )
+    .join("\n");
   await writeFile(
     join(homeDir, "config.toml"),
     `default_model = "${MODEL_ALIAS}"
@@ -198,7 +218,7 @@ api_key = "${PROVIDER_TOKEN}"
 provider = "local"
 model = "mock-model"
 max_context_size = 128000
-
+${extra}
 [loop_control]
 max_retries_per_step = 1
 `,
@@ -270,6 +290,30 @@ async function openRuntimeSession(rig: RuntimeRig, sessionId?: string, yoloMode 
   });
 }
 
+function streamChatContext(rig: RuntimeRig): HandlerContext {
+  return {
+    workDir: rig.workDir,
+    webviewId: "view-1",
+    broadcast: (event: string, data: unknown, webviewId?: string) => {
+      rig.broadcasts.push({ event, data, webviewId });
+    },
+    getOrCreateSession: async (model: string, effort: string, sessionId?: string) =>
+      rig.runtime.openSession({
+        webviewId: "view-1",
+        workDir: rig.workDir,
+        ...(sessionId === undefined ? {} : { sessionId }),
+        model,
+        effort,
+        yoloMode: false,
+      }),
+    getSession: () => rig.runtime.getSessionForView("view-1"),
+    saveAllDirty: async () => undefined,
+    logError: (message: string, error: unknown) => {
+      rig.logs.push({ message, error });
+    },
+  } as unknown as HandlerContext;
+}
+
 function streamEvents(broadcasts: readonly BroadcastRecord[]): unknown[] {
   return broadcasts
     .filter((record) => record.event === Events.StreamEvent)
@@ -325,7 +369,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       "compact",
       "clear",
       "yolo",
-      "afk",
+      "auto",
       "plan",
       "add-dir",
       "export",
@@ -1018,6 +1062,23 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     await expect(runtime.session.getContext()).resolves.toEqual({ history: [], tokenCount: 0 });
   });
 
+  it("applies the composer-submitted model before the turn starts", async () => {
+    const rig = await createRuntimeRig(["vscode-alt"]);
+    routeSuccessfulPrompt(rig.provider);
+    const runtime = await openRuntimeSession(rig);
+
+    const result = await chatHandlers[Methods.StreamChat]!(
+      { content: "hi", model: "vscode-alt", effort: "high" },
+      streamChatContext(rig),
+    );
+
+    expect(result).toEqual({ done: true });
+    await expect(runtime.session.getStatus()).resolves.toMatchObject({
+      model: "vscode-alt",
+      thinkingEffort: "high",
+    });
+  });
+
   it("toggles plan mode through the public session without calling the model", async () => {
     const rig = await createRuntimeRig();
     const runtime = await openRuntimeSession(rig);
@@ -1051,6 +1112,26 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       "Unknown plan subcommand: sideways",
     );
 
+    expect(runtime.isBusy).toBe(false);
+  });
+
+  it("fails a prompt sent while a turn is running without disturbing the active turn", async () => {
+    const rig = await createRuntimeRig();
+    const blocked = routeBlockedPrompt(rig.provider);
+    const runtime = await openRuntimeSession(rig);
+    const first = runtime.prompt("first message");
+    await blocked.started;
+
+    await expect(runtime.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
+
+    // The rejection surfaces as a mid-turn warning; the active turn is untouched.
+    expect(runtime.isBusy).toBe(true);
+    expect(streamEvents(rig.broadcasts)).toContainEqual(
+      expect.objectContaining({ type: "error", terminal: false }),
+    );
+
+    blocked.release();
+    await expect(first).resolves.toEqual({ status: "finished" });
     expect(runtime.isBusy).toBe(false);
   });
 

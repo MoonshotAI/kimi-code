@@ -70,6 +70,14 @@ export function isThinkingOn(level: ThinkingLevel): boolean {
   return level !== 'off';
 }
 
+/** True when the level is selectable for the model (one of its UI segments). */
+export function levelDeclaredBy(
+  model: ModelThinkingInfo | undefined,
+  level: string,
+): boolean {
+  return segmentsFor(model).includes(level);
+}
+
 /**
  * Normalize a UI draft before it crosses the component boundary. 'on' never
  * leaks out of the control — it becomes the model's default level.
@@ -99,26 +107,34 @@ export function effectiveThinkingLevel(
 /**
  * Project a thinking level onto the daemon's `[thinking]` config section —
  * the same mapping the TUI persists (thinkingEffortToConfig): 'off' disables
- * thinking, a concrete effort records it as the global default, and boolean
- * 'on' records only `enabled` (boolean models resolve back to 'on' at
- * runtime).
+ * thinking, boolean 'on' records only `enabled` (boolean models resolve back
+ * to 'on' at runtime), and a concrete effort is recorded as the global
+ * default — EXCEPT the model's highest declared level (the last entry of
+ * `support_efforts`, ordered by strength), which is session-only and records
+ * just `enabled`, so the most expensive tier never becomes the global
+ * default for every new session. When the model's levels are unknown the
+ * concrete level is persisted as-is.
  */
-export function thinkingLevelToConfig(level: ThinkingLevel): {
+export function thinkingLevelToConfig(
+  level: ThinkingLevel,
+  supportEfforts?: readonly string[],
+): {
   enabled: boolean;
   effort?: string;
 } {
   if (level === 'off') return { enabled: false };
   if (level === 'on') return { enabled: true };
+  const top = supportEfforts?.at(-1);
+  if (top !== undefined && level === top) return { enabled: true };
   return { enabled: true, effort: level };
 }
 
 /**
  * Thinking level to use when the user picks a model in the switcher.
- * Mirrors the TUI model picker: switching onto a different model pre-selects
- * that model's own default level; re-selecting the current model keeps the
- * live level untouched (including "no preference"). The carried-over level is
- * never coerced onto the target model — whatever is stored is submitted
- * verbatim.
+ * Mirrors the TUI model picker: re-selecting the current model keeps the live
+ * level untouched (including "no preference"). Switching onto a different model
+ * pre-selects that model's catalog default level. The carried-over level is
+ * never coerced onto the target model.
  */
 export function thinkingLevelForModelSwitch(
   model: ModelThinkingInfo | undefined,

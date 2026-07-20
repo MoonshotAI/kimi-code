@@ -25,6 +25,7 @@ import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import type { ISnapshotReader } from '../services/snapshot';
+import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
@@ -82,6 +83,12 @@ export async function registerApiV1Routes(
   await app.register(
     async (apiV1) => {
       registerHealthRoute(apiV1);
+
+      // Dev-only debug RPC surface (`--debug-endpoints`, loopback-gated in
+      // `start.ts`): every scoped Service reachable, no `/api/v2` whitelist.
+      if (opts.debugEndpoints === true) {
+        registerDebugRoutes(apiV1 as unknown as Parameters<typeof registerDebugRoutes>[0], core);
+      }
 
       registerMetaRoute(apiV1, {
         serverVersion: opts.serverVersion,

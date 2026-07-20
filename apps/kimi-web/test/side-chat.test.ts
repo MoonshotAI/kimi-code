@@ -66,6 +66,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      resolveThinkingForPrompt: async () => undefined,
     });
 
     await sideChat.openSideChatOn('sess_1', 'what changed?');
@@ -85,9 +86,10 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     expect(pushOperationFailure).not.toHaveBeenCalled();
   });
 
-  it('submits the stored thinking level verbatim, even when the parent model does not declare it', async () => {
-    // Thinking levels are never coerced onto the prompt's model (same as
-    // normal prompts and the TUI): a stale effort like 'max' is sent as-is.
+  it('falls back to the active level when the parent model has left the catalog', async () => {
+    // resolveThinkingForPrompt returns undefined for a model the catalog no
+    // longer lists — the submit then keeps the active-session level (same
+    // fallback as the normal prompt paths).
     apiMock.startBtw.mockReset();
     apiMock.submitPrompt.mockReset();
     apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
@@ -100,6 +102,7 @@ describe('useSideChat — sendSideChatPromptOn', () => {
       nextOptimisticMsgId: () => 'msg_opt_btw',
       connectEventsIfNeeded: vi.fn(),
       getEventConn: () => null,
+      resolveThinkingForPrompt: async () => undefined,
     });
 
     await sideChat.openSideChatOn('sess_1', 'what changed?');
@@ -107,6 +110,33 @@ describe('useSideChat — sendSideChatPromptOn', () => {
     expect(apiMock.submitPrompt).toHaveBeenCalledWith(
       'sess_1',
       expect.objectContaining({ thinking: 'max' }),
+    );
+  });
+
+  it('resolves thinking from the parent model, not the level of the session the user switched to', async () => {
+    // startBtw spans an await during which the user can switch sessions; the
+    // BTW prompt must still carry the PARENT model's level ('low'), never the
+    // active view's ('max').
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'pr_btw', userMessageId: 'msg_opt_btw' });
+
+    const state = createState();
+    state.thinking = 'max'; // the user is now viewing a max-only session elsewhere
+    const sideChat = useSideChat(state, {
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => null,
+      resolveThinkingForPrompt: async (_sid, id) => (id === 'kimi-code' ? 'low' : undefined),
+    });
+
+    await sideChat.openSideChatOn('sess_1', 'what changed?');
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ model: 'kimi-code', thinking: 'low' }),
     );
   });
 });
