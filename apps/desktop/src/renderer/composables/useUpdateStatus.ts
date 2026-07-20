@@ -12,11 +12,12 @@
 // chose to skip ("本次跳过" in the dialog): the choice is persisted in
 // localStorage and lifts as soon as a different version shows up.
 //
-// Sole consumer today: the sidebar UpdateIndicator.
+// Consumers: the sidebar UpdateIndicator, and settings → advanced (the manual
+// "check for updates" row uses `canCheck` / `check`).
 
 import { computed, ref, type Ref } from 'vue';
 
-import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { safeGetString, safeRemove, safeSetString, STORAGE_KEYS } from '../lib/storage';
 
 export type UpdateState = 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
 
@@ -28,10 +29,20 @@ export interface UpdateStatus {
   releaseDate?: string;
 }
 
-// Subset of the preload `kimiDesktop` bridge this tracker needs.
+/** Outcome of a manual "check for updates" (settings → advanced). Mirrors the
+    preload bridge's UpdateCheckResult; 'unsupported' = dev / unpackaged build. */
+export type UpdateCheckResult =
+  | { outcome: 'available'; version?: string }
+  | { outcome: 'latest' }
+  | { outcome: 'unsupported' }
+  | { outcome: 'error'; message: string };
+
+// Subset of the preload `kimiDesktop` bridge this tracker needs. Older desktop
+// builds lack `checkForUpdates` — feature-detect it before exposing the UI.
 interface UpdateBridge {
   getUpdateStatus: () => Promise<UpdateStatus>;
   onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void;
+  checkForUpdates?: () => Promise<UpdateCheckResult>;
   downloadUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
 }
@@ -40,8 +51,13 @@ export interface UpdateTracker {
   status: Ref<UpdateStatus>;
   /** Whether the sidebar indicator should render (state minus user skips). */
   visible: Ref<boolean>;
+  /** Whether a manual update check is wired up (false in plain web and on
+      desktop builds whose bridge predates `checkForUpdates` — hide the row). */
+  canCheck: boolean;
   /** "本次跳过": hide this version until a different one appears (persisted). */
   skipVersion: () => void;
+  /** User-initiated check; resolves with the outcome for inline feedback. */
+  check: () => Promise<UpdateCheckResult>;
   /** Start downloading the available update (no-op unless available/error). */
   download: () => void;
   /** Quit and install the downloaded update (no-op unless downloaded). */
@@ -91,12 +107,30 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
   return {
     status,
     visible,
+    canCheck: typeof bridge?.checkForUpdates === 'function',
     skipVersion: () => {
       const version = status.value.version;
       if (status.value.state === 'available' && version !== undefined) {
         skippedVersion.value = version;
         safeSetString(STORAGE_KEYS.updateSkippedVersion, version);
       }
+    },
+    check: async () => {
+      if (typeof bridge?.checkForUpdates !== 'function') {
+        return Promise.resolve({ outcome: 'unsupported' });
+      }
+      const result = await bridge
+        .checkForUpdates()
+        .catch((): UpdateCheckResult => ({ outcome: 'error', message: 'bridge call failed' }));
+      // A manual check is update intent: when it finds the exact version the
+      // user previously skipped, lift the skip so the sidebar entry appears —
+      // the settings hint points there for the download, and without this the
+      // pill would stay hidden with no actionable path.
+      if (result.outcome === 'available' && result.version !== undefined && result.version === skippedVersion.value) {
+        skippedVersion.value = null;
+        safeRemove(STORAGE_KEYS.updateSkippedVersion);
+      }
+      return result;
     },
     download: () => {
       void bridge?.downloadUpdate().catch(() => {});

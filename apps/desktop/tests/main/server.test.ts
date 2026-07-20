@@ -64,6 +64,10 @@ describe('startDesktopServer', () => {
     expect(args.lockPath).toMatch(/server-desktop\.lock$/);
     expect(args.webAssetsDir).toBe('/app/web-dist');
     expect(args.corsOrigins).toEqual(['app://renderer']);
+    // server_version comes from the tsdown/vitest-injected __KIMI_CORE_VERSION__
+    // (the kimi-code CLI version), never from the bundled package.json lookup.
+    expect(typeof args.version).toBe('string');
+    expect(args.version.length).toBeGreaterThan(0);
 
     // Host identity is seeded as the full Kimi request headers (v2 dropped
     // `coreProcessOptions`); no serviceOverrides / process.exit hack remains.

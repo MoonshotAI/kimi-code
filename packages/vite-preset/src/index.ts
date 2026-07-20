@@ -23,7 +23,14 @@ export function kimiRendererViteConfig(opts: KimiRendererViteOptions): UserConfi
         },
       }),
     ],
-    define: { ...defines },
+    define: {
+      // Bundle build time (ISO), shown as "build time" in settings → advanced.
+      // Evaluated once when this config is loaded (dev server start / build
+      // start). Provided by the preset so the web and desktop renderers —
+      // which share the components referencing it — stay in lockstep.
+      __KIMI_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+      ...defines,
+    },
     build: {
       target,
     },

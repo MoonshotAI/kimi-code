@@ -16,6 +16,7 @@ export const IPC = {
   fullscreenChanged: 'kimi:fullscreen-changed',
   updateStatus: 'kimi:update-status',
   updateGetStatus: 'kimi:update-get-status',
+  updateCheck: 'kimi:update-check',
   updateDownload: 'kimi:update-download',
   updateInstall: 'kimi:update-install',
   trayAttention: 'kimi:tray-attention',

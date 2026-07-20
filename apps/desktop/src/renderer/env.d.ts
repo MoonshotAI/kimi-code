@@ -24,6 +24,10 @@ declare global {
   // Injected by Vite `define`: true only in the web bundle embedded in the Kimi
   // Code desktop app. Gates desktop-only behaviour (see lib/desktopFlag.ts).
   const __KIMI_WEB_DESKTOP__: boolean;
+
+  // Injected by Vite `define` (from @moonshot-ai/vite-preset): the bundle's
+  // build time (ISO), shown in settings → advanced.
+  const __KIMI_BUILD_TIME__: string;
 }
 
 declare module '*.vue' {

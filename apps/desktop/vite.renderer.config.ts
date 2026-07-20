@@ -34,9 +34,10 @@ const preset = kimiRendererViteConfig({
   root,
   iconsDir,
   defines: {
-    // The renderer bundle is a copy of apps/web/src, which references three
-    // compile-time `__KIMI_*` defines (see apps/web/src/env.d.ts). Provide all
-    // three so the copy builds unchanged:
+    // The renderer bundle is a copy of apps/web/src, which references four
+    // compile-time `__KIMI_*` defines (see apps/web/src/env.d.ts). The preset
+    // injects __KIMI_BUILD_TIME__; provide the other three so the copy builds
+    // unchanged:
     //   __KIMI_DEV_PROXY_TARGET__ — desktop talks to the loopback server
     //     directly, never through the web dev proxy, so leave it empty.
     //   __KIMI_CLIENT_VERSION__ — reported to the server as the renderer's

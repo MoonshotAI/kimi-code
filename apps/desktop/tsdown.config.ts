@@ -1,5 +1,14 @@
 import { defineConfig } from 'tsdown';
 import { rawTextPlugin } from './scripts/raw-text-plugin.mjs';
+import { KIMI_CORE_VERSION } from './scripts/kimi-core-version.mjs';
+
+// The embedded server reports `server_version` (GET /api/v1/meta) from
+// kap-server's `version` opt. Its default reads the package.json next to the
+// kap-server module — which, once everything is bundled into out/main.cjs, is
+// the DESKTOP app's own package.json, so the settings "server version" row
+// duplicated the app version. Inject the kimi-code core (CLI) version from
+// the submodule instead (scripts/kimi-core-version.mjs), so the embedded
+// server reports the same engine version a standalone CLI daemon would.
 
 // Electron main process is CommonJS (`out/main.cjs`). `node-pty` (used by
 // agent-core's terminal service) is the only native module in the desktop
@@ -19,6 +28,9 @@ export default defineConfig({
   dts: false,
   fixedExtension: true,
   plugins: [rawTextPlugin()],
+  define: {
+    __KIMI_CORE_VERSION__: JSON.stringify(KIMI_CORE_VERSION),
+  },
   deps: {
     // Bundle every @moonshot-ai/* package (server / agent-core / sdk / oauth /
     // kaos / kosong / protocol …) and transpile their TypeScript sources into the

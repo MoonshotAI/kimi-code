@@ -11,6 +11,7 @@ import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
+import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel } from '../../api/types';
 import type { IconName } from '../../lib/icons';
@@ -123,6 +124,59 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 function exportLog(): void {
   downloadTraceLog();
 }
+
+// ---------------------------------------------------------------------------
+// Advanced tab — app version + build time (compile-time defines injected by
+// both apps' Vite configs / the shared preset), and the desktop-only manual
+// update check. The check row hides without a capable bridge (plain web), so
+// this whole section stays identical across the desktop/web copies.
+// ---------------------------------------------------------------------------
+const appVersionText = (() => {
+  const version =
+    typeof __KIMI_CLIENT_VERSION__ === 'string' && __KIMI_CLIENT_VERSION__.trim()
+      ? __KIMI_CLIENT_VERSION__
+      : '';
+  let built = '';
+  if (typeof __KIMI_BUILD_TIME__ === 'string' && __KIMI_BUILD_TIME__.trim()) {
+    const d = new Date(__KIMI_BUILD_TIME__);
+    if (!Number.isNaN(d.getTime())) {
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      built = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+  }
+  const text = built === '' ? version : `${version} · ${built}`;
+  return text === '' ? '-' : text;
+})();
+
+const updateTracker = useUpdateStatus();
+const checkingUpdate = ref(false);
+const checkResult = ref<UpdateCheckResult | null>(null);
+
+async function onCheckUpdate(): Promise<void> {
+  if (checkingUpdate.value) return;
+  checkingUpdate.value = true;
+  checkResult.value = null;
+  try {
+    checkResult.value = await updateTracker.check();
+  } finally {
+    checkingUpdate.value = false;
+  }
+}
+
+const checkResultText = computed(() => {
+  const result = checkResult.value;
+  if (result === null) return '';
+  switch (result.outcome) {
+    case 'available':
+      return t('settings.updateCheckAvailable', { version: result.version ?? '' });
+    case 'latest':
+      return t('settings.updateCheckLatest');
+    case 'unsupported':
+      return t('settings.updateCheckUnsupported');
+    case 'error':
+      return t('settings.updateCheckFailed');
+  }
+});
 
 type ModelOption = { id: string; label: string; provider: string };
 
@@ -630,17 +684,17 @@ function archiveTime(iso: string): string {
           </section>
         </section>
 
-        <!-- Advanced: diagnostics + data/privacy -->
+        <!-- Advanced: version & updates + data/privacy + diagnostics -->
         <section v-show="activeTab === 'advanced'" class="panel">
           <section class="sec">
-            <h3 class="sec-title">{{ t('settings.advanced') }}</h3>
+            <h3 class="sec-title">{{ t('settings.versionAndUpdates') }}</h3>
             <div class="settings-group">
             <div class="row">
               <span class="rlabel">
-                {{ t('sidebar.daemon') }}
-                <span class="hint">{{ t('settings.daemonHint') }}</span>
+                {{ t('settings.appVersion') }}
+                <span class="hint">{{ t('settings.appVersionHint') }}</span>
               </span>
-              <span class="rvalue">{{ daemonEndpoint }}</span>
+              <span class="rvalue">{{ appVersionText }}</span>
             </div>
             <div class="row">
               <span class="rlabel">
@@ -649,7 +703,30 @@ function archiveTime(iso: string): string {
               </span>
               <span class="rvalue">{{ serverVersion || '-' }}</span>
             </div>
-            <div v-if="config" class="row">
+            <div class="row">
+              <span class="rlabel">
+                {{ t('sidebar.daemon') }}
+                <span class="hint">{{ t('settings.daemonHint') }}</span>
+              </span>
+              <span class="rvalue">{{ daemonEndpoint }}</span>
+            </div>
+            <div v-if="updateTracker.canCheck" class="row">
+              <span class="rlabel">
+                {{ t('settings.checkUpdate') }}
+                <span v-if="checkResultText" class="hint">{{ checkResultText }}</span>
+                <span v-else class="hint">{{ t('settings.checkUpdateHint') }}</span>
+              </span>
+              <Button variant="secondary" size="sm" :disabled="checkingUpdate" @click="onCheckUpdate">
+                {{ checkingUpdate ? t('settings.updateChecking') : t('settings.checkUpdateBtn') }}
+              </Button>
+            </div>
+            </div>
+          </section>
+
+          <section v-if="config" class="sec">
+            <h3 class="sec-title">{{ t('settings.privacy') }}</h3>
+            <div class="settings-group">
+            <div class="row">
               <span class="rlabel">
                 {{ t('settings.telemetry') }}
                 <span class="hint">{{ t('settings.telemetryHint') }}</span>
@@ -662,6 +739,12 @@ function archiveTime(iso: string): string {
                 @update:model-value="toggleTelemetry()"
               />
             </div>
+            </div>
+          </section>
+
+          <section class="sec">
+            <h3 class="sec-title">{{ t('settings.diagnostics') }}</h3>
+            <div class="settings-group">
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.exportLog') }}

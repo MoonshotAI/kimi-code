@@ -18,6 +18,7 @@ vi.mock('electron', () => ({
 }));
 
 const WHITELIST = [
+  'checkForUpdates',
   'downloadUpdate',
   'getServerToken',
   'getUpdateStatus',
@@ -154,6 +155,9 @@ describe('kimiDesktop preload bridge', () => {
     await exposed.getUpdateStatus();
     expect(invoke).toHaveBeenCalledWith('kimi:update-get-status');
 
+    await exposed.checkForUpdates();
+    expect(invoke).toHaveBeenCalledWith('kimi:update-check');
+
     await exposed.downloadUpdate();
     expect(invoke).toHaveBeenCalledWith('kimi:update-download');
 
@@ -202,5 +206,25 @@ describe('kimiDesktop preload bridge', () => {
     listeners.get('kimi:update-status')?.({}, { state: 'bogus' });
     listeners.get('kimi:update-status')?.({}, 'available');
     expect(updateCb).toHaveBeenCalledTimes(1);
+  });
+
+  it('validates update-check responses and falls back to an error outcome', async () => {
+    await import('../../src/main/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    invoke.mockResolvedValueOnce({ outcome: 'available', version: '1.2.3' });
+    await expect(exposed.checkForUpdates()).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
+
+    invoke.mockResolvedValueOnce({ outcome: 'latest' });
+    await expect(exposed.checkForUpdates()).resolves.toEqual({ outcome: 'latest' });
+
+    // An error outcome without a message gets a placeholder; junk falls back.
+    invoke.mockResolvedValueOnce({ outcome: 'error' });
+    await expect(exposed.checkForUpdates()).resolves.toEqual({ outcome: 'error', message: 'unknown error' });
+    invoke.mockResolvedValueOnce({ outcome: 'bogus' });
+    await expect(exposed.checkForUpdates()).resolves.toEqual({
+      outcome: 'error',
+      message: 'invalid update-check response',
+    });
   });
 });

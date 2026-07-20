@@ -34,6 +34,14 @@ export interface UpdateStatus {
   releaseDate?: string;
 }
 
+/** Result of a user-initiated "check for updates" (settings → advanced). */
+export type UpdateCheckResult =
+  | { outcome: 'available'; version?: string }
+  | { outcome: 'latest' }
+  /** Dev / unpackaged runs have no updater at all (controller is null). */
+  | { outcome: 'unsupported' }
+  | { outcome: 'error'; message: string };
+
 // Structural subset of electron-updater's AppUpdater (an EventEmitter).
 // Declared with method overloads so the real `autoUpdater` stays assignable.
 export interface UpdaterLike {
@@ -44,6 +52,9 @@ export interface UpdaterLike {
   on(event: 'download-progress', listener: (progress: { percent: number }) => void): void;
   on(event: 'update-downloaded', listener: (info: { version: string; releaseDate?: string }) => void): void;
   on(event: 'error', listener: (error: Error) => void): void;
+  off(event: 'update-available', listener: (info: { version: string; releaseDate?: string }) => void): void;
+  off(event: 'update-not-available', listener: () => void): void;
+  off(event: 'error', listener: (error: Error) => void): void;
   checkForUpdates(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
@@ -51,6 +62,9 @@ export interface UpdaterLike {
 
 export interface UpdateController {
   getStatus(): UpdateStatus;
+  /** User-initiated check (settings → advanced): resolves with the outcome,
+      unlike the fire-and-forget scheduled checks. */
+  check(): Promise<UpdateCheckResult>;
   download(): void;
   install(): void;
   stop(): void;
@@ -68,6 +82,9 @@ export interface StartAutoUpdaterDeps {
 
 const INITIAL_DELAY_MS = 10_000;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+// A manual check that never settles (hung request, no error event) must not
+// leave the settings row stuck on "checking…" forever.
+const MANUAL_CHECK_TIMEOUT_MS = 30_000;
 
 export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController | null {
   if (!deps.isPackaged) {
@@ -134,8 +151,41 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
   initialTimer.unref();
   intervalTimer.unref();
 
+  // User-initiated check: one-shot listeners race the three terminal events
+  // (plus the promise rejection and a timeout) and resolve with the outcome,
+  // so the settings UI can show "latest" / "available" / "failed" inline.
+  // The persistent listeners above still run — the state machine is updated
+  // as usual (a found update still grows the sidebar indicator).
+  const checkNow = (): Promise<UpdateCheckResult> =>
+    new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: UpdateCheckResult): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        updater.off('update-available', onAvailable);
+        updater.off('update-not-available', onNotAvailable);
+        updater.off('error', onError);
+        resolve(result);
+      };
+      const onAvailable = (info: { version: string }): void => finish({ outcome: 'available', version: info.version });
+      const onNotAvailable = (): void => finish({ outcome: 'latest' });
+      const onError = (error: Error): void => finish({ outcome: 'error', message: error.message });
+      const timer = setTimeout(() => finish({ outcome: 'error', message: 'check timed out' }), MANUAL_CHECK_TIMEOUT_MS);
+      timer.unref();
+      updater.on('update-available', onAvailable);
+      updater.on('update-not-available', onNotAvailable);
+      updater.on('error', onError);
+      void updater.checkForUpdates().catch((error: unknown) => {
+        finish({ outcome: 'error', message: error instanceof Error ? error.message : String(error) });
+      });
+    });
+
   return {
     getStatus: () => current,
+    check: checkNow,
     download: () => {
       if (current.state !== 'available' && current.state !== 'error') {
         return;
@@ -172,6 +222,10 @@ export function initAutoUpdater(): void {
 // or in dev (controller === null): they degrade to idle / no-ops.
 export function getUpdateStatus(): UpdateStatus {
   return controller?.getStatus() ?? { state: 'idle' };
+}
+
+export function requestUpdateCheck(): Promise<UpdateCheckResult> {
+  return controller?.check() ?? Promise.resolve({ outcome: 'unsupported' });
 }
 
 export function requestUpdateDownload(): void {

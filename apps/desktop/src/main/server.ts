@@ -95,6 +95,11 @@ export async function startDesktopServer(
     logger: opts.logger,
     lockPath: desktopLockPath(opts.dev === true),
     webAssetsDir: opts.webAssetsDir,
+    // Report the kimi-code core version as `server_version` (GET /api/v1/meta).
+    // kap-server's default reads the package.json next to its own module, which
+    // in this bundled main process resolves to the desktop app's package.json —
+    // pass it explicitly (injected by tsdown, see tsdown.config.ts).
+    version: __KIMI_CORE_VERSION__,
     // Allow the local `app://renderer` origin so the renderer (served from
     // app://renderer) can call the loopback HTTP API. The v2 server takes the
     // origin allowlist directly (no KIMI_CODE_CORS_ORIGINS env needed).

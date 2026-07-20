@@ -4,7 +4,7 @@ import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { getMainWindow } from './window';
 import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
-import { getUpdateStatus, requestUpdateDownload, requestUpdateInstall } from './updater';
+import { getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { IPC, type ColorScheme } from './ipc-channels';
 
@@ -55,6 +55,9 @@ export function registerIpcHandlers(): void {
   // recovery — transitions stream over IPC.updateStatus) and fires the two
   // user actions. No-ops in dev (see updater.ts).
   ipcMain.handle(IPC.updateGetStatus, () => getUpdateStatus());
+  // Manual "check for updates" (settings → advanced): resolves with the
+  // outcome so the renderer can show inline feedback; 'unsupported' in dev.
+  ipcMain.handle(IPC.updateCheck, () => requestUpdateCheck());
   ipcMain.handle(IPC.updateDownload, () => requestUpdateDownload());
   ipcMain.handle(IPC.updateInstall, () => requestUpdateInstall());
   // Tray attention badge: the renderer pushes {unread, approvals, questions}

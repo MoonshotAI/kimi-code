@@ -192,3 +192,50 @@ describe('startAutoUpdater', () => {
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
   });
 });
+
+describe('manual check (controller.check)', () => {
+  it('resolves available when the feed offers a version, and still updates the state machine', async () => {
+    const { updater, sent, controller } = setup();
+
+    const promise = controller.check();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    updater.emit('update-available', { version: '1.2.3' });
+    await expect(promise).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
+
+    // The persistent listener ran too: the sidebar indicator flow is untouched.
+    expect(sent.at(-1)).toEqual({ state: 'available', version: '1.2.3' });
+    // One-shot listeners are cleaned up — only the persistent ones remain.
+    expect(updater.listenerCount('update-available')).toBe(1);
+    expect(updater.listenerCount('update-not-available')).toBe(1);
+    expect(updater.listenerCount('error')).toBe(1);
+  });
+
+  it('resolves latest on update-not-available', async () => {
+    const { updater, controller } = setup();
+    const promise = controller.check();
+    updater.emit('update-not-available');
+    await expect(promise).resolves.toEqual({ outcome: 'latest' });
+  });
+
+  it('resolves error on an error event and on a rejected checkForUpdates', async () => {
+    const { updater, controller } = setup();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const promise = controller.check();
+    updater.emit('error', new Error('feed unreachable'));
+    await expect(promise).resolves.toEqual({ outcome: 'error', message: 'feed unreachable' });
+    // The background-swallow path logged the event as usual.
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+
+    updater.checkForUpdates.mockRejectedValueOnce(new Error('boom'));
+    await expect(controller.check()).resolves.toEqual({ outcome: 'error', message: 'boom' });
+  });
+
+  it('times out instead of hanging forever', async () => {
+    const { controller } = setup();
+    const promise = controller.check();
+    vi.advanceTimersByTime(30_000);
+    await expect(promise).resolves.toEqual({ outcome: 'error', message: 'check timed out' });
+  });
+});

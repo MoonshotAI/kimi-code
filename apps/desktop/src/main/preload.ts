@@ -23,6 +23,16 @@ export type UpdateStatus = {
 
 const UPDATE_STATES = new Set(['idle', 'available', 'downloading', 'downloaded', 'error']);
 
+/** Outcome of a manual "check for updates" (main/updater.ts UpdateCheckResult,
+    structurally duplicated — preload keeps its own literal surface). */
+export type UpdateCheckResult =
+  | { outcome: 'available'; version?: string }
+  | { outcome: 'latest' }
+  | { outcome: 'unsupported' }
+  | { outcome: 'error'; message: string };
+
+const UPDATE_CHECK_OUTCOMES = new Set(['available', 'latest', 'unsupported', 'error']);
+
 /** Pending-attention totals for the tray badge (main/tray.ts TrayAttention,
     structurally duplicated — preload keeps its own literal surface). */
 export type TrayAttentionItem = {
@@ -107,6 +117,29 @@ function asUpdateStatus(value: unknown): UpdateStatus | null {
   return status;
 }
 
+function asUpdateCheckResult(value: unknown): UpdateCheckResult | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as { outcome?: unknown; version?: unknown; message?: unknown };
+  if (typeof candidate.outcome !== 'string' || !UPDATE_CHECK_OUTCOMES.has(candidate.outcome)) {
+    return null;
+  }
+  switch (candidate.outcome) {
+    case 'available':
+      return typeof candidate.version === 'string'
+        ? { outcome: 'available', version: candidate.version }
+        : { outcome: 'available' };
+    case 'error':
+      return {
+        outcome: 'error',
+        message: typeof candidate.message === 'string' ? candidate.message : 'unknown error',
+      };
+    default:
+      return { outcome: candidate.outcome as 'latest' | 'unsupported' };
+  }
+}
+
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   onMenu: (cb: (action: string) => void) => () => void;
@@ -126,6 +159,9 @@ export type KimiDesktopApi = {
   /** Current auto-update status (initial value; transitions come through
    *  `onUpdateStatus`). */
   getUpdateStatus: () => Promise<UpdateStatus>;
+  /** User-initiated update check; resolves with the outcome ('unsupported'
+   *  in dev / unpackaged runs). */
+  checkForUpdates: () => Promise<UpdateCheckResult>;
   /** Main → renderer push on every auto-update state transition. */
   onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void;
   /** Start downloading the available update (user-initiated). */
@@ -180,6 +216,10 @@ export const api: KimiDesktopApi = {
   getUpdateStatus: async () => {
     const status = asUpdateStatus(await ipcRenderer.invoke('kimi:update-get-status'));
     return status ?? { state: 'idle' };
+  },
+  checkForUpdates: async () => {
+    const result = asUpdateCheckResult(await ipcRenderer.invoke('kimi:update-check'));
+    return result ?? { outcome: 'error', message: 'invalid update-check response' };
   },
   onUpdateStatus: (cb) => {
     const listener = (_event: unknown, payload: unknown) => {

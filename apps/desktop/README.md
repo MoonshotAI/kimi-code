@@ -38,7 +38,9 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
   badge（菜单栏计数 + 托盘菜单按会话跳转）；主进程原生界面文案的 en/zh 字符串表与
   `kimi:locale` 语言同步也在这里。
 - `src/main/ipc.ts` / `ipc-channels.ts` — IPC handler 注册、channel 常量与 payload 类型。
-- `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist。
+- `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist；`server_version`
+  经 tsdown 注入的 `__KIMI_CORE_VERSION__`（`scripts/kimi-core-version.mjs` 读 submodule 的 CLI 版本）
+  显式传给 kap-server——bundle 后 kap-server 默认的 package.json 查找会落到 desktop app 自己的版本上。
 - `src/main/protocol.ts` — `app://renderer` scheme/protocol 注册与 `rendererUrl` 拼接。
 - `src/main/preload.ts` — contextIsolation 下的白名单 IPC（主题、菜单/快捷键转发等）。
 - `src/renderer/` — web UI 副本（构建源）。

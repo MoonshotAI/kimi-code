@@ -110,6 +110,58 @@ describe('createUpdateTracker', () => {
   });
 });
 
+describe('manual check', () => {
+  it('reports canCheck=false and resolves unsupported without a bridge', async () => {
+    const tracker = createUpdateTracker(undefined);
+    expect(tracker.canCheck).toBe(false);
+    await expect(tracker.check()).resolves.toEqual({ outcome: 'unsupported' });
+  });
+
+  it('reports canCheck=false for a bridge that predates checkForUpdates', async () => {
+    const { bridge } = fakeBridge({ state: 'idle' });
+    const tracker = createUpdateTracker(bridge);
+    expect(tracker.canCheck).toBe(false);
+    await expect(tracker.check()).resolves.toEqual({ outcome: 'unsupported' });
+  });
+
+  it('passes the check through to a capable bridge', async () => {
+    const { bridge } = fakeBridge({ state: 'idle' });
+    const capable = { ...bridge, checkForUpdates: vi.fn().mockResolvedValue({ outcome: 'latest' }) };
+    const tracker = createUpdateTracker(capable);
+    expect(tracker.canCheck).toBe(true);
+    await expect(tracker.check()).resolves.toEqual({ outcome: 'latest' });
+    expect(capable.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps a rejected bridge check to an error outcome', async () => {
+    const { bridge } = fakeBridge({ state: 'idle' });
+    const capable = { ...bridge, checkForUpdates: vi.fn().mockRejectedValue(new Error('ipc down')) };
+    const tracker = createUpdateTracker(capable);
+    await expect(tracker.check()).resolves.toEqual({ outcome: 'error', message: 'bridge call failed' });
+  });
+
+  it('lifts a previous version skip when a manual check finds that version', async () => {
+    globalThis.localStorage?.removeItem('kimi-web.update-skipped-version');
+    const { bridge } = fakeBridge({ state: 'available', version: '1.2.3' });
+    const capable = {
+      ...bridge,
+      checkForUpdates: vi.fn().mockResolvedValue({ outcome: 'available', version: '1.2.3' }),
+    };
+    const tracker = createUpdateTracker(capable);
+    await flush();
+
+    tracker.skipVersion();
+    expect(tracker.visible.value).toBe(false);
+
+    await expect(tracker.check()).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
+    // The skip is lifted (state + persisted key), so the sidebar pill the
+    // settings hint points to actually appears.
+    expect(tracker.visible.value).toBe(true);
+    expect(globalThis.localStorage?.getItem('kimi-web.update-skipped-version') ?? null).toBeNull();
+    globalThis.localStorage?.removeItem('kimi-web.update-skipped-version');
+  });
+});
+
 describe('visibility & version skip', () => {
   beforeEach(() => {
     try {
