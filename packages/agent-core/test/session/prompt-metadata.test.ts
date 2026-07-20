@@ -103,7 +103,8 @@ describe('promptMetadataTextFromPayload', () => {
     const text = promptMetadataTextFromPayload({
       input: [{ type: 'text', text: longText }],
     });
-    expect(text).toBe(longText);
+    // Not wrongly redacted as a secret; truncated to the metadata cap.
+    expect(text).toBe('a'.repeat(4000));
   });
 
   it('strips the caption when it is the only text and there are no images', () => {
