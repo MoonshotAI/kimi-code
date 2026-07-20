@@ -174,9 +174,6 @@ export class AgentRPCService implements IAgentRPCService {
     const wasYolo = this.permissionMode.mode === 'yolo';
     const wasAuto = this.permissionMode.mode === 'auto';
     this.permissionMode.setMode(payload.mode);
-    // A switch on the main agent is the session-level switch: fan it out so
-    // already-running subagents observe the new mode. Switches addressed to
-    // any other agent stay local to that agent.
     if (this.scopeContext.agentId === MAIN_AGENT_ID) {
       this.agentLifecycle.broadcastPermissionMode(payload.mode);
     }

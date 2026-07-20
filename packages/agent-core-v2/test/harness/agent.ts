@@ -996,9 +996,6 @@ export class AgentTestContext {
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
-            // The harness builds its single agent scope directly, so the real
-            // `AgentLifecycleService` never tracks it; the broadcast fan-out
-            // still lands on that agent to keep `setPermission` observable.
             reg.defineInstance(IAgentLifecycleService, {
               _serviceBrand: undefined,
               onDidCreate: Event.None as Event<IAgentScopeHandle>,
