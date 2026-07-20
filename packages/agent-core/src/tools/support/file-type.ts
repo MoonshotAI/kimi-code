@@ -413,7 +413,13 @@ export function detectFileType(
   if (header) {
     const native = tryNativeDetectFileType(path, new Uint8Array(toBuffer(header)));
     if (native) {
-      return { kind: native.kind, mimeType: native.mimeType };
+      // The native detector trusts the extension for media kinds, so a media
+      // extension whose bytes lack a matching signature would be misreported.
+      // Only take the native answer for text, or for media confirmed by magic;
+      // otherwise fall through to the cross-validating TS logic below.
+      if (native.kind === 'text' || sniffMediaFromMagic(toBuffer(header))?.kind === native.kind) {
+        return { kind: native.kind, mimeType: native.mimeType };
+      }
     }
   }
   const suffix = getSuffix(path);

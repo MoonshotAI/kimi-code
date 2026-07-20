@@ -217,6 +217,14 @@ export function resolvePathAccess(
   config: WorkspaceConfig,
   options: ResolvePathAccessOptions,
 ): PathAccess {
+  if (path.includes('\0')) {
+    throw new PathSecurityError(
+      'PATH_INVALID',
+      path,
+      path,
+      `"${path.replaceAll('\0', '\\0')}" contains a null byte and is not a valid path.`,
+    );
+  }
   const pathClass = options.pathClass ?? DEFAULT_PATH_CLASS;
   const normalizedPath = normalizeUserPath(path, pathClass);
   const expandedPath = expandUserPath(normalizedPath, options.homeDir, pathClass);
