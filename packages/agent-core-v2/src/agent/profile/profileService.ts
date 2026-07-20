@@ -3,13 +3,13 @@
  *
  * Owns the active agent's model alias, thinking level, system prompt, and
  * active-tool set; resolves the runnable god-object Model through the App-
- * scope `IModelResolver`, persists the persistent config slice (`cwd` /
- * `modelAlias` / `profileName` / resolved base `thinkingLevel` /
- * `systemPrompt` / profile `disallowedTools` / profile `subagents`) in the
- * `wire` `ProfileModel`
- * through the `config.update` Op
- * and the persisted active-tool set in the `wire` `ActiveToolsModel` through the
- * `tools.set_active_tools` Op (`wire.dispatch`), and reads both through
+ * scope `IModelResolver`, persists the profile binding (`cwd` / `modelAlias` /
+ * `profileName` / resolved base `thinkingLevel` / `systemPrompt` /
+ * `activeToolNames` / profile `disallowedTools` / profile `subagents`) in the
+ * `wire` `ProfileModel` through the `profile.bind` Op (later slice updates
+ * ride the `config.update` Op) and the persisted active-tool set in the
+ * `wire` `ActiveToolsModel` through the `tools.set_active_tools` /
+ * `tools.reset_active_tools` Ops (`wire.dispatch`), and reads both through
  * `wire.getModel`. The effective active-tool set read by consumers is the
  * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
  * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
@@ -23,6 +23,23 @@
  * rebuilds the Models silently; the same live-only path mirrors the resolved
  * model protocol into the ambient telemetry context (`provider_type` /
  * `protocol`) whenever the model alias changes.
+ * `bind()` is first-bind only — a profile is the session's identity: the
+ * guard runs before name resolution so `already bound` fails fast, and again
+ * in the synchronous segment before the first dispatch, so concurrent binds
+ * cannot both pass (an edge-level guard always leaves an interleaving
+ * window); a same-name rebind keeps the persisted thinking effort unless the
+ * caller explicitly overrides it. `refreshSystemPrompt` never rejects: a
+ * failed context build keeps the current prompt and surfaces a warning,
+ * because the `[tools]` config watcher fires it voided (an unhandled
+ * rejection would crash kap-server) and the Session tool-policy fan-out
+ * awaits it across agents. Tool-policy entries that can never activate
+ * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
+ * `mcp__` literals) surface as `warning` events instead of silently shrinking
+ * the tool set; the known-name vocabulary is the live registry plus
+ * builtin-profile literal names — deliberately not the session catalog, so a
+ * typo in one agent file cannot legitimize the same typo in another, and
+ * flag-gated tools (which every builtin profile lists) stay "known" even when
+ * unregistered.
  * Bound at Agent scope.
  */
 
@@ -223,12 +240,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   async bind(input: BindAgentInput): Promise<void> {
     await this.catalog.ready;
-    // A profile is the session's identity: first-bind only. The guard runs
-    // twice — here, before name resolution, so `already bound` wins over
-    // `unknown profile` and the common case fails fast; and again in the
-    // synchronous segment after every await and before the first
-    // wire.dispatch, so check-and-set is atomic and concurrent binds cannot
-    // both pass (an edge-level guard always leaves an interleaving window).
     this.assertBindable(input.profile);
     const profile = this.catalog.get(input.profile);
     if (profile === undefined) {
@@ -251,12 +262,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     }
     const model = this.modelFactory.resolve(alias);
 
-    // An explicitly user-requested thinking effort (strictThinking) must be
-    // supported by the model: reject before any await or state mutation so a
-    // bad edge request cannot wedge the session's identity after first-bind.
-    // Inherited thinking (subagent spawn, fork) deliberately skips this and
-    // clamps below instead — a persisted effort that drifted out of the
-    // model's support list must not break spawning.
     if (input.strictThinking === true && input.thinking !== undefined) {
       this.assertThinkingEffortSupported(input.thinking, model, alias);
     }
@@ -269,8 +274,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
-    // A same-name rebind keeps the persisted thinking effort unless the caller
-    // explicitly overrides it; only a first bind resolves the default.
     const thinkingLevel = resolveThinkingEffort(
       input.thinking ?? (currentProfileName !== undefined ? this.thinkingLevel : undefined),
       this.config.get<ThinkingConfig>(THINKING_SECTION),
@@ -372,12 +375,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const profile = this.resolveActiveProfile();
     if (profile === undefined) return;
 
-    // Context building reads the AGENTS.md hierarchy through an unguarded
-    // readText, so a stat/read race or a denied read rejects here. A failed
-    // refresh must not reject its callers — the `[tools]` config watcher fires
-    // this voided (an unhandled rejection would crash kap-server) and the
-    // session tool-policy fan-out awaits it across agents — so keep the
-    // current prompt and surface a warning instead.
     let context: SystemPromptContext;
     try {
       context = await this.buildSystemPromptContext(profile, this.cwd);
@@ -733,19 +730,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     });
   }
 
-  /**
-   * Surface tool-policy entries that can never activate anything (typo'd
-   * names, wildcards without the `mcp__` prefix, incomplete `mcp__` literals)
-   * as warnings instead of letting the tool set silently shrink. Checked for
-   * the bound profile's lists and the global `[tools]` config; each
-   * context/field/pattern triple warns once per agent.
-   *
-   * The known-name vocabulary is the live registry plus the literal names
-   * referenced by the builtin profiles — deliberately not the session
-   * catalog, so a typo in one agent file cannot legitimize the same typo in
-   * another, and flag-gated tools (which every builtin profile lists) stay
-   * "known" even when unregistered.
-   */
   private publishToolPatternWarnings(profile?: ResolvedAgentProfile): void {
     const known = new Set<string>();
     for (const ref of this.toolRegistry.listReferences()) known.add(ref.name);

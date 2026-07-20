@@ -64,8 +64,6 @@ function buildGoalReminder(goal: GoalSnapshot): string {
   });
 }
 
-// Optional sections are composed in code — the `${var}` renderer has no
-// conditional syntax, so templates place these pre-rendered blocks verbatim.
 function reasonSuffix(goal: GoalSnapshot): string {
   const reason = goal.terminalReason;
   return reason === undefined ? '' : ` (${escapeUntrustedText(reason)})`;

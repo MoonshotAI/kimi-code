@@ -9,7 +9,17 @@
  * files — shares one `${var}` substitution pass over one variable table
  * ({@link systemPromptVars}); unknown placeholders stay verbatim. Conditional
  * sections (Windows notes, additional directories, skills) are composed here
- * as pre-rendered blocks because the renderer has no conditional syntax.
+ * as pre-rendered blocks because the renderer has no conditional syntax. Raw
+ * context fields render as empty strings when missing and the composed
+ * `*_section` / `windows_notes` blocks are empty unless their content exists,
+ * so templates can place them on their own line without leaving stray
+ * headings behind. `renderPromptTemplate` renders a user-owned template (an
+ * agent-file body or `SYSTEM.md`) against the table; `${base_prompt}` is
+ * bound to the default profile's prompt when a `basePrompt` is given,
+ * resolved lazily and only when the template actually references it. Also
+ * shared: `skillActiveFor` (whether the Skill tool survives a profile's tool
+ * list — drives skills injection) and the `subagents`-allowlist helpers
+ * (`subagentAllowlistFor`, `subagentTypeNotAllowedMessage`).
  */
 
 import { renderPrompt } from '#/_base/utils/render-prompt';
@@ -24,7 +34,6 @@ export const TASK_AGENT_ROLE_PREFIX =
   'You must treat the parent agent as your caller. Do not directly ask the end user questions. ' +
   'If something is unclear, explain the ambiguity in your final summary to the parent agent.';
 
-/** Whether the Skill tool survives a profile's tool list — drives skills injection. */
 export function skillActiveFor(tools: readonly string[]): boolean {
   return tools.includes('Skill');
 }
@@ -41,7 +50,6 @@ export function subagentAllowlistFor(
   return caller.profileName === undefined ? catalog.getDefault().subagents : caller.subagents;
 }
 
-/** Tool-facing error for a delegation rejected by the caller's `subagents` allowlist. */
 export function subagentTypeNotAllowedMessage(
   name: string,
   allowlist: readonly string[],
@@ -62,13 +70,6 @@ const SKILLS_SECTION_PROSE =
   '## Available skills\n\n' +
   'Skills are grouped by scope (`Project`, `User`, `Extra`, `Built-in`) so you can tell where each came from. When the user refers to "the skill in this project" or "the user-scope skill", use the scope heading to disambiguate. When multiple scopes define a skill with the same name, the more specific scope takes precedence: **Project overrides User overrides Extra overrides Built-in**.';
 
-/**
- * The single variable table shared by every system-prompt template (builtin
- * `system.md`, `SYSTEM.md`, agent files). Raw context fields render as empty
- * strings when missing; the composed `*_section` / `windows_notes` blocks are
- * empty unless their content exists, so templates can place them on their own
- * line without leaving stray headings behind.
- */
 export function systemPromptVars(
   context: AgentProfileContext,
   options: { readonly skillActive: boolean },
@@ -98,12 +99,6 @@ export function systemPromptVars(
   };
 }
 
-/**
- * Render a user-owned prompt template (an agent-file body or `SYSTEM.md`)
- * against the shared variable table. `${base_prompt}` is bound to the default
- * profile's prompt when `basePrompt` is given; it is resolved lazily and only
- * when the template actually references it.
- */
 export function renderPromptTemplate(
   template: string,
   context: AgentProfileContext,

@@ -5,7 +5,11 @@
  * `AgentFileDefinition`. Pure functions with no IO: callers read bytes however
  * they like and pass the decoded text in, mirroring `skillCatalog/parser`.
  * Unknown frontmatter fields are ignored so later format extensions stay
- * forward-compatible.
+ * forward-compatible. Compatibility conventions match other agent CLIs: a
+ * missing `name` falls back to the file name (OpenCode), a lone `*` in
+ * `tools` / `subagents` means unrestricted like an omitted field, and list
+ * fields accept either a bare comma-separated string or the YAML list form
+ * (Claude Code).
  */
 
 import { FrontmatterError, parseFrontmatter } from '#/app/skillCatalog/parser';
@@ -60,8 +64,6 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
       `Frontmatter field "name" in ${options.path} must be a non-empty string`,
     );
   }
-  // OpenCode compatibility: a missing `name` falls back to the file name, so
-  // agent files written for tools that derive the name from the path load as-is.
   const name = nonEmptyString(nameField) ?? deriveNameFromPath(options.path);
   if (name === undefined) {
     throw new AgentFileParseError(`Missing required frontmatter field "name" in ${options.path}`);
@@ -80,7 +82,6 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
 
   const override = parseBoolean(frontmatter['override'], 'override', options.path);
   const rawTools = parseStringList(frontmatter['tools'], 'tools', options.path);
-  // Claude Code compatibility: a lone `*` means "all tools", like omitting the field.
   const tools = rawTools?.length === 1 && rawTools[0] === '*' ? undefined : rawTools;
   const disallowedTools = parseStringList(
     frontmatter['disallowedTools'],
@@ -88,7 +89,6 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     options.path,
   );
   const rawSubagents = parseStringList(frontmatter['subagents'], 'subagents', options.path);
-  // Same convention as `tools`: a lone `*` means "all subagent types", like omitting the field.
   const subagents =
     rawSubagents?.length === 1 && rawSubagents[0] === '*' ? undefined : rawSubagents;
 
@@ -125,8 +125,6 @@ function parseStringList(
   filePath: string,
 ): readonly string[] | undefined {
   if (value === undefined || value === null) return undefined;
-  // Claude Code compatibility: a bare string is split on commas, so both
-  // `tools: Read, Grep` and the YAML list form are accepted.
   if (typeof value === 'string') {
     return value
       .split(',')

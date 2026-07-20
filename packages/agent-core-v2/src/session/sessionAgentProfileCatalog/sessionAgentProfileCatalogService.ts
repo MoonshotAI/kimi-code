@@ -88,11 +88,6 @@ export class SessionAgentProfileCatalogService
     void this.readyPromise.catch(() => undefined);
   }
 
-  /**
-   * The most recent load pass. Replaced by `reload()`, so a `fatal` source
-   * failure does not wedge the catalog forever: once a reload succeeds,
-   * awaiters observe the fresh pass instead of the original rejection.
-   */
   get ready(): Promise<void> {
     return this.readyPromise;
   }
@@ -132,9 +127,6 @@ export class SessionAgentProfileCatalogService
         await this.loadSource(s);
       }
     } finally {
-      // Even when a fatal source rejects mid-pass, merge the sources that did
-      // load — otherwise their contributions sit in `contributions` without
-      // ever reaching the merged view.
       this.remerge();
     }
   }
@@ -155,8 +147,6 @@ export class SessionAgentProfileCatalogService
           contribution = await source.load();
         } catch (error) {
           if (source.fatal) throw error;
-          // Surface the offending path when the failure carries one (e.g. an
-          // unreadable root directory) — `String(error)` drops `details`.
           const at = isError2(error) ? error.details?.['path'] : undefined;
           this.log.warn(
             `agent profile source "${source.id}" load failed: ${String(error)}${typeof at === 'string' ? ` [${at}]` : ''}`,

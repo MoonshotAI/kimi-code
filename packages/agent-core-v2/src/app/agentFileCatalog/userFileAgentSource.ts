@@ -6,9 +6,9 @@
  * prompt-override profile (synthesized against the builtin default from the
  * App profile catalog) after the scanned profiles so it wins same-name
  * collisions within this contribution. Also exposes the effective default
- * profile — the `SYSTEM.md` override when present, else the builtin default —
- * so every agent-file source can back `${base_prompt}` with it. Bound at App
- * scope.
+ * profile — the `SYSTEM.md` override when present, else the builtin default,
+ * refreshed on each `load()` pass — so every agent-file source can back
+ * `${base_prompt}` with it. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -34,12 +34,6 @@ import { loadSystemMdProfile } from './systemFile';
 
 export interface IUserFileAgentSource extends IAgentProfileSource {
   readonly _serviceBrand: undefined;
-  /**
-   * The default profile ignoring file-based agent definitions: the
-   * `SYSTEM.md` override when present, else the builtin default. Backs
-   * `${base_prompt}` for every agent-file source and is refreshed on each
-   * `load()` pass.
-   */
   getDefaultProfile(): AgentProfile;
 }
 
@@ -88,8 +82,6 @@ export class UserFileAgentSource implements IUserFileAgentSource {
       (context) => this.defaultProfile.systemPrompt(context),
     );
     if (systemMd === undefined) return contribution;
-    // Append last: within one contribution a later same-name profile wins, so
-    // SYSTEM.md beats a scanned `agents/agent.md` from the user directory.
     return { ...contribution, profiles: [...contribution.profiles, systemMd] };
   }
 }

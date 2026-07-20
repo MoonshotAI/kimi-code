@@ -9,8 +9,10 @@
  * `--agent-file`) override it, and binding a different profile ignores it.
  * The body is a prompt template rendered against the shared variable table
  * (`systemPromptVars`): `${var}` placeholders substitute live context, and
- * `${base_prompt}` embeds the builtin default prompt. Pure logic; no scoped
- * state.
+ * `${base_prompt}` embeds the builtin default prompt. A missing or empty file
+ * yields no profile; a read failure degrades to `warn` instead of rejecting,
+ * matching the directory-source policy that a transient fs error must never
+ * poison a session. Pure logic; no scoped state.
  */
 
 import { join } from 'pathe';
@@ -30,12 +32,6 @@ import { isFilePath } from './paths';
 
 export const SYSTEM_MD_FILENAME = 'SYSTEM.md';
 
-/**
- * Synthesize the prompt-override profile from `<brandHome>/SYSTEM.md`. Returns
- * `undefined` when the file is missing or empty after trimming; a read failure
- * degrades to `warn` instead of rejecting, matching the directory-source
- * policy that a transient fs error must never poison a session.
- */
 export async function loadSystemMdProfile(
   fs: IHostFileSystem,
   brandHome: string,

@@ -21,7 +21,17 @@
  * session's storage scope — so an alias spelling of the workDir cannot split
  * the session into a bucket v1 readers never look in. Fork flushes
  * live Agent wire journals, normalizes a missing protocol envelope, and
- * appends the fork boundary before restoring the target Agent.
+ * appends the fork boundary before restoring the target Agent. On
+ * materialize, the session's metadata, tool policy, and agent-profile catalog
+ * are awaited before the handle is published — agent-file discovery is local-
+ * fs and cheap, and a resumed session's first turn must see file-defined
+ * agent types in the `Agent` tool description; the catalog's `ready` only
+ * rejects for a fatal explicit-source error, exactly the case that should
+ * fail fast, and on that failure the half-materialized handle is disposed
+ * instead of poisoning the session cache (the skill catalog, by contrast, is
+ * kicked fire-and-forget). The session-level eager services whose
+ * subscriptions must exist before the first agent / turn (external hooks,
+ * cron) are force-instantiated at the same point.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -208,16 +218,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
       void handle.accessor.get(ISessionSkillCatalog).ready;
-      // Agent-file discovery is awaited (unlike the skill catalog above): it is
-      // local-fs and cheap, and a resumed session's first turn must see
-      // file-defined agent types in the `Agent` tool description. `ready` only
-      // rejects for a fatal explicit-source error — exactly the case that
-      // should fail fast here. On that failure the half-materialized handle is
-      // removed and disposed instead of poisoning the session cache.
       await handle.accessor.get(ISessionAgentProfileCatalog).ready;
       await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
-      // Force-instantiate the session-level eager services whose subscriptions
-      // must exist before the first agent / turn (external hooks, cron).
       handle.accessor.get(ISessionExternalHooksService);
       handle.accessor.get(ISessionCronService);
     } catch (error) {

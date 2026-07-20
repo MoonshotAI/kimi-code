@@ -10,6 +10,16 @@
  * must always win. Concrete sources (user at App scope; project / extra /
  * explicit at Session scope) each bind their own DI token extending this
  * contract.
+ *
+ * A source may mark `load()` failures as `fatal`: the Session catalog lets
+ * them propagate into `ready` so awaiters see the error (`explicit` does —
+ * `--agent-file` is an explicit user intent that must not be silently
+ * dropped); without it a failure degrades to a warning and keeps any
+ * previously loaded contribution, because directory sources must never poison
+ * a session over a transient fs error. `profilesFromDiscovery` binds each
+ * profile's `${base_prompt}` placeholder lazily at render time, so it always
+ * reflects the effective default profile (builtin, or the `SYSTEM.md`
+ * override) rather than any file-based definition.
  */
 
 import type { Event } from '#/_base/event';
@@ -39,24 +49,10 @@ export interface IAgentProfileSource {
   readonly id: string;
   readonly priority: number;
   readonly onDidChange?: Event<void>;
-  /**
-   * When true, a `load()` rejection is fatal: the Session catalog lets it
-   * propagate into `ready` so awaiters see the error. When unset, the catalog
-   * degrades to a warning and keeps any previously loaded contribution —
-   * directory sources must never poison a session over a transient fs error.
-   * `explicit` sets this because `--agent-file` is an explicit user intent
-   * that must not be silently dropped.
-   */
   readonly fatal?: boolean;
   load(): Promise<AgentProfileContribution>;
 }
 
-/**
- * Map discovered agent files to profiles. `basePrompt` backs each profile's
- * `${base_prompt}` placeholder and is resolved lazily at render time, so it
- * always reflects the effective default profile (builtin, or the `SYSTEM.md`
- * override) rather than any file-based definition.
- */
 export function profilesFromDiscovery(
   result: AgentFileDiscoveryResult,
   basePrompt: (context: AgentProfileContext) => string,

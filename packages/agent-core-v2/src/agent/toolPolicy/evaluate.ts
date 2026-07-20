@@ -5,7 +5,21 @@
  * by Agent authorization, profile prompt construction, and child-agent setup.
  * `isToolActiveComposed` intersects the three policy layers (profile, global
  * `[tools]` config, Session denylist) so every consumer evaluates the same
- * combination instead of re-implementing it.
+ * combination instead of re-implementing it. An empty/absent global `enabled`
+ * list means unconstrained — an explicit empty list must never disable
+ * everything.
+ *
+ * `findInactiveToolPatterns` statically inspects policy entries so
+ * misconfigurations surface as warnings instead of silently shrinking the
+ * active tool set. Three entry shapes are dead on arrival under
+ * `isToolActive`: `wildcard-not-mcp` (non-MCP entries match builtin/user
+ * tools by exact name only, and the MCP branch filters entries without the
+ * `mcp__` prefix, so a wildcard outside `mcp__…` patterns can never match — a
+ * bare `*` in an allowlist disables everything, in a denylist it is a
+ * no-op), `incomplete-mcp-name` (an `mcp__…` literal without glob magic must
+ * be a full `mcp__<server>__<tool>` name; `mcp__github__*` is the working
+ * form for a whole server), and `unknown-tool` (a literal naming no
+ * registered tool and no builtin-profile tool is almost always a typo).
  */
 
 import picomatch from 'picomatch';
@@ -44,14 +58,8 @@ export interface GlobalToolsPolicy {
 }
 
 export interface ToolPolicyLayers {
-  /** The bound profile's own policy. */
   readonly profile: ToolActivationPolicy;
-  /**
-   * The global `[tools]` config section. An empty/absent `enabled` list means
-   * unconstrained — an explicit empty list must never disable everything.
-   */
   readonly global?: GlobalToolsPolicy;
-  /** The Session-owned client denylist, applied on top of the other layers. */
   readonly sessionDisabledTools?: readonly string[];
 }
 
@@ -83,24 +91,6 @@ export function resolveActiveToolNames(
   );
 }
 
-/**
- * Static inspection of tool-policy entries, so misconfigurations surface as
- * warnings instead of silently shrinking the active tool set.
- *
- * The matching semantics of `isToolActive` make three entry shapes dead on
- * arrival:
- *
- * - `wildcard-not-mcp` — non-MCP entries match builtin/user tools by exact
- *   name only, and the MCP branch filters entries without the `mcp__`
- *   prefix, so a wildcard outside `mcp__…` patterns can never match (a bare
- *   `*` in an allowlist therefore disables everything, in a denylist it is a
- *   no-op).
- * - `incomplete-mcp-name` — an `mcp__…` literal without glob magic must be a
- *   full `mcp__<server>__<tool>` name; `mcp__github` alone equals no real
- *   MCP tool name (`mcp__github__*` is the working form).
- * - `unknown-tool` — a literal entry that names no registered tool and no
- *   tool referenced by the builtin profiles is almost always a typo.
- */
 export type InactiveToolPatternKind = 'wildcard-not-mcp' | 'incomplete-mcp-name' | 'unknown-tool';
 
 export interface InactiveToolPattern {
@@ -110,7 +100,6 @@ export interface InactiveToolPattern {
 
 const GLOB_MAGIC = /[*?[\]{}]/;
 
-/** Extract the literal (non-glob, non-MCP) tool names from a policy list. */
 export function literalToolNames(patterns: readonly string[]): string[] {
   return patterns.filter((pattern) => !isMcpToolName(pattern) && !GLOB_MAGIC.test(pattern));
 }

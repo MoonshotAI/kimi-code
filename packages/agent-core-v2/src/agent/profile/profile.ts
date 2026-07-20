@@ -1,3 +1,18 @@
+/**
+ * `profile` domain (L4) — `IAgentProfileService` contract.
+ *
+ * Owns the active agent's identity: bound profile, model alias, thinking
+ * level, system prompt, and active-tool set. `bind()` takes an optional
+ * `model`, falling back to the configured `defaultModel` so edges don't each
+ * re-implement the fallback (a missing model everywhere throws
+ * `model.not_configured`), and an optional `thinking`; `strictThinking` marks
+ * `thinking` as an explicit user request (edge input) rather than inherited
+ * state, so the effort is validated against the model's supported efforts and
+ * the bind rejects up front when unsupported — internal spawns pass inherited
+ * thinking without the flag, and a persisted effort that drifted out of the
+ * model's support list clamps instead of breaking the spawn.
+ */
+
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
@@ -97,21 +112,8 @@ export interface ProfileSetModelResult {
 
 export interface BindAgentInput {
   readonly profile: string;
-  /**
-   * Model alias to bind with. Optional: the engine falls back to the
-   * configured `defaultModel` so edges don't each re-implement the fallback;
-   * a missing model everywhere throws `model.not_configured`.
-   */
   readonly model?: string;
   readonly thinking?: string;
-  /**
-   * Set when `thinking` is an explicit user request (edge input) rather than
-   * inherited state: the effort is then validated against the model's
-   * supported efforts and the bind rejects up front when unsupported.
-   * Internal spawns pass inherited thinking without this flag — a persisted
-   * effort that drifted out of the model's support list clamps instead of
-   * breaking the spawn.
-   */
   readonly strictThinking?: boolean;
   readonly cwd?: string;
 }

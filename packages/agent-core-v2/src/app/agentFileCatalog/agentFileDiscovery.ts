@@ -2,8 +2,19 @@
  * `agentFileCatalog` domain (L3) — filesystem agent-file discovery.
  *
  * Discovers and parses agent files through the `hostFs` filesystem boundary.
- * Invalid files are isolated from the rest of the discovery pass. No scoped
- * state.
+ * Invalid files are isolated from the rest of the discovery pass. Failure
+ * policy: below a root, ANY readdir failure (notably EACCES) skips just that
+ * directory — one unreadable subdirectory must not zero the whole source,
+ * mirroring `fileSkillDiscovery`'s per-directory tolerance; at a root, a
+ * missing directory is simply "no agents here", a transient whole-fs outage
+ * (`os.fs.unavailable`) propagates so the Session catalog keeps its previous
+ * contribution instead of replacing it with a partial scan, and any other
+ * failure skips just that root. Skip warnings are capped
+ * (`MAX_SKIP_WARNINGS`) so a misconfigured root (e.g. an extra dir pointing
+ * at a docs-heavy tree) cannot spam one line per non-agent file; the returned
+ * `skipped` list keeps the full parse-failure detail regardless, and the
+ * capping summary names a few suppressed paths so the rest stay findable. No
+ * scoped state.
  */
 
 import { join } from 'pathe';
@@ -35,10 +46,6 @@ export async function discoverAgentFiles(
   const byName = new Map<string, AgentFileDefinition>();
   const skipped: SkippedAgentFile[] = [];
 
-  // Skip warnings are capped: a misconfigured root (e.g. an extra dir pointing
-  // at a docs-heavy tree) must not spam one line per non-agent markdown file.
-  // The returned `skipped` list keeps the parse-failure detail regardless;
-  // the summary below names a few suppressed paths so the rest stay findable.
   let emittedWarnings = 0;
   let suppressedWarnings = 0;
   const suppressedSubjects: string[] = [];
@@ -82,16 +89,10 @@ export async function discoverAgentFiles(
     try {
       entries = (await fs.readdir(dirPath)).map((entry) => entry.name).toSorted();
     } catch (error) {
-      // Below the root, ANY readdir failure (notably EACCES) skips just this
-      // directory — one unreadable subdirectory must not zero the whole
-      // source, mirroring fileSkillDiscovery's per-directory tolerance.
       if (depth > 0) {
         warnCapped(dirPath, `Skipping unreadable directory ${dirPath}: ${errorMessage(error)}`, error);
         return;
       }
-      // At the root, a missing directory is simply "no agents here"; other
-      // failures propagate so the session catalog keeps its previous
-      // contribution instead of wiping it over a transient fs error.
       if (
         error instanceof HostFsError &&
         (error.code === OsFsErrors.codes.OS_FS_NOT_FOUND ||
@@ -128,10 +129,6 @@ export async function discoverAgentFiles(
     try {
       await walk(root.path, root, 0);
     } catch (error) {
-      // A transient whole-fs outage (`os.fs.unavailable`) propagates so the
-      // session catalog keeps its previous contribution instead of replacing
-      // it with a partial scan. Any other root-level failure (notably EACCES)
-      // skips just this root — one bad root must not take its siblings down.
       if (
         error instanceof HostFsError &&
         error.code === OsFsErrors.codes.OS_FS_UNAVAILABLE
