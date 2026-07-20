@@ -29,6 +29,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message } from '#/app/llmProtocol/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -521,12 +522,6 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
         })
       : source.content;
   return cleanContent(source, content, onAnomaly);
-}
-
-function isVacuousContentPart(part: ContentPart): boolean {
-  if (part.type === 'text') return part.text.trim().length === 0;
-  if (part.type === 'think') return part.encrypted === undefined && part.think.trim().length === 0;
-  return false;
 }
 
 function cleanContent(
