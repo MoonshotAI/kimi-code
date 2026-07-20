@@ -5,4 +5,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix sessions getting permanently stuck after a provider-filtered response: an assistant message holding only an empty thinking part could persist in the conversation history and was then rejected by the provider ("the message ... with role 'assistant' must not be empty") on every later request. Such wholly-empty messages are now dropped from outgoing requests — thinking content is still round-tripped verbatim — so affected sessions resume normally instead of failing on every turn.
+Fix sessions getting stuck on every turn with a provider "message must not be empty" error after a content-filtered response.
