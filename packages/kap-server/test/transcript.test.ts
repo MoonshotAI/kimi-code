@@ -61,6 +61,13 @@ interface TranscriptWire {
   items: (TurnWire | { kind: 'marker' | 'taskref' })[];
   has_more: boolean;
   tasks: unknown[];
+  interactions: {
+    interactionId: string;
+    interactionKind?: string;
+    toolCallId?: string;
+    state: string;
+    [key: string]: unknown;
+  }[];
   meta: Record<string, unknown>;
   agents: { agentId: string; type?: string }[];
   pending_interactions: string[];
@@ -213,7 +220,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     });
   });
 
-  it('surfaces approval interactions as inline frames with pending_ids', async () => {
+  it('surfaces approval interactions as global entities with pending ids', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
     // Bind first so the interaction listeners are attached.
@@ -248,10 +255,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
     let { body } = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(body.data.pending_interactions).toEqual(['apr-1']);
-    let frames = (body.data.items[0] as TurnWire).steps[0]!.frames;
-    expect(frames).toContainEqual(
+    expect(body.data.interactions).toContainEqual(
       expect.objectContaining({
-        kind: 'interaction',
+        interactionId: 'apr-1',
         interactionKind: 'approval',
         toolCallId: 'call_9',
         state: 'pending',
@@ -261,10 +267,10 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     interactions.respond('apr-1', { decision: 'approved' });
     ({ body } = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`));
     expect(body.data.pending_interactions).toEqual([]);
-    frames = (body.data.items[0] as TurnWire).steps[0]!.frames;
-    expect(frames).toContainEqual(
-      expect.objectContaining({ kind: 'interaction', state: 'approved' }),
+    expect(body.data.interactions).toContainEqual(
+      expect.objectContaining({ interactionId: 'apr-1', state: 'approved' }),
     );
+    const frames = (body.data.items[0] as TurnWire).steps[0]!.frames;
     expect(frames).toContainEqual(
       expect.objectContaining({ kind: 'tool', toolCallId: 'call_9', approvalId: 'apr-1' }),
     );
@@ -514,17 +520,13 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       origin: { agentId: 'main', turnId: 0 },
     });
 
-    // Binding defers the announce until after the backfill, so the frame
-    // lands with the backfilled tool call and resolve can back-link it.
+    // Binding defers the announce until after the backfill, so the entity
+    // anchors at the backfilled tool call and resolve can back-link it.
     const { body } = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(body.data.pending_interactions).toEqual(['apr-1']);
-    const turn = body.data.items.find(
-      (item): item is TurnWire => item.kind === 'turn' && item.turnId === 't0',
-    );
-    const frames = turn!.steps.flatMap((step) => step.frames);
-    expect(frames).toContainEqual(
+    expect(body.data.interactions).toContainEqual(
       expect.objectContaining({
-        kind: 'interaction',
+        interactionId: 'apr-1',
         interactionKind: 'approval',
         toolCallId: 'call_9',
         state: 'pending',
@@ -590,12 +592,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
     const subBody = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
     expect(subBody.body.data.pending_interactions).toEqual(['call_q']);
-    const frames = subBody.body.data.items.flatMap(
-      (item) => (item as TurnWire).steps?.flatMap((step) => step.frames) ?? [],
-    );
-    expect(frames).toContainEqual(
+    expect(subBody.body.data.interactions).toContainEqual(
       expect.objectContaining({
-        kind: 'interaction',
+        interactionId: 'call_q',
         interactionKind: 'question',
         toolCallId: 'call_q',
         state: 'pending',
@@ -758,10 +757,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
     const subBody = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
     expect(subBody.body.data.pending_interactions).toEqual(['call_q']);
-    const subFrames = (subBody.body.data.items[0] as TurnWire).steps[0]!.frames;
-    expect(subFrames).toContainEqual(
+    expect(subBody.body.data.interactions).toContainEqual(
       expect.objectContaining({
-        kind: 'interaction',
+        interactionId: 'call_q',
         interactionKind: 'question',
         toolCallId: 'call_q',
         state: 'pending',

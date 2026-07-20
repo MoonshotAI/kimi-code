@@ -14,9 +14,9 @@
  *    a full REST refresh; nothing is resynced from the socket itself.
  *
  * Rendering is turn-granular (turn → step → frame) and typed entirely by the
- * transcript data model. Prompts/cancels still go through the v2
- * `IAgentRPCService`; the running indicator derives from transcript state
- * (`meta.activity` / running turns).
+ * transcript data model. Prompts/cancels go through the `IAgentRPCService`
+ * over the debug RPC surface (`/api/v1/debug`); the running indicator
+ * derives from transcript state (`meta.activity` / running turns).
  */
 
 import {
@@ -36,12 +36,15 @@ import {
   type InteractionFrame,
   type NoticeFrame,
   type ToolCallFrame,
+  type TranscriptAttachment,
   type TranscriptFrame,
+  type TranscriptInteraction,
   type TranscriptItem,
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptTask,
   type TranscriptTaskRef,
+  type TranscriptTodo,
   type TranscriptTurn,
   type TranscriptUsage,
   type TurnOrigin,
@@ -258,6 +261,14 @@ export function ChatView({
     state.meta.activity === 'turn' ||
     items.some((item) => item.kind === 'turn' && item.state === 'running');
 
+  // Interactions render inline at their anchor tool frame; entities whose
+  // anchor frame is outside the loaded window collect here.
+  const anchoredToolCallIds = collectToolCallIds(items);
+  const unanchoredInteractions = [...state.interactions.values()].filter(
+    (interaction) => !anchoredToolCallIds.has(interaction.toolCallId),
+  );
+  const latestTodo = [...state.todos.values()].at(-1);
+
   const send = async () => {
     if (sessionId === null || input.trim() === '' || running) return;
     const text = input.trim();
@@ -336,8 +347,32 @@ export function ChatView({
             {loaded ? 'Empty transcript — send a prompt below.' : 'Loading transcript…'}
           </div>
         ) : null}
+        {latestTodo !== undefined && latestTodo.items.length > 0 ? (
+          <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-[11px]">
+            <div className="mb-1 text-neutral-500">todo (latest)</div>
+            {latestTodo.items.map((entry, i) => (
+              <div key={i} className="flex gap-2">
+                <span className={entry.status === 'done' ? 'text-green-500' : entry.status === 'in_progress' ? 'text-sky-400' : 'text-neutral-600'}>
+                  {entry.status === 'done' ? '✔' : entry.status === 'in_progress' ? '◐' : '□'}
+                </span>
+                <span className={entry.status === 'done' ? 'text-neutral-600 line-through' : 'text-neutral-300'}>
+                  {entry.title}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {items.map((item) => (
-          <ItemView key={itemId(item)} item={item} tasks={state.tasks} />
+          <ItemView
+            key={itemId(item)}
+            item={item}
+            tasks={state.tasks}
+            interactions={state.interactions}
+            attachments={state.attachments}
+          />
+        ))}
+        {unanchoredInteractions.map((interaction) => (
+          <InteractionEntityView key={interaction.interactionId} interaction={interaction} />
         ))}
       </div>
 
@@ -379,18 +414,35 @@ export function ChatView({
 function ItemView({
   item,
   tasks,
+  interactions,
+  attachments,
 }: {
   item: TranscriptItem;
   tasks: ReadonlyMap<string, TranscriptTask>;
+  interactions: ReadonlyMap<string, TranscriptInteraction>;
+  attachments: ReadonlyMap<string, TranscriptAttachment>;
 }) {
   switch (item.kind) {
     case 'turn':
-      return <TurnView turn={item} tasks={tasks} />;
+      return <TurnView turn={item} tasks={tasks} interactions={interactions} attachments={attachments} />;
     case 'marker':
       return <MarkerView marker={item} />;
     case 'taskref':
       return <TaskRefView item={item} task={tasks.get(item.taskId)} />;
   }
+}
+
+function collectToolCallIds(items: readonly TranscriptItem[]): Set<string> {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (item.kind !== 'turn') continue;
+    for (const step of item.steps) {
+      for (const frame of step.frames) {
+        if (frame.kind === 'tool') ids.add(frame.toolCallId);
+      }
+    }
+  }
+  return ids;
 }
 
 function turnStateTone(state: TurnState): 'neutral' | 'green' | 'amber' | 'red' {
@@ -418,9 +470,13 @@ function usageText(usage: TranscriptUsage): string {
 function TurnView({
   turn,
   tasks,
+  interactions,
+  attachments,
 }: {
   turn: TranscriptTurn;
   tasks: ReadonlyMap<string, TranscriptTask>;
+  interactions: ReadonlyMap<string, TranscriptInteraction>;
+  attachments: ReadonlyMap<string, TranscriptAttachment>;
 }) {
   return (
     <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/30">
@@ -439,10 +495,19 @@ function TurnView({
         {turn.prompt !== undefined && turn.prompt !== '' ? (
           <TurnPrompt origin={turn.origin} prompt={turn.prompt} />
         ) : null}
+        {turn.attachmentIds !== undefined && turn.attachmentIds.length > 0 ? (
+          <AttachmentChips ids={turn.attachmentIds} attachments={attachments} />
+        ) : null}
         {turn.steps.map((step) => (
           <div key={step.stepId}>
             {step.frames.map((frame) => (
-              <FrameView key={frame.frameId} frame={frame} tasks={tasks} />
+              <FrameView
+                key={frame.frameId}
+                frame={frame}
+                tasks={tasks}
+                interactions={interactions}
+                attachments={attachments}
+              />
             ))}
             {step.state === 'interrupted' ? (
               <div className="mb-2 text-[10px] text-neutral-600 italic">step interrupted</div>
@@ -519,29 +584,80 @@ function TaskRefView({
 
 // ---------------------------------------------------------------- frames
 
+function AttachmentChips({
+  ids,
+  attachments,
+}: {
+  ids: readonly string[];
+  attachments: ReadonlyMap<string, TranscriptAttachment>;
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap gap-1">
+      {ids.map((id) => {
+        const attachment = attachments.get(id);
+        const label = attachment?.name ?? attachment?.mediaType ?? id;
+        const href =
+          attachment?.source?.kind === 'url' ? attachment.source.url : undefined;
+        return (
+          <span
+            key={id}
+            className="rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-neutral-400"
+            title={attachment?.mediaType}
+          >
+            📎 {href !== undefined ? <a href={href} className="underline">{label}</a> : label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function FrameView({
   frame,
   tasks,
+  interactions,
+  attachments,
 }: {
   frame: TranscriptFrame;
   tasks: ReadonlyMap<string, TranscriptTask>;
+  interactions: ReadonlyMap<string, TranscriptInteraction>;
+  attachments: ReadonlyMap<string, TranscriptAttachment>;
 }) {
   switch (frame.kind) {
-    case 'text':
-      if (frame.role === 'user') {
-        return (
+    case 'text': {
+      const chips =
+        frame.attachmentIds !== undefined && frame.attachmentIds.length > 0 ? (
+          <AttachmentChips ids={frame.attachmentIds} attachments={attachments} />
+        ) : null;
+      const taskBadge =
+        frame.taskId !== undefined ? (
+          <div className="mb-1">
+            <Badge tone={tasks.get(frame.taskId)?.state === 'running' ? 'amber' : 'neutral'}>
+              task: {frame.taskId}
+              {tasks.get(frame.taskId) !== undefined ? ` (${tasks.get(frame.taskId)!.state})` : ''}
+            </Badge>
+          </div>
+        ) : null;
+      const bubble =
+        frame.role === 'user' ? (
           <div className="mb-2 flex justify-end">
             <div className="max-w-[80%] whitespace-pre-wrap rounded-lg bg-sky-900/40 px-3 py-2 text-[13px] text-neutral-100">
               {frame.text}
             </div>
           </div>
+        ) : (
+          <div className="mb-2 max-w-[85%] whitespace-pre-wrap rounded-lg bg-neutral-800/60 px-3 py-2 text-[13px] text-neutral-100">
+            {frame.text}
+          </div>
         );
-      }
       return (
-        <div className="mb-2 max-w-[85%] whitespace-pre-wrap rounded-lg bg-neutral-800/60 px-3 py-2 text-[13px] text-neutral-100">
-          {frame.text}
-        </div>
+        <>
+          {taskBadge}
+          {chips}
+          {bubble}
+        </>
       );
+    }
     case 'thinking':
       return (
         <div className="mb-2 max-w-[85%] whitespace-pre-wrap rounded-lg border border-dashed border-neutral-700 px-3 py-2 font-mono text-[11px] text-neutral-500">
@@ -549,8 +665,11 @@ function FrameView({
         </div>
       );
     case 'tool':
-      return <ToolFrameView frame={frame} tasks={tasks} />;
+      return <ToolFrameView frame={frame} tasks={tasks} interactions={interactions} />;
     case 'interaction':
+      // 实体通道优先：同一 interactionId 的实体存在时，旧式内联帧是双写的
+      // 镜像，跳过以免重复渲染；只有旧服务端（无实体）才用帧兜底。
+      if (interactions.has(frame.interactionId)) return null;
       return <InteractionFrameView frame={frame} />;
     case 'notice':
       return <NoticeFrameView frame={frame} />;
@@ -560,11 +679,19 @@ function FrameView({
 function ToolFrameView({
   frame,
   tasks,
+  interactions,
 }: {
   frame: ToolCallFrame;
   tasks: ReadonlyMap<string, TranscriptTask>;
+  interactions: ReadonlyMap<string, TranscriptInteraction>;
 }) {
   const task = frame.taskId !== undefined ? tasks.get(frame.taskId) : undefined;
+  // The interaction anchored at this call (via approvalId, or by scanning the
+  // entity's toolCallId for requests that predate the back-link).
+  const linked = [...interactions.values()].filter(
+    (interaction) =>
+      interaction.interactionId === frame.approvalId || interaction.toolCallId === frame.toolCallId,
+  );
   return (
     <div className="mb-2 max-w-[85%] rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2 font-mono text-[11px]">
       <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -581,6 +708,7 @@ function ToolFrameView({
           </Badge>
         ))}
         {task !== undefined ? <span className="text-neutral-600">task: {task.state}</span> : null}
+        {frame.todoId !== undefined ? <span className="text-neutral-600">todo: {frame.todoId}</span> : null}
       </div>
       {frame.input !== undefined ? (
         typeof frame.input === 'string' ? (
@@ -609,6 +737,35 @@ function ToolFrameView({
       {frame.error !== undefined && frame.error !== frame.output ? (
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-red-400">{frame.error}</pre>
       ) : null}
+      {linked.map((interaction) => (
+        <InteractionEntityView key={interaction.interactionId} interaction={interaction} nested />
+      ))}
+    </div>
+  );
+}
+
+function InteractionEntityView({
+  interaction,
+  nested,
+}: {
+  interaction: TranscriptInteraction;
+  nested?: boolean;
+}) {
+  return (
+    <div
+      className={`mb-2 max-w-[85%] rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2 text-[11px] ${
+        nested === true ? 'mt-2 max-w-full' : ''
+      }`}
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <Badge tone={interaction.state === 'pending' ? 'amber' : 'neutral'}>
+          {interaction.interactionKind}
+        </Badge>
+        <span className="text-neutral-400">{interaction.state}</span>
+        <span className="text-neutral-600">tool: {interaction.toolCallId}</span>
+      </div>
+      {interaction.request !== undefined ? <JsonView data={interaction.request} /> : null}
+      {interaction.response !== undefined ? <JsonView data={interaction.response} /> : null}
     </div>
   );
 }
@@ -619,6 +776,7 @@ function InteractionFrameView({ frame }: { frame: InteractionFrame }) {
       <div className="mb-1 flex items-center gap-2">
         <Badge tone={frame.state === 'pending' ? 'amber' : 'neutral'}>{frame.interactionKind}</Badge>
         <span className="text-neutral-400">{frame.state}</span>
+        <span className="text-neutral-600">legacy frame</span>
       </div>
       {frame.request !== undefined ? <JsonView data={frame.request} /> : null}
       {frame.response !== undefined ? <JsonView data={frame.response} /> : null}

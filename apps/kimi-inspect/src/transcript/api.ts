@@ -15,9 +15,12 @@
 
 import {
   transcriptResponseSchema,
+  type TranscriptAttachment,
+  type TranscriptInteraction,
   type TranscriptItem,
   type TranscriptMeta,
   type TranscriptTask,
+  type TranscriptTodo,
 } from '@moonshot-ai/transcript';
 
 /** One transcript page as merged by the chat store. */
@@ -27,6 +30,9 @@ export interface TranscriptPage {
   readonly hasMoreOlder: boolean;
   /** Global, unpaginated state (every response carries the current whole). */
   readonly tasks: readonly TranscriptTask[];
+  readonly interactions: readonly TranscriptInteraction[];
+  readonly attachments: readonly TranscriptAttachment[];
+  readonly todos: readonly TranscriptTodo[];
   readonly meta: TranscriptMeta;
   readonly pendingInteractions: readonly string[];
 }
@@ -72,10 +78,16 @@ export async function fetchTranscriptPage(
   }
   const items: readonly TranscriptItem[] = parsed.data.items;
   const tasks: readonly TranscriptTask[] = parsed.data.tasks;
+  const interactions: readonly TranscriptInteraction[] = parsed.data.interactions;
+  const attachments: readonly TranscriptAttachment[] = parsed.data.attachments;
+  const todos: readonly TranscriptTodo[] = parsed.data.todos;
   return {
     items,
     hasMoreOlder: parsed.data.has_more,
     tasks,
+    interactions,
+    attachments,
+    todos,
     meta: parsed.data.meta,
     pendingInteractions: parsed.data.pending_interactions,
   };

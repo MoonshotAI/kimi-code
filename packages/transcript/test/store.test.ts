@@ -8,7 +8,8 @@ import type {
   TurnUpsertOp,
   TranscriptOperation,
 } from '#/ops/operation';
-import type { ThinkingFrame, ToolCallFrame, InteractionFrame } from '#/model/frame';
+import type { ThinkingFrame, ToolCallFrame } from '#/model/frame';
+import type { TranscriptInteraction } from '#/model/interaction';
 import type { TranscriptItem } from '#/model/item';
 
 /** Display id for order assertions across the item union. */
@@ -161,22 +162,62 @@ describe('AgentTranscript', () => {
     expect(appendAtOffset('hello wo', 6, 'world')).toEqual({ text: 'hello world', changed: true });
   });
 
-  it('tracks pending interactions as a derived index', () => {
+  it('tracks pending interactions as a derived index (both channels)', () => {
     const tx = new AgentTranscript('main');
-    const interaction = (state: InteractionFrame['state']): InteractionFrame => ({
-      kind: 'interaction',
-      frameId: 't1.1.i1',
+    const interaction = (state: TranscriptInteraction['state']): TranscriptInteraction => ({
       interactionId: 'appr-1',
       interactionKind: 'approval',
+      toolCallId: 'call-1',
       state,
     });
-    tx.apply([turn1, { op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: interaction('pending') }]);
+    // Authoritative channel: the global entity.
+    tx.apply([turn1, { op: 'interaction.upsert', interaction: interaction('pending') }]);
     expect(tx.listPendingInteractions()).toEqual(['appr-1']);
-    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: interaction('approved') }]);
+    tx.apply([{ op: 'interaction.upsert', interaction: interaction('approved') }]);
+    expect(tx.listPendingInteractions()).toEqual([]);
+
+    // Legacy channel: an inline interaction frame (older producers).
+    const legacyFrame = (state: 'pending' | 'answered') => ({
+      kind: 'interaction' as const,
+      frameId: 'i-appr-2',
+      interactionId: 'appr-2',
+      interactionKind: 'question' as const,
+      state,
+    });
+    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: legacyFrame('pending') }]);
+    expect(tx.listPendingInteractions()).toEqual(['appr-2']);
+    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: legacyFrame('answered') }]);
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
-  it('items.remove drops whole turns and their pending index entries', () => {
+  it('upserts attachment and todo entities idempotently', () => {
+    const tx = new AgentTranscript('main');
+    const attachment = {
+      attachmentId: 'att_1',
+      mediaType: 'image/png',
+      source: { kind: 'url' as const, url: 'https://example.com/a.png' },
+    };
+    const todo = { todoId: 'todo', items: [{ title: 'x', status: 'pending' as const }] };
+    const first = tx.apply([
+      { op: 'attachment.upsert', attachment },
+      { op: 'todo.upsert', todo },
+    ]);
+    expect(first.accepted).toHaveLength(2);
+    // Re-applying the identical entities is a no-op (idempotent upsert).
+    const second = tx.apply([
+      { op: 'attachment.upsert', attachment },
+      { op: 'todo.upsert', todo },
+    ]);
+    expect(second.accepted).toHaveLength(0);
+    expect(tx.getAttachment('att_1')?.mediaType).toBe('image/png');
+    expect(tx.getTodo('todo')?.items).toHaveLength(1);
+    tx.apply([{ op: 'todo.upsert', todo: { ...todo, items: [] } }]);
+    expect(tx.getTodo('todo')?.items).toHaveLength(0);
+  });
+
+  it('items.remove clears anchored interactions and their pending entries (legacy semantics)', () => {
+    // Removing a turn removes its inline interaction frames; the interaction
+    // entity anchored to a tool call inside the turn dies with its anchor.
     const tx = new AgentTranscript('main');
     tx.apply([
       turn1,
@@ -185,16 +226,27 @@ describe('AgentTranscript', () => {
         turnId: 't1',
         stepId: 't1.1',
         frame: {
-          kind: 'interaction',
-          frameId: 't1.1.i1',
+          kind: 'tool',
+          frameId: 't1.1.call-9',
+          toolCallId: 'call-9',
+          name: 'Bash',
+          state: 'running',
+        },
+      },
+      {
+        op: 'interaction.upsert',
+        interaction: {
           interactionId: 'appr-9',
           interactionKind: 'approval',
+          toolCallId: 'call-9',
           state: 'pending',
         },
       },
     ]);
+    expect(tx.listPendingInteractions()).toEqual(['appr-9']);
     tx.apply([{ op: 'items.remove', ids: ['t1'] }]);
     expect(tx.getItems()).toHaveLength(0);
+    expect(tx.getInteraction('appr-9')).toBeUndefined();
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 

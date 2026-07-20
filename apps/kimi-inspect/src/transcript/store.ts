@@ -126,6 +126,13 @@ export class TranscriptChatStore {
       this.state = {
         items: page.items,
         tasks: new Map(page.tasks.map((task) => [task.taskId, task])),
+        interactions: new Map(
+          page.interactions.map((interaction) => [interaction.interactionId, interaction]),
+        ),
+        attachments: new Map(
+          page.attachments.map((attachment) => [attachment.attachmentId, attachment]),
+        ),
+        todos: new Map(page.todos.map((todo) => [todo.todoId, todo])),
         meta: page.meta,
         pendingInteractions: new Set(page.pendingInteractions),
         hasMoreOlder: page.hasMoreOlder,

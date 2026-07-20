@@ -43,12 +43,10 @@ import type { Socket } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
-import { registerRpcRoutes } from './transport/registerRpcRoutes';
 import {
   ConnectionRegistry,
   type IConnectionRegistry,
 } from './transport/ws/connectionRegistry';
-import { registerWs, WS_PATH as WS_PATH_V2 } from './transport/ws/registerWs';
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
@@ -96,10 +94,10 @@ export interface ServerStartOptions {
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
   /**
-   * Optional *additional* credential accepted on the `/api/v2` surface (REST +
+   * Optional *additional* credential accepted on the RPC surface (debug REST +
    * WebSocket) alongside the persistent bearer token. Never required and never
-   * the only gate: the persistent token always protects `/api/v2`. Leave unset
-   * unless a second, distinct RPC credential is genuinely needed.
+   * the only gate: the persistent token always protects the RPC surface. Leave
+   * unset unless a second, distinct RPC credential is genuinely needed.
    */
   readonly rpcToken?: string;
   /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
@@ -224,7 +222,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   }
   // Unified credential: the persistent token (or password) protects every
   // route; the optional `rpcToken` is accepted as an additional credential
-  // for the `/api/v2` surface. The same validator backs the HTTP auth hook,
+  // for the RPC surface. The same validator backs the HTTP auth hook,
   // the WS upgrade handler, and the post-connect handshakes so one credential
   // gates all surfaces and upgrade / handshake can never disagree.
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
@@ -409,8 +407,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     dangerousBypassAuth: opts.disableAuth === true,
   });
 
-  registerRpcRoutes(app, core, { token: opts.rpcToken });
-  const wssV2 = registerWs(core, { validateCredential, registry: connectionRegistry, logger });
   const wssV1 = registerWsV1(core, {
     validateCredential,
     registry: connectionRegistry,
@@ -426,8 +422,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    const isV2 = url === WS_PATH_V2 || url.startsWith(`${WS_PATH_V2}?`);
-    if (!isV1 && !isV2) {
+    if (!isV1) {
       socket.destroy();
       return;
     }
@@ -462,7 +457,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
       const candidate = bearerToken !== null && bearerToken.length > 0 ? bearerToken : protocolToken;
       // Require a valid credential at the upgrade: a token-less (or invalid)
-      // upgrade is rejected with 401 for both `/api/v1/ws` and `/api/v2/ws`.
+      // upgrade is rejected with 401 for `/api/v1/ws`.
       let ok = false;
       if (candidate !== null) {
         try {
@@ -496,11 +491,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
 
     (socket as Socket).setNoDelay(true);
-    if (isV1) {
-      wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
-    } else {
-      wssV2.handleUpgrade(req, socket, head, (ws) => wssV2.emit('connection', ws, req));
-    }
+    wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -511,7 +502,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
-    wssV2.close();
     await broadcaster.close();
   });
 

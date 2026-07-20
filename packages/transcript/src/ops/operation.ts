@@ -18,10 +18,13 @@ import type {
   TaskId,
   TurnId,
 } from '../model/ids';
+import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
+import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
+import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 
 /** Turn header as carried on the wire: steps always arrive via step.upsert. */
@@ -88,6 +91,34 @@ export interface TaskUpsertOp {
   readonly task: TranscriptTask;
 }
 
+/**
+ * Interaction entity upsert — global like `task.upsert`, addressed by id
+ * (never placed into a step). Flows at 'turn' grade and up, so even coarse
+ * subscribers see pending approvals/questions.
+ */
+export interface InteractionUpsertOp {
+  readonly op: 'interaction.upsert';
+  readonly interaction: TranscriptInteraction;
+}
+
+/**
+ * Attachment entity upsert — global, addressed by id. Media bytes never
+ * travel the wire; the entity carries metadata plus a fetch reference.
+ */
+export interface AttachmentUpsertOp {
+  readonly op: 'attachment.upsert';
+  readonly attachment: TranscriptAttachment;
+}
+
+/**
+ * Todo document upsert — whole-document replace (idempotent). Carries the
+ * latest list; point-in-time history stays on `TodoList` tool frames.
+ */
+export interface TodoUpsertOp {
+  readonly op: 'todo.upsert';
+  readonly todo: TranscriptTodo;
+}
+
 export interface MetaMergeOp {
   readonly op: 'meta.merge';
   readonly meta: TranscriptMetaMerge;
@@ -108,6 +139,9 @@ export type TranscriptOperation =
   | MarkerUpsertOp
   | TaskRefUpsertOp
   | TaskUpsertOp
+  | InteractionUpsertOp
+  | AttachmentUpsertOp
+  | TodoUpsertOp
   | MetaMergeOp
   | ItemsRemoveOp;
 
@@ -120,6 +154,12 @@ export interface TranscriptOpBatch {
 export interface AgentTranscriptSnapshot {
   readonly items: readonly TranscriptItem[];
   readonly tasks: readonly TranscriptTask[];
+  /** Global interaction entities (approvals / questions); never paginated. */
+  readonly interactions: readonly TranscriptInteraction[];
+  /** Global attachment entities (media metadata); never paginated. */
+  readonly attachments: readonly TranscriptAttachment[];
+  /** Global todo documents (latest state); never paginated. */
+  readonly todos: readonly TranscriptTodo[];
   readonly meta: TranscriptMeta;
   /**
    * When the reset only ships a tail window, this flag tells the consumer

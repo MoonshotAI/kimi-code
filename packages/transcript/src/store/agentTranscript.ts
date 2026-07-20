@@ -11,10 +11,13 @@
  * returned array/object is never mutated by later applies.
  */
 
-import type { AgentId, InteractionId, TaskId, TurnId } from '../model/ids';
+import type { AgentId, AttachmentId, InteractionId, TaskId, TodoId, TurnId } from '../model/ids';
+import type { TranscriptAttachment } from '../model/attachment';
+import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
 import type { TranscriptMeta } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
+import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptTurn } from '../model/turn';
 import {
   EMPTY_AGENT_STATE,
@@ -99,6 +102,30 @@ export class AgentTranscript {
     return this.#state.tasks.get(taskId);
   }
 
+  getInteractions(): ReadonlyMap<InteractionId, TranscriptInteraction> {
+    return this.#state.interactions;
+  }
+
+  getInteraction(interactionId: InteractionId): TranscriptInteraction | undefined {
+    return this.#state.interactions.get(interactionId);
+  }
+
+  getAttachments(): ReadonlyMap<AttachmentId, TranscriptAttachment> {
+    return this.#state.attachments;
+  }
+
+  getAttachment(attachmentId: AttachmentId): TranscriptAttachment | undefined {
+    return this.#state.attachments.get(attachmentId);
+  }
+
+  getTodos(): ReadonlyMap<TodoId, TranscriptTodo> {
+    return this.#state.todos;
+  }
+
+  getTodo(todoId: TodoId): TranscriptTodo | undefined {
+    return this.#state.todos.get(todoId);
+  }
+
   getMeta(): TranscriptMeta {
     return this.#state.meta;
   }
@@ -138,6 +165,9 @@ export class AgentTranscript {
     return {
       items,
       tasks: [...this.#state.tasks.values()],
+      interactions: [...this.#state.interactions.values()],
+      attachments: [...this.#state.attachments.values()],
+      todos: [...this.#state.todos.values()],
       meta: this.#state.meta,
       hasMoreOlder,
     };

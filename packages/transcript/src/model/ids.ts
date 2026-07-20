@@ -5,8 +5,9 @@
  * from the engine's per-agent monotonic turn counter, so pages can be keyed by
  * turn without an index lookup. Step ids nest under a turn (`t3.2`), frame ids
  * under a step (`t3.2.f4`) unless the frame has its own engine-level key
- * (tool-call frames use the tool-call id, interaction frames the interaction
- * id) — keep ids stable across upserts so L2 ops stay idempotent.
+ * (tool-call frames use the tool-call id) — keep ids stable across upserts so
+ * L2 ops stay idempotent. Global entities (tasks, interactions, attachments,
+ * todos) carry their own engine/stable ids.
  */
 
 export type TurnId = string;
@@ -17,6 +18,8 @@ export type TaskRefId = string;
 export type TaskId = string;
 export type AgentId = string;
 export type InteractionId = string;
+export type AttachmentId = string;
+export type TodoId = string;
 export type ItemId = string;
 
 export function turnId(ordinal: number): TurnId {

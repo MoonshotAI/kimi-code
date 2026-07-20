@@ -17,7 +17,8 @@
  * REST page load and that point are missed).
  *
  * The bearer token is presented at the upgrade through the
- * `kimi-code.bearer.<token>` subprotocol (same trick as the v2 `WsSocket`).
+ * `kimi-code.bearer.<token>` subprotocol (the only credential channel a
+ * browser WebSocket has).
  */
 
 import {
@@ -25,7 +26,7 @@ import {
   type TranscriptOperation,
 } from '@moonshot-ai/transcript';
 
-import type { WsLike, WsLikeCtor } from '../channel/wsSocket';
+import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
 export interface TranscriptWsHandlers {
   /** Incremental L2 op batch for the agent (the only data frame consumed). */

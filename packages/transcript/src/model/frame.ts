@@ -8,9 +8,17 @@
  * Frames never nest. Cross-references are by id: a tool frame may point at a
  * task entity (`taskId`), an interaction (`approvalId`), or a sibling agent
  * (`agentRefs`) whose own AgentTranscript can be subscribed separately.
+ *
+ * Interactions appear twice by design: inline as `InteractionFrame` (legacy
+ * surface, kept for wire compatibility) and as global entities beside tasks
+ * (`model/interaction.ts`, the authoritative channel). Both mirror the same
+ * underlying interaction by `interactionId`.
  */
 
-import type { AgentId, FrameId, InteractionId, TaskId } from './ids';
+import type { AgentId, AttachmentId, FrameId, InteractionId, TaskId, TodoId } from './ids';
+import type { InteractionKind, InteractionState } from './interaction';
+
+export type { InteractionKind, InteractionState } from './interaction';
 
 export type FrameRef = {
   readonly target: 'frame';
@@ -23,6 +31,15 @@ export interface TextFrame {
   readonly frameId: FrameId;
   readonly role: 'assistant' | 'user';
   readonly text: string;
+  /** Attachments carried by this message (entities in `attachments`). */
+  readonly attachmentIds?: readonly AttachmentId[];
+  /**
+   * For user-role inputs that are about a task — e.g. a background-task
+   * completion notification injected into the running step — the referenced
+   * task entity. The text is the point-in-time record; the ref links the
+   * live task.
+   */
+  readonly taskId?: TaskId;
 }
 
 /** Model thinking chain. Same full-text invariant as TextFrame. */
@@ -61,24 +78,22 @@ export interface ToolCallFrame {
   readonly taskId?: TaskId;
   /** Interaction (approval/question) that gated this call, if any. */
   readonly approvalId?: InteractionId;
+  /** Todo entity this call mutates (TodoList writes). */
+  readonly todoId?: TodoId;
   /** Agents spawned by this call (Agent tool / AgentSwarm members). */
   readonly agentRefs?: readonly AgentRef[];
 }
 
-export type InteractionKind = 'approval' | 'question';
-
-export type InteractionState =
-  | 'pending'
-  | 'approved'
-  | 'rejected'
-  | 'cancelled'
-  | 'answered'
-  | 'dismissed';
-
 /**
- * An approval or AskUserQuestion surfaced inline. Plan-mode review is not a
- * special case here: ExitPlanMode flows through the ordinary approval path, so
- * the plan card renders from the linked tool frame's `display` payload.
+ * An approval or AskUserQuestion surfaced inline — the **legacy inline
+ * surface**, kept verbatim for wire compatibility: existing consumers read
+ * interactions from step frames at this position with these fields.
+ *
+ * The authoritative channel is the global entity (`model/interaction.ts` +
+ * `interaction.upsert`): producers emit BOTH (this frame mirrors the entity
+ * by `interactionId`). Consumers should prefer the entity — it is addressed
+ * by id, pagination-proof, and visible at 'turn' grade — and treat this
+ * frame as the fallback when no entity with the same id is present.
  */
 export interface InteractionFrame {
   readonly kind: 'interaction';

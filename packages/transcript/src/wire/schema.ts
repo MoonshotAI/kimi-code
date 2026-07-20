@@ -64,6 +64,8 @@ export const textFrameSchema = z.object({
   frameId: frameIdSchema,
   role: z.enum(['assistant', 'user']),
   text: z.string(),
+  attachmentIds: z.array(z.string()).optional(),
+  taskId: taskIdSchema.optional(),
 });
 
 export const thinkingFrameSchema = z.object({
@@ -90,7 +92,17 @@ export const toolCallFrameSchema = z.object({
   error: z.string().optional(),
   taskId: taskIdSchema.optional(),
   approvalId: z.string().optional(),
+  todoId: z.string().optional(),
   agentRefs: z.array(agentRefSchema).optional(),
+});
+
+export const interactionSchema = z.object({
+  interactionId: z.string(),
+  interactionKind: z.enum(['approval', 'question']),
+  toolCallId: z.string(),
+  state: z.enum(['pending', 'approved', 'rejected', 'cancelled', 'answered', 'dismissed']),
+  request: z.unknown().optional(),
+  response: z.unknown().optional(),
 });
 
 export const interactionFrameSchema = z.object({
@@ -139,6 +151,7 @@ export const transcriptTurnSchema = z.object({
   state: turnStateSchema,
   origin: turnOriginSchema,
   prompt: z.string().optional(),
+  attachmentIds: z.array(z.string()).optional(),
   steps: z.array(transcriptStepSchema),
   startedAt: z.string().optional(),
   endedAt: z.string().optional(),
@@ -209,9 +222,38 @@ export const transcriptMetaMergeSchema = transcriptMetaSchema.extend({
 
 // ---------------------------------------------------------------- ops
 
+export const attachmentSchema = z.object({
+  attachmentId: z.string(),
+  mediaType: z.string(),
+  name: z.string().optional(),
+  size: z.number().optional(),
+  source: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('url'), url: z.string() }),
+      z.object({ kind: z.literal('file'), fileId: z.string() }),
+    ])
+    .optional(),
+  placeholder: z.string().optional(),
+});
+
+export const todoItemSchema = z.object({
+  title: z.string(),
+  status: z.enum(['pending', 'in_progress', 'done']),
+});
+
+export const todoSchema = z.object({
+  todoId: z.string(),
+  items: z.array(todoItemSchema),
+  updatedAt: z.string().optional(),
+});
+
 export const agentTranscriptSnapshotSchema = z.object({
   items: z.array(transcriptItemSchema),
   tasks: z.array(transcriptTaskSchema),
+  // Added later; defaulted so newer consumers tolerate older servers.
+  interactions: z.array(interactionSchema).default([]),
+  attachments: z.array(attachmentSchema).default([]),
+  todos: z.array(todoSchema).default([]),
   meta: transcriptMetaSchema,
   hasMoreOlder: z.boolean().optional(),
 });
@@ -256,6 +298,9 @@ export const transcriptOperationSchema = z.discriminatedUnion('op', [
     beforeTurn: z.number().int().optional(),
   }),
   z.object({ op: z.literal('task.upsert'), task: transcriptTaskSchema }),
+  z.object({ op: z.literal('interaction.upsert'), interaction: interactionSchema }),
+  z.object({ op: z.literal('attachment.upsert'), attachment: attachmentSchema }),
+  z.object({ op: z.literal('todo.upsert'), todo: todoSchema }),
   z.object({ op: z.literal('meta.merge'), meta: transcriptMetaMergeSchema }),
   z.object({ op: z.literal('items.remove'), ids: z.array(z.string()) }),
 ]);
@@ -292,8 +337,8 @@ export const transcriptSubscriptionSchema = z.record(z.string(), transcriptGrade
  * package: `agent_id` (required) + turn cursor (`before_turn` / `after_turn`,
  * mutually exclusive) + `page_size` (default 20, max 100). The page unit is
  * the turn (contiguous turn slice plus segment markers/taskrefs); `tasks`,
- * `meta`, `agents` and `pending_interactions` are global state and ship
- * unpaginated with every response.
+ * `interactions`, `meta`, `agents` and `pending_interactions` are global
+ * state and ship unpaginated with every response.
  */
 export const transcriptQuerySchema = z
   .object({
@@ -332,6 +377,10 @@ export const transcriptResponseSchema = z.object({
   items: z.array(transcriptItemSchema),
   has_more: z.boolean(),
   tasks: z.array(transcriptTaskSchema),
+  // Added later; defaulted so newer consumers tolerate older servers.
+  interactions: z.array(interactionSchema).default([]),
+  attachments: z.array(attachmentSchema).default([]),
+  todos: z.array(todoSchema).default([]),
   meta: transcriptMetaSchema,
   agents: z.array(agentDescriptorSchema),
   pending_interactions: z.array(z.string()),

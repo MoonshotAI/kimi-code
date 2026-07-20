@@ -1,21 +1,21 @@
 /**
- * `/api/v2` route registration — mounts the channel dispatcher on Fastify.
+ * Shared Service-dispatcher route registration.
  *
- * Three routes mirror the scope tree; all share one handler. `:service` is a
- * decorator id (channel name) resolved by the registry; `:method` is invoked by
+ * Mounts the reflection dispatcher under `basePath`: three routes mirror the
+ * scope tree; all share one handler. `:service` is a decorator id (channel
+ * name) resolved against the scoped DI registry; `:method` is invoked by
  * reflection. Reads use `GET`, writes use `POST`.
  *
- *   GET|POST /api/v2/:service/:method
- *   GET|POST /api/v2/session/:session_id/:service/:method
- *   GET|POST /api/v2/session/:session_id/agent/:agent_id/:service/:method
+ *   GET|POST {basePath}/:service/:method
+ *   GET|POST {basePath}/session/:session_id/:service/:method
+ *   GET|POST {basePath}/session/:session_id/agent/:agent_id/:service/:method
  *
  * Body (POST) or `?arg=<json>` (GET) is the method's single argument. Responses
  * are always the project envelope (HTTP 200; business outcome in `code`). Body
  * size, connection timeout, and graceful close are Fastify's.
  *
- * `registerServiceDispatcherRoutes` is the shared, path-agnostic core: the
- * dev-only `/api/v1/debug` surface (`registerDebugRoutes.ts`) mounts the same
- * dispatcher with a different base path and a whitelist-free channel lookup.
+ * The single consumer today is the dev-only `/api/v1/debug` surface
+ * (`registerDebugRoutes.ts`).
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
@@ -24,7 +24,11 @@ import { requestLog } from '../lib/requestLog';
 import { okEnvelope } from '../protocol/envelope';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ScopeKind } from './channel';
-import { type ChannelDescriptor, describeChannels, resolveChannel } from './channelRegistry';
+import {
+  type ChannelDescriptor,
+  describeAllChannels,
+  resolveAnyScopedServiceId,
+} from './channelRegistry';
 import { type ChannelLookup, dispatch } from './dispatcher';
 import { mapError, validationEnvelope, withTimeout } from './errors';
 
@@ -47,30 +51,18 @@ export interface RouteHost {
   post(path: string, handler: (req: RpcRequest, reply: RpcReply) => Promise<unknown>): unknown;
 }
 
-export interface RegisterRpcRoutesOptions {
-  /**
-   * @deprecated Auth is enforced by the global bearer hook (`middleware/auth`)
-   * before the handler runs — the persistent token (and, when configured, the
-   * `rpcToken`) gates every `/api/v2` route. Kept for call-site compatibility;
-   * the route handler itself no longer performs a separate token check.
-   */
-  readonly token?: string;
-  /** Per-call deadline in ms. Default 30s. */
-  readonly callTimeoutMs?: number;
-}
-
 export interface ServiceDispatcherRouteOptions {
   /** Per-call deadline in ms. Default 30s. */
   readonly callTimeoutMs?: number;
-  /** Channel name → identifier resolution. Default: the `/api/v2` whitelist registry. */
+  /** Channel name → identifier resolution. Default: the full scoped DI registry. */
   readonly lookup?: ChannelLookup;
-  /** Descriptor source for `GET {basePath}/channels`. Default: the whitelist set. */
+  /** Descriptor source for `GET {basePath}/channels`. Default: every scoped Service. */
   readonly describe?: () => readonly ChannelDescriptor[];
 }
 
 /**
- * Mount the reflection dispatcher under `basePath` (e.g. `/api/v2`, or
- * `/debug` inside the prefixed `/api/v1` plugin): the three scope routes plus
+ * Mount the reflection dispatcher under `basePath` (e.g. `/debug` inside the
+ * prefixed `/api/v1` plugin): the three scope routes plus
  * `GET {basePath}/channels` for introspection. `channels` is a single segment,
  * so it cannot collide with `:service/:method`.
  */
@@ -80,7 +72,7 @@ export function registerServiceDispatcherRoutes(
   basePath: string,
   opts: ServiceDispatcherRouteOptions = {},
 ): void {
-  const lookup = opts.lookup ?? resolveChannel;
+  const lookup = opts.lookup ?? resolveAnyScopedServiceId;
   const scopeRoutes: { path: string; scopeKind: ScopeKind }[] = [
     { path: `${basePath}/:service/:method`, scopeKind: 'core' },
     { path: `${basePath}/session/:session_id/:service/:method`, scopeKind: 'session' },
@@ -97,18 +89,10 @@ export function registerServiceDispatcherRoutes(
 
   // Introspection: the dynamic service browser (kimi-inspect) reads this once
   // per connection.
-  const describe = opts.describe ?? describeChannels;
+  const describe = opts.describe ?? describeAllChannels;
   app.get(`${basePath}/channels`, async (req, reply) =>
     reply.send(okEnvelope(describe(), req.id)),
   );
-}
-
-export function registerRpcRoutes(
-  app: RouteHost,
-  core: Scope,
-  opts: RegisterRpcRoutesOptions = {},
-): void {
-  registerServiceDispatcherRoutes(app, core, '/api/v2', opts);
 }
 
 function makeHandler(

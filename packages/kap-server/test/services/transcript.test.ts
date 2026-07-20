@@ -29,6 +29,7 @@ import {
   type AgentTranscriptSnapshot,
   type AppendOp,
   type FrameUpsertOp,
+  type InteractionUpsertOp,
   type TranscriptOperation,
   type TranscriptTask,
   type TranscriptTurn,
@@ -330,6 +331,9 @@ describe('AgentTranscriptProjector', () => {
 
   it('snapshotToOps anchors standalone items so backfill keeps history order against live turns', () => {
     const snapshot: AgentTranscriptSnapshot = {
+      interactions: [],
+      attachments: [],
+      todos: [],
       items: [
         {
           kind: 'turn',
@@ -729,7 +733,7 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('places interaction frames next to the gating tool call and back-links on resolve', () => {
+  it('emits interactions on both channels (legacy frame + global entity), back-links on resolve', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
@@ -761,12 +765,18 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    let tool = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
-    const interaction = turnOps('t2', tx.getItems()).steps[0]!.frames.find(
-      (f) => f.kind === 'interaction',
-    );
-    expect(interaction).toMatchObject({
+    // Legacy channel: the inline frame, placed next to the gating tool call.
+    const legacy = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'interaction');
+    expect(legacy).toMatchObject({
       frameId: 'i-apr-1',
+      interactionId: 'apr-1',
+      interactionKind: 'approval',
+      toolCallId: 'call_9',
+      state: 'pending',
+      request,
+    });
+    // Authoritative channel: the global entity, anchored by toolCallId.
+    expect(tx.getInteraction('apr-1')).toMatchObject({
       interactionId: 'apr-1',
       interactionKind: 'approval',
       toolCallId: 'call_9',
@@ -777,15 +787,99 @@ describe('AgentTranscriptProjector', () => {
 
     tx.apply(projector.mapInteractionResolved('apr-1', { decision: 'approved', scope: 'session' }));
 
-    tool = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
+    const tool = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
     expect(tool).toMatchObject({ approvalId: 'apr-1' });
     expect(
       turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'interaction'),
     ).toMatchObject({ state: 'approved', response: { decision: 'approved', scope: 'session' } });
+    expect(tx.getInteraction('apr-1')).toMatchObject({
+      state: 'approved',
+      response: { decision: 'approved', scope: 'session' },
+    });
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
-  it('falls back to the turn skeleton when the gating tool call is unknown', () => {
+  it('surfaces a mid-turn task notification as a user input frame linked to the task', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    const notified = (): DomainEvent =>
+      ev({
+        type: 'task.notified',
+        notificationType: 'task.completed',
+        title: 'Background process completed',
+        body: 'pnpm test — 42 passed',
+        severity: 'info',
+        sourceKind: 'background_task',
+        sourceId: 'task_1',
+      });
+
+    // Idle (no open step): the notification opens a task-origin turn instead —
+    // no inline frame.
+    tx.apply(projector.map(notified()));
+    expect(tx.getItems()).toHaveLength(0);
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    tx.apply(projector.map(notified()));
+
+    const frames = turnOps('t1', tx.getItems()).steps[0]!.frames;
+    const frame = frames.find((f) => f.kind === 'text' && f.role === 'user');
+    expect(frame).toMatchObject({ kind: 'text', role: 'user', taskId: 'task_1' });
+    expect(frame?.kind === 'text' && frame.text).toContain('Background process completed');
+  });
+
+  it('replaces the global todo document on a confirmed TodoList write', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+
+    // A read (no `todos` arg) writes nothing.
+    feed(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_read', name: 'TodoList', args: {} }));
+    feed(ev({ type: 'tool.result', toolCallId: 'call_read', output: '2 todos' }));
+    expect(tx.getTodo('todo')).toBeUndefined();
+
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_write',
+        name: 'TodoList',
+        args: { todos: [{ title: 'write tests', status: 'in_progress' }, { title: 'ship', status: 'pending' }] },
+      }),
+    );
+    const writeFrame = turnOps('t1', tx.getItems()).steps[0]!.frames.find(
+      (f) => f.kind === 'tool' && f.toolCallId === 'call_write',
+    );
+    expect(writeFrame?.kind === 'tool' && writeFrame.todoId).toBe('todo');
+
+    feed(ev({ type: 'tool.result', toolCallId: 'call_write', output: 'updated' }));
+    expect(tx.getTodo('todo')?.items).toEqual([
+      { title: 'write tests', status: 'in_progress' },
+      { title: 'ship', status: 'pending' },
+    ]);
+
+    // A failed write must not clobber the document.
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'call_fail',
+        name: 'TodoList',
+        args: { todos: [] },
+      }),
+    );
+    feed(ev({ type: 'tool.result', toolCallId: 'call_fail', output: 'boom', isError: true }));
+    expect(tx.getTodo('todo')?.items).toHaveLength(2);
+  });
+
+  it('places only the legacy frame when the payload has no toolCallId (fallback placement)', () => {
+    // The entity requires its anchor (every real interaction comes from a
+    // tool call); the legacy frame keeps its historical fallback placement.
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
 
@@ -800,6 +894,7 @@ describe('AgentTranscriptProjector', () => {
     const turn = turnOps('t3', tx.getItems());
     expect(turn.steps[0]!.stepId).toBe('t3.1');
     expect(turn.steps[0]!.frames[0]).toMatchObject({ kind: 'interaction', state: 'pending' });
+    expect(tx.getInteraction('q1')).toBeUndefined();
 
     // Dismissed question (null response).
     tx.apply(projector.mapInteractionResolved('q1', null));
@@ -1010,8 +1105,8 @@ describe('bindSessionTranscript', () => {
 
     binding.seedPendingInteractions();
     const states = ops
-      .filter((op): op is FrameUpsertOp => op.op === 'frame.upsert')
-      .map((op) => (op.frame.kind === 'interaction' ? op.frame.state : undefined));
+      .filter((op): op is InteractionUpsertOp => op.op === 'interaction.upsert')
+      .map((op) => op.interaction.state);
     expect(states).toEqual(['pending', 'approved']);
     binding.dispose();
   });
@@ -1186,8 +1281,8 @@ describe('bindSessionTranscript', () => {
 
   it('seeds pending interactions per agent, not before that agent is backfilled', () => {
     const interactions = new SessionInteractionService();
-    interactions.enqueue({ id: 'q-main', kind: 'question', payload: {}, origin: { agentId: 'main', turnId: 0 } });
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-main', kind: 'question', payload: { toolCallId: 'call_main' }, origin: { agentId: 'main', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
 
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
@@ -1215,7 +1310,7 @@ describe('bindSessionTranscript', () => {
 
     // Created live, but during the backfill window (no seed has run yet):
     // announcing now would misplace it into a synthetic step for good.
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
     expect(byAgent.size).toBe(0);
 
     binding.seedPendingInteractions('main');
@@ -1238,7 +1333,7 @@ describe('bindSessionTranscript', () => {
     // Created AFTER binding: fully live-covered by its projector, so its
     // pendings announce without waiting for any backfill.
     agents.add('sub-1');
-    interactions.enqueue({ id: 'q1', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q1', kind: 'question', payload: { toolCallId: 'call_q1' }, origin: { agentId: 'sub-1', turnId: 0 } });
     expect([...byAgent.keys()]).toEqual(['sub-1']);
     binding.dispose();
   });
@@ -1285,7 +1380,7 @@ describe('bindSessionTranscript', () => {
   it('subscribes the bus for an agent whose projector was seeded before its handle existed', () => {
     const agents = new FakeAgents();
     const interactions = new SessionInteractionService();
-    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: { toolCallId: 'call_sub' }, origin: { agentId: 'sub-1', turnId: 0 } });
     const store = new TranscriptStore('s1');
     const byAgent = new Map<string, TranscriptOperation[]>();
     const binding = bindSessionTranscript(store, fakeSession(interactions, agents), undefined, (event) => {
@@ -1293,9 +1388,12 @@ describe('bindSessionTranscript', () => {
     });
 
     // Seeding creates the projector WITHOUT a lifecycle handle — no bus
-    // subscription can exist yet.
+    // subscription can exist yet. (Two ops: the legacy frame + the entity.)
     binding.seedPendingInteractions('sub-1');
-    expect(byAgent.get('sub-1')).toHaveLength(1);
+    expect(byAgent.get('sub-1')?.map((op) => op.op).toSorted()).toEqual([
+      'frame.upsert',
+      'interaction.upsert',
+    ]);
 
     // The agent materializes later: it must still get its live subscription
     // (guarding on the projector's existence would drop every live event).

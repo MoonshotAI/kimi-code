@@ -88,7 +88,7 @@ export async function registerApiV1Routes(
       registerHealthRoute(apiV1);
 
       // Dev-only debug RPC surface (`--debug-endpoints`, loopback-gated in
-      // `start.ts`): every scoped Service reachable, no `/api/v2` whitelist.
+      // `start.ts`): every scoped Service reachable.
       if (opts.debugEndpoints === true) {
         registerDebugRoutes(apiV1 as unknown as Parameters<typeof registerDebugRoutes>[0], core);
       }

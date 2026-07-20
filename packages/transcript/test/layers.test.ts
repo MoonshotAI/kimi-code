@@ -113,9 +113,25 @@ describe('granularity', () => {
         { kind: 'marker', markerId: 'm1', marker: 'skill' },
       ],
       tasks: [],
+      interactions: [
+        {
+          interactionId: 'appr-1',
+          interactionKind: 'approval' as const,
+          toolCallId: 'c1',
+          state: 'pending' as const,
+        },
+      ],
+      attachments: [
+        { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'url' as const, url: 'https://example.com/a.png' } },
+      ],
+      todos: [{ todoId: 'todo', items: [{ title: 'write tests', status: 'in_progress' as const }] }],
       meta: {},
     };
     const turnGrade = redactSnapshotForGrade('turn', snapshot);
+    // Global entities flow at 'turn' grade untouched.
+    expect(turnGrade.interactions).toHaveLength(1);
+    expect(turnGrade.attachments).toHaveLength(1);
+    expect(turnGrade.todos).toHaveLength(1);
     const turn = turnGrade.items[0];
     expect(turn?.kind === 'turn' && turn.steps).toEqual([]);
     expect(turn?.kind === 'turn' && turn.prompt).toBe('hi');
@@ -206,7 +222,7 @@ describe('ViewRegistry', () => {
 describe('wire schemas', () => {
   it('roundtrips every op kind', () => {
     const ops: TranscriptOperation[] = [
-      { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], meta: {}, hasMoreOlder: true } },
+      { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], meta: {}, hasMoreOlder: true } },
       turnOp(1),
       stepOp,
       frameOp,
@@ -214,6 +230,15 @@ describe('wire schemas', () => {
       { op: 'marker.upsert', item: { kind: 'marker', markerId: 'm1', marker: 'goal' } },
       { op: 'taskref.upsert', item: { kind: 'taskref', refId: 'r1', taskId: 'task1' } },
       { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false, outputTail: '' } },
+      {
+        op: 'interaction.upsert',
+        interaction: { interactionId: 'appr-1', interactionKind: 'approval', toolCallId: 'c1', state: 'pending' },
+      },
+      {
+        op: 'attachment.upsert',
+        attachment: { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'file', fileId: 'f1' } },
+      },
+      { op: 'todo.upsert', todo: { todoId: 'todo', items: [{ title: 'x', status: 'done' }] } },
       { op: 'meta.merge', meta: { goal: { objective: 'x', status: 'active' } } },
       { op: 'items.remove', ids: ['t1'] },
     ];
@@ -229,6 +254,9 @@ describe('wire schemas', () => {
       items: [],
       has_more: false,
       tasks: [],
+      interactions: [],
+      attachments: [],
+      todos: [],
       meta: {},
       agents: [{ agentId: 'main', type: 'main' }],
       pending_interactions: [],
@@ -283,6 +311,43 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(tool?.kind === 'tool' && tool.input).toEqual({ path: '/a' });
     const marker = snapshot.items[2];
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
+  });
+
+  it('maps media parts on the opening user message to attachment entities, dropping base64 bytes', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this? [Image #1]' },
+          { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
+          { type: 'image', source: { kind: 'url', url: 'https://example.com/pic.png' } },
+          { type: 'file', file_id: 'file_9', name: 'notes.txt', media_type: 'text/plain', size: 128 },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'a screenshot' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.attachments).toHaveLength(3);
+    expect(snapshot.attachments[0]).toMatchObject({
+      attachmentId: 'att_1',
+      mediaType: 'image/png',
+      source: undefined, // base64 bytes never ship
+    });
+    expect(snapshot.attachments[1]).toMatchObject({
+      attachmentId: 'att_2',
+      source: { kind: 'url', url: 'https://example.com/pic.png' },
+    });
+    expect(snapshot.attachments[2]).toMatchObject({
+      attachmentId: 'att_3',
+      mediaType: 'text/plain',
+      name: 'notes.txt',
+      source: { kind: 'file', fileId: 'file_9' },
+    });
+    const firstTurn = snapshot.items[0];
+    if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
   });
 
   it('keeps cold tool calls running until a result is persisted', () => {

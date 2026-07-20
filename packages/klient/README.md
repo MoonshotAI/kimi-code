@@ -1,13 +1,17 @@
 # @moonshot-ai/klient
 
-Contract-driven client SDK for the agent-core-v2 engine. One facade, three
+Contract-driven client SDK for the agent-core-v2 engine. One facade, two
 transports — you pick the transport **once** at creation; everything after
 that is byte-identical:
 
 ```ts
-import { createKlient } from '@moonshot-ai/klient/http';   // or '/ipc', '/memory'
+import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
+import { createKlient } from '@moonshot-ai/klient/memory';   // or '/ipc'
 
-const klient = createKlient({ url: 'http://127.0.0.1:58627', token });
+const { app } = bootstrap({ homeDir }, [
+  ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
+]);
+const klient = createKlient({ scope: app });
 
 const env = await klient.global.env();
 const sessions = await klient.global.sessions.list({ limit: 20 });
@@ -30,7 +34,7 @@ contract (procedure schemas, shared by all transports)
    ↓
 KlientChannel { call, listen }   ← the only transport SPI
    ↓
-http │ ipc │ memory
+ipc │ memory
 ```
 
 - **Facade** — aggregated methods, no engine service tokens, no
@@ -61,32 +65,23 @@ http │ ipc │ memory
 
 | entry | options | events |
 |---|---|---|
-| `@moonshot-ai/klient/http` | `{ url, token?, fetch?, WebSocketImpl? }` | lazily opened WS, transparent |
 | `@moonshot-ai/klient/ipc` | `{ socketPath, token? }` | same socket |
 | `@moonshot-ai/klient/memory` | `{ scope }` (a bootstrapped engine app scope) | direct emitter/bus subscription |
 
 `ipc` and `memory` share one in-process dispatcher, so they behave identically
 by construction; `memory` additionally JSON round-trips every value so results
-match the networked transports byte-for-byte. The IPC host ships with the
-transport: `serveKlientIpc({ scope, socketPath })`.
+cross the same JSON boundary a socket transport would impose. The IPC host
+ships with the transport: `serveKlientIpc({ scope, socketPath })`.
 
-The same conformance suite runs against all three transports in this
-package's tests (`test/helpers/conformance.ts` — one test file per transport;
-the http leg boots an in-process kap-server).
+The same conformance suite runs against both transports in this
+package's tests (`test/helpers/conformance.ts` — one test file per transport).
 
 This package also hosts the e2e suites (the retired `server-e2e` package was
 folded in here):
 
-- `test/e2e/dual/` — session/agent suites that run the **exact same body**
-  against an in-memory engine and an in-process kap-server
-  (`test/helpers/dual.ts`). Model-requiring suites skip unless
-  `KIMI_E2E_MODEL` + `KIMI_E2E_API_KEY` (optional `KIMI_E2E_BASE_URL`,
-  `KIMI_E2E_PROTOCOL`) are set; the model is seeded into each backend's temp
-  home through the facade itself.
-- `test/e2e/v2/` — `/api/v2` wire tests booting kap-server in-process.
 - `test/e2e/legacy/` + `test/e2e/harness/` — the legacy `/api/v1` live suites
   and their client harness (skip unless `KIMI_SERVER_URL` is set; the v1
-  surface has no in-memory equivalent, so these stay http-only).
+  surface has no in-memory equivalent, so these stay live-server-only).
 
 The docker e2e runner (`pnpm docker:e2e`) runs this whole vitest suite inside
 a container against a container-local server. See `AGENTS.md` for the testing
@@ -100,13 +95,14 @@ What it deliberately leaves out (for now): onWill/hook-style interception
 upload (v1 multipart REST only), and the terminal surface (v1 REST + WS
 only).
 
-## Real-server smoke check
+## Smoke check
 
 ```sh
-KIMI_SERVER_URL=http://127.0.0.1:58627 \
-KIMI_SERVER_TOKEN=YOUR_SERVER_TOKEN \
 pnpm -C packages/klient smoke
 ```
 
-Omit `KIMI_SERVER_TOKEN` only for a server started with authentication
-bypassed. `examples/basic.ts` is a shorter narrated tour.
+`examples/smoke.ts` boots an in-process engine (memory transport) and asserts
+the `global` facade end-to-end — no server needed. `examples/basic.ts` is a
+shorter narrated tour; `examples/context-usage.ts` traces context-size
+readings through a real prompt (requires `KIMI_EXAMPLE_MODEL` +
+`KIMI_EXAMPLE_API_KEY`).

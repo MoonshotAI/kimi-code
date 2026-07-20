@@ -15,7 +15,7 @@ import {
   type TurnState,
 } from '@moonshot-ai/transcript';
 
-import type { WsLike } from '../channel/wsSocket';
+import type { WsLike } from '../channel/wsLike';
 import { fetchTranscriptPage, type TranscriptPage } from './api';
 import {
   countTurns,
@@ -56,6 +56,9 @@ const frameAppend = (turnId: string, stepId: string, frameId: string, offset: nu
 
 const emptyPage = {
   tasks: [],
+  interactions: [],
+  attachments: [],
+  todos: [],
   meta: {},
   pendingInteractions: [],
 } as const;
@@ -160,6 +163,9 @@ describe('fetchTranscriptPage', () => {
     items: [turnItem(1)],
     has_more: true,
     tasks: [{ taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: 'x' }],
+    interactions: [],
+    attachments: [],
+    todos: [],
     meta: { activity: 'turn' },
     agents: [],
     pending_interactions: ['apr-1'],
@@ -236,7 +242,7 @@ describe('TranscriptWs', () => {
       payload: {
         type: 'transcript.reset',
         agent_id: 'main',
-        snapshot: { items: [], tasks: [], meta: {} },
+        snapshot: { items: [], tasks: [], interactions: [], meta: {} },
         has_more_older: true,
       },
     });

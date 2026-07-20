@@ -2,9 +2,10 @@
  * `GET /sessions/{session_id}/transcript` — turn-granular session transcript.
  *
  * The page unit is the turn: a page is a contiguous slice of turns plus the
- * markers/taskrefs in their segments (`paginateTurns`); `tasks`, `meta`,
- * `agents` and `pending_interactions` are global state and ship unpaginated
- * with every response.
+ * markers/taskrefs in their segments (`paginateTurns`); `tasks`,
+ * `interactions`, `attachments`, `todos`, `meta`, `agents` and
+ * `pending_interactions` are global state and ship unpaginated with every
+ * response.
  *
  *   - Live sessions answer from the in-memory `TranscriptStore`
  *     (`TranscriptService.forSessionLive`), awaiting the requested agent's
@@ -127,6 +128,9 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
               items: page.items,
               has_more: page.hasMore,
               tasks: [...transcript.getTasks().values()],
+              interactions: [...transcript.getInteractions().values()],
+              attachments: [...transcript.getAttachments().values()],
+              todos: [...transcript.getTodos().values()],
               meta: transcript.getMeta(),
               agents: store.agents(),
               pending_interactions: transcript.listPendingInteractions(),
@@ -164,6 +168,9 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
             items: page.items,
             has_more: page.hasMore,
             tasks: snapshot.tasks,
+            interactions: snapshot.interactions,
+            attachments: snapshot.attachments,
+            todos: snapshot.todos,
             meta: snapshot.meta,
             agents: roster,
             pending_interactions: [],

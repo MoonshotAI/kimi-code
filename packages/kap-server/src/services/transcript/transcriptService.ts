@@ -593,8 +593,9 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
  *     persisted one carries (a tool.result dropped in the attach race is
  *     otherwise unrecoverable until a cold rebuild) — live-only extras
  *     (display / agentRefs / approvalId) are preserved on the emitted frame;
- *   - interaction frames are never re-emitted: they are not persisted as
- *     context messages and the live kernel bridge is always richer.
+ *   - interactions are never re-emitted: they are global entities (not step
+ *     content), are not persisted as context messages, and the live kernel
+ *     bridge is always richer.
  */
 export function healTurnOps(
   snapshotTurn: TranscriptTurn,

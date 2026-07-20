@@ -39,11 +39,14 @@ import type {
   AgentRef,
   InteractionFrame,
   StepHeader,
+  TextFrame,
   ToolCallFrame,
   TranscriptFrame,
+  TranscriptInteraction,
   TranscriptMarker,
   TranscriptOperation,
   TranscriptTask,
+  TranscriptTodo,
   TurnHeader,
   TurnOrigin,
   TurnState,
@@ -107,14 +110,17 @@ export interface ToolFrameRecord {
 interface InteractionRecord {
   readonly turnId: string;
   readonly stepId: string;
+  /** Legacy inline frame (kept for wire compatibility). */
   readonly frame: InteractionFrame;
+  /** Global entity (authoritative channel); absent when the payload carried no toolCallId. */
+  readonly interaction: TranscriptInteraction | undefined;
 }
 
 export class AgentTranscriptProjector {
   /** Latest header of the in-flight (or most recent) turn; kept whole so terminal upserts preserve `origin` / `startedAt` by reference. */
   private currentTurn: TurnHeader | undefined;
   private currentStep: StepHeader | undefined;
-  /** turnId → highest step ordinal seen (fallback placement for interactions). */
+  /** turnId → highest step ordinal seen (engine-reported placement hint). */
   private readonly stepOrdinals = new Map<string, number>();
   private frameOrdinal = 0;
   private openText: OpenTextFrame | undefined;
@@ -160,8 +166,7 @@ export class AgentTranscriptProjector {
       case 'task.terminated':
         return this.onTaskLifecycle(event);
       case 'task.notified':
-        // The notification surfaces as a new turn with `origin.kind === 'task'`.
-        return [];
+        return this.onTaskNotified(event);
       case 'shell.started':
         return this.onShellStarted(event);
       case 'shell.output':
@@ -446,14 +451,16 @@ export class AgentTranscriptProjector {
     const turnId = `t${event.turnId}`;
     const step = this.ensureStep(turnId, ops);
     const frameId = `${step.stepId}.${event.toolCallId}`;
+    const input = parseToolArgs(event.args);
     const frame: ToolCallFrame = {
       kind: 'tool',
       frameId,
       toolCallId: event.toolCallId,
       name: event.name,
       state: 'running',
-      input: parseToolArgs(event.args),
+      input,
       display: event.display,
+      todoId: event.name === TODO_LIST_TOOL_NAME && todoWriteItems(input) !== undefined ? TODO_ENTITY_ID : undefined,
     };
     this.toolFrames.set(event.toolCallId, { turnId, stepId: step.stepId, frame });
     ops.push({ op: 'frame.upsert', turnId, stepId: step.stepId, frame });
@@ -475,7 +482,19 @@ export class AgentTranscriptProjector {
       error: isError && typeof event.output === 'string' ? event.output : undefined,
     };
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
-    return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
+    const ops: TranscriptOperation[] = [
+      { op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame },
+    ];
+    // A confirmed TodoList write replaces the global todo document (the frame
+    // keeps its own point-in-time snapshot in `display`).
+    if (!isError && frame.name === TODO_LIST_TOOL_NAME) {
+      const items = todoWriteItems(frame.input);
+      if (items !== undefined) {
+        const todo: TranscriptTodo = { todoId: TODO_ENTITY_ID, items, updatedAt: nowIso() };
+        ops.push({ op: 'todo.upsert', todo });
+      }
+    }
+    return ops;
   }
 
   /**
@@ -493,6 +512,40 @@ export class AgentTranscriptProjector {
   }
 
   // ---------------------------------------------------------------- tasks
+
+  /**
+   * `task.notified` — a background task's completion notification. Mid-turn
+   * the engine injects the notification message into the running turn's
+   * context, so it surfaces as a user input frame inside the open step,
+   * linked to the task entity (`text.taskId`). When no step is open the
+   * notification opens a fresh turn with `origin.kind === 'task'` instead
+   * (the `turn.started` path owns that case).
+   */
+  private onTaskNotified(event: {
+    notificationType: string;
+    title: string;
+    body: string;
+    severity: string;
+    sourceKind: string;
+    sourceId: string;
+  }): TranscriptOperation[] {
+    const step = this.currentStep;
+    const turn = this.currentTurn;
+    const midTurn =
+      step !== undefined &&
+      turn !== undefined &&
+      step.state === 'running' &&
+      turn.state === 'running';
+    if (!midTurn) return [];
+    const frame: TextFrame = {
+      kind: 'text',
+      frameId: `${step.stepId}.f${++this.frameOrdinal}`,
+      role: 'user',
+      text: `${event.title}\n${event.body}`.trim(),
+      taskId: event.sourceId,
+    };
+    return [{ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame }];
+  }
 
   private onTaskLifecycle(event: {
     type: 'task.started' | 'task.terminated';
@@ -811,12 +864,16 @@ export class AgentTranscriptProjector {
   // ---------------------------------------------------------------- interactions
 
   /**
-   * `requested` — place an interaction frame next to the tool call that gated
-   * it; fall back to the turn's latest step (the store skeleton-fills
-   * `t<n>.1` when nothing else exists). `request` is the raw in-process
-   * `ApprovalRequest` / `QuestionRequest`, passed through as-is (plan-mode's
-   * ExitPlanMode is an ordinary approval; the plan card renders from the
-   * linked tool frame's `display`).
+   * `requested` — dual emission, by wire-compat contract:
+   *  - legacy: an inline `InteractionFrame` placed next to the tool call that
+   *    gated it (fallback: the turn's latest step), exactly as older
+   *    consumers read it;
+   *  - authoritative: the global interaction entity (`interaction.upsert`),
+   *    addressed by id, pagination-proof, visible at 'turn' grade.
+   * Both mirror the same interaction by `interactionId`; the entity's
+   * `toolCallId` is required (approvals gate a tool call; questions are
+   * emitted by the AskUserQuestion tool call itself), so a payload without
+   * one still produces the legacy frame (fallback placement) but no entity.
    */
   mapInteractionRequested(interaction: ProjectorInteraction): TranscriptOperation[] {
     const payload = interaction.payload as { toolCallId?: unknown; turnId?: unknown };
@@ -848,13 +905,26 @@ export class AgentTranscriptProjector {
       state: 'pending',
       request: interaction.payload,
     };
-    this.interactions.set(interaction.id, { turnId, stepId, frame });
-    return [{ op: 'frame.upsert', turnId, stepId, frame }];
+    const ops: TranscriptOperation[] = [{ op: 'frame.upsert', turnId, stepId, frame }];
+    let entity: TranscriptInteraction | undefined;
+    if (toolCallId !== undefined) {
+      entity = {
+        interactionId: interaction.id,
+        interactionKind: interaction.kind,
+        toolCallId,
+        state: 'pending',
+        request: interaction.payload,
+      };
+      ops.push({ op: 'interaction.upsert', interaction: entity });
+    }
+    this.interactions.set(interaction.id, { turnId, stepId, frame, interaction: entity });
+    return ops;
   }
 
   /**
-   * `resolved` — terminal state plus the raw engine response; when the linked
-   * tool call is known, re-emit its frame with the `approvalId` back-link.
+   * `resolved` — terminal state plus the raw engine response on BOTH channels
+   * (legacy frame and entity); when the linked tool call is known, re-emit
+   * its frame with the `approvalId` back-link.
    */
   mapInteractionResolved(id: string, response: unknown): TranscriptOperation[] {
     const record = this.interactions.get(id);
@@ -865,6 +935,12 @@ export class AgentTranscriptProjector {
     const ops: TranscriptOperation[] = [
       { op: 'frame.upsert', turnId: record.turnId, stepId: record.stepId, frame },
     ];
+    if (record.interaction !== undefined) {
+      ops.push({
+        op: 'interaction.upsert',
+        interaction: { ...record.interaction, state, response },
+      });
+    }
     const toolCallId = record.frame.toolCallId;
     if (toolCallId !== undefined) {
       // Adopt the seeded frame when the call predates this projector, so the
@@ -965,13 +1041,32 @@ function mapTaskKind(kind: string): TranscriptTask['kind'] {
 function mapInteractionEndState(
   kind: 'approval' | 'question',
   response: unknown,
-): InteractionFrame['state'] {
+): TranscriptInteraction['state'] {
   if (kind === 'question') return response === null ? 'dismissed' : 'answered';
   const decision = (response as { decision?: unknown } | null | undefined)?.decision;
   if (decision === 'approved' || decision === 'rejected' || decision === 'cancelled') {
     return decision;
   }
   return 'cancelled';
+}
+
+/** Engine todo tool name and the singleton todo entity id (the engine store key). */
+const TODO_LIST_TOOL_NAME = 'TodoList';
+const TODO_ENTITY_ID = 'todo';
+
+/** TodoList write args → todo items; undefined when the call is a read or malformed. */
+function todoWriteItems(input: unknown): TranscriptTodo['items'] | undefined {
+  const todos = (input as { todos?: unknown } | undefined)?.todos;
+  if (!Array.isArray(todos)) return undefined;
+  const items: { title: string; status: 'pending' | 'in_progress' | 'done' }[] = [];
+  for (const entry of todos) {
+    const title = (entry as { title?: unknown } | undefined)?.title;
+    const status = (entry as { status?: unknown } | undefined)?.status;
+    if (typeof title !== 'string') return undefined;
+    if (status !== 'pending' && status !== 'in_progress' && status !== 'done') return undefined;
+    items.push({ title, status });
+  }
+  return items;
 }
 
 /** Tool args arrive parsed in v2; tolerate a raw JSON string (parse-or-keep). */

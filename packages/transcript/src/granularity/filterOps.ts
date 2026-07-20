@@ -8,8 +8,8 @@
  *
  * Content-bearing ops gated below 'block':
  *  - step.upsert / frame.upsert (step & frame detail)
- * Everything else (turn headers, markers, taskrefs, tasks, meta, removals,
- * resets) flows at 'turn' and up. `off` admits nothing.
+ * Everything else (turn headers, markers, taskrefs, tasks, interactions,
+ * meta, removals, resets) flows at 'turn' and up. `off` admits nothing.
  */
 
 import type { TranscriptGrade } from './grade';
@@ -50,9 +50,9 @@ export function isAppendOnly(ops: readonly TranscriptOperation[]): boolean {
  * Redact a reset snapshot to what the grade admits — the reset counterpart of
  * `filterOpsForGrade` (live ops are filtered per grade; the reset must not
  * leak the detail a lower grade never sees). Below 'block' the step/frame
- * detail is stripped, leaving turn headers, standalone items, tasks and meta
- * (exactly what 'turn' admits); 'block' and 'delta' carry the full snapshot,
- * and 'off' never reaches here (no reset is sent).
+ * detail is stripped, leaving turn headers, standalone items, tasks,
+ * interactions and meta (exactly what 'turn' admits); 'block' and 'delta'
+ * carry the full snapshot, and 'off' never reaches here (no reset is sent).
  */
 export function redactSnapshotForGrade(
   grade: TranscriptGrade,

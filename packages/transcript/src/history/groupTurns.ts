@@ -5,7 +5,8 @@
  * This is a best-effort reconstruction — the live path (engine events) is the
  * high-fidelity one. Known limitations, accepted by design:
  *  - step granularity collapses to "one assistant message = one step";
- *  - media content parts are dropped (text/think only);
+ *  - media content parts become attachment entities (metadata only — base64
+ *    bytes are dropped, never shipped); mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
  *  - interaction frames do not appear (approvals are not persisted as
  *    context messages);
@@ -21,13 +22,27 @@
  */
 
 import type { AgentTranscriptSnapshot } from '../ops/operation';
+import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 
+export type HistoryMediaSource =
+  | { readonly kind: 'url'; readonly url: string }
+  | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
+  | { readonly kind: 'file'; readonly file_id: string };
+
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'think'; readonly think: string }
+  | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource }
+  | {
+      readonly type: 'file';
+      readonly file_id: string;
+      readonly name: string;
+      readonly media_type: string;
+      readonly size: number;
+    }
   | { readonly type: string };
 
 export interface HistoryToolCall {
@@ -50,6 +65,7 @@ interface TurnDraft {
   ordinal: number;
   origin: TurnOrigin;
   prompt?: string;
+  attachmentIds?: string[];
   steps: StepDraft[];
 }
 
@@ -85,10 +101,47 @@ export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
+  const attachments: TranscriptAttachment[] = [];
   let turn: TurnDraft | undefined;
   /** Next turn ordinal — 0-based, matching the engine's live turn numbering. */
   let nextOrdinal = 0;
   let markerCount = 0;
+
+  /** Media parts of a turn-opening user message → attachment entities (+ ids). */
+  const collectAttachments = (message: HistoryMessage): string[] | undefined => {
+    const ids: string[] = [];
+    for (const part of message.content ?? []) {
+      if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
+        if (!('source' in part) || part.source === undefined) continue;
+        const source = part.source as HistoryMediaSource;
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType:
+            source.kind === 'base64' ? source.media_type : `${part.type}/*`,
+          source:
+            source.kind === 'url'
+              ? { kind: 'url', url: source.url }
+              : source.kind === 'file'
+                ? { kind: 'file', fileId: source.file_id }
+                : undefined,
+          // base64 bytes are deliberately dropped — never shipped on the wire.
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+      } else if (part.type === 'file' && 'file_id' in part) {
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType: part.media_type as string,
+          name: part.name as string,
+          size: part.size as number,
+          source: { kind: 'file', fileId: part.file_id as string },
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+      }
+    }
+    return ids.length > 0 ? ids : undefined;
+  };
 
   const ensureTurn = (origin: TurnOrigin = FALLBACK_ORIGIN): TurnDraft => {
     if (!turn) {
@@ -100,10 +153,10 @@ export function groupMessagesIntoSnapshot(
     return turn;
   };
 
-  const startTurn = (origin: TurnOrigin, prompt?: string): TurnDraft => {
+  const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
-    turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, steps: [] };
+    turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
   };
@@ -140,7 +193,7 @@ export function groupMessagesIntoSnapshot(
         }
         continue;
       }
-      startTurn(mapOrigin(message), textOf(message));
+      startTurn(mapOrigin(message), textOf(message), collectAttachments(message));
       continue;
     }
 
@@ -198,7 +251,9 @@ export function groupMessagesIntoSnapshot(
     }
   }
 
-  return { items, tasks: [], meta: {} };
+  // Approvals / questions are never persisted, so a cold rebuild carries no
+  // interaction entities (same as the pre-entity frame model).
+  return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
 }
 
 // ---------------------------------------------------------------- helpers
@@ -282,6 +337,7 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
     state: 'completed',
     origin: draft.origin,
     prompt: draft.prompt,
+    attachmentIds: draft.attachmentIds,
     steps: draft.steps.map((step) => ({
       kind: 'step' as const,
       stepId: step.stepId,
