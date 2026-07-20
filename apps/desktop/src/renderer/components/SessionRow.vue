@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/SessionRow.vue -->
+<!-- apps/web/src/components/SessionRow.vue -->
 <!-- A single session row: status dot + title + time + attention pill + kebab. -->
 <!-- Inline rename (dblclick) and delete-confirm live here. -->
 <script setup lang="ts">

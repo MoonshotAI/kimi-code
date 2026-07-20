@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/mobile/MobileSettingsSheet.vue -->
+<!-- apps/web/src/components/mobile/MobileSettingsSheet.vue -->
 <!-- Mobile settings: a bottom sheet that surfaces the desktop Composer-toolbar -->
 <!-- controls as big tappable rows — model (opens ModelPicker), thinking level -->
 <!-- (inline cycle picker), plan mode (toggle), permission (cycle), and a -->

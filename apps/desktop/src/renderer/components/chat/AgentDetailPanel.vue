@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/AgentDetailPanel.vue -->
+<!-- apps/web/src/components/chat/AgentDetailPanel.vue -->
 <!-- A subagent's full detail in the right-side panel (App's shared slot — opening
      this replaces a thinking/compaction/file view and vice versa). Mirrors the
      thinking panel: the content is reactive, so a still-running subagent keeps

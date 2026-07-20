@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/WorkspaceGroup.vue -->
+<!-- apps/web/src/components/WorkspaceGroup.vue -->
 <!-- One workspace group in the sidebar: the workspace header (folder icon,
      name / inline rename, kebab, add button), the path line, and that group's
      session rows (with show-more truncation + empty state). State, menus,

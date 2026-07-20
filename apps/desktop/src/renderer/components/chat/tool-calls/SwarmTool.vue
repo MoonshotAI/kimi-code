@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/SwarmTool.vue -->
+<!-- apps/web/src/components/chat/tool-calls/SwarmTool.vue -->
 <!-- A single AgentSwarm tool call, rendered as one inline "operation card".
      Expanded by default while the swarm runs, collapsed once settled; when
      opened the body shows a phase overview and a phase overview and a

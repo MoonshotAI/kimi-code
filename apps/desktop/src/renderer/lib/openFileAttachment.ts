@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/openFileAttachment.ts
+// apps/web/src/lib/openFileAttachment.ts
 // Open a generic file attachment in a new tab — but ONLY types the browser
 // renders inertly (the whitelist below). A blob: URL inherits this origin, so
 // navigating a tab to an active document (HTML/SVG/JS/XML) would execute its

@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/tool-calls/MediaTool.vue -->
+<!-- apps/web/src/components/chat/tool-calls/MediaTool.vue -->
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { ToolCall, ToolMedia } from '../../../types';

@@ -1,4 +1,4 @@
-// apps/kimi-web/src/components/chat/tool-calls/toolRegistry.ts
+// apps/web/src/components/chat/tool-calls/toolRegistry.ts
 import type { Component } from 'vue';
 import type { ToolCall } from '../../../types';
 import { normalizeToolName } from '../../../lib/toolMeta';

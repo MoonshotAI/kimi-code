@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/latestTodos.ts
+// apps/web/src/composables/latestTodos.ts
 // Derives the CURRENT todo list from a session transcript. The model manages
 // todos via the TodoList tool: every write carries the FULL list in
 // `input.todos` (an empty array clears it), and a call without `todos` is a

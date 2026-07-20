@@ -146,7 +146,7 @@ export function createWindow(): void {
     downloadsDir: app.getPath('downloads'),
   });
   // Keep the window title as the product name. The web page sets document.title
-  // ("Kimi Code Web"), which would otherwise replace it.
+  // ("Kimi Code"), which would otherwise replace it.
   win.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
   });

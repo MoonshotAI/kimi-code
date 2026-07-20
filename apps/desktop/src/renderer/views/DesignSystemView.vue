@@ -65,7 +65,7 @@ onUnmounted(() => {
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">K</div>
-          <div class="brand-name">Kimi Web</div>
+          <div class="brand-name">Kimi Code</div>
         </div>
         <div class="brand-sub">Design System · v1.0</div>
 
@@ -99,13 +99,13 @@ onUnmounted(() => {
           <section id="overview">
             <div class="hero">
               <span class="eyebrow">● Design System · v1.0</span>
-              <h1>Kimi Web <span class="grad">Design System</span></h1>
+              <h1>Kimi Code <span class="grad">Design System</span></h1>
               <p class="lead">
-                This document defines the visual language and component specification for Kimi Web — design tokens, component primitives, the chat interface, theming, and style rules.
+                This document defines the visual language and component specification for Kimi Code — design tokens, component primitives, the chat interface, theming, and style rules.
                 All UI work is grounded in it: unified, restrained, token-driven, and themeable.
               </p>
               <div class="hero-meta">
-                <span class="meta-chip"><span class="dot"></span> Scope <b>apps/kimi-web</b></span>
+                <span class="meta-chip"><span class="dot"></span> Scope <b>apps/web</b></span>
                 <span class="meta-chip">Component primitives</span>
                 <span class="meta-chip">Theme <b>1 set · 4 customizable colors</b></span>
                 <span class="meta-chip">Light / dark mode</span>
@@ -128,7 +128,7 @@ onUnmounted(() => {
               <h2 class="sec-title">Design Principles</h2>
             </div>
             <p class="sec-desc">
-              Every UI decision traces back to the following principles. Kimi Web is a local Agent tool for developers: quick scanning, long stretches of staring, often in the dark — the design serves the task, and is restrained, clinical, and density-first.
+              Every UI decision traces back to the following principles. Kimi Code is a local Agent tool for developers: quick scanning, long stretches of staring, often in the dark — the design serves the task, and is restrained, clinical, and density-first.
             </p>
 
             <ul class="clean check">
@@ -233,7 +233,7 @@ onUnmounted(() => {
             <p>All disabled controls use <code>opacity:.5</code> + <code>cursor:not-allowed</code> uniformly; do not separately grey out or recolor.</p>
 
             <h3 class="sub">Font families</h3>
-            <p>Kimi Web uses two font tokens: <b>--font-ui</b> (UI and body, with Schibsted Grotesk for Latin and Noto Sans SC for Simplified Chinese) and <b>--font-mono</b> (code and monospace). Components always reference the variables; do not hard-code font names.</p>
+            <p>Kimi Code uses two font tokens: <b>--font-ui</b> (UI and body, with Schibsted Grotesk for Latin and Noto Sans SC for Simplified Chinese) and <b>--font-mono</b> (code and monospace). Components always reference the variables; do not hard-code font names.</p>
 
             <h4 class="mini">--font-ui · UI &amp; body (Schibsted Grotesk + Noto Sans SC)</h4>
             <p>Body and UI use self-hosted Schibsted Grotesk for Latin text and self-hosted Noto Sans SC Variable for Simplified Chinese. Platform fonts remain as fallbacks:</p>
@@ -1022,7 +1022,7 @@ onUnmounted(() => {
                 <div class="p-section-label" style="padding:12px 16px 4px">Workspaces</div>
                 <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;margin:1px 6px;border-radius:8px;color:var(--p-text);font-size:13px">
                   <svg style="color:var(--d-fg-faint);flex:none" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M4 5v14h16V7h-8.414l-2-2zm8.414 0H21a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h7.414z"/></svg>
-                  kimi-code-web
+                  kimi-code-app
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;margin:1px 6px;border-radius:8px;color:var(--p-text);font-size:13px">
                   <svg style="color:var(--d-fg-faint);flex:none" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M4 5v14h16V7h-8.414l-2-2zm8.414 0H21a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h7.414z"/></svg>
@@ -1039,7 +1039,7 @@ onUnmounted(() => {
               <h2 class="sec-title">Chat Interface Overhaul</h2>
             </div>
             <p class="sec-desc">
-              The message stream is the core of Kimi Web. Tool calls render as <b>quiet activity lines</b> — one borderless line per call,
+              The message stream is the core of Kimi Code. Tool calls render as <b>quiet activity lines</b> — one borderless line per call,
               bespoke per tool kind, auto-grouped, expanding on demand — while Question / Approval elevate to a <b>floating neutral surface</b>
               because they need a decision, and the Swarm composite keeps a card; the Composer collapses into a single rounded container.
             </p>
@@ -1287,7 +1287,7 @@ onUnmounted(() => {
               <h2 class="sec-title">Theming</h2>
             </div>
             <p class="sec-desc">
-              Kimi Web uses <b>one unified theme</b>: the same components, fonts, radii, shadows, and surfaces — "reskinning" only changes colors.
+              Kimi Code uses <b>one unified theme</b>: the same components, fonts, radii, shadows, and surfaces — "reskinning" only changes colors.
               Colors are collapsed into <b>4 seed tokens</b> — two theme colors + one light surface + one dark surface; the neutrals and accent are derived from them,
               and the semantic status colors (success / warning / danger) ship as independent palettes paired with the seeds, one set each for light / dark.
             </p>
@@ -1401,7 +1401,7 @@ onUnmounted(() => {
 
             <h3 class="sub">Moon phase exemption</h3>
             <div class="callout good"><span class="ico">✓</span><div>
-              The "🌑…🌘" moon-phase emoji are a brand signature of Kimi Web, <b>used only in the chat state of "message sent, waiting for the Agent's first response"</b>, and are rendered uniformly by the <code>MoonSpinner</code> component; waiting states such as <code>ActivityNotice</code> reuse it rather than implementing their own moon phase.
+              The "🌑…🌘" moon-phase emoji are a brand signature of Kimi Code, <b>used only in the chat state of "message sent, waiting for the Agent's first response"</b>, and are rendered uniformly by the <code>MoonSpinner</code> component; waiting states such as <code>ActivityNotice</code> reuse it rather than implementing their own moon phase.
               It is the sole exception to the <code>no-emoji-icon</code> rule; all other loading states use the plain <code>Spinner</code>.
             </div></div>
 
@@ -1411,7 +1411,7 @@ onUnmounted(() => {
             </div></div>
 
             <div class="footer">
-              <span>Kimi Web Design System · v1.0</span>
+              <span>Kimi Code Design System · v1.0</span>
               <span>The reference when changing the web UI</span>
             </div>
           </section>
@@ -1547,7 +1547,7 @@ onUnmounted(() => {
               <h2 class="sec-title">Accessibility (pragmatic edition)</h2>
             </div>
             <p class="sec-desc">
-              Kimi Web is a local developer tool; it <b>does not target a specific WCAG conformance level</b>, nor maintain a full screen-reader QA matrix.
+              Kimi Code is a local developer tool; it <b>does not target a specific WCAG conformance level</b>, nor maintain a full screen-reader QA matrix.
               This section collects only the rules that are "low-cost, don't hurt the look, and directly benefit keyboard-heavy users", as the baseline contract for each primitive;
               the more expensive, lower-ROI parts (such as real-time announcement orchestration for streaming output) are not mandatory for now.
             </p>

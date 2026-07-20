@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/TodoCard.vue -->
+<!-- apps/web/src/components/chat/TodoCard.vue -->
 <!-- Read-only todo list driven by the model's TodoList tool (latest full-list
      write wins). Rendered inside the dock panel, which owns the card shell
      and the "待办 · N/M" header — this is just the rows + empty state.

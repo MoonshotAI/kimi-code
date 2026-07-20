@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/storage.ts
+// apps/web/src/lib/storage.ts
 // Thin, safe wrapper over localStorage: raw read/write/remove plus JSON
 // helpers, each guarded with try/catch. No validation, clamping, or enum
 // checks here — those stay at call sites. Read helpers return null when the

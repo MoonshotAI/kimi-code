@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/StatusPanel.vue -->
+<!-- apps/web/src/components/chat/StatusPanel.vue -->
 <!-- /status overlay — renders the CURRENT session status from existing client -->
 <!-- state (no daemon call). Built on the design-system Dialog primitive. -->
 <script setup lang="ts">

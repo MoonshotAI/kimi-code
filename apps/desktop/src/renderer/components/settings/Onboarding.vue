@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/settings/Onboarding.vue -->
+<!-- apps/web/src/components/settings/Onboarding.vue -->
 <!-- First-run onboarding overlay: a short welcome + the language, color scheme
      and accent preferences, all of which apply live. Re-openable from the
      settings popover. Each preference can be changed any time later, so there's

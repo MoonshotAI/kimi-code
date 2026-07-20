@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/mergeWorkspaces.ts
+// apps/web/src/lib/mergeWorkspaces.ts
 // Pure helper that merges registered (daemon) workspaces with workspaces
 // DERIVED from the current sessions' cwds. Extracted from the
 // `useKimiWebClient` composable so the merge is unit-testable without a Vue

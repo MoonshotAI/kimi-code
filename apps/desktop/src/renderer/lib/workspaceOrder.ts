@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/workspaceOrder.ts
+// apps/web/src/lib/workspaceOrder.ts
 // Pure helpers for the sidebar's user-defined workspace order. Kept separate
 // from the composable so the reconciliation and sort rules are unit-testable
 // without mounting Vue state.

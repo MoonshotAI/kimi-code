@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/SideChatPanel.vue -->
+<!-- apps/web/src/components/chat/SideChatPanel.vue -->
 <!-- BTW "side chat": a side-channel agent rendered in the right-side panel.
      It keeps the parent's context without creating a sidebar session. Reuses
      ChatPane for the transcript; its panel-open emits are no-ops here. -->

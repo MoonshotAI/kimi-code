@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/desktopFlag.ts
+// apps/web/src/lib/desktopFlag.ts
 //
 // Detects whether the web UI is running inside the Kimi Desktop app, and on
 // which platform.

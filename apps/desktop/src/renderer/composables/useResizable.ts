@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useResizable.ts
+// apps/web/src/composables/useResizable.ts
 // A small reusable hook for a horizontal drag-to-resize handle. It owns the
 // width value, clamps it to [min, max], persists it to localStorage, and wires
 // up pointer events (pointerdown/move/up with capture, no text-selection while

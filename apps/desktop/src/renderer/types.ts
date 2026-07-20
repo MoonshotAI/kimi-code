@@ -1,4 +1,4 @@
-// apps/kimi-web/src/types.ts
+// apps/web/src/types.ts
 
 /** File content loaded for preview (text or base64-encoded binary). */
 export interface FileData {
@@ -58,7 +58,7 @@ export interface WorkspaceView {
   name: string;
   /** Absolute path to the project root. */
   root: string;
-  /** Home-shortened path for dim display, e.g. `~/code/kimi-code-web`. */
+  /** Home-shortened path for dim display, e.g. `~/code/kimi-code-app`. */
   shortPath: string;
   /** Current branch, when known. */
   branch?: string;

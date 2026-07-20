@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/diffLines.ts
+// apps/web/src/lib/diffLines.ts
 // Build line-by-line diff rows for <DiffLines/> from a before/after pair of
 // plain texts (Edit's old_string/new_string, or Write's content vs an empty
 // before). Uses a classic line-level LCS so unchanged lines line up as context.

@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/SlashMenu.vue -->
+<!-- apps/web/src/components/chat/SlashMenu.vue -->
 <!-- Popup list of slash commands shown above the Composer textarea. -->
 <script setup lang="ts">
 import { ref, watch } from 'vue';

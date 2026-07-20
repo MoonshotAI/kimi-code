@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/cronHumanize.ts
+// apps/web/src/lib/cronHumanize.ts
 // Turn a 5-field cron expression into a short human-readable label for the
 // cron notice header (e.g. "*/5 * * * *" → "Every 5 minutes"). Falls back to
 // the raw expression for anything we don't recognize — better to show the

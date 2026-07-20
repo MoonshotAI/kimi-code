@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/WarningToasts.vue -->
+<!-- apps/web/src/components/WarningToasts.vue -->
 <!-- Floating stack of warning/error messages collected in the app state. -->
 <script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue';

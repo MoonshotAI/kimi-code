@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/usePageTitle.ts
+// apps/web/src/composables/usePageTitle.ts
 // Static page title (app name only). The session title and workspace name are
 // intentionally excluded so the tab title stays stable.
 // Prefix an animated spinner when the agent is running so users can see activity
@@ -42,8 +42,8 @@ export function usePageTitle({ running, showAuthGate }: UsePageTitleOptions): vo
 
   const pageTitle = computed<string>(() => {
     const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
-    if (showAuthGate.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code Web`;
-    return `${prefix}Kimi Code Web`;
+    if (showAuthGate.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code`;
+    return `${prefix}Kimi Code`;
   });
   watchEffect(() => {
     if (typeof document !== 'undefined') document.title = pageTitle.value;

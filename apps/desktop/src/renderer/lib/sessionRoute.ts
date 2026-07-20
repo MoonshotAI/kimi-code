@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/sessionRoute.ts
+// apps/web/src/lib/sessionRoute.ts
 //
 // Tiny URL helper for session deep links — no router. The app recognises
 // exactly one path shape:

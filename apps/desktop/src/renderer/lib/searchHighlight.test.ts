@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/searchHighlight.test.ts
+// apps/web/src/lib/searchHighlight.test.ts
 import { describe, expect, it } from 'vitest';
 import { escapeHtml, escapeRegExp, highlightHtml, snippet } from './searchHighlight';
 

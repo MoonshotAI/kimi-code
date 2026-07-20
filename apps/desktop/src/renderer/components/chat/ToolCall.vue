@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/ToolCall.vue -->
+<!-- apps/web/src/components/chat/ToolCall.vue -->
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../types';

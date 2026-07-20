@@ -1,4 +1,4 @@
-// apps/kimi-web/src/api/daemon/serverAuth.ts
+// apps/web/src/api/daemon/serverAuth.ts
 // Minimal server-transport credential store for the Web UI.
 //
 // The local server now requires a bearer credential on every non-bypass API

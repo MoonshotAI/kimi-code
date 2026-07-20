@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/useNotification.ts
+// apps/web/src/composables/client/useNotification.ts
 // Browser notifications for when the agent needs attention: a turn finished, a
 // question waiting for an answer, or a tool needing approval. Each kind has its
 // own on/off preference (persisted) plus the shared OS permission + Notification

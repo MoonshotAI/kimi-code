@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/debug/KapDebugView.vue
+<!-- apps/web/src/debug/KapDebugView.vue
      The KAP debug panel CONTENT — mounted into a popped-out browser window by
      DebugPanel.vue (so it shares the live trace buffer with the main app). The
      ✕ button asks the controller to close the window.

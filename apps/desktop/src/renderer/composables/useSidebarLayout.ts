@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useSidebarLayout.ts
+// apps/web/src/composables/useSidebarLayout.ts
 // Layout: resizable session column. ResizeHandle owns the column width (with
 // localStorage persistence); we mirror it here to drive the App grid.
 

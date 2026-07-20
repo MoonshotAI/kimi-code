@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useConfirmDialog.ts
+// apps/web/src/composables/useConfirmDialog.ts
 // Promise-based modal confirmation. A module-level singleton holds the pending
 // request; ConfirmDialogHost (mounted once in App.vue) renders it. Callers
 // `await confirm(...)` from anywhere — components or composables — which is

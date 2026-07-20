@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useAttachmentUpload.ts
+// apps/web/src/composables/useAttachmentUpload.ts
 // Attachment handling for the composer: file picker, paste, drag & drop, the
 // upload machinery, the chip strip, and the preview lightbox. Images and
 // videos get media chips with thumbnails; any other file type attaches as a

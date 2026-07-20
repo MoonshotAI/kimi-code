@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/DiffLines.vue -->
+<!-- apps/web/src/components/chat/DiffLines.vue -->
 <!-- Pure line-by-line diff renderer. Shared by the ~/diff panel (DiffView) and
      inline tool-call edit previews (ToolCall). Owns only the rows + their
      styling; the parent controls the surrounding height / scroll. -->

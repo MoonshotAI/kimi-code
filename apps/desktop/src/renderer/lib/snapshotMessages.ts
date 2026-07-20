@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/snapshotMessages.ts
+// apps/web/src/lib/snapshotMessages.ts
 // Merge an authoritative snapshot tail into already-loaded messages.
 //
 // The session snapshot returns only the most recent bounded page. After a user

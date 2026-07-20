@@ -1,5 +1,5 @@
-// apps/kimi-web/src/lib/icons.ts
-// Single source of truth for apps/kimi-web icons (design-system §02).
+// apps/web/src/lib/icons.ts
+// Single source of truth for apps/web icons (design-system §02).
 //
 // Icons come from three collections, all bundled by unplugin-icons at build
 // time — only the icons listed below end up in the production bundle:

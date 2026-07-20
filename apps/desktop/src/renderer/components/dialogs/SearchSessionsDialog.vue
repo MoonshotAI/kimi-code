@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/dialogs/SearchSessionsDialog.vue -->
+<!-- apps/web/src/components/dialogs/SearchSessionsDialog.vue -->
 <!-- Spotlight-style session search: type to filter by title + last prompt, each
      hit shows its workspace, the session title, and a snippet of the matched
      content with the query highlighted. ↑/↓ to move, ↵ to open, Esc to close. -->

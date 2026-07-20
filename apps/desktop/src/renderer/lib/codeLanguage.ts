@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/codeLanguage.ts
+// apps/web/src/lib/codeLanguage.ts
 // Maps a file path to a shiki language for syntax highlighting, by extension
 // (or a few well-known extensionless filenames). Deliberately shiki-free at
 // runtime (a static `import 'shiki'` here would pull the highlighter core into

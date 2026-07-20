@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/MentionMenu.vue -->
+<!-- apps/web/src/components/chat/MentionMenu.vue -->
 <!-- Popup list of file paths shown when user types @ in the Composer textarea. -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';

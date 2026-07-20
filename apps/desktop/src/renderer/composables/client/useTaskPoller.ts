@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/useTaskPoller.ts
+// apps/web/src/composables/client/useTaskPoller.ts
 // Background task output polling and the 1-second task clock used to keep
 // running-task elapsed timers live in the UI.
 

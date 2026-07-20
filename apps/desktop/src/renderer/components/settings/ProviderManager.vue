@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/settings/ProviderManager.vue -->
+<!-- apps/web/src/components/settings/ProviderManager.vue -->
 <!-- Modal overlay for managing providers: list, add, refresh, delete. -->
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue';

@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/useModelProviderState.ts
+// apps/web/src/composables/client/useModelProviderState.ts
 // Models, providers, starred/favorite models, the active-session thinking
 // level, session-scoped slash skills, and the managed OAuth device flow.
 // Owns the lazy-loaded model/provider caches plus the new-session "draft"
@@ -404,7 +404,7 @@ export function useModelProviderState(
     } catch (err) {
       // The dialog counts consecutive nulls and gives up after a few; keep the
       // cause in the log so a dead daemon is diagnosable.
-      console.warn('[kimi-web] pollOAuthLogin failed', err);
+      console.warn('[kimi-code] pollOAuthLogin failed', err);
       return null;
     }
   }

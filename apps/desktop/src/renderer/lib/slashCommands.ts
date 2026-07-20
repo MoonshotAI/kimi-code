@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/slashCommands.ts
+// apps/web/src/lib/slashCommands.ts
 // Pure TS — no Vue, no side effects. Slash-command metadata + parsers.
 
 export interface SlashCommand {

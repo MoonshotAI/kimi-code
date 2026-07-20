@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/ChatHeader.vue -->
+<!-- apps/web/src/components/chat/ChatHeader.vue -->
 <!-- Thin context bar above the chat: workspace / session name, git branch +
      status, "open in editor", and a ⋮ more-menu that bundles copy-all plus
      the same session actions available from the sidebar session row. -->

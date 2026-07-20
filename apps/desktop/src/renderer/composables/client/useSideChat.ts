@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/useSideChat.ts
+// apps/web/src/composables/client/useSideChat.ts
 // Side chat ("BTW") — a TUI-style forked agent rendered as a session tab.
 // It is not a child session and never appears in the sidebar. Each session can
 // have its own side chat; state is keyed by session id, while messages are

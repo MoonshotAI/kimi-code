@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/toolMeta.ts
+// apps/web/src/lib/toolMeta.ts
 // Helpers for tool display. Labels/chips are localized via the shared i18n instance.
 
 import { i18n } from '../i18n';

@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/dialogs/LoginDialog.vue -->
+<!-- apps/web/src/components/dialogs/LoginDialog.vue -->
 <!-- Managed Kimi OAuth device-code login dialog. Built on the design-system -->
 <!-- Dialog primitive; the device code + countdown stay monospace. -->
 <script setup lang="ts">

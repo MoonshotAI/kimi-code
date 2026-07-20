@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useFilePreview.ts
+// apps/web/src/composables/useFilePreview.ts
 // File preview: download / path normalization / request-sequence guard. Claims
 // the 'file' slot of the shared right-side detail layer.
 

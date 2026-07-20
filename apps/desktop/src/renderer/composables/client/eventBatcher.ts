@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/eventBatcher.ts
+// apps/web/src/composables/client/eventBatcher.ts
 // Coalesce high-frequency streaming events and apply them in bounded slices.
 //
 // Pure logic (no Vue) so the queue, ordering, and scheduler fallback can be

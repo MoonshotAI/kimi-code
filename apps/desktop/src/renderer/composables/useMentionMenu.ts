@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useMentionMenu.ts
+// apps/web/src/composables/useMentionMenu.ts
 import { nextTick, ref, type Ref } from 'vue';
 import type { FileItem } from '../types';
 

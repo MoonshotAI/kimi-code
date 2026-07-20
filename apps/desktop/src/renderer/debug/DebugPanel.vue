@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/debug/DebugPanel.vue
+<!-- apps/web/src/debug/DebugPanel.vue
      KAP/daemon debug panel — opt-in (?debug=1 or localStorage kimi-web.debug=1).
      This is the CONTROLLER: it pops the panel out into a real, separate browser
      window. The panel app is created from THIS window's JS context, so it shares

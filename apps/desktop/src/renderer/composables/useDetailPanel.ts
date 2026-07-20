@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useDetailPanel.ts
+// apps/web/src/composables/useDetailPanel.ts
 // Unified right-side detail layer. Only one detail is open at a time.
 
 import { computed, ref, watch, type Ref } from 'vue';

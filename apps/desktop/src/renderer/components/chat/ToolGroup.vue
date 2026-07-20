@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/ToolGroup.vue -->
+<!-- apps/web/src/components/chat/ToolGroup.vue -->
 <!-- A homogeneous batch of consecutive same-kind tool calls, rendered as ONE
      quiet caption row that expands into the individual lines. The caption
      shares the thinking row's language exactly: a borderless faint text row

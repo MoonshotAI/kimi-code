@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/client/useSoundNotification.ts
+// apps/web/src/composables/client/useSoundNotification.ts
 // Browser attention sound: a persisted on/off preference plus a short chime
 // synthesized with the WebAudio API (no audio asset, no permission prompt).
 // One chime covers every "the agent needs you" moment — a finished turn, a

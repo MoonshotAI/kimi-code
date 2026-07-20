@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/parseDiff.ts
+// apps/web/src/lib/parseDiff.ts
 // Parse raw UNIFIED diff text (git diff output) into line-by-line rows for
 // the ~/diff tab. Handles multiple files + multiple hunks per file.
 

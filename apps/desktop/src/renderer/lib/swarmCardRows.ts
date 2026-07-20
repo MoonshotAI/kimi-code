@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/swarmCardRows.ts
+// apps/web/src/lib/swarmCardRows.ts
 // Build the accordion row model for the AgentSwarm inline tool card. Pure
 // function of live members (AppTask store, real-time phase) and the parsed
 // `<agent_swarm_result>` payload (terminal result) — kept in plain TS so it can

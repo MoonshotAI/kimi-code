@@ -1,4 +1,4 @@
-// apps/kimi-web/src/debug/trace.ts
+// apps/web/src/debug/trace.ts
 // KAP/daemon trace — a side-channel recording of low-frequency client
 // lifecycle events plus opt-in REST/WS/console diagnostics.
 //
@@ -614,7 +614,7 @@ export function downloadTraceLog(list: readonly TraceEntry[] = entries): void {
   try {
     anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `kimi-web-log-${new Date().toISOString().replaceAll(/[:.]/g, '-')}.jsonl`;
+    anchor.download = `kimi-code-log-${new Date().toISOString().replaceAll(/[:.]/g, '-')}.jsonl`;
     document.body.append(anchor);
     anchor.click();
   } finally {

@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/HighlightedCode.vue -->
+<!-- apps/web/src/components/HighlightedCode.vue -->
 <!-- Shiki syntax highlighting for code surfaces: plain content (Write tool
      card) or line-diff rows (Edit tool card). Renders plain text immediately
      and upgrades in place once the lazily-loaded highlighter resolves; unknown

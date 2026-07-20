@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/searchHighlight.ts
+// apps/web/src/lib/searchHighlight.ts
 // Pure helpers for the session search dialog: extract a snippet around the
 // matched query and render it with <mark> highlights. Kept framework-agnostic
 // so it can be unit-tested without mounting a component.

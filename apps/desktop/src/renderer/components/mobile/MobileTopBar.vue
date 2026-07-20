@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/mobile/MobileTopBar.vue -->
+<!-- apps/web/src/components/mobile/MobileTopBar.vue -->
 <!-- Mobile title bar (50px): a 28px dark workspace square, a tappable middle -->
 <!-- zone showing the mono `workspace / session ⌄` path with a status sub-line -->
 <!-- (● running · branch · N sessions), and a trailing sliders button. Tapping -->

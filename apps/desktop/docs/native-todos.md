@@ -2,10 +2,11 @@
 
 桌面端目前大量功能仍用 web 方式实现。preload 已暴露 19 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
-改之前注意两点：
+改之前注意三点：
 
 - `src/renderer/` 是 `apps/web/src` 的整份快照副本，改任何共享组件前先想清楚边界：web 版只能走 daemon REST，desktop 走原生，用 `lib/desktopFlag.ts` 的 `isDesktop` / `isMacosDesktop` 或 `window.kimiDesktop` 探测分流。
 - 改共享文件后需同步回 `apps/web`（开发顺序：先在 desktop 开发，再同步 web，见根 AGENTS.md）。
+- desktop 侧已做品牌字符串清理（2026-07，web 侧未同步，属分叉）：页面/窗口标题为 `Kimi Code`（`index.html`、`usePageTitle.ts`）、`DesignSystemView.vue` 品牌文案为 Kimi Code、日志前缀 `[kimi-code]`、trace 导出文件名 `kimi-code-log-*`、`workspaceName` 兜底值 `kimi-code`、文件头来源注释指向 `apps/web`。整目录 re-copy 时这些点会被 web 版冲回旧值，需保留 desktop 侧。注意 `kimi-web.*` localStorage key 与 `kimiWeb.optimisticUserMessage` metadata key 是有意保留的持久化协议，不要"顺手清理"。
 
 ## TODO
 

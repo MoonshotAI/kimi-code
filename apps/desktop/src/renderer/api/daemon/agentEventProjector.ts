@@ -1,4 +1,4 @@
-// apps/kimi-web/src/api/daemon/agentEventProjector.ts
+// apps/web/src/api/daemon/agentEventProjector.ts
 //
 // Client-side projector: raw agent-core WS events → AppEvent[]
 //

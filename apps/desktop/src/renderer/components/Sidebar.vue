@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/Sidebar.vue -->
+<!-- apps/web/src/components/Sidebar.vue -->
 <!-- Unified sidebar: session groups with collapsible workspace headers.
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
@@ -583,7 +583,7 @@ async function chooseBackend(name: BackendName): Promise<void> {
   }
   const next = await switchDevBackend(name);
   if (next === null) {
-    console.warn('[kimi-web] dev backend switch failed:', name);
+    console.warn('[kimi-code] dev backend switch failed:', name);
     closeBackendMenu();
     return;
   }

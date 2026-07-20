@@ -1,4 +1,4 @@
-// apps/kimi-web/src/api/devBackend.ts
+// apps/web/src/api/devBackend.ts
 // Dev-only backend switcher client. Talks to the Vite dev-server endpoints
 // mounted by `backendSwitcherPlugin` in vite.config.ts:
 //   GET  /__kimi-dev/backend          → { current, presets }

@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useIsMobile.ts
+// apps/web/src/composables/useIsMobile.ts
 // Reactive "is the viewport narrow (phone-sized)?" flag.
 //
 // Drives the App.vue desktop/mobile branch. When window.matchMedia is

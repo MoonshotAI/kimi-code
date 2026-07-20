@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/mobile/MobileSwitcherSheet.vue -->
+<!-- apps/web/src/components/mobile/MobileSwitcherSheet.vue -->
 <!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: a "+ New
      chat" row, then collapsible workspace groups (folder icon + name +
      branch/path sub-line + per-group "+") with their session rows beneath.

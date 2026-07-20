@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/StatusGlyph.vue -->
+<!-- apps/web/src/components/chat/StatusGlyph.vue -->
 <!-- Shared status glyph for dock list rows (todo + background bash/subagent tasks).
      One symbol per state, colored by state — keeps the two lists visually identical. -->
 <script setup lang="ts">

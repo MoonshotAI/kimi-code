@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/TasksPane.vue -->
+<!-- apps/web/src/components/chat/TasksPane.vue -->
 <!-- TUI-inspired todo list: clean rows with status glyphs, strikethrough done,
      compact output, minimal chrome. Matches the terminal todo-panel style. -->
 <script setup lang="ts">

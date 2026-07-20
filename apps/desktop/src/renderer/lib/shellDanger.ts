@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/shellDanger.ts
+// apps/web/src/lib/shellDanger.ts
 // Display-layer heuristic for the approval card: flag obviously destructive
 // shell commands so the card can show a danger hint. The daemon's approval
 // payload has a `danger` slot but never fills it, so the client does a

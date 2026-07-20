@@ -1,4 +1,4 @@
-// apps/kimi-web/src/components/chat/tool-calls/toolArgs.ts
+// apps/web/src/components/chat/tool-calls/toolArgs.ts
 // Shared parsing helpers for the bespoke tool-call renderers: pull typed
 // fields out of a tool's JSON-stringified `arg`, plus small path/URL
 // formatters the row layouts reuse. Every helper is defensive and never

@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/toolDiff.ts
+// apps/web/src/lib/toolDiff.ts
 // Builds the line diff shown inline inside an expanded Edit tool card.
 
 import type { DiffViewLine } from '../types';

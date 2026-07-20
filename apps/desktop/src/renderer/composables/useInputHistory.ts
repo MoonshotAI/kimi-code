@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useInputHistory.ts
+// apps/web/src/composables/useInputHistory.ts
 // Shell-style ↑/↓ recall of previously sent messages, scoped per session.
 //
 // `ArrowUp` at the very start of the text steps back through older entries

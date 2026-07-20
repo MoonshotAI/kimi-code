@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/readOutput.ts
+// apps/web/src/lib/readOutput.ts
 // Parses the Read tool's output for display.
 
 export interface ReadOutput {

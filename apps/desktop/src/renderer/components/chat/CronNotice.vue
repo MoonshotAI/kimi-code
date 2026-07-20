@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/CronNotice.vue -->
+<!-- apps/web/src/components/chat/CronNotice.vue -->
 <!-- In-transcript notice for a turn triggered by a scheduled reminder rather
      than a real user. It is styled to read like a user message — a right-
      aligned, max-width-capped bubble in the user-bubble colour — because a cron

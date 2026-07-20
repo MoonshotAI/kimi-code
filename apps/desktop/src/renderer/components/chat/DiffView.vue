@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/DiffView.vue -->
+<!-- apps/web/src/components/chat/DiffView.vue -->
 <!-- ~/diff tab: real git changes from the daemon's fs:git_status, with a
      line-by-line unified-diff view (fs:diff) when a file is tapped.
      The changed-file list can be viewed as a flat list or as a tree. -->

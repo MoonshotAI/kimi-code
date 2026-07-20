@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useAuthGate.ts
+// apps/web/src/composables/useAuthGate.ts
 // Auth readiness gates the main app. Once the first load finishes and auth is
 // still missing, show a full-page login entry instead of an in-app banner.
 

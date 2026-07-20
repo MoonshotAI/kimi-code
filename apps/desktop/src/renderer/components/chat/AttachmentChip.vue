@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/AttachmentChip.vue -->
+<!-- apps/web/src/components/chat/AttachmentChip.vue -->
 <!-- One attachment rendered as a pill chip — the SAME component for the
      composer's pending-attachment strip and for sent messages in the chat
      bubble. Context differences are props, not restyled variants:

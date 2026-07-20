@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/useViewportWidth.ts
+// apps/web/src/composables/useViewportWidth.ts
 // Shared reactive viewport width for the resizable layout panels. A single
 // window resize listener backs every consumer, so panels can cap themselves to
 // the current window size without each wiring up their own listener.

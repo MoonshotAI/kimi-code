@@ -1,4 +1,4 @@
-// apps/kimi-web/src/composables/messagesToTurns.ts
+// apps/web/src/composables/messagesToTurns.ts
 // Converts a flat list of AppMessages into ChatTurn[] for rendering.
 //
 // Key rule: consecutive ASSISTANT messages are merged into ONE ChatTurn unless

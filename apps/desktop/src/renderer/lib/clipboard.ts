@@ -1,4 +1,4 @@
-// apps/kimi-web/src/lib/clipboard.ts
+// apps/web/src/lib/clipboard.ts
 // Robust clipboard helper.
 //
 // The modern `navigator.clipboard` API is only exposed in secure contexts

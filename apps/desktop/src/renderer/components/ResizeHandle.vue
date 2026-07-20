@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/ResizeHandle.vue -->
+<!-- apps/web/src/components/ResizeHandle.vue -->
 <!-- A thin (~4px) vertical drag bar used to resize the panel to its LEFT. It -->
 <!-- owns the width via useResizable and reports changes through v-model:width so -->
 <!-- the parent can drive its grid/flex sizing. col-resize cursor, subtle blue -->

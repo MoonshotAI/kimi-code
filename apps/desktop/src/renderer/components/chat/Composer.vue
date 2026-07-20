@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/chat/Composer.vue -->
+<!-- apps/web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';

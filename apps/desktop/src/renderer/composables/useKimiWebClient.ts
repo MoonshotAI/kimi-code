@@ -405,7 +405,7 @@ const rawState: ExtendedState = reactive({
   serverVersion: '',
   dangerousBypassAuth: false,
   backend: 'v1',
-  workspaceName: 'kimi-web',
+  workspaceName: 'kimi-code',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
   thinking: loadThinkingFromStorage(),
@@ -1290,7 +1290,7 @@ function pushOperationFailure(
 ): void {
   // Always-on logging: a surfaced failure must be diagnosable from the console
   // and from the exported web log (session export), not just from the toast.
-  console.error(`[kimi-web] operation failed: ${operation}`, err);
+  console.error(`[kimi-code] operation failed: ${operation}`, err);
   const api = isDaemonApiError(err);
   const network = isDaemonNetworkError(err);
   traceKeyEvent('operation:failed', {
