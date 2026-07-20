@@ -90,7 +90,11 @@ export class Image implements Component {
 				if (caps.images === "kitty") {
 					// For Kitty: C=1 prevents cursor movement.
 					// Don't need the cursor movement.
-					lines = [result.sequence];
+					// Wrap in DEC save/restore cursor as a safety net: some
+					// emulators move the cursor while placing the image
+					// despite C=1, which would corrupt the TUI's row
+					// accounting. On spec-compliant terminals this is a no-op.
+					lines = [`\x1b7${result.sequence}\x1b8`];
 
 					// Return `rows` lines so TUI accounts for image height.
 					for (let i = 0; i < result.rows - 1; i++) {
@@ -99,15 +103,18 @@ export class Image implements Component {
 				} else {
 					// Return `rows` lines so TUI accounts for image height.
 					// First (rows-1) lines are empty and cleared before the image is drawn.
-					// Last line: move cursor back up, draw the image, then move back down
-					// so TUI cursor accounting stays inside the scroll area.
+					// Last line: save the cursor, move up to the first reserved row,
+					// draw the image, then restore the cursor. Terminals disagree on
+					// where the cursor lands after an inline image (iTerm2 moves it
+					// below the image, some emulators don't move it at all), so anchor
+					// it explicitly to keep the TUI's cursor accounting exact.
 					lines = [];
 					for (let i = 0; i < result.rows - 1; i++) {
 						lines.push("");
 					}
 					const rowOffset = result.rows - 1;
 					const moveUp = rowOffset > 0 ? `\x1b[${rowOffset}A` : "";
-					lines.push(moveUp + result.sequence);
+					lines.push(`\x1b7${moveUp}${result.sequence}\x1b8`);
 				}
 			} else {
 				const fallback = imageFallback(this.mimeType, this.dimensions, this.options.filename);
