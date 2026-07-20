@@ -28,7 +28,7 @@ class FakeSessionIndex implements ISessionIndex {
     return undefined;
   }
 
-  async countActive(_workspaceId: string): Promise<number> {
+  async countActive(_workspaceIds: readonly string[]): Promise<number> {
     return 0;
   }
 }
@@ -69,7 +69,7 @@ describe('WorkspaceQueryService', () => {
     await query.listRecentSessions('wd_abc');
 
     expect(index.lastListQuery).toEqual({
-      workspaceId: 'wd_abc',
+      workspaceIds: ['wd_abc'],
       limit: RECENT_SESSIONS_LIMIT,
     });
     expect(RECENT_SESSIONS_LIMIT).toBe(20);

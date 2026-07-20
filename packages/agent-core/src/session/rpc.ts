@@ -16,6 +16,7 @@ import type {
   EnterSwarmPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  ImportContextPayload,
   McpServerInfo,
   McpStartupMetrics,
   PromptPayload,
@@ -216,6 +217,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async clearContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).clearContext(payload);
+  }
+
+  async importContext({ agentId, ...payload }: AgentScopedPayload<ImportContextPayload>) {
+    return (await this.getAgent(agentId)).importContext(payload);
   }
 
   async activateSkill({ agentId, ...payload }: AgentScopedPayload<ActivateSkillPayload>) {

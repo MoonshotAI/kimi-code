@@ -115,8 +115,8 @@ function autosize(): void {
         v-else
         :turns="turns"
         :approvals="[]"
-        :running="running"
-        :sending="sending"
+        :turn-active="running"
+        :working="sending || running"
       />
       <div v-if="showLoading" class="sc-loading" aria-hidden="true">
         <MoonSpinner />

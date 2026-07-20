@@ -1,8 +1,15 @@
+/**
+ * Scenario: wire-backed goal lifecycle persistence and replay.
+ * Responsibilities: verify goal Ops, live events, and replay normalization through the service contract.
+ * Wiring: real goal/wire/event/deadline services with non-persistence collaborators stubbed.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/goal/goalOps.test.ts`.
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { Event } from '#/_base/event';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
@@ -10,9 +17,12 @@ import { IConfigService } from '#/app/config/config';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentGoalService } from '#/agent/goal/goal';
+import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
+import { GoalDeadlineSchedulerService } from '#/agent/goal/goalDeadlineSchedulerService';
 import { AgentGoalService } from '#/agent/goal/goalService';
 import { GoalModel } from '#/agent/goal/goalOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -114,11 +124,17 @@ function buildHost(key: string): {
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());
-  ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
+  ix.set(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
   const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   });
+  ix.stub(IAgentScopeContext, {
+    _serviceBrand: undefined,
+    agentId: 'main',
+    scope: () => 'wire/agents/main',
+  });
+  ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
   return {
     wire,
     svc: ix.get(IAgentGoalService),
@@ -248,5 +264,153 @@ describe('AgentGoalService (wire-backed)', () => {
         reason: 'Paused after agent resume',
       }),
     ]);
+  });
+
+  it('restores goal records with omitted optional fields from older journals', async () => {
+    await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+      { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
+      { type: 'goal.update' },
+    ]);
+
+    expect(modelOf(wire)).toMatchObject({
+      goalId: 'goal-1',
+      status: 'paused',
+      budgetLimits: {},
+    });
+  });
+
+  it('restores legacy goal create audit fields without changing normalized state', async () => {
+    await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+      {
+        type: 'goal.create',
+        goalId: 'goal-1',
+        objective: 'work',
+        status: 'active',
+        actor: 'user',
+        budgetLimits: {},
+      },
+    ]);
+
+    expect(modelOf(wire)).toMatchObject({
+      goalId: 'goal-1',
+      status: 'paused',
+      budgetLimits: {},
+    });
+  });
+
+  it('restores a legacy goal update identity without changing state selection', async () => {
+    await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+      { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
+      { type: 'goal.update', goalId: 'goal-1', status: 'blocked', reason: 'waiting' },
+    ]);
+
+    expect(modelOf(wire)).toMatchObject({
+      goalId: 'goal-1',
+      status: 'blocked',
+      terminalReason: 'waiting',
+    });
+  });
+
+  it('strips forward-compatible goal fields during restore', async () => {
+    await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+      {
+        type: 'goal.create',
+        goalId: 'goal-1',
+        objective: 'work',
+        futureField: true,
+      },
+    ]);
+
+    expect(modelOf(wire)).toMatchObject({ goalId: 'goal-1', objective: 'work' });
+  });
+
+  it('skips a goal update with an invalid status during restore', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+        { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
+        { type: 'goal.update', status: 'cancelled' },
+      ]);
+
+      expect(modelOf(wire)).toMatchObject({ status: 'paused' });
+      expect(unexpected).toContainEqual(
+        expect.objectContaining({ code: 'wire.unknown_record', details: { type: 'goal.update', index: 1 } }),
+      );
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('skips a goal update with an invalid actor during restore', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+        { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
+        { type: 'goal.update', actor: 'assistant' },
+      ]);
+
+      expect(modelOf(wire)).toMatchObject({ status: 'paused' });
+      expect(unexpected).toContainEqual(
+        expect.objectContaining({ code: 'wire.unknown_record', details: { type: 'goal.update', index: 1 } }),
+      );
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('skips negative and non-finite goal counters and budgets during restore', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+        { type: 'goal.create', goalId: 'goal-1', objective: 'work' },
+        { type: 'goal.update', turnsUsed: -1 },
+        { type: 'goal.update', tokensUsed: Number.POSITIVE_INFINITY },
+        { type: 'goal.update', wallClockMs: Number.NaN },
+        { type: 'goal.update', wallClockResumedAt: Number.NaN },
+        { type: 'goal.update', budgetLimits: { turnBudget: -1 } },
+        { type: 'goal.update', budgetLimits: { tokenBudget: Number.POSITIVE_INFINITY } },
+        { type: 'goal.update', budgetLimits: { wallClockBudgetMs: Number.NaN } },
+      ]);
+
+      expect(modelOf(wire)).toMatchObject({
+        turnsUsed: 0,
+        tokensUsed: 0,
+        wallClockMs: 0,
+        budgetLimits: {},
+      });
+      expect(unexpected).toHaveLength(7);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
+
+  it('skips null, arrays, and malformed nested goal records during restore', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(
+        wire,
+        log,
+        testWireScope(SCOPE, KEY),
+        [
+          null,
+          [],
+          {
+            type: 'goal.create',
+            goalId: 'goal-1',
+            objective: 'work',
+            budgetLimits: { unexpected: true },
+          },
+        ] as unknown as WireRecord[],
+      );
+
+      expect(modelOf(wire)).toBeNull();
+      expect(unexpected).toHaveLength(3);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 });

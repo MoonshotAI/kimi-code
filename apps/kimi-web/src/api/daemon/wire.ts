@@ -66,7 +66,10 @@ export interface WireSession {
   title: string;
   created_at: string;
   updated_at: string;
-  status: WireSessionStatus;
+  busy: boolean;
+  main_turn_active?: boolean;
+  pending_interaction?: 'none' | 'approval' | 'question';
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   current_prompt_id?: string;
   /** Text of the most recent user prompt, for search/preview. */
@@ -155,8 +158,6 @@ export interface WireWorkspace {
   id: string;
   root: string;
   name: string;
-  is_git_repo: boolean;
-  branch: string | null;
   last_opened_at?: string;
   session_count: number;
 }
@@ -165,8 +166,6 @@ export interface WireFsBrowseEntry {
   name: string;
   path: string;
   is_dir: boolean;
-  is_git_repo: boolean;
-  branch?: string;
 }
 
 export interface WireFsBrowseResult {
@@ -677,6 +676,13 @@ interface WireEventBase<T extends string, P> {
 type WireEventSessionCreated = WireEventBase<'event.session.created', { session: WireSession }>;
 type WireEventSessionUpdated = WireEventBase<'event.session.updated', { session: WireSession; changed_fields: string[] }>;
 type WireEventSessionDeleted = WireEventBase<'event.session.deleted', { session_id: string }>;
+type WireEventSessionWorkChanged = WireEventBase<'event.session.work_changed', {
+  busy: boolean;
+  main_turn_active?: boolean;
+  pending_interaction?: 'none' | 'approval' | 'question';
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+}>;
+/** @deprecated Old journals may still carry this; mapped onto busy for replay. */
 type WireEventSessionStatusChanged = WireEventBase<'event.session.status_changed', {
   status: WireSessionStatus;
   previous_status: WireSessionStatus;
@@ -828,6 +834,7 @@ export type WireEvent =
   | WireEventSessionCreated
   | WireEventSessionUpdated
   | WireEventSessionDeleted
+  | WireEventSessionWorkChanged
   | WireEventSessionStatusChanged
   | WireEventSessionUsageUpdated
   | WireEventSessionHistoryCompacted

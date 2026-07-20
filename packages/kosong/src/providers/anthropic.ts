@@ -41,6 +41,14 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
+import {
+  BUDGET_THINKING_EFFORTS,
+  inferAnthropicModelProfile,
+  matchKnownAnthropicModelProfile,
+  parseAnthropicModelVersion,
+  type AnthropicModelProfile,
+  type AnthropicModelVersion,
+} from './anthropic-profile';
 import { mergeConsecutiveUserMessages } from './merge-user-messages';
 import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
@@ -96,6 +104,12 @@ export interface AnthropicOptions {
    * encode a parseable Claude version. Leave undefined to infer from the name.
    */
   adaptiveThinking?: boolean | undefined;
+  /**
+   * Concrete thinking efforts declared by the model catalog. When omitted,
+   * the provider infers a Claude profile from the model name and falls back to
+   * the latest Opus profile for unrecognized Anthropic-compatible models.
+   */
+  supportEfforts?: readonly string[] | undefined;
   kimiThinking?: boolean | undefined;
   /**
    * Use the Anthropic **beta** Messages API (`client.beta.messages.create`,
@@ -133,9 +147,6 @@ interface AnthropicContextManagement {
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
-const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
-const THINKING_EFFORT_CONFIG_DOCS_URL =
-  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
@@ -178,6 +189,7 @@ function applyResponseFormat(
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   // Claude Fable 5 documents a 128k output ceiling.
   'fable-5': 128000,
+  'mythos-5': 128000,
   // Claude Opus per minor version. 4.6 through 4.8 document a 128k cap;
   // 4.5 ships at 64k; 4.1 and the dated 4.0 release stay at 32k.
   'opus-4-8': 128000,
@@ -187,8 +199,9 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'opus-4-1': 32000,
   'opus-4-0': 32000,
   'opus-4': 32000,
-  // Claude Sonnet 4.x: 4.0 / 4.5 / 4.6 all document a 64k ceiling.
-  'sonnet-4-6': 64000,
+  // Claude Sonnet 5 and 4.6 document a 128k ceiling; older 4.x stays at 64k.
+  'sonnet-5': 128000,
+  'sonnet-4-6': 128000,
   'sonnet-4-5': 64000,
   'sonnet-4-0': 64000,
   'sonnet-4': 64000,
@@ -207,87 +220,9 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'haiku-3': 4096,
 };
 
-const FALLBACK_MAX_TOKENS = 32000;
+const FALLBACK_MAX_TOKENS = 128000;
 
-type ClaudeFamily = 'opus' | 'sonnet' | 'haiku' | 'fable';
-
-interface ClaudeVersion {
-  family: ClaudeFamily;
-  major: number;
-  minor: number | null;
-}
-
-// Family-first form: "opus-4-7", "sonnet-4.6", "haiku-4-5-20251001",
-// "fable-5" (single version component — Fable ids carry no minor).
-// Version numbers are capped at 1–2 digits with a non-digit lookahead so
-// 8-digit date suffixes (e.g. `-20251001`) don't get consumed as version
-// components.
-const FAMILY_FIRST_RE =
-  /(opus|sonnet|haiku|fable)[-._](\d{1,2})(?!\d)(?:[-._](\d{1,2})(?!\d))?/;
-// Legacy version-first form: "3-5-sonnet", "3.7.opus" — used by older
-// Anthropic model ids and Bedrock variants of Claude 3.x.
-const VERSION_FIRST_RE = /(\d{1,2})[-._](\d{1,2})[-._](opus|sonnet|haiku)/;
-// Bare family form for base Claude 3 (no minor): "3-opus", "3.haiku".
-const BARE_FAMILY_RE = /(\d{1,2})[-._](opus|sonnet|haiku)/;
-
-/**
- * Extract Claude family + version from a model id.
- *
- * Designed to survive the naming variants we see across vendors:
- * vendor prefixes (`anthropic.`, `aws/`, `openrouter/`,
- * `online-`), suffixes (date stamps like `-20251001`, build tags
- * like `-construct`, `-v1:0`), and `.` vs `-` separators between
- * the family and version components.
- *
- * Returns `null` when the id contains no Claude marker or no
- * recognizable family/version, in which case the resolver should fall
- * back to the override or {@link FALLBACK_MAX_TOKENS}.
- */
-function parseClaudeVersion(model: string): ClaudeVersion | null {
-  return parseClaudeFamilyVersion(model, true);
-}
-
-function parseClaudeAliasVersion(model: string): ClaudeVersion | null {
-  return parseClaudeFamilyVersion(model, false);
-}
-
-function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): ClaudeVersion | null {
-  const normalized = model.toLowerCase();
-  // Guard against false positives on non-Claude models that happen to
-  // contain an `opus-4-7`-like substring (e.g. fine-tunes named after a
-  // checkpoint). The Anthropic provider might still be configured for
-  // non-Claude endpoints, so without this guard we'd quietly apply
-  // Claude ceilings to unrelated models.
-  if (requireClaudeMarker && !normalized.includes('claude')) return null;
-
-  const familyFirst = FAMILY_FIRST_RE.exec(normalized);
-  if (familyFirst !== null) {
-    return {
-      family: familyFirst[1] as ClaudeFamily,
-      major: Number.parseInt(familyFirst[2]!, 10),
-      minor: familyFirst[3] !== undefined ? Number.parseInt(familyFirst[3], 10) : null,
-    };
-  }
-  const versionFirst = VERSION_FIRST_RE.exec(normalized);
-  if (versionFirst !== null) {
-    return {
-      major: Number.parseInt(versionFirst[1]!, 10),
-      minor: Number.parseInt(versionFirst[2]!, 10),
-      family: versionFirst[3] as ClaudeFamily,
-    };
-  }
-  const bare = BARE_FAMILY_RE.exec(normalized);
-  if (bare !== null) {
-    return {
-      major: Number.parseInt(bare[1]!, 10),
-      minor: null,
-      family: bare[2] as ClaudeFamily,
-    };
-  }
-  return null;
-}
-
-function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
+function lookupClaudeCeiling(version: AnthropicModelVersion): number | undefined {
   const { family, major, minor } = version;
   if (minor !== null) {
     // Exact minor first, then walk down to the nearest catalogued minor:
@@ -319,7 +254,7 @@ function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
  *      {@link FALLBACK_MAX_TOKENS}.
  */
 export function resolveDefaultMaxTokens(model: string, override?: number): number {
-  const parsed = parseClaudeVersion(model);
+  const parsed = parseAnthropicModelVersion(model, true);
   const ceiling = parsed === null ? undefined : lookupClaudeCeiling(parsed);
   if (ceiling === undefined) {
     return override ?? FALLBACK_MAX_TOKENS;
@@ -327,55 +262,56 @@ export function resolveDefaultMaxTokens(model: string, override?: number): numbe
   return override === undefined ? ceiling : Math.min(override, ceiling);
 }
 
-function versionAtLeast(
-  version: { major: number; minor: number },
-  minimum: { major: number; minor: number },
-): boolean {
-  return (
-    version.major > minimum.major ||
-    (version.major === minimum.major && version.minor >= minimum.minor)
+function requiresAdaptiveThinking(efforts: readonly string[]): boolean {
+  return efforts.some(
+    (effort) => effort !== 'low' && effort !== 'medium' && effort !== 'high',
   );
 }
 
-function supportsAdaptiveThinking(model: string): boolean {
-  const version = parseClaudeAliasVersion(model);
-  if (version === null) {
-    return false;
+function resolveThinkingProfile(
+  model: string,
+  supportEfforts: readonly string[] | undefined,
+  adaptiveThinking: boolean | undefined,
+): AnthropicModelProfile {
+  const inferred = inferAnthropicModelProfile(model);
+  if (adaptiveThinking === false) {
+    return {
+      ...inferred,
+      mode: 'budget',
+      efforts: supportEfforts ?? BUDGET_THINKING_EFFORTS,
+      // Opting out of adaptive also opts out of the effort param: budget
+      // efforts must go out as pure `budget_tokens` payloads instead of
+      // inheriting `supportsEffortParam` from an adaptive inferred profile.
+      supportsEffortParam: false,
+    };
   }
-  // A missing minor is a bare family-major id: "claude-fable-5" (5.0 ≥ 4.6,
-  // adaptive-only) or "claude-opus-4" (4.0 < 4.6, budget-based).
-  return versionAtLeast(
-    { major: version.major, minor: version.minor ?? 0 },
-    ADAPTIVE_MIN_VERSION,
-  );
+
+  if (adaptiveThinking === true) {
+    return {
+      ...inferred,
+      mode: 'adaptive',
+      efforts: supportEfforts ?? inferred.efforts,
+      supportsEffortParam: true,
+    };
+  }
+
+  if (supportEfforts === undefined) {
+    return inferred;
+  }
+  return {
+    ...inferred,
+    mode: requiresAdaptiveThinking(supportEfforts) ? 'adaptive' : inferred.mode,
+    efforts: supportEfforts,
+    supportsEffortParam:
+      requiresAdaptiveThinking(supportEfforts) || inferred.supportsEffortParam,
+  };
 }
 
-function isFableModel(model: string): boolean {
-  return parseClaudeAliasVersion(model)?.family === 'fable';
-}
-
-function supportsEffortParam(model: string, adaptive: boolean): boolean {
-  if (adaptive) {
-    return true;
-  }
-  const normalized = model.toLowerCase();
-  return normalized.includes('opus-4-5') || normalized.includes('opus-4.5');
-}
-
-function budgetTokensForEffort(effort: ThinkingEffort): number {
-  switch (effort) {
-    case 'low':
-      return 1024;
-    case 'medium':
-      return 4096;
-    case 'on':
-    case 'high':
-      return 32_000;
-    default:
-      throw new Error(
-        `Anthropic budget-based thinking cannot express effort "${effort}". Use low, medium, or high, or configure an adaptive / effort-param-capable model. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`,
-      );
-  }
+function budgetTokensForEffort(effort: ThinkingEffort): number | undefined {
+  if (effort === 'low') return 1024;
+  if (effort === 'medium') return 4096;
+  if (effort === 'on' || effort === 'high') return 32_000;
+  return undefined;
 }
 
 const CACHE_CONTROL = { type: 'ephemeral' as const };
@@ -383,7 +319,10 @@ const CACHE_CONTROL = { type: 'ephemeral' as const };
 type CacheableBlock = ContentBlockParam & { cache_control?: { type: 'ephemeral' } };
 
 function shouldPreserveUnsignedThinking(model: string): boolean {
-  return parseClaudeAliasVersion(model) === null;
+  return (
+    parseAnthropicModelVersion(model) === null &&
+    matchKnownAnthropicModelProfile(model) === undefined
+  );
 }
 
 /**
@@ -637,6 +576,11 @@ function convertMessage(message: Message, model: string): MessageParam {
 
   return { role: role, content: blocks };
 }
+
+function shouldKeepConvertedMessage(message: MessageParam): boolean {
+  return message.role !== 'assistant' || message.content.length > 0;
+}
+
 export function convertAnthropicError(error: unknown): ChatProviderError {
   // Check timeout before connection (APIConnectionTimeoutError extends APIConnectionError)
   if (error instanceof AnthropicTimeoutError) {
@@ -833,7 +777,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield { type: 'text', text: block.text };
               break;
             case 'thinking':
-              yield { type: 'think', think: block.thinking };
+              yield { type: 'think', think: block.thinking ?? '' };
               break;
             case 'redacted_thinking':
               yield {
@@ -866,7 +810,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield { type: 'text', text: delta.text };
               break;
             case 'thinking_delta':
-              yield { type: 'think', think: delta.thinking };
+              yield { type: 'think', think: delta.thinking ?? '' };
               break;
             case 'input_json_delta':
               yield {
@@ -950,6 +894,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
+  private readonly _supportEfforts: readonly string[] | undefined;
   private readonly _kimiThinking: boolean;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
@@ -959,6 +904,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
+    this._supportEfforts = options.supportEfforts;
     this._kimiThinking = options.kimiThinking ?? false;
     this._betaApi = options.betaApi ?? false;
     this._apiKey =
@@ -1036,9 +982,9 @@ export class AnthropicChatProvider implements ChatProvider {
         // garbage `<system></system>` user turn). See isToolDeclarationOnlyMessage.
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
-      ).map((msg) =>
-        convertMessage(msg, this._model),
-      ),
+      )
+        .map((msg) => convertMessage(msg, this._model))
+        .filter(shouldKeepConvertedMessage),
       {
         isUser: (message) => message.role === 'user',
         isToolResultOnly,
@@ -1070,12 +1016,8 @@ export class AnthropicChatProvider implements ChatProvider {
     if (this._generationKwargs.top_p !== undefined) {
       kwargs['top_p'] = this._generationKwargs.top_p;
     }
-    // Fable rejects an explicit `disabled` thinking config (HTTP 400, unlike
-    // Opus 4.7/4.8 which accept it), so omit the field instead. Note thinking
-    // cannot actually be turned off on Fable: adaptive thinking is always on,
-    // and an omitted `thinking` field still runs with it.
     const thinking = this._generationKwargs.thinking;
-    if (thinking !== undefined && !(thinking.type === 'disabled' && isFableModel(this._model))) {
+    if (thinking !== undefined) {
       kwargs['thinking'] = thinking;
     }
     if (this._generationKwargs.output_config !== undefined) {
@@ -1241,9 +1183,11 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): AnthropicChatProvider {
-    // Resolve once: an explicit `adaptiveThinking` option overrides the
-    // model-name version inference, so custom-named endpoints can opt in/out.
-    const adaptive = this._adaptiveThinking ?? supportsAdaptiveThinking(this._model);
+    const profile = resolveThinkingProfile(
+      this._model,
+      this._supportEfforts,
+      this._kimiThinking ? true : this._adaptiveThinking,
+    );
     let thinking: MessageCreateParams['thinking'];
     let outputConfig: MessageCreateParams['output_config'] | undefined;
 
@@ -1253,22 +1197,26 @@ export class AnthropicChatProvider implements ChatProvider {
       thinking = { type: 'enabled' } as MessageCreateParams['thinking'];
       outputConfig =
         effort === 'on' ? undefined : ({ effort } as MessageCreateParams['output_config']);
-    } else if (adaptive) {
+    } else if (profile.mode === 'adaptive') {
       thinking = { type: 'adaptive', display: 'summarized' };
       outputConfig =
         effort === 'on'
           ? undefined
           : ({ effort } as MessageCreateParams['output_config']);
     } else {
-      thinking = { type: 'enabled', budget_tokens: budgetTokensForEffort(effort) };
+      const budgetTokens = budgetTokensForEffort(effort);
+      thinking =
+        budgetTokens === undefined
+          ? ({ type: 'enabled' } as MessageCreateParams['thinking'])
+          : { type: 'enabled', budget_tokens: budgetTokens };
       outputConfig =
-        supportsEffortParam(this._model, adaptive) && effort !== 'on'
+        (profile.supportsEffortParam || budgetTokens === undefined) && effort !== 'on'
           ? ({ effort } as MessageCreateParams['output_config'])
           : undefined;
     }
 
     let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-    if (adaptive) {
+    if (profile.mode === 'adaptive') {
       newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
     }
     const clone = this._withGenerationKwargs({

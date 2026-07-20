@@ -129,6 +129,10 @@ export class CloudAppender implements ITelemetryAppender {
     if (typeof sessionId === 'string') {
       this.sessionId = sessionId;
     }
+    const model = patch['model'];
+    if (typeof model === 'string') {
+      setPrimitive(this.context, 'model', model);
+    }
   }
 
   async flush(): Promise<void> {

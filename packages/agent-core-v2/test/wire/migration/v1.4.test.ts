@@ -64,7 +64,7 @@ describe('1.3 to 1.4', () => {
         },
       ]),
     ).toMatchInlineSnapshot(`
-      [wire] metadata      { "protocol_version": "<protocol-version>", "created_at": "<time>" }
+      [wire] metadata      { "protocol_version": "1.4", "created_at": "<time>" }
       [wire] goal.create   { "goalId": "goal-1", "objective": "ship the feature", "completionCriterion": "tests pass", "time": "<time>" }
       [wire] goal.update   { "tokensUsed": 5, "wallClockMs": 0, "time": "<time>" }
       [wire] goal.update   { "turnsUsed": 1, "time": "<time>" }

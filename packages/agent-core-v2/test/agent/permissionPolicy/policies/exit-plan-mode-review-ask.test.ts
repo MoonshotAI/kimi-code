@@ -1,5 +1,6 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
-import type { ApprovalResponse, ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { ApprovalResponse } from '#/session/approval/approval';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';

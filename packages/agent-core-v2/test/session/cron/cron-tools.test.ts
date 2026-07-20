@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CronJobOrigin } from '@moonshot-ai/protocol';
+import type { CronJobOrigin } from '#/agent/contextMemory/types';
 
 import type {
   ExecutableTool,

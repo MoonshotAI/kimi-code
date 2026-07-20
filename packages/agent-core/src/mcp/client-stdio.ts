@@ -3,6 +3,7 @@ import type { McpServerStdioConfig } from '#/config/schema';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/utils/proxy';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { win32 } from 'node:path';
 import { isAbsolute, resolve } from 'pathe';
 
 import {
@@ -218,10 +219,20 @@ class BoundedTail {
   }
 }
 
-function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | undefined): string | undefined {
+export function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | undefined): string | undefined {
   if (configCwd === undefined) return defaultCwd;
+  if (defaultCwd !== undefined && isWindowsAbsolutePath(defaultCwd)) {
+    return win32.resolve(defaultCwd, configCwd).replaceAll('\\', '/');
+  }
+  if (isWindowsAbsolutePath(configCwd)) {
+    return win32.resolve(configCwd).replaceAll('\\', '/');
+  }
   if (defaultCwd !== undefined && !isAbsolute(configCwd)) return resolve(defaultCwd, configCwd);
   return configCwd;
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }
 
 // Inherit the parent's env so PATH/HOME/etc. survive — otherwise `npx`/`uvx`

@@ -39,6 +39,7 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
     expect(report.sessionsMigrated).toBe(2); // a1, a2
     expect(report.sessionsSkippedPlaceholder).toBe(1);
     expect(report.sessionsSkippedEmpty).toBe(1);
+    expect(report.sessionsFailed).toEqual([]);
   });
 
   it('counts a migrated session as failed when its index entry cannot be written', async () => {
@@ -171,6 +172,101 @@ describe('migrateSessionsStep (multi-workdir fixture)', () => {
       expect(report.sessionsFailed).toHaveLength(0);
       expect(report.sessionsSkippedEmpty).toBe(1);
       expect(report.sessionsMigrated).toBe(1);
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a non-empty session without context.jsonl as a failure', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'missing-context-src-'));
+    try {
+      const workdir = '/Users/me/missing-context-project';
+      await writeFile(
+        join(src, 'kimi.json'),
+        JSON.stringify({ work_dirs: [{ path: workdir, kaos: 'local' }] }),
+      );
+      const sessionDir = join(src, 'sessions', oldMd5BucketName(workdir), 'missing-context');
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(join(sessionDir, 'state.json'), '{}');
+
+      const report = await migrateSessionsStep({ sourceHome: src, targetHome });
+
+      expect(report.sessionsFailed).toEqual([
+        {
+          sourcePath: sessionDir,
+          reason: expect.stringMatching(/context\.jsonl.*missing.*unreadable/i),
+        },
+      ]);
+      expect(report.sessionsSkippedMalformed).toBe(0);
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a context.jsonl that cannot be read as a failure', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'unreadable-context-src-'));
+    try {
+      const workdir = '/Users/me/unreadable-context-project';
+      await writeFile(
+        join(src, 'kimi.json'),
+        JSON.stringify({ work_dirs: [{ path: workdir, kaos: 'local' }] }),
+      );
+      const sessionDir = join(src, 'sessions', oldMd5BucketName(workdir), 'bad-context');
+      await mkdir(join(sessionDir, 'context.jsonl'), { recursive: true });
+
+      const report = await migrateSessionsStep({ sourceHome: src, targetHome });
+
+      expect(report.sessionsFailed).toEqual([
+        {
+          sourcePath: sessionDir,
+          reason: expect.stringMatching(/context\.jsonl.*unreadable/i),
+        },
+      ]);
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an unknown workdir bucket as a failure', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'unknown-workdir-src-'));
+    try {
+      const bucket = join(src, 'sessions', oldMd5BucketName('/workspace/not-registered'));
+      await mkdir(join(bucket, 'legacy-session'), { recursive: true });
+
+      const report = await migrateSessionsStep({ sourceHome: src, targetHome });
+
+      expect(report.bucketsSkippedNoWorkdirFound).toBe(1);
+      expect(report.sessionsFailed).toEqual([
+        {
+          sourcePath: bucket,
+          reason: expect.stringMatching(/workdir.*kimi\.json/i),
+        },
+      ]);
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a bucket that cannot be read as a failure', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'unreadable-bucket-src-'));
+    try {
+      const workdir = '/Users/me/unreadable-bucket-project';
+      await writeFile(
+        join(src, 'kimi.json'),
+        JSON.stringify({ work_dirs: [{ path: workdir, kaos: 'local' }] }),
+      );
+      const bucket = join(src, 'sessions', oldMd5BucketName(workdir));
+      await mkdir(join(src, 'sessions'), { recursive: true });
+      await writeFile(bucket, 'not a directory');
+
+      const report = await migrateSessionsStep({ sourceHome: src, targetHome });
+
+      expect(report.sessionsFailed).toEqual([
+        {
+          sourcePath: bucket,
+          reason: expect.stringMatching(/bucket could not be read/i),
+        },
+      ]);
     } finally {
       await rm(src, { recursive: true, force: true });
     }

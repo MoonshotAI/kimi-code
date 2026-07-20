@@ -224,6 +224,8 @@ class FakeLoopService implements IAgentLoopService {
     return false;
   }
 
+  async settled(): Promise<void> {}
+
   registerLoopErrorHandler(): IDisposable {
     throw new Error('unused in this suite');
   }

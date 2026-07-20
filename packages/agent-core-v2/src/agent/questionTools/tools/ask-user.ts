@@ -4,7 +4,10 @@
  * The LLM calls this tool when it needs structured input from the user
  * (multiple-choice, preference selection, disambiguation). The tool delegates
  * to the `questionTools` domain (backed by the `interaction` kernel), which owns
- * the actual UI interaction.
+ * the actual UI interaction. Requests record the owning agent
+ * (`IAgentScopeContext.agentId`) on the interaction origin, so question events
+ * and transcript frames route to the asking agent's surfaces instead of
+ * falling back to 'main' (a subagent's question must not land there).
  */
 
 import { z } from 'zod';
@@ -14,8 +17,9 @@ import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { QuestionAnsweredEvent } from '#/app/telemetry/events';
+import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
   BuiltinTool,
   ExecutableToolContext,
@@ -135,6 +139,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     @ISessionQuestionService private readonly question: ISessionQuestionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
     this.parameters = toInputJsonSchema(this.inputSchema());
@@ -153,7 +158,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
   private async execution(
     args: AskUserQuestionInput,
-    { toolCallId, signal, turnId }: ExecutableToolContext,
+    { toolCallId, signal, turnId, trace }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     const uniquenessError = questionUniquenessError(args.questions);
     if (uniquenessError !== null) {
@@ -161,10 +166,10 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     }
 
     if (args.background === true) {
-      return this.executeInBackground(args, { toolCallId, turnId, signal });
+      return this.executeInBackground(args, { toolCallId, turnId, signal, trace });
     }
 
-    return this.executeQuestion(args, { toolCallId, turnId, signal });
+    return this.executeQuestion(args, { toolCallId, turnId, signal, trace });
   }
 
   private inputSchema(): z.ZodType<AskUserQuestionInput> {
@@ -177,7 +182,8 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       toolCallId,
       signal,
       turnId,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
+      trace,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'>,
   ): ExecutableToolResult {
     if (signal.aborted) {
       signal.throwIfAborted();
@@ -188,7 +194,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     try {
       taskId = this.tasks.registerTask(
         new QuestionBackgroundTask(
-          (taskSignal) => this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal }),
+          (taskSignal) => this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal, trace }),
           description,
           { questionCount: args.questions.length, toolCallId },
         ),
@@ -213,7 +219,6 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
         'next_step: Use TaskOutput with this task_id for a non-blocking status/answer snapshot.\n' +
         'next_step: Use TaskStop only if the question should be cancelled.\n' +
         'human_shell_hint: The pending question is also visible in /tasks.',
-      message: `Started ${taskId}`,
     };
   }
 
@@ -223,7 +228,8 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       toolCallId,
       signal,
       turnId,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
+      trace,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'>,
   ): Promise<ExecutableToolResult> {
     try {
       const result = await this.question.request(
@@ -240,16 +246,22 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
             multiSelect: q.multi_select,
           })),
         },
-        { signal },
+        { signal, agentId: this.scopeContext.agentId },
       );
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
-        this.telemetry.track2('question_dismissed');
+        const properties: QuestionDismissedEvent = {
+          trace_id: trace?.traceId,
+        };
+        this.telemetry.track2('question_dismissed', properties);
         return dismissedQuestionResult();
       }
 
-      const properties: QuestionAnsweredEvent = { answered: Object.keys(normalized.answers).length };
+      const properties: QuestionAnsweredEvent = {
+        answered: Object.keys(normalized.answers).length,
+        trace_id: trace?.traceId,
+      };
       if (normalized.method !== undefined) properties.method = normalized.method;
       this.telemetry.track2('question_answered', properties);
       return {

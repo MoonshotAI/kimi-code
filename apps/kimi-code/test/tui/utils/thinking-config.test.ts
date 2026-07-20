@@ -16,8 +16,24 @@ describe('thinkingEffortToConfig', () => {
     ['low', { enabled: true, effort: 'low' }],
     ['high', { enabled: true, effort: 'high' }],
     ['max', { enabled: true, effort: 'max' }],
-  ] as const)('maps %s → %o', (effort, expected) => {
+  ] as const)('maps %s → %o without model efforts', (effort, expected) => {
     expect(thinkingEffortToConfig(effort)).toEqual(expected);
+  });
+
+  it.each([
+    // The model's highest declared level (last support_efforts entry) is
+    // session-only; anything below it persists as the global default.
+    ['low', { enabled: true, effort: 'low' }],
+    ['high', { enabled: true, effort: 'high' }],
+    ['max', { enabled: true }],
+    // Undeclared values persist as-is (the provider validates them).
+    ['ultra', { enabled: true, effort: 'ultra' }],
+  ] as const)('maps %s → %o for [low, high, max]', (effort, expected) => {
+    expect(thinkingEffortToConfig(effort, ['low', 'high', 'max'])).toEqual(expected);
+  });
+
+  it('treats a single declared level as the top tier', () => {
+    expect(thinkingEffortToConfig('max', ['max'])).toEqual({ enabled: true });
   });
 });
 

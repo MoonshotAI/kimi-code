@@ -1,5 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
-import type { ApprovalResponse } from "@moonshot-ai/protocol";
+import type { ApprovalResponse } from "#/session/approval/approval";
 
 export interface PermissionApprovalResultRecord {
   readonly turnId: number;

@@ -178,6 +178,7 @@ describe('GoalInjection content', () => {
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 2 } }, 'model');
       await goals.incrementTurn();
       await goals.incrementTurn();
+      await goals.setBudgetLimits({ budgetLimits: { turnBudget: 2 } }, 'model');
     }))!;
     expect(text).toContain('currently blocked');
     expect(text).toContain('Blocked after goal budget reached: turn budget 2');

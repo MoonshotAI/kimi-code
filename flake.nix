@@ -66,7 +66,6 @@
         ./packages/agent-core
         ./packages/agent-core-v2
         ./packages/kap-server
-        ./packages/server-e2e
         ./packages/kaos
         ./packages/klient
         ./packages/kosong
@@ -77,8 +76,10 @@
         ./packages/pi-tui
         ./packages/protocol
         ./packages/telemetry
+        ./packages/transcript
         ./apps/kimi-code
-        ./apps/kimi-desktop
+        ./apps/vscode
+        ./apps/kimi-inspect
         ./apps/kimi-web
         ./apps/vis
         ./apps/vis/server
@@ -91,7 +92,6 @@
         "@moonshot-ai/agent-core"
         "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/kap-server"
-        "@moonshot-ai/server-e2e"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
@@ -102,8 +102,10 @@
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
+        "@moonshot-ai/transcript"
         "@moonshot-ai/kimi-code"
-        "@moonshot-ai/kimi-desktop"
+        "kimi-code"
+        "@moonshot-ai/kimi-inspect"
         "@moonshot-ai/kimi-web"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
@@ -158,7 +160,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-dqniDBWjKjtTcr+zKhtilkKXdNMfiwnfrqH/7Cg4eZ0=";
+              hash = "sha256-+pzJfoWJwVXIUU8oc56LVpfNjSY6MABID5g11Cm92xw=";
             };
 
             nativeBuildInputs = [

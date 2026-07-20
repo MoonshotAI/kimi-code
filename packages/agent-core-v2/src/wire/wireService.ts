@@ -29,6 +29,7 @@ import { WireError, WireErrors } from './errors';
 import {
   WIRE_PROTOCOL_VERSION,
   isNewerWireVersion,
+  migrateV1_4ToV1_5,
   migrateWireRecord,
   resolveWireMigrations,
   type WireMigration,
@@ -40,6 +41,7 @@ import { OP_REGISTRY } from './op';
 import {
   AGENT_WIRE_RECORD_KEY,
   createWireMetadataRecord,
+  isWireRecord,
   isWireMetadataRecord,
   opToWireRecord,
   wireRecordToPayload,
@@ -148,11 +150,18 @@ export class WireService extends Disposable implements IWireService {
       let recordIndex = 0;
       let hasRecords = false;
 
-      for await (const sourceRecord of source) {
+      for await (const candidate of source) {
+        const sourceRecord: unknown = candidate;
+        if (!isWireRecord(sourceRecord)) {
+          this.reportSkippedRecord(undefined, recordIndex, true);
+          recordIndex++;
+          continue;
+        }
         if (!hasRecords) {
           hasRecords = true;
           if (sourceRecord.type !== 'metadata') {
             rewrittenRecords = [createWireMetadataRecord()];
+            migrations = [migrateV1_4ToV1_5];
           } else if (!isWireMetadataRecord(sourceRecord)) {
             throw new StorageError(
               StorageErrors.codes.STORAGE_CORRUPTED,
@@ -205,19 +214,32 @@ export class WireService extends Disposable implements IWireService {
   private replayRecord(record: WireRecord, index: number): void {
     const descriptor = OP_REGISTRY.get(record.type);
     if (descriptor === undefined) {
-      onUnexpectedError(
-        new WireError(
-          WireErrors.codes.WIRE_UNKNOWN_RECORD,
-          `Unknown wire record type '${record.type}' skipped during restore`,
-          { details: { type: record.type, index } },
-        ),
-      );
+      this.reportSkippedRecord(record.type, index);
+      return;
+    }
+    const payload = descriptor.schema.safeParse(wireRecordToPayload(record));
+    if (!payload.success) {
+      this.reportSkippedRecord(record.type, index, true);
       return;
     }
     this.execute({
-      ops: [{ type: record.type, payload: wireRecordToPayload(record), descriptor }],
+      ops: [{ type: record.type, payload: payload.data, descriptor }],
       silent: true,
     });
+  }
+
+  private reportSkippedRecord(type: string | undefined, index: number, malformed = false): void {
+    onUnexpectedError(
+      new WireError(
+        WireErrors.codes.WIRE_UNKNOWN_RECORD,
+        type === undefined
+          ? 'Malformed wire record skipped during restore'
+          : malformed
+            ? `Malformed wire record type '${type}' skipped during restore`
+            : `Unknown wire record type '${type}' skipped during restore`,
+        { details: { type, index } },
+      ),
+    );
   }
 
   private execute(group: OpGroup): void {

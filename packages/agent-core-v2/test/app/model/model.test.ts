@@ -20,6 +20,111 @@ import {
 import { modelsFromToml, modelsToToml } from '#/app/model/configSection';
 import { ModelService } from '#/app/model/modelService';
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
+import { effectiveModelConfig } from '#/app/model/modelAuth';
+import type { ModelConfig } from '#/app/model/model';
+
+describe('effectiveModelConfig', () => {
+  it('derives the official effort metadata from a Claude model name', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'anthropic',
+        model: 'claude-opus-4-6',
+        maxContextSize: 200000,
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('infers Anthropic effort metadata for an unknown model on a non-Kimi Anthropic provider', () => {
+    expect(
+      effectiveModelConfig(
+        {
+          provider: 'custom',
+          model: 'custom-anthropic-model',
+          maxContextSize: 200000,
+          protocol: 'anthropic',
+        },
+        'anthropic',
+      ),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for a Kimi provider routed through the Anthropic protocol', () => {
+    const model: ModelConfig = {
+      provider: 'managed:kimi-code',
+      model: 'kimi-for-coding',
+      maxContextSize: 262144,
+      capabilities: ['thinking', 'always_thinking'],
+      protocol: 'anthropic',
+      adaptiveThinking: true,
+    };
+
+    expect(effectiveModelConfig(model, 'kimi')).toEqual(model);
+  });
+
+  it('does not infer the fallback profile without provider context', () => {
+    const model: ModelConfig = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+    };
+
+    expect(effectiveModelConfig(model)).toEqual(model);
+  });
+
+  it('limits an adaptive_thinking=false model to budget efforts', () => {
+    expect(
+      effectiveModelConfig(
+        {
+          provider: 'custom',
+          model: 'custom-anthropic-model',
+          maxContextSize: 200000,
+          protocol: 'anthropic',
+          adaptiveThinking: false,
+        },
+        'anthropic',
+      ),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for an unknown model without an Anthropic protocol', () => {
+    const model = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelConfig(model)).toEqual(model);
+  });
+
+  it('marks official always-on models while preserving explicit effort metadata', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'anthropic',
+        model: 'claude-fable-5',
+        maxContextSize: 200000,
+        supportEfforts: ['high', 'max'],
+        defaultEffort: 'max',
+      }),
+    ).toMatchObject({
+      capabilities: ['always_thinking'],
+      supportEfforts: ['high', 'max'],
+      defaultEffort: 'max',
+    });
+  });
+});
 
 describe('ModelService', () => {
   let disposables: DisposableStore;

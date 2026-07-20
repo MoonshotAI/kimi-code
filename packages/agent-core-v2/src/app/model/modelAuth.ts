@@ -4,11 +4,20 @@
  * Resolves Model / Provider / Platform credential precedence for runtime
  * model resolution and auth-readiness probes. Pure computation; callers
  * supply the Platform lookup so this file stays outside the service graph.
+ * The inferred Anthropic effort profile is reserved for non-Kimi
+ * Anthropic-compatible providers; Kimi providers — including managed models
+ * routed through protocol = "anthropic" — keep only catalog-declared effort
+ * metadata.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
+import {
+  BUDGET_THINKING_EFFORTS,
+  inferAnthropicModelProfile,
+  matchKnownAnthropicModelProfile,
+} from '#/app/llmProtocol/providers/anthropic-profile';
 import { type PlatformConfig, UNKNOWN_PLATFORM_KEY } from '#/app/platform/platform';
-import type { OAuthRef, ProviderConfig } from '#/app/provider/provider';
+import type { OAuthRef, ProviderConfig, ProviderType } from '#/app/provider/provider';
 import type { Protocol } from '#/app/protocol/protocol';
 
 import type { ModelConfig } from './model';
@@ -70,19 +79,48 @@ export function resolveModelAuthMaterial(args: {
   return {};
 }
 
-export function effectiveModelConfig(model: ModelConfig): ModelConfig {
+export function effectiveModelConfig(
+  model: ModelConfig,
+  providerType?: ProviderType,
+): ModelConfig {
   const { overrides, ...base } = model;
-  if (overrides === undefined) return model;
-  const effective: ModelConfig = { ...base, ...overrides };
+  const effective: ModelConfig = overrides === undefined ? model : { ...base, ...overrides };
   if (
-    overrides.supportEfforts !== undefined &&
+    overrides?.supportEfforts !== undefined &&
     overrides.defaultEffort === undefined &&
     effective.defaultEffort !== undefined &&
     !overrides.supportEfforts.includes(effective.defaultEffort)
   ) {
     delete effective.defaultEffort;
   }
-  return effective;
+  return withAnthropicProfile(effective, providerType);
+}
+
+function withAnthropicProfile(model: ModelConfig, providerType?: ProviderType): ModelConfig {
+  const wireName = model.name ?? model.model;
+  const protocol = model.protocol ?? providerType;
+  const profile =
+    wireName === undefined
+      ? undefined
+      : providerType !== undefined && providerType !== 'kimi' && protocol === 'anthropic'
+        ? inferAnthropicModelProfile(wireName)
+        : matchKnownAnthropicModelProfile(wireName);
+  if (profile === undefined) return model;
+  const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';
+  const capabilities = model.capabilities ?? [];
+  const hasCapability = capabilities.some(
+    (candidate) => candidate.trim().toLowerCase() === capability,
+  );
+  const supportEfforts =
+    model.supportEfforts ??
+    (model.adaptiveThinking === false ? [...BUDGET_THINKING_EFFORTS] : [...profile.efforts]);
+  return {
+    ...model,
+    capabilities: hasCapability ? capabilities : [...capabilities, capability],
+    supportEfforts,
+    defaultEffort:
+      model.defaultEffort ?? (supportEfforts.includes('high') ? 'high' : undefined),
+  };
 }
 
 export function deriveProviderId(baseUrl: string): string {

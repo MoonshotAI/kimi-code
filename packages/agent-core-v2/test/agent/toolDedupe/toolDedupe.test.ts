@@ -161,9 +161,10 @@ async function executeAll(
   calls: ToolCall[],
   turnId: number,
   signal = new AbortController().signal,
+  traceId?: string,
 ): Promise<ToolExecutionResult[]> {
   const results: ToolExecutionResult[] = [];
-  for await (const item of h.executor.execute(calls, { turnId, signal })) {
+  for await (const item of h.executor.execute(calls, { turnId, signal, trace: { traceId } })) {
     results.push(item);
   }
   return results;
@@ -674,6 +675,34 @@ describe('AgentToolDedupeService', () => {
       expect(telemetryEvents).toContainEqual({
         event: 'tool_call',
         properties: expect.objectContaining({ tool_call_id: 'c2', dup_type: 'cross_step' }),
+      });
+    });
+
+    it('merges the request trace id into dedupe and repeat telemetry', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('Read'));
+      await runStep(h, 7, 1, [toolCall('c1', 'Read', { path: '/a' })]);
+      telemetryEvents.length = 0;
+
+      const signal = new AbortController().signal;
+      await beforeStep(h, 7, 2, signal);
+      await executeAll(h, [toolCall('c2', 'Read', { path: '/a' })], 7, signal, 'trace-dedupe-1');
+
+      expect(telemetryEvents).toContainEqual({
+        event: 'tool_call_dedup_detected',
+        properties: expect.objectContaining({
+          tool_call_id: 'c2',
+          dup_type: 'cross_step',
+          trace_id: 'trace-dedupe-1',
+        }),
+      });
+      expect(telemetryEvents).toContainEqual({
+        event: 'tool_call_repeat',
+        properties: expect.objectContaining({
+          tool_name: 'Read',
+          repeat_count: 2,
+          trace_id: 'trace-dedupe-1',
+        }),
       });
     });
 

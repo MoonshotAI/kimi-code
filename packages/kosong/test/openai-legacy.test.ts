@@ -992,6 +992,43 @@ describe('OpenAILegacyChatProvider', () => {
       expect(maxBody['reasoning_effort']).toBe('max');
       expect(xhighBody['reasoning_effort']).toBe('xhigh');
     });
+
+    it('.withThinking("off") sends no reasoning_effort and reports "off"', async () => {
+      const provider = createProvider().withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('.withThinking("on") sends no reasoning_effort without ThinkPart history and reports "on"', async () => {
+      const provider = createProvider().withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('on');
+    });
+
+    it('reports a null thinkingEffort until withThinking is called', () => {
+      expect(createProvider().thinkingEffort).toBeNull();
+    });
+
+    it('.withThinking("off") clears a concrete effort set earlier', async () => {
+      const provider = createProvider().withThinking('high').withThinking('off');
+      expect(provider.thinkingEffort).toBe('off');
+
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      expect(body['reasoning_effort']).toBeUndefined();
+    });
   });
 
   describe('auto reasoning_effort', () => {
@@ -1081,6 +1118,52 @@ describe('OpenAILegacyChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['reasoning_effort']).toBe('high');
+    });
+
+    it('does not auto-inject reasoning_effort when thinking was explicitly turned off', async () => {
+      // An explicit withThinking('off') is not the same as "never configured":
+      // with thinking off, auto-injection must not silently switch reasoning
+      // back on (or leak reasoning_effort to models that reject the field).
+      const provider = createProvider({ model: 'some-model' }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'How are you?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('still auto-injects reasoning_effort for an explicit "on"', async () => {
+      // 'on' keeps the #1616 behavior: thinking enabled without a concrete
+      // effort still pairs reasoning_effort with ThinkPart history so strict
+      // OpenAI-compatible gateways don't 400.
+      const provider = createProvider({ model: 'some-model' }).withThinking('on');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'Thinking...' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'How are you?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('medium');
+      expect(provider.thinkingEffort).toBe('on');
     });
   });
 

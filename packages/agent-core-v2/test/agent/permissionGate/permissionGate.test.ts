@@ -34,7 +34,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { stubApprovalService } from '../../session/approval/stubs';
 import { stubPermissionModeService } from '../permissionMode/stubs';
@@ -47,6 +47,7 @@ function makeContext(
   toolName: string,
   args: Record<string, unknown> = {},
   display?: ToolInputDisplay,
+  traceId?: string,
 ): ResolvedToolExecutionHookContext {
   const toolCall: ToolCall = {
     type: 'function',
@@ -57,6 +58,7 @@ function makeContext(
   return {
     turnId: 1,
     signal: new AbortController().signal,
+    trace: { traceId },
     toolCall,
     toolCalls: [toolCall],
     args,
@@ -546,6 +548,25 @@ describe('AgentPermissionGate', () => {
         policy_name: 'exit-plan-mode-review-ask',
         tool_name: 'ExitPlanMode',
         result: 'error',
+      }),
+    });
+  });
+
+  it('merges the request trace id into approval result telemetry', async () => {
+    mode = 'manual';
+    policyResult = { policyName: 'p', result: { kind: 'ask' } };
+    approvalResponse = { decision: 'approved' };
+    const records = recordTelemetry();
+    const svc = make();
+
+    await svc.authorize(makeContext('bash', {}, undefined, 'trace-approval-1'));
+
+    expect(records).toContainEqual({
+      event: 'permission_approval_result',
+      properties: expect.objectContaining({
+        tool_name: 'bash',
+        result: 'approved',
+        trace_id: 'trace-approval-1',
       }),
     });
   });

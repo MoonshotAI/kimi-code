@@ -322,3 +322,86 @@ test('valueMode auto without maxMemoryBytes defaults to memory', async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('openOrRebuild preserves data when only a sidecar definition file is corrupt', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open<Record<string, number>>({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    for (let i = 0; i < 100; i++) await db.set(`k${i}`, { n: i });
+    await db.createIndex('byN', { field: 'n' });
+    await db.close();
+    await fs.writeFile(path.join(dir, 'db.indexes.json'), 'corrupt{{{');
+    // plain open still throws on the corrupt sidecar...
+    await assert.rejects(MiniDb.open({ dir, valueCodec: 'json' }), SyntaxError);
+    // ...but openOrRebuild drops the derived sidecars instead of wiping the data
+    db = await MiniDb.openOrRebuild<Record<string, number>>({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    assert.equal(db.size, 100);
+    assert.deepEqual(db.get('k42'), { n: 42 });
+    assert.deepEqual(db.listIndexes(), []); // definitions are lost, not the data; recreate as needed
+    await db.createIndex('byN2', { field: 'n' });
+    assert.equal(db.findEq('byN2', 42).length, 1);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('open removes stale compaction temp files', async () => {
+  const dir = await tmpDir();
+  try {
+    let db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no' });
+    await db.set('a', '1');
+    await db.close();
+    await fs.writeFile(path.join(dir, 'db.snapshot.tmp'), 'stale');
+    await fs.writeFile(path.join(dir, 'db.wal.tmp'), 'stale');
+    db = await MiniDb.open({ dir, valueCodec: 'string' });
+    assert.equal(db.get('a'), '1');
+    await assert.rejects(fs.stat(path.join(dir, 'db.snapshot.tmp')), /ENOENT/);
+    await assert.rejects(fs.stat(path.join(dir, 'db.wal.tmp')), /ENOENT/);
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('query with skip/limit returns the same rows as slicing the unbounded result', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open<Record<string, number>>({ dir, valueCodec: 'json', fsyncPolicy: 'no' });
+    for (let i = 0; i < 200; i++) await db.set(`k${String(i).padStart(3, '0')}`, { n: i, grp: i % 4 });
+    await db.createIndex('byGrp', { field: 'grp' });
+    const full = db.query({ key: { prefix: 'k1' } });
+    assert.deepEqual(db.query({ key: { prefix: 'k1' }, limit: 10 }), full.slice(0, 10));
+    assert.deepEqual(db.query({ key: { prefix: 'k1' }, skip: 5, limit: 3 }), full.slice(5, 8));
+    const eq = db.query({ filter: { grp: 2 } }); // indexed equality path
+    assert.deepEqual(db.query({ filter: { grp: 2 }, limit: 7 }), eq.slice(0, 7));
+    const scan = db.query({ filter: { n: { $gte: 100 } } }); // unindexed full scan path
+    assert.deepEqual(db.query({ filter: { n: { $gte: 100 } }, skip: 10, limit: 5 }), scan.slice(10, 15));
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('maxMemory evict-lru evicts in least-recently-used order across many victims', async () => {
+  const dir = await tmpDir();
+  try {
+    const db = await MiniDb.open({ dir, valueCodec: 'string', maxMemoryBytes: 50, maxMemoryPolicy: 'evict-lru' });
+    await db.set('a', '1234567890'); // ~11B per record, budget fits 4
+    await db.set('b', '1234567890');
+    await db.set('c', '1234567890');
+    await db.set('d', '1234567890');
+    assert.equal(db.get('a'), '1234567890'); // touch a: b becomes LRU
+    await db.set('e', '1234567890'); // exceeds budget -> evicts b
+    await db.set('f', '1234567890'); // exceeds budget -> evicts c
+    assert.equal(db.get('a'), '1234567890');
+    assert.equal(db.get('b'), undefined);
+    assert.equal(db.get('c'), undefined);
+    assert.equal(db.get('d'), '1234567890');
+    assert.equal(db.get('e'), '1234567890');
+    assert.equal(db.get('f'), '1234567890');
+    await db.close();
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

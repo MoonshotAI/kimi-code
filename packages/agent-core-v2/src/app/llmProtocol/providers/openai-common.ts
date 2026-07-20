@@ -5,6 +5,7 @@ import {
   classifyBaseApiError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
+  parseTraceId,
 } from '../errors';
 import { extractText } from '../message';
 import type { ContentPart, Message } from '../message';
@@ -96,6 +97,7 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
       error.message,
       reqId,
       parseRetryAfterMs(error.headers),
+      parseTraceId(error.headers),
     );
   }
   if (

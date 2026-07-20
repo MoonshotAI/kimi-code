@@ -41,13 +41,6 @@ export type AppWarning = string | AppNotice;
 // Session
 // ---------------------------------------------------------------------------
 
-export type AppSessionStatus =
-  | 'idle'
-  | 'running'
-  | 'awaitingApproval'
-  | 'awaitingQuestion'
-  | 'aborted';
-
 export interface AppSessionUsage {
   inputTokens: number;
   outputTokens: number;
@@ -64,7 +57,19 @@ export interface AppSession {
   title: string;
   createdAt: string;
   updatedAt: string;
-  status: AppSessionStatus;
+  /** Any agent in the session holds an active turn or background lease.
+   *  Awaiting states ride the approval/question channels; turn outcomes ride
+   *  turn.ended. */
+  busy: boolean;
+  /** Whether the main agent has an active turn. Unlike busy, this excludes
+   *  background tasks and sub-agent work. */
+  mainTurnActive?: boolean;
+  /** List-level fallback for the action-required badge. */
+  pendingInteraction?: 'none' | 'approval' | 'question';
+  /** Outcome of the main agent's most recent turn (when the server reports
+   *  one). Presentation rule for the "aborted" tag:
+   *  `!busy && (cancelled | failed)`. */
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   currentPromptId?: string;
   /** Text of the most recent user prompt, for search/preview. */
@@ -115,10 +120,6 @@ export interface AppWorkspace {
   root: string;
   /** Display name — defaults to basename(root), may be renamed on the daemon. */
   name: string;
-  /** Whether root is inside a git repository. */
-  isGitRepo: boolean;
-  /** Current branch, when known. */
-  branch?: string;
   /** ISO timestamp of when this workspace was last opened. */
   lastOpenedAt?: string;
   /** Number of sessions belonging to this workspace. */
@@ -130,8 +131,6 @@ export interface FsBrowseEntry {
   name: string;
   path: string;
   isDir: boolean;
-  isGitRepo: boolean;
-  branch?: string;
 }
 
 export interface FsBrowseResult {
@@ -333,6 +332,12 @@ export interface AppTask {
    *  the dock: the dock lists background subagents, while foreground subagents
    *  render inline in the message flow as the `Agent` tool card. */
   runInBackground?: boolean;
+  /** The id this same subagent has in the server's background-task store
+   *  (REST `/tasks`), learned from the `task.started` registration event. The
+   *  WS event stream keys the agent by agent id while REST keys it by task id;
+   *  this links the two so the REST copy can be folded into this row and so
+   *  cancel can target the id REST actually knows. */
+  backgroundTaskId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -412,9 +417,16 @@ export type AppEvent =
   | { type: 'workspaceDeleted'; workspaceId: string; root: string }
   | { type: 'sessionUpdated'; session: AppSession; changedFields: string[] }
   | { type: 'sessionDeleted'; sessionId: string }
-  | { type: 'sessionStatusChanged'; sessionId: string; status: AppSessionStatus; previousStatus: AppSessionStatus; currentPromptId?: string }
+  | {
+      type: 'sessionWorkChanged';
+      sessionId: string;
+      busy: boolean;
+      mainTurnActive?: boolean;
+      pendingInteraction?: 'none' | 'approval' | 'question';
+      lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+    }
   | { type: 'sessionMetaUpdated'; sessionId: string; title?: string; lastPrompt?: string }
-  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean }
+  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean; thinking?: string }
   | { type: 'historyCompacted'; sessionId: string; beforeSeq: number; reason: string; summaryMessageId?: string }
   | { type: 'compactionStarted'; sessionId: string; trigger: 'manual' | 'auto'; instruction?: string }
   | { type: 'compactionCompleted'; sessionId: string; tokensBefore?: number; tokensAfter?: number; summary?: string }
@@ -449,6 +461,20 @@ export type AppEvent =
       kind?: 'line' | 'text';
     }
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
+  // Prompt-level lifecycle (distinct from turn-level): a prompt that never
+  // produced a turn — blocked by a pre-submit hook, or aborted while queued —
+  // gets no turn.ended and no session status flip, so these are the web layer's
+  // only signal to clear the per-session in-flight state. A normal turn's
+  // prompt.completed is a no-op for state (the status_changed ahead of it
+  // already finished the prompt).
+  | { type: 'promptCompleted'; sessionId: string; promptId: string; reason: string }
+  | { type: 'promptAborted'; sessionId: string; promptId: string }
+  // The MAIN agent's turn boundary — the single source of truth for "the main
+  // conversation has a turn in flight" (half of the working moon, and the
+  // streaming reveal). Deliberately NOT derived from session status: a
+  // background subagent or BTW side chat keeps the session busy but must not
+  // light up the main conversation's moon. `reason` rides on deactivation.
+  | { type: 'turnActiveChanged'; sessionId: string; active: boolean; reason?: string }
   | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
   | {
@@ -507,12 +533,24 @@ export interface AppSessionSnapshot {
 }
 
 export interface KimiEventHandlers {
-  onEvent(event: AppEvent, meta: { sessionId: string; seq: number }): void;
+  onEvent(event: AppEvent, meta: KimiEventMeta): void;
   onResync(sessionId: string, currentSeq: number, epoch?: string): void;
   onError(code: number, msg: string, fatal: boolean): void;
   onConnectionChange(connected: boolean): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
   onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
+}
+
+/** Raw stream coordinates are present only for kap-server assistant/thinking
+    deltas. They let the render queue merge chunks without guessing continuity. */
+export interface KimiEventMeta {
+  sessionId: string;
+  seq: number;
+  stream?: {
+    turnId: number;
+    offset: number;
+    kind: 'text' | 'thinking';
+  };
 }
 
 export interface KimiEventConnection {
@@ -662,7 +700,7 @@ export interface AppSessionWarning {
 export interface KimiWebApi {
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
   getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; backend: 'v1' | 'v2' }>;
-  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean; archivedOnly?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
+  listSessions(input?: PageRequest & { busy?: boolean; workspaceId?: string; includeArchive?: boolean; archivedOnly?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;

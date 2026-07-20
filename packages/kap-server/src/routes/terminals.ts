@@ -6,7 +6,8 @@
  * Backed by the v2 Session-scoped `ISessionTerminalService`
  * (`agent-core-v2/src/session/terminal`): the route resolves the session from
  * the URL, then dispatches to the matching `ISessionTerminalService` method.
- * The wire schema is reused from `@moonshot-ai/protocol`.
+ * The wire schema comes from the engine's own terminal contract
+ * (`agent-core-v2`).
  *
  * The v2 service is Session-scoped (one instance owns only its own session's
  * terminals), so unlike v1 the methods do not take a `session_id` — the session
@@ -28,18 +29,18 @@ import {
   Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  closeTerminalResponseSchema,
-  createTerminalRequestSchema,
-  ErrorCode,
-  getTerminalResponseSchema,
-  listTerminalsResponseSchema,
-} from '@moonshot-ai/protocol';
+import { createTerminalRequestSchema } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  closeTerminalResponseSchema,
+  getTerminalResponseSchema,
+  listTerminalsResponseSchema,
+} from '../protocol/rest-terminal';
 import { parseActionSuffix } from './action-suffix';
 
 interface TerminalsRouteHost {

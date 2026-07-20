@@ -25,18 +25,22 @@ export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
+  /** Trace id from the `x-trace-id` response header (Kimi only; `null` otherwise). */
+  readonly traceId: string | null;
 
   constructor(
     statusCode: number,
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
     super(message);
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
     this.retryAfterMs = retryAfterMs ?? null;
+    this.traceId = traceId ?? null;
   }
 }
 
@@ -46,8 +50,9 @@ export class APIContextOverflowError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs);
+    super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIContextOverflowError';
   }
 }
@@ -58,15 +63,21 @@ export class APIRequestTooLargeError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs);
+    super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIRequestTooLargeError';
   }
 }
 
 export class APIProviderRateLimitError extends APIStatusError {
-  constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
-    super(429, message, requestId, retryAfterMs);
+  constructor(
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+    traceId?: string | null,
+  ) {
+    super(429, message, requestId, retryAfterMs, traceId);
     this.name = 'APIProviderRateLimitError';
   }
 }
@@ -77,8 +88,9 @@ export class APIProviderOverloadedError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs);
+    super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIProviderOverloadedError';
   }
 }
@@ -229,24 +241,26 @@ export function normalizeAPIStatusError(
   message: string,
   requestId?: string | null,
   retryAfterMs?: number | null,
+  traceId?: string | null,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
   }
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, traceId);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, traceId);
   }
   if (isProviderOverloadStatusError(statusCode, message)) {
-    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs);
+    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs, traceId);
   }
   return new APIStatusError(
     statusCode,
     appendThinkingEffortConfigHint(statusCode, message),
     requestId,
     retryAfterMs,
+    traceId,
   );
 }
 
@@ -261,6 +275,17 @@ export function parseRetryAfterMs(headers: unknown): number | null {
   const seconds = Number.parseInt(raw, 10);
   if (!Number.isFinite(seconds) || seconds < 0) return null;
   return seconds * 1000;
+}
+
+export function parseTraceId(headers: unknown): string | null {
+  const raw =
+    headers !== null &&
+    typeof headers === 'object' &&
+    typeof (headers as { get?: unknown }).get === 'function'
+      ? (headers as { get(name: string): string | null }).get('x-trace-id')
+      : null;
+  if (raw === null || raw === undefined || raw.length === 0) return null;
+  return raw;
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {

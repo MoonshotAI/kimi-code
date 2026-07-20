@@ -86,6 +86,8 @@ import {
 const PROMPT_UI_MODE = 'print';
 const DEFAULT_PRINT_WAIT_CEILING_S = 3600;
 const DEFAULT_PRINT_MAX_TURNS = 50;
+/** Re-check `goalActive` at least this often while waiting for goal turns. */
+const GOAL_WAIT_POLL_MS = 250;
 
 export async function runV2Print(
   opts: CLIOptions,
@@ -157,9 +159,11 @@ export async function runV2Print(
   removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanup);
 
   try {
-    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
-    restorePermission = resolved.restorePermission;
-
+    // Install the appender BEFORE resolving the session: `session_started` and
+    // `session_load_failed` fire inside create()/resume(), so an appender wired
+    // up only after resolveNativeSession() would drop them to the null appender.
+    // The model below is the best known up front; a resumed session's real
+    // model is reconciled via setContext once resolved.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
       telemetryService.setAppender(
@@ -167,12 +171,16 @@ export async function runV2Print(
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
           uiMode: PROMPT_UI_MODE,
-          model: resolved.telemetryModel,
+          model: opts.model ?? defaultModel,
           getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
         }),
       );
     }
-    telemetryService.setContext({ sessionId: resolved.session.id });
+
+    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+    restorePermission = resolved.restorePermission;
+
+    telemetryService.setContext({ sessionId: resolved.session.id, model: resolved.telemetryModel });
     if (firstLaunch) {
       telemetryService.track2('first_launch');
     }
@@ -373,6 +381,7 @@ async function runNativeTurn(
     if (result.type === 'completed') {
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
+      const goalService = agent.accessor.get(IAgentGoalService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -384,6 +393,7 @@ async function runNativeTurn(
           skipTurnId: turn.id,
           warn: (message) => stderr.write(`Warning: ${message}\n`),
           now: () => Date.now(),
+          goalActive: () => goalService.getGoal().goal?.status === 'active',
         });
       } catch (error) {
         // A steered turn that fails fails the run (v1 parity). Anything else
@@ -537,9 +547,11 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
             // oxlint-disable-next-line promise/no-multiple-resolved -- `settled` guards the single resolve; the rule cannot see it
             resolve(value);
           };
-          const timer = setTimeout(() => {
-            settle(null);
-          }, ms);
+          const timer = Number.isFinite(ms)
+            ? setTimeout(() => {
+                settle(null);
+              }, ms)
+            : undefined;
           waiter = settle;
         });
       for (;;) {
@@ -571,11 +583,21 @@ export interface PrintBackgroundPolicyInput {
   readonly skipTurnId: number;
   readonly warn: (message: string) => void;
   readonly now: () => number;
+  /**
+   * Reports whether an agent goal is still `active`. v2 drives goal
+   * continuation as new turns (v1 keeps a single turn alive), so a `-p` goal
+   * run must stay alive until the goal leaves `active`, independent of the
+   * background policy.
+   */
+  readonly goalActive?: () => boolean;
 }
 
 /**
  * Apply the print-mode (`kimi -p`) background-task policy after the main turn
  * completes. Mirrors v1's `Session.handlePrintMainTurnCompleted`:
+ *  - goal    : while a goal is `active`, keep waiting for its continuation
+ *              turns (bounded by `ceilingS` as a safety net), regardless of
+ *              the background mode; the goal summary drives the exit code.
  *  - 'exit'  : return immediately (default).
  *  - 'drain' : suppress + drain background tasks, then return.
  *  - 'steer' : while background tasks are still pending, stay alive so task
@@ -587,6 +609,25 @@ export interface PrintBackgroundPolicyInput {
 export async function applyPrintBackgroundPolicy(
   input: PrintBackgroundPolicyInput,
 ): Promise<void> {
+  if (input.goalActive !== undefined) {
+    const goalDeadline = input.now() + input.ceilingS * 1000;
+    while (input.goalActive()) {
+      // Also wake on a short poll: a goal can leave `active` without any
+      // further turn.ended (budget block at a turn boundary, or a pause after
+      // a continuation-launch failure), which would otherwise hang the run
+      // until the ceiling.
+      const ended = await input.turnEndings.next(
+        Math.min(goalDeadline - input.now(), GOAL_WAIT_POLL_MS),
+        input.skipTurnId,
+      );
+      if (ended === null && input.now() >= goalDeadline) {
+        input.warn(`print goal wait ceiling reached (${input.ceilingS}s), finishing`);
+        return;
+      }
+      // A continuation turn that does not complete pauses/blocks the goal, so
+      // the loop condition exits on the next check.
+    }
+  }
   if (input.mode === 'exit') return;
   if (input.mode === 'drain') {
     await input.drain();

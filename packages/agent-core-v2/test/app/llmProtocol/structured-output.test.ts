@@ -101,7 +101,14 @@ async function captureKimiBody(options?: GenerateOptions): Promise<Record<string
   let captured: Record<string, unknown> | undefined;
   (Reflect.get(provider, '_client') as { chat: { completions: { create: unknown } } }).chat.completions.create = vi.fn().mockImplementation((params: unknown) => {
     captured = params as Record<string, unknown>;
-    return Promise.resolve(chatCompletionResponse('kimi-k2'));
+    return {
+      withResponse: () =>
+        Promise.resolve({
+          data: chatCompletionResponse('kimi-k2'),
+          response: new Response(null),
+          request_id: null,
+        }),
+    };
   });
 
   const stream = await provider.generate('', [], HISTORY, options);

@@ -1,5 +1,6 @@
 import { sleep } from '@antfu/utils';
 
+import { APIStatusError } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import { abortable } from '../utils/abort';
@@ -7,14 +8,17 @@ import type { LoopEventDispatcher } from './events';
 import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 
-export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
+// Default retry budget per step: 10 attempts (9 retries). With the
+// exponential ramp below the backoff climbs 0.5s, 1s, 2s … up to the 32s
+// cap, giving roughly 2–3 minutes of total wait — enough to ride out a
+// typical provider overload window (sustained 429s) instead of surfacing
+// the error after a couple of quick retries.
+export const DEFAULT_MAX_RETRY_ATTEMPTS = 10;
 
 const BASE_DELAY_MS = 500;
-// Per-attempt backoff cap (32s). With the default 3 attempts the ramp
-// (0.5s, 1s) never reaches the cap, so interactive runs are unaffected; it
-// only matters for high-attempt configs (e.g. eval harnesses with
-// `max_retries_per_step = 10`), where it lets retries ride out multi-minute
-// provider overload instead of giving up after a few seconds of backoff.
+// Per-attempt backoff cap (32s). The default 10-attempt ramp reaches the
+// cap on the 7th retry, so most of the budget is spent at the cap waiting
+// out multi-minute provider overload.
 const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
 // Up to 25% jitter on top of the exponential base to avoid herd retries.
@@ -36,9 +40,13 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
 
   if (input.llm.isRetryableError === undefined || maxAttempts <= 1) {
     const effectiveMaxAttempts = Math.max(maxAttempts, 1);
+    input.params.trace?.reset();
     try {
-      return await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
+      const response = await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
+      input.params.trace?.capture(response.traceId);
+      return response;
     } catch (error) {
+      captureAttemptTraceId(input, error);
       logRequestFailure(input, error, 1, effectiveMaxAttempts);
       throw error;
     }
@@ -47,9 +55,13 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
   const delays = retryBackoffDelays(maxAttempts);
 
   for (let attempt = 1; ; attempt += 1) {
+    input.params.trace?.reset();
     try {
-      return await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
+      const response = await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
+      input.params.trace?.capture(response.traceId);
+      return response;
     } catch (error) {
+      captureAttemptTraceId(input, error);
       if (attempt >= maxAttempts || !input.llm.isRetryableError(error)) {
         logRequestFailure(input, error, attempt, maxAttempts);
         throw error;
@@ -89,6 +101,34 @@ function logRequestFailure(
     model: input.llm.modelName,
     ...retryErrorFields(error),
   });
+}
+
+/**
+ * Surface a failed attempt's trace id through the same early-capture channel
+ * as a successful attempt. A status-error response still carried response
+ * headers, so its `x-trace-id` is available on the converted error; writing
+ * it here (before the failure propagates to the loop's `turn.interrupted`
+ * dispatch) lets turn-level telemetry attribute the turn to the failed
+ * request rather than the previous successful one. Mid-stream failures were
+ * already captured by the attempt's request trace; failures before any
+ * response (network errors, local aborts) keep the attempt-start reset.
+ */
+function captureAttemptTraceId(input: ChatWithRetryInput, error: unknown): void {
+  const statusError = findAPIStatusError(error);
+  if (statusError?.traceId !== null && statusError?.traceId !== undefined) {
+    input.params.trace?.capture(statusError.traceId);
+  }
+}
+
+export function findAPIStatusError(error: unknown): APIStatusError | undefined {
+  let current = error;
+  const visited = new Set<unknown>();
+  while (current !== null && typeof current === 'object' && !visited.has(current)) {
+    if (current instanceof APIStatusError) return current;
+    visited.add(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 function paramsForAttempt(

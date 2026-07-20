@@ -164,13 +164,8 @@ export * from '#/app/flag/flagRegistryService';
 export * from '#/app/flag/flag';
 export * from '#/app/flag/flagService';
 
-import '#/app/multiServer/flag';
-export * from '#/app/multiServer/flag';
-
-export * from '#/activity/activity';
-export * from '#/activity/activityOps';
-import '#/activity/agentActivityService';
-import '#/activity/sessionActivityKernel';
+export * from '#/agent/activityView/activityView';
+import '#/agent/activityView/activityViewService';
 import '#/agent/plan/profile/plan';
 import '#/agent/plan/tools/enter-plan-mode';
 import '#/agent/plan/tools/exit-plan-mode';
@@ -182,6 +177,8 @@ import '#/agent/goal/tools/create-goal';
 import '#/agent/goal/tools/get-goal';
 import '#/agent/goal/tools/set-goal-budget';
 import '#/agent/goal/tools/update-goal';
+export * from '#/agent/goal/goalDeadlineScheduler';
+import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';
 export * from '#/agent/goal/goalService';
 export * from '#/agent/goal/types';
@@ -254,8 +251,6 @@ export * from '#/app/sessionLegacy/sessionLegacyService';
 export * from '#/session/interaction/interaction';
 export * from '#/session/interaction/interactionService';
 export * from '#/session/sessionContext/sessionContext';
-export * from '#/session/sessionActivity/sessionActivity';
-export * from '#/session/sessionActivity/sessionActivityService';
 
 import '#/session/approval/approval';
 import '#/session/approval/approvalService';

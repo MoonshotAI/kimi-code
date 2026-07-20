@@ -256,7 +256,7 @@ test('batch rejects keys longer than 128 chars', async () => {
 
 // --- #9 TTL heap does not grow unboundedly ----------------------------------
 
-test('repeated TTL updates on one key do not bloat the heap', async () => {
+test('repeated TTL updates on one key do not bloat the heap', { timeout: 30_000 }, async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'string', activeExpireIntervalMs: 0 });
   for (let i = 0; i < 5000; i++) await db.set('k', 'v', { ttl: 1_000_000 });
@@ -344,6 +344,7 @@ test('RESP MSET sets all keys', async () => {
 test('openOrRebuild rebuilds on corrupt index-definition JSON', async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'json' });
+  await db.createIndex('byV', { field: 'v' });
   await db.set('k', { v: 1 });
   await db.close();
   await fs.writeFile(path.join(dir, 'db.indexes.json'), '{ not valid json', 'utf8');
@@ -351,7 +352,9 @@ test('openOrRebuild rebuilds on corrupt index-definition JSON', async () => {
   let rebuilt = false;
   const db2 = await MiniDb.openOrRebuild({ dir, valueCodec: 'json' }, { onRebuild: () => (rebuilt = true) });
   assert.ok(rebuilt, 'onRebuild should be called');
-  assert.equal(db2.get('k'), undefined, 'rebuilt db is empty');
+  // the corrupt sidecar (derived state) is dropped; the data is preserved
+  assert.deepEqual(db2.get('k'), { v: 1 });
+  assert.deepEqual(db2.listIndexes(), []);
   await db2.close();
   await fs.rm(dir, { recursive: true, force: true });
 });

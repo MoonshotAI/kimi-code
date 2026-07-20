@@ -25,6 +25,15 @@ export interface WireMetadataRecord extends WireRecord {
   readonly created_at: number;
 }
 
+export function isWireRecord(record: unknown): record is WireRecord {
+  return (
+    record !== null &&
+    typeof record === 'object' &&
+    !Array.isArray(record) &&
+    typeof (record as { type?: unknown }).type === 'string'
+  );
+}
+
 export function createWireMetadataRecord(now = Date.now()): WireMetadataRecord {
   return {
     type: 'metadata',

@@ -50,6 +50,7 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
 
@@ -58,7 +59,6 @@ const DEFAULT_TIMEOUT_S = 60;
 const MAX_TIMEOUT_S = 5 * 60;
 const DEFAULT_BACKGROUND_TIMEOUT_S = 10 * 60;
 const MAX_BACKGROUND_TIMEOUT_S = 24 * 60 * 60;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 
 export const BashInputSchema = z
   .object({
@@ -395,8 +395,11 @@ export class BashTool implements BuiltinTool<BashInput> {
       result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
         brief: `Killed by timeout (${timeoutLabel})`,
       });
-    } else if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
-      result = builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
+    } else if (
+      current?.status === 'killed' &&
+      current.stopReason === userCancellationReason().message
+    ) {
+      result = builder.error('Interrupted by user', { brief: 'Interrupted by user' });
     } else if (
       (current?.status === 'failed' || current?.status === 'killed') &&
       current.stopReason !== undefined
@@ -453,9 +456,7 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
-    const message = backgroundResultMessage(labels.title, foregroundResult.message);
     const result: ExecutableToolResult & {
-      readonly message: string;
       readonly brief: string;
       readonly truncated: boolean;
     } = {
@@ -464,7 +465,6 @@ export class BashTool implements BuiltinTool<BashInput> {
         foregroundOutput.length === 0
           ? metadata
           : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
-      message,
       brief: labels.brief,
       truncated: foregroundResult.truncated,
     };
@@ -495,12 +495,6 @@ export class BashTool implements BuiltinTool<BashInput> {
 }
 
 registerTool(BashTool);
-
-function backgroundResultMessage(title: string, suffix: string): string {
-  const normalized = title.endsWith('.') ? title : `${title}.`;
-  if (suffix.length === 0) return normalized;
-  return suffix.endsWith('.') ? `${normalized} ${suffix}` : `${normalized} ${suffix}.`;
-}
 
 function formatTimeoutLabel(timeoutMs: number): string {
   return timeoutMs % 1000 === 0 ? `${String(timeoutMs / 1000)}s` : `${String(timeoutMs)}ms`;

@@ -619,11 +619,11 @@ describe('ModelResolverService', () => {
       expect(model.supportEfforts).toEqual(['low', 'high']);
     });
 
-    it('does not pass supportEfforts through for non-Kimi providers', async () => {
+    it('passes Anthropic supportEfforts through to the protocol adapter', async () => {
       providers['p'] = { type: 'anthropic', baseUrl: 'https://example.test', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
-        model: 'kimi-for-coding',
+        model: 'compatible-model',
         maxContextSize: 1000,
         supportEfforts: ['low', 'high', 'max'],
       };
@@ -632,11 +632,8 @@ describe('ModelResolverService', () => {
 
       expect(config).toMatchObject({
         protocol: 'anthropic',
+        providerOptions: { supportEfforts: ['low', 'high', 'max'] },
       });
-      const providerOptions = config?.['providerOptions'] as
-        | { readonly supportEfforts?: readonly string[] }
-        | undefined;
-      expect(providerOptions?.supportEfforts).toBeUndefined();
     });
 
     it('marks the Anthropic adapter when it transports a Kimi provider', async () => {
@@ -655,6 +652,35 @@ describe('ModelResolverService', () => {
         protocol: 'anthropic',
         providerOptions: { kimiThinking: true },
       });
+    });
+
+    it('does not infer fallback effort metadata for an unknown Kimi-managed Anthropic model', () => {
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        protocol: 'anthropic',
+        model: 'compatible-model',
+        maxContextSize: 1000,
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.supportEfforts).toBeUndefined();
+      expect(model.defaultEffort).toBeUndefined();
+    });
+
+    it('infers latest Opus metadata for a flat providerless Anthropic model', () => {
+      models['m'] = {
+        model: 'compatible-model',
+        baseUrl: 'https://anthropic.example.test',
+        protocol: 'anthropic',
+        maxContextSize: 1000,
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.supportEfforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+      expect(model.defaultEffort).toBe('high');
     });
 
     it('passes Vertex service-account options and derives location from the baseUrl', async () => {
@@ -801,6 +827,25 @@ describe('ModelResolverService', () => {
     it('is off (null) when thinking.enabled is false', () => {
       configValues['thinking'] = { enabled: false };
       expect(resolveEffort()).toBeNull();
+    });
+
+    it('applies explicit off to Anthropic providers like v1', async () => {
+      configValues['thinking'] = { enabled: false };
+      providers['p'] = { type: 'anthropic', baseUrl: 'https://example.test', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        model: 'compatible-model',
+        maxContextSize: 1000,
+        capabilities: ['thinking'],
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+      for await (const _event of model.request({ systemPrompt: '', tools: [], messages: [] })) {
+        void _event;
+      }
+
+      expect(model.thinkingEffort).toBe('off');
+      expect(appliedThinkingEfforts).toEqual(['off']);
     });
 
     it('uses the configured thinking.effort', () => {

@@ -8,7 +8,7 @@
  *   POST    /v1/sessions/{id}:btw         -                     data: StartBtwSession
  *   GET     /v1/sessions/{id}/children    query: ListSessions   data: Page<Session>
  *   POST    /v1/sessions/{id}/children    body: SessionChild    data: Session
- *   GET     /v1/sessions/{id}/status      -                     data: SessionStatus
+ *   GET     /v1/sessions/{id}/status      -                     data: SessionStatusResponse
  *   POST    /v1/sessions/{id}:compact     body: CompactSession  data: {}
  *   POST    /v1/sessions/{id}:undo        body: UndoSession     data: UndoSession
  *   POST    /v1/sessions/{id}:archive     -                     data: { archived: true }
@@ -25,7 +25,6 @@ import {
   sessionCreateSchema,
   sessionForkSchema,
   sessionSchema,
-  sessionStatusSchema,
   sessionUpdateSchema,
 } from '../session';
 
@@ -46,7 +45,7 @@ const booleanQueryParam = z.preprocess(
 
 export const listSessionsQuerySchema = cursorQuerySchema.and(
   z.object({
-    status: sessionStatusSchema.optional(),
+    busy: booleanQueryParam,
     include_archive: booleanQueryParam,
     archived_only: booleanQueryParam,
     exclude_empty: booleanQueryParam,
@@ -112,7 +111,7 @@ export type StartBtwSessionResponse = z.infer<typeof startBtwSessionResponseSche
 // does not filter by it, so advertising it would mislead generated clients.
 export const listSessionChildrenQuerySchema = cursorQuerySchema.and(
   z.object({
-    status: sessionStatusSchema.optional(),
+    busy: booleanQueryParam,
     include_archive: booleanQueryParam,
   }),
 );
@@ -128,7 +127,9 @@ export const createSessionChildResponseSchema = sessionSchema;
 export type CreateSessionChildResponse = z.infer<typeof createSessionChildResponseSchema>;
 
 export const sessionStatusResponseSchema = z.object({
-  status: sessionStatusSchema,
+  /** Any agent in the session holds an active turn. Replaces the derived
+   *  status enum; awaiting states ride the approval/question channels. */
+  busy: z.boolean(),
   model: z.string().optional(),
   thinking_level: z.string(),
   permission: z.string(),

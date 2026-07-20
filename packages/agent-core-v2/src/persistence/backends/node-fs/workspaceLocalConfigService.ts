@@ -228,7 +228,7 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
 
   private async pathExists(filePath: string): Promise<boolean> {
     try {
-      await this.fs.stat(filePath);
+      await this.fs.lstat(filePath);
       return true;
     } catch {
       return false;

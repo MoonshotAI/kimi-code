@@ -477,7 +477,7 @@ describe('AgentTaskService', () => {
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(manager.getTask(taskId)).toMatchObject({
       status: 'killed',
-      stopReason: 'Interrupted by user',
+      stopReason: 'Aborted by the user',
     });
   });
 
@@ -507,7 +507,7 @@ describe('AgentTaskService', () => {
     const info = await manager.wait(taskId);
     expect(info).toMatchObject({
       status: 'killed',
-      stopReason: 'Interrupted by user',
+      stopReason: 'Aborted by the user',
     });
     expect(isUserCancellation(subagentController.signal.reason)).toBe(true);
   });

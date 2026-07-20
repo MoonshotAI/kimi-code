@@ -11,21 +11,43 @@ import {
 import type { AcpModelEntry } from '../src/model-catalog';
 
 function makeHarnessWithModels(
-  entries: ReadonlyArray<{ id: string; model?: string; displayName?: string; capabilities?: readonly string[] }>,
+  entries: ReadonlyArray<{
+    id: string;
+    model?: string;
+    displayName?: string;
+    capabilities?: readonly string[];
+    protocol?: 'anthropic';
+    providerType?: 'anthropic' | 'kimi' | 'openai';
+  }>,
 ): { harness: KimiHarness; getConfig: ReturnType<typeof vi.fn> } {
   // Mirror the `listAvailableModels` derivation: `id` is the config map
   // key, `model` defaults to id, `displayName` to model. The test fixtures
   // below pick names that exercise the three thinkingSupported triggers
-  // (name regex, capabilities array, toggleable allow-list).
-  const models: Record<string, { model: string; displayName?: string; capabilities?: readonly string[] }> = {};
+  // (name regex, capabilities array, toggleable allow-list). Entries with a
+  // `providerType` also get a backing provider so provider-aware derivation
+  // (e.g. the Anthropic fallback profile) can resolve the provider's type.
+  const models: Record<string, {
+    provider?: string;
+    model: string;
+    displayName?: string;
+    capabilities?: readonly string[];
+    protocol?: 'anthropic';
+  }> = {};
+  const providers: Record<string, { type: string }> = {};
   for (const entry of entries) {
+    const providerName = `provider-${entry.id}`;
     models[entry.id] = {
+      ...(entry.providerType !== undefined ? { provider: providerName } : {}),
       model: entry.model ?? entry.id,
       ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
+      protocol: entry.protocol,
     };
+    if (entry.providerType !== undefined) {
+      providers[providerName] = { type: entry.providerType };
+    }
   }
-  const getConfig = vi.fn(async () => ({ models }));
+  const getConfig = vi.fn(async () => ({ models, providers }));
   return { harness: { getConfig } as unknown as KimiHarness, getConfig };
 }
 
@@ -155,6 +177,36 @@ describe('buildSessionConfigOptions', () => {
     if (result[2]!.type === 'select') {
       expect(result[2]!.currentValue).toBe('default');
     }
+  });
+
+  it('shows the thinking control for an unknown model using the Anthropic protocol', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'custom',
+        model: 'custom-anthropic-model',
+        protocol: 'anthropic',
+        providerType: 'anthropic',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'custom', false, 'default');
+
+    expect(result.map((option) => option.id)).toEqual(['model', 'thinking', 'mode']);
+  });
+
+  it('hides the thinking control for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'custom',
+        model: 'custom-anthropic-model',
+        protocol: 'anthropic',
+        providerType: 'kimi',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'custom', false, 'default');
+
+    expect(result.map((option) => option.id)).toEqual(['model', 'mode']);
   });
 
   it('omits the thinking toggle when current model is non-thinking-supported', async () => {

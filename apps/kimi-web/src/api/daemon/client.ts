@@ -17,7 +17,6 @@ import type {
   AppSessionCursor,
   AppSessionRuntimeStatus,
   AppSessionSnapshot,
-  AppSessionStatus,
   AppTask,
   AppTaskStatus,
   AppTerminal,
@@ -52,7 +51,6 @@ import {
   toWireApprovalResponse,
   toWirePromptSubmission,
   toWireQuestionResponse,
-  toWireSessionStatus,
   toAppWorkspace,
   wireEventSeq,
   wireEventSessionId,
@@ -347,7 +345,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async listSessions(
     input?: PageRequest & {
-      status?: AppSessionStatus;
+      busy?: boolean;
       workspaceId?: string;
       includeArchive?: boolean;
       archivedOnly?: boolean;
@@ -358,7 +356,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       before_id: input?.beforeId,
       after_id: input?.afterId,
       page_size: input?.pageSize,
-      status: input?.status ? toWireSessionStatus(input.status) : undefined,
+      busy: input?.busy,
       include_archive: input?.includeArchive,
       archived_only: input?.archivedOnly,
       exclude_empty: input?.excludeEmpty,
@@ -565,7 +563,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       };
       traceKeyEvent('session:snapshot:accepted', {
         sessionId,
-        status: snapshot.session.status,
+        busy: snapshot.session.busy,
         seq: snapshot.asOfSeq,
         messageCount: snapshot.messages.length,
         durationMs: Date.now() - startedAt,
@@ -1177,8 +1175,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
           name: e.name,
           path: e.path,
           isDir: e.is_dir,
-          isGitRepo: e.is_git_repo,
-          branch: e.branch,
         })),
       };
     } catch {
@@ -1434,6 +1430,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
         const { type, seq, session_id: sessionId, payload, offset } = frame;
         const appEvents = projector.project(type, payload, sessionId, { offset });
         for (const appEvent of appEvents) {
+          const turnId = (payload as { turnId?: unknown } | null)?.turnId;
+          const stream =
+            appEvent.type === 'assistantDelta' &&
+            typeof turnId === 'number' &&
+            typeof offset === 'number' &&
+            (type === 'assistant.delta' || type === 'thinking.delta')
+              ? {
+                  turnId,
+                  offset,
+                  kind: type === 'assistant.delta' ? ('text' as const) : ('thinking' as const),
+                }
+              : undefined;
           // historyCompacted from the projector is either a compaction signal
           // (reason auto_compact — no reload, the divider marker handles it) or
           // a delta-gap recovery (reason delta_gap — a real resync, routed to
@@ -1441,7 +1449,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
           if (appEvent.type === 'historyCompacted' && !isCompactionReason(appEvent.reason)) {
             handlers.onResync(sessionId, seq);
           }
-          handlers.onEvent(appEvent, { sessionId, seq });
+          handlers.onEvent(appEvent, { sessionId, seq, stream });
         }
       },
 

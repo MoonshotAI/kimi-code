@@ -20,13 +20,13 @@ export class SessionQuestionService implements ISessionQuestionService {
 
   constructor(@ISessionInteractionService private readonly interaction: ISessionInteractionService) {}
 
-  request(req: QuestionRequest, options?: { signal?: AbortSignal }): Promise<QuestionResult> {
+  request(req: QuestionRequest, options?: { signal?: AbortSignal; agentId?: string }): Promise<QuestionResult> {
     const id = requestId(req);
     const pending = this.interaction.request<QuestionRequest, QuestionResult>({
       id,
       kind: 'question',
       payload: req,
-      origin: { turnId: req.turnId },
+      origin: { turnId: req.turnId, agentId: options?.agentId },
     });
 
     const signal = options?.signal;

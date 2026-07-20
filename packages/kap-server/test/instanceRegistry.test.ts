@@ -1,9 +1,10 @@
 /**
- * Server instance registry semantics (plan P0 — multi-server shared homedir).
+ * Server instance registry semantics — the always-on kap-server discovery
+ * mechanism (no feature flag; every instance registers itself).
  *
  * Hermetic strategy: every test uses a tmpdir instances dir so the real
  * `~/.kimi-code/server/instances` is never touched. Dead-pid simulation uses
- * `0x7fffffff` (guaranteed ESRCH on Linux/macOS), mirroring lock.test.ts.
+ * `0x7fffffff` (guaranteed ESRCH on Linux/macOS).
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -18,6 +19,7 @@ import {
   listLiveServerInstances,
   type ServerInstanceInfo,
 } from '../src/instanceRegistry';
+import { type RunningServer, startServer } from '../src/start';
 
 let tmpDir: string;
 let instancesDir: string;
@@ -256,5 +258,78 @@ describe('convenience readers', () => {
 
   it('getLiveServerInstance returns undefined when no live instance exists', async () => {
     await expect(getLiveServerInstance(tmpDir)).resolves.toBeUndefined();
+  });
+});
+
+
+describe('startServer — instance registry wiring', () => {
+  let home: string | undefined;
+  const servers: RunningServer[] = [];
+
+  afterEach(async () => {
+    while (servers.length > 0) {
+      await servers.pop()!.close();
+    }
+    if (home !== undefined) {
+      rmSync(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  it('lets two servers share one homeDir, each registering a distinct instance and port', async () => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-server-multi-server-'));
+    const a = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(a);
+    const b = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(b);
+
+    // Each instance binds its own (ephemeral) port and registers it.
+    expect(b.port).not.toBe(a.port);
+
+    const live = await listLiveServerInstances(home);
+    expect(live).toHaveLength(2);
+    expect(new Set(live.map((i) => i.serverId)).size).toBe(2);
+    expect(live.map((i) => i.port).sort((x, y) => x - y)).toEqual(
+      [a.port, b.port].sort((x, y) => x - y),
+    );
+    // The legacy single-instance lock is never created.
+    expect(existsSync(join(home, 'server', 'lock'))).toBe(false);
+  });
+
+  it('removes its instance file on close so peers no longer list it', async () => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-server-multi-server-'));
+    const a = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(a);
+    const b = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    servers.push(b);
+    expect(await listLiveServerInstances(home)).toHaveLength(2);
+
+    await a.close();
+    servers.splice(servers.indexOf(a), 1);
+
+    const live = await listLiveServerInstances(home);
+    expect(live).toHaveLength(1);
+    expect(live[0]?.port).toBe(b.port);
+  });
+
+  it('releases its registration on close so a fresh instance on the same home can start', async () => {
+    home = mkdtempSync(join(tmpdir(), 'kimi-server-multi-server-'));
+    const first = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    await first.close();
+
+    const restarted = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    servers.push(restarted);
+    expect(await listLiveServerInstances(home)).toHaveLength(1);
+    expect((await listLiveServerInstances(home))[0]?.port).toBe(restarted.port);
   });
 });

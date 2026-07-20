@@ -1,7 +1,7 @@
 /**
  * `/api/v1/ws` — creates the v1 (legacy) WebSocket server. The HTTP `upgrade`
  * event is dispatched by the bootstrap (`start.ts`), which routes by path so
- * this endpoint coexists with `/api/v2/ws`.
+ * this is the only WebSocket endpoint.
  *
  * Each connection is a {@link WsConnectionV1}, tracked in the shared
  * {@link IConnectionRegistry}; shutdown (close-all + wss.close) is owned by the

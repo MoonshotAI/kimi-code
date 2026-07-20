@@ -12,10 +12,8 @@ import MenuItem from '../ui/MenuItem.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
 
 const props = defineProps<{
   sessionId?: string;
@@ -210,21 +208,13 @@ function exportSession(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Archive — modal confirm (the header has no session row to swap, so use the
-// shared ConfirmDialog instead of the inline strip used in SessionRow).
+// Archive — the modal confirm and the async work live in App.vue
+// (confirmArchiveSession); the header only emits the intent.
 // ---------------------------------------------------------------------------
-async function startArchive(): Promise<void> {
+function startArchive(): void {
   if (!props.sessionId) return;
   closeMenu();
-  if (
-    await confirm({
-      title: t('header.archiveSession'),
-      message: t('sidebar.archiveConfirm'),
-      variant: 'danger',
-    })
-  ) {
-    emit('archiveSession', props.sessionId);
-  }
+  emit('archiveSession', props.sessionId);
 }
 </script>
 

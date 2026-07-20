@@ -27,17 +27,43 @@ import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { isProviderRateLimitError } from '#/app/llmProtocol/errors';
 import { type TokenUsage } from '#/app/llmProtocol/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type {
-  SubagentCompletedEvent,
-  SubagentFailedEvent,
-  SubagentSpawnedEvent,
-  SubagentStartedEvent,
-} from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { type AgentRunHandle, ISessionSubagentService } from './subagent';
+
+export interface SubagentSpawnedEvent {
+  readonly type: 'subagent.spawned';
+  readonly subagentId: string;
+  readonly subagentName: string;
+  readonly parentToolCallId: string;
+  readonly parentToolCallUuid?: string;
+  readonly parentAgentId?: string;
+  readonly callerAgentId?: string;
+  readonly description?: string;
+  readonly swarmIndex?: number;
+  readonly runInBackground: boolean;
+}
+
+export interface SubagentStartedEvent {
+  readonly type: 'subagent.started';
+  readonly subagentId: string;
+}
+
+export interface SubagentCompletedEvent {
+  readonly type: 'subagent.completed';
+  readonly subagentId: string;
+  readonly resultSummary: string;
+  readonly usage?: TokenUsage;
+  readonly contextTokens?: number;
+}
+
+export interface SubagentFailedEvent {
+  readonly type: 'subagent.failed';
+  readonly subagentId: string;
+  readonly error: string;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

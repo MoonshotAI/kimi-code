@@ -6,6 +6,117 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.27.0 (2026-07-17)
+
+### Features
+
+- Add the /copy slash command to copy the last assistant message to the clipboard.
+- Using an API key for Kimi coding models now also fetches the latest model list automatically.
+
+### Polish
+
+- OAuth connection errors now include the underlying network cause (DNS, refused connection, TLS, or timeout) instead of a bare "fetch failed".
+
+### Bug Fixes
+
+- Fix repeated request rejections after an interrupted model response.
+- Fix the built-in URL fetch tool's network safeguards: crafted domains and redirect chains can no longer reach loopback or internal network services.
+- web: Fix LaTeX formulas rendering as garbled overlapping text when the web UI is accessed over the network.
+- web: Fix queued messages silently re-sending previously uploaded files when a session is reopened.
+- web: Remember the thinking level per model, fixing an empty, unresponsive thinking picker when the model doesn't support the stored level.
+- web: Fix duplicate workspace groups on Windows when the same folder is opened with different path spellings; its sessions now list under one merged group.
+- Fix AGENTS.md files installed as symbolic links being ignored by the web backend.
+- Fix Esc and Ctrl+C cancelling compaction instead of closing an open /btw panel.
+- Fix whitespace-only thinking content rendering as a blank line in the transcript.
+- Fix `/export-debug-zip` and `kimi export` overwriting the previous ZIP on repeated runs for the same session; the default filename now includes a timestamp.
+
+## 0.26.0 (2026-07-16) Say hi to the BIIIG DAY!
+
+### Polish
+
+- Expand the coder subagent tool set to include background tasks, todo lists, plan mode, skill invocation, and nested agents, mirroring the main agent's capabilities.
+- Warn in the `/model` and `/effort` pickers that switching invalidates the existing prompt cache, and hint to use `/new` to avoid extra token costs.
+- web: Refresh the model catalog for all providers when opening the model picker, so newly available models always show up.
+- Optimize the unit formatting of the context usage display.
+
+### Bug Fixes
+
+- Fix a resumed session being marked as just updated and jumping to the top of the session list without any new activity.
+- Fix the context size indicator under-reporting the model's actual context usage.
+- Fix Kimi-provider models routed through the Anthropic protocol incorrectly showing reasoning effort options.
+- Honor an explicit thinking "off" on OpenAI-compatible (chat completions) providers.
+- Report when users stop tasks and preserve other stop reasons in model context.
+- Fix a race where resuming a background subagent right after it was manually stopped could fail with an "already running" error.
+- Replay empty thinking content verbatim instead of substituting a placeholder space on Anthropic-compatible and Kimi preserved-thinking endpoints.
+- Keep legacy migrations idempotent across multiple Kimi homes and report damaged or unmapped sessions instead of silently skipping them.
+- web: Fix the sidebar resize handle being covered by the chat composer background.
+
+## 0.25.0 (2026-07-16)
+
+### Features
+
+- web: Attach any file type in chat — files can be dropped anywhere in the window, and sent files, images, and videos show as chips in the message bubble.
+
+### Polish
+
+- web: Show full diagnostics for model request failures.
+- Apply official Anthropic effort profiles and a 128k output fallback for unknown models.
+
+### Bug Fixes
+
+- Fix the web server bearer-token check being bypassed by percent-encoded API paths, which allowed unauthenticated access to every API route.
+- Fix the session filesystem API following symlinks that point outside the workspace, which allowed accessing host files beyond the session directory.
+- web: Keep session activity indicators in sync with agent work and prevent duplicate streamed content after session activation races or LLM retries.
+- Fix custom-named models on Anthropic-compatible providers starting new sessions with thinking effort off and not showing the thinking control in ACP clients.
+- Honor adaptive_thinking = false on Anthropic-compatible models by omitting the effort parameter from requests.
+- web: Fix the Content-Security-Policy on non-loopback server binds blocking the web UI's theme bootstrap script and bundled fonts.
+- Fix sessions failing to be created when the workspace directory is given through a symlink.
+- Fix the CLI exiting unexpectedly when reading an image from the clipboard fails; it now falls back to pasting text.
+- web: Fix completed background subagents losing their final output after a session reload.
+- web: Fix Enter not confirming modal confirmation dialogs in dev builds.
+- web: Fix a background subagent showing up as two identical rows in the agents dock panel during streaming.
+- Fix the diagnostic log missing the actual error when the CLI exits unexpectedly.
+
+## 0.24.2 (2026-07-15)
+
+### Features
+
+- Add a builtin `/check-kimi-code-docs` skill that automatically answers Kimi Code product questions with official-docs sources.
+
+### Polish
+
+- Align `kimi -p` behavior across engines: `print_background_mode` and `print_max_turns` now apply, and `/goal` runs stay alive until the goal finishes.
+- `kimi -p` now stays alive by default while background tasks are pending, with no effective wait or turn limit, and feeds each completion back to the agent. Set `print_background_mode = "exit"` or `"drain"` to restore the old exit-after-one-turn behavior.
+- `kimi -p` background tasks and subagents no longer time out by default (interactive mode is unchanged); restore limits with `[background] bash_task_timeout_s` or `[subagent] timeout_ms`.
+- Subagent timeout now defaults to 2 hours everywhere; override with `[subagent] timeout_ms` or `KIMI_SUBAGENT_TIMEOUT_MS`.
+- The per-step LLM retry limit is raised from 3 to 10 attempts, so transient provider failures (429 / overload) are retried before a turn fails; tune with `loop_control.max_retries_per_step`.
+- Workspaces now stay in sync: new sessions register automatically, missing workspaces are restored at startup, and removed ones stay removed.
+- `kimi web` now logs failed requests and key operations so daemon issues are easier to diagnose.
+- web: AgentSwarm cards now stay expanded while subagents are still running.
+- web: Minimized plan review and question cards now use an upward chevron for expand.
+
+### Bug Fixes
+
+- web: Fix mobile layout on iOS, including the composer, safe areas, and toasts.
+- Fix new sessions not opening in older CLI versions.
+- Fix completion notifications firing early when a subagent finished while the main turn was still running.
+- Fix the web UI showing the wrong CLI version.
+- Fix Gemini tool call IDs colliding across turns and merging swarm runs into one card.
+- web: Show server error details when actions like stopping or archiving a session fail.
+- web: Fix long responses stalling after the tab was backgrounded.
+- web: Fix code block copy buttons over plain HTTP.
+- web: Keep loaded sessions visible when the session list fails to reload.
+- web: Restore the AgentSwarm member list after a page refresh.
+- web: Fix session titles not generating when the first message is a slash command.
+- web: Show each message's actual send time after reloading a session.
+- Fix several goal-mode issues around budgets and turn limits, pausing and resuming, crash recovery, final status messages, and invalid persisted goal records.
+- Fix replaced goals being able to affect the new goal's budget, and reject subagent goals consistently.
+- Correct the guidance shown when a goal cannot be paused or resumed.
+
+### Refactors
+
+- Rename the dynamic tool loading capability from `select_tools` to `dynamically_loaded_tools`; behavior is unchanged.
+
 ## 0.24.1 (2026-07-14)
 
 ### Bug Fixes

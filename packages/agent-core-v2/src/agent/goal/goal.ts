@@ -1,8 +1,9 @@
 /**
- * `goal` domain (L4) — per-agent goal lifecycle contract.
+ * `goal` domain (L4) — main-agent goal lifecycle contract.
  *
  * Defines the commands and snapshots used to create, inspect, update, and clear
- * the durable goal state. Bound at Agent scope.
+ * the durable goal state. Bound at Agent scope; subagent callers are rejected
+ * with `goal.unsupported_agent`.
  */
 import { createDecorator } from "#/_base/di/instantiation";
 import type {
@@ -18,6 +19,7 @@ export interface GoalReasonInput {
 }
 
 export interface ResumeGoalInput extends GoalReasonInput {
+  readonly continueIfPaused?: boolean;
   readonly continueIfBlocked?: boolean;
 }
 
