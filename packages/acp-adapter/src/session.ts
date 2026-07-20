@@ -39,7 +39,14 @@ import {
 } from './builtin-commands';
 import { buildSessionConfigOptions } from './config-options';
 import { listModelsFromHarness } from './model-catalog';
-import { acpBlocksToPromptParts, compressPromptImageParts } from './convert';
+import {
+  acpBlocksToPromptParts,
+  compressPromptImageParts,
+  extractAgentSummary,
+  questionsFromToolArgs,
+  summarizeQuestionResult,
+  todoItemsFromToolArgs,
+} from './convert';
 import {
   acpToolCallId,
   assistantDeltaToSessionUpdate,
@@ -47,6 +54,7 @@ import {
   planFromDisplayBlock,
   stringifyArgs,
   thinkingDeltaToSessionUpdate,
+  todoListToSessionUpdate,
   toolCallDeltaToSessionUpdate,
   toolCallLazyCreateToSessionUpdate,
   toolCallStartedUpgradeToSessionUpdate,
@@ -546,6 +554,11 @@ export class AcpSession {
     // the assistant message that issued the call is replayed and read
     // when the tool result lands. Lives for the duration of one replay.
     const toolCallTurnIds = new Map<string, number>();
+    // Per-call replay bookkeeping for the structured-tool families
+    // (TodoList → plan, AskUserQuestion, Agent): how the call was emitted
+    // and its parsed args (needed to summarize results without re-parsing).
+    const toolCallKinds = new Map<string, 'plan' | 'question' | 'agent' | 'generic'>();
+    const toolCallArgs = new Map<string, unknown>();
 
     for (const message of agent.context.history) {
       try {
@@ -558,6 +571,14 @@ export class AcpSession {
             toolCallTurnIds.set(toolCallId, turnId);
           },
           lookupToolCallTurnId: (toolCallId) => toolCallTurnIds.get(toolCallId),
+          recordToolCallMeta: (toolCallId, kind, args) => {
+            toolCallKinds.set(toolCallId, kind);
+            toolCallArgs.set(toolCallId, args);
+          },
+          lookupToolCallMeta: (toolCallId) => ({
+            kind: toolCallKinds.get(toolCallId) ?? 'generic',
+            args: toolCallArgs.get(toolCallId),
+          }),
         });
       } catch (err) {
         log.warn('acp: replayHistory failed to emit a message; continuing', {
@@ -586,6 +607,8 @@ export class AcpSession {
       beginAssistantTurn: () => void;
       recordToolCall: (toolCallId: string) => void;
       lookupToolCallTurnId: (toolCallId: string) => number | undefined;
+      recordToolCallMeta: (toolCallId: string, kind: 'plan' | 'question' | 'agent' | 'generic', args: unknown) => void;
+      lookupToolCallMeta: (toolCallId: string) => { kind: 'plan' | 'question' | 'agent' | 'generic'; args: unknown };
     },
   ): Promise<void> {
     switch (message.role) {
@@ -610,7 +633,7 @@ export class AcpSession {
         }
         for (const toolCall of message.toolCalls ?? []) {
           ctx.recordToolCall(toolCall.id);
-          await this.replaySyntheticToolCall(toolCall, sessionId, conn, turnId);
+          await this.replaySyntheticToolCall(toolCall, sessionId, conn, turnId, ctx);
         }
         return;
       }
@@ -632,6 +655,14 @@ export class AcpSession {
           return;
         }
         const isError = message.isError === true;
+        const meta = ctx.lookupToolCallMeta(rawToolCallId);
+        if (meta.kind !== 'generic') {
+          // The call was replayed through a structured channel (plan /
+          // question bridge / Agent): shape its result to match instead of
+          // dumping the raw envelope text.
+          await this.replayStructuredToolResult(meta.kind, meta.args, message, isError, sessionId, conn, turnId, rawToolCallId);
+          return;
+        }
         await conn.sessionUpdate({
           sessionId,
           update: {
@@ -685,10 +716,26 @@ export class AcpSession {
     sessionId: string,
     conn: AgentSideConnection,
     turnId: number,
+    ctx: {
+      recordToolCallMeta: (toolCallId: string, kind: 'plan' | 'question' | 'agent' | 'generic', args: unknown) => void;
+    },
   ): Promise<void> {
     const name = toolCall.name;
     const argsRaw = toolCall.arguments;
     const parsedArgs = parseToolCallArguments(argsRaw);
+
+    // Structured replay for the custom-tool families: replay should
+    // reconstruct the SAME wire semantics the live path used (TodoList →
+    // ACP plan, AskUserQuestion / Agent → structured tool_call with
+    // rawInput/rawOutput) instead of flattening envelopes into text. On
+    // any shape mismatch the helper returns null and we fall through to
+    // the generic tool_call dump (honest, never lossy).
+    const family = await this.replayStructuredToolCall(toolCall, parsedArgs, sessionId, conn, turnId);
+    if (family !== null) {
+      ctx.recordToolCallMeta(toolCall.id, family, parsedArgs);
+      return;
+    }
+    ctx.recordToolCallMeta(toolCall.id, 'generic', parsedArgs);
     await conn.sessionUpdate(
       toolCallStartToSessionUpdate(sessionId, {
         type: 'tool.call.started',
@@ -698,6 +745,176 @@ export class AcpSession {
         args: parsedArgs,
       }),
     );
+  }
+
+  /**
+   * Replay one of the three custom-tool families through its structured
+   * channel. Returns the family tag ('plan' | 'question' | 'agent') when
+   * handled so the result side can shape its output to match, or `null`
+   * to leave the call on the generic tool_call path.
+   */
+  private async replayStructuredToolCall(
+    toolCall: NonNullable<ContextMessage['toolCalls']>[number],
+    parsedArgs: unknown,
+    sessionId: string,
+    conn: AgentSideConnection,
+    turnId: number,
+  ): Promise<'plan' | 'question' | 'agent' | null> {
+    // TodoList → ACP `plan` (the same session update the live path emits
+    // via planFromDisplayBlock). An empty list emits nothing: the wire
+    // replaces the whole plan per update, and 'plan_removed' is a
+    // separate deferred story.
+    if (toolCall.name === 'TodoList') {
+      const items = todoItemsFromToolArgs(parsedArgs);
+      if (items === null) return null;
+      const update = todoListToSessionUpdate(sessionId, turnId, items);
+      if (update !== null) {
+        await conn.sessionUpdate(update);
+      }
+      return 'plan';
+    }
+
+    // AskUserQuestion → a clean tool_call: structured rawInput (the
+    // questions), result side emits the one-line human summary with the
+    // full JSON in rawOutput. A question-bridge replay (re-asking the
+    // user through requestPermission on load) was rejected: replaying
+    // history must be side-effect-free, and the answer already exists in
+    // the transcript.
+    if (toolCall.name === 'AskUserQuestion') {
+      const questions = questionsFromToolArgs(parsedArgs);
+      if (questions === null) return null;
+      await conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: acpToolCallId(turnId, toolCall.id),
+          title: 'AskUserQuestion',
+          kind: 'other',
+          status: 'in_progress',
+          rawInput: parsedArgs,
+          content: [
+            {
+              type: 'content',
+              content: {
+                type: 'text',
+                text: questions.length === 1 ? questions[0]! : `${questions.length} questions`,
+              },
+            },
+          ],
+        },
+      });
+      return 'question';
+    }
+
+    // Agent (subagent spawn) → clean title with type + description;
+    // result side strips the `agent_id:…\n…status:…` envelope prelude and
+    // keeps the raw envelope in rawOutput.
+    if (toolCall.name === 'Agent') {
+      const args = typeof parsedArgs === 'object' && parsedArgs !== null ? (parsedArgs as Record<string, unknown>) : {};
+      const subagentType = typeof args['subagent_type'] === 'string' && args['subagent_type'].length > 0 ? args['subagent_type'] : 'coder';
+      const description = typeof args['description'] === 'string' ? args['description'] : '';
+      await conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: acpToolCallId(turnId, toolCall.id),
+          title: `Agent (${subagentType})${description ? `: ${description}` : ''}`,
+          kind: 'other',
+          status: 'in_progress',
+          rawInput: parsedArgs,
+          content: [{ type: 'content', content: { type: 'text', text: description } }],
+        },
+      });
+      return 'agent';
+    }
+
+    return null;
+  }
+
+  /**
+   * Emit the tool RESULT for a structured-family call, matching the call
+   * side's channel: plan results are dropped entirely (the plan update
+   * already carries the full list — no wire tool_call exists to complete);
+   * question results become a one-line summary + rawOutput JSON; Agent
+   * results become the subagent's summary text + rawOutput envelope.
+   */
+  private async replayStructuredToolResult(
+    kind: 'plan' | 'question' | 'agent',
+    args: unknown,
+    message: ContextMessage,
+    isError: boolean,
+    sessionId: string,
+    conn: AgentSideConnection,
+    turnId: number,
+    rawToolCallId: string,
+  ): Promise<void> {
+    void args;
+    if (kind === 'plan') {
+      // Nothing to emit: the ACP plan carries the whole list per update,
+      // and the 'Todo list updated…' text adds a fake assistant dump.
+      return;
+    }
+    const resultText = message.content
+      .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+
+    if (kind === 'question') {
+      const shaped = summarizeQuestionResult(resultText);
+      if (shaped === null) {
+        await this.replayGenericToolResult(message, isError, sessionId, conn, turnId, rawToolCallId);
+        return;
+      }
+      await conn.sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: acpToolCallId(turnId, rawToolCallId),
+          status: isError ? 'failed' : 'completed',
+          rawOutput: shaped.rawOutput,
+          content: [{ type: 'content', content: { type: 'text', text: shaped.summary } }],
+        },
+      });
+      return;
+    }
+
+    // kind === 'agent'
+    const shaped = extractAgentSummary(resultText);
+    if (shaped === null) {
+      await this.replayGenericToolResult(message, isError, sessionId, conn, turnId, rawToolCallId);
+      return;
+    }
+    await conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: acpToolCallId(turnId, rawToolCallId),
+        status: isError ? 'failed' : 'completed',
+        rawOutput: shaped.rawOutput,
+        content: [{ type: 'content', content: { type: 'text', text: shaped.summary } }],
+      },
+    });
+  }
+
+  /** The pre-existing generic result path (raw content dump), factored so
+   *  family fallbacks reuse it verbatim. */
+  private async replayGenericToolResult(
+    message: ContextMessage,
+    isError: boolean,
+    sessionId: string,
+    conn: AgentSideConnection,
+    turnId: number,
+    rawToolCallId: string,
+  ): Promise<void> {
+    await conn.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: acpToolCallId(turnId, rawToolCallId),
+        status: isError ? 'failed' : 'completed',
+        content: toolMessageContentToAcpToolCallContent(message.content),
+      },
+    });
   }
 
   /**

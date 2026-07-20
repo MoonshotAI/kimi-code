@@ -323,3 +323,119 @@ export function toolResultToAcpContent(event: ToolResultEvent): ToolCallContent[
   if (!text) return [];
   return [{ type: 'content', content: { type: 'text', text } }];
 }
+
+// ---------------------------------------------------------------------------
+// Replay-side structured-tool helpers (fix/acp-replay-structured-tools)
+//
+// The history replay path flattens every tool into tool_call + raw output
+// text. For the three custom-tool families below the live path emits rich
+// channels (TodoList → ACP plan, AskUserQuestion → question bridge, Agent →
+// subagent events), so a raw text dump is a semantic downgrade AND a visible
+// one (JSON envelopes / agent_id preludes shown as assistant text). These
+// helpers shape the replayed args/results into the same wire semantics —
+// or return null to fall back to the generic tool_call dump.
+// ---------------------------------------------------------------------------
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Extract TodoList items from a replayed call's parsed args
+ * (`{todos: [{title, status}]}` — Claude-style `{content, status:
+ * 'completed'}` variants are normalized into the kosong shape). Returns
+ * `null` when the args do not carry a well-formed todos array so the
+ * caller falls back to the generic tool_call dump.
+ */
+export function todoItemsFromToolArgs(args: unknown): ReadonlyArray<{ title: string; status: string }> | null {
+  if (!isRecord(args)) return null;
+  const todos = args['todos'];
+  if (!Array.isArray(todos)) return null;
+  const items: Array<{ title: string; status: string }> = [];
+  for (const entry of todos) {
+    if (!isRecord(entry)) return null;
+    const title = typeof entry['title'] === 'string' ? entry['title'] : typeof entry['content'] === 'string' ? entry['content'] : null;
+    const rawStatus = typeof entry['status'] === 'string' ? entry['status'] : entry['completed'] === true ? 'done' : null;
+    if (title === null || rawStatus === null) return null;
+    items.push({ title, status: rawStatus });
+  }
+  return items;
+}
+
+/**
+ * Extract AskUserQuestion prompts from a replayed call's parsed args
+ * (`{questions: [{question, ...}]}`). Returns `null` on shape mismatch
+ * (generic fallback).
+ */
+export function questionsFromToolArgs(args: unknown): readonly string[] | null {
+  if (!isRecord(args)) return null;
+  const questions = args['questions'];
+  if (!Array.isArray(questions) || questions.length === 0) return null;
+  const out: string[] = [];
+  for (const entry of questions) {
+    if (!isRecord(entry) || typeof entry['question'] !== 'string') return null;
+    out.push(entry['question']);
+  }
+  return out;
+}
+
+/**
+ * Shape an AskUserQuestion tool RESULT (`{"answers":{...}}` or
+ * `{answers:{}, note: "User dismissed…"}`) into a one-line human summary.
+ * The full JSON goes to `rawOutput` (structured over pre-rendered text,
+ * per the replay principle); content text becomes a single line:
+ * the dismiss note, or `Answered: <labels>`. Returns `null` when the
+ * text is not the question envelope (generic fallback).
+ */
+export function summarizeQuestionResult(resultText: string): { summary: string; rawOutput: string } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(resultText);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed['answers'])) return null;
+  const answers = parsed['answers'];
+  const note = typeof parsed['note'] === 'string' ? parsed['note'] : null;
+  if (Object.keys(answers).length === 0) {
+    return { summary: note ?? 'Question dismissed.', rawOutput: resultText };
+  }
+  const labels: string[] = [];
+  for (const value of Object.values(answers)) {
+    if (typeof value === 'string') {
+      labels.push(value);
+    } else if (isRecord(value)) {
+      const optionId = typeof value['option_id'] === 'string' ? value['option_id'] : null;
+      const text = typeof value['text'] === 'string' ? value['text'] : null;
+      if (optionId !== null) labels.push(optionId);
+      else if (text !== null) labels.push(text);
+    }
+  }
+  const summary = labels.length > 0 ? `Answered: ${labels.join(', ')}` : 'Question answered.';
+  return { summary, rawOutput: resultText };
+}
+
+/**
+ * Strip the Agent tool's result envelope prelude
+ * (`agent_id: X\nactual_subagent_type: Y\nstatus: Z\n\n[summary]\n…`)
+ * off a replayed result, returning the subagent's final summary text
+ * only. `rawOutput` keeps the full original text. Returns `null` when
+ * no envelope is present (generic fallback).
+ */
+export function extractAgentSummary(resultText: string): { summary: string; rawOutput: string } | null {
+  if (!resultText.startsWith('agent_id: ')) return null;
+  const lines = resultText.split('\n');
+  let index = 0;
+  // Drop leading `key: value` header lines (agent_id / actual_subagent_type
+  // / status), blank lines, and the literal `[summary]` marker.
+  while (index < lines.length) {
+    const line = lines[index]!;
+    if (/^\w[\w ]*:/.test(line) || line.trim() === '' || line.trim() === '[summary]') {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  if (index === 0 || index >= lines.length) return null;
+  return { summary: lines.slice(index).join('\n').trimEnd(), rawOutput: resultText };
+}
