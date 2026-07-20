@@ -81,6 +81,7 @@ import { isToolActive as evaluateToolActive } from '#/agent/toolPolicy/evaluate'
 import {
   ActiveToolsModel,
   configUpdate,
+  profileBind,
   ProfileModel,
   setActiveTools,
   resetActiveTools,
@@ -174,17 +175,17 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
     this.activeProfile = undefined;
+    this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(
-      configUpdate(
-        this.resolveConfigPayload({
-          cwd: snapshot.cwd,
-          modelAlias: snapshot.modelAlias,
-          profileName: snapshot.profileName,
-          thinkingLevel: snapshot.thinkingLevel,
-          systemPrompt: snapshot.systemPrompt,
-          disallowedTools: snapshot.disallowedTools ?? [],
-        }),
-      ),
+      profileBind({
+        cwd: snapshot.cwd,
+        modelAlias: snapshot.modelAlias,
+        profileName: snapshot.profileName,
+        thinkingEffort: snapshot.thinkingLevel,
+        systemPrompt: snapshot.systemPrompt,
+        activeToolNames: snapshot.activeToolNames,
+        disallowedTools: snapshot.disallowedTools ?? [],
+      }),
     );
     this.afterConfigDispatch({
       cwd: snapshot.cwd,
@@ -194,7 +195,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       systemPrompt: snapshot.systemPrompt,
       disallowedTools: snapshot.disallowedTools ?? [],
     });
-    this.setActiveTools(snapshot.activeToolNames);
   }
 
   async bind(input: BindAgentInput): Promise<void> {
@@ -253,15 +253,24 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       model,
     );
 
-    this.update({
+    this.activeToolNamesOverlay = undefined;
+    this.wire.dispatch(profileBind({
       cwd: input.cwd,
+      modelAlias: alias,
       profileName: profile.name,
+      thinkingEffort: thinkingLevel,
+      systemPrompt,
+      activeToolNames: profile.tools,
+      disallowedTools: profile.disallowedTools ?? [],
+    }));
+    this.afterConfigDispatch({
+      cwd: input.cwd,
+      modelAlias: alias,
+      profileName: profile.name,
+      thinkingLevel,
       systemPrompt,
       disallowedTools: profile.disallowedTools ?? [],
     });
-    this.setActiveTools(profile.tools);
-    this.wire.dispatch(configUpdate({ modelAlias: alias, thinkingEffort: thinkingLevel }));
-    this.afterConfigDispatch({ modelAlias: alias, thinkingLevel });
 
     this.publishAgentsMdWarning();
   }

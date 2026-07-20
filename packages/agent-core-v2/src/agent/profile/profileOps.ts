@@ -54,6 +54,26 @@ export const ProfileModel = defineModel<ProfileModelState>('profile', () => ({
   systemPrompt: '',
 }));
 
+export const profileBind = ProfileModel.defineOp('profile.bind', {
+  schema: z.object({
+    cwd: z.string().optional(),
+    modelAlias: z.string().optional(),
+    profileName: z.string().optional(),
+    thinkingEffort: z.custom<ThinkingEffort>(),
+    systemPrompt: z.string(),
+    activeToolNames: z.array(z.string()).readonly().optional(),
+    disallowedTools: z.array(z.string()).readonly(),
+  }),
+  apply: (s, p) => ({
+    cwd: p.cwd ?? s.cwd,
+    modelAlias: p.modelAlias ?? s.modelAlias,
+    profileName: p.profileName ?? s.profileName,
+    thinkingLevel: p.thinkingEffort,
+    systemPrompt: p.systemPrompt,
+    disallowedTools: p.disallowedTools,
+  }),
+});
+
 export const configUpdate = ProfileModel.defineOp('config.update', {
   schema: z.object({
     cwd: z.string().optional(),
@@ -127,10 +147,12 @@ export type ActiveToolsState = readonly string[] | undefined;
 export const ActiveToolsModel = defineModel<ActiveToolsState>(
   'profile.activeTools',
   () => undefined,
+  { reducers: { 'profile.bind': (_state, payload) => payload.activeToolNames } },
 );
 
 declare module '#/wire/types' {
   interface PersistedOpMap {
+    'profile.bind': typeof profileBind;
     'config.update': typeof configUpdate;
     'tools.set_active_tools': typeof setActiveTools;
     'tools.reset_active_tools': typeof resetActiveTools;

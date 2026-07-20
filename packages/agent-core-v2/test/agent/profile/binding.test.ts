@@ -100,7 +100,7 @@ describe('AgentProfileService.bind', () => {
     expect(svc.getSystemPrompt()).toContain('Kimi Code CLI');
   });
 
-  it('persists bind bootstrap records in the v1-compatible order', async () => {
+  it('persists the complete binding in one journal record', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent(
       {
@@ -133,31 +133,18 @@ describe('AgentProfileService.bind', () => {
     });
     await ctx.get(IWireService).flush();
 
-    const records = persistence.records
-      .slice(start)
-      .filter(
-        (record) =>
-          record.type === 'config.update' || record.type === 'tools.set_active_tools',
-      );
-    expect(records).toHaveLength(3);
+    const records = persistence.records.slice(start).filter((record) => record.type === 'profile.bind');
+    expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
-      type: 'config.update',
+      type: 'profile.bind',
       cwd: homeDir,
       profileName: DEFAULT_AGENT_PROFILE_NAME,
-      systemPrompt: expect.stringContaining('Kimi Code CLI'),
-    });
-    expect(records[0]).not.toHaveProperty('modelAlias');
-    expect(records[0]).not.toHaveProperty('thinkingEffort');
-    expect(records[1]).toMatchObject({
-      type: 'tools.set_active_tools',
-      names: expect.arrayContaining(['Read', 'Write', 'Bash']),
-    });
-    expect(records[2]).toMatchObject({
-      type: 'config.update',
       modelAlias: MOCK_MODEL,
       thinkingEffort: 'on',
+      systemPrompt: expect.stringContaining('Kimi Code CLI'),
+      activeToolNames: expect.arrayContaining(['Read', 'Write', 'Bash']),
+      disallowedTools: [],
     });
-    expect(records[2]).not.toHaveProperty('thinkingLevel');
   });
 
   it('setModel applies the default profile when none is bound yet', async () => {
@@ -364,11 +351,11 @@ describe('AgentProfileService tool denylist', () => {
     await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
     await ctx.get(IWireService).flush();
 
-    const record = persistence.records.find((r) => r.type === 'config.update' && 'profileName' in r);
+    const record = persistence.records.find((candidate) => candidate.type === 'profile.bind');
     expect(record).toMatchObject({ profileName: 'deny-builtin', disallowedTools: ['Bash'] });
   });
 
-  it('writes no tools.set_active_tools record when the profile has no allowlist', async () => {
+  it('persists an unrestricted tool policy when the profile has no allowlist', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
     const svc = profileWithToolPolicy(ctx);
@@ -376,9 +363,9 @@ describe('AgentProfileService tool denylist', () => {
     await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
     await ctx.get(IWireService).flush();
 
-    // The all-tools default must be represented by the ABSENCE of the record:
-    // a `tools.set_active_tools` record without `names` crashes v1 replay.
-    expect(persistence.records.some((r) => r.type === 'tools.set_active_tools')).toBe(false);
+    expect(persistence.records.find((record) => record.type === 'profile.bind')).toMatchObject({
+      activeToolNames: undefined,
+    });
     expect(svc.isToolActive('Read')).toBe(true);
     expect(svc.isToolActive('Bash')).toBe(false);
   });
