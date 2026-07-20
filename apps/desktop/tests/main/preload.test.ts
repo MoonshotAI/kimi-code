@@ -38,6 +38,7 @@ const WHITELIST = [
   'setTrayAttention',
   'showOpenDialog',
   'showSaveDialog',
+  'showWindow',
 ];
 
 beforeEach(() => {
@@ -98,6 +99,9 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:locale', 'zh');
     exposed.setLocale('fr'); // unsupported locale ignored
     expect(send).toHaveBeenCalledTimes(3);
+
+    exposed.showWindow();
+    expect(send).toHaveBeenCalledWith('kimi:show-window');
 
     const offMenu = exposed.onMenu(() => {});
     expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));

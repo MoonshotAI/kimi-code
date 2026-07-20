@@ -15,16 +15,76 @@ export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
+/** Bring the main window back on screen (Dock click, tray, notification
+    click): un-minimize + show + focus when it exists (including hidden via
+    hide-on-close); recreate it after a real destroy. */
+export function showMainWindow(): void {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    createWindow();
+  }
+}
+
+// --- window lifecycle ---------------------------------------------------------
+
+// macOS hide-on-close (the tray-resident model, like Slack/Discord): closing
+// the window only hides it — the renderer, its session state, WS, and the
+// tray-select subscription all stay alive, so re-showing (Dock click, tray)
+// is instant and tray jumps deliver immediately without the boot/reload
+// queue. Real quits (Cmd+Q, tray 退出, updater install) go through
+// before-quit, which fires before any window close event and flips this
+// flag, letting the close proceed to destruction. The listener installs
+// lazily from createWindow: module scope must stay Electron-free for tests.
+let isQuitting = false;
+let quitWatchInstalled = false;
+
+function installQuitWatch(): void {
+  if (quitWatchInstalled) return;
+  quitWatchInstalled = true;
+  app.on('before-quit', () => {
+    isQuitting = true;
+  });
+}
+
+/** Mark the app as quitting so hide-on-close lets real closes through.
+    Programmatic quits that bypass before-quit's normal ordering need this:
+    Electron emits before-quit only AFTER the window close events when quit
+    is initiated by `autoUpdater.quitAndInstall`, so the updater marks it
+    explicitly before calling (updater.ts). */
+export function markQuitting(): void {
+  isQuitting = true;
+}
+
+/** Close-button policy: hide instead of destroy on macOS, unless quitting. */
+export function shouldHideOnClose(platform: NodeJS.Platform, quitting: boolean): boolean {
+  return platform === 'darwin' && !quitting;
+}
+
 // --- tray "jump to session" routing -------------------------------------------
 //
-// Tray menu clicks target a renderer that may not exist (macOS keeps the app
-// running windowless), may still be booting, or may be mid-reload (the View
-// menu exposes Reload/Force Reload). Pushes are only safe once the page
-// finished loading — by then the Vue app's `onTraySelectSession` subscription
-// is in place (module scripts run before the load event) — so clicks before
-// that queue up and flush on did-finish-load.
+// Tray menu clicks target a renderer that may still be booting or may be
+// mid-reload (the View menu exposes Reload/Force Reload). Pushes are only
+// safe once the page has settled — by then the Vue app's
+// `onTraySelectSession` subscription is in place (module scripts run before
+// the load event) — so clicks before that queue up and flush when the load
+// settles (did-finish-load, or did-fail-load: a failed/aborted load leaves
+// the old, still-subscribed page displayed). With macOS hide-on-close
+// (shouldHideOnClose) the renderer otherwise stays alive for the app's
+// lifetime, so clicks deliver immediately and the queue only covers boot and
+// reload.
 let rendererReady = false;
 let pendingTraySessionSelect: string | null = null;
+
+/** The tray-select subscription lives in the renderer page (app:// in
+    production, the http dev server in dev). The connect error page (data:
+    URL) and about:blank have none — readiness must never be marked for them,
+    or a queued push would flush into a page that drops it silently. */
+export function isAppRendererUrl(url: string): boolean {
+  return url.startsWith('app://') || url.startsWith('http://') || url.startsWith('https://');
+}
 
 /** Tray menu "jump to this session": push straight to a live, loaded renderer;
     queue while the window is closed or still loading (flushed on load). */
@@ -103,6 +163,7 @@ function saveBounds(win: BrowserWindow): void {
 const TRAFFIC_LIGHT_POSITION = { x: 16, y: 17 } as const;
 
 export function createWindow(): void {
+  installQuitWatch();
   const win = new BrowserWindow({
     ...loadBounds(),
     // Sidebar (264px) + a usable conversation column (~636px) — just above the
@@ -183,36 +244,62 @@ export function createWindow(): void {
   };
   win.on('enter-full-screen', notifyFullscreen);
   win.on('leave-full-screen', notifyFullscreen);
-  win.on('close', () => {
+  win.on('close', (event) => {
     saveBounds(win);
+    if (shouldHideOnClose(process.platform, isQuitting)) {
+      event.preventDefault();
+      // A detached DevTools window would linger on screen after the hide.
+      if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+      win.hide();
+    }
   });
   win.on('closed', () => {
     if (mainWindow === win) {
       mainWindow = null;
     }
-    // The tray badge keeps its last-known state while windowless (macOS keeps
-    // the app running): unread flags are durable (localStorage) and pending
-    // approvals/questions live server-side, so the entries stay meaningful —
-    // and clickable, thanks to the queue above — until the next window's
-    // renderer re-pushes fresh totals on load (useTrayAttention.ts).
+    // With hide-on-close this only fires on real destruction (quit / updater
+    // install) — the tray is torn down on quit anyway. Unread flags are
+    // durable (localStorage) and pending approvals/questions live server-side,
+    // so the badge's last-known state stays plausible until then.
   });
   if (!app.isPackaged) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
-  win.webContents.on('did-start-loading', () => {
+  // Gate readiness on REAL renderer replacements only: cross-document,
+  // main-frame navigations. did-start-loading must NOT do this — Electron 43
+  // fires it for same-document navigations too (pushState route changes,
+  // history back/forward), which never get a did-finish-load; gating on it
+  // wedged the flag false after the first in-app route change (including the
+  // boot auto-select), silently queueing every later tray click forever.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
     // A reload replaces the renderer and its tray-select subscription; queue
-    // clicks again until did-finish-load re-marks the new page ready.
+    // clicks again until the load settles (either handler below).
     rendererReady = false;
   });
-  win.webContents.on('did-finish-load', () => {
-    if (win.isDestroyed()) return;
-    // The renderer is up and its tray-select subscription is in place: direct
-    // pushes are safe now, and anything queued during the boot can flush.
+  // Settle funnel for the ready flag. Success marks the fresh page ready; a
+  // failed/aborted navigation leaves the previously committed page (and its
+  // tray-select subscription) displayed, so failure restores readiness too —
+  // one wedged false here used to swallow every later tray click into a flush
+  // that never came. The connect error page never qualifies (isAppRendererUrl),
+  // so a queued click survives it and flushes once the real renderer loads.
+  const settleRendererReady = (isMainFrame: boolean): void => {
+    if (win.isDestroyed() || !isMainFrame || !isAppRendererUrl(win.webContents.getURL())) return;
     rendererReady = true;
     if (pendingTraySessionSelect !== null) {
       sendToRenderer(IPC.traySelectSession, pendingTraySessionSelect);
       pendingTraySessionSelect = null;
     }
+  };
+  win.webContents.on('did-fail-load', (_event, _code, _desc, _url, isMainFrame) => {
+    settleRendererReady(isMainFrame);
+  });
+  win.webContents.on('did-fail-provisional-load', (_event, _code, _desc, _url, isMainFrame) => {
+    settleRendererReady(isMainFrame);
+  });
+  win.webContents.on('did-finish-load', () => {
+    settleRendererReady(true);
+    if (win.isDestroyed()) return;
     const factor = win.webContents.getZoomFactor();
     const level = win.webContents.getZoomLevel();
     void win.webContents

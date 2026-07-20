@@ -21,7 +21,7 @@ import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 
 import { IPC } from './ipc-channels';
-import { sendToRenderer } from './window';
+import { markQuitting, sendToRenderer } from './window';
 
 export type UpdateState = 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
 
@@ -197,6 +197,10 @@ export function startAutoUpdater(deps: StartAutoUpdaterDeps): UpdateController |
       if (current.state !== 'downloaded') {
         return;
       }
+      // quitAndInstall emits before-quit only AFTER the window close events,
+      // so hide-on-close would intercept those closes and hang the install —
+      // mark quitting explicitly first (window.ts).
+      markQuitting();
       updater.quitAndInstall(true, true);
     },
     stop: () => {

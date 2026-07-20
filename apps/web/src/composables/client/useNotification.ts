@@ -190,6 +190,10 @@ function fire(ctx: NotifyBaseCtx, copy: NotificationCopy, tag: string): void {
     const n = new Notification(copy.title, { body: copy.body, tag, icon: NOTIFICATION_ICON });
     n.onclick = () => {
       try {
+        // Desktop hide-on-close: the native window may be alive but hidden,
+        // and window.focus() can't un-hide it — ask the main process to show
+        // it (no-op without the bridge: web, old desktop builds).
+        (window as { kimiDesktop?: { showWindow?: () => void } }).kimiDesktop?.showWindow?.();
         window.focus();
       } catch {
         // ignore

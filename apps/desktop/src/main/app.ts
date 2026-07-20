@@ -1,10 +1,10 @@
 import { join } from 'node:path';
 
-import { app, BrowserWindow, nativeImage } from 'electron';
+import { app, nativeImage } from 'electron';
 
 import { registerRendererScheme, registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
-import { createWindow, selectSessionInRenderer } from './window';
+import { createWindow, selectSessionInRenderer, showMainWindow } from './window';
 import { createTray, destroyTray } from './tray';
 import { buildMenu } from './menu';
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './shortcuts';
@@ -12,17 +12,6 @@ import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
 
 // --- app lifecycle ------------------------------------------------------------
-
-function showMainWindow(): void {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (win) {
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-  } else {
-    createWindow();
-  }
-}
 
 export function main(): void {
   registerRendererScheme();
@@ -65,9 +54,9 @@ export function main(): void {
     // dev (unpackaged); the packaged app checks on a delay + 4h cadence.
     initAutoUpdater();
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
+      // macOS Dock click: un-hide the window (hide-on-close leaves it alive
+      // but hidden), or recreate it after a real destroy.
+      showMainWindow();
     });
   });
 }

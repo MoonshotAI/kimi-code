@@ -178,6 +178,10 @@ export type KimiDesktopApi = {
   /** Sync the in-app language so native surfaces (today: the tray menu and
    *  tooltip) follow it instead of only the OS language. */
   setLocale: (locale: 'en' | 'zh') => void;
+  /** Bring the native window back on screen (notification clicks): with
+   *  macOS hide-on-close it may be alive but hidden, and the renderer's own
+   *  window.focus() can't un-hide it. */
+  showWindow: () => void;
 };
 
 export const api: KimiDesktopApi = {
@@ -251,6 +255,9 @@ export const api: KimiDesktopApi = {
     if (locale === 'en' || locale === 'zh') {
       ipcRenderer.send('kimi:locale', locale);
     }
+  },
+  showWindow: () => {
+    ipcRenderer.send('kimi:show-window');
   },
 };
 

@@ -1,11 +1,12 @@
 import { dialog, ipcMain, nativeTheme, shell } from 'electron';
 import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 
-import { getMainWindow } from './window';
+import { getMainWindow, showMainWindow } from './window';
 import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
 import { getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
+import { setMenuLocale } from './menu';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -69,11 +70,19 @@ export function registerIpcHandlers(): void {
       setTrayAttention(attention);
     }
   });
-  // The renderer's in-app language drives the tray's strings (menu labels,
-  // tooltip). Until the first push the OS language is the fallback.
+  // The renderer's in-app language drives the main-process strings (tray
+  // labels/tooltip, application menu). Until the first push the OS language
+  // is the fallback.
   ipcMain.on(IPC.locale, (_event, locale: unknown) => {
     if (locale === 'en' || locale === 'zh') {
       setTrayLocale(locale);
+      setMenuLocale(locale);
     }
+  });
+  // Renderer-initiated "bring the window back" (notification clicks): with
+  // macOS hide-on-close the window may be alive but hidden, and the web
+  // window.focus() can't un-hide it — only the main process can.
+  ipcMain.on(IPC.showWindow, () => {
+    showMainWindow();
   });
 }

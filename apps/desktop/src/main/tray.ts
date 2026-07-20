@@ -14,10 +14,12 @@ import type { MenuItemConstructorOptions } from 'electron';
 // shows the bare total next to the macOS menu-bar icon (Tray.setTitle is
 // macOS-only), the per-kind breakdown in the tooltip, and the attention
 // sessions as clickable entries at the top of the dropdown menu (click → show
-// the window and jump to that session). When the window closes the badge
-// keeps its last-known state — unread flags persist in localStorage and
-// pending items live server-side, so entries stay meaningful (and clickable,
-// via the window.ts queue) until the next renderer load re-pushes.
+// the window and jump to that session). On macOS the window hides instead of
+// closing (window.ts shouldHideOnClose), so the renderer keeps reporting while
+// hidden and the badge stays live; the last-known state only has to survive
+// real quits/reloads — unread flags persist in localStorage and pending items
+// live server-side, so entries stay meaningful (and clickable, via the
+// window.ts queue while booting/reloading) until the next push.
 
 export interface TrayIconEnv {
   platform: NodeJS.Platform;
@@ -339,7 +341,10 @@ function renderTray(): void {
   const locale = effectiveTrayLocale();
   if (process.platform === 'darwin') {
     // monospacedDigit keeps the status item's width stable as the count ticks.
-    tray.setTitle(trayAttentionTitle(lastAttention), { fontType: 'monospacedDigit' });
+    // Unpackaged (dev) runs prefix the title with "dev" so this tray can't be
+    // confused with a simultaneously running packaged app's (same icon).
+    const title = trayAttentionTitle(lastAttention);
+    tray.setTitle(app.isPackaged ? title : `dev${title}`, { fontType: 'monospacedDigit' });
   }
   const summary = trayAttentionSummary(lastAttention, locale);
   tray.setToolTip(summary === '' ? 'Kimi Code' : `Kimi Code — ${summary}`);

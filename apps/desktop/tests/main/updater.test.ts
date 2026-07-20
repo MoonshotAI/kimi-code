@@ -7,9 +7,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // startAutoUpdater state machine. Mock all three so the import stays inert.
 vi.mock('electron', () => ({ app: { isPackaged: false } }));
 vi.mock('electron-updater', () => ({ autoUpdater: {} }));
-vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn() }));
+vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 
 import { startAutoUpdater, type UpdateStatus } from '../../src/main/updater';
+import { markQuitting } from '../../src/main/window';
+
+const markQuittingMock = vi.mocked(markQuitting);
 
 class FakeUpdater extends EventEmitter {
   autoDownload = true;
@@ -111,7 +114,14 @@ describe('startAutoUpdater', () => {
     });
 
     controller.install();
+    // quitAndInstall reorders before-quit after the window closes, so install
+    // must mark quitting first — otherwise hide-on-close swallows the closes
+    // and the update never applies.
+    expect(markQuittingMock).toHaveBeenCalled();
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+    expect(markQuittingMock.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.quitAndInstall.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('surfaces an error only when the user-initiated download fails', () => {

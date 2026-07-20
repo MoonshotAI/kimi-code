@@ -22,6 +22,7 @@ export const IPC = {
   trayAttention: 'kimi:tray-attention',
   traySelectSession: 'kimi:tray-select-session',
   locale: 'kimi:locale',
+  showWindow: 'kimi:show-window',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';

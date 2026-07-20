@@ -9,9 +9,10 @@
 // Why a push reporter: the unread flags and pending approvals/questions are
 // projected in renderer state (localStorage-backed + WS events), so the main
 // process only knows what it is told. The reload recovery and the keep-last-
-// known-on-close behaviour live on the main side (window.ts / the immediate
-// push); the reverse direction (tray click → selectSession) queues in
-// window.ts while the renderer is (re)loading.
+// known-across-reload behaviour live on the main side (window.ts / the
+// immediate push); the reverse direction (tray click → selectSession) queues
+// in window.ts while the renderer is (re)loading — with macOS hide-on-close
+// it otherwise delivers immediately.
 //
 // With no bridge — plain web, tests — the reporter never starts, so this file
 // is a safe no-op in apps/web (no-bridge fallback, per native-todos.md).

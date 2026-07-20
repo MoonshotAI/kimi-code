@@ -313,6 +313,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     fileDiffLoading,
   } = deps;
   let exportInFlight = false;
+  /** Monotonic selectSession serial: an off-list fetch that returns after a
+      newer select started is stale and bails (see selectSession). */
+  let selectSerial = 0;
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
@@ -1385,6 +1388,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     sessionId: string,
     opts?: { urlMode?: SessionUrlMode },
   ): Promise<void> {
+    // Jumps can target a session outside the loaded pages — a tray menu entry
+    // kept across a window restart, or a notification for a session the
+    // recency window paged out. The workspace sync and the snapshot sync
+    // below both key off the list entry, so pull it into the list first (the
+    // deep-link path's fallback). A session the daemon no longer knows leaves
+    // the current session and URL untouched.
+    if (!rawState.sessions.some((s) => s.id === sessionId)) {
+      // A select that started after this one must win: it bumped the serial,
+      // so a stale fetch bails here instead of yanking the app back to an
+      // older target. In-list sessions keep the fully synchronous path below,
+      // so their rapid-click URL ordering is unaffected.
+      const serial = ++selectSerial;
+      if (!(await fetchSessionIntoList(sessionId))) return;
+      if (serial !== selectSerial) return;
+    }
     const messagesLoaded = hasLoadedMessages(sessionId);
     // Only sessions created locally in this client are trusted to be empty.
     // The daemon-reported messageCount can be stale for old sessions, so relying
