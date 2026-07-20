@@ -36,6 +36,7 @@ export interface StreamingUIHost {
   shiftQueuedMessage(): QueuedMessage | undefined;
   pushTranscriptEntry(entry: TranscriptEntry): void;
   mergeCurrentTurnSteps(): void;
+  mergeCompletedTurnAssistants(): void;
 }
 
 export class StreamingUIController {
@@ -555,6 +556,9 @@ export class StreamingUIController {
     const completedTurnKey =
       this._currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
     this.finalizeLiveTextBuffers('idle');
+    // The finished turn keeps only its conclusion-bearing tail; intermediate
+    // chatter folds into the step summary.
+    this.host.mergeCompletedTurnAssistants();
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
