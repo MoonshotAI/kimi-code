@@ -7,7 +7,9 @@
  * outgoing wire valid (a displaced result moved back to its call, a synthetic
  * result invented for a lost one, an orphan/duplicate dropped, leading
  * non-user messages dropped, consecutive assistants merged, blank text
- * dropped) are reported through an optional sink and surfaced once here as a
+ * dropped, wholly-vacuous messages — nothing sendable was recorded, e.g. an
+ * assistant step that kept only an empty thinking part — dropped whole) are
+ * reported through an optional sink and surfaced once here as a
  * single deduped warning plus a `context_projection_repaired` telemetry event,
  * so a silently-mangled history always leaves a trace.
  *
@@ -160,13 +162,6 @@ type ProjectionAnomaly =
   | { readonly kind: 'leading_non_user_dropped'; readonly role: string }
   | { readonly kind: 'consecutive_assistants_merged' }
   | { readonly kind: 'whitespace_text_dropped'; readonly role: string }
-  /**
-   * Every recorded part serialized to nothing on the wire (e.g. an assistant
-   * step that recorded only an empty thinking part from a provider-filtered
-   * response), so the whole message was dropped. Distinct from the silent
-   * empty-content drop: parts were recorded, yet none of them was sendable —
-   * a genuine defect signal, not routine cleanup.
-   */
   | { readonly kind: 'vacuous_message_dropped'; readonly role: string };
 
 type OnAnomaly = (anomaly: ProjectionAnomaly) => void;
@@ -421,15 +416,6 @@ function project(history: readonly ContextMessage[], onAnomaly?: OnAnomaly): Mes
     const content = projectedContent(source, onAnomaly);
     if (source.toolCalls.length === 0 && !hasDeclaredTools(source)) {
       if (content.length === 0) return;
-      // Every remaining part serializes to nothing on the wire — e.g. an
-      // assistant step that recorded only an empty thinking part from a
-      // provider-filtered response. Sent as-is it becomes an assistant
-      // message with no content and no tool calls, which strict providers
-      // reject ("the message ... with role 'assistant' must not be empty") on
-      // every resend, permanently wedging the session. Drop the whole message
-      // here. A message that carries any real content keeps every part
-      // verbatim — including empty thinking blocks, which preserved-thinking
-      // providers require back.
       if (content.every(isVacuousContentPart)) {
         onAnomaly?.({ kind: 'vacuous_message_dropped', role: source.role });
         return;
@@ -537,13 +523,6 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
   return cleanContent(source, content, onAnomaly);
 }
 
-/**
- * True when a content part carries nothing the provider wire can represent:
- * an empty or whitespace-only text block, or an empty thinking block with no
- * provider signature. A signed thinking block (`encrypted`) is never vacuous
- * — reasoning providers require it back verbatim — and media parts always
- * carry content.
- */
 function isVacuousContentPart(part: ContentPart): boolean {
   if (part.type === 'text') return part.text.trim().length === 0;
   if (part.type === 'think') return part.encrypted === undefined && part.think.trim().length === 0;

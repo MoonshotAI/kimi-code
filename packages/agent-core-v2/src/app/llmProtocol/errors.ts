@@ -333,11 +333,6 @@ const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
   /roles must alternate/,
   /multiple .*(?:user|assistant).* roles in a row/,
   /tool_use[\s\S]*ids must be unique/,
-  // Moonshot / Kimi rejects a message whose serialized form carries nothing —
-  // no content, no tool_calls, an empty reasoning_content: "the message at
-  // position N with role 'assistant' must not be empty". Seen when a filtered
-  // response left an assistant message holding only an empty thinking part in
-  // the history; the strict resend's projection drops such vacuous messages.
   /message at position \d+ with role ['"`]?[a-z]+['"`]? must not be empty/,
 ] as const;
 

@@ -531,9 +531,6 @@ describe('projector tool-exchange normalization', () => {
     }
 
     it('drops an assistant message whose only part is an empty think block', () => {
-      // A provider-filtered response records exactly this shape; sending it
-      // back is rejected as "message ... with role 'assistant' must not be
-      // empty" on every resend, permanently wedging the session.
       const history = [
         user('u1'),
         thinkingAssistant([{ type: 'think', think: '' }]),
@@ -554,7 +551,6 @@ describe('projector tool-exchange normalization', () => {
         user('u1'),
         assistant('', ['c1']),
         toolResult('c1', 'one'),
-        // sealed by the filtered step: no text, no tool calls, one empty think
         thinkingAssistant([{ type: 'think', think: '' }]),
         reminder('ping'),
       ];
@@ -563,8 +559,6 @@ describe('projector tool-exchange normalization', () => {
     });
 
     it('keeps a message with real text intact — including its empty think part', () => {
-      // Preserved-thinking providers require even empty reasoning back; only
-      // wholly-vacuous messages may be dropped, never parts of a real message.
       const history = [
         user('u1'),
         thinkingAssistant([{ type: 'think', think: '' }, { type: 'text', text: 'answer' }]),
