@@ -18,6 +18,7 @@ function skill(
   name: string,
   metadata: SkillDefinition['metadata'] = {},
   content = `body of ${name}`,
+  resources?: Readonly<Record<string, string>>,
 ): SkillDefinition {
   return {
     name,
@@ -27,6 +28,7 @@ function skill(
     content,
     metadata,
     source: 'user',
+    resources,
   };
 }
 
@@ -79,7 +81,7 @@ function skillTool(
   return new SkillTool(skillToolAgent(skills, methods), options);
 }
 
-function execute(tool: SkillTool, args: { skill: string; args?: string }) {
+function execute(tool: SkillTool, args: { skill: string; args?: string; resource?: string }) {
   return executeTool(tool, {
     turnId: '0',
     toolCallId: 'call_skill',
@@ -309,5 +311,77 @@ describe('SkillTool recursion guard', () => {
     const tool = skillTool(registry([skill('loop')])).withInitialQueryDepth(MAX_SKILL_QUERY_DEPTH);
 
     await expect(execute(tool, { skill: 'loop' })).rejects.toBeInstanceOf(NestedSkillTooDeepError);
+  });
+});
+
+describe('SkillTool resource fetch', () => {
+  const resources = {
+    'references/hooks-patterns.md': '# Hooks patterns\n\nReference body.',
+    'AGENTS.md': '# Agents\n\nAgent guidance.',
+  } as const;
+
+  it('returns the bundled resource content without invoking the skill', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(registry([skill('commit', {}, 'body of commit', resources)]), methods);
+
+    const result = await execute(tool, {
+      skill: 'commit',
+      resource: 'references/hooks-patterns.md',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe(resources['references/hooks-patterns.md']);
+    // A resource fetch is a read, not an invocation: no activation, no message.
+    expect(methods.recordSkillActivation).not.toHaveBeenCalled();
+    expect(methods.recordUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('uses a load-resource description for resource fetches', () => {
+    const tool = skillTool(registry([skill('commit', {}, 'body of commit', resources)]));
+
+    const execution = tool.resolveExecution({ skill: 'commit', resource: 'AGENTS.md' });
+
+    expect(execution).toMatchObject({
+      description: 'Load resource AGENTS.md from skill commit',
+    });
+  });
+
+  it('errors with the sorted list of available resources when the path is unknown', async () => {
+    const tool = skillTool(registry([skill('commit', {}, 'body of commit', resources)]));
+
+    const result = await execute(tool, { skill: 'commit', resource: 'references/missing.md' });
+
+    expect(result).toMatchObject({ isError: true });
+    const output = result.output as string;
+    expect(output).toContain('references/missing.md');
+    expect(output).toContain('- AGENTS.md');
+    expect(output).toContain('- references/hooks-patterns.md');
+    expect(output.indexOf('- AGENTS.md')).toBeLessThan(
+      output.indexOf('- references/hooks-patterns.md'),
+    );
+  });
+
+  it('reports when the skill has no bundled resource files', async () => {
+    const tool = skillTool(registry([skill('commit')]));
+
+    const result = await execute(tool, { skill: 'commit', resource: 'AGENTS.md' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('no bundled resource files');
+  });
+
+  it('does not throw or consume depth at the recursion cap', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(
+      registry([skill('commit', {}, 'body of commit', resources)]),
+      methods,
+    ).withInitialQueryDepth(MAX_SKILL_QUERY_DEPTH);
+
+    const result = await execute(tool, { skill: 'commit', resource: 'AGENTS.md' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe(resources['AGENTS.md']);
+    expect(methods.recordSkillActivation).not.toHaveBeenCalled();
+    expect(methods.recordUserMessage).not.toHaveBeenCalled();
   });
 });

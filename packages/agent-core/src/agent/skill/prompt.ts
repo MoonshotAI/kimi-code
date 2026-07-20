@@ -16,6 +16,14 @@ export interface RenderSkillPromptInput {
    * author manually embeds `${KIMI_SKILL_DIR}` in the body.
    */
   readonly skillDir?: string | undefined;
+  /**
+   * Skill-relative paths of the resource files bundled with the skill.
+   * Surfaced as a `<bundled-resources>` section inside the loaded block so
+   * the model knows what it can pull in through the Skill tool's `resource`
+   * parameter — without it, in-memory (builtin://) skills would hide their
+   * reference files entirely.
+   */
+  readonly skillResources?: readonly string[] | undefined;
 }
 
 interface RenderSkillLoadedBlockInput extends RenderSkillPromptInput {
@@ -46,8 +54,20 @@ export function renderSkillLoadedBlock(input: RenderSkillLoadedBlockInput): stri
   return [
     `<kimi-skill-loaded${renderSkillAttributes(input)}>`,
     input.skillContent,
+    ...renderBundledResources(input),
     '</kimi-skill-loaded>',
   ].join('\n');
+}
+
+function renderBundledResources(input: RenderSkillLoadedBlockInput): readonly string[] {
+  const resources = input.skillResources ?? [];
+  if (resources.length === 0) return [];
+  return [
+    '<bundled-resources>',
+    `This skill ships bundled resource files. Load one with the Skill tool: Skill(skill="${input.skillName}", resource="<path>").`,
+    ...resources.map((path) => `- ${path}`),
+    '</bundled-resources>',
+  ];
 }
 
 function renderSkillAttributes(input: RenderSkillLoadedBlockInput): string {

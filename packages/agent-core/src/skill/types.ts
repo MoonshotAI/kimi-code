@@ -23,6 +23,13 @@ export interface SkillDefinition {
   readonly plugin?: SkillPluginContext;
   readonly mermaid?: string | undefined;
   readonly d2?: string;
+  /**
+   * Resource files bundled with the skill (references, rules, AGENTS.md),
+   * keyed by skill-relative POSIX path (e.g. `references/hooks-patterns.md`).
+   * Builtin skills populate this from `?raw` imports; the model loads entries
+   * on demand through the Skill tool's `resource` parameter.
+   */
+  readonly resources?: Readonly<Record<string, string>>;
 }
 
 export interface SkillSummary {

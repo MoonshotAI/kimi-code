@@ -46,3 +46,40 @@ describe('renderSkillLoadedBlock skill directory', () => {
     expect(text).toContain('source="user"');
   });
 });
+
+describe('renderSkillLoadedBlock bundled resources', () => {
+  const base = {
+    skillName: 'review',
+    skillArgs: '',
+    skillContent: 'body',
+    skillSource: 'user' as const,
+    skillDir: '/home/user/.kimi-code/skills/review',
+  };
+
+  it('lists bundled resources inside the loaded block when provided', () => {
+    const text = renderUserSlashSkillPrompt({
+      ...base,
+      skillResources: ['AGENTS.md', 'references/hooks-patterns.md'],
+    });
+    expect(text).toContain('<bundled-resources>');
+    expect(text).toContain('Skill(skill="review", resource="<path>")');
+    expect(text).toContain('- AGENTS.md');
+    expect(text).toContain('- references/hooks-patterns.md');
+    expect(text.indexOf('<bundled-resources>')).toBeGreaterThan(
+      text.indexOf('<kimi-skill-loaded'),
+    );
+    expect(text.indexOf('</bundled-resources>')).toBeLessThan(
+      text.indexOf('</kimi-skill-loaded>'),
+    );
+  });
+
+  it('omits the section when no resources are provided', () => {
+    expect(renderUserSlashSkillPrompt(base)).not.toContain('bundled-resources');
+  });
+
+  it('omits the section for an empty resource list', () => {
+    expect(renderUserSlashSkillPrompt({ ...base, skillResources: [] })).not.toContain(
+      'bundled-resources',
+    );
+  });
+});

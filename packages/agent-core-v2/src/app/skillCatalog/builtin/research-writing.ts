@@ -8,6 +8,14 @@ import { parseSkillText } from '#/app/skillCatalog/parser';
 import RESEARCH_WRITING_BODY from './research-writing/SKILL.md?raw';
 import RESEARCH_WRITING_ACADEMIC_RESEARCHER_BODY from './research-writing/academic-researcher/SKILL.md?raw';
 import RESEARCH_WRITING_CODE_DOCUMENTER_BODY from './research-writing/code-documenter/SKILL.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_API_DOCS_FASTAPI_DJANGO from './research-writing/code-documenter/references/api-docs-fastapi-django.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_API_DOCS_NESTJS_EXPRESS from './research-writing/code-documenter/references/api-docs-nestjs-express.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_COVERAGE_REPORTS from './research-writing/code-documenter/references/coverage-reports.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_DOCUMENTATION_SYSTEMS from './research-writing/code-documenter/references/documentation-systems.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_INTERACTIVE_API_DOCS from './research-writing/code-documenter/references/interactive-api-docs.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_PYTHON_DOCSTRINGS from './research-writing/code-documenter/references/python-docstrings.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_TYPESCRIPT_JSDOC from './research-writing/code-documenter/references/typescript-jsdoc.md?raw';
+import RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_USER_GUIDES_TUTORIALS from './research-writing/code-documenter/references/user-guides-tutorials.md?raw';
 import RESEARCH_WRITING_CONTENT_CREATOR_BODY from './research-writing/content-creator/SKILL.md?raw';
 import RESEARCH_WRITING_DEEP_RESEARCH_BODY from './research-writing/deep-research/SKILL.md?raw';
 import RESEARCH_WRITING_EDITOR_BODY from './research-writing/editor/SKILL.md?raw';
@@ -21,6 +29,7 @@ function makeBuiltin(
   dirName: string,
   pseudoPath: string,
   extraMetadata: Record<string, unknown> = {},
+  resources?: Readonly<Record<string, string>>,
 ): SkillDefinition {
   const parsed = parseSkillText({
     skillMdPath: `/builtin/skills/${dirName}/SKILL.md`,
@@ -33,6 +42,7 @@ function makeBuiltin(
     name: dirName,
     path: pseudoPath,
     dir: pseudoPath,
+    resources,
     metadata: {
       ...parsed.metadata,
       type: parsed.metadata.type ?? 'inline',
@@ -60,6 +70,16 @@ export const RESEARCH_WRITING_CODE_DOCUMENTER_SKILL = makeBuiltin(
   'research-writing.code-documenter',
   'builtin://research-writing/code-documenter',
   { isSubSkill: true },
+  {
+    'references/api-docs-fastapi-django.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_API_DOCS_FASTAPI_DJANGO,
+    'references/api-docs-nestjs-express.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_API_DOCS_NESTJS_EXPRESS,
+    'references/coverage-reports.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_COVERAGE_REPORTS,
+    'references/documentation-systems.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_DOCUMENTATION_SYSTEMS,
+    'references/interactive-api-docs.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_INTERACTIVE_API_DOCS,
+    'references/python-docstrings.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_PYTHON_DOCSTRINGS,
+    'references/typescript-jsdoc.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_TYPESCRIPT_JSDOC,
+    'references/user-guides-tutorials.md': RESEARCH_WRITING_CODE_DOCUMENTER_REFERENCES_USER_GUIDES_TUTORIALS,
+  },
 );
 
 export const RESEARCH_WRITING_CONTENT_CREATOR_SKILL = makeBuiltin(

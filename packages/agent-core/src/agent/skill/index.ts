@@ -38,6 +38,7 @@ export class SkillManager {
           skillContent,
           skillSource: skill.source,
           skillDir: skill.dir,
+          skillResources: Object.keys(skill.resources ?? {}).sort(),
         }),
       },
     ];
