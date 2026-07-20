@@ -1,5 +1,43 @@
 # kimi-code-app
 
+## 0.0.6
+
+### Patch Changes
+
+- [#46](https://github.com/MoonshotAI/kimi-code-app/pull/46) [`7ac176f`](https://github.com/MoonshotAI/kimi-code-app/commit/7ac176f9a9ff71821b637d23e53e932874db63bc) Thanks [@liruifengv](https://github.com/liruifengv)! - 设置的高级页新增应用版本与构建时间展示和手动检查更新按钮，并将页面选项整理为版本与更新、数据与隐私、诊断三组。
+
+- [#42](https://github.com/MoonshotAI/kimi-code-app/pull/42) [`177c68c`](https://github.com/MoonshotAI/kimi-code-app/commit/177c68c90effc14aa13d8c4462c6c4fdc2058f55) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复发送首条消息进入消息流、以及切换到其它会话后，输入框不会自动聚焦的问题。
+
+- [#41](https://github.com/MoonshotAI/kimi-code-app/pull/41) [`7d7365d`](https://github.com/MoonshotAI/kimi-code-app/commit/7d7365dd439577b6dbf380e7df40673c08e4dd05) Thanks [@liruifengv](https://github.com/liruifengv)! - 窗口标题与应用内各处的品牌名统一为「Kimi Code」。
+
+- [#46](https://github.com/MoonshotAI/kimi-code-app/pull/46) [`7ac176f`](https://github.com/MoonshotAI/kimi-code-app/commit/7ac176f9a9ff71821b637d23e53e932874db63bc) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复设置里服务端版本错误显示为应用版本的问题，现在正确显示内嵌核心引擎的版本。
+
+- [#37](https://github.com/MoonshotAI/kimi-code-app/pull/37) [`7c90df8`](https://github.com/MoonshotAI/kimi-code-app/commit/7c90df89815e0c56fc0cfbc2eec830cb1ffb347f) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复对话中读取视频文件后播放器黑屏、无法预览内容的问题。
+
+- [#40](https://github.com/MoonshotAI/kimi-code-app/pull/40) [`a2c4ed8`](https://github.com/MoonshotAI/kimi-code-app/commit/a2c4ed86225bd3bdcf5706f21e7a6dc337bd73ba) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复系统提醒注入把回合切断、导致连续活动被折成多行的问题，现在一整段活动正常折成一行。
+
+- [#40](https://github.com/MoonshotAI/kimi-code-app/pull/40) [`a2c4ed8`](https://github.com/MoonshotAI/kimi-code-app/commit/a2c4ed86225bd3bdcf5706f21e7a6dc337bd73ba) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复进行中的摘要会把还在运行的工具提前计入「已完成」统计的问题。
+
+- [#47](https://github.com/MoonshotAI/kimi-code-app/pull/47) [`e48bbf5`](https://github.com/MoonshotAI/kimi-code-app/commit/e48bbf5e01f2e1fb6e3d35bd11c7c5267a9ef3b3) Thanks [@liruifengv](https://github.com/liruifengv)! - 使用 API Key 接入 Kimi 编程模型时，会自动获取最新的模型列表。
+
+- [#47](https://github.com/MoonshotAI/kimi-code-app/pull/47) [`e48bbf5`](https://github.com/MoonshotAI/kimi-code-app/commit/e48bbf5e01f2e1fb6e3d35bd11c7c5267a9ef3b3) Thanks [@liruifengv](https://github.com/liruifengv)! - 模型选择菜单新增提示：切换模型或思考强度会使已有的提示词缓存失效，建议新建对话以避免额外 token 消耗。
+
+- [#47](https://github.com/MoonshotAI/kimi-code-app/pull/47) [`e48bbf5`](https://github.com/MoonshotAI/kimi-code-app/commit/e48bbf5e01f2e1fb6e3d35bd11c7c5267a9ef3b3) Thanks [@liruifengv](https://github.com/liruifengv)! - 修正自动与 YOLO 权限模式的说明文案，与其实际行为一致。
+
+- [#47](https://github.com/MoonshotAI/kimi-code-app/pull/47) [`e48bbf5`](https://github.com/MoonshotAI/kimi-code-app/commit/e48bbf5e01f2e1fb6e3d35bd11c7c5267a9ef3b3) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复排队待发的消息被自动补发时可能携带过期附件的问题。
+
+- [#47](https://github.com/MoonshotAI/kimi-code-app/pull/47) [`e48bbf5`](https://github.com/MoonshotAI/kimi-code-app/commit/e48bbf5e01f2e1fb6e3d35bd11c7c5267a9ef3b3) Thanks [@liruifengv](https://github.com/liruifengv)! - 思考强度改为按会话生效：每个会话保持自己的设置，切换会话或模型时互不影响。
+
+- [#36](https://github.com/MoonshotAI/kimi-code-app/pull/36) [`58636df`](https://github.com/MoonshotAI/kimi-code-app/commit/58636dffa767ae386b7757fa6ba769c30fc5ae88) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 侧边栏多个会话同时运行时，加载动画现在保持同步转动。
+
+- [#47](https://github.com/MoonshotAI/kimi-code-app/pull/47) [`e48bbf5`](https://github.com/MoonshotAI/kimi-code-app/commit/e48bbf5e01f2e1fb6e3d35bd11c7c5267a9ef3b3) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复在符号链接目录下的问题：AGENTS.md 无法生效、文件状态读取失败。
+
+- [#39](https://github.com/MoonshotAI/kimi-code-app/pull/39) [`7b7ff5f`](https://github.com/MoonshotAI/kimi-code-app/commit/7b7ff5f1433b8f9bec60e69f8d34f74b8dd95050) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Mac 菜单栏图标旁现在会显示未读、待审批和待回答的总数，点开托盘菜单可按会话逐条查看并直接跳转到对应会话，菜单语言跟随应用语言设置。
+
+- [#40](https://github.com/MoonshotAI/kimi-code-app/pull/40) [`a2c4ed8`](https://github.com/MoonshotAI/kimi-code-app/commit/a2c4ed86225bd3bdcf5706f21e7a6dc337bd73ba) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 连续的思考与工具调用自动折叠成一行摘要（如「读取了 2 个文件 · 运行了 5 条命令 · 26.8s」），进行中实时展开直播、结束后自动收起，消息流更安静。
+
+- [#35](https://github.com/MoonshotAI/kimi-code-app/pull/35) [`aeb9384`](https://github.com/MoonshotAI/kimi-code-app/commit/aeb93843770d2d0f563015d99e342cb3c0bd3c89) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 聊天中的宽表格默认保持在正文列宽内展示，被截断时右缘有渐隐提示，鼠标悬停后点右上角的按钮即可加宽，再点一次恢复。
+
 ## 0.0.5
 
 ### Patch Changes
