@@ -95,6 +95,7 @@ describe('Event public types', () => {
         case 'tool.progress':
         case 'shell.output':
         case 'shell.started':
+        case 'shell.completed':
         case 'tool.result':
         case 'tool.list.updated':
         case 'mcp.server.status':

@@ -64,9 +64,11 @@ import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permission
 import type { WarningEvent } from '@moonshot-ai/agent-core-v2/agent/profile/profileService';
 import type { PluginCommandActivatedEvent } from '@moonshot-ai/agent-core-v2/agent/rpc/rpcService';
 import type {
+  ShellCompletedEvent,
   ShellOutputEvent,
   ShellStartedEvent,
 } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
+
 import type { TurnStepRetryingEvent } from '@moonshot-ai/agent-core-v2/agent/stepRetry/stepRetryService';
 import type { AgentTaskStatus } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import type {
@@ -627,6 +629,7 @@ export const turnStartedEventSchema = z.object({
   type: z.literal('turn.started'),
   turnId: z.number(),
   origin: promptOriginSchema,
+  prompt: z.string().optional(),
 });
 
 export const turnEndedEventSchema = z.object({
@@ -733,6 +736,7 @@ export const shellOutputEventSchema = z.object({
   type: z.literal('shell.output'),
   commandId: z.string(),
   update: toolUpdateSchema,
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<ShellOutputEvent>;
 
 export const shellStartedEventSchema = z.object({
@@ -740,6 +744,13 @@ export const shellStartedEventSchema = z.object({
   commandId: z.string(),
   taskId: z.string(),
 }) satisfies z.ZodType<ShellStartedEvent>;
+
+export const shellCompletedEventSchema = z.object({
+  type: z.literal('shell.completed'),
+  commandId: z.string(),
+  isError: z.boolean(),
+  taskId: z.string().optional(),
+}) satisfies z.ZodType<ShellCompletedEvent>;
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
@@ -917,6 +928,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   toolProgressEventSchema,
   shellOutputEventSchema,
   shellStartedEventSchema,
+  shellCompletedEventSchema,
   toolResultEventSchema,
   toolListUpdatedEventSchema,
   mcpServerStatusEventSchema,

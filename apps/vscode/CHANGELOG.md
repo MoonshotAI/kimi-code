@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.6.4
+
+### Changed
+
+- Picking a model's highest thinking effort now applies to the current session
+  only instead of becoming the global default: the top tier saves just the
+  on/off toggle, lower tiers persist as the default as before, and
+  re-confirming the current effort no longer rewrites the saved preference.
+  The model and thinking pickers also note that switching mid-conversation
+  invalidates the existing prompt cache.
+- Unified the YOLO and Auto permission mode naming and descriptions with the
+  CLI (`/afk` is now `/auto`), and approval requests that fall outside the
+  active permission mode (sensitive files, plan reviews, ask rules) are now
+  always shown to you instead of being auto-approved.
+
+## 0.6.3
+
+### Fixed
+
+- Editor mentions now work for files outside the working directory, and paths
+  containing spaces are quoted correctly.
+- Cancelling a running turn now reliably reaches the engine, and the UI no
+  longer reports a task as stopped when there is nothing to cancel.
+- Attaching to or resuming an existing session no longer overwrites its model
+  and thinking effort with the configured defaults; model or effort changes
+  picked in the composer are applied when the prompt is sent.
+
+## 0.6.2
+
+### Fixed
+
+- A core error arriving in the middle of a turn no longer corrupts the active
+  turn; the turn now ends cleanly with an error instead of leaving the chat in
+  a broken state.
+- Kimi sign-in and connection failures now include the underlying transport
+  cause (for example DNS or connection refused) instead of a generic error.
+- Closed several FetchURL SSRF bypasses and the DNS-rebinding window.
+- Tool calls interrupted mid-stream are now recorded and closed, so they no
+  longer corrupt the session history.
+
 ## 0.6.1
 
 ### Fixed

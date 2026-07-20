@@ -42,6 +42,7 @@ export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 export { KIMI_CODE_FLOW_CONFIG } from './constants';
 
 export {
+  applyManagedApiKeyProviderModels,
   applyManagedKimiCodeLogoutConfig,
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
@@ -57,6 +58,7 @@ export {
   resolveKimiCodeOAuthKey,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  toManagedModelAlias,
 } from './managed-kimi-code';
 export type {
   FetchManagedKimiCodeModelsOptions,
@@ -80,6 +82,7 @@ export {
   formatDuration,
   formatResetTime,
   isManagedKimiCode,
+  isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
   kimiCodeUsageUrl,
   parseManagedUsagePayload,

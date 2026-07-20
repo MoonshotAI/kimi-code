@@ -1244,6 +1244,7 @@ function lifecycleStub(
     remove: async (agentId: string) => {
       handles.delete(agentId);
     },
+    broadcastPermissionMode: () => {},
   };
   return lifecycle as IAgentLifecycleService;
 }

@@ -26,6 +26,7 @@ export function createFakeHostFs(overrides: Partial<IHostFileSystem> = {}): IHos
     readLines: () => notImplemented('FakeHostFs.readLines'),
     createExclusive: () => notImplemented('FakeHostFs.createExclusive'),
     stat: () => notImplemented('FakeHostFs.stat'),
+    lstat: () => notImplemented('FakeHostFs.lstat'),
     readdir: () => notImplemented('FakeHostFs.readdir'),
     mkdir: () => notImplemented('FakeHostFs.mkdir'),
     remove: () => notImplemented('FakeHostFs.remove'),

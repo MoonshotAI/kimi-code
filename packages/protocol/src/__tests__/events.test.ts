@@ -8,6 +8,7 @@ import {
   agentEventSchema,
   assistantDeltaEventSchema,
   eventSchema,
+  shellCompletedEventSchema,
   toolCallStartedEventSchema,
 } from '../events';
 import type { Event } from '../events';
@@ -77,6 +78,22 @@ describe('events / display re-exports', () => {
         name: 'bash',
         args: { command: 'pwd' },
         display: { kind: 'command', command: 'pwd', language: 'bash' },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      shellCompletedEventSchema.parse({
+        type: 'shell.completed',
+        commandId: 'cmd-1',
+        isError: false,
+      }),
+    ).toEqual({ type: 'shell.completed', commandId: 'cmd-1', isError: false });
+    expect(
+      agentEventSchema.safeParse({
+        type: 'shell.completed',
+        commandId: 'cmd-1',
+        isError: true,
+        taskId: 'task-1',
       }).success,
     ).toBe(true);
   });
@@ -182,8 +199,6 @@ describe('events / display re-exports', () => {
       id: 'wd_project_123456abcdef',
       root: '/tmp/project',
       name: 'project',
-      is_git_repo: true,
-      branch: 'main',
       created_at: '2026-06-11T00:00:00.000Z',
       last_opened_at: '2026-06-11T00:00:00.000Z',
       session_count: 1,

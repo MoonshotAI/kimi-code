@@ -181,6 +181,7 @@ export const VOLATILE_EVENT_TYPES = [
   'tool.progress',
   'shell.output',
   'shell.started',
+  'shell.completed',
   'agent.status.updated',
 ] as const;
 

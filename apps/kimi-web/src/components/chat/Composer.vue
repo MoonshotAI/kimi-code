@@ -633,11 +633,10 @@ const currentModel = computed(() =>
 );
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
-// The stored level is shown and submitted verbatim (same as the TUI footer) —
-// no coercion against the active model. No stored preference (undefined) shows
-// the model default, which is what the daemon will resolve for the prompt. A
-// level the model doesn't declare highlights no segment but still shows in the
-// suffix.
+// The client resolves the level per model (the model's stored pick when still
+// declared, else the catalog default), so what arrives here is valid for the
+// active model and highlights its segment. An undeclared level can only appear
+// transiently, before the catalog loads, and simply highlights no segment.
 const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
 const activeThinkingSegment = computed(() => {
   const segs = thinkingSegments.value;
@@ -1200,6 +1199,9 @@ function selectModel(modelId: string): void {
               >{{ thinkingSegmentLabel(seg) }}</button>
             </div>
           </div>
+
+          <div class="md-divider" />
+          <div class="md-cache-note">{{ t('status.cacheNote') }}</div>
 
           <div class="md-divider" />
 
@@ -1806,6 +1808,16 @@ function selectModel(modelId: string): void {
 }
 .md-thinking.is-readonly .effort-segments {
   opacity: 0.62;
+}
+.md-cache-note {
+  /* width:0 + min-width:100% — the note never widens the shrink-to-fit
+     dropdown, but always fills its width and wraps there naturally. */
+  width: 0;
+  min-width: 100%;
+  padding: 2px 7px 4px;
+  color: var(--muted);
+  font-size: var(--ui-font-size-xs);
+  line-height: 1.4;
 }
 .md-thinking.is-readonly .effort-seg.is-active {
   background: var(--color-surface-raised);

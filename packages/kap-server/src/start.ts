@@ -14,7 +14,6 @@ import {
   IModelCatalogService,
   IWorkspaceRegistry,
   logSeed,
-  MULTI_SERVER_FLAG_ENV,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -26,7 +25,6 @@ import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
-import { acquireLock, type AcquireLockResult, ServerLockedError } from './lock';
 import { createInstanceRegistry, type InstanceRegistration } from './instanceRegistry';
 import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
@@ -43,12 +41,10 @@ import type { Socket } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 
-import { registerRpcRoutes } from './transport/registerRpcRoutes';
 import {
   ConnectionRegistry,
   type IConnectionRegistry,
 } from './transport/ws/connectionRegistry';
-import { registerWs, WS_PATH as WS_PATH_V2 } from './transport/ws/registerWs';
 import { extractWsBearerToken } from './transport/ws/bearerProtocol';
 import { SessionEventBroadcaster } from './transport/ws/v1/sessionEventBroadcaster';
 import { FsWatchBridge } from './transport/ws/v1/fsWatchBridge';
@@ -65,6 +61,7 @@ import { createSecurityHeadersHook } from './middleware/securityHeaders';
 import { createAuthHook } from './middleware/auth';
 import { GuiStoreService } from './services/guiStore/guiStoreService';
 import { loadSnapshotConfig, SnapshotReader } from './services/snapshot';
+import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
 import {
@@ -80,8 +77,12 @@ export interface ServerStartOptions {
   readonly port?: number;
   readonly homeDir?: string;
   readonly configPath?: string;
-  /** Override the single-instance lock path — used in tests. Defaults to `<homeDir>/server/lock`. */
-  readonly lockPath?: string;
+  /**
+   * Override the instance-registry directory — used in tests that need the
+   * registry OUTSIDE `homeDir` (e.g. folder-picker fixtures browsing the home
+   * dir). Defaults to `<homeDir>/server/instances`.
+   */
+  readonly instancesDir?: string;
   readonly logLevel?: ServerLogLevel;
   readonly logger?: ServerLogger;
   readonly debugEndpoints?: boolean;
@@ -95,10 +96,10 @@ export interface ServerStartOptions {
   readonly authTokenService?: IAuthTokenService;
   readonly disableAuth?: boolean;
   /**
-   * Optional *additional* credential accepted on the `/api/v2` surface (REST +
+   * Optional *additional* credential accepted on the RPC surface (debug REST +
    * WebSocket) alongside the persistent bearer token. Never required and never
-   * the only gate: the persistent token always protects `/api/v2`. Leave unset
-   * unless a second, distinct RPC credential is genuinely needed.
+   * the only gate: the persistent token always protects the RPC surface. Leave
+   * unset unless a second, distinct RPC credential is genuinely needed.
    */
   readonly rpcToken?: string;
   /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
@@ -138,64 +139,30 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
-/**
- * Resolve the `multi_server` gate from the environment *before* bootstrap.
- *
- * The lock-vs-registry decision must be made ahead of `bootstrap()` so the
- * legacy single-instance lock is still taken early (fail-fast, and ahead of any
- * bootstrap-time writes to shared home-dir files). The decision keys off the
- * dedicated `KIMI_CODE_EXPERIMENTAL_MULTI_SERVER` env only — deliberately NOT
- * the master `KIMI_CODE_EXPERIMENTAL_FLAG`: that switch already enables the v2
- * engine itself, and coupling the lock contract to it would make every v2
- * server skip the legacy lock before CLI consumers learn to read the instance
- * registry. Keeping the gate specific makes multi-server strictly opt-in.
- */
-function isMultiServerEnabled(env: NodeJS.ProcessEnv): boolean {
-  const raw = (env[MULTI_SERVER_FLAG_ENV] ?? '').trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-}
-
-export { ServerLockedError };
-
 export async function startServer(opts: ServerStartOptions = {}): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
   const homeDir = resolveKimiHome(opts.homeDir);
-  // Instance discovery (matches v1 when `multi_server` is off):
-  //   - flag off: take the single-instance `<home>/server/lock` so a second
-  //     server on the same homeDir fails fast with `ServerLockedError` rather
-  //     than racing the port.
-  //   - flag on: register this process under `<home>/server/instances/` so
-  //     multiple servers can share the homeDir; port conflicts are resolved by
-  //     the `port + 1` retry below instead of the lock.
-  // Either handle is released on close and on any boot refusal below.
+  // Instance discovery: every server registers itself under
+  // `<home>/server/instances/<serverId>.json`, so multiple servers can share
+  // one homeDir and consumers (the CLI's `server ps/kill`, `kimi web`, dev
+  // tooling) can discover the live instances. Port conflicts between siblings
+  // are resolved by the `port + 1` retry below. The registration is released
+  // on close and on any boot refusal below.
   const hostVersion = opts.version ?? getServerVersion();
-  let lockHandle: AcquireLockResult | undefined;
-  let registration: InstanceRegistration | undefined;
-  if (isMultiServerEnabled(process.env)) {
-    const registry = createInstanceRegistry({
-      instancesDir: join(homeDir, 'server', 'instances'),
-    });
-    registration = await registry.register({
-      pid: process.pid,
-      host,
-      port,
-      startedAt: Date.now(),
-      hostVersion,
-    });
-  } else {
-    lockHandle = acquireLock({
-      port,
-      host,
-      lockPath: opts.lockPath ?? join(homeDir, 'server', 'lock'),
-      hostVersion,
-      entry: process.argv[1],
-    });
-  }
+  const registry = createInstanceRegistry({
+    instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
+  });
+  const registration: InstanceRegistration = await registry.register({
+    pid: process.pid,
+    host,
+    port,
+    startedAt: Date.now(),
+    hostVersion,
+  });
   const exposureClass = classify(host, { bindClass: opts.bindClass });
   if (exposureClass !== 'loopback' && opts.insecureNoTls !== true) {
-    await registration?.release();
-    lockHandle?.release();
+    await registration.release();
     throw new Error(
       `Refusing to bind ${host} (${exposureClass}) without TLS; terminate TLS at a reverse proxy or pass --insecure-no-tls.`,
     );
@@ -223,7 +190,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   }
   // Unified credential: the persistent token (or password) protects every
   // route; the optional `rpcToken` is accepted as an additional credential
-  // for the `/api/v2` surface. The same validator backs the HTTP auth hook,
+  // for the RPC surface. The same validator backs the HTTP auth hook,
   // the WS upgrade handler, and the post-connect handshakes so one credential
   // gates all surfaces and upgrade / handshake can never disagree.
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
@@ -326,15 +293,16 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     core.dispose();
-    await registration?.release();
-    lockHandle?.release();
+    await registration.release();
   };
 
   const connectionRegistry = new ConnectionRegistry();
+  const transcriptService = new TranscriptService({ homeDir, core, logger });
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
+    transcriptService,
   });
   const fsWatchBridge = new FsWatchBridge({ core, logger });
 
@@ -366,6 +334,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
           { name: 'sessions', description: 'Session lifecycle' },
           { name: 'workspaces', description: 'Workspace registry + folder picker' },
           { name: 'messages', description: 'Message history' },
+          { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
           { name: 'approvals', description: 'Approval resolution' },
           { name: 'questions', description: 'Question resolution & dismiss' },
@@ -401,11 +370,10 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     connectionRegistry,
     broadcaster,
     snapshotReader,
+    transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
   });
 
-  registerRpcRoutes(app, core, { token: opts.rpcToken });
-  const wssV2 = registerWs(core, { validateCredential, registry: connectionRegistry, logger });
   const wssV1 = registerWsV1(core, {
     validateCredential,
     registry: connectionRegistry,
@@ -421,8 +389,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   ): Promise<void> => {
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
-    const isV2 = url === WS_PATH_V2 || url.startsWith(`${WS_PATH_V2}?`);
-    if (!isV1 && !isV2) {
+    if (!isV1) {
       socket.destroy();
       return;
     }
@@ -457,7 +424,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
       const candidate = bearerToken !== null && bearerToken.length > 0 ? bearerToken : protocolToken;
       // Require a valid credential at the upgrade: a token-less (or invalid)
-      // upgrade is rejected with 401 for both `/api/v1/ws` and `/api/v2/ws`.
+      // upgrade is rejected with 401 for `/api/v1/ws`.
       let ok = false;
       if (candidate !== null) {
         try {
@@ -491,11 +458,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
 
     (socket as Socket).setNoDelay(true);
-    if (isV1) {
-      wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
-    } else {
-      wssV2.handleUpgrade(req, socket, head, (ws) => wssV2.emit('connection', ws, req));
-    }
+    wssV1.handleUpgrade(req, socket, head, (ws) => wssV1.emit('connection', ws, req));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -506,7 +469,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
-    wssV2.close();
     await broadcaster.close();
   });
 
@@ -535,13 +497,12 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // Bind with port+1 retry on EADDRINUSE (mirrors v1). Port 0 (ephemeral) is
   // never retried.
   //
-  // When `multi_server` is off the single-instance lock above guarantees any
-  // "address in use" here is a third-party listener — never another kimi
-  // server — so bumping the port is the desired policy. When `multi_server` is
-  // on there is no lock: a busy port is likely a sibling kimi instance, and
-  // the same `port + 1` walk is exactly how the second instance yields to
-  // 58628 (and so on), so the retry doubles as the multi-instance coexistence
-  // mechanism.
+  // There is no single-instance lock: a busy port may be a sibling kimi
+  // instance sharing this homeDir (each registers itself under
+  // `<home>/server/instances/`), and the `port + 1` walk is exactly how the
+  // second instance yields to 58628 (and so on) — the retry doubles as the
+  // multi-instance coexistence mechanism. A busy port held by a third-party
+  // listener gets the same treatment, matching the v1 policy.
   try {
     await listenWithPortRetry({
       listen: (h, p) => app.listen({ host: h, port: p }),
@@ -552,7 +513,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   } catch (error) {
     // Listen failed even after the port walk (or for a non-EADDRINUSE reason).
     // Tear down what boot already assembled so a failed start does not leak the
-    // lock file, the Core scope, or the refresh scheduler.
+    // instance registration, the Core scope, or the refresh scheduler.
     try {
       await close();
     } catch {
@@ -564,10 +525,9 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   const address = app.server.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : port;
   // Advertise the actually-bound port (e.g. ephemeral when `port: 0`, or the
-  // `port + 1` retry winner) so a status/kill lookup against the lock file or
-  // the instance registry finds the real listener.
-  await registration?.update({ port: boundPort });
-  lockHandle?.updatePort(boundPort);
+  // `port + 1` retry winner) so a status/kill lookup against the instance
+  // registry finds the real listener.
+  await registration.update({ port: boundPort });
 
   void modelCatalogRefreshScheduler.start().catch((error) => {
     logger.warn(
@@ -604,15 +564,12 @@ export interface ListenWithPortRetryOptions {
 /**
  * Bind the listener, retrying on `port + 1` when the port is held.
  *
- * Why this is the right layer: when the `multi_server` flag is off,
- * {@link startServer} takes the single-instance lock *before* listening, so by
- * the time we reach `listen` a live kimi server would already have thrown
- * `ServerLockedError`; any `EADDRINUSE` is then a third-party listener and
- * bumping the port is the desired policy ("if the port is taken by something
- * other than kimi server itself, +1"). When `multi_server` is on, the lock is
- * replaced by the instance registry, so a busy port may be a sibling kimi
- * instance — the same `port + 1` walk then serves as the multi-instance
- * coexistence mechanism (second instance lands on the next free port).
+ * Why this is the right layer: there is no single-instance lock — every
+ * kap-server registers itself under `<home>/server/instances/` instead, so a
+ * busy port may be a sibling kimi instance. The `port + 1` walk then serves
+ * as the multi-instance coexistence mechanism (the second instance lands on
+ * the next free port), and a third-party listener gets the same "port busy ⇒
+ * +1" policy as v1.
  *
  * Port `0` (OS-assigned ephemeral) is never retried: the kernel already picks a
  * free port, so `EADDRINUSE` cannot arise from a specific-port conflict.

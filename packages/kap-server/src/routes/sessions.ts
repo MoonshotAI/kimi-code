@@ -163,8 +163,10 @@ const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
 // not implement `cursor`, so we page over its recency-sorted result); `status`
 // filters the projected page (post-page, matching v1). `include_archive` →
 // `includeArchived`; `archived_only` forces `includeArchived` and then keeps
-// only archived sessions; `workspace_id` → `workspaceId`; `exclude_empty` drops
-// sessions with no prompt.
+// only archived sessions; `workspace_id` → `workspaceIds` after
+// `resolveAliasIds` expands the alias set of the directory (legacy split
+// buckets list as one workspace); `exclude_empty` drops sessions with no
+// prompt.
 const sessionsListQueryCoercion = z
   .object({
     before_id: z.string().min(1).optional(),
@@ -360,8 +362,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const roots = new Map(workspaces.map((w) => [w.id, w.root]));
 
       // v1 resolves `workspace_id` to its root and 40410s when it is unknown;
-      // the index filters by `workspaceId` directly, so only the existence
-      // check is needed here (the root itself is not used by the query).
+      // the existence check stays on the listed (root-deduped) registry so an
+      // unknown id fails byte-identically, and only then is a known id
+      // expanded to every id spelling of the same directory — legacy split
+      // buckets (casing/slash variants) list as one workspace.
       if (raw.workspace_id !== undefined && !roots.has(raw.workspace_id)) {
         reply.send(
           errEnvelope(
@@ -376,10 +380,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       // `FileSessionIndex` does not implement `cursor` (gap G5 closed here), so
       // we fetch the full recency-sorted set (no `limit`) and apply the id
       // cursor in this handler. `list()` already orders by `updatedAt` desc and
-      // filters by workspace / archived. `archived_only` forces archived rows
-      // into the set, then the filter below keeps only them.
+      // filters across the workspace-id set / archived. `archived_only` forces
+      // archived rows into the set, then the filter below keeps only them.
+      const workspaceIds =
+        raw.workspace_id === undefined
+          ? undefined
+          : await core.accessor.get(IWorkspaceRegistry).resolveAliasIds(raw.workspace_id);
       const page = await core.accessor.get(ISessionIndex).list({
-        workspaceId: raw.workspace_id,
+        workspaceIds,
         includeArchived: archivedOnly ? true : raw.include_archive,
       });
 

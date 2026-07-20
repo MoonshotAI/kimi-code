@@ -117,8 +117,6 @@ export function toAppWorkspace(wire: WireWorkspace): AppWorkspace {
     id: wire.id,
     root: wire.root,
     name: wire.name,
-    isGitRepo: wire.is_git_repo,
-    branch: wire.branch ?? undefined,
     lastOpenedAt: wire.last_opened_at,
     sessionCount: wire.session_count,
   };

@@ -5,6 +5,7 @@ import { isRealUserInput } from '../../agent/compaction';
 import type { AgentContextData, ContextMessage } from '../../agent/context';
 import type { JsonObject, ListSessionsPayload, SessionSummary } from '../../rpc';
 import type { SessionMeta } from '../../session';
+import { workspaceRootKey } from '../../session/store';
 import {
   type CompactSessionRequest,
   type CompactSessionResponse,
@@ -29,6 +30,7 @@ import { IEventService } from '../event/event';
 import { toProtocolMessage } from '../message/message';
 import { IPromptService, type AgentStatePatch } from '../prompt/prompt';
 import { IQuestionService } from '../question/question';
+import { IWorkspaceRegistry } from '../workspace/workspaceRegistry';
 import {
   ISessionService,
   SessionNotFoundError,
@@ -116,6 +118,7 @@ export class SessionService extends Disposable implements ISessionService {
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IApprovalService private readonly approvalService: IApprovalService,
     @IQuestionService private readonly questionService: IQuestionService,
+    @IWorkspaceRegistry private readonly workspaceRegistry: IWorkspaceRegistry,
   ) {
     super();
     this._register(
@@ -249,17 +252,15 @@ export class SessionService extends Disposable implements ISessionService {
       }
     }
     const meta = await this.tryGetMeta(summary.id);
-    const session = this._patchSessionStatus(toProtocolSession(summary, meta));
+    const session = this._patchSessionStatus(
+      toProtocolSession(summary, meta, await this.tryResolveWorkspaceId(summary.workDir)),
+    );
     this.emitCreated(session);
     return session;
   }
 
   async list(query: SessionListQuery): Promise<PageResponse<Session>> {
-    const corePayload: ListSessionsPayload = {
-      workDir: query.workDir,
-      includeArchive: query.includeArchive,
-    };
-    const all = await this.core.rpc.listSessions(corePayload);
+    const all = await this.listSummaries(query);
     const sorted = all.toSorted((a, b) => b.updatedAt - a.updatedAt);
     // Hide sessions the user has never interacted with: a session is "empty" when
     // it has no lastPrompt (the first prompt has not been sent yet). Filtered
@@ -290,7 +291,9 @@ export class SessionService extends Disposable implements ISessionService {
 
     const items = await Promise.all(
       pageSummaries.map(async (s) =>
-        this._patchSessionStatus(toProtocolSession(s, await this.tryGetMeta(s.id)))
+        this._patchSessionStatus(
+          toProtocolSession(s, await this.tryGetMeta(s.id), await this.tryResolveWorkspaceId(s.workDir)),
+        )
       ),
     );
 
@@ -307,7 +310,9 @@ export class SessionService extends Disposable implements ISessionService {
       throw new SessionNotFoundError(id);
     }
     const meta = await this.tryGetMeta(id);
-    return this._patchSessionStatus(toProtocolSession(summary, meta));
+    return this._patchSessionStatus(
+      toProtocolSession(summary, meta, await this.tryResolveWorkspaceId(summary.workDir)),
+    );
   }
 
   async update(id: string, input: SessionUpdate): Promise<Session> {
@@ -355,7 +360,9 @@ export class SessionService extends Disposable implements ISessionService {
     const allAfter = await this.core.rpc.listSessions({});
     const summaryAfter = allAfter.find((s) => s.id === id) ?? summary;
     const meta = await this.tryGetMeta(id);
-    return this._patchSessionStatus(toProtocolSession(summaryAfter, meta));
+    return this._patchSessionStatus(
+      toProtocolSession(summaryAfter, meta, await this.tryResolveWorkspaceId(summaryAfter.workDir)),
+    );
   }
 
   async fork(id: string, input: SessionFork): Promise<Session> {
@@ -368,7 +375,9 @@ export class SessionService extends Disposable implements ISessionService {
       metadata,
     });
     const meta = await this.tryGetMeta(summary.id);
-    const session = this._patchSessionStatus(toProtocolSession(summary, meta));
+    const session = this._patchSessionStatus(
+      toProtocolSession(summary, meta, await this.tryResolveWorkspaceId(summary.workDir)),
+    );
     this.emitCreated(session);
     return session;
   }
@@ -404,7 +413,9 @@ export class SessionService extends Disposable implements ISessionService {
     const pageSummaries = slice.slice(0, pageSize);
     const items = await Promise.all(
       pageSummaries.map(async (s) =>
-        this._patchSessionStatus(toProtocolSession(s, await this.tryGetMeta(s.id)))
+        this._patchSessionStatus(
+          toProtocolSession(s, await this.tryGetMeta(s.id), await this.tryResolveWorkspaceId(s.workDir)),
+        )
       ),
     );
     const filtered =
@@ -430,7 +441,9 @@ export class SessionService extends Disposable implements ISessionService {
       metadata,
     });
     const meta = await this.tryGetMeta(summary.id);
-    const session = this._patchSessionStatus(toProtocolSession(summary, meta));
+    const session = this._patchSessionStatus(
+      toProtocolSession(summary, meta, await this.tryResolveWorkspaceId(summary.workDir)),
+    );
     this.emitCreated(session);
     return session;
   }
@@ -571,6 +584,43 @@ export class SessionService extends Disposable implements ISessionService {
     try {
       const meta = await this.core.rpc.getSessionMetadata({ sessionId: id });
       return meta;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Summary universe for a list query. A workspace filter widens to every
+   * alias spelling of the same physical root: pre-resolver legacy splits
+   * parked sessions in parallel buckets that a single workDir query cannot
+   * reach — the store resolves a spelling of a registered root back onto the
+   * registered bucket, hiding the split one. The index-wide list is filtered
+   * by identity key instead. Read-only: buckets and the index stay untouched.
+   */
+  private async listSummaries(query: SessionListQuery): Promise<readonly SessionSummary[]> {
+    if (query.workspaceId === undefined) {
+      const corePayload: ListSessionsPayload = {
+        workDir: query.workDir,
+        includeArchive: query.includeArchive,
+      };
+      return this.core.rpc.listSessions(corePayload);
+    }
+    const aliases = await this.workspaceRegistry.resolveAliasWorkDirs(query.workspaceId);
+    if (aliases.length === 0) return [];
+    const aliasKeys = new Set(aliases.map((dir) => workspaceRootKey(dir)));
+    const all = await this.core.rpc.listSessions({ includeArchive: query.includeArchive });
+    return all.filter((summary) => aliasKeys.has(workspaceRootKey(summary.workDir)));
+  }
+
+  /**
+   * Registered workspace id for the wire projection, when a registry entry
+   * identity-matches the session's workDir (case/slash variants of one
+   * Windows directory fold). Falls back to undefined — the projection then
+   * mints the key itself, the pre-resolver behavior.
+   */
+  private async tryResolveWorkspaceId(workDir: string): Promise<string | undefined> {
+    try {
+      return await this.workspaceRegistry.findWorkspaceIdByRoot(workDir);
     } catch {
       return undefined;
     }

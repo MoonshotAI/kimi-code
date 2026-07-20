@@ -256,21 +256,18 @@ async function applySessionSettings(
   legacyApproval: LegacyApprovalFlags,
 ): Promise<void> {
   const status = await session.getStatus();
-  if (options.model && status.model !== options.model) {
-    await session.setModel(options.model);
-  }
-  // Thinking effort is applied only when the session is created (see
-  // openSession). An existing session keeps its own effort — the global
-  // config value is a default for new sessions, matching CLI/TUI resume
-  // semantics. Effort changes made in the picker reach the active session
-  // through the SaveConfig handler instead.
+  // Model and thinking effort are applied only when the session is created
+  // (see openSession). An existing session keeps its own — the global config
+  // values are defaults for new sessions, matching CLI/TUI resume semantics.
+  // Changes made in the pickers reach the active session through the
+  // SaveConfig handler instead.
   const permission = corePermissionForLegacyApproval(legacyApproval);
   if (status.permission !== permission) {
     await session.setPermission(permission);
   }
 }
 
-function normalizeEffort(effort: string): ThinkingEffort {
+export function normalizeEffort(effort: string): ThinkingEffort {
   return (effort.trim() || "off") as ThinkingEffort;
 }
 

@@ -882,6 +882,7 @@ function registerSessionExportServices(
       createdAt: 1,
       lastOpenedAt: 2,
     }),
+    resolveAliasIds: async (id) => [id],
     createOrTouch: async (root) => ({
       id: 'ws_created',
       root,
@@ -960,6 +961,7 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     get: (agentId) => agents.find((agent) => agent.id === agentId),
     list: () => agents,
     remove: async () => {},
+    broadcastPermissionMode: () => {},
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

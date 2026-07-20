@@ -129,6 +129,7 @@ describe('ModelCatalogService', () => {
   afterEach(() => {
     disposables.dispose();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   function catalog(): IModelCatalogService {
@@ -450,5 +451,112 @@ describe('ModelCatalogService', () => {
         headers: expect.objectContaining({ 'User-Agent': 'kimi-code-cli/test' }),
       }),
     );
+  });
+
+  it('refreshProviderModels refreshes a hand-configured API-key provider at the managed endpoint', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    backing.providers = {
+      'my-kimi': { type: 'kimi', baseUrl, apiKey: 'sk-distributed-key' },
+    };
+    backing.models = {
+      'my-kimi/kimi-k2': {
+        provider: 'my-kimi',
+        model: 'kimi-k2',
+        maxContextSize: 262144,
+        displayName: 'Old K2',
+      },
+    };
+    backing.defaultModel = 'my-kimi/kimi-k2';
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-k2',
+                context_length: 262144,
+                supports_reasoning: true,
+                display_name: 'Fresh K2',
+              },
+              { id: 'kimi-k2.5', context_length: 131072 },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 0 },
+    ]);
+    expect(publishEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'event.model_catalog.changed' }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${baseUrl}/models`,
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-distributed-key' }),
+      }),
+    );
+    // The user-owned provider record survives; only model aliases are merged.
+    expect(backing.providers['my-kimi']).toEqual({
+      type: 'kimi',
+      baseUrl,
+      apiKey: 'sk-distributed-key',
+    });
+    expect(backing.models['my-kimi/kimi-k2']?.displayName).toBe('Fresh K2');
+    expect(backing.models['my-kimi/kimi-k2.5']).toBeDefined();
+    // The surviving default selection is written back, not cleared.
+    expect(backing.defaultModel).toBe('my-kimi/kimi-k2');
+  });
+
+  it('refreshProviderModels clears a stale defaultModel whose alias upstream dropped', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    backing.providers = {
+      'my-kimi': { type: 'kimi', baseUrl, apiKey: 'sk-distributed-key' },
+    };
+    backing.models = {
+      'my-kimi/kimi-k2': {
+        provider: 'my-kimi',
+        model: 'kimi-k2',
+        maxContextSize: 262144,
+        displayName: 'Old K2',
+      },
+    };
+    backing.defaultModel = 'my-kimi/kimi-k2';
+    backing.thinking = { enabled: true };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-k3', context_length: 1048576, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
+    ]);
+    // The dropped alias was the default: an explicit undefined in the patch
+    // must clear the section instead of leaving the default dangling. It has
+    // to go through `replace` — `set()`'s deepMerge would resolve undefined
+    // back to the stale base value.
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', undefined);
+    expect(configReplace).toHaveBeenCalledWith('thinking', undefined);
+    expect(configSet).not.toHaveBeenCalled();
+    expect(backing.defaultModel).toBeUndefined();
+    expect(backing.thinking).toBeUndefined();
+    expect(backing.models['my-kimi/kimi-k3']).toBeDefined();
+    expect(backing.models['my-kimi/kimi-k2']).toBeUndefined();
   });
 });

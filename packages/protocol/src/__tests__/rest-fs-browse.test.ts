@@ -24,23 +24,11 @@ describe('fsBrowseQuerySchema', () => {
 });
 
 describe('fsBrowseEntrySchema', () => {
-  it('round-trips a non-git dir entry without branch', () => {
+  it('round-trips a dir entry', () => {
     const entry = {
       name: 'src',
       path: '/Users/foo/code/src',
       is_dir: true as const,
-      is_git_repo: false,
-    };
-    expect(fsBrowseEntrySchema.parse(entry)).toEqual(entry);
-  });
-
-  it('round-trips a git dir entry with branch', () => {
-    const entry = {
-      name: 'kimi-code',
-      path: '/Users/foo/code/kimi-code',
-      is_dir: true as const,
-      is_git_repo: true,
-      branch: 'main',
     };
     expect(fsBrowseEntrySchema.parse(entry)).toEqual(entry);
   });
@@ -50,7 +38,6 @@ describe('fsBrowseEntrySchema', () => {
       name: 'README.md',
       path: '/Users/foo/code/README.md',
       is_dir: false,
-      is_git_repo: false,
     };
     expect(fsBrowseEntrySchema.safeParse(bad).success).toBe(false);
   });
@@ -66,8 +53,6 @@ describe('fsBrowseResponseSchema', () => {
           name: 'kimi-code',
           path: '/Users/foo/code/kimi-code',
           is_dir: true as const,
-          is_git_repo: true,
-          branch: 'main',
         },
       ],
     };

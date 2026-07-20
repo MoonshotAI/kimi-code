@@ -52,21 +52,67 @@ export interface ForkSessionRecordInput {
   readonly turnIndex?: number;
 }
 
-export type SessionStoreOptions = Record<string, never>;
+export type SessionStoreOptions = {
+  /**
+   * Optional identity hook (wired by the services layer from the workspace
+   * registry): the already-registered workspace id for the same physical root
+   * as `workDir`, or undefined when no entry matches. Bucket derivation
+   * prefers it over minting a fresh `encodeWorkDirKey` hash, so a session
+   * created from a case/slash variant of a registered Windows root lands in
+   * the registered bucket instead of splitting into a second one.
+   */
+  readonly resolveWorkspaceId?: (workDir: string) => Promise<string | undefined>;
+};
 
 export class SessionStore {
   readonly sessionsDir: string;
+  private readonly resolveWorkspaceId: SessionStoreOptions['resolveWorkspaceId'];
 
   constructor(
     readonly homeDir: string,
-    _options: SessionStoreOptions = {},
+    options: SessionStoreOptions = {},
   ) {
     this.sessionsDir = join(homeDir, 'sessions');
+    this.resolveWorkspaceId = options.resolveWorkspaceId;
   }
 
   sessionDirFor(input: { readonly id: string; readonly workDir: string }): string {
     assertSafeSessionId(input.id);
     return join(this.sessionsDir, encodeWorkDirKey(normalizeWorkDir(input.workDir)), input.id);
+  }
+
+  /**
+   * Bucket key for a workDir: asks the workspace registry (when wired) for the
+   * registered id of the same physical root — see SessionStoreOptions — and
+   * prefers it over the freshly minted `encodeWorkDirKey` hash. Falls back to
+   * minting when the resolver is absent, errors, or returns an id that is not
+   * a safe bucket name (registry contents are user-editable state; minted ids
+   * always pass `isSafeSessionId`).
+   */
+  private async bucketKeyFor(workDir: string): Promise<string> {
+    let resolved: string | undefined;
+    try {
+      resolved = await this.resolveWorkspaceId?.(workDir);
+    } catch {
+      resolved = undefined;
+    }
+    return resolved !== undefined && isSafeSessionId(resolved)
+      ? resolved
+      : encodeWorkDirKey(normalizeWorkDir(workDir));
+  }
+
+  /** Like `sessionDirFor`, but under the registry-resolved bucket. */
+  private async resolvedSessionDirFor(input: {
+    readonly id: string;
+    readonly workDir: string;
+  }): Promise<string> {
+    assertSafeSessionId(input.id);
+    return join(this.sessionsDir, await this.bucketKeyFor(input.workDir), input.id);
+  }
+
+  /** Bucket directory for a workDir, registry-resolved when possible. */
+  private async bucketDirFor(workDir: string): Promise<string> {
+    return join(this.sessionsDir, await this.bucketKeyFor(workDir));
   }
 
   async create(input: CreateSessionRecordInput): Promise<SessionSummary> {
@@ -77,7 +123,7 @@ export class SessionStore {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
     }
 
-    const dir = this.sessionDirFor({ id: input.id, workDir });
+    const dir = await this.resolvedSessionDirFor({ id: input.id, workDir });
     if (await isDirectory(dir)) {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.id}" already exists`);
     }
@@ -100,7 +146,7 @@ export class SessionStore {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
     }
 
-    const targetDir = this.sessionDirFor({ id: input.targetId, workDir: source.workDir });
+    const targetDir = await this.resolvedSessionDirFor({ id: input.targetId, workDir: source.workDir });
     if (await isDirectory(targetDir)) {
       throw new KimiError(ErrorCodes.SESSION_ALREADY_EXISTS, `Session "${input.targetId}" already exists`);
     }
@@ -274,8 +320,15 @@ export class SessionStore {
           continue;
         }
         // Refuse to index a session whose recorded workDir does not match the
-        // bucket it lives in (corrupt or foreign state).
-        if (!areSameFsPath(sessionDir, expectedDir)) continue;
+        // bucket it lives in (corrupt or foreign state). The registry-resolved
+        // bucket is accepted too: sessions created with a wired resolver live
+        // in the registered bucket even though their workDir mints elsewhere.
+        if (
+          !areSameFsPath(sessionDir, expectedDir) &&
+          !areSameFsPath(sessionDir, await this.resolvedSessionDirFor({ id, workDir }))
+        ) {
+          continue;
+        }
 
         const existing = index.get(id);
         if (
@@ -319,7 +372,7 @@ export class SessionStore {
     workDir: string,
     includeArchive: boolean,
   ): Promise<readonly SessionSummary[]> {
-    const bucketDir = join(this.sessionsDir, encodeWorkDirKey(workDir));
+    const bucketDir = await this.bucketDirFor(workDir);
     let entries: Dirent[] = [];
     try {
       entries = await readdir(bucketDir, { withFileTypes: true });
@@ -393,7 +446,7 @@ export class SessionStore {
     includeArchive: boolean,
   ): Promise<SessionSummary | undefined> {
     if (!isSafeSessionId(sessionId)) return undefined;
-    const sessionDir = this.sessionDirFor({ id: sessionId, workDir });
+    const sessionDir = await this.resolvedSessionDirFor({ id: sessionId, workDir });
     if (!(await isDirectory(sessionDir))) return undefined;
     const summary = await this.summaryFromDir(sessionId, sessionDir, workDir);
     if (!includeArchive && summary.archived === true) return undefined;

@@ -172,6 +172,7 @@ function workspaceRegistryStub(): IWorkspaceRegistry {
     _serviceBrand: undefined,
     list: () => Promise.resolve([]),
     get: () => Promise.resolve(undefined),
+    resolveAliasIds: (id) => Promise.resolve([id]),
     createOrTouch: (root, name) =>
       Promise.resolve<Workspace>({
         id: 'wd_stub',
@@ -208,6 +209,7 @@ function persistentWorkspaceRegistryStub(): IWorkspaceRegistry {
     _serviceBrand: undefined,
     list: () => Promise.resolve([...workspaces.values()]),
     get: (id) => Promise.resolve(workspaces.get(id)),
+    resolveAliasIds: (id) => Promise.resolve([id]),
     createOrTouch: (root, name) => {
       const id = encodeWorkDirKey(root);
       const now = 1;
@@ -304,6 +306,7 @@ function agentLifecycleStub(): IAgentLifecycleService {
     get: () => undefined,
     list: () => [],
     remove: () => Promise.resolve(),
+    broadcastPermissionMode: () => {},
   };
 }
 
@@ -523,9 +526,13 @@ describe('SessionLifecycleService', () => {
       }),
     ]);
 
-    await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
-    const workspaceId = encodeWorkDirKey('/tmp/proj');
+    // The index entry addresses the session under the registry-resolved
+    // workspace id — the same id seeding the session's storage scope — not a
+    // recomputed encodeWorkDirKey, so the v1 reader finds it in the bucket it
+    // was materialized into.
+    const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
     expect(appended).toEqual([
       {
         scope: '',
@@ -569,6 +576,46 @@ describe('SessionLifecycleService', () => {
     expect(appended).toEqual([]);
     expect(svc.get('s1')).toBeUndefined();
     expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it('indexes the session under the registry-resolved id when the workDir is an alias spelling', async () => {
+    const appended: unknown[] = [];
+    const svc = build([
+      stubPair(IAppendLogStore, {
+        ...appendLogStoreStub(),
+        append: (scope: string, key: string, record: unknown) => {
+          appended.push({ scope, key, record });
+        },
+      }),
+      stubPair(IWorkspaceRegistry, {
+        ...workspaceRegistryStub(),
+        // As the real registry does after folding: the id minted for the
+        // first-seen spelling is reused for the alias.
+        createOrTouch: (root: string, name?: string) =>
+          Promise.resolve({
+            id: 'wd_first_spelling',
+            root,
+            name: name ?? 'proj',
+            createdAt: 0,
+            lastOpenedAt: 0,
+          }),
+      }),
+    ]);
+
+    const handle = await svc.create({ sessionId: 's1', workDir: 'c:\\users\\foo\\proj' });
+
+    expect(handle.accessor.get(ISessionContext).workspaceId).toBe('wd_first_spelling');
+    expect(appended).toEqual([
+      {
+        scope: '',
+        key: 'session_index.jsonl',
+        record: {
+          sessionId: 's1',
+          sessionDir: '/tmp/sessions/wd_first_spelling/s1',
+          workDir: 'c:\\users\\foo\\proj',
+        },
+      },
+    ]);
   });
 
   it('registers the workspace during create so a cold resume can resolve the workdir', async () => {
@@ -645,6 +692,7 @@ describe('SessionLifecycleService', () => {
               }
             : undefined,
         ),
+      resolveAliasIds: (id) => Promise.resolve([id]),
       createOrTouch: (root, name) =>
         Promise.resolve({
           id: encodeWorkDirKey(root),

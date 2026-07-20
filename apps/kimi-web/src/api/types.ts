@@ -120,10 +120,6 @@ export interface AppWorkspace {
   root: string;
   /** Display name — defaults to basename(root), may be renamed on the daemon. */
   name: string;
-  /** Whether root is inside a git repository. */
-  isGitRepo: boolean;
-  /** Current branch, when known. */
-  branch?: string;
   /** ISO timestamp of when this workspace was last opened. */
   lastOpenedAt?: string;
   /** Number of sessions belonging to this workspace. */
@@ -135,8 +131,6 @@ export interface FsBrowseEntry {
   name: string;
   path: string;
   isDir: boolean;
-  isGitRepo: boolean;
-  branch?: string;
 }
 
 export interface FsBrowseResult {
@@ -432,7 +426,7 @@ export type AppEvent =
       lastTurnReason?: 'completed' | 'cancelled' | 'failed';
     }
   | { type: 'sessionMetaUpdated'; sessionId: string; title?: string; lastPrompt?: string }
-  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean }
+  | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean; thinking?: string }
   | { type: 'historyCompacted'; sessionId: string; beforeSeq: number; reason: string; summaryMessageId?: string }
   | { type: 'compactionStarted'; sessionId: string; trigger: 'manual' | 'auto'; instruction?: string }
   | { type: 'compactionCompleted'; sessionId: string; tokensBefore?: number; tokensAfter?: number; summary?: string }

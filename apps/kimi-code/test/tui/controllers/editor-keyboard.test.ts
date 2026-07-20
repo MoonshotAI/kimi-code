@@ -12,16 +12,24 @@ interface Harness {
   readonly editor: Record<string, ((...args: never[]) => unknown) | undefined>;
   readonly openUndoSelector: ReturnType<typeof vi.fn>;
   readonly cancelRunningShellCommand: ReturnType<typeof vi.fn>;
+  readonly cancelCompaction: ReturnType<typeof vi.fn>;
+  readonly btwCancelRunning: ReturnType<typeof vi.fn>;
+  readonly btwCloseOrCancel: ReturnType<typeof vi.fn>;
 }
 
 function createHarness(options: { streamingPhase?: string; isCompacting?: boolean } = {}): Harness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
     setInputMode: vi.fn() as unknown as (...args: never[]) => unknown,
+    getText: vi.fn(() => '') as unknown as (...args: never[]) => unknown,
+    setText: vi.fn() as unknown as (...args: never[]) => unknown,
   };
   const openUndoSelector = vi.fn();
   const cancelRunningShellCommand = vi.fn();
-  const session = { cancel: vi.fn(async () => {}) };
+  const cancelCompaction = vi.fn(async () => {});
+  const btwCancelRunning = vi.fn(() => false);
+  const btwCloseOrCancel = vi.fn(() => false);
+  const session = { cancel: vi.fn(async () => {}), cancelCompaction };
 
   const host = {
     state: {
@@ -35,7 +43,7 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
       ui: { requestRender: vi.fn() },
     },
     session,
-    btwPanelController: { closeOrCancel: vi.fn(() => false) },
+    btwPanelController: { cancelRunning: btwCancelRunning, closeOrCancel: btwCloseOrCancel },
     openUndoSelector,
     cancelRunningShellCommand,
   } as unknown as EditorKeyboardHost;
@@ -46,12 +54,26 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
   );
   controller.install();
 
-  return { host, editor, openUndoSelector, cancelRunningShellCommand };
+  return {
+    host,
+    editor,
+    openUndoSelector,
+    cancelRunningShellCommand,
+    cancelCompaction,
+    btwCancelRunning,
+    btwCloseOrCancel,
+  };
 }
 
 function pressEscape(editor: Harness['editor']): void {
   const handler = editor['onEscape'];
   if (handler === undefined) throw new Error('onEscape handler not installed');
+  (handler as () => void)();
+}
+
+function pressCtrlC(editor: Harness['editor']): void {
+  const handler = editor['onCtrlC'];
+  if (handler === undefined) throw new Error('onCtrlC handler not installed');
   (handler as () => void)();
 }
 
@@ -120,6 +142,70 @@ describe('EditorKeyboardController double-Esc undo', () => {
     expect(cancelRunningShellCommand).toHaveBeenCalled();
     const session = host.session as unknown as { cancel: ReturnType<typeof vi.fn> };
     expect(session.cancel).toHaveBeenCalled();
+  });
+});
+
+describe('EditorKeyboardController btw panel priority', () => {
+  it('Esc closes the btw panel first while compacting, without cancelling compaction', () => {
+    const { editor, btwCloseOrCancel, cancelCompaction } = createHarness({ isCompacting: true });
+    btwCloseOrCancel.mockReturnValue(true);
+
+    pressEscape(editor);
+
+    expect(btwCloseOrCancel).toHaveBeenCalledOnce();
+    expect(cancelCompaction).not.toHaveBeenCalled();
+  });
+
+  it('Esc cancels compaction on the next press once the btw panel is gone', () => {
+    const { editor, btwCloseOrCancel, cancelCompaction } = createHarness({ isCompacting: true });
+    btwCloseOrCancel.mockReturnValueOnce(true);
+
+    pressEscape(editor);
+    expect(cancelCompaction).not.toHaveBeenCalled();
+
+    pressEscape(editor);
+    expect(cancelCompaction).toHaveBeenCalledOnce();
+  });
+
+  it('Esc cancels compaction directly when no btw panel is open', () => {
+    const { editor, btwCloseOrCancel, cancelCompaction } = createHarness({ isCompacting: true });
+
+    pressEscape(editor);
+
+    expect(btwCloseOrCancel).toHaveBeenCalledOnce();
+    expect(cancelCompaction).toHaveBeenCalledOnce();
+  });
+
+  it('Ctrl+C cancels a running btw question first while compacting', () => {
+    const { editor, btwCancelRunning, cancelCompaction } = createHarness({ isCompacting: true });
+    btwCancelRunning.mockReturnValue(true);
+
+    pressCtrlC(editor);
+
+    expect(btwCancelRunning).toHaveBeenCalledOnce();
+    expect(cancelCompaction).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+C closes an idle btw panel while compacting, without cancelling compaction', () => {
+    const { editor, btwCloseOrCancel, cancelCompaction } = createHarness({ isCompacting: true });
+    btwCloseOrCancel.mockReturnValue(true);
+
+    pressCtrlC(editor);
+
+    expect(btwCloseOrCancel).toHaveBeenCalledOnce();
+    expect(cancelCompaction).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+C cancels compaction when no btw panel is open', () => {
+    const { editor, btwCancelRunning, btwCloseOrCancel, cancelCompaction } = createHarness({
+      isCompacting: true,
+    });
+
+    pressCtrlC(editor);
+
+    expect(btwCancelRunning).toHaveBeenCalledOnce();
+    expect(btwCloseOrCancel).toHaveBeenCalledOnce();
+    expect(cancelCompaction).toHaveBeenCalledOnce();
   });
 });
 

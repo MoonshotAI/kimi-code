@@ -1,0 +1,21 @@
+{
+  // Mirror the repo root tsconfig: agent-core-v2 is consumed through source
+  // `exports`, so its sources are type-checked here too, and the strictness
+  // flags must match the root exactly. The src includes are required (not
+  // just for speed): agent-core-v2 fills interfaces like `AgentTaskInfoByKind`
+  // via cross-module `declare module` augmentation, and those collapse to
+  // `never` when the augmenting files are not in the program. Only the
+  // environment (DOM + vite client types) differs.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"],
+    "noEmit": true
+  },
+  "include": [
+    "src",
+    "vite",
+    "vite.config.ts",
+    "../../packages/agent-core-v2/src"
+  ]
+}
