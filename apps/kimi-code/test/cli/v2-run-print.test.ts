@@ -377,7 +377,7 @@ describe('runV2Print', () => {
   it('fails before any turn when --agent-file is invalid', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-agent-file-'));
     const agentFile = join(dir, 'broken.md');
-    await writeFile(agentFile, '---\ndescription: no name\n---\n\nbody\n');
+    await writeFile(agentFile, '---\nname: broken\n---\n\nbody\n');
     const stdout = writer();
     const stderr = writer();
     const { app, agent, agentServices } = makeFakeHarness();
