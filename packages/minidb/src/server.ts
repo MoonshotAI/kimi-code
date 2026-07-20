@@ -5,6 +5,7 @@
 
 import net from 'node:net';
 import type { Socket } from 'node:net';
+import { pathToFileURL } from 'node:url';
 import { MiniDb } from './index.js';
 
 const CRLF = '\r\n';
@@ -227,7 +228,7 @@ export async function startServer({ dir, port = 6379, host = '127.0.0.1', fsyncP
 }
 
 // Run directly: node --import tsx src/server.ts --dir ./data --port 6379
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const argv = process.argv.slice(2);
   const arg = (name: string, def: string): string => {
     const i = argv.indexOf(`--${name}`);

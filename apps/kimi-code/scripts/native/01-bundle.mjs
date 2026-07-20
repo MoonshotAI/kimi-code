@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { run } from './exec.mjs';
 
@@ -18,6 +19,6 @@ export async function runBundleStep() {
   await run(process.execPath, [checkBundlePath]);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await runBundleStep();
 }
