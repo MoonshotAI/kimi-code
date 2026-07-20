@@ -771,6 +771,43 @@ describe('AgentToolPolicyService executor enforcement', () => {
     expect(probe.calls).toBe(1);
   });
 
+  it.each([
+    {
+      name: 'global denylist',
+      options: { initialConfig: { tools: { disabled: [SELECT_TOOLS_TOOL_NAME] } } },
+      disable: undefined,
+    },
+    {
+      name: 'global allowlist',
+      options: { initialConfig: { tools: { enabled: ['Read'] } } },
+      disable: undefined,
+    },
+    {
+      name: 'session denylist',
+      options: {},
+      disable: [SELECT_TOOLS_TOOL_NAME],
+    },
+  ])('blocks select_tools through an explicit $name', async ({ options, disable }) => {
+    ctx = createTestAgent(options, hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).bind({
+      profile: DEFAULT_AGENT_PROFILE_NAME,
+      model: MOCK_MODEL,
+    });
+    if (disable !== undefined) {
+      await ctx.get(IAgentToolPolicyService).setSessionDisabledTools(disable);
+    }
+    const probe = new PolicyProbeTool(SELECT_TOOLS_TOOL_NAME);
+    ctx.get(IAgentToolRegistryService).register(probe);
+
+    const result = await executeDirectToolCall(ctx, SELECT_TOOLS_TOOL_NAME);
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: `Tool "${SELECT_TOOLS_TOOL_NAME}" is disabled by the active tool policy`,
+    });
+    expect(probe.calls).toBe(0);
+  });
+
 });
 
 async function executeDirectToolCall(ctx: TestAgentContext, name: string): Promise<ToolResult> {

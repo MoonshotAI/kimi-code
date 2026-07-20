@@ -4,10 +4,9 @@
  * Intersects the bound profile policy, global `[tools]` configuration, and
  * Session denylist (composed by `isToolActiveComposed` in `./evaluate`), and
  * installs the resulting authorization check into the L3 executor preflight so
- * direct tool calls cannot bypass schema filtering. `select_tools` is exempt
- * from the preflight gate: it is the progressive-disclosure loading entry
- * point whose loadable set is itself policy-filtered, so rejecting the call
- * would only contradict the schema layer that advertises it.
+ * direct tool calls cannot bypass schema filtering. Disclosure entries retain
+ * their implicit availability when a profile allowlist omits them, while
+ * explicit deny layers still apply.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -39,12 +38,11 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     super();
     this._register(
       toolExecutor.registerToolCallGuard(({ name, source }) => {
-        // The disclosure loading entry point: the schema layer advertises it
-        // only while disclosure is on, its execute() self-rejects when it is
-        // off, and the set it can load is policy-filtered — a policy rejection
-        // here would just contradict the schema layer (see `toolSelect`).
-        if (name === SELECT_TOOLS_TOOL_NAME) return undefined;
-        return this.isToolActive(name, source)
+        const active =
+          name === SELECT_TOOLS_TOOL_NAME
+            ? this.isToolActiveForDisclosure(name, source)
+            : this.isToolActive(name, source);
+        return active
           ? undefined
           : `Tool "${name}" is disabled by the active tool policy`;
       }),
@@ -57,6 +55,19 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
       {
         tools: profile.activeToolNames,
         disallowedTools: profile.disallowedTools,
+      },
+      name,
+      source,
+    );
+  }
+
+  isToolActiveForDisclosure(name: string, source: ToolSource = 'builtin'): boolean {
+    const profile = this.profile.data();
+    return isToolActiveComposed(
+      {
+        profile: { disallowedTools: profile.disallowedTools },
+        global: this.config.get<ToolsConfig>(TOOLS_SECTION),
+        sessionDisabledTools: this.sessionToolPolicy.disabledTools(),
       },
       name,
       source,

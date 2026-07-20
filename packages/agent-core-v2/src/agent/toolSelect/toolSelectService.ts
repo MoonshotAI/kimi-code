@@ -262,7 +262,9 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
       const entry = entries[i]!;
       const active =
         this.toolPolicy.isToolActive(entry.name, entry.source) ||
-        (disclosure && entry.name === SELECT_TOOLS_TOOL_NAME);
+        (disclosure &&
+          entry.name === SELECT_TOOLS_TOOL_NAME &&
+          this.toolPolicy.isToolActiveForDisclosure(entry.name, entry.source));
       const keep = active && (disclosure || entry.name !== SELECT_TOOLS_TOOL_NAME);
       if (keep) {
         if (filtered !== undefined) filtered.push(entry);
