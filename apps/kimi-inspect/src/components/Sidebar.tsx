@@ -1,19 +1,19 @@
 /**
  * Left sidebar — two columns: the workspace registry (`IWorkspaceRegistry`)
  * and the sessions of the selected workspace (`ISessionIndex`). Clicking a
- * session opens it in the main view. Lists refresh on core events (debounced)
- * and a slow poll as a safety net. Session creation goes through the v1 REST
- * endpoint (klient is v2-only).
+ * session opens it in the main view. Lists refresh on a slow poll only: the
+ * core-event stream that used to trigger a debounced refresh went away with
+ * the v2 socket (`/api/v2/ws`). Session creation goes through the v1 REST
+ * endpoint.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import { IWorkspaceRegistry, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
 
 import { useConnection } from '../connection';
-import { useLiveEvent } from '../live';
 import { Badge, ErrorLine, relTime } from '../ui';
 
 export function Sidebar({
@@ -40,17 +40,6 @@ export function Sidebar({
         .core(ISessionIndex)
         .list({ workspaceId: workspaceId ?? undefined, includeArchived: true, limit: 200 }),
     refetchInterval: 15_000,
-  });
-
-  // Core events (session archived, model catalog, …) → debounced list refresh.
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useLiveEvent((event) => {
-    if (event.source !== 'core') return;
-    if (refreshTimer.current !== undefined) clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(() => {
-      void queryClient.invalidateQueries({ queryKey: ['workspaces'] });
-      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    }, 800);
   });
 
   const sortedWorkspaces = (workspaces.data ?? []).toSorted((a, b) => b.lastOpenedAt - a.lastOpenedAt);

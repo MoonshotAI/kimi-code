@@ -79,6 +79,7 @@ describe('RestGateway', () => {
       get: (id) => (id === 'main' ? agentHandle : undefined),
       list: () => [agentHandle],
       remove: () => Promise.resolve(),
+      broadcastPermissionMode: () => {},
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',

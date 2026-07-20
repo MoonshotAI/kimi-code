@@ -600,6 +600,7 @@ export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
   readonly origin: PromptOrigin;
+  readonly prompt?: string;
 }
 
 export interface TurnEndedEvent {
@@ -722,6 +723,7 @@ export interface ShellOutputEvent {
   readonly type: 'shell.output';
   readonly commandId: string;
   readonly update: ToolUpdate;
+  readonly taskId?: string;
 }
 
 /**
@@ -732,6 +734,18 @@ export interface ShellStartedEvent {
   readonly type: 'shell.started';
   readonly commandId: string;
   readonly taskId: string;
+}
+
+/**
+ * Fired once when a foreground `!` shell command settles (success or
+ * failure). Runs detached to background do NOT fire it — they report through
+ * the task lifecycle instead. Transient, like the other `shell.*` events.
+ */
+export interface ShellCompletedEvent {
+  readonly type: 'shell.completed';
+  readonly commandId: string;
+  readonly isError: boolean;
+  readonly taskId?: string;
 }
 
 export interface ToolResultEvent {
@@ -914,6 +928,7 @@ export type AgentEvent =
   | ToolProgressEvent
   | ShellOutputEvent
   | ShellStartedEvent
+  | ShellCompletedEvent
   | ToolResultEvent
   | ToolListUpdatedEvent
   | McpServerStatusEvent
@@ -1468,6 +1483,7 @@ export const turnStartedEventSchema = z.object({
   type: z.literal('turn.started'),
   turnId: z.number(),
   origin: promptOriginSchema,
+  prompt: z.string().optional(),
 }) satisfies z.ZodType<TurnStartedEvent>;
 
 export const turnEndedEventSchema = z.object({
@@ -1574,6 +1590,7 @@ export const shellOutputEventSchema = z.object({
   type: z.literal('shell.output'),
   commandId: z.string(),
   update: toolUpdateSchema,
+  taskId: z.string().optional(),
 }) satisfies z.ZodType<ShellOutputEvent>;
 
 export const shellStartedEventSchema = z.object({
@@ -1581,6 +1598,13 @@ export const shellStartedEventSchema = z.object({
   commandId: z.string(),
   taskId: z.string(),
 }) satisfies z.ZodType<ShellStartedEvent>;
+
+export const shellCompletedEventSchema = z.object({
+  type: z.literal('shell.completed'),
+  commandId: z.string(),
+  isError: z.boolean(),
+  taskId: z.string().optional(),
+}) satisfies z.ZodType<ShellCompletedEvent>;
 
 export const toolResultEventSchema = z.object({
   type: z.literal('tool.result'),
@@ -1759,6 +1783,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   toolProgressEventSchema,
   shellOutputEventSchema,
   shellStartedEventSchema,
+  shellCompletedEventSchema,
   toolResultEventSchema,
   toolListUpdatedEventSchema,
   mcpServerStatusEventSchema,
@@ -1814,6 +1839,7 @@ export const VOLATILE_EVENT_TYPES = [
   'tool.progress',
   'shell.output',
   'shell.started',
+  'shell.completed',
   'agent.status.updated',
 ] as const satisfies readonly AgentEvent['type'][];
 

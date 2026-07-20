@@ -16,6 +16,7 @@
  */
 
 import { WS_PROTOCOL_VERSION, type SessionCursor } from '../../../protocol/ws-control';
+import { transcriptSubscriptionSchema, type TranscriptGradeSpec } from '@moonshot-ai/transcript';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
@@ -35,10 +36,14 @@ import {
   type BroadcastTarget,
   type ResyncReason,
   type SessionEventBroadcaster,
+  type TargetSubscription,
 } from './sessionEventBroadcaster';
 import { FsWatchBridge } from './fsWatchBridge';
 
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
+
+/** Per-session subscription state held by the connection (see `TargetSubscription`). */
+type SessionSubscription = TargetSubscription;
 
 // Outbound send buffer — coalesces a burst of frames (notably high-frequency
 // volatile text deltas) into fewer `socket.send` calls and applies backpressure
@@ -98,8 +103,8 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private closed = false;
   private gotClientHello = false;
-  /** Per-session subscription state, with each session's optional agent allowlist. */
-  readonly subscriptions = new Map<string, AgentFilter>();
+  /** Per-session subscription state: legacy agent allowlist + opt-in transcript grades. */
+  readonly subscriptions = new Map<string, SessionSubscription>();
 
   /** Outbound frames awaiting the next flush. */
   private outbound: unknown[] = [];
@@ -192,6 +197,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const subscriptions = asStringArray(payload['subscriptions']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
+    const transcript = parseTranscriptSubscription(payload['transcript']);
 
     const accepted: string[] = [];
     const resyncRequired: string[] = [];
@@ -202,6 +208,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         sid,
         cursors?.[sid],
         agentFilter?.[sid],
+        transcript?.[sid],
         accepted,
         resyncRequired,
         serverCursors,
@@ -222,6 +229,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const sessionIds = asStringArray(payload['session_ids']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
+    const transcript = parseTranscriptSubscription(payload['transcript']);
 
     const accepted: string[] = [];
     const notFound: string[] = [];
@@ -230,16 +238,22 @@ export class WsConnectionV1 implements BroadcastTarget {
 
     for (const sid of sessionIds) {
       const filter = agentFilter?.[sid];
-      const ok = await this.broadcaster.subscribe(sid, this, filter);
+      const grades = transcript?.[sid];
+      const cursor = cursors?.[sid];
+      // With a cursor the transcript baseline defers until after the replay —
+      // its seq must follow the replayed backlog, never precede it.
+      const ok = await this.broadcaster.subscribe(sid, this, filter, grades, {
+        deferTranscriptReset: cursor !== undefined,
+      });
       if (!ok) {
         notFound.push(sid);
         continue;
       }
-      this.subscriptions.set(sid, filter);
+      this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
       accepted.push(sid);
-      const cursor = cursors?.[sid];
       if (cursor !== undefined) {
         await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+        await this.broadcaster.flushTranscriptSeed(sid, this);
       } else {
         const cur = await this.broadcaster.getCursor(sid);
         serverCursors[sid] = cur;
@@ -306,19 +320,24 @@ export class WsConnectionV1 implements BroadcastTarget {
     sid: string,
     cursor: SessionCursor | undefined,
     filter: AgentFilter | undefined,
+    transcriptGrades: TranscriptGradeSpec | undefined,
     accepted: string[],
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const ok = await this.broadcaster.subscribe(sid, this, filter);
+    // Same ordering rule as onSubscribe: baseline after the cursor replay.
+    const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
+      deferTranscriptReset: cursor !== undefined,
+    });
     if (!ok) {
       resyncRequired.push(sid);
       return;
     }
-    this.subscriptions.set(sid, filter);
+    this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
     accepted.push(sid);
     if (cursor !== undefined) {
       await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+      await this.broadcaster.flushTranscriptSeed(sid, this);
     } else {
       const cur = await this.broadcaster.getCursor(sid);
       serverCursors[sid] = cur;
@@ -488,6 +507,21 @@ function parseAgentFilter(value: unknown): Record<string, AgentFilter> | undefin
     out[sid] = set;
   }
   return out;
+}
+
+/**
+ * Parse the opt-in wire `transcript` payload (`Record<session_id,
+ * Record<agent_id|'*', grade>>`). Validated against the shared zod schema so
+ * a malformed grade cannot widen into a subscription; a bad field degrades to
+ * "no transcript" for the whole frame, matching how `agent_filter` drops bad
+ * entries.
+ */
+function parseTranscriptSubscription(
+  value: unknown,
+): Record<string, TranscriptGradeSpec> | undefined {
+  if (value === undefined) return undefined;
+  const parsed = transcriptSubscriptionSchema.safeParse(value);
+  return parsed.success ? (parsed.data as Record<string, TranscriptGradeSpec>) : undefined;
 }
 
 function rawDataToString(data: RawData): string {

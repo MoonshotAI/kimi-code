@@ -5,13 +5,10 @@
  * the v1 wire shape (`connectionsListResponseSchema` from the local
  * `protocol/rest-connection`). Backed by the in-memory `IConnectionRegistry`.
  *
- * server-v2 serves two WebSocket endpoints, so this lists clients of both:
+ * server-v2 serves one WebSocket endpoint:
  *   - `/api/v1/ws` (v1 protocol) — `has_client_hello` reflects the v1
  *     `client_hello` handshake; `subscriptions` are the sessions the client
  *     subscribed to via `client_hello` / `subscribe`.
- *   - `/api/v2/ws` (v2 RPC protocol) — `has_client_hello` reflects the v2
- *     `hello` auth handshake; `subscriptions` are the distinct session ids with
- *     an active session/agent-scoped `listen`.
  *
  * Read-only and infallible: it only snapshots the registry.
  */

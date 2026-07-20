@@ -1,17 +1,22 @@
 /**
  * Right sidebar — access point for the Services of the server (app scope),
- * the active session, and the active agent. Hosts the agent switcher, four
- * tabs (app / session / agent / events), the live pending-interaction card
- * (driven by the session `interactions` stream), and the Service panels.
+ * the active session, and the active agent. Hosts the agent switcher, three
+ * tabs (app / session / agent), the pending-interaction card, and the
+ * Service panels.
  *
- * The panel list is dynamic: `GET /api/v2/channels` describes every
+ * The panel list is dynamic: `GET /api/v1/debug/channels` describes every
  * wire-exposed Service with its methods, rendered by `DynamicServiceCard`;
  * the handwritten descriptors in `panels.ts` override individual Services
  * with curated cards (`ServiceCard`).
+ *
+ * Everything here is fetch-on-demand (Load / Refresh buttons): the v2 event
+ * socket (`/api/v2/ws`) that used to push core/session/agent event streams
+ * — live panel refetches, the pending-interaction push, the merged event
+ * log — was removed server-side, so there is no live push to render.
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
@@ -24,7 +29,6 @@ import {
   type ChannelDescriptor,
 } from '../channel';
 import { useConnection } from '../connection';
-import { eventType, payloadField, useLiveEvent, useRecentEvents, type LiveEvent } from '../live';
 import {
   AGENT_PANELS,
   CORE_PANELS,
@@ -35,7 +39,7 @@ import {
 } from '../panels';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
 
-type Tab = 'app' | 'session' | 'agent' | 'events';
+type Tab = 'app' | 'session' | 'agent';
 type Scope = 'app' | 'session' | 'agent';
 
 const PANEL_OVERRIDES: ReadonlyMap<string, ServicePanelDef> = new Map(
@@ -46,7 +50,7 @@ const PANEL_OVERRIDES: ReadonlyMap<string, ServicePanelDef> = new Map(
 function useChannels() {
   const { klient } = useConnection();
   return useQuery({
-    queryKey: ['channels', klient.baseUrl, klient.rpcBasePath],
+    queryKey: ['channels', klient.baseUrl],
     queryFn: () => fetchChannelDescriptors(klient),
     staleTime: Number.POSITIVE_INFINITY,
   });
@@ -101,8 +105,8 @@ export function Inspector({
   };
 
   // Resolve a Service proxy by channel name + scope, 1:1 with the channel
-  // descriptor from `/api/v2/channels`. Returns null when the scope needs a
-  // session that isn't selected/ready.
+  // descriptor from `/api/v1/debug/channels`. Returns null when the scope
+  // needs a session that isn't selected/ready.
   const serviceProxy = useMemo(() => {
     return (name: string, scope: Scope): AnyService | null => {
       return serviceByName<AnyService>(klient, name, {
@@ -114,8 +118,8 @@ export function Inspector({
   }, [klient, sessionId, effectiveAgent, ready]);
 
   // Panels for one scope: the dynamic channel list merged with the handwritten
-  // overrides. When the channels endpoint is unavailable (older server), fall
-  // back to the handwritten panels only.
+  // overrides. When the channels endpoint is unavailable, fall back to the
+  // handwritten panels only.
   const renderPanels = (scope: Scope) => {
     const byName = new Map<string, ChannelDescriptor | undefined>();
     if (channels.data !== undefined) {
@@ -203,7 +207,7 @@ export function Inspector({
 
       {/* Tabs */}
       <div className="flex border-b border-neutral-800 text-[11px]">
-        {(['app', 'session', 'agent', 'events'] as const).map((t) => (
+        {(['app', 'session', 'agent'] as const).map((t) => (
           <button
             key={t}
             className={`flex-1 px-2 py-2 font-medium uppercase tracking-wider ${
@@ -211,7 +215,7 @@ export function Inspector({
             }`}
             onClick={() => setTab(t)}
           >
-            {t === 'app' ? 'App' : t === 'session' ? 'Session' : t === 'agent' ? 'Agent' : 'Events'}
+            {t === 'app' ? 'App' : t === 'session' ? 'Session' : 'Agent'}
           </button>
         ))}
       </div>
@@ -219,8 +223,6 @@ export function Inspector({
       <div className="flex-1 overflow-y-auto p-3">
         {tab === 'app' ? (
           renderPanels('app')
-        ) : tab === 'events' ? (
-          <EventLog />
         ) : sessionBlocked ? (
           <div className="text-[12px] text-neutral-600">
             {sessionId === null ? 'No session selected.' : 'Loading session…'}
@@ -268,15 +270,6 @@ function ServiceCard({
       onError?.(error);
     }
   };
-
-  // Refetch on matching live events (app-scope panels ride the `core` stream).
-  useLiveEvent((event: LiveEvent) => {
-    if (def.refreshOn === undefined || svc === null) return;
-    const source = def.scope === 'app' ? 'core' : def.scope;
-    if (event.source !== source) return;
-    const type = eventType(event);
-    if (def.refreshOn.some((prefix) => type.startsWith(prefix))) void refresh();
-  });
 
   return (
     <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/60">
@@ -450,7 +443,9 @@ function DynamicServiceCard({
 }
 
 // ---------------------------------------------------------------------------
-// Pending interactions (approvals / questions), live via the session stream
+// Pending interactions (approvals / questions) — fetched on demand: the
+// session `interactions` push stream went away with `/api/v2/ws`, so the
+// card refreshes only when Load is clicked.
 // ---------------------------------------------------------------------------
 
 interface PendingInteraction {
@@ -478,15 +473,10 @@ function InteractionsCard({ sessionId }: { sessionId: string }) {
     }
   };
 
-  // The `interactions` stream pushes the full pending set on every change.
-  useLiveEvent((event) => {
-    if (event.source !== 'session') return;
-    if (Array.isArray(event.data)) setPending(event.data as readonly PendingInteraction[]);
-  });
-
   const decide = async (id: string, decision: 'approved' | 'rejected') => {
     try {
       await approval.decide(id, { decision });
+      await reload();
     } catch (error) {
       setError(error);
     }
@@ -494,6 +484,7 @@ function InteractionsCard({ sessionId }: { sessionId: string }) {
   const answer = async (id: string, q: string, value: string) => {
     try {
       await question.answer(id, { answers: { [q]: value } });
+      await reload();
     } catch (error) {
       setError(error);
     }
@@ -501,6 +492,7 @@ function InteractionsCard({ sessionId }: { sessionId: string }) {
   const dismiss = async (id: string) => {
     try {
       await question.dismiss(id);
+      await reload();
     } catch (error) {
       setError(error);
     }
@@ -517,7 +509,9 @@ function InteractionsCard({ sessionId }: { sessionId: string }) {
       <div className="px-3 py-2">
         {error !== null ? <div className="mb-2"><ErrorLine error={error} /></div> : null}
         {pending.length === 0 ? (
-          <div className="text-[11px] text-neutral-600 italic">nothing pending</div>
+          <div className="text-[11px] text-neutral-600 italic">
+            nothing pending (click Load to check)
+          </div>
         ) : (
           pending.map((item) => (
             <div key={item.id} className="mb-2 rounded border border-neutral-800 bg-neutral-950/60 p-2">
@@ -602,60 +596,18 @@ function QuestionView({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Event log — merged core/session/agent stream
-// ---------------------------------------------------------------------------
-
-function EventLog() {
-  const recent = useRecentEvents();
-  const [events, setEvents] = useState<readonly LiveEvent[]>(() => recent);
-  const [paused, setPaused] = useState(false);
-  const [filter, setFilter] = useState('');
-  const pausedRef = useRefState(paused);
-
-  useLiveEvent((event) => {
-    if (pausedRef.current) return;
-    setEvents((prev) => [...prev.slice(-500), event]);
-  });
-
-  const filtered = filter.trim() === ''
-    ? events
-    : events.filter((e) => JSON.stringify(e.data).toLowerCase().includes(filter.trim().toLowerCase()));
-
-  return (
-    <div>
-      <div className="mb-2 flex items-center gap-1.5">
-        <input
-          className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] text-neutral-100 outline-none focus:border-sky-600"
-          placeholder="filter JSON…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <ActionButton onClick={() => setPaused((v) => !v)}>{paused ? 'Resume' : 'Pause'}</ActionButton>
-        <ActionButton onClick={() => setEvents([])}>Clear</ActionButton>
-      </div>
-      <div className="text-[10px] text-neutral-600">{filtered.length} events (newest first)</div>
-      <div className="mt-2">
-        {filtered.toReversed().map((event, i) => (
-          <div key={`${event.at}-${i}`} className="mb-1.5 rounded border border-neutral-800/70 bg-neutral-950/50 p-2">
-            <div className="mb-1 flex items-center gap-1.5">
-              <Badge tone={event.source === 'core' ? 'sky' : event.source === 'session' ? 'amber' : 'green'}>
-                {event.source}
-              </Badge>
-              <span className="font-mono text-[10px] text-neutral-400">{eventType(event) || '(payload)'}</span>
-              <span className="text-[10px] text-neutral-600">{new Date(event.at).toLocaleTimeString()}</span>
-            </div>
-            <JsonView data={event.data} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Mirror a state value into a ref so event handlers see the latest without re-subscribing. */
-function useRefState<T>(value: T): { readonly current: T } {
-  const ref = useRef(value);
-  ref.current = value;
-  return ref;
+/**
+ * Render a wire payload field as display text: strings pass through,
+ * numbers/booleans are stringified, anything else (or missing) falls back —
+ * never "[object Object]".
+ */
+function payloadField(
+  payload: Record<string, unknown>,
+  key: string,
+  fallback: string,
+): string {
+  const value = payload[key];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return fallback;
 }

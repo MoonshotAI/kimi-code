@@ -279,6 +279,7 @@ function agentLifecycleStub(): IAgentLifecycleService {
     get: () => undefined,
     list: () => [],
     remove: () => Promise.resolve(),
+    broadcastPermissionMode: () => {},
   };
 }
 

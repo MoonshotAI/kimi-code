@@ -1,9 +1,8 @@
 /**
- * IPC wire framing — newline-delimited JSON over a `node:net` stream. The
- * frame shapes deliberately mirror the `/api/v2/ws` protocol
- * (`hello`/`call`/`listen`/`unlisten` ↔ `ready`/`result`/`error`/
- * `listen_result`/`event`) so the two socket transports stay interchangeable;
- * only the byte pipe differs.
+ * IPC wire framing — newline-delimited JSON over a `node:net` stream. One
+ * socket multiplexes RPC `call`s and event `listen`s: `hello`/`call`/
+ * `listen`/`unlisten` go out, `ready`/`result`/`error`/`listen_result`/
+ * `event` come back.
  */
 
 /** One NDJSON message. `type` discriminates; other fields depend on it. */
@@ -27,7 +26,7 @@ export function encodeFrame(frame: IpcFrame): string {
   return `${JSON.stringify(frame)}\n`;
 }
 
-/** Incremental NDJSON decoder; malformed lines are dropped, mirroring the WS side. */
+/** Incremental NDJSON decoder; malformed lines are dropped. */
 export class NdjsonDecoder {
   private buffer = '';
 

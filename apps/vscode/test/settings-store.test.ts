@@ -96,6 +96,7 @@ describe("Webview model settings persistence", () => {
       model: "proxy/shared",
       thinking: false,
       effort: "off",
+      effortChanged: false,
     });
   });
 
@@ -369,6 +370,50 @@ describe("Webview thinking effort parity with the TUI", () => {
 
     expect(useSettingsStore.getState().thinkingEffort).toBe(previous);
     expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("skips the config write when re-confirming the current effort", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true);
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+    boundary.saveConfig.mockClear();
+
+    useSettingsStore.getState().selectThinkingEffort("high");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("does not seed future sessions with the model's top declared tier", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels(MODELS, "reasoning", false);
+
+    useSettingsStore.getState().selectThinkingEffort("high");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({ model: "reasoning", thinking: true, effort: "high" });
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBeUndefined();
+  });
+
+  it("seeds future sessions with a persisted non-top effort", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels(MODELS, "reasoning", false);
+
+    useSettingsStore.getState().selectThinkingEffort("low");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("low");
+    expect(useSettingsStore.getState().defaultThinkingEffort).toBe("low");
+  });
+
+  it("marks the effort as changed when a model switch resolves to a different effort", () => {
+    boundary.saveConfig.mockResolvedValue({ ok: true });
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true);
+    expect(useSettingsStore.getState().thinkingEffort).toBe("high");
+
+    useSettingsStore.getState().updateModel("always");
+
+    expect(useSettingsStore.getState().thinkingEffort).toBe("on");
+    expect(boundary.saveConfig).toHaveBeenCalledWith({ model: "always", thinking: true, effort: "on", effortChanged: true });
   });
 });
 

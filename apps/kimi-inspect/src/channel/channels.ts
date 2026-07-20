@@ -1,23 +1,27 @@
 /**
- * Protocol loading — the server's `{rpcBasePath}/channels` endpoint is its
- * self-description of every wire-callable Service (name, scope, domain,
- * methods + properties). On dev servers that's the whitelist-free
- * `/api/v1/debug`; older/production servers fall back to the `/api/v2`
- * whitelist set (`probeRpcBasePath` decides). Paired with `serviceByName`,
- * each descriptor materializes 1:1 into a typed proxy of the channel layer:
- * same channel name, same scope route, methods invoked by reflection.
+ * Protocol loading — the debug surface's `GET /api/v1/debug/channels`
+ * endpoint is the server's self-description of every wire-callable Service
+ * (name, scope, domain, methods + properties), whitelist-free. Paired with
+ * `serviceByName`, each descriptor materializes 1:1 into a typed proxy of
+ * the channel layer: same channel name, same scope route, methods invoked by
+ * reflection.
+ *
+ * `/api/v1/debug` is the ONLY RPC surface this app talks to (mounted by
+ * kap-server with `--debug-endpoints` on a loopback bind); the v2 surface
+ * (`/api/v2` + `/api/v2/ws`) was removed server-side, so there is no
+ * fallback — `probeDebugSurface` fails the connection with a clear error.
  */
 
 import { createDecorator } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 
+import { DEBUG_RPC_BASE, type InspectClient } from './client';
 import { RPCError } from './errors';
-import type { InspectClient } from './client';
 import type { ServiceProxy } from './channel';
 
 /** Wire scope kinds reported by the channels endpoint (`app` ≡ the core route). */
 export type ChannelScope = 'app' | 'session' | 'agent';
 
-/** Mirror of `ChannelDescriptor` in kap-server (`GET /api/v2/channels`). */
+/** Mirror of `ChannelDescriptor` in kap-server (`GET /api/v1/debug/channels`). */
 export interface ChannelDescriptor {
   readonly name: string;
   readonly scope: ChannelScope;
@@ -30,8 +34,7 @@ export interface ChannelDescriptor {
   }[];
 }
 
-/** Fetch the dynamic channel list (unwrapped from the project envelope),
- * from whichever RPC surface the connection probed (`rpcBasePath`). */
+/** Fetch the dynamic channel list (unwrapped from the project envelope). */
 export async function fetchChannelDescriptors(
   client: InspectClient,
 ): Promise<readonly ChannelDescriptor[]> {
@@ -39,7 +42,7 @@ export async function fetchChannelDescriptors(
   if (client.token !== undefined && client.token !== '') {
     headers['authorization'] = `Bearer ${client.token}`;
   }
-  const res = await fetch(`${client.baseUrl}${client.rpcBasePath}/channels`, { headers });
+  const res = await fetch(`${client.baseUrl}${DEBUG_RPC_BASE}/channels`, { headers });
   const envelope = (await res.json()) as {
     code: number;
     msg: string;
@@ -49,39 +52,44 @@ export async function fetchChannelDescriptors(
   return envelope.data;
 }
 
-/** The dev server's whitelist-free debug surface (`--debug-endpoints`). */
-export const DEBUG_RPC_BASE = '/api/v1/debug' as const;
-/** The stable whitelist RPC surface — fallback when debug is not mounted. */
-export const V2_RPC_BASE = '/api/v2' as const;
-
-export type RpcBasePath = typeof DEBUG_RPC_BASE | typeof V2_RPC_BASE;
-
 /**
- * Probe which RPC surface a server offers: dev servers started with
- * `--debug-endpoints` answer `/api/v1/debug/channels`; older/production
- * servers only the whitelisted `/api/v2`. Always resolves (fallback `/api/v2`).
+ * Verify the server mounts the debug RPC surface before the client is built.
+ * Resolves silently when `GET /api/v1/debug/channels` answers with a
+ * zero-code envelope; otherwise throws an `Error` whose message tells the
+ * user exactly what is wrong (unreachable server, surface not mounted →
+ * start kap-server with `--debug-endpoints`, or a rejected probe → check the
+ * token).
  */
-export async function probeRpcBasePath(options: {
+export async function probeDebugSurface(options: {
   readonly baseUrl: string;
   readonly token?: string;
-}): Promise<RpcBasePath> {
-  try {
-    const headers: Record<string, string> = {};
-    if (options.token !== undefined && options.token !== '') {
-      headers['authorization'] = `Bearer ${options.token}`;
-    }
-    const res = await fetch(
-      `${options.baseUrl.replace(/\/$/, '')}${DEBUG_RPC_BASE}/channels`,
-      { headers },
-    );
-    if (res.ok) {
-      const envelope = (await res.json()) as { code?: number };
-      if (envelope.code === 0) return DEBUG_RPC_BASE;
-    }
-  } catch {
-    // fall through to the v2 fallback
+}): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (options.token !== undefined && options.token !== '') {
+    headers['authorization'] = `Bearer ${options.token}`;
   }
-  return V2_RPC_BASE;
+  const url = `${options.baseUrl.replace(/\/$/, '')}${DEBUG_RPC_BASE}/channels`;
+  let res: Response;
+  try {
+    res = await fetch(url, { headers });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`cannot reach ${options.baseUrl} — is kap-server running? (${reason})`);
+  }
+  if (!res.ok) {
+    throw new Error(
+      `GET ${DEBUG_RPC_BASE}/channels answered HTTP ${res.status} — this server does not ` +
+        'mount the debug RPC surface. Start kap-server with --debug-endpoints on a loopback bind.',
+    );
+  }
+  const envelope = (await res.json()) as { code?: number; msg?: string };
+  if (envelope.code !== 0) {
+    throw new Error(
+      `the debug surface rejected the probe (code ${envelope.code ?? '?'}: ${
+        envelope.msg ?? 'no message'
+      }) — check the bearer token.`,
+    );
+  }
 }
 
 export interface ServiceTarget {

@@ -4,5 +4,4 @@ export * from './client';
 export * from './errors';
 export * from './proxy';
 export * from './proxyChannel';
-export * from './wsChannel';
-export * from './wsSocket';
+export * from './wsLike';

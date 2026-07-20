@@ -56,7 +56,7 @@ describe('Agent loop', () => {
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] tools.set_active_tools      { "names": [], "time": "<time>" }
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
+      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -96,7 +96,7 @@ describe('Agent loop', () => {
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
+      [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Hello" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -314,7 +314,7 @@ describe('Agent loop', () => {
     expect(await ctx.untilApproval(true)).toMatchInlineSnapshot(`
       [wire] tools.set_active_tools          { "names": [ "Lookup" ], "time": "<time>" }
       [wire] turn.prompt                     { "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "time": "<time>" }
-      [emit] turn.started                    { "turnId": 0, "origin": { "kind": "user" } }
+      [emit] turn.started                    { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up moon" }
       [emit] agent.activity.updated          { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
       [emit] context.spliced                 { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
       [wire] context.append_message          { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -621,6 +621,37 @@ describe('Agent loop', () => {
       expect.objectContaining({ content: [{ type: 'text', text: 'cancelled' }] }),
     );
   });
+
+  it('omits the turn.started prompt for system-triggered turns', async () => {
+    const prompts: Array<string | undefined> = [];
+    const subscription = ctx.get(IEventBus).subscribe('turn.started', (event) => {
+      prompts.push(event.prompt);
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'continued' });
+    ctx.mockNextResponse({ type: 'text', text: 'hi there' });
+
+    // A goal-continuation turn carries internal steering text as its input —
+    // the turn boundary must land without a prompt.
+    const system = (
+      await loop.enqueue(
+        new MessageStepRequest(
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'continue the goal' }],
+            toolCalls: [],
+            origin: { kind: 'system_trigger', name: 'goal_continuation' },
+          },
+          { admission: 'newTurn' },
+        ),
+      ).assigned
+    ).turn;
+    await system.result;
+    const user = (await loop.enqueue(nextTurnMessage('hi')).assigned).turn;
+    await user.result;
+    subscription.dispose();
+
+    expect(prompts).toEqual([undefined, 'hi']);
+  });
 });
 
 describe('turn telemetry', () => {
@@ -635,7 +666,7 @@ describe('turn telemetry', () => {
 
       expect(records).toContainEqual({
         event: 'turn_started',
-        properties: { turn_id: 0, mode: 'agent', provider_type: 'kimi', protocol: 'kimi' },
+        properties: { turn_id: 0, mode: 'agent', provider_type: 'kimi', protocol: 'kimi', thinking_effort: 'off' },
       });
       expect(records).toContainEqual({
         event: 'turn_ended',
@@ -646,9 +677,54 @@ describe('turn telemetry', () => {
           mode: 'agent',
           provider_type: 'kimi',
           protocol: 'kimi',
+          thinking_effort: 'off',
         }),
       });
       expect(records.some((record) => record.event === 'turn_interrupted')).toBe(false);
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('keeps turn telemetry aligned with the request config across pre-step changes', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      const localLoop = local.get(IAgentLoopService);
+      const localProfile = local.get(IAgentProfileService);
+      local.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
+      localProfile.update({ activeToolNames: [] });
+      localProfile.setThinking('on');
+      localLoop.hooks.onWillBeginStep.register('test-change-thinking', async (_ctx, next) => {
+        localProfile.setThinking('off');
+        await next();
+      });
+      local.mockNextResponse({ type: 'text', text: 'hi' });
+
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      const request = local.allEvents.find(
+        (event) => event.type === '[wire]' && event.event === 'llm.request',
+      );
+      expect(request?.args).toMatchObject({ thinkingEffort: 'on' });
+      expect(records).toContainEqual({
+        event: 'turn_started',
+        properties: expect.objectContaining({ turn_id: 0, thinking_effort: 'on' }),
+      });
+      expect(records).toContainEqual({
+        event: 'turn_ended',
+        properties: expect.objectContaining({ turn_id: 0, thinking_effort: 'on' }),
+      });
     } finally {
       await local.dispose();
     }
@@ -926,6 +1002,7 @@ function createTimingRequester(): IAgentLLMRequesterService {
 
   const requester: IAgentLLMRequesterService = {
     _serviceBrand: undefined,
+    prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
     async request(_overrides, onPart = () => {}) {
       await onPart({ type: 'text', text: 'answer' });
       return {

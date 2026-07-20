@@ -2,7 +2,7 @@
   "name": "@moonshot-ai/klient",
   "version": "0.0.1",
   "private": true,
-  "description": "Kimi client SDK — contract-driven facade over agent-core-v2, routable over http, ipc, or in-memory transports.",
+  "description": "Kimi client SDK — contract-driven facade over agent-core-v2, routable over ipc or in-memory transports.",
   "license": "MIT",
   "type": "module",
   "imports": {
@@ -12,10 +12,6 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
-    },
-    "./http": {
-      "types": "./src/transports/http/index.ts",
-      "default": "./src/transports/http/index.ts"
     },
     "./ipc": {
       "types": "./src/transports/ipc/index.ts",
@@ -39,7 +35,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm typecheck:examples",
     "typecheck:examples": "tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
-    "smoke": "tsx examples/smoke.ts",
+    "smoke": "tsx --tsconfig ./tsconfig.examples.json --import ../../build/register-raw-text-loader.mjs examples/smoke.ts",
     "clean": "rm -rf dist",
     "docker:e2e": "bash scripts/run-docker-e2e.sh"
   },
@@ -48,7 +44,6 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",
     "@types/ws": "^8.18.0",
     "ulid": "^3.0.1",

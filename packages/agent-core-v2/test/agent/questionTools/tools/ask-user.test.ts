@@ -16,6 +16,7 @@ import {
 } from '#/agent/questionTools/tools/ask-user';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type {
   ISessionQuestionService,
   QuestionRequest,
@@ -73,7 +74,8 @@ function makeTool(
     id === 'q_test_task_id' ? { status: 'running' } : undefined,
   );
   const tasks = { registerTask, getTask } as unknown as IAgentTaskService;
-  const tool = new AskUserQuestionTool(question, telemetry, tasks);
+  const scopeContext = { agentId: 'main' } as unknown as IAgentScopeContext;
+  const tool = new AskUserQuestionTool(question, telemetry, tasks, scopeContext);
   return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
 }
 
@@ -255,7 +257,7 @@ describe('AskUserQuestionTool', () => {
           },
         ],
       },
-      { signal },
+      { signal, agentId: 'main' },
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
@@ -291,7 +293,7 @@ describe('AskUserQuestionTool', () => {
           }),
         ],
       }),
-      { signal },
+      { signal, agentId: 'main' },
     );
   });
 

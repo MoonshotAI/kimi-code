@@ -283,6 +283,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     }),
     get: vi.fn((agentId) => handles.get(agentId)),
     list: vi.fn(() => [...handles.values()]),
+    broadcastPermissionMode: vi.fn(),
     remove: vi.fn(async (agentId) => {
       handles.delete(agentId);
     }),
@@ -2288,7 +2289,7 @@ describe('Agent tools', () => {
         [wire] permission.set_mode         { "mode": "auto", "time": "<time>" }
         [wire] tools.register_user_tool    { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "time": "<time>" }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "time": "<time>" }
-        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" } }
+        [emit] turn.started                { "turnId": 0, "origin": { "kind": "user" }, "prompt": "Look up moon" }
         [emit] agent.activity.updated      { "lifecycle": "ready", "turn": { "turnId": 0, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [emit] context.spliced             { "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" } ] }
         [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-1>" }, "time": "<time>" }
@@ -2357,7 +2358,7 @@ describe('Agent tools', () => {
         [wire] tools.unregister_user_tool   { "name": "Lookup", "time": "<time>" }
         [emit] prompt.completed             { "promptId": "<msg-1>", "finishedAt": "<time>", "reason": "completed" }
         [wire] turn.prompt                  { "input": [ { "type": "text", "text": "Can you still use Lookup?" } ], "origin": { "kind": "user" }, "time": "<time>" }
-        [emit] turn.started                 { "turnId": 1, "origin": { "kind": "user" } }
+        [emit] turn.started                 { "turnId": 1, "origin": { "kind": "user" }, "prompt": "Can you still use Lookup?" }
         [emit] agent.activity.updated       { "lifecycle": "ready", "turn": { "turnId": 1, "origin": { "kind": "user" }, "phase": "running", "step": 0, "ending": false, "pendingApprovals": [], "activeToolCalls": [], "since": "<time>" }, "background": [] }
         [emit] context.spliced              { "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" } ] }
         [wire] context.append_message       { "message": { "role": "user", "content": [ { "type": "text", "text": "Can you still use Lookup?" } ], "toolCalls": [], "origin": { "kind": "user" }, "id": "<msg-2>" }, "time": "<time>" }

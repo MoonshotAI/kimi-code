@@ -1,8 +1,8 @@
 /**
- * Shared conformance suite — the guarantee that the http, ipc, and memory
+ * Shared conformance suite — the guarantee that the ipc and memory
  * transports are interchangeable. Every transport test file runs the exact
- * same assertions against a real backend (in-process engine for memory/ipc,
- * a booted kap-server for http); only the `before` setup differs per file.
+ * same assertions against a real in-process engine; only the `before` setup
+ * differs per file.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

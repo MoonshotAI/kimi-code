@@ -1,20 +1,18 @@
 /**
  * `ProxyChannel` — an `IChannel` bound to one Service, routing `call`s to
- * kap-server's `/api/v2` HTTP surface. Every call `POST`s the method name to
- * the Service base URL with the complete argument array as the JSON body,
- * then unwraps the project envelope: a non-zero `code` throws `RPCError`,
- * otherwise `data` is returned. Non-function members answer as property reads
- * through the same route (the dispatcher returns them as-is).
+ * kap-server's `/api/v1/debug` HTTP surface. Every call `POST`s the method
+ * name to the Service base URL with the complete argument array as the JSON
+ * body, then unwraps the project envelope: a non-zero `code` throws
+ * `RPCError`, otherwise `data` is returned. Non-function members answer as
+ * property reads through the same route (the dispatcher returns them as-is).
  *
- * `listen` cannot be served by HTTP; when the client supplies a WS binding
- * (`events` factory) it is delegated to a lazily-created `WsChannel` bound to
- * the same scope + Service, so the Service's `onXxx` emitter events work 1:1.
- * Without a factory `listen` throws, matching the old HTTP-only channel.
+ * `listen` cannot be served by HTTP: the v2 event socket (`/api/v2/ws`) that
+ * used to back Service emitter events was removed, so `listen` throws and
+ * the UI fetches Service state on demand instead.
  */
 
 import type { Event, IChannel } from './channel';
 import { RPCError } from './errors';
-import type { WsChannel } from './wsChannel';
 
 interface Envelope<T> {
   readonly code: number;
@@ -25,7 +23,7 @@ interface Envelope<T> {
 }
 
 export interface ProxyChannelOptions {
-  /** Service base URL, e.g. `http://127.0.0.1:58627/api/v2[/session/:sid[/agent/:aid]]/:service`. */
+  /** Service base URL, e.g. `http://127.0.0.1:58627/api/v1/debug[/session/:sid[/agent/:aid]]/:service`. */
   readonly baseUrl: string;
   /** Optional bearer token. */
   readonly token?: string;
@@ -37,16 +35,13 @@ export class ProxyChannel implements IChannel {
   private readonly baseUrl: string;
   private readonly token?: string;
   private readonly fetchImpl: typeof fetch;
-  private readonly eventsFactory?: () => WsChannel;
-  private eventsChannel: WsChannel | undefined;
 
-  constructor(opts: ProxyChannelOptions, events?: () => WsChannel) {
+  constructor(opts: ProxyChannelOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
     this.token = opts.token;
     // Bind the global fetch: browsers throw "Illegal invocation" when the
     // native function is invoked with a non-Window receiver.
     this.fetchImpl = opts.fetch ?? fetch.bind(globalThis);
-    this.eventsFactory = events;
   }
 
   async call<T>(command: string, args: unknown[] = []): Promise<T> {
@@ -71,11 +66,9 @@ export class ProxyChannel implements IChannel {
     return envelope.data;
   }
 
-  listen<T>(event: string): Event<T> {
-    if (this.eventsFactory === undefined) {
-      throw new Error('events are not supported on this channel (no WS binding)');
-    }
-    this.eventsChannel ??= this.eventsFactory();
-    return this.eventsChannel.listen(event);
+  listen<T>(_event: string): Event<T> {
+    throw new Error(
+      'events are not supported on this channel (HTTP-only; the /api/v2/ws event socket was removed)',
+    );
   }
 }

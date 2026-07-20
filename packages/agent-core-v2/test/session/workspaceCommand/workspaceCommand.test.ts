@@ -187,6 +187,7 @@ function agentsStub(): AgentsStub {
     get: (id) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
     list: () => [],
     remove: () => Promise.resolve(),
+    broadcastPermissionMode: () => {},
     setMain: (present) => {
       mainPresent = present;
       if (present) created.fire(mainHandle);

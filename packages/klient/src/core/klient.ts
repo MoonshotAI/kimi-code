@@ -1,6 +1,6 @@
 /**
  * The transport-agnostic klient factory. Every transport entry point
- * (`@moonshot-ai/klient/http|ipc|memory`) builds a `KlientChannel` and hands
+ * (`@moonshot-ai/klient/ipc|memory`) builds a `KlientChannel` and hands
  * it here; the returned `Klient` is identical in shape and behavior no matter
  * which transport carried the bytes.
  */

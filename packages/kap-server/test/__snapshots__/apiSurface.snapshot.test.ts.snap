@@ -46,6 +46,22 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/debug/{service}/{method}",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/channels",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/session/{session_id}/{service}/{method}",
+    ],
+    [
+      "GET",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
+    ],
+    [
+      "GET",
       "/api/v1/files/{file_id}",
     ],
     [
@@ -166,6 +182,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/transcript",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/warnings",
     ],
     [
@@ -182,22 +202,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v2/{service}/{method}",
-    ],
-    [
-      "GET",
-      "/api/v2/channels",
-    ],
-    [
-      "GET",
-      "/api/v2/session/{session_id}/{service}/{method}",
-    ],
-    [
-      "GET",
-      "/api/v2/session/{session_id}/agent/{agent_id}/{service}/{method}",
-    ],
-    [
-      "GET",
       "/asyncapi.json",
     ],
     [
@@ -211,6 +215,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/config",
+    ],
+    [
+      "POST",
+      "/api/v1/debug/{service}/{method}",
+    ],
+    [
+      "POST",
+      "/api/v1/debug/session/{session_id}/{service}/{method}",
+    ],
+    [
+      "POST",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
     ],
     [
       "POST",
@@ -319,18 +335,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/workspaces",
-    ],
-    [
-      "POST",
-      "/api/v2/{service}/{method}",
-    ],
-    [
-      "POST",
-      "/api/v2/session/{session_id}/{service}/{method}",
-    ],
-    [
-      "POST",
-      "/api/v2/session/{session_id}/agent/{agent_id}/{service}/{method}",
     ],
   ],
 }

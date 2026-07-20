@@ -25,7 +25,10 @@
  * compacts and re-enqueues it — so the loop only learns caught-or-not, while
  * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
  * events through `event`, persists loop events through `contextMemory`, and
- * reads the step budget from `config`. Bound at Agent scope.
+ * reads the step budget from `config`. Bound at Agent scope. The `turnEvents`
+ * import is load-bearing beyond the prompt-text helper: it loads the
+ * `DomainEventMap` augmentation for the `turn.*` / delta events published
+ * here, which lives with the event definitions.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -81,11 +84,8 @@ import {
   type TurnSeed,
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
+import { isDisplayablePromptOrigin, turnPromptText } from './turnEvents';
 import { cancelTurn, promptTurn, TurnModel } from './turnOps';
-// Loads the `DomainEventMap` augmentation for the `turn.*` / delta events this
-// service publishes (the augmentation lives with the event definitions;
-// without an import it would not enter every consumer's program).
-import './turnEvents';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
@@ -360,7 +360,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.wire.dispatch(promptTurn({ input: job.seed.input, origin }));
     job.turn.state = 'running';
     this.activeTurnJob = job;
-    this.eventBus.publish({ type: 'turn.started', turnId: job.turn.id, origin });
+    this.eventBus.publish({
+      type: 'turn.started',
+      turnId: job.turn.id,
+      origin,
+      prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input) : undefined,
+    });
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
   }
 
@@ -373,9 +378,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const telemetryContext = this.telemetryContext.get();
     const turnTelemetry = this.telemetry.withContext(telemetryContext);
     const { mode, provider_type, protocol } = telemetryContext;
+    let thinkingEffort: string | undefined;
     let result: TurnResult | undefined;
     try {
-      const started: TurnStartedTelemetryEvent = { turn_id: turn.id, mode, provider_type, protocol };
+      thinkingEffort = this.llmRequester.prepareTurnConfig(turn.id)?.thinkingEffort;
+      const started: TurnStartedTelemetryEvent = {
+        turn_id: turn.id,
+        mode,
+        provider_type,
+        protocol,
+        thinking_effort: thinkingEffort,
+      };
       turnTelemetry.track2('turn_started', started);
       result = await this.run({
         turnId: turn.id,
@@ -411,6 +424,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             interrupt_reason: interruptReasonFor(result),
             provider_type,
             protocol,
+            thinking_effort: thinkingEffort,
             trace_id: traceId,
           };
           turnTelemetry.track2('turn_interrupted', interrupted);
@@ -423,6 +437,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         mode,
         provider_type,
         protocol,
+        thinking_effort: thinkingEffort,
         trace_id: traceId,
       };
       turnTelemetry.track2('turn_ended', ended);

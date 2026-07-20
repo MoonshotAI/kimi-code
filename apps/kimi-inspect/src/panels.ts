@@ -1,12 +1,15 @@
 /**
  * Service panel descriptors — the handwritten *override* layer of the right
  * sidebar. The sidebar's baseline is the dynamic channel list served by
- * `GET /api/v2/channels` (every wire-exposed Service with its methods); a
- * descriptor here replaces the generic card for its Service with a curated
- * one: a `fetch` that reads its inspectable state, optional `actions` that
- * trigger its methods, and live-event `refreshOn` prefixes. The generic
- * `ServiceCard` renders them; adding a curated panel is one entry here, no
- * component code.
+ * `GET /api/v1/debug/channels` (every wire-exposed Service with its methods);
+ * a descriptor here replaces the generic card for its Service with a curated
+ * one: a `fetch` that reads its inspectable state and optional `actions`
+ * that trigger its methods. The generic `ServiceCard` renders them; adding a
+ * curated panel is one entry here, no component code.
+ *
+ * Panels refresh manually (Load / Refresh buttons): the live event streams
+ * that used to drive `refreshOn` refetches went away with the v2 socket
+ * (`/api/v2/ws`).
  *
  * The proxies are typed by the real `agent-core-v2` contracts at the call
  * site, but panels treat them as `AnyService` so one descriptor shape covers
@@ -66,8 +69,6 @@ export interface ServicePanelDef {
   readonly scope: 'app' | 'session' | 'agent';
   readonly fetch?: (svc: AnyService) => Promise<unknown>;
   readonly actions?: readonly PanelAction[];
-  /** Live-event `type` prefixes that refetch this panel. */
-  readonly refreshOn?: readonly string[];
 }
 
 const setModeModes = ['manual', 'auto', 'yolo'];
@@ -156,7 +157,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     label: 'AgentActivityView',
     scope: 'agent',
     fetch: (svc) => call(svc, 'state'),
-    refreshOn: ['agent.activity.'],
   },
   {
     id: String(IAgentProfileService),
@@ -172,21 +172,18 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'Set model', input: 'Model id', run: (svc, model) => call(svc, 'setModel', model) },
       { label: 'Refresh system prompt', run: (svc) => call(svc, 'refreshSystemPrompt') },
     ],
-    refreshOn: ['agent.status.updated'],
   },
   {
     id: String(IAgentUsageService),
     label: 'AgentUsageService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'status'),
-    refreshOn: ['turn.step.completed', 'agent.status.updated', 'turn.ended'],
   },
   {
     id: String(IAgentContextSizeService),
     label: 'AgentContextSizeService',
     scope: 'agent',
     fetch: (svc) => call(svc, 'get'),
-    refreshOn: ['turn.', 'context.', 'compaction.'],
   },
   {
     id: String(IAgentPermissionModeService),
@@ -214,7 +211,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'cancel', run: (svc) => call(svc, 'cancel') },
       { label: 'clear', run: (svc) => call(svc, 'clear') },
     ],
-    refreshOn: ['turn.ended'],
   },
   {
     id: String(IAgentGoalService),
@@ -226,7 +222,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'resume', run: (svc) => call(svc, 'resumeGoal', {}) },
       { label: 'cancel', danger: true, run: (svc) => call(svc, 'cancelGoal', {}) },
     ],
-    refreshOn: ['goal.updated'],
   },
   {
     id: String(IAgentTaskService),
@@ -237,7 +232,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       { label: 'Stop task', input: 'Task id', danger: true, run: (svc, id) => call(svc, 'stop', id) },
       { label: 'stopAll', danger: true, run: (svc) => call(svc, 'stopAll') },
     ],
-    refreshOn: ['task.', 'subagent.'],
   },
   {
     id: String(IAgentToolRegistryService),
@@ -247,7 +241,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
       const tools = (await call(svc, 'list')) as readonly { name?: string }[];
       return { count: tools.length, names: tools.map((t) => t.name) };
     },
-    refreshOn: ['tool.list.updated'],
   },
   {
     id: String(IAgentMcpService),
@@ -257,7 +250,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     actions: [
       { label: 'Reconnect server', input: 'Server name', run: (svc, name) => call(svc, 'reconnect', name) },
     ],
-    refreshOn: ['mcp.server.status'],
   },
   {
     id: String(IAgentSwarmService),

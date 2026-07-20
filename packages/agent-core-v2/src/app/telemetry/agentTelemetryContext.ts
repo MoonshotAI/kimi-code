@@ -4,8 +4,8 @@
  * Agent-scoped ambient telemetry context: a per-agent property bag that domains
  * contribute to (the `plan` domain sets `mode`, the `profile` domain mirrors
  * the resolved model protocol into `provider_type` / `protocol`, the `loop`
- * domain sets `turn_id` at turn start and keeps `trace_id` at the active
- * turn's most recent request) and that turn-scoped
+ * domain sets `turn_id` at turn start and keeps `trace_id` at the active turn's
+ * most recent request) and that turn-scoped
  * telemetry snapshots at launch. Decouples turn telemetry from any
  * specific contributor so the turn domain does not need to know about plan or
  * profile. Bound at Agent scope.

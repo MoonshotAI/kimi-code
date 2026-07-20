@@ -8,7 +8,10 @@
  * completion-token budget, then drives a bounded request chain: one primary
  * `model.request(input, signal)` attempt plus projection rebuilds for request
  * structure or media compatibility; general retry policy remains in the
- * loop's `stepRetry` plugin.
+ * loop's `stepRetry` plugin. When a model is configured, `prepareTurnConfig`
+ * snapshots the model, effective thinking effort, and system prompt at the turn
+ * boundary so loop telemetry and every request in that turn share one
+ * configuration.
  * Forwards streamed `part` events to the caller's `onPart`
  * handler, records `usage` through `IAgentUsageService`, resolves to an
  * `LLMRequestFinish` on the `finish` event, logs the request lifecycle
@@ -77,6 +80,7 @@ import {
   type LLMRequestSource,
   type LLMRequestTask,
   type LLMStreamTiming,
+  type PreparedTurnRequestConfig,
 } from './llmRequester';
 import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 import {
@@ -151,6 +155,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
     @IEventBus private readonly eventBus: IEventBus,
   ) {}
+
+  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined {
+    if (!this.profile.hasProvider()) return undefined;
+    const config = this.getOrCreateTurnConfig(turnId);
+    return { thinkingEffort: config.resolved.thinkingLevel };
+  }
 
   async request(
     overrides: LLMRequestOverrides = {},
@@ -529,7 +539,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private resolveTurnConfig(source: LLMRequestSource | undefined): TurnRequestConfig | undefined {
     if (source?.type !== 'turn') return undefined;
-    const turnId = source.turnId;
+    return this.getOrCreateTurnConfig(source.turnId);
+  }
+
+  private getOrCreateTurnConfig(turnId: number): TurnRequestConfig {
     for (const id of this.turnConfigs.keys()) {
       if (id < turnId) this.turnConfigs.delete(id);
     }

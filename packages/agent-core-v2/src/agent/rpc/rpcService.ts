@@ -13,6 +13,11 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '#/session/agentLifecycle/agentLifecycle';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
@@ -108,6 +113,8 @@ export class AgentRPCService implements IAgentRPCService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionBtwService private readonly btw: ISessionBtwService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
@@ -167,6 +174,9 @@ export class AgentRPCService implements IAgentRPCService {
     const wasYolo = this.permissionMode.mode === 'yolo';
     const wasAuto = this.permissionMode.mode === 'auto';
     this.permissionMode.setMode(payload.mode);
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      this.agentLifecycle.broadcastPermissionMode(payload.mode);
+    }
     const enabled = this.permissionMode.mode === 'yolo';
     if (enabled !== wasYolo) {
       this.telemetry.track2('yolo_toggle', { enabled });

@@ -50,6 +50,7 @@ import {
 import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './configPure';
 import { getConfigSectionContributions } from './configSectionContributions';
 import { getConfigOverlayContributions } from './configOverlayContributions';
+import { migrateThinkingEffortMaxToHigh } from './migrations';
 import {
   applySectionToToml,
   camelToSnake,
@@ -242,7 +243,14 @@ export class ConfigService extends Disposable implements IConfigService {
     this.configKey = this.bootstrap.configKey;
     this._register(this.registry.onDidRegisterSection((e) => this.revalidateDomain(e.domain)));
     this._register(this.registry.onDidRegisterOverlay(() => this.reapplyOverlays()));
-    this.ready = this.load('load');
+    // One-shot config migrations run before the first load (best-effort, never
+    // throws): rewrites a persisted thinking.effort "max" to "high" once.
+    const { configKey } = this;
+    const { homeDir } = this.bootstrap;
+    this.ready = (async () => {
+      await migrateThinkingEffortMaxToHigh(this.documentStore, configKey, homeDir);
+      await this.load('load');
+    })();
     this._register(
       this.documentStore.watch(CONFIG_SCOPE, this.configKey)(() => {
         void this.reload();

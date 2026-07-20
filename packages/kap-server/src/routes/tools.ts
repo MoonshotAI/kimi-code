@@ -10,7 +10,7 @@
  *
  * **Thin wrapper over Agent-scoped services**: `IAgentToolRegistryService.list` /
  * `IAgentMcpService.list` / `IAgentMcpService.reconnect` are already exposed on the
- * `/api/v2` RPC action map (`tools:list`, `mcp:list`, `mcp:reconnect`). These
+ * RPC dispatcher (`/api/v1/debug`). These
  * REST routes borrow them by interface and project their v2 models into the
  * protocol's `ToolDescriptor` / `McpServer` shapes.
  *
