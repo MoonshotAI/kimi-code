@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStd
 import { z } from 'zod';
 
 import type { HookResult } from './types';
+import { isRecord } from '../../utils/guards';
 
 export interface RunHookOptions {
   readonly timeout: number;
@@ -35,7 +36,11 @@ export function buildHookSpawnOptions(options: {
 function parseHookCommand(command: string): { binary: string; args: string[] } {
   const trimmed = command.trim();
   const parts = splitShellArgs(trimmed);
-  if (parts.length > 0 && !hasDangerousMetachars(trimmed)) {
+  if (
+    parts.length > 0 &&
+    !hasDangerousMetachars(trimmed) &&
+    !SHELL_BUILTINS.has(parts[0]!)
+  ) {
     return { binary: parts[0]!, args: parts.slice(1) };
   }
   // Fall back to explicit shell invocation.
@@ -48,11 +53,24 @@ function parseHookCommand(command: string): { binary: string; args: string[] } {
 /** Shell metacharacters that indicate command chaining or substitution. */
 const DANGEROUS_METACHARS = /[;&|`$(){}<>]/;
 
+/**
+ * POSIX shell builtins are not standalone executables, so spawning them
+ * directly fails (ENOENT); they must be run through a shell.
+ */
+const SHELL_BUILTINS = new Set([
+  '.', ':', 'alias', 'bg', 'break', 'cd', 'command', 'continue', 'declare',
+  'echo', 'eval', 'exec', 'exit', 'export', 'false', 'fg', 'getopts', 'hash',
+  'jobs', 'kill', 'let', 'local', 'printf', 'pwd', 'read', 'readonly',
+  'return', 'set', 'shift', 'source', 'test', 'times', 'trap', 'true',
+  'type', 'typeset', 'ulimit', 'umask', 'unalias', 'unset', 'wait',
+]);
+
 function hasDangerousMetachars(command: string): boolean {
   return DANGEROUS_METACHARS.test(command);
 }
 
-/** Split a command string into argv respecting single/double quotes. */
+/** Split a command string into argv respecting single/double quotes.
+ *  Returns an empty array on unterminated quotes (caller falls back to shell). */
 function splitShellArgs(command: string): string[] {
   const result: string[] = [];
   let current = '';
@@ -81,6 +99,7 @@ function splitShellArgs(command: string): string[] {
       current += ch;
     }
   }
+  if (inSingle || inDouble) return [];
   if (current.length > 0) result.push(current);
   return result;
 }
@@ -314,10 +333,6 @@ function killProcessTreeWindows(child: ChildProcessWithoutNullStreams, force: bo
       // Process already exited — nothing left to clean up.
     }
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function errorMessage(error: unknown): string {

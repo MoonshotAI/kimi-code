@@ -421,12 +421,12 @@ timeout = 5
     const engine = new HookEngine([
       { event: 'PreToolUse', matcher: 'Shell', command: 'node -e "process.exit(2)"', timeout: 5 },
     ]);
-    const results = await engine.trigger('PreToolUse', {
+    const decision = await engine.triggerBlock('PreToolUse', {
       matcherValue: 'Shell',
       inputData: {},
     });
-    expect(results[0]?.action).toBe('block');
+    expect(decision?.block).toBe(true);
     // Falls back to the default reason when stderr is empty.
-    expect(results[0]?.reason).toContain('Blocked by PreToolUse hook');
+    expect(decision?.reason).toContain('Blocked by PreToolUse hook');
   });
 });

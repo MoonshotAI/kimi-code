@@ -170,9 +170,8 @@ describe('buildHookSpawnOptions (Windows console-window regression)', () => {
     expect(buildHookSpawnOptions({}).windowsHide).toBe(true);
   });
 
-  it('runs through the shell with stdio piped', () => {
+  it('pipes stdio (shell selection is embedded by parseHookCommand)', () => {
     const options = buildHookSpawnOptions({});
-    expect(options.shell).toBe(true);
     expect(options.stdio).toBe('pipe');
   });
 

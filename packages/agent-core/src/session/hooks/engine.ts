@@ -101,6 +101,7 @@ export class HookEngine {
     const matched: HookDef[] = [];
 
     for (const hook of this.byEvent.get(event) ?? []) {
+      if (hook.command.trim().length === 0) continue;
       if (!matches(hook.matcher ?? '', matcherValue)) continue;
       const key = (hook.cwd ?? '') + '\0' + hook.command;
       if (seen.has(key)) continue;
@@ -136,6 +137,9 @@ export class HookEngine {
 
 function matches(pattern: string, value: string): boolean {
   if (pattern.length === 0) return true;
+  if (pattern.length > 200) return false;
+  // Reject nested quantifiers — the primary ReDoS vector (e.g. (a+)+, (.*)*).
+  if (/[+*]\)?[+*{]/.test(pattern)) return false;
   try {
     return new RegExp(pattern).test(value);
   } catch {
