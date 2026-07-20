@@ -153,5 +153,41 @@ describe('agentRoots', () => {
         configuredAgentRoots(unavailableFs, ['agents'], root, root, 'extra'),
       ).rejects.toMatchObject({ code: OsFsErrors.codes.OS_FS_UNAVAILABLE });
     });
+
+    it('skips an unreadable configured root and keeps later roots', async () => {
+      const blockedDir = join(root, 'blocked');
+      const availableDir = join(root, 'available');
+      await mkdir(availableDir, { recursive: true });
+      const permissionFs = new Proxy(hostFs, {
+        get(target, property, receiver) {
+          if (property === 'realpath') {
+            return (path: string) =>
+              path === blockedDir
+                ? Promise.reject(
+                    new HostFsError(
+                      OsFsErrors.codes.OS_FS_PERMISSION_DENIED,
+                      'permission denied',
+                    ),
+                  )
+                : target.realpath(path);
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const warnings: string[] = [];
+
+      const roots = await configuredAgentRoots(
+        permissionFs,
+        [blockedDir, availableDir],
+        root,
+        root,
+        'extra',
+        (message) => warnings.push(message),
+      );
+
+      expect(roots.map((candidate) => candidate.path)).toEqual([await realpath(availableDir)]);
+      expect(warnings.some((warning) => warning.includes(blockedDir))).toBe(true);
+    });
   });
 });

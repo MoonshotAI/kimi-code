@@ -51,6 +51,9 @@ export class UserFileAgentSource implements IUserFileAgentSource {
       this.fs,
       this.bootstrap.homeDir,
       this.bootstrap.osHomeDir,
+      (message, error) => {
+        this.log.warn(message, error);
+      },
     );
     const contribution = profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),

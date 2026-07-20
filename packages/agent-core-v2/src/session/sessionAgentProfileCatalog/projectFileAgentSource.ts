@@ -41,7 +41,13 @@ export class ProjectFileAgentSource implements IProjectFileAgentSource {
   ) {}
 
   async load(): Promise<AgentProfileContribution> {
-    const roots = await projectAgentRoots(this.fs, this.workspace.workDir);
+    const roots = await projectAgentRoots(
+      this.fs,
+      this.workspace.workDir,
+      (message, error) => {
+        this.log.warn(message, error);
+      },
+    );
     return profilesFromDiscovery(
       await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
     );

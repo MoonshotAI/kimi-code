@@ -26,6 +26,7 @@ import {
 } from '#/app/agentFileCatalog/systemFile';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 const hostFs = new HostFileSystem();
 
@@ -71,6 +72,22 @@ describe('loadSystemMdProfile', () => {
       stat: async () => ({ isFile: true }),
       readText: async () => {
         throw new Error('disk gone');
+      },
+    } as unknown as IHostFileSystem;
+    const { warnings, warn } = collectWarnings();
+
+    expect(await loadSystemMdProfile(unreadableFs, home, BUILTIN_DEFAULT, warn)).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('SYSTEM.md');
+  });
+
+  it('degrades to a warning when the SYSTEM.md type probe is denied', async () => {
+    const unreadableFs = {
+      realpath: async () => {
+        throw new HostFsError(
+          OsFsErrors.codes.OS_FS_PERMISSION_DENIED,
+          'realpath failed: permission denied',
+        );
       },
     } as unknown as IHostFileSystem;
     const { warnings, warn } = collectWarnings();

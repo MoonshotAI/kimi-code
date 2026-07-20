@@ -188,6 +188,33 @@ describe('discoverAgentFiles', () => {
     expect(warnings.some((w) => w.includes('locked'))).toBe(true);
   });
 
+  it('skips an unreadable entry probe and keeps scanning the same root', async () => {
+    const blocked = join(root, 'blocked.md');
+    const available = join(root, 'available.md');
+    const fakeFs = {
+      realpath: async (p: string) => p,
+      stat: async (p: string) => {
+        if (p === blocked) {
+          throw new HostFsError(
+            OsFsErrors.codes.OS_FS_PERMISSION_DENIED,
+            'stat failed: permission denied',
+          );
+        }
+        return { isDirectory: false, isFile: p === available };
+      },
+      readdir: async () => [{ name: 'blocked.md' }, { name: 'available.md' }],
+      readText: async () => agentMd('available'),
+    } as unknown as IHostFileSystem;
+
+    const warnings: string[] = [];
+    const result = await discoverAgentFiles(fakeFs, [fileRoot(root)], (message) =>
+      warnings.push(message),
+    );
+
+    expect(result.agents.map((agent) => agent.name)).toEqual(['available']);
+    expect(warnings.some((warning) => warning.includes('blocked.md'))).toBe(true);
+  });
+
   it('isolates a failed root and keeps scanning sibling roots', async () => {
     const other = await mkdtemp(join(tmpdir(), 'agent-discovery-other-'));
     try {

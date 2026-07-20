@@ -105,12 +105,22 @@ export async function discoverAgentFiles(
     for (const entry of entries) {
       if (entry.startsWith('.') || entry === 'node_modules') continue;
       const entryPath = join(dirPath, entry);
-      if (await isDirectoryPath(fs, entryPath)) {
-        await walk(entryPath, root, depth + 1);
-        continue;
+      try {
+        if (await isDirectoryPath(fs, entryPath)) {
+          await walk(entryPath, root, depth + 1);
+          continue;
+        }
+        if (!entry.endsWith('.md') || !(await isFilePath(fs, entryPath))) continue;
+        await parseAndRegister(entryPath, root);
+      } catch (error) {
+        if (
+          error instanceof HostFsError &&
+          error.code === OsFsErrors.codes.OS_FS_UNAVAILABLE
+        ) {
+          throw error;
+        }
+        warnCapped(entryPath, `Skipping unreadable agent path ${entryPath}: ${errorMessage(error)}`, error);
       }
-      if (!entry.endsWith('.md') || !(await isFilePath(fs, entryPath))) continue;
-      await parseAndRegister(entryPath, root);
     }
   }
 

@@ -21,6 +21,7 @@ import {
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { skillActiveFor } from '#/app/agentProfileCatalog/profile-shared';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 import { isFilePath } from './paths';
 
@@ -39,11 +40,17 @@ export async function loadSystemMdProfile(
   warn: (message: string) => void,
 ): Promise<AgentProfile | undefined> {
   const path = join(brandHome, SYSTEM_MD_FILENAME);
-  if (!(await isFilePath(fs, path))) return undefined;
   let text: string;
   try {
+    if (!(await isFilePath(fs, path))) return undefined;
     text = await fs.readText(path);
   } catch (error) {
+    if (
+      error instanceof HostFsError &&
+      error.code === OsFsErrors.codes.OS_FS_UNAVAILABLE
+    ) {
+      throw error;
+    }
     warn(`agent SYSTEM.md load failed: ${String(error)} [${path}]`);
     return undefined;
   }

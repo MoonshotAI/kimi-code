@@ -72,6 +72,9 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
           this.workspace.workDir,
           this.bootstrap.osHomeDir,
           'extra',
+          (message, error) => {
+            this.log.warn(message, error);
+          },
         ),
         (message) => this.log.warn(message),
       ),
