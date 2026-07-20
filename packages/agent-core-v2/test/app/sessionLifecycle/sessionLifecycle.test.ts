@@ -555,10 +555,7 @@ describe('SessionLifecycleService', () => {
         ...appendLogStoreStub(),
         append: (_scope: string, _key: string, record: unknown) => appended.push(record),
       }),
-      stubPair(IHostFileSystem, {
-        ...new HostFileSystem(),
-        remove,
-      } as unknown as IHostFileSystem),
+      stubPair(IHostFileSystem, { remove } as unknown as IHostFileSystem),
       stubPair(IAgentLifecycleService, {
         ...agentLifecycleStub(),
         create,
