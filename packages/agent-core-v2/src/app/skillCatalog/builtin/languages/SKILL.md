@@ -12,11 +12,13 @@ This is a parent skill bundle containing sub-skills for specific programming lan
 
 ## Sub-skills
 
-- `cpp-pro` — Modern C++20/23, template metaprogramming, SIMD
-- `golang-pro` — Go goroutines, channels, gRPC, generics, pprof
-- `javascript-pro` — ES2023+ JavaScript, async/await, ESM, Node.js
-- `kotlin-specialist` — Kotlin coroutines, Flow, Compose, Ktor
-- `python-expert` — Clean, efficient, well-documented Python
-- `python-pro` — Python 3.11+ type safety, async, pytest, mypy
-- `rust-engineer` — Idiomatic Rust, ownership, lifetimes, tokio
-- `typescript-pro` — Advanced TypeScript type system, tRPC
+- `languages.cpp-pro` — Modern C++20/23, template metaprogramming, SIMD
+- `languages.golang-pro` — Go goroutines, channels, gRPC, generics, pprof
+- `languages.javascript-pro` — ES2023+ JavaScript, async/await, ESM, Node.js
+- `languages.kotlin-specialist` — Kotlin coroutines, Flow, Compose, Ktor
+- `languages.python-expert` — Clean, efficient, well-documented Python
+- `languages.python-pro` — Python 3.11+ type safety, async, pytest, mypy
+- `languages.rust-engineer` — Idiomatic Rust, ownership, lifetimes, tokio
+- `languages.typescript-pro` — Advanced TypeScript type system, tRPC
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="languages.cpp-pro")`.

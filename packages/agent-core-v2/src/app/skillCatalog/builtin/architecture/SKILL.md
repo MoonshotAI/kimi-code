@@ -12,9 +12,11 @@ This is a parent skill bundle containing sub-skills for software architecture an
 
 ## Sub-skills
 
-- `api-designer` — REST/GraphQL API design, OpenAPI specs, versioning
-- `architecture-designer` — System architecture, ADRs, technology trade-offs
-- `graphql-architect` — GraphQL schemas, Apollo Federation, DataLoader
-- `legacy-modernizer` — Migration strategies, dependency maps, API facades
-- `microservices-architect` — Distributed systems, service boundaries, resilience
-- `spec-miner` — Reverse-engineering specifications from codebases
+- `architecture.api-designer` — REST/GraphQL API design, OpenAPI specs, versioning
+- `architecture.architecture-designer` — System architecture, ADRs, technology trade-offs
+- `architecture.graphql-architect` — GraphQL schemas, Apollo Federation, DataLoader
+- `architecture.legacy-modernizer` — Migration strategies, dependency maps, API facades
+- `architecture.microservices-architect` — Distributed systems, service boundaries, resilience
+- `architecture.spec-miner` — Reverse-engineering specifications from codebases
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="architecture.api-designer")`.

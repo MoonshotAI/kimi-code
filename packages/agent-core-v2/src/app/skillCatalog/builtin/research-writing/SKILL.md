@@ -12,12 +12,14 @@ This is a parent skill bundle containing sub-skills for research, writing, and c
 
 ## Sub-skills
 
-- `academic-researcher` — Literature reviews, paper analysis, scholarly writing
-- `code-documenter` — Docstrings, OpenAPI/Swagger, JSDoc, user guides
-- `content-creator` — Blog posts, social media, marketing copy
-- `deep-research` — Multi-source research with citations
-- `editor` — Editing and proofreading for clarity and grammar
-- `email-drafter` — Professional email composition
-- `fact-checker` — Fact verification, misinformation identification
-- `meeting-notes` — Meeting summaries with action items
-- `technical-writer` — Documentation, API references, tutorials
+- `research-writing.academic-researcher` — Literature reviews, paper analysis, scholarly writing
+- `research-writing.code-documenter` — Docstrings, OpenAPI/Swagger, JSDoc, user guides
+- `research-writing.content-creator` — Blog posts, social media, marketing copy
+- `research-writing.deep-research` — Multi-source research with citations
+- `research-writing.editor` — Editing and proofreading for clarity and grammar
+- `research-writing.email-drafter` — Professional email composition
+- `research-writing.fact-checker` — Fact verification, misinformation identification
+- `research-writing.meeting-notes` — Meeting summaries with action items
+- `research-writing.technical-writer` — Documentation, API references, tutorials
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="research-writing.academic-researcher")`.

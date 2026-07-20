@@ -12,6 +12,8 @@ This is a parent skill bundle containing sub-skills for testing and code review.
 
 ## Sub-skills
 
-- `code-reviewer` — Bug detection, security vulnerabilities, code smells
-- `playwright-expert` — E2E tests with Playwright, page objects, CI integration
-- `test-master` — Test files, mocking, coverage, test plans, defect reports
+- `testing.code-reviewer` — Bug detection, security vulnerabilities, code smells
+- `testing.playwright-expert` — E2E tests with Playwright, page objects, CI integration
+- `testing.test-master` — Test files, mocking, coverage, test plans, defect reports
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="testing.code-reviewer")`.

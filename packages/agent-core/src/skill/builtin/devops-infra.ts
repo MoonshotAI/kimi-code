@@ -31,7 +31,6 @@ function makeBuiltin(
     metadata: {
       ...parsed.metadata,
       type: parsed.metadata.type ?? 'inline',
-      disableModelInvocation: true,
       ...extraMetadata,
     },
   };

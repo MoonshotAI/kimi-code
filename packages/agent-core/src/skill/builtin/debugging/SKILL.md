@@ -11,5 +11,7 @@ This is a parent skill bundle containing sub-skills for debugging and troublesho
 
 ## Sub-skills
 
-- `debugger` — Systematic debugging and root cause analysis
-- `debugging-wizard` — Stack trace parsing, log correlation, hypothesis-driven debugging
+- `debugging.debugger` — Systematic debugging and root cause analysis
+- `debugging.debugging-wizard` — Stack trace parsing, log correlation, hypothesis-driven debugging
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="debugging.debugger")`.

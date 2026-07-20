@@ -12,10 +12,12 @@ This is a parent skill bundle containing sub-skills for project management and d
 
 ## Sub-skills
 
-- `atlassian-mcp` — Jira issues, Confluence pages, project tracking
-- `decision-helper` — Decision-making frameworks, trade-off analysis
-- `feature-forge` — Feature specs, user stories, EARS requirements
-- `project-planner` — Task breakdowns, timelines, milestones
-- `sprint-planner` — Sprint planning, story estimation, capacity
-- `strategy-advisor` — Strategic thinking, business decision guidance
-- `the-fool` — Devil's advocate, pre-mortem, red team, evidence auditing
+- `project-management.atlassian-mcp` — Jira issues, Confluence pages, project tracking
+- `project-management.decision-helper` — Decision-making frameworks, trade-off analysis
+- `project-management.feature-forge` — Feature specs, user stories, EARS requirements
+- `project-management.project-planner` — Task breakdowns, timelines, milestones
+- `project-management.sprint-planner` — Sprint planning, story estimation, capacity
+- `project-management.strategy-advisor` — Strategic thinking, business decision guidance
+- `project-management.the-fool` — Devil's advocate, pre-mortem, red team, evidence auditing
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="project-management.atlassian-mcp")`.

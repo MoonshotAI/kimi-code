@@ -12,6 +12,8 @@ This is a parent skill bundle containing sub-skills for security and secure codi
 
 ## Sub-skills
 
-- `fullstack-guardian` — Security-focused full-stack with layered security
-- `secure-code-guardian` — Auth/authz, input validation, OWASP Top 10
-- `security-reviewer` — Security audits, vulnerability reports, remediation
+- `security.fullstack-guardian` — Security-focused full-stack with layered security
+- `security.secure-code-guardian` — Auth/authz, input validation, OWASP Top 10
+- `security.security-reviewer` — Security audits, vulnerability reports, remediation
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="security.fullstack-guardian")`.

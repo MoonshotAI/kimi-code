@@ -12,8 +12,10 @@ This is a parent skill bundle containing sub-skills for AI, ML, and LLM-related 
 
 ## Sub-skills
 
-- `fine-tuning-expert` — LLM fine-tuning, LoRA/QLoRA, training datasets
-- `mcp-developer` — MCP servers/clients, tool handlers, transport layers
-- `ml-pipeline` — MLflow, Kubefloat/Airflow DAGs, Feast, model deployment
-- `prompt-engineer` — Prompt templates, output schemas, evaluation rubrics
-- `rag-architect` — RAG systems, vector stores, hybrid search, reranking
+- `ai-ml.fine-tuning-expert` — LLM fine-tuning, LoRA/QLoRA, training datasets
+- `ai-ml.mcp-developer` — MCP servers/clients, tool handlers, transport layers
+- `ai-ml.ml-pipeline` — MLflow, Kubefloat/Airflow DAGs, Feast, model deployment
+- `ai-ml.prompt-engineer` — Prompt templates, output schemas, evaluation rubrics
+- `ai-ml.rag-architect` — RAG systems, vector stores, hybrid search, reranking
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="ai-ml.fine-tuning-expert")`.

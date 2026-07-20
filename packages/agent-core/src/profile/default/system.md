@@ -127,7 +127,7 @@ The applicable `AGENTS.md` instructions are:
 
 Skills are reusable, composable capabilities that enhance your abilities. Each skill is either a self-contained directory with a `SKILL.md` file or a standalone `.md` file that contains instructions, examples, and/or reference material.
 
-Identify the skills relevant to your current task and read the skill file for its instructions; only read further skill details when needed, to conserve the context window.
+Skills are actionable capabilities, not passive reference material: when a listed skill matches your current task, load it with the `Skill` tool and follow its instructions. Skills whose path starts with `builtin://` exist only in memory — they cannot be read from disk and must be loaded via the `Skill` tool; file-based skills may instead be read directly when you only need a specific detail. Some skills are parent bundles that list sub-skills: after loading the parent, invoke the chosen sub-skill by its dotted name (e.g. `languages.cpp-pro`) with the `Skill` tool.
 
 ## Available skills
 

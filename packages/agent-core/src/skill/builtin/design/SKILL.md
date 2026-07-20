@@ -12,5 +12,7 @@ This is a parent skill bundle containing sub-skills for UX design and data visua
 
 ## Sub-skills
 
-- `ux-designer` — Wireframing, user research, prototyping, design strategy
-- `visualization-expert` — Chart selection, dashboards, data visualization
+- `design.ux-designer` — Wireframing, user research, prototyping, design strategy
+- `design.visualization-expert` — Chart selection, dashboards, data visualization
+
+Load a sub-skill with the `Skill` tool using its dotted name, e.g. `Skill(skill="design.ux-designer")`.
