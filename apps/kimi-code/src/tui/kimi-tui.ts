@@ -134,6 +134,7 @@ import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
+import { REPLAY_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -776,6 +777,7 @@ export class KimiTUI {
           session = await this.harness.resumeSession({
             id: startup.sessionFlag,
             additionalDirs: createSessionOptions.additionalDirs,
+            replayTurnLimit: REPLAY_TURN_LIMIT,
           });
           shouldReplayHistory = true;
         } else {
@@ -785,6 +787,7 @@ export class KimiTUI {
             session = await this.harness.resumeSession({
               id: target.id,
               additionalDirs: createSessionOptions.additionalDirs,
+              replayTurnLimit: REPLAY_TURN_LIMIT,
             });
             shouldReplayHistory = true;
           } else {
@@ -1702,7 +1705,10 @@ export class KimiTUI {
 
     let session: Session;
     try {
-      session = await this.harness.resumeSession({ id: targetSessionId });
+      session = await this.harness.resumeSession({
+        id: targetSessionId,
+        replayTurnLimit: REPLAY_TURN_LIMIT,
+      });
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);

@@ -5,10 +5,13 @@ import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRecord } from '../../src/agent';
+import type { PromptOrigin } from '../../src/agent/context';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../src/agent/records';
+import { limitAgentReplayByTurns } from '../../src/agent/replay/turns';
+import type { AgentReplayRecord } from '../../src/rpc/resumed';
 import { BackgroundTaskPersistence } from '../../src/agent/background';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
@@ -1688,3 +1691,54 @@ function findRpcEvent(
 ) {
   return ctxEvents.find((entry) => entry.type === '[rpc]' && entry.event === event);
 }
+
+describe('limitAgentReplayByTurns', () => {
+  const replayMessage = (
+    role: 'user' | 'assistant',
+    text: string,
+    origin?: PromptOrigin,
+  ): AgentReplayRecord =>
+    ({
+      time: 0,
+      type: 'message',
+      message: { role, content: [{ type: 'text', text }], ...(origin ? { origin } : {}) },
+    }) as AgentReplayRecord;
+
+  it('returns the full replay when maxTurns is undefined', () => {
+    const records = [replayMessage('user', 'a'), replayMessage('assistant', 'b')];
+    expect(limitAgentReplayByTurns(records, undefined)).toBe(records);
+  });
+
+  it('returns an empty replay when maxTurns is zero', () => {
+    expect(limitAgentReplayByTurns([replayMessage('user', 'a')], 0)).toEqual([]);
+  });
+
+  it('keeps the most recent user turns, treating system-triggered user messages as continuations', () => {
+    const records = [
+      replayMessage('user', 'first', { kind: 'user' }),
+      replayMessage('assistant', 'one'),
+      replayMessage('user', 'second', { kind: 'user' }),
+      replayMessage('user', 'goal continuation', { kind: 'system_trigger', name: 'goal' }),
+      replayMessage('assistant', 'two'),
+      replayMessage('user', 'third', { kind: 'user' }),
+      replayMessage('assistant', 'three'),
+    ];
+    expect(limitAgentReplayByTurns(records, 2)).toEqual(records.slice(2));
+  });
+
+  it('treats user-slash activations and shell command inputs as boundaries, but not their outputs', () => {
+    const records = [
+      replayMessage('user', 't1', { kind: 'user' }),
+      replayMessage('user', '/skill', {
+        kind: 'skill_activation',
+        activationId: 'act-1',
+        skillName: 'demo',
+        trigger: 'user-slash',
+      }),
+      replayMessage('user', '!ls', { kind: 'shell_command', phase: 'input' }),
+      replayMessage('user', 'ls output', { kind: 'shell_command', phase: 'output' }),
+      replayMessage('user', 't2', { kind: 'user' }),
+    ];
+    expect(limitAgentReplayByTurns(records, 2)).toEqual(records.slice(2));
+  });
+});
