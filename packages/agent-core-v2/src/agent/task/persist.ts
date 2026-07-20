@@ -20,8 +20,10 @@
 
 import { join } from 'pathe';
 
+import { Error2, ErrorCodes } from '#/errors';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IWriteAuthorityRegistry, sessionIdFromScope } from '#/persistence/interface/writeAuthority';
 
 import type { AgentTaskInfo, AgentTaskStatus } from './types';
 
@@ -73,7 +75,8 @@ export class AgentTaskPersistence {
     private readonly agentScope: string,
     private readonly docs: IAtomicDocumentStore,
     private readonly bytes: IFileSystemStorageService,
-    private readonly fallbackRoot?: AgentTaskPersistenceRoot,
+    private readonly fallbackRoot: AgentTaskPersistenceRoot | undefined,
+    private readonly authorityRegistry: IWriteAuthorityRegistry,
   ) {}
 
   private primaryRoot(): AgentTaskPersistenceRoot {
@@ -103,6 +106,7 @@ export class AgentTaskPersistence {
 
   async writeTask(task: PersistedTask): Promise<void> {
     validateTaskId(task.taskId);
+    this.assertWritable();
     await this.docs.set(this.tasksScope(), `${task.taskId}${JSON_SUFFIX}`, task);
   }
 
@@ -122,7 +126,21 @@ export class AgentTaskPersistence {
 
   async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
+    validateTaskId(taskId);
+    this.assertWritable();
     await this.bytes.append(this.taskOutputScope(taskId), OUTPUT_LOG_KEY, textEncoder.encode(chunk));
+  }
+
+  private assertWritable(): void {
+    const sessionId = sessionIdFromScope(this.agentScope);
+    if (sessionId === undefined) return;
+    const authority = this.authorityRegistry.resolve(sessionId);
+    if (authority === undefined) {
+      throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session has no registered write authority', {
+        details: { sessionId },
+      });
+    }
+    authority.assertWritable();
   }
 
   async taskOutputSizeBytes(taskId: string): Promise<number> {

@@ -16,14 +16,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { ErrorCodes } from '#/errors';
 import {
   AgentTaskPersistence,
   type AgentTaskInfo,
 } from '#/agent/task/task';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import type { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 
 const SESSION_SCOPE = 'session';
 const AGENT_SCOPE = `${SESSION_SCOPE}/agents/main`;
@@ -32,6 +35,7 @@ let disposables: DisposableStore;
 let sessionDir: string;
 let docs: IAtomicDocumentStore;
 let bytes: IFileSystemStorageService;
+let authorityRegistry: IWriteAuthorityRegistry;
 let persistence: AgentTaskPersistence;
 
 function sample(overrides: Partial<Extract<AgentTaskInfo, { kind: 'process' }>> = {}): Extract<AgentTaskInfo, { kind: 'process' }> {
@@ -64,7 +68,15 @@ beforeEach(async () => {
   ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
   docs = ix.get(IAtomicDocumentStore);
   bytes = ix.get(IFileSystemStorageService);
-  persistence = new AgentTaskPersistence(sessionDir, SESSION_SCOPE, docs, bytes);
+  authorityRegistry = new WriteAuthorityRegistryService();
+  persistence = new AgentTaskPersistence(
+    sessionDir,
+    SESSION_SCOPE,
+    docs,
+    bytes,
+    undefined,
+    authorityRegistry,
+  );
 });
 
 afterEach(async () => {
@@ -77,7 +89,14 @@ describe('AgentTaskPersistence', () => {
     scope: string,
     fallbackRoot?: { readonly dir: string; readonly scope: string },
   ): AgentTaskPersistence {
-    return new AgentTaskPersistence(join(sessionDir, scope), scope, docs, bytes, fallbackRoot);
+    return new AgentTaskPersistence(
+      join(sessionDir, scope),
+      scope,
+      docs,
+      bytes,
+      fallbackRoot,
+      authorityRegistry,
+    );
   }
 
   function sessionRoot(): { readonly dir: string; readonly scope: string } {
@@ -105,6 +124,26 @@ describe('AgentTaskPersistence', () => {
       kind: 'process',
       exitCode: 0,
       endedAt: 1_700_000_100,
+    });
+  });
+
+  it('fails closed when the session write authority is unregistered', async () => {
+    const scope = 'sessions/workspace/test-session/agents/main';
+    const fenced = rootedPersistence(scope);
+    const registration = authorityRegistry.register({
+      sessionId: 'test-session',
+      assertWritable: () => {},
+    });
+
+    await fenced.writeTask(sample());
+    await fenced.appendTaskOutput(sample().taskId, 'before release');
+    registration.dispose();
+
+    await expect(fenced.writeTask(sample({ status: 'completed', endedAt: 2 }))).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
+    await expect(fenced.appendTaskOutput(sample().taskId, 'after release')).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
     });
   });
 

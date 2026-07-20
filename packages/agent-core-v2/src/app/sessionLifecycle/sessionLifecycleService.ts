@@ -93,6 +93,7 @@ import {
   OsLockErrors,
 } from '#/os/interface/crossProcessLock';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
@@ -153,6 +154,7 @@ interface SessionEntry {
   closeKind?: SessionCloseKind;
   closeStep: number;
   closePromise?: Promise<void>;
+  dirtyAbortPromise?: Promise<void>;
 }
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
@@ -917,16 +919,31 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private dirtyAbortSession(entry: SessionEntry): void {
+    if (entry.dirtyAbortPromise !== undefined) return;
     if (this.entries.get(entry.handle.id) === entry) this.entries.delete(entry.handle.id);
+
+    let taskServices: IAgentTaskService[] = [];
+    try {
+      taskServices = entry.handle
+        .accessor.get(IAgentLifecycleService)
+        .list()
+        .map((agent) => agent.accessor.get(IAgentTaskService));
+    } catch {
+    }
     try {
       this.disposeSessionHandle(entry);
     } catch {
     }
-    try {
-      entry.registration.dispose();
-    } catch {
-    }
-    entry.lease.release();
+    entry.dirtyAbortPromise = Promise.allSettled(
+      taskServices.map((tasks) => tasks.flushPersistence()),
+    ).then(() => {
+      try {
+        entry.registration.dispose();
+      } catch {
+      }
+      entry.lease.release();
+    });
+    void entry.dirtyAbortPromise.catch(() => {});
   }
 
   private async readMetaFromDisk(

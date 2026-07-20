@@ -84,6 +84,7 @@ export interface IAgentTaskService {
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];
   persistOutput(taskId: string): void;
+  flushPersistence(): Promise<void>;
   getOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,

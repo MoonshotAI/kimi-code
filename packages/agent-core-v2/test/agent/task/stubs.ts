@@ -14,6 +14,7 @@ import {
 } from '#/agent/task/task';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
 
 export type TaskServiceTestManager = IAgentTaskService & {
   loadFromDisk(): Promise<void>;
@@ -26,10 +27,17 @@ export const TASK_TEST_AGENT_SCOPE = `${TASK_TEST_SESSION_SCOPE}/agents/main`;
 
 export function createAgentTaskPersistence(homedir: string): AgentTaskPersistence {
   const storage = new FileStorageService(homedir);
+  const authorityRegistry = new WriteAuthorityRegistryService();
+  authorityRegistry.register({
+    sessionId: 'test-session',
+    assertWritable: () => {},
+  });
   return new AgentTaskPersistence(
     join(homedir, TASK_TEST_AGENT_SCOPE),
     TASK_TEST_AGENT_SCOPE,
     new JsonAtomicDocumentStore(storage),
     storage,
+    undefined,
+    authorityRegistry,
   );
 }

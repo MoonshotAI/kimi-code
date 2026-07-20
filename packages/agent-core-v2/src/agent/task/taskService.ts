@@ -62,6 +62,7 @@ import { IConfigService } from '#/app/config/config';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { defineModel } from '#/wire/model';
 import { IWireService } from '#/wire/wire';
@@ -229,6 +230,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IConfigService private readonly config: IConfigService,
     @IAtomicDocumentStore atomicDocs: IAtomicDocumentStore,
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
+    @IWriteAuthorityRegistry authorityRegistry: IWriteAuthorityRegistry,
     @ISessionContext session: ISessionContext,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
@@ -248,6 +250,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
       fallbackRoot,
+      authorityRegistry,
     );
     this._register(
       this.wire.hooks.onDidRestore.register('task', async (_ctx, next) => {
@@ -478,6 +481,34 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const entry = this.tasks.get(taskId);
     if (entry === undefined) return;
     this.startOutputPersist(entry);
+  }
+
+  async flushPersistence(): Promise<void> {
+    let firstFailure: unknown;
+    for (;;) {
+      const entries = [...this.tasks.values()];
+      for (const entry of entries) {
+        if (entry.pendingOutput.length > 0) this.startOutputPersist(entry);
+      }
+      const queues = entries.flatMap((entry) => [
+        { entry, kind: 'state' as const, promise: entry.persistWriteQueue },
+        { entry, kind: 'output' as const, promise: entry.outputWriteQueue },
+      ]);
+      const results = await Promise.allSettled(queues.map(({ promise }) => promise));
+      for (const result of results) {
+        if (result.status === 'rejected' && firstFailure === undefined) {
+          firstFailure = result.reason;
+        }
+      }
+      const changed = queues.some(({ entry, kind, promise }) => {
+        return kind === 'state'
+          ? entry.persistWriteQueue !== promise
+          : entry.outputWriteQueue !== promise;
+      });
+      if (changed) continue;
+      if (firstFailure !== undefined) throw firstFailure;
+      return;
+    }
   }
 
   async loadFromDisk(options: AgentTaskLoadOptions = {}): Promise<void> {
@@ -876,8 +907,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const persistence = this.persistence;
     const info = this.toInfo(entry);
     entry.persistWriteQueue = entry.persistWriteQueue
-      .then(() => persistence.writeTask(info))
-      .catch(() => { });
+      .then(() => persistence.writeTask(info));
+    void entry.persistWriteQueue.catch(() => {});
     return entry.persistWriteQueue;
   }
 
@@ -911,8 +942,8 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private appendTaskOutput(entry: ManagedTask, chunk: string): void {
     const persistence = this.persistence;
     entry.outputWriteQueue = entry.outputWriteQueue
-      .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
-      .catch(() => { });
+      .then(() => persistence.appendTaskOutput(entry.taskId, chunk));
+    void entry.outputWriteQueue.catch(() => {});
   }
 
   private startOutputPersist(entry: ManagedTask): void {

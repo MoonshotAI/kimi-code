@@ -172,6 +172,8 @@ class FakeTaskService implements IAgentTaskService {
 
   persistOutput(_taskId: string): void {}
 
+  async flushPersistence(): Promise<void> {}
+
   async getOutputSnapshot(
     taskId: string,
     _maxPreviewBytes: number,
