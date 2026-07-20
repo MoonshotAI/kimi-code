@@ -39,7 +39,7 @@ function fail(message: string): never {
 }
 
 function parsePositiveInt(raw: string, varName: string): number {
-  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+  if (!/^[1-9]\d*$/.test(raw)) {
     fail(`${varName} must be a positive integer, got "${raw}".`);
   }
   return Number(raw);
@@ -91,8 +91,12 @@ function parseBooleanVar(raw: string | undefined, varName: string): boolean | un
  * a final guard against patch round-trips (getConfig -> setConfig).
  */
 export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env): KimiConfig {
-  const model = trimmed(env['KIMI_MODEL_NAME']);
-  if (model === undefined) return config;
+  const modelRaw = env['KIMI_MODEL_NAME'];
+  if (modelRaw === undefined) return config;
+  const model = trimmed(modelRaw);
+  if (model === undefined) {
+    fail('KIMI_MODEL_NAME must not be empty.');
+  }
 
   const apiKey = trimmed(env['KIMI_MODEL_API_KEY']);
   if (apiKey === undefined) {
@@ -180,12 +184,15 @@ export function stripEnvModelConfig(config: KimiConfig): KimiConfig {
   if (models !== undefined && ENV_MODEL_ALIAS_KEY in models) {
     models = { ...models };
     delete models[ENV_MODEL_ALIAS_KEY];
+    if (Object.keys(models).length === 0) {
+      models = undefined;
+    }
   }
 
   return {
     ...config,
     providers,
-    ...(models !== undefined ? { models } : {}),
+    models,
     // Restore env-injected top-level fields from raw instead of persisting the
     // shell overrides: the env default_model (when it points at the env alias),
     // and the env thinking. Reaching here means env-model mode is active (the
