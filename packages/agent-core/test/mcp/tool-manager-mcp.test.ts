@@ -24,6 +24,9 @@ function fakeAgent(calls: unknown[] = []): Agent {
     goal: {
       getGoal: () => ({ goal: null }),
     },
+    experimentalFlags: {
+      enabled: () => false,
+    },
   } as unknown as Agent;
 }
 
