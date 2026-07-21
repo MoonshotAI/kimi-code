@@ -201,8 +201,8 @@ describe('FooterComponent subagent model badge', () => {
       model: 'kimi-k3',
       subagentModel: 'glm-5.2',
       availableModels: {
-        'kimi-k3': { provider: 'managed:kimi-code', model: 'kimi-k3', maxContextSize: 262144 },
-        'glm-5.2': { provider: 'zai', model: 'glm-5.2', maxContextSize: 131072, displayName: 'GLM-5.2' },
+        'kimi-k3': { provider: 'managed:kimi-code', model: 'kimi-k3', maxContextSize: 1_048_576 },
+        'glm-5.2': { provider: 'zai', model: 'glm-5.2', maxContextSize: 1_000_000, displayName: 'GLM-5.2' },
       },
     };
     const footer = new FooterComponent(state);
@@ -230,12 +230,12 @@ describe('FooterComponent subagent model badge', () => {
         'kimi-k3': {
           provider: 'managed:kimi-code',
           model: 'kimi-k3',
-          maxContextSize: 262144,
+          maxContextSize: 1_048_576,
         },
         'glm-5.2': {
           provider: 'zai',
           model: 'glm-5.2',
-          maxContextSize: 131072,
+          maxContextSize: 1_000_000,
           displayName: 'GLM-5.2',
         },
       },
@@ -257,7 +257,7 @@ describe('FooterComponent subagent model badge', () => {
         'kimi-k3': {
           provider: 'managed:kimi-code',
           model: 'kimi-k3',
-          maxContextSize: 262144,
+          maxContextSize: 1_048_576,
           displayName: 'Kimi K3',
         },
       },
@@ -281,12 +281,12 @@ describe('FooterComponent subagent model badge', () => {
         'kimi-k3': {
           provider: 'managed:kimi-code',
           model: 'kimi-k3',
-          maxContextSize: 262144,
+          maxContextSize: 1_048_576,
         },
         'glm-5.2': {
           provider: 'zai',
           model: 'glm-5.2',
-          maxContextSize: 131072,
+          maxContextSize: 1_000_000,
           displayName: 'GLM-5.2',
         },
       },
@@ -307,12 +307,12 @@ describe('FooterComponent subagent model badge', () => {
         'kimi-k3': {
           provider: 'managed:kimi-code',
           model: 'kimi-k3',
-          maxContextSize: 262144,
+          maxContextSize: 1_048_576,
         },
         'glm-5.2': {
           provider: 'zai',
           model: 'glm-5.2',
-          maxContextSize: 131072,
+          maxContextSize: 1_000_000,
           displayName: 'GLM-5.2',
         },
       },

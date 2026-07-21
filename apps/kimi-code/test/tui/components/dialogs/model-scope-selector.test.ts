@@ -13,13 +13,13 @@ const availableModels: Record<string, ModelAlias> = {
   'kimi-k3': {
     provider: 'managed:kimi-code',
     model: 'kimi-k3',
-    maxContextSize: 262144,
+    maxContextSize: 1_048_576,
     displayName: 'Kimi K3',
   },
   'glm-5.2': {
     provider: 'zai',
     model: 'glm-5.2',
-    maxContextSize: 131072,
+    maxContextSize: 1_000_000,
     displayName: 'GLM-5.2',
   },
 };
