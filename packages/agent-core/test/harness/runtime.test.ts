@@ -267,6 +267,52 @@ micro_compaction = false
     expect(session?.getAdditionalDirs()).toContain(normalize(sharedDir));
   });
 
+  it('clears defaultSubagentModel when removeKimiProvider removes its model', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `default_model = "default-mock"
+default_subagent_model = "sub-glm"
+
+[providers.test]
+type = "kimi"
+api_key = "test-key"
+
+[providers.zai]
+type = "openai"
+api_key = "zai-key"
+
+[models."default-mock"]
+provider = "test"
+model = "default-mock"
+max_context_size = 100000
+
+[models."sub-glm"]
+provider = "zai"
+model = "glm-5.2"
+max_context_size = 100000
+`,
+    );
+
+    const core = new KimiCore(async () => ({}) as never, { homeDir });
+
+    const updated = await core.removeKimiProvider({ providerId: 'zai' });
+
+    // The removed provider's model alias is gone, and the subagent default
+    // that pointed at it is cleared (a stale alias would fail provider
+    // resolution on the next delegated spawn).
+    expect(updated.models?.['sub-glm']).toBeUndefined();
+    expect(updated.defaultSubagentModel).toBeUndefined();
+    // The main default belongs to a different provider and survives.
+    expect(updated.models?.['default-mock']).toBeDefined();
+    expect(updated.defaultModel).toBe('default-mock');
+
+    const onDisk = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+    expect(onDisk).not.toContain('default_subagent_model');
+  });
+
   it('uses the shared OAuth resolver for Moonshot service tokens', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');

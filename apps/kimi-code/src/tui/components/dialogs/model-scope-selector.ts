@@ -37,19 +37,19 @@ function isModelScope(value: string): value is ModelScope {
 export class ModelScopeSelectorComponent extends ChoicePickerComponent {
   constructor(opts: ModelScopeSelectorOptions) {
     const mainName = modelDisplayName(opts.currentModel, opts.availableModels[opts.currentModel]);
+    const effort = opts.currentSubagentThinkingEffort;
+    const hasEffort = effort !== undefined && effort.length > 0;
     let subagentName: string;
     if (opts.currentSubagentModel !== undefined && opts.currentSubagentModel.length > 0) {
       const model = modelDisplayName(
         opts.currentSubagentModel,
         opts.availableModels[opts.currentSubagentModel],
       );
-      const effortSuffix =
-        opts.currentSubagentThinkingEffort !== undefined && opts.currentSubagentThinkingEffort.length > 0
-          ? ` (effort: ${opts.currentSubagentThinkingEffort})`
-          : '';
-      subagentName = `${model}${effortSuffix}`;
+      subagentName = hasEffort ? `${model} (effort: ${effort})` : model;
     } else {
-      subagentName = '(inherits main model)';
+      // The model is inherited, but a configured subagent effort still
+      // applies — show it so the label reflects the effective settings.
+      subagentName = hasEffort ? `(inherits main model, effort: ${effort})` : '(inherits main model)';
     }
 
     const options: readonly ChoiceOption[] = [

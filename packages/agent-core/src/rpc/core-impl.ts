@@ -670,6 +670,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     delete config.providers[input.providerId];
 
     let removedDefault = false;
+    let removedSubagentDefault = false;
     const existingModels = config.models ?? {};
     for (const [key, model] of Object.entries(existingModels)) {
       if (
@@ -680,12 +681,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       ) {
         delete existingModels[key];
         if (config.defaultModel === key) removedDefault = true;
+        if (config.defaultSubagentModel === key) removedSubagentDefault = true;
       }
     }
     config.models = existingModels;
 
     if (removedDefault) {
       config.defaultModel = undefined;
+    }
+
+    // The subagent default (`dual-model-routing`) must not outlive its model
+    // either — a stale alias would fail provider resolution on the next spawn.
+    if (removedSubagentDefault) {
+      config.defaultSubagentModel = undefined;
     }
 
     if (config.defaultProvider === input.providerId) {

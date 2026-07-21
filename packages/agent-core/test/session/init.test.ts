@@ -952,4 +952,18 @@ describe('SessionAPIImpl subagent model/thinking RPCs (dual-model-routing)', () 
     expect(api.getSubagentModel({}).subagentModel).toBeUndefined();
     expect(api.getSubagentThinking({}).subagentThinkingEffort).toBeUndefined();
   });
+
+  it('setSubagentModel persists when session metadata has no custom map', () => {
+    const session = makeSession({ flagOn: true });
+    // Legacy state.json may lack the `custom` key; spreading undefined is a
+    // no-op, so persisting the override must rebuild the map, not throw.
+    session.metadata = {
+      ...session.metadata,
+      custom: undefined as unknown as Record<string, unknown>,
+    };
+    const api = new SessionAPIImpl(session);
+    const result = api.setSubagentModel({ model: 'mock-model' });
+    expect(result).toEqual({ subagentModel: 'mock-model' });
+    expect(session.metadata.custom['subagentModelAlias']).toBe('mock-model');
+  });
 });

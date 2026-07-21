@@ -73,6 +73,23 @@ describe('ModelScopeSelectorComponent', () => {
     expect(out.some((l) => l.includes('Subagents — GLM-5.2 (effort: high)'))).toBe(true);
   });
 
+  it('shows the effort when the model is inherited but an effort is configured', () => {
+    const picker = new ModelScopeSelectorComponent({
+      currentModel: 'kimi-k3',
+      currentSubagentModel: undefined,
+      currentSubagentThinkingEffort: 'high',
+      availableModels,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = picker.render(120).map(strip);
+
+    expect(out.some((l) => l.includes('Subagents — (inherits main model, effort: high)'))).toBe(
+      true,
+    );
+  });
+
   it('fires onSelect with "main" for the main option and "subagent" for the subagent option', () => {
     const onSelect = vi.fn();
     const picker = new ModelScopeSelectorComponent({
