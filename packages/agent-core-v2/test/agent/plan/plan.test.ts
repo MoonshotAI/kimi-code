@@ -672,7 +672,13 @@ describe('Plan service', () => {
           files.set(path, content);
           return textFileStat(content);
         });
-        useFakes(createPlanFakes({ readText, writeText }));
+        const stat = vi.fn(async (path: string) => {
+          const content = files.get(path);
+          return content === undefined
+            ? { isFile: false, isDirectory: true, size: 0 }
+            : textFileStat(content);
+        });
+        useFakes(createPlanFakes({ readText, writeText, stat }));
         const cwd = await makeTempDir('kimi-plan-write-tool-');
         useTools([toolName]);
         profile.update({ cwd });

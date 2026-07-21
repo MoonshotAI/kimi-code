@@ -8,19 +8,14 @@
  * wrapper re-checks the ledger only after the scheduler grants the declared
  * file access, so a queued write cannot rely on a stale preflight verdict. The
  * target path comes from the resolved execution's file accesses
- * — the exact canonical path the tool itself computed — so the ledger and
- * the watcher key it identically. The before-hook records the target keyed
- * by `toolCall.id` (cleared in the did-hook and swept on turn change) and,
- * for `Write`/`Edit`, computes the ledger verdict: `stale` blocks with an
+ * — the exact canonical path the tool itself computed. `stale` blocks with an
  * outside-modification conflict and `no-baseline` blocks with a read-first
  * reason (Edit-over-existing, or Write over an already existing file). The
- * did-hook records the revision captured by the successful fenced call
- * (ranged Reads excepted — per the ledger contract they never count as full
- * reads); direct creation of a new file is verdict-`clean`, so it never
- * blocks. Watcher echos of the session's own writes are absorbed by the
- * ledger's stat punch, so consecutive Edits stay clean. Checked after
- * `permission` (ignition order is set by `agentLifecycle`). Bound at Agent
- * scope.
+ * did-hook baselines the ledger from the revision the successful call captured
+ * on its own result (ranged Reads excepted — per the ledger contract they
+ * never count as full reads); direct creation of a new file is verdict-`clean`,
+ * so it never blocks. Checked after `permission` (ignition order is set by
+ * `agentLifecycle`). Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -36,21 +31,12 @@ import {
   ISessionFileLedger,
   type FileLedgerVerdict,
 } from '#/session/sessionFileLedger/fileLedger';
-import {
-  toolFileRevision,
-  type ToolAccesses,
-  type ToolFileRevision,
-} from '#/tool/toolContract';
+import { toolFileRevision, type ToolAccesses } from '#/tool/toolContract';
 
 import { IAgentFileFencingService } from './fileFencing';
 
 const READ_TOOL = 'Read';
 const WRITE_TOOLS = new Set(['Write', 'Edit']);
-
-interface FencingTarget {
-  readonly toolName: string;
-  readonly path: string;
-}
 
 function isFenced(ctx: ToolExecutionHookContext): boolean {
   return ctx.toolCall.name === READ_TOOL || WRITE_TOOLS.has(ctx.toolCall.name);
@@ -87,18 +73,8 @@ function blockReason(toolName: string, path: string, verdict: FileLedgerVerdict)
   );
 }
 
-function revisionForTarget(
-  revision: ToolFileRevision | undefined,
-  targetPath: string,
-): ToolFileRevision | undefined {
-  return revision?.path === targetPath ? revision : undefined;
-}
-
 export class AgentFileFencingService extends Disposable implements IAgentFileFencingService {
   declare readonly _serviceBrand: undefined;
-
-  private readonly targets = new Map<string, FencingTarget>();
-  private markerTurnId: number | undefined;
 
   constructor(
     @ISessionFileLedger private readonly ledger: ISessionFileLedger,
@@ -111,7 +87,7 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
       await next();
     });
     toolExecutor.hooks.onDidExecuteTool.register('writeFencing', async (ctx, next) => {
-      await this.onDid(ctx);
+      this.onDid(ctx);
       await next();
     });
   }
@@ -120,11 +96,6 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     if (!isFenced(ctx)) return;
     const path = targetPathOf(ctx);
     if (path === undefined) return;
-    if (this.markerTurnId !== ctx.turnId) {
-      this.markerTurnId = ctx.turnId;
-      this.targets.clear();
-    }
-    this.targets.set(ctx.toolCall.id, { toolName: ctx.toolCall.name, path });
     if (!WRITE_TOOLS.has(ctx.toolCall.name)) return;
     const execute = ctx.decision?.execute ?? ctx.execution.execute;
     ctx.decision = {
@@ -140,15 +111,13 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     };
   }
 
-  private async onDid(ctx: ToolDidExecuteContext): Promise<void> {
+  private onDid(ctx: ToolDidExecuteContext): void {
     if (!isFenced(ctx)) return;
-    const target = this.targets.get(ctx.toolCall.id);
-    this.targets.delete(ctx.toolCall.id);
-    if (target === undefined || ctx.result.isError === true) return;
-    if (target.toolName === READ_TOOL && isRangedRead(ctx.args)) return;
-    const revision = revisionForTarget(ctx.result[toolFileRevision], target.path);
+    if (ctx.result.isError === true) return;
+    if (ctx.toolCall.name === READ_TOOL && isRangedRead(ctx.args)) return;
+    const revision = ctx.result[toolFileRevision];
     if (revision !== undefined) {
-      this.ledger.recordBaseline(target.path, {
+      this.ledger.recordBaseline(revision.path, {
         exists: true,
         ino: revision.ino,
         mtimeMs: revision.mtimeMs,

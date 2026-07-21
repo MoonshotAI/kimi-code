@@ -1,17 +1,16 @@
 /**
  * `sessionFileLedger` domain (L2) — verifies the optimistic-concurrency
- * verdict matrix (clean / stale / no-baseline) against a real tmpdir, a real
- * `HostFileSystem` (stat-call counted) and a fake os watcher: baselines only
- * refresh on success, every write decision performs a fresh stat, dirty ticks
- * arrive before debounced event delivery, watcher echoes of the session's own
- * writes re-baseline, and truncated windows retain conservative root ticks.
+ * verdict matrix (clean / stale / no-baseline) against a real tmpdir and a
+ * real `HostFileSystem` with stat calls counted. Baselines are compared only
+ * against fresh stat tuples, and resolving or using the ledger never starts a
+ * workspace watcher.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { LifecycleScope } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
@@ -22,18 +21,10 @@ import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionFileLedger } from '#/session/sessionFileLedger/fileLedger';
 import { SessionFileLedger } from '#/session/sessionFileLedger/fileLedgerService';
-import { ISessionFsWatchService } from '#/session/sessionFs/fsWatch';
-import { SessionFsWatchService } from '#/session/sessionFs/fsWatchService';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 
 import { fakeHostFsWatch, type FakeWatch } from '../sessionFs/stubs';
 
 void SessionFileLedger;
-void SessionFsWatchService;
-void SessionWorkspaceContextService;
-
-const JUNK_EVENT_COUNT = 501;
 
 function countingHostFs(poisonedPaths: Set<string>): {
   fs: IHostFileSystem;
@@ -65,8 +56,6 @@ interface World {
   readonly outsideDir: string;
   readonly fs: IHostFileSystem;
   readonly ledger: ISessionFileLedger;
-  readonly watch: ISessionFsWatchService;
-  readonly workspace: ISessionWorkspaceContext;
   readonly fake: FakeWatch;
   readonly statCalls: () => number;
   readonly poisonedPaths: Set<string>;
@@ -101,8 +90,6 @@ function makeWorld(): World {
     outsideDir,
     fs,
     ledger: session.accessor.get(ISessionFileLedger),
-    watch: session.accessor.get(ISessionFsWatchService),
-    workspace: session.accessor.get(ISessionWorkspaceContext),
     fake,
     statCalls,
     poisonedPaths,
@@ -125,22 +112,13 @@ async function recordCurrentBaseline(world: World, path: string): Promise<void> 
   }
 }
 
-function foldJunkEvents(world: World, count: number = JUNK_EVENT_COUNT): void {
-  for (let i = 0; i < count; i++) world.fake.fire(`junk-${i}.tmp`, 'created');
-  vi.advanceTimersByTime(200);
-}
-
 const hosts: ScopedTestHost[] = [];
 const cleanupPaths: string[] = [];
 
 describe('SessionFileLedger', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
   afterEach(() => {
     for (const host of hosts.splice(0)) host.dispose();
     for (const path of cleanupPaths.splice(0)) rmSync(path, { recursive: true, force: true });
-    vi.useRealTimers();
   });
 
   it('returns clean for a baselined file with no changes', async () => {
@@ -165,15 +143,15 @@ describe('SessionFileLedger', () => {
     expect(await world.ledger.compare(join(world.workDir, 'new.txt'))).toBe('clean');
   });
 
-  it('returns stale for a dirty path without a baseline', async () => {
+  it('does not let watcher signals change the stat-only verdict', async () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
 
     world.fake.fire('a.txt', 'modified');
-    vi.advanceTimersByTime(200);
 
-    expect(await world.ledger.compare(file)).toBe('stale');
+    expect(await world.ledger.compare(file)).toBe('no-baseline');
+    expect(world.fake.watchCalls).toEqual([]);
   });
 
   it('returns stale when a baselined file is modified outside the session', async () => {
@@ -183,34 +161,17 @@ describe('SessionFileLedger', () => {
     await recordCurrentBaseline(world, file);
 
     writeFileSync(file, 'hello world');
-    world.fake.fire('a.txt', 'modified');
-    vi.advanceTimersByTime(200);
 
     expect(await world.ledger.compare(file)).toBe('stale');
   });
 
-  it('detects an outside modification before the watch debounce flush', async () => {
-    const world = makeWorld();
-    const file = join(world.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-    await recordCurrentBaseline(world, file);
-
-    writeFileSync(file, 'hello world');
-    world.fake.fire('a.txt', 'modified');
-
-    expect(await world.ledger.compare(file)).toBe('stale');
-  });
-
-  it('absorbs the watcher echo of the session own write and re-baselines the tick', async () => {
+  it('performs a fresh stat for every comparison', async () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
     await recordCurrentBaseline(world, file);
     expect(world.statCalls()).toBe(1);
 
-    world.fake.fire('a.txt', 'modified');
-    vi.advanceTimersByTime(200);
-
     expect(await world.ledger.compare(file)).toBe('clean');
     expect(world.statCalls()).toBe(2);
 
@@ -218,29 +179,13 @@ describe('SessionFileLedger', () => {
     expect(world.statCalls()).toBe(3);
   });
 
-  it('keeps a baselined file clean through an untouched truncated window', async () => {
-    const world = makeWorld();
-    const file = join(world.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-    await recordCurrentBaseline(world, file);
-
-    foldJunkEvents(world);
-    expect(world.watch.rootDirtyTickFor(world.workDir)).toBeGreaterThan(0);
-
-    expect(await world.ledger.compare(file)).toBe('clean');
-    expect(world.statCalls()).toBe(2);
-    expect(await world.ledger.compare(file)).toBe('clean');
-    expect(world.statCalls()).toBe(3);
-  });
-
-  it('detects an outside modification through a truncated window via the stat punch', async () => {
+  it('detects an outside modification using only the stat tuple', async () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
     await recordCurrentBaseline(world, file);
 
     writeFileSync(file, 'hello world');
-    foldJunkEvents(world);
 
     expect(await world.ledger.compare(file)).toBe('stale');
   });
@@ -252,20 +197,16 @@ describe('SessionFileLedger', () => {
     await recordCurrentBaseline(world, file);
 
     rmSync(file);
-    world.fake.fire('a.txt', 'deleted');
-    vi.advanceTimersByTime(200);
     expect(await world.ledger.compare(file)).toBe('stale');
 
     await recordCurrentBaseline(world, file);
     expect(await world.ledger.compare(file)).toBe('clean');
 
     writeFileSync(file, 'recreated');
-    world.fake.fire('a.txt', 'created');
-    vi.advanceTimersByTime(200);
     expect(await world.ledger.compare(file)).toBe('stale');
   });
 
-  it('falls back to the stat-only comparison outside every watched root', async () => {
+  it('uses the same stat-only comparison outside the workspace', async () => {
     const world = makeWorld();
     const file = join(world.outsideDir, 'b.txt');
     writeFileSync(file, 'hello');
@@ -285,23 +226,15 @@ describe('SessionFileLedger', () => {
     expect(await world.ledger.compare(file)).toBe('stale');
   });
 
-  it('adds a later additional dir as a watched root when a target falls under it', async () => {
+  it('never starts a watcher when recording or comparing paths', async () => {
     const world = makeWorld();
-    expect(world.fake.watchCalls).toEqual([world.workDir]);
-
-    world.workspace.addAdditionalDir(world.outsideDir);
     const file = join(world.outsideDir, 'b.txt');
     writeFileSync(file, 'hello');
 
     expect(await world.ledger.compare(file)).toBe('no-baseline');
-    expect(world.fake.watchCalls).toContain(world.outsideDir);
-    expect(world.watch.watchedRoots).toContain(world.outsideDir);
-
-    world.fake.handles
-      .find((h) => h.root === world.outsideDir)
-      ?.fire('b.txt', 'modified');
-    vi.advanceTimersByTime(200);
-    expect(await world.ledger.compare(file)).toBe('stale');
+    await recordCurrentBaseline(world, file);
+    expect(await world.ledger.compare(file)).toBe('clean');
+    expect(world.fake.watchCalls).toEqual([]);
   });
 
   it('fails closed when stat fails for reasons other than not-found', async () => {
@@ -316,8 +249,6 @@ describe('SessionFileLedger', () => {
     world.poisonedPaths.clear();
     await recordCurrentBaseline(world, file);
     world.poisonedPaths.add(file);
-    world.fake.fire('a.txt', 'modified');
-    vi.advanceTimersByTime(200);
 
     expect(await world.ledger.compare(file)).toBe('stale');
     expect(world.statCalls()).toBeGreaterThan(0);

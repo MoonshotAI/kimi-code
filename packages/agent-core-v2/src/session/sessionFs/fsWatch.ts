@@ -8,20 +8,10 @@
  * dropped. Session-scoped — the scope itself is the session, so no
  * `sessionId` is threaded through.
  *
- * Beyond the change feed, every confined change entry is folded into a
- * per-session dirty state for optimistic-concurrency consumers
- * (`sessionFileLedger`): a monotonic `currentTick` incremented per processed
- * entry, immediate per-path dirty ticks independent of debounce delivery, and
- * per-root dirty ticks for truncated windows whose exact paths were dropped.
- * Client subscriptions (`setWatchedPaths`, replace semantics) and
- * optimistic-concurrency watch anchors (`ensureWatchedRoots`, additive,
- * absolute) are independent sets so neither side can clobber the other;
- * `watchedRoots` reports the union as absolute paths.
- *
- * Also owns the lexical key helpers shared with the ledger so both sides key
- * paths identically: `normalizeFsWatchKey` (lexical normalize only, no
- * `realpath`; case-folded on macOS/Windows) and `isFsWatchKeyWithin`
- * (separator-bounded prefix containment on normalized keys).
+ * Also owns the lexical key helper shared with the optimistic-concurrency
+ * ledger (`sessionFileLedger`) so both sides key paths identically:
+ * `normalizeFsWatchKey` (lexical normalize only, no `realpath`; case-folded
+ * on macOS/Windows).
  */
 
 import { normalize, sep } from 'node:path';
@@ -55,28 +45,12 @@ export function normalizeFsWatchKey(path: string): string {
   return FS_WATCH_KEY_CASE_FOLD ? normalized.toLowerCase() : normalized;
 }
 
-export function isFsWatchKeyWithin(key: string, rootKey: string): boolean {
-  if (key === rootKey) return true;
-  const prefix = rootKey.endsWith('/') ? rootKey : `${rootKey}/`;
-  return key.startsWith(prefix);
-}
-
 export interface ISessionFsWatchService {
   readonly _serviceBrand: undefined;
 
   setWatchedPaths(paths: readonly string[]): void;
 
   readonly watchedPaths: readonly string[];
-
-  ensureWatchedRoots(roots: readonly string[]): void;
-
-  readonly watchedRoots: readonly string[];
-
-  readonly currentTick: number;
-
-  dirtyTickFor(path: string): number | undefined;
-
-  rootDirtyTickFor(root: string): number | undefined;
 
   readonly onDidChangeFiles: Event<FsChangeEvent>;
 }

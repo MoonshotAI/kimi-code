@@ -15,7 +15,7 @@ import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { FsChangeEvent } from '#/session/sessionFs/fsWatch';
 
-import { ISessionFsWatchService, isFsWatchKeyWithin, normalizeFsWatchKey } from '#/session/sessionFs/fsWatch';
+import { ISessionFsWatchService, normalizeFsWatchKey } from '#/session/sessionFs/fsWatch';
 import { SessionFsWatchService } from '#/session/sessionFs/fsWatchService';
 
 import { fakeHostFsWatch, type FakeWatch } from './stubs';
@@ -245,97 +245,5 @@ describe('fsWatch key helpers', () => {
   it('normalizes keys lexically and folds case on macOS/Windows', () => {
     const folded = process.platform === 'darwin' || process.platform === 'win32';
     expect(normalizeFsWatchKey('/A//B/../C')).toBe(folded ? '/a/c' : '/A/C');
-  });
-
-  it('checks containment with a separator boundary', () => {
-    expect(isFsWatchKeyWithin('/a/b', '/a/b')).toBe(true);
-    expect(isFsWatchKeyWithin('/a/b/c', '/a/b')).toBe(true);
-    expect(isFsWatchKeyWithin('/a/bc', '/a/b')).toBe(false);
-    expect(isFsWatchKeyWithin('/a', '/a/b')).toBe(false);
-  });
-});
-
-describe('SessionFsWatchService ensured roots and dirty ticks', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    for (const d of disposers.splice(0)) d();
-    vi.useRealTimers();
-  });
-
-  it('starts the os watcher for an ensured root and reports it as a watched root', () => {
-    const { svc, watch } = makeSession();
-    svc.ensureWatchedRoots([WORK_DIR]);
-    expect(watch.watchCalls).toEqual([WORK_DIR]);
-    expect(svc.watchedRoots).toEqual([WORK_DIR]);
-    expect(svc.watchedPaths).toEqual([]);
-  });
-
-  it('keeps the os watcher alive when client subscriptions empty but ensured roots remain', () => {
-    const { svc, watch } = makeSession();
-    svc.ensureWatchedRoots([WORK_DIR]);
-    svc.setWatchedPaths(['src']);
-    svc.setWatchedPaths([]);
-    expect(watch.disposed()).toBe(false);
-    expect(svc.watchedRoots).toEqual([WORK_DIR]);
-  });
-
-  it('skips ensured roots already covered by an existing watched root', () => {
-    const { svc, watch } = makeSession();
-    svc.ensureWatchedRoots([WORK_DIR]);
-    svc.ensureWatchedRoots([join(WORK_DIR, 'sub')]);
-    expect(watch.watchCalls).toEqual([WORK_DIR]);
-  });
-
-  it('watches an ensured root outside the workspace with a dedicated handle folded into dirty state only', () => {
-    const EXT = '/ext-root';
-    const { svc, watch, events } = makeSession();
-    svc.ensureWatchedRoots([EXT]);
-    expect(new Set(watch.watchCalls)).toEqual(new Set([WORK_DIR, EXT]));
-    const ext = watch.handles.find((h) => h.root === EXT);
-    expect(ext).toBeDefined();
-
-    ext!.fire('a.ts', 'modified');
-    vi.advanceTimersByTime(200);
-
-    expect(svc.dirtyTickFor(join(EXT, 'a.ts'))).toBe(1);
-    expect(events).toEqual([]);
-  });
-
-  it('increments and exposes per-path dirty ticks before the debounce flush', () => {
-    const { svc, watch } = makeSession();
-    svc.ensureWatchedRoots([WORK_DIR]);
-    expect(svc.currentTick).toBe(0);
-
-    const a = join(WORK_DIR, 'a.ts');
-    watch.fire('a.ts', 'created');
-    expect(svc.currentTick).toBe(1);
-    expect(svc.dirtyTickFor(a)).toBe(1);
-    vi.advanceTimersByTime(200);
-    expect(svc.dirtyTickFor(a)).toBe(1);
-
-    watch.fire('b.ts', 'modified');
-    vi.advanceTimersByTime(200);
-    expect(svc.dirtyTickFor(join(WORK_DIR, 'b.ts'))).toBe(2);
-    expect(svc.dirtyTickFor(a)).toBe(1);
-  });
-
-  it('marks every watched root dirty for a truncated window', () => {
-    const { svc, watch } = makeSession();
-    svc.ensureWatchedRoots([WORK_DIR]);
-    for (let i = 0; i < 501; i++) watch.fire(`f${i}.ts`, 'created');
-    vi.advanceTimersByTime(200);
-
-    expect(svc.dirtyTickFor(join(WORK_DIR, 'f0.ts'))).toBe(1);
-    expect(svc.rootDirtyTickFor(WORK_DIR)).toBe(501);
-  });
-
-  it('folds buffered dirty signals when the window is cleared without flushing', () => {
-    const { svc, watch } = makeSession();
-    svc.setWatchedPaths(['src']);
-    watch.fire('src/a.ts', 'modified');
-    svc.setWatchedPaths([]);
-    expect(svc.dirtyTickFor(join(WORK_DIR, 'src/a.ts'))).toBe(1);
   });
 });

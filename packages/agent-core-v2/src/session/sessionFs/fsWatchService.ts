@@ -5,27 +5,11 @@
  * events to the caller-declared subtree and to non-`.gitignore`d paths,
  * debounces them into fixed windows and re-exposes them as workspace-relative
  * `FsChangeEvent`s. Path confinement is lexical (`ISessionWorkspaceContext.isWithin`),
- * matching `sessionFs`.
- *
- * Two independent watch sets feed confinement: client subscriptions
- * (`setWatchedPaths`, workspace-relative, replace semantics) and ensured
- * roots (`ensureWatchedRoots`, absolute, additive — used by the
- * optimistic-concurrency ledger). An ensured root inside the workDir is
- * covered by the workDir watcher; one outside gets its own os handle whose
- * events skip the workDir `.gitignore` filter and are never re-emitted as
- * `FsChangeEvent`s (protocol paths are workspace-relative) — they only fold
- * into dirty state. The os workDir watcher runs while either set is
+ * matching `sessionFs`. The os workDir watcher runs while the watched set is
  * non-empty.
- *
- * Dirty state is independent from event delivery: every confined raw change
- * immediately advances `dirtyTicks[normalizedAbs]`, while protocol events are
- * still buffered and debounced. A truncated window additionally advances
- * `dirtyRootTicks` for every watched root. This keeps the optimistic
- * concurrency ledger from inheriting the UI debounce window.
- * Key normalization is the shared `normalizeFsWatchKey` from the contract.
  */
 
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 
 import ignore, { type Ignore } from 'ignore';
 
@@ -43,15 +27,13 @@ import {
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { FsChangeEvent } from './fsWatch';
 
-import { ISessionFsWatchService, isFsWatchKeyWithin, normalizeFsWatchKey } from './fsWatch';
+import { ISessionFsWatchService } from './fsWatch';
 
 const DEFAULT_DEBOUNCE_MS = 200;
 const DEFAULT_MAX_CHANGES_PER_WINDOW = 500;
 
 interface PendingChange {
-  readonly abs: string;
-  readonly rel: string | undefined;
-  readonly tick: number;
+  readonly rel: string;
   readonly change: HostFsChange['action'];
   readonly kind: HostFsChange['kind'];
 }
@@ -70,22 +52,13 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
   readonly onDidChangeFiles: Event<FsChangeEvent> = this.emitter.event;
 
   private watched = new Set<string>();
-  private readonly ensured = new Map<string, string>();
   private handle: IHostFsWatchHandle | undefined;
   private handleSub: IDisposable | undefined;
-  private readonly extraHandles = new Map<
-    string,
-    { readonly handle: IHostFsWatchHandle; readonly sub: IDisposable }
-  >();
 
   private debounceTimer: NodeJS.Timeout | undefined;
   private pending: PendingChange[] = [];
   private rawCount = 0;
   private truncated = false;
-
-  private tick = 0;
-  private readonly dirtyTicks = new Map<string, number>();
-  private readonly dirtyRootTicks = new Map<string, number>();
 
   private readonly debounceMs = readPositiveIntEnv(
     'KIMI_CODE_FS_WATCH_DEBOUNCE_MS',
@@ -115,28 +88,6 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     return Array.from(this.watched);
   }
 
-  get watchedRoots(): readonly string[] {
-    const out = new Map<string, string>();
-    for (const rel of this.watched) {
-      const abs = this.workspace.resolve(rel);
-      out.set(normalizeFsWatchKey(abs), abs);
-    }
-    for (const [key, abs] of this.ensured) out.set(key, abs);
-    return Array.from(out.values());
-  }
-
-  get currentTick(): number {
-    return this.tick;
-  }
-
-  dirtyTickFor(path: string): number | undefined {
-    return this.dirtyTicks.get(normalizeFsWatchKey(path));
-  }
-
-  rootDirtyTickFor(root: string): number | undefined {
-    return this.dirtyRootTicks.get(normalizeFsWatchKey(root));
-  }
-
   setWatchedPaths(paths: readonly string[]): void {
     const next = new Set<string>();
     for (const p of paths) {
@@ -144,7 +95,7 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
       next.add(this.toRel(abs));
     }
     this.watched = next;
-    if (next.size === 0 && this.ensured.size === 0) {
+    if (next.size === 0) {
       this.teardownHandle();
       this.clearWindow();
       return;
@@ -152,39 +103,9 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     this.ensureHandle();
   }
 
-  ensureWatchedRoots(roots: readonly string[]): void {
-    let changed = false;
-    for (const root of roots) {
-      const abs = resolve(root);
-      if (this.isCovered(abs)) continue;
-      const key = normalizeFsWatchKey(abs);
-      this.ensured.set(key, abs);
-      changed = true;
-      if (!isFsWatchKeyWithin(key, normalizeFsWatchKey(this.workspace.workDir))) {
-        this.startExtraHandle(key, abs);
-      }
-    }
-    if (changed || this.watched.size > 0) this.ensureHandle();
-  }
-
-  private isCovered(abs: string): boolean {
-    const key = normalizeFsWatchKey(abs);
-    for (const root of this.watchedRoots) {
-      if (isFsWatchKeyWithin(key, normalizeFsWatchKey(root))) return true;
-    }
-    return false;
-  }
-
-  private startExtraHandle(key: string, abs: string): void {
-    if (this.extraHandles.has(key)) return;
-    const handle = this.hostFsWatch.watch(abs, { recursive: true });
-    const sub = handle.onDidChange((e) => this.onRawExtra(key, e));
-    this.extraHandles.set(key, { handle, sub });
-  }
-
   private ensureHandle(): void {
     if (this.handle !== undefined) return;
-    if (this.watched.size === 0 && this.ensured.size === 0) return;
+    if (this.watched.size === 0) return;
     this.loadGitignore();
     const handle = this.hostFsWatch.watch(this.workspace.workDir, { recursive: true });
     this.handle = handle;
@@ -228,33 +149,15 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     if (this.matcher.ignores(probe)) return;
     if (isUnderAny(rel, this.watched)) {
       this.record(e, rel);
-      return;
-    }
-    const key = normalizeFsWatchKey(e.path);
-    for (const rootKey of this.ensured.keys()) {
-      if (isFsWatchKeyWithin(key, rootKey)) {
-        this.record(e, rel);
-        return;
-      }
     }
   }
 
-  private onRawExtra(rootKey: string, e: HostFsChange): void {
-    if (!isFsWatchKeyWithin(normalizeFsWatchKey(e.path), rootKey)) return;
-    this.record(e, undefined);
-  }
-
-  private record(e: HostFsChange, rel: string | undefined): void {
-    this.tick += 1;
-    this.dirtyTicks.set(normalizeFsWatchKey(e.path), this.tick);
-    this.pending.push({ abs: e.path, rel, tick: this.tick, change: e.action, kind: e.kind });
+  private record(e: HostFsChange, rel: string): void {
+    this.pending.push({ rel, change: e.action, kind: e.kind });
     this.rawCount += 1;
     if (this.pending.length > this.maxChangesPerWindow) {
       this.truncated = true;
       this.pending = [];
-      for (const root of this.watchedRoots) {
-        this.dirtyRootTicks.set(normalizeFsWatchKey(root), this.tick);
-      }
     }
     if (this.debounceTimer === undefined) {
       const timer = setTimeout(() => this.flush(), this.debounceMs);
@@ -273,21 +176,13 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     this.rawCount = 0;
     this.truncated = false;
 
-    if (truncated) {
-      for (const root of this.watchedRoots) {
-        this.dirtyRootTicks.set(normalizeFsWatchKey(root), this.tick);
-      }
-    }
-
     const changes = truncated
       ? []
-      : pending
-          .filter((entry) => entry.rel !== undefined)
-          .map((entry) => ({
-            path: entry.rel!,
-            change: entry.change,
-            kind: entry.kind,
-          }));
+      : pending.map((entry) => ({
+          path: entry.rel,
+          change: entry.change,
+          kind: entry.kind,
+        }));
     if (truncated || changes.length > 0) {
       const event: FsChangeEvent = {
         changes,
@@ -303,11 +198,6 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
       clearTimeout(this.debounceTimer);
       this.debounceTimer = undefined;
     }
-    if (this.truncated) {
-      for (const root of this.watchedRoots) {
-        this.dirtyRootTicks.set(normalizeFsWatchKey(root), this.tick);
-      }
-    }
     this.pending = [];
     this.rawCount = 0;
     this.truncated = false;
@@ -316,11 +206,6 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
   override dispose(): void {
     this.clearWindow();
     this.teardownHandle();
-    for (const { handle, sub } of this.extraHandles.values()) {
-      sub.dispose();
-      handle.dispose();
-    }
-    this.extraHandles.clear();
     super.dispose();
   }
 

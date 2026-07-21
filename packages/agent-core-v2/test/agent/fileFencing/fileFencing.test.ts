@@ -1,19 +1,17 @@
 /**
  * `fileFencing` domain (L4) — verifies the write/read-first gate end to end
  * through the real DI scope tree: a real tmpdir, the real `HostFileSystem`,
- * the real watch service folding fake os-watcher events, and the registered
- * `writeFencing` hook participant over a real `OrderedHookSlot`. Covers the
- * hard-block verdicts (stale outside change / never-read existing file), the
- * own-write echo / truncated-window stale checks, out-of-root stat fallback,
- * watched-root ensuring for additional dirs, and ledger isolation between
- * two Session scopes sharing one workspace (two-instance conflict).
+ * and the registered `writeFencing` hook participant over a real
+ * `OrderedHookSlot`. Covers the hard-block verdicts (stale outside change /
+ * never-read existing file), stat-only checks, and ledger isolation between
+ * two Session scopes sharing one workspace.
  */
 
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { LifecycleScope, type Scope } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
@@ -32,12 +30,11 @@ import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionFileLedger } from '#/session/sessionFileLedger/fileLedger';
 import { SessionFileLedger } from '#/session/sessionFileLedger/fileLedgerService';
-import { ISessionFsWatchService } from '#/session/sessionFs/fsWatch';
-import { SessionFsWatchService } from '#/session/sessionFs/fsWatchService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 import {
   ToolAccesses,
+  type ExecutableToolContext,
   type ExecutableToolResult,
   makeToolFileRevision,
   toolFileRevision,
@@ -51,7 +48,6 @@ import { fakeHostFsWatch, type FakeWatch } from '../../session/sessionFs/stubs';
 
 void AgentFileFencingService;
 void SessionFileLedger;
-void SessionFsWatchService;
 void SessionWorkspaceContextService;
 void AgentToolExecutorService;
 
@@ -115,7 +111,6 @@ interface AgentWorld {
   readonly session: Scope;
   readonly agent: Scope;
   readonly executor: IAgentToolExecutorService;
-  readonly watch: ISessionFsWatchService;
   readonly workspace: ISessionWorkspaceContext;
   readonly ledger: ISessionFileLedger;
 }
@@ -131,7 +126,6 @@ function makeAgent(env: Env, session: Scope): AgentWorld {
     session,
     agent,
     executor,
-    watch: session.accessor.get(ISessionFsWatchService),
     workspace: session.accessor.get(ISessionWorkspaceContext),
     ledger: session.accessor.get(ISessionFileLedger),
   };
@@ -147,7 +141,12 @@ let nextCallSeq = 0;
 function beforeCtx(
   toolName: string,
   path: string,
-  opts: { id?: string; turnId?: number; args?: Record<string, unknown> } = {},
+  opts: {
+    id?: string;
+    turnId?: number;
+    args?: Record<string, unknown>;
+    execute?: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
+  } = {},
 ): ToolBeforeExecuteContext {
   const id = opts.id ?? `call-${++nextCallSeq}`;
   const args =
@@ -173,7 +172,7 @@ function beforeCtx(
     execution: {
       accesses: ToolAccesses.file(operation, path),
       approvalRule: toolName,
-      execute: async () => ({ output: 'ok' }),
+      execute: opts.execute ?? (async () => ({ output: 'ok' })),
     },
   };
 }
@@ -266,27 +265,13 @@ async function runBlocked(
   return result;
 }
 
-function foldChange(world: AgentWorld, rel: string, action: 'created' | 'modified' | 'deleted'): void {
-  world.env.fake.fire(rel, action);
-  vi.advanceTimersByTime(200);
-}
-
-function foldJunk(env: Env, count = 501): void {
-  for (let i = 0; i < count; i++) env.fake.fire(`junk-${i}.tmp`, 'created');
-  vi.advanceTimersByTime(200);
-}
-
 const hosts: ScopedTestHost[] = [];
 const cleanupPaths: string[] = [];
 
 describe('AgentFileFencingService', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
   afterEach(() => {
     for (const host of hosts.splice(0)) host.dispose();
     for (const path of cleanupPaths.splice(0)) rmSync(path, { recursive: true, force: true });
-    vi.useRealTimers();
   });
 
   it('blocks Edit on an existing file that was never read, read-first', async () => {
@@ -306,7 +291,6 @@ describe('AgentFileFencingService', () => {
     await runOk(world, 'Read', file);
 
     writeFileSync(file, 'hello world');
-    foldChange(world, 'a.txt', 'modified');
 
     const blocked = await runBlocked(world, 'Edit', file);
     expect(blocked.output).toContain('changed on disk since');
@@ -328,6 +312,15 @@ describe('AgentFileFencingService', () => {
     const blocked = await runPrepared(ctx);
     expect(blocked?.isError).toBe(true);
     expect(blocked?.output).toContain('changed on disk since');
+  });
+
+  it('does not start a recursive workspace watcher for fencing', async () => {
+    const world = setup();
+    const file = join(world.env.workDir, 'new.txt');
+
+    await runOk(world, 'Write', file);
+
+    expect(world.env.fake.watchCalls).toEqual([]);
   });
 
   it('keeps the revision captured by Read when the file changes before the did-hook', async () => {
@@ -410,14 +403,12 @@ describe('AgentFileFencingService', () => {
     expect(await world.ledger.compare(file)).toBe('clean');
   });
 
-  it('keeps consecutive Edits clean through the own-write watcher echo and re-baselines', async () => {
+  it('keeps consecutive Edits clean while the stat tuple matches the baseline', async () => {
     const world = setup();
     const file = join(world.env.workDir, 'a.txt');
     writeFileSync(file, 'hello');
     await runOk(world, 'Read', file);
     expect(world.env.statCalls()).toBe(0);
-
-    foldChange(world, 'a.txt', 'modified');
 
     await runOk(world, 'Edit', file);
     expect(world.env.statCalls()).toBe(1);
@@ -426,18 +417,15 @@ describe('AgentFileFencingService', () => {
     expect(world.env.statCalls()).toBe(2);
   });
 
-  it('resolves a truncated window by stat punch: unchanged passes, changed blocks', async () => {
+  it('checks the current stat on every execution: unchanged passes and changed blocks', async () => {
     const world = setup();
     const file = join(world.env.workDir, 'a.txt');
     writeFileSync(file, 'hello');
     await runOk(world, 'Read', file);
 
-    foldJunk(world.env);
-
     await runOk(world, 'Edit', file);
 
     writeFileSync(file, 'hello world');
-    foldJunk(world.env);
 
     const blocked = await runBlocked(world, 'Edit', file);
     expect(blocked.output).toContain('changed on disk since');
@@ -469,20 +457,15 @@ describe('AgentFileFencingService', () => {
     expect(changed.output).toContain('changed on disk since');
   });
 
-  it('ensures an additional dir becomes watched when a write target falls under it', async () => {
+  it('fences additional dirs by stat without adding a watcher', async () => {
     const world = setup();
     world.workspace.addAdditionalDir(world.env.outsideDir);
     const file = join(world.env.outsideDir, 'new.txt');
 
     await runOk(world, 'Write', file);
-    expect(world.watch.watchedRoots).toContain(world.env.outsideDir);
-    expect(world.env.fake.watchCalls).toContain(world.env.outsideDir);
+    expect(world.env.fake.watchCalls).toEqual([]);
 
     writeFileSync(file, 'changed outside');
-    world.env.fake.handles
-      .find((h) => h.root === world.env.outsideDir)
-      ?.fire('new.txt', 'modified');
-    vi.advanceTimersByTime(200);
 
     const blocked = await runBlocked(world, 'Write', file);
     expect(blocked.output).toContain('changed on disk since');
@@ -499,12 +482,9 @@ describe('AgentFileFencingService', () => {
 
     const neverRead = await runBlocked(worldB, 'Edit', file);
     expect(neverRead.output).toContain('has not been read in this session');
+    await runOk(worldB, 'Read', file);
 
     writeFileSync(file, 'hello world');
-    env.fake.handles
-      .findLast((h) => h.root === env.workDir)
-      ?.fire('a.txt', 'modified');
-    vi.advanceTimersByTime(200);
 
     const conflict = await runBlocked(worldB, 'Edit', file);
     expect(conflict.output).toContain('changed on disk since');
@@ -523,7 +503,6 @@ describe('AgentFileFencingService', () => {
     await runOk(world, 'Read', file);
 
     writeFileSync(file, 'hello world');
-    foldChange(world, 'a.txt', 'modified');
 
     // The stale verdict blocks the Edit; the wrapper's error result must not
     // be baselined by the did-hook, so the file stays stale until re-read.
@@ -535,25 +514,6 @@ describe('AgentFileFencingService', () => {
 
     const retry = await runBlocked(world, 'Edit', file);
     expect(retry.output).toContain('changed on disk since');
-  });
-
-  it('does not leak a target across turns', async () => {
-    const world = setup();
-    const file = join(world.env.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-
-    await runBefore(world, beforeCtx('Edit', file, { id: 'call-abandoned', turnId: 1 }));
-    await runBefore(
-      world,
-      beforeCtx('Edit', join(world.env.workDir, 'other.txt'), { turnId: 2 }),
-    );
-
-    // A late did-hook for the abandoned turn-1 call finds no swept target and
-    // records nothing: a.txt stays never-read, so a real Edit still blocks.
-    const abandonedCtx = beforeCtx('Edit', file, { id: 'call-abandoned', turnId: 1 });
-    await runDid(world, abandonedCtx);
-    const retry = await runBlocked(world, 'Edit', file);
-    expect(retry.output).toContain('has not been read in this session');
   });
 
   it('ignores tools other than Read/Write/Edit entirely', async () => {

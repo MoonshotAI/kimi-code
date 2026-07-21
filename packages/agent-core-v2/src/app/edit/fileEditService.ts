@@ -2,10 +2,11 @@
  * `edit` domain (L4) — `IFileEditService` implementation.
  *
  * Reads the file through the os `hostFs` domain (`IHostFileSystem`), runs the
- * pure edit logic (`TextModel` + `EditService`), and writes the re-materialized
- * content back. Maps host-level failures (e.g. `EISDIR`) to the domain-neutral
- * `FileEditResult`; it owns no tool-facing message, which the Agent `EditTool`
- * adapter supplies. Bound at App scope.
+ * pure edit logic (`TextModel` + `EditService`), verifies that the stat tuple
+ * stayed stable across the read/transform window, and writes the
+ * re-materialized content back. Maps host-level failures (e.g. `EISDIR`) to
+ * the domain-neutral `FileEditResult`; it owns no tool-facing message, which
+ * the Agent `EditTool` adapter supplies. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -16,6 +17,13 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { EditService } from './editService';
 import { type FileEditInput, type FileEditResult, IFileEditService } from './fileEdit';
 import { TextModel } from './textModel';
+
+function sameRevision(
+  a: { readonly ino?: number; readonly mtimeMs?: number; readonly size: number },
+  b: { readonly ino?: number; readonly mtimeMs?: number; readonly size: number },
+): boolean {
+  return a.ino === b.ino && a.mtimeMs === b.mtimeMs && a.size === b.size;
+}
 
 export class FileEditService implements IFileEditService {
   declare readonly _serviceBrand: undefined;
@@ -28,7 +36,15 @@ export class FileEditService implements IFileEditService {
 
   async edit(input: FileEditInput): Promise<FileEditResult> {
     try {
+      const beforeRead = await this.fs.stat(input.path);
       const raw = await this.fs.readText(input.path, { errors: 'strict' });
+      const afterRead = await this.fs.stat(input.path);
+      if (!sameRevision(beforeRead, afterRead)) {
+        return {
+          ok: false,
+          error: `${input.displayPath} changed on disk while the edit was being prepared. Read it again, then retry.`,
+        };
+      }
       const model = new TextModel(raw);
       const result = this.editor.apply(model, {
         path: input.displayPath,
@@ -38,6 +54,13 @@ export class FileEditService implements IFileEditService {
       });
       if (!result.ok) {
         return { ok: false, error: result.error };
+      }
+      const beforeWrite = await this.fs.stat(input.path);
+      if (!sameRevision(afterRead, beforeWrite)) {
+        return {
+          ok: false,
+          error: `${input.displayPath} changed on disk while the edit was being prepared. Read it again, then retry.`,
+        };
       }
       const stat = await this.fs.writeText(input.path, result.rawContent);
       return { ok: true, count: result.count, stat };

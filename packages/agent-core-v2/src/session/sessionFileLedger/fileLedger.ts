@@ -3,18 +3,16 @@
  *
  * Defines the `ISessionFileLedger` that remembers, per normalized absolute
  * path, the on-disk stat tuple (`ino`, `mtimeMs`, `size`, existence) this
- * session last successfully read or wrote, together with the
- * `sessionFsWatch` tick captured when that revision is recorded. Before every Write/Edit,
- * `compare` stats the target again and compares the tuple directly; live dirty
- * signals classify watcher echoes and truncated windows but are never the
- * correctness gate. This avoids both debounce latency and delayed watcher
- * delivery turning into a stale-write allowance.
+ * session last successfully read or wrote. Before every Write/Edit, `compare`
+ * stats the target again and compares the tuple directly. The mechanism is
+ * detection, not mutual exclusion: it blocks stale writes it can observe and
+ * deliberately accepts the residual stat→write race, which no
+ * cooperating-process lock could close against external editors anyway.
  *
  * The verdict drives the write-path policy: `clean` lets the call through,
- * `stale` means the file diverged since the baseline (or a path-level dirty
- * signal hit with no baseline at all), and `no-baseline` means the target
- * exists on disk but this session never read or wrote it (the read-first
- * case). New-file creation is always `clean`.
+ * `stale` means the file diverged since the baseline, and `no-baseline` means
+ * the target exists on disk but this session never read or wrote it (the
+ * read-first case). New-file creation is always `clean`.
  *
  * The ledger is in-memory only: never persisted, never journaled, never part
  * of diagnostics. `resume` and `fork` therefore start from an empty ledger
