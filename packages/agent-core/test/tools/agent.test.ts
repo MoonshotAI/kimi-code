@@ -1074,6 +1074,148 @@ describe('AgentTool', () => {
     expect(result.output).toContain('inheriting the main agent model');
   });
 
+  it('prefers a configured binding slot over the type binding', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        modelAlias: 'slot/model-a',
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      readBinding: async () => ({ model: 'type/model-b' }),
+      readSlotBinding: async () => ({ model: 'slot/model-a' }),
+      isModelAliasKnown: () => true,
+    });
+
+    const result = await executeTool(
+      tool,
+      context({ prompt: 'Investigate', description: 'Find cause', binding_slot: 'debater_a' }),
+    );
+
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'slot/model-a' }),
+    );
+    expect(result.output).toContain('binding_slot: debater_a');
+  });
+
+  it('asks to configure a requested slot and applies the answer', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        modelAlias: 'sub2/glm-5.2-x',
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const askBinding = vi.fn(async () => ({ model: 'sub2/glm-5.2-x' }));
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      readBinding: async () => undefined,
+      readSlotBinding: async () => undefined,
+      askBinding,
+      isModelAliasKnown: () => true,
+    });
+
+    await executeTool(
+      tool,
+      context({ prompt: 'Investigate', description: 'Find cause', binding_slot: 'debater_a' }),
+    );
+
+    expect(askBinding).toHaveBeenCalledTimes(1);
+    expect(askBinding).toHaveBeenCalledWith('coder', { slot: 'debater_a' });
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'sub2/glm-5.2-x' }),
+    );
+  });
+
+  it('warns and falls back to the type binding when the slot is unconfigured and asking is unavailable', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        modelAlias: 'type/model-b',
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      readBinding: async () => ({ model: 'type/model-b' }),
+      readSlotBinding: async () => undefined,
+      isModelAliasKnown: () => true,
+    });
+
+    const result = await executeTool(
+      tool,
+      context({ prompt: 'Investigate', description: 'Find cause', binding_slot: 'debater_a' }),
+    );
+
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'type/model-b' }),
+    );
+    expect(result.output).toContain('warning:');
+    expect(result.output).toContain('binding slot "debater_a" is not configured');
+  });
+
+  it('warns and falls back to the type binding when the slot alias is unknown and asking is unavailable', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        modelAlias: 'type/model-b',
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      readBinding: async () => ({ model: 'type/model-b' }),
+      readSlotBinding: async () => ({ model: 'gone/model-x' }),
+      isModelAliasKnown: (alias) => alias !== 'gone/model-x',
+    });
+
+    const result = await executeTool(
+      tool,
+      context({ prompt: 'Investigate', description: 'Find cause', binding_slot: 'debater_a' }),
+    );
+
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'type/model-b' }),
+    );
+    expect(result.output).toContain('binding slot "debater_a" references unknown model alias');
+  });
+
+  it('ignores binding slots when the experiment is disabled', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const readSlotBinding = vi.fn(async () => ({ model: 'slot/model-a' }));
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: false,
+      readSlotBinding,
+    });
+
+    await executeTool(
+      tool,
+      context({ prompt: 'Investigate', description: 'Find cause', binding_slot: 'debater_a' }),
+    );
+
+    expect(readSlotBinding).not.toHaveBeenCalled();
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: undefined, thinkingEffort: undefined }),
+    );
+  });
+
   it('inherits plainly when the binding is an explicit inherit choice', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({

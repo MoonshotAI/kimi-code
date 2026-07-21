@@ -1,12 +1,14 @@
 /**
  * Workspace subagent model bindings — callback factory for the Agent tool.
  *
- * Bindings live in `<projectRoot>/.kimi-code/local.toml` under
- * `[subagent.<type>]` (see `config/workspace-local.ts`). The Agent tool uses
- * these callbacks to (a) apply a binding mechanically on spawn and (b) ask
- * the user interactively the first time an unbound subagent type is spawned
- * in this workspace, persisting the answer — including an explicit "keep
- * inheriting" choice so the question never repeats for that type.
+ * Bindings live in `<projectRoot>/.kimi-code/local.toml`: per-type bindings
+ * under `[subagent.<type>]` and named binding slots under
+ * `[subagent-slot.<name>]` (see `config/workspace-local.ts`). The Agent tool
+ * uses these callbacks to (a) apply a binding mechanically on spawn and
+ * (b) ask the user interactively the first time an unbound subagent type or
+ * requested slot is spawned in this workspace, persisting the answer —
+ * including an explicit "keep inheriting" choice so the question never
+ * repeats for that type or slot.
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
@@ -15,12 +17,18 @@ import type { Agent } from '../index';
 import type { QuestionAnswers, QuestionResult } from '../../rpc';
 import {
   readSubagentBinding,
+  readSubagentSlotBinding,
   writeSubagentBinding,
+  writeSubagentSlotBinding,
   type SubagentBinding,
 } from '../../config/workspace-local';
 
 export type ReadSubagentBindingCallback = (
   profileName: string,
+) => Promise<SubagentBinding | undefined>;
+
+export type ReadSubagentSlotBindingCallback = (
+  slot: string,
 ) => Promise<SubagentBinding | undefined>;
 
 export interface AskSubagentBindingContext {
@@ -30,6 +38,12 @@ export interface AskSubagentBindingContext {
    * happening again and the new choice repairs the broken binding.
    */
   readonly missingModel?: string;
+  /**
+   * Set when the ask concerns a named binding slot (requested via the Agent
+   * tool's `binding_slot` parameter) rather than a subagent type; the answer
+   * is persisted under `[subagent-slot.<name>]`.
+   */
+  readonly slot?: string;
 }
 
 export type AskSubagentBindingCallback = (
@@ -52,11 +66,15 @@ export function createSubagentBindingCallbacks(
   workDir: string,
 ): {
   readBinding: ReadSubagentBindingCallback;
+  readSlotBinding: ReadSubagentSlotBindingCallback;
   askBinding?: AskSubagentBindingCallback;
   isModelAliasKnown: IsModelAliasKnownCallback;
 } {
   const readBinding: ReadSubagentBindingCallback = (profileName) =>
     readSubagentBinding(kaos, workDir, profileName);
+
+  const readSlotBinding: ReadSubagentSlotBindingCallback = (slot) =>
+    readSubagentSlotBinding(kaos, workDir, slot);
 
   // Without a models config there is nothing to validate against — stay
   // silent rather than nagging about every binding.
@@ -67,16 +85,25 @@ export function createSubagentBindingCallbacks(
   };
 
   const requestQuestion = agent.rpc?.requestQuestion?.bind(agent.rpc);
-  if (requestQuestion === undefined) return { readBinding, isModelAliasKnown };
+  if (requestQuestion === undefined) return { readBinding, readSlotBinding, isModelAliasKnown };
 
   const askBinding: AskSubagentBindingCallback = async (profileName, context) => {
     const models = agent.kimiConfig?.models ?? {};
     const aliases = Object.keys(models).toSorted();
     const missingModel = context?.missingModel;
+    const slot = context?.slot;
+    const subject = slot === undefined ? `Subagent type "${profileName}"` : `Binding slot "${slot}"`;
+    const persist = async (binding: SubagentBinding): Promise<void> => {
+      if (slot === undefined) {
+        await writeSubagentBinding(kaos, workDir, profileName, binding);
+      } else {
+        await writeSubagentSlotBinding(kaos, workDir, slot, binding);
+      }
+    };
     const modelQuestion =
       missingModel === undefined
-        ? `Subagent type "${profileName}" has no model binding in this workspace. Bind a model for it?`
-        : `Subagent type "${profileName}" is bound to model "${missingModel}", but that alias no longer exists in your models config. Bind a model for it?`;
+        ? `${subject} has no model binding in this workspace. Bind a model for it?`
+        : `${subject} is bound to model "${missingModel}", but that alias no longer exists in your models config. Bind a model for it?`;
     const modelResult = await requestQuestion({
       questions: [
         {
@@ -96,7 +123,7 @@ export function createSubagentBindingCallbacks(
     if (chosen === undefined) return undefined; // dismissed — ask again next time
     if (chosen === INHERIT_LABEL) {
       const binding: SubagentBinding = { inherit: true };
-      await writeSubagentBinding(kaos, workDir, profileName, binding);
+      await persist(binding);
       return binding;
     }
 
@@ -104,7 +131,7 @@ export function createSubagentBindingCallbacks(
     let thinkingEffort: string | undefined;
     const supportEfforts = models[model]?.supportEfforts ?? [];
     if (supportEfforts.length > 0) {
-      const effortQuestion = `Thinking effort for subagent type "${profileName}" on ${model}?`;
+      const effortQuestion = `Thinking effort for ${subject} on ${model}?`;
       const effortResult = await requestQuestion({
         questions: [
           {
@@ -122,11 +149,11 @@ export function createSubagentBindingCallbacks(
     }
 
     const binding: SubagentBinding = { model, thinkingEffort };
-    await writeSubagentBinding(kaos, workDir, profileName, binding);
+    await persist(binding);
     return binding;
   };
 
-  return { readBinding, askBinding, isModelAliasKnown };
+  return { readBinding, readSlotBinding, askBinding, isModelAliasKnown };
 }
 
 function answerFor(result: QuestionResult, question: string): string | undefined {

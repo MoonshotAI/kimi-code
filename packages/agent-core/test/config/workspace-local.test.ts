@@ -12,8 +12,11 @@ import {
   normalizeAdditionalDirs,
   readSubagentBinding,
   readSubagentBindings,
+  readSubagentSlotBinding,
+  readSubagentSlotBindings,
   readWorkspaceAdditionalDirs,
   writeSubagentBinding,
+  writeSubagentSlotBinding,
 } from '../../src/config/workspace-local';
 
 const tempDirs: string[] = [];
@@ -281,5 +284,51 @@ describe('subagent bindings', () => {
     await expect(readSubagentBinding(testKaos, root, 'coder')).resolves.toBeUndefined();
     const text = await readFile(join(root, '.kimi-code', 'local.toml'), 'utf-8');
     expect(text).not.toContain('subagent');
+  });
+
+  it('writes and reads back a named slot binding', async () => {
+    const root = await makeProject();
+
+    const { configPath } = await writeSubagentSlotBinding(testKaos, root, 'debater_a', {
+      model: 'deepseek/deepseek-v4',
+      thinkingEffort: 'high',
+    });
+
+    expect(configPath).toBe(join(root, '.kimi-code', 'local.toml'));
+    await expect(readSubagentSlotBinding(testKaos, root, 'debater_a')).resolves.toEqual({
+      model: 'deepseek/deepseek-v4',
+      thinkingEffort: 'high',
+      inherit: undefined,
+    });
+    // Slot storage is independent from the type-binding table.
+    await expect(readSubagentBinding(testKaos, root, 'debater_a')).resolves.toBeUndefined();
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('[subagent-slot.debater_a]');
+    expect(text).toContain('model = "deepseek/deepseek-v4"');
+  });
+
+  it('keeps slot bindings and type bindings side by side and clears slots independently', async () => {
+    const root = await makeProject();
+    await writeSubagentBinding(testKaos, root, 'coder', { model: 'kimi-code/k3' });
+    await writeSubagentSlotBinding(testKaos, root, 'debater_a', { model: 'deepseek/deepseek-v4' });
+    await writeSubagentSlotBinding(testKaos, root, 'debater_b', { model: 'openrouter/claude' });
+
+    await expect(readSubagentSlotBindings(testKaos, root)).resolves.toEqual({
+      debater_a: { model: 'deepseek/deepseek-v4', thinkingEffort: undefined, inherit: undefined },
+      debater_b: { model: 'openrouter/claude', thinkingEffort: undefined, inherit: undefined },
+    });
+    await expect(readSubagentBinding(testKaos, root, 'coder')).resolves.toMatchObject({
+      model: 'kimi-code/k3',
+    });
+
+    await writeSubagentSlotBinding(testKaos, root, 'debater_a', undefined);
+
+    await expect(readSubagentSlotBinding(testKaos, root, 'debater_a')).resolves.toBeUndefined();
+    await expect(readSubagentSlotBinding(testKaos, root, 'debater_b')).resolves.toMatchObject({
+      model: 'openrouter/claude',
+    });
+    const text = await readFile(join(root, '.kimi-code', 'local.toml'), 'utf-8');
+    expect(text).toContain('[subagent.coder]');
+    expect(text).not.toContain('debater_a');
   });
 });

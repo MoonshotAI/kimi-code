@@ -21,6 +21,7 @@ const WorkspaceLocalTomlSchema = z.object({
     })
     .optional(),
   subagent: z.record(z.string(), SubagentBindingTomlSchema).optional(),
+  'subagent-slot': z.record(z.string(), SubagentBindingTomlSchema).optional(),
 });
 
 type WorkspaceLocalToml = z.infer<typeof WorkspaceLocalTomlSchema>;
@@ -120,16 +121,7 @@ export async function readSubagentBinding(
   workDir: string,
   agentType: string,
 ): Promise<SubagentBinding | undefined> {
-  const projectRoot = await findProjectRoot(kaos, workDir);
-  const configPath = getWorkspaceLocalConfigPath(projectRoot);
-  const file = await readWorkspaceLocalToml(kaos, configPath);
-  const entry = file?.parsed.subagent?.[agentType];
-  if (entry === undefined) return undefined;
-  return {
-    model: entry.model,
-    thinkingEffort: entry.thinking_effort,
-    inherit: entry.inherit,
-  };
+  return readBindingEntry(kaos, workDir, 'subagent', agentType);
 }
 
 /** Read all subagent bindings for the workspace (for display/management). */
@@ -137,16 +129,7 @@ export async function readSubagentBindings(
   kaos: Kaos,
   workDir: string,
 ): Promise<Readonly<Record<string, SubagentBinding>>> {
-  const projectRoot = await findProjectRoot(kaos, workDir);
-  const configPath = getWorkspaceLocalConfigPath(projectRoot);
-  const file = await readWorkspaceLocalToml(kaos, configPath);
-  const entries = file?.parsed.subagent ?? {};
-  return Object.fromEntries(
-    Object.entries(entries).map(([type, entry]) => [
-      type,
-      { model: entry.model, thinkingEffort: entry.thinking_effort, inherit: entry.inherit },
-    ]),
-  );
+  return readBindingSection(kaos, workDir, 'subagent');
 }
 
 /**
@@ -159,24 +142,106 @@ export async function writeSubagentBinding(
   agentType: string,
   binding: SubagentBinding | undefined,
 ): Promise<{ readonly configPath: string }> {
+  return writeBindingEntry(kaos, workDir, 'subagent', agentType, binding);
+}
+
+/**
+ * Named binding slots (`[subagent-slot.<name>]`): instance-level bindings the
+ * Agent tool selects via its `binding_slot` parameter. Unlike type bindings,
+ * slots let a caller address a specific pre-configured model/effort pair —
+ * the caller names a slot, never a model.
+ */
+export async function readSubagentSlotBinding(
+  kaos: Kaos,
+  workDir: string,
+  slot: string,
+): Promise<SubagentBinding | undefined> {
+  return readBindingEntry(kaos, workDir, 'subagent-slot', slot);
+}
+
+/** Read all named slot bindings for the workspace (for display/management). */
+export async function readSubagentSlotBindings(
+  kaos: Kaos,
+  workDir: string,
+): Promise<Readonly<Record<string, SubagentBinding>>> {
+  return readBindingSection(kaos, workDir, 'subagent-slot');
+}
+
+/**
+ * Write (or clear, when `binding` is `undefined`) the binding for one named
+ * slot, preserving unrelated TOML content.
+ */
+export async function writeSubagentSlotBinding(
+  kaos: Kaos,
+  workDir: string,
+  slot: string,
+  binding: SubagentBinding | undefined,
+): Promise<{ readonly configPath: string }> {
+  return writeBindingEntry(kaos, workDir, 'subagent-slot', slot, binding);
+}
+
+type BindingSection = 'subagent' | 'subagent-slot';
+
+async function readBindingEntry(
+  kaos: Kaos,
+  workDir: string,
+  section: BindingSection,
+  name: string,
+): Promise<SubagentBinding | undefined> {
+  const projectRoot = await findProjectRoot(kaos, workDir);
+  const configPath = getWorkspaceLocalConfigPath(projectRoot);
+  const file = await readWorkspaceLocalToml(kaos, configPath);
+  const entry = file?.parsed[section]?.[name];
+  if (entry === undefined) return undefined;
+  return {
+    model: entry.model,
+    thinkingEffort: entry.thinking_effort,
+    inherit: entry.inherit,
+  };
+}
+
+async function readBindingSection(
+  kaos: Kaos,
+  workDir: string,
+  section: BindingSection,
+): Promise<Readonly<Record<string, SubagentBinding>>> {
+  const projectRoot = await findProjectRoot(kaos, workDir);
+  const configPath = getWorkspaceLocalConfigPath(projectRoot);
+  const file = await readWorkspaceLocalToml(kaos, configPath);
+  const entries = file?.parsed[section] ?? {};
+  return Object.fromEntries(
+    Object.entries(entries).map(([type, entry]) => [
+      type,
+      { model: entry.model, thinkingEffort: entry.thinking_effort, inherit: entry.inherit },
+    ]),
+  );
+}
+
+async function writeBindingEntry(
+  kaos: Kaos,
+  workDir: string,
+  section: BindingSection,
+  name: string,
+  binding: SubagentBinding | undefined,
+): Promise<{ readonly configPath: string }> {
   const projectRoot = await findProjectRoot(kaos, workDir);
   const configPath = getWorkspaceLocalConfigPath(projectRoot);
   const file = (await readWorkspaceLocalToml(kaos, configPath)) ?? { raw: {}, parsed: {} };
 
-  const subagent = cloneRecord(file.raw['subagent']);
+  const record = cloneRecord(file.raw[section]);
   if (binding === undefined) {
-    delete subagent[agentType];
+    delete record[name];
   } else {
     const entry: Record<string, unknown> = {};
     if (binding.model !== undefined) entry['model'] = binding.model;
     if (binding.thinkingEffort !== undefined) entry['thinking_effort'] = binding.thinkingEffort;
     if (binding.inherit !== undefined) entry['inherit'] = binding.inherit;
-    subagent[agentType] = entry;
+    record[name] = entry;
   }
-  if (Object.keys(subagent).length === 0) {
-    delete file.raw['subagent'];
+  if (Object.keys(record).length === 0) {
+    delete file.raw[section];
   } else {
-    file.raw['subagent'] = subagent;
+    file.raw[section] = record;
   }
 
   await kaos.mkdir(dirname(configPath), { parents: true, existOk: true });
