@@ -43,7 +43,6 @@ import {
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
 } from '#/agent/loop/configSection';
-import { ENV_MODEL_ALIAS_KEY } from '#/app/model/envOverlay';
 import {
   THINKING_SECTION,
   type ThinkingConfig,
@@ -1091,17 +1090,19 @@ describe('get() freshness for overlay-written domains', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    env['KIMI_MODEL_NAME'] = 'env-model';
-    env['KIMI_MODEL_API_KEY'] = 'sk-test';
-    expect(config.get<Record<string, unknown>>('models')).toHaveProperty(ENV_MODEL_ALIAS_KEY);
-    expect(config.get<string>('defaultModel')).toBe(ENV_MODEL_ALIAS_KEY);
+    ix.get(IConfigRegistry).registerEffectiveOverlay({
+      apply(effective, getEnv) {
+        if (getEnv('SMOKE_OVERLAY_FLAG') !== '1') return [];
+        effective['overlayDomain'] = { flag: true };
+        return ['overlayDomain'];
+      },
+    });
 
-    delete env['KIMI_MODEL_NAME'];
-    delete env['KIMI_MODEL_API_KEY'];
-    expect(config.get<Record<string, unknown> | undefined>('models') ?? {}).not.toHaveProperty(
-      ENV_MODEL_ALIAS_KEY,
-    );
-    expect(config.get<string | undefined>('defaultModel')).toBeUndefined();
+    expect(config.get('overlayDomain')).toBeUndefined();
+    env['SMOKE_OVERLAY_FLAG'] = '1';
+    expect(config.get('overlayDomain')).toEqual({ flag: true });
+    delete env['SMOKE_OVERLAY_FLAG'];
+    expect(config.get('overlayDomain')).toBeUndefined();
 
     disposables.dispose();
   });
