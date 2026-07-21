@@ -481,7 +481,7 @@ function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission[
     else if (part.type === 'image_url') {
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
       parts.push(match === null
-        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url } }
+        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
         : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
     } else if (part.type === 'video_url') {
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
@@ -497,7 +497,7 @@ function contentToCoreParts(content: PromptSubmission['content']): ContentPart[]
   const parts: ContentPart[] = [];
   for (const part of content) {
     if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url } });
+    else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url, id: part.source.id } });
     else if (part.type === 'image' && part.source.kind === 'base64') parts.push({ type: 'image_url', imageUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
     else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url, id: part.source.id } });
     else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
