@@ -518,30 +518,32 @@ export class Agent {
         'The current model does not support video upload.',
       );
     }
-    const trimmed = path.trim();
-    if (trimmed.length === 0) {
+    // The trimmed copy is only the emptiness check — the path itself is used
+    // verbatim so a name that legitimately starts or ends with whitespace
+    // still resolves to the same file.
+    if (path.trim().length === 0) {
       throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Video path cannot be empty.');
     }
-    const header = await this.kaos.readBytes(trimmed, MEDIA_SNIFF_BYTES);
-    const fileType = detectFileType(trimmed, header, 'media');
+    const header = await this.kaos.readBytes(path, MEDIA_SNIFF_BYTES);
+    const fileType = detectFileType(path, header, 'media');
     if (fileType.kind !== 'video') {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, `"${trimmed}" is not a video file.`);
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, `"${path}" is not a video file.`);
     }
-    const stat = await this.kaos.stat(trimmed);
+    const stat = await this.kaos.stat(path);
     if (stat.stSize === 0) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, `"${trimmed}" is empty.`);
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, `"${path}" is empty.`);
     }
     if (stat.stSize > MAX_MEDIA_BYTES) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        `"${trimmed}" is ${String(stat.stSize)} bytes, which exceeds the 100MB maximum for video uploads.`,
+        `"${path}" is ${String(stat.stSize)} bytes, which exceeds the 100MB maximum for video uploads.`,
       );
     }
-    const data = await this.kaos.readBytes(trimmed);
+    const data = await this.kaos.readBytes(path);
     return uploader({
       data,
       mimeType: fileType.mimeType,
-      filename: trimmed.split(/[\\/]/).at(-1),
+      filename: path.split(/[\\/]/).at(-1),
     });
   }
 
