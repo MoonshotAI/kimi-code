@@ -46,7 +46,12 @@ function makeInMemoryStreamPair(): {
 }
 
 interface CapturedCall {
-  options: { id?: string; workDir: string; mcpServers?: Record<string, unknown> };
+  options: {
+    additionalDirs?: readonly string[];
+    id?: string;
+    mcpServers?: Record<string, unknown>;
+    workDir: string;
+  };
 }
 
 function makeHarness(
@@ -73,7 +78,11 @@ function makeHarness(
   } as unknown as Session;
   const harness = {
     auth: { status: async () => AUTHED_STATUS },
-    createSession: async (options: { id?: string; workDir: string }) => {
+    createSession: async (options: {
+      additionalDirs?: readonly string[];
+      id?: string;
+      workDir: string;
+    }) => {
       captured.push({ options });
       return Object.assign({}, fakeSession, { id: options.id ?? sessionId }) as Session;
     },
@@ -127,7 +136,11 @@ describe('AcpServer session/new', () => {
     const captured: CapturedCall[] = [];
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
-      createSession: async (options: { id?: string; workDir: string }) => {
+      createSession: async (options: {
+        additionalDirs?: readonly string[];
+        id?: string;
+        workDir: string;
+      }) => {
         captured.push({ options });
         return {
           id: options.id ?? 'fallback',
@@ -155,6 +168,126 @@ describe('AcpServer session/new', () => {
     expect(captured[0]?.options.id).toBe(first.sessionId);
     expect(captured[1]?.options.workDir).toBe('/tmp/b');
     expect(captured[1]?.options.id).toBe(second.sessionId);
+  });
+
+  it('passes ACP additionalDirectories through as SDK additionalDirs', async () => {
+    const captured: CapturedCall[] = [];
+    const { harness } = makeHarness('sess-multi-root', captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.newSession({
+      cwd: '/tmp/work',
+      additionalDirectories: ['/tmp/docs', '/tmp/plugin'],
+      mcpServers: [],
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.options.additionalDirs).toEqual(['/tmp/docs', '/tmp/plugin']);
+  });
+
+  it('omits additionalDirs from createSession when additionalDirectories is absent', async () => {
+    const captured: CapturedCall[] = [];
+    const { harness } = makeHarness('sess-omit', captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    expect(captured).toHaveLength(1);
+    expect((captured[0]!.options as { additionalDirs?: readonly string[] }).additionalDirs).toBeUndefined();
+  });
+
+  it('forwards empty additionalDirectories as empty array', async () => {
+    const captured: CapturedCall[] = [];
+    const { harness } = makeHarness('sess-empty', captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [], additionalDirectories: [] });
+
+    expect(captured).toHaveLength(1);
+    expect((captured[0]!.options as { additionalDirs?: readonly string[] }).additionalDirs).toEqual([]);
+  });
+
+  it('rejects non-array additionalDirectories with invalid_params', async () => {
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      getConfig: async () => ({ providers: {}, models: {} }),
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await expect(
+      client.newSession({
+        cwd: '/tmp/work',
+        mcpServers: [],
+        additionalDirectories: 'not-an-array' as never,
+      }),
+    ).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it('rejects non-string entry in additionalDirectories', async () => {
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      getConfig: async () => ({ providers: {}, models: {} }),
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await expect(
+      client.newSession({
+        cwd: '/tmp/work',
+        mcpServers: [],
+        additionalDirectories: [42] as never,
+      }),
+    ).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it('rejects empty string entry in additionalDirectories', async () => {
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      getConfig: async () => ({ providers: {}, models: {} }),
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await expect(
+      client.newSession({
+        cwd: '/tmp/work',
+        mcpServers: [],
+        additionalDirectories: [''],
+      }),
+    ).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it('rejects relative path in additionalDirectories', async () => {
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      getConfig: async () => ({ providers: {}, models: {} }),
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await expect(
+      client.newSession({
+        cwd: '/tmp/work',
+        mcpServers: [],
+        additionalDirectories: ['relative/path'],
+      }),
+    ).rejects.toMatchObject({ code: -32602 });
   });
 
   it('advertises configOptions (PLAN D11 + Phase 15 thinking toggle) — model + thinking + mode under the unified SessionConfigOption surface', async () => {

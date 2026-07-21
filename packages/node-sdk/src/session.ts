@@ -73,14 +73,19 @@ export class Session {
     return this.resumeState;
   }
 
+  updateSummary(summary: ResumedSessionSummary): void {
+    this.ensureOpen();
+    this.summary = summary;
+    this.resumeState = resumeStateFromSummary(summary);
+  }
+
   async reloadSession(options?: ReloadSessionOptions): Promise<ResumedSessionSummary> {
     this.ensureOpen();
     const summary = await this.rpc.reloadSession({
       sessionId: this.id,
       forcePluginSessionStartReminder: options?.forcePluginSessionStartReminder,
     });
-    this.summary = summary;
-    this.resumeState = resumeStateFromSummary(summary);
+    this.updateSummary(summary);
     return summary;
   }
 

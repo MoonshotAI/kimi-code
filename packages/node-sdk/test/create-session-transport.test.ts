@@ -52,6 +52,7 @@ max_context_size = 1000
 }
 
 class StubRpc extends SDKRpcClientBase {
+  plainResumeCalls: ResumeSessionInput[] = [];
   resumeCalls: Array<{ input: ResumeSessionInput; kaos: Kaos; persistenceKaos?: Kaos }> = [];
 
   protected async getRpc(): Promise<never> {
@@ -68,6 +69,27 @@ class StubRpc extends SDKRpcClientBase {
     };
   }
 
+  override async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
+    this.plainResumeCalls.push(input);
+    return {
+      id: input.id,
+      workDir: '/tmp/work',
+      sessionDir: '/tmp/session',
+      createdAt: 1,
+      updatedAt: 1,
+      additionalDirs: input.additionalDirs ?? [],
+      sessionMetadata: {
+        createdAt: '',
+        updatedAt: '',
+        title: '',
+        isCustomTitle: false,
+        agents: {},
+        custom: {},
+      },
+      agents: {},
+    };
+  }
+
   override async resumeSessionWithKaos(input: ResumeSessionInput, kaos: Kaos, persistenceKaos?: Kaos): Promise<ResumedSessionSummary> {
     this.resumeCalls.push({ input, kaos, persistenceKaos });
     return {
@@ -76,6 +98,7 @@ class StubRpc extends SDKRpcClientBase {
       sessionDir: '/tmp/session',
       createdAt: 1,
       updatedAt: 1,
+      additionalDirs: input.additionalDirs ?? [],
       sessionMetadata: {
         createdAt: '',
         updatedAt: '',
@@ -765,12 +788,55 @@ effort = "medium"
     const resumed = await harness.resumeSession({ id: session.id, kaos });
 
     expect(resumed).toBe(session);
+    expect(resumed.summary?.additionalDirs).toEqual([]);
+    expect(resumed.getResumeState()).toMatchObject({
+      sessionMetadata: {
+        title: '',
+      },
+      agents: {},
+    });
     expect(rpc.resumeCalls).toHaveLength(1);
     expect(rpc.resumeCalls[0]).toMatchObject({
       input: { id: 'ses_active' },
       kaos,
       persistenceKaos: undefined,
     });
+  });
+
+  it('refreshes an active session when resumeSession receives additionalDirs without a new Kaos', async () => {
+    const records: TelemetryRecord[] = [];
+    const rpc = new StubRpc();
+    const harness = new KimiHarness(rpc, {
+      homeDir: '/tmp/home',
+      configPath: '/tmp/config.toml',
+      auth: { status: async () => ({ providers: [] }) } as never,
+      telemetry: recordingTelemetry(records),
+      ensureConfigFile: async () => undefined,
+      onClose: () => undefined,
+    });
+
+    const session = await harness.createSession({ id: 'ses_active_dirs', workDir: '/tmp/work' });
+
+    const resumed = await harness.resumeSession({
+      id: session.id,
+      additionalDirs: ['/tmp/extra'],
+    });
+
+    expect(resumed).toBe(session);
+    expect(resumed.summary?.additionalDirs).toEqual(['/tmp/extra']);
+    expect(resumed.getResumeState()).toMatchObject({
+      sessionMetadata: {
+        title: '',
+      },
+      agents: {},
+    });
+    expect(rpc.plainResumeCalls).toEqual([
+      {
+        id: 'ses_active_dirs',
+        additionalDirs: ['/tmp/extra'],
+      },
+    ]);
+    expect(rpc.resumeCalls).toHaveLength(0);
   });
 });
 
