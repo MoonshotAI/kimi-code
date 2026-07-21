@@ -1716,7 +1716,7 @@ command = "vim"
       await vi.waitFor(() => {
         expect(session.uploadVideo).toHaveBeenCalled();
       });
-      (driver as { session: unknown }).session = makeSession();
+      (driver as unknown as { session: unknown }).session = makeSession();
       releaseUpload();
 
       await vi.waitFor(() => {
