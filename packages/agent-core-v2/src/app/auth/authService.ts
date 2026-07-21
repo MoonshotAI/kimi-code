@@ -329,8 +329,11 @@ export class OAuthService extends Disposable implements IOAuthService {
         );
         await this.config.replace(PROVIDERS_SECTION, next.providers);
         await this.config.replace(MODELS_SECTION, next.models ?? {});
-        await this.config.set(DEFAULT_MODEL_SECTION, next.defaultModel);
-        await this.config.set(THINKING_SECTION, next.thinking);
+        // defaultModel/thinking hold the final computed values — write them
+        // with replace (set-undefined cannot delete; set-object would merge
+        // stale keys into the previous thinking config).
+        await this.config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);
+        await this.config.replace(THINKING_SECTION, next.thinking);
         changed.push({
           provider_id: KIMI_CODE_PROVIDER_NAME,
           provider_name: 'Kimi Code',
@@ -509,8 +512,12 @@ export class OAuthService extends Disposable implements IOAuthService {
       await this.config.replace(SERVICES_SECTION, next.services);
     }
     if (cleanup.defaultModelCleared) {
-      await this.config.set(DEFAULT_MODEL_SECTION, undefined);
-      await this.config.set(THINKING_SECTION, undefined);
+      // Delete, not merge: `set(domain, undefined)` resolves back to the base
+      // value by design — only `replace(domain, undefined)` actually removes
+      // the key, and leaving defaultModel dangling to a just-removed managed
+      // model keeps /api/v1/auth reporting ready=true after logout.
+      await this.config.replace(DEFAULT_MODEL_SECTION, undefined);
+      await this.config.replace(THINKING_SECTION, undefined);
     }
   }
 

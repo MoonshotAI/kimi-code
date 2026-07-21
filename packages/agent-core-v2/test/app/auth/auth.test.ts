@@ -136,6 +136,14 @@ describe('OAuthService', () => {
         services = value as Record<string, unknown> | undefined;
         return;
       }
+      if (domain === 'defaultModel') {
+        defaultModel = value as string | undefined;
+        return;
+      }
+      if (domain === 'thinking') {
+        thinking = value as { enabled?: boolean; effort?: string } | undefined;
+        return;
+      }
       throw new Error(`unexpected config replace: ${domain}`);
     });
     events = [];
@@ -398,7 +406,7 @@ describe('OAuthService', () => {
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
   });
 
   it('startLogin returns authenticated when model refresh fails on the already-authenticated fast path', async () => {
@@ -421,7 +429,7 @@ describe('OAuthService', () => {
         oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
-    expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
+    expect(configReplace).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
   });
 
   it('keeps a device-code login authenticated when model fetch is unavailable after authorization', async () => {
@@ -439,7 +447,7 @@ describe('OAuthService', () => {
     });
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
+    expect(configReplace).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
   });
 
   it('refreshes managed models and sets the default model after a device-code login succeeds', async () => {
@@ -467,7 +475,7 @@ describe('OAuthService', () => {
         'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
       }),
     );
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
   });
 
   it('keeps an in-flight OAuth flow alive when unrelated providers change', async () => {
@@ -596,8 +604,8 @@ describe('OAuthService', () => {
         maxContextSize: 8192,
       },
     });
-    expect(configSet).toHaveBeenCalledWith('defaultModel', undefined);
-    expect(configSet).toHaveBeenCalledWith('thinking', undefined);
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', undefined);
+    expect(configReplace).toHaveBeenCalledWith('thinking', undefined);
   });
 
   it('logout removes managed web services while preserving unrelated services', async () => {
@@ -721,8 +729,8 @@ describe('OAuthService', () => {
         'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
       }),
     );
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
-    expect(configSet).toHaveBeenCalledWith('thinking', { enabled: true });
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    expect(configReplace).toHaveBeenCalledWith('thinking', { enabled: true });
     expect(events).toEqual([
       {
         type: 'event.model_catalog.changed',
