@@ -3,10 +3,11 @@
  *
  * Defines the context objects passed through `IAgentToolExecutorService`'s
  * `onBeforeExecuteTool` / `onDidExecuteTool` hooks and the decision results
- * handlers may return. Participants such as `permissionGate`,
- * `permissionPolicy`, `toolDedupe`, `externalHooks`, `goal`, and `prompt`
- * register through the executor's hook slots. Pure contract (types only);
- * no scoped service.
+ * handlers may return. Participants such as `permissionGate`, `toolDedupe`,
+ * `externalHooks`, `goal`, `plan`, `swarm`, `btw`, and `prompt` register
+ * through the executor's hook slots; Harness constraints order themselves
+ * `before: 'permission'` (see the `permission` topic doc). Pure contract
+ * (types only); no scoped service.
  */
 
 import type { ToolCall } from '#/kosong/contract/message';

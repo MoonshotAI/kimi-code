@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -14,6 +14,14 @@ import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { AgentSwarmService } from '#/agent/swarm/swarmService';
 import { SwarmModel } from '#/agent/swarm/swarmOps';
 import { AgentSwarmTool, AgentSwarmToolInputSchema } from '#/agent/swarm/tools/agent-swarm';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type {
+  ToolBeforeExecuteContext,
+  ToolDidExecuteContext,
+} from '#/agent/toolExecutor/toolHooks';
+import { OrderedHookSlot } from '#/hooks';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -42,6 +50,21 @@ function context<Input>(
   toolCallId = 'call_swarm',
 ): ExecutableToolContext & { readonly args: Input } {
   return { turnId: 0, toolCallId, args, signal };
+}
+
+function toolCall(name: string, id: string): ToolCall {
+  return { type: 'function', id, name, arguments: '{}' };
+}
+
+function hookContext(toolCalls: ToolCall[]): ToolBeforeExecuteContext {
+  return {
+    turnId: 0,
+    signal,
+    toolCall: toolCalls[0]!,
+    toolCalls,
+    args: {},
+    execution: { approvalRule: toolCalls[0]!.name, execute: async () => ({ output: '' }) },
+  };
 }
 
 function mockSwarmHost({
@@ -99,6 +122,9 @@ function stubCallerProfile(
 describe('AgentSwarmService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let beforeExecuteSlot: OrderedHookSlot<ToolBeforeExecuteContext>;
+  let permissionGateRan: boolean;
+  let formatDenyMessage: Mock<(message: string) => string>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -115,6 +141,23 @@ describe('AgentSwarmService', () => {
       run: async () => [],
       cancel: () => {},
     });
+    // The swarm-exclusive hook registers `before: 'permission'`, so the slot
+    // needs a stand-in for the permissionGate hook; the flag proves whether
+    // the swarm hook short-circuited or delegated via next().
+    beforeExecuteSlot = new OrderedHookSlot<ToolBeforeExecuteContext>();
+    permissionGateRan = false;
+    beforeExecuteSlot.register('permission', async (_ctx, next) => {
+      permissionGateRan = true;
+      await next();
+    });
+    ix.stub(IAgentToolExecutorService, {
+      hooks: {
+        onBeforeExecuteTool: beforeExecuteSlot,
+        onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
+      },
+    });
+    formatDenyMessage = vi.fn((message: string) => message);
+    ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
@@ -171,6 +214,59 @@ describe('AgentSwarmService', () => {
       records,
     );
     expect(fresh.getModel(SwarmModel)).toBe('manual');
+  });
+
+  it('blocks a batch with multiple AgentSwarm calls before the permission gate', async () => {
+    ix.get(IAgentSwarmService);
+    const ctx = hookContext([
+      toolCall('AgentSwarm', 'call_swarm_1'),
+      toolCall('AgentSwarm', 'call_swarm_2'),
+    ]);
+
+    await beforeExecuteSlot.run(ctx);
+
+    expect(ctx.decision).toEqual({
+      block: true,
+      reason: expect.stringContaining('one swarm at a time'),
+    });
+    expect(permissionGateRan).toBe(false);
+    expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks an AgentSwarm call mixed with other tools in one batch', async () => {
+    ix.get(IAgentSwarmService);
+    const ctx = hookContext([toolCall('AgentSwarm', 'call_swarm'), toolCall('Bash', 'call_bash')]);
+
+    await beforeExecuteSlot.run(ctx);
+
+    expect(ctx.decision).toEqual({
+      block: true,
+      reason: expect.stringContaining('must be the only tool call'),
+    });
+    expect(permissionGateRan).toBe(false);
+    expect(formatDenyMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a single AgentSwarm call through to the permission gate', async () => {
+    ix.get(IAgentSwarmService);
+    const ctx = hookContext([toolCall('AgentSwarm', 'call_swarm')]);
+
+    await beforeExecuteSlot.run(ctx);
+
+    expect(ctx.decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
+  });
+
+  it('lets tool batches without AgentSwarm through to the permission gate', async () => {
+    ix.get(IAgentSwarmService);
+    const ctx = hookContext([toolCall('Bash', 'call_bash'), toolCall('Read', 'call_read')]);
+
+    await beforeExecuteSlot.run(ctx);
+
+    expect(ctx.decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
   });
 });
 

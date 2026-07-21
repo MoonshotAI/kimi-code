@@ -1,67 +1,70 @@
-import { IAgentPlanService, type IAgentPlanService as AgentPlanService } from '#/agent/plan/plan';
-import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+/**
+ * `plan` domain (L3) — ExitPlanMode plan review.
+ *
+ * Owns the user-facing review that intercepts an `ExitPlanMode` call carrying
+ * a non-empty `plan_review` display: emits `plan_submitted` / `plan_resolved`
+ * through `telemetry`, drives the approval round-trip through `toolApproval`
+ * (origin `exit-plan-mode-review-ask`, matching the legacy permission
+ * policy's telemetry), and folds every approval outcome (approve with or
+ * without a selected option, Revise with feedback, Reject and Exit, dismiss)
+ * into a synthetic tool result, exiting plan mode through `plan` when the
+ * outcome deactivates it. Consumed by `planService`'s `'plan-guard'` executor
+ * hook; the mode / plan-active gating stays in the hook.
+ */
+
 import type {
-  PermissionPolicy,
-  PermissionPolicyResolution,
-  PermissionPolicyResult,
   ApprovalResponse,
+  PermissionPolicyResolution,
 } from '#/agent/permissionPolicy/types';
+import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import type {
+  AuthorizeToolExecutionResult,
+  ResolvedToolExecutionHookContext,
+} from '#/agent/toolExecutor/toolHooks';
+import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-interface PlanReviewOption {
-  readonly label: string;
-  readonly description: string;
-}
+import type { IAgentPlanService } from './plan';
 
-interface PlanReviewDisplay {
-  readonly plan: string;
-  readonly path?: string | undefined;
-  readonly options?: readonly PlanReviewOption[] | undefined;
-}
+type PlanReviewDisplay = Extract<ToolInputDisplay, { kind: 'plan_review' }>;
+type PlanReviewOption = NonNullable<PlanReviewDisplay['options']>[number];
 
-export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionPolicy {
-  readonly name = 'exit-plan-mode-review-ask';
-
+export class ExitPlanModeReview {
   constructor(
-    @IAgentPlanService private readonly plan: AgentPlanService,
-    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
+    private readonly plan: IAgentPlanService,
+    private readonly toolApproval: IAgentToolApprovalService,
+    private readonly telemetry: ITelemetryService,
   ) {}
 
-  async evaluate(
+  async requestApproval(
     context: ResolvedToolExecutionHookContext,
-  ): Promise<PermissionPolicyResult | undefined> {
-    if (context.toolCall.name !== 'ExitPlanMode') return undefined;
-    if (this.modeService.mode === 'auto') return undefined;
-    if (await this.plan.status() === null) return undefined;
+  ): Promise<AuthorizeToolExecutionResult | undefined> {
     const display = context.execution.display;
     if (display?.kind !== 'plan_review') return undefined;
     if (display.plan.trim().length === 0) return undefined;
     this.trackPlanTelemetry('plan_submitted', {
       has_options: display.options !== undefined && display.options.length >= 2,
     });
-    return {
-      kind: 'ask',
-      reason: {
-        has_options: display.options !== undefined,
+    return this.toolApproval.requestToolApproval(
+      context,
+      {
+        kind: 'ask',
+        reason: {
+          has_options: display.options !== undefined,
+        },
+        resolveApproval: (result) => this.approvalResult(result, display),
       },
-      resolveApproval: (result) =>
-        this.exitPlanModeApprovalResult(result, {
-          plan: display.plan,
-          path: display.path,
-          options: display.options,
-        }),
-    };
+      'exit-plan-mode-review-ask',
+    );
   }
 
-  private exitPlanModeApprovalResult(
+  private approvalResult(
     result: ApprovalResponse,
     display: PlanReviewDisplay,
   ): PermissionPolicyResolution | undefined {
     if (result.decision !== 'approved') {
-      return this.rejectedExitPlanModeApprovalResult(result);
+      return this.rejectedApprovalResult(result);
     }
 
     const selected = selectedExitPlanModeOption(display.options, result.selectedLabel);
@@ -91,9 +94,7 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     };
   }
 
-  private rejectedExitPlanModeApprovalResult(
-    result: ApprovalResponse,
-  ): PermissionPolicyResolution {
+  private rejectedApprovalResult(result: ApprovalResponse): PermissionPolicyResolution {
     this.trackRejectedPlanResolution(result);
 
     if (result.decision === 'cancelled') {

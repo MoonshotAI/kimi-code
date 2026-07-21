@@ -12,7 +12,11 @@
  * live-only `context.spliced` event for that pop (so injector bookkeeping
  * stays in step) and appends the exit reminder when nothing was
  * popped. Bound at Agent scope. The `AgentSwarm` tool self-registers via
- * `registerTool(...)` in `tools/agent-swarm.ts`.
+ * `registerTool(...)` in `tools/agent-swarm.ts`. The service also guards
+ * AgentSwarm batch exclusivity through an executor `onBeforeExecuteTool` hook
+ * (`swarm-exclusive`, ordered before `permission`): an AgentSwarm call must be
+ * the only tool call in its batch, anything else is blocked with a
+ * `toolApproval.formatDenyMessage`-formatted reason.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -20,7 +24,10 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IWireService } from '#/wire/wire';
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
@@ -35,6 +42,9 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
+    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentPermissionGate _permissionGate: IAgentPermissionGate,
   ) {
     super();
     this._register(
@@ -43,6 +53,29 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
           this.exit();
         }
       }),
+    );
+    this._register(
+      toolExecutor.hooks.onBeforeExecuteTool.register(
+        'swarm-exclusive',
+        async (ctx, next) => {
+          const agentSwarmCount = ctx.toolCalls.filter(
+            (toolCall) => toolCall.name === 'AgentSwarm',
+          ).length;
+          if (agentSwarmCount === 0 || (agentSwarmCount === 1 && ctx.toolCalls.length === 1)) {
+            await next();
+            return;
+          }
+          ctx.decision = {
+            block: true,
+            reason: this.toolApproval.formatDenyMessage(
+              agentSwarmCount > 1
+                ? multipleAgentSwarmDeniedMessage(ctx.toolCalls.length > agentSwarmCount)
+                : mixedAgentSwarmDeniedMessage(),
+            ),
+          };
+        },
+        { before: 'permission' },
+      ),
     );
   }
 
@@ -98,3 +131,21 @@ registerScopedService(
   InstantiationType.Eager,
   'swarm',
 );
+
+function multipleAgentSwarmDeniedMessage(hasOtherToolCalls: boolean): string {
+  const suffix = hasOtherToolCalls
+    ? ' AgentSwarm also must not be combined with other tools in the same response.'
+    : '';
+  return (
+    'AgentSwarm must be called one swarm at a time. Multiple AgentSwarm calls are not forbidden, ' +
+    'but issue them sequentially: call one AgentSwarm, wait for its result, then call the next; ' +
+    `or merge the work into a single AgentSwarm when one swarm can cover it.${suffix}`
+  );
+}
+
+function mixedAgentSwarmDeniedMessage(): string {
+  return (
+    'AgentSwarm must be the only tool call in a model response. Retry with a single AgentSwarm ' +
+    'call by itself, then call any other tools after it returns.'
+  );
+}

@@ -514,7 +514,7 @@ describe('Plan service', () => {
       },
     );
 
-    it('keeps explicit deny rules above active plan file writes', async () => {
+    it('short-circuits active plan file writes ahead of explicit deny rules', async () => {
       const files = new Map<string, string>();
       const writeText = vi.fn(async (path: string, content: string): Promise<void> => {
         files.set(path, content);
@@ -548,11 +548,12 @@ describe('Plan service', () => {
 
       await ctx.untilTurnEnd();
 
-      expect(files.get(planPath)).toBeUndefined();
-      expect(writeText).not.toHaveBeenCalled();
-      expect(toolResultText(context.get())).toContain(
-        'Tool "Write" was denied by permission rule. Reason: blocked by test',
-      );
+      // The plan-guard hook lets plan-file writes through before the
+      // permission chain runs, so user-configured deny rules no longer
+      // adjudicate them.
+      expect(files.get(planPath)).toBe(content);
+      expect(writeText).toHaveBeenCalledWith(planPath, content);
+      expect(toolResultText(context.get())).not.toContain('denied by permission rule');
       expect(
         ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
       ).toBe(false);

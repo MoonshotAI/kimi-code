@@ -137,6 +137,7 @@ const DOMAIN_LAYER = new Map([
   ['sessionAgentProfileCatalog', 3],
   ['sessionToolPolicy', 3],
   ['permissionGate', 3],
+  ['toolApproval', 3],
   ['flag', 3],
   ['toolExecutor', 3],
   ['toolResultTruncation', 3],
@@ -372,13 +373,10 @@ function domainFromRel(rel, { exemptRootFile }) {
  *                              Store to its filesystem backend (same role as
  *                              the storage backend bindings).
  *
- *  - `permissionGate>approval`  : permissionGate(Agent) requests approval(Session broker).
+ *  - `toolApproval>approval`   : toolApproval(Agent) requests approval(Session broker)
+ *                                for permissionGate asks and plan/goal reviews.
  *  - `userTool>interaction`     : userTool(Agent) requests host-side execution
  *                                 through the Session interaction broker.
- *  - `permissionPolicy>plan`     : plan-mode approval policies need the current
- *                                 Agent plan state to approve/deny tool use.
- *  - `permissionPolicy>swarm`    : swarm-mode approval policy needs the current
- *                                 Agent swarm state to approve AgentSwarm.
  *  - `skill>loop`           : skill activate starts a turn through the loop (same Agent scope intent).
  *  - `swarm>agentLifecycle`: swarm spawns/manages sub-agents.
  *  - `cron>agentLifecycle` : cron coordinator steers the main agent.
@@ -405,15 +403,15 @@ const ALLOWED_EXCEPTIONS = new Set([
   // auth-independent `web` domain.
   'auth>tool',
   'auth>toolRegistry',
-  'permissionGate>approval',
+  // `toolApproval` (Agent, L3) owns the approval round-trip for permissionGate
+  // asks and plan/goal reviews, driven through the Session approval broker.
+  'toolApproval>approval',
   // `permissionRules` (L3) persists the approval broker's `ApprovalResponse`
   // (Session, L7) verbatim in its wire-logged `PermissionApprovalResultRecord`
   // — a real cross-scope dependency, surfaced here rather than hidden behind a
   // re-declared copy of the shape.
   'permissionRules>approval',
   'userTool>interaction',
-  'permissionPolicy>plan',
-  'permissionPolicy>swarm',
   'skill>loop',
   // `activityView` seeds its background-task slice once from the agent's task
   // registry (a read, never a write) — everything else it folds from events.

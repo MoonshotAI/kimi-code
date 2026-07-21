@@ -3,30 +3,50 @@
  *
  * Manages plan-mode state through `wire`, injects plan-mode context through
  * `contextInjector`, writes optional plan files through `hostFileSystem`,
- * and tags mode telemetry through `telemetry`. Bound at Agent scope.
+ * and tags mode telemetry through `telemetry`. Also carries the plan-mode
+ * Harness constraints as an executor `onBeforeExecuteTool` hook
+ * (`'plan-guard'`, ordered before `'permission'` whenever the gate's hook
+ * already exists): while a plan is active, Write/Edit calls targeting only
+ * the current plan file are let through without the permission chain, any
+ * other Write/Edit and every TaskStop/CronCreate/CronDelete call is blocked
+ * with a `toolApproval.formatDenyMessage`-formatted reason, and an
+ * `ExitPlanMode` call outside `auto` mode goes through the
+ * `exitPlanModeReview` user review instead of the permission chain. Bound at
+ * Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
-import { Disposable } from '#/_base/di/lifecycle';
+import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/agent/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type {
+  ResolvedToolExecutionHookContext,
+  ToolBeforeExecuteContext,
+} from '#/agent/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWireService } from '#/wire/wire';
+import type { ToolFileAccess } from '#/tool/toolContract';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import {
   IAgentPlanService,
   type PlanData,
   type PlanFilePath,
 } from './plan';
+import { ExitPlanModeReview } from './exitPlanModeReview';
 import {
   PlanModel,
   planModeCancel,
@@ -37,6 +57,8 @@ import {
 export class AgentPlanService extends Disposable implements IAgentPlanService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly review: ExitPlanModeReview;
+
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
@@ -45,8 +67,15 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     @IWireService private readonly wire: IWireService,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
+    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
+    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
+    @ITelemetryService telemetry: ITelemetryService,
+    @IAgentPermissionGate _permissionGate: IAgentPermissionGate,
   ) {
     super();
+
+    this.review = new ExitPlanModeReview(this, this.toolApproval, telemetry);
 
     this._register(
       this.wire.hooks.onDidRestore.register('plan', async (_ctx, next) => {
@@ -56,6 +85,79 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     );
 
     this._register(new PlanModeInjection(dynamicInjector, this, this.context));
+    this._register(this.registerPlanGuard(toolExecutor));
+  }
+
+  // Injecting the gate above forces it to be constructed first, so the
+  // `'permission'` hook is always registered when this hook lands ahead of it.
+  private registerPlanGuard(toolExecutor: IAgentToolExecutorService): IDisposable {
+    const slot = toolExecutor.hooks.onBeforeExecuteTool;
+    const handler = async (
+      ctx: ToolBeforeExecuteContext,
+      next: () => Promise<void>,
+    ): Promise<void> => {
+      await this.guardToolExecution(ctx, next);
+    };
+    return slot.register('plan-guard', handler, { before: 'permission' });
+  }
+
+  private async guardToolExecution(
+    ctx: ToolBeforeExecuteContext,
+    next: () => Promise<void>,
+  ): Promise<void> {
+    const toolName = ctx.toolCall.name;
+    const plan = await this.status();
+
+    if (toolName === 'ExitPlanMode') {
+      if (plan !== null && this.modeService.mode !== 'auto') {
+        const decision = await this.review.requestApproval(ctx);
+        if (decision !== undefined) {
+          ctx.decision = decision;
+          if (decision.block === true || decision.syntheticResult !== undefined) return;
+        }
+      }
+      await next();
+      return;
+    }
+
+    if (plan === null) {
+      await next();
+      return;
+    }
+
+    if (toolName === 'Write' || toolName === 'Edit') {
+      if (writesOnlyPlanFile(ctx, plan.path)) {
+        ctx.decision = {};
+        return;
+      }
+      ctx.decision = {
+        block: true,
+        reason: this.toolApproval.formatDenyMessage(planModeWriteDeniedMessage(plan.path)),
+      };
+      return;
+    }
+
+    if (toolName === 'TaskStop') {
+      ctx.decision = {
+        block: true,
+        reason: this.toolApproval.formatDenyMessage(
+          'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
+        ),
+      };
+      return;
+    }
+
+    if (toolName === 'CronCreate' || toolName === 'CronDelete') {
+      ctx.decision = {
+        block: true,
+        reason: this.toolApproval.formatDenyMessage(
+          `${toolName} is not available in plan mode because it would mutate scheduled work that runs after plan exit. Call ExitPlanMode first.`,
+        ),
+      };
+      return;
+    }
+
+    await next();
   }
 
   private get isActive(): boolean {
@@ -153,6 +255,26 @@ function isMissingFileError(error: unknown): boolean {
   if (unwrapped === null || typeof unwrapped !== 'object') return false;
   const code = (unwrapped as { readonly code?: unknown }).code;
   return code === 'ENOENT';
+}
+
+function writesOnlyPlanFile(
+  context: ResolvedToolExecutionHookContext,
+  planFilePath: string,
+): boolean {
+  const writeAccesses = (context.execution.accesses ?? []).filter(
+    (access): access is ToolFileAccess =>
+      access.kind === 'file' &&
+      (access.operation === 'write' || access.operation === 'readwrite'),
+  );
+  if (writeAccesses.length === 0) return false;
+  return writeAccesses.every((access) => access.path === planFilePath);
+}
+
+function planModeWriteDeniedMessage(planFilePath: string | null): string {
+  return (
+    `Plan mode is active. You may only write to the current plan file: ${planFilePath ?? '(no plan file selected yet)'}. ` +
+    'Call ExitPlanMode to exit plan mode before editing other files.'
+  );
 }
 
 export { AgentPlanService as Plan };

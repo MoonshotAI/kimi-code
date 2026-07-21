@@ -28,15 +28,6 @@ export function writeFileAccesses(context: ResolvedToolExecutionHookContext): To
   );
 }
 
-export function writesOnlyPlanFile(
-  context: ResolvedToolExecutionHookContext,
-  planFilePath: string,
-): boolean {
-  const writeAccesses = writeFileAccesses(context);
-  if (writeAccesses.length === 0) return false;
-  return writeAccesses.every((access) => access.path === planFilePath);
-}
-
 export function hasGitPathComponent(
   targetPath: string,
   cwd: string,
