@@ -141,6 +141,12 @@ function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const OFFICIAL_INSTALL_URL = 'https://www.kimi.com/code';
+
+const THIRD_PARTY_SOURCE_NOTE =
+  '\nNote: Third-party sources may lag behind the latest release.\n' +
+  `For the latest updates, use the official installer: ${OFFICIAL_INSTALL_URL}\n`;
+
 export function renderManualUpdateMessage(
   currentVersion: string,
   target: UpdateTarget,
@@ -169,7 +175,8 @@ export function renderManualUpdateMessage(
     `A newer version of ${NPM_PACKAGE_NAME} is available ` +
     `(${currentVersion} -> ${target.version}).\n` +
     `Detected install source: ${sourceDesc}\n` +
-    `To update manually, run: ${installCommand}\n`
+    `To update manually, run: ${installCommand}\n` +
+    (source === 'homebrew' ? THIRD_PARTY_SOURCE_NOTE : '')
   );
 }
 
