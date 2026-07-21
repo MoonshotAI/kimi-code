@@ -1,5 +1,6 @@
 import { Container, Key, matchesKey, type Focusable } from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
+import { printableChar } from '#/tui/utils/printable-key';
 import { t } from '#/i18n';
 
 export interface CodingPlanConfigOptions {
@@ -45,7 +46,7 @@ export class CodingPlanConfigComponent extends Container implements Focusable {
         if (schema !== undefined) {
           const parsed = schema.parse(raw);
           if (schema.validate !== undefined && !schema.validate(parsed)) {
-            this.errorMsg = t('codingPlan.invalidValue', { key, raw });
+            this.errorMsg = t('tui.codingPlan.invalidValue', { key, raw });
             return;
           }
           config[key] = parsed;
@@ -71,17 +72,21 @@ export class CodingPlanConfigComponent extends Container implements Focusable {
     if (matchesKey(data, Key.backspace)) {
       const current = this.fields[field];
       this.fields[field] = current !== undefined ? current.slice(0, -1) : '';
-    } else if (data.length > 0 && !matchesKey(data, Key.enter) && !matchesKey(data, Key.escape)) {
-      // Accept any printable character input (including paste)
-      const current = this.fields[field] ?? '';
-      this.fields[field] = current + data;
+    } else {
+      // Accept printable input only (including paste): arrow keys, Tab and
+      // Ctrl combos must not leak escape bytes into the field value.
+      const ch = printableChar(data);
+      if (ch.length > 0) {
+        const current = this.fields[field] ?? '';
+        this.fields[field] = current + ch;
+      }
     }
   }
 
   override render(width: number): string[] {
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', t('codingPlan.title')),
+      currentTheme.boldFg('primary', t('tui.codingPlan.title')),
       '',
     ];
     for (let i = 0; i < this.fieldOrder.length; i++) {
@@ -99,7 +104,7 @@ export class CodingPlanConfigComponent extends Container implements Focusable {
     if (this.errorMsg.length > 0) {
       lines.push(currentTheme.fg('error', ` ${this.errorMsg}`));
     }
-    lines.push(currentTheme.fg('textMuted', t('codingPlan.navHint')));
+    lines.push(currentTheme.fg('textMuted', t('tui.codingPlan.navHint')));
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => line.slice(0, width));
   }
@@ -107,15 +112,15 @@ export class CodingPlanConfigComponent extends Container implements Focusable {
 
 function fieldLabel(key: string): string {
   const labels: Record<string, string> = {
-    protocol: t('codingPlan.fieldProtocol'),
-    stream: t('codingPlan.fieldStream'),
-    temperature: t('codingPlan.fieldTemperature'),
-    maxTokens: t('codingPlan.fieldMaxTokens'),
-    enableThinking: t('codingPlan.fieldEnableThinking'),
-    searchDisable: t('codingPlan.fieldSearchDisable'),
-    showRefLabel: t('codingPlan.fieldShowRefLabel'),
-    loraId: t('codingPlan.fieldLoraId'),
-    reasoningEffort: t('codingPlan.fieldReasoningEffort'),
+    protocol: t('tui.codingPlan.fieldProtocol'),
+    stream: t('tui.codingPlan.fieldStream'),
+    temperature: t('tui.codingPlan.fieldTemperature'),
+    maxTokens: t('tui.codingPlan.fieldMaxTokens'),
+    enableThinking: t('tui.codingPlan.fieldEnableThinking'),
+    searchDisable: t('tui.codingPlan.fieldSearchDisable'),
+    showRefLabel: t('tui.codingPlan.fieldShowRefLabel'),
+    loraId: t('tui.codingPlan.fieldLoraId'),
+    reasoningEffort: t('tui.codingPlan.fieldReasoningEffort'),
   };
   return labels[key] ?? key;
 }

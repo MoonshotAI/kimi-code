@@ -139,12 +139,13 @@ export interface CreateI18nOptions {
  *
  * @example
  * const { t, setLocale } = createI18n();
- * console.log(t('errors.sessionNotFound'));
+ * console.log(t('cli.errors.promptEmpty'));
  */
 export function createI18n(options: CreateI18nOptions = {}): I18nInstance {
-  let currentLocale: Locale = options.noDetect
-    ? 'en'
-    : (options.initialLocale ?? detectLocaleNode());
+  // An explicit initialLocale always wins; noDetect only suppresses
+  // env-based detection (falling back to 'en') when no locale was given.
+  let currentLocale: Locale = options.initialLocale
+    ?? (options.noDetect ? 'en' : detectLocaleNode());
 
   let localeCurrentJson = JSON.stringify(messages[currentLocale]);
 
@@ -238,3 +239,5 @@ export const t = defaultI18n.t.bind(defaultI18n);
 export const setLocale = defaultI18n.setLocale.bind(defaultI18n);
 export const getLocale = defaultI18n.getLocale.bind(defaultI18n);
 export const getEngine = defaultI18n.getEngine.bind(defaultI18n);
+export const getMessages = defaultI18n.getMessages.bind(defaultI18n);
+export const translateBatch = defaultI18n.translateBatch.bind(defaultI18n);

@@ -39,10 +39,10 @@ const SPINNER_INTERVAL_MS = 80;
 
 function stepLabels(): ReadonlyArray<readonly [string, string]> {
   return [
-    ['config', t('migration.stepLabelConfig')],
-    ['mcp', t('migration.stepLabelMcp')],
-    ['user-history', t('migration.stepLabelReplHistory')],
-    ['sessions', t('migration.stepLabelSessions')],
+    ['config', t('tui.migration.stepLabelConfig')],
+    ['mcp', t('tui.migration.stepLabelMcp')],
+    ['user-history', t('tui.migration.stepLabelReplHistory')],
+    ['sessions', t('tui.migration.stepLabelSessions')],
   ];
 }
 
@@ -285,26 +285,26 @@ export class MigrationScreenComponent extends Container implements Focusable {
     const colors = this.opts.colors ?? currentTheme.palette;
     const lines: string[] = [chalk.hex(colors.primary)('─'.repeat(width))];
     if (this.migrationFailed) {
-      lines.push(chalk.hex(colors.error).bold(t('migration.failed')));
+      lines.push(chalk.hex(colors.error).bold(t('tui.migration.failed')));
       if (this.migrationFailureReason !== undefined) {
         lines.push('');
-        lines.push(chalk.hex(colors.text)(t('migration.reason', { reason: this.migrationFailureReason })));
+        lines.push(chalk.hex(colors.text)(t('tui.migration.reason', { reason: this.migrationFailureReason })));
       }
       lines.push('');
-      lines.push(chalk.hex(colors.text)(t('migration.retryHint')));
+      lines.push(chalk.hex(colors.text)(t('tui.migration.retryHint')));
       lines.push('');
-      lines.push(chalk.hex(colors.textMuted)(t('migration.continueHint')));
+      lines.push(chalk.hex(colors.textMuted)(t('tui.migration.continueHint')));
       lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
       return lines.map((l) => truncateToWidth(l, width));
     }
     const r = this.report;
-    lines.push(chalk.hex(colors.primary).bold(t('migration.complete')));
+    lines.push(chalk.hex(colors.primary).bold(t('tui.migration.complete')));
     lines.push('');
     if (r !== undefined) {
       const sum = r.summary;
       if (sum.sessions.sessionsMigrated > 0) {
         lines.push(
-          chalk.hex(colors.success)(t('migration.sessionsMigrated', { count: String(sum.sessions.sessionsMigrated) })),
+          chalk.hex(colors.success)(t('tui.migration.sessionsMigrated', { count: String(sum.sessions.sessionsMigrated) })),
         );
       }
       // Only claim a data class was migrated when the summary says it was —
@@ -316,36 +316,36 @@ export class MigrationScreenComponent extends Container implements Focusable {
       if (sum.userHistory.copied > 0) migratedKinds.push('REPL history');
       if (sum.skills.copied > 0) migratedKinds.push('skills');
       if (migratedKinds.length > 0) {
-        lines.push(chalk.hex(colors.success)(t('migration.kindsMigrated', { kinds: migratedKinds.join(' · ') })));
+        lines.push(chalk.hex(colors.success)(t('tui.migration.kindsMigrated', { kinds: migratedKinds.join(' · ') })));
       }
       if (sum.sessions.sessionsMigrated === 0 && migratedKinds.length === 0) {
-        lines.push(chalk.hex(colors.textMuted)(t('migration.skipped')));
+        lines.push(chalk.hex(colors.textMuted)(t('tui.migration.skipped')));
       }
       if (r.notices.detectedPlugins.length > 0) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.pluginsNotSupported', { count: String(r.notices.detectedPlugins.length) }),
+            t('tui.migration.pluginsNotSupported', { count: String(r.notices.detectedPlugins.length) }),
           ),
         );
       }
       if (sum.config.droppedHooks > 0) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.hooksDropped', { count: String(sum.config.droppedHooks) }),
+            t('tui.migration.hooksDropped', { count: String(sum.config.droppedHooks) }),
           ),
         );
       }
       if (sum.config.configConflicts.length > 0) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.configConflicts', { count: String(sum.config.configConflicts.length), keys: sum.config.configConflicts.join(' · ') }),
+            t('tui.migration.configConflicts', { count: String(sum.config.configConflicts.length), keys: sum.config.configConflicts.join(' · ') }),
           ),
         );
       }
       if (sum.config.wroteSiblingDueToConflict) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.configParseError'),
+            t('tui.migration.configParseError'),
           ),
         );
         const sc = sum.config.siblingContents;
@@ -360,41 +360,41 @@ export class MigrationScreenComponent extends Container implements Focusable {
           items.push(`${sc.hooks} hook${sc.hooks === 1 ? '' : 's'}`);
         }
         if (items.length > 0) {
-          lines.push(chalk.hex(colors.warning)(t('migration.contains', { items: items.join(', ') })));
+          lines.push(chalk.hex(colors.warning)(t('tui.migration.contains', { items: items.join(', ') })));
         }
       }
       if (sum.config.wroteTuiSibling) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.tuiConflict'),
+            t('tui.migration.tuiConflict'),
           ),
         );
       }
       if (sum.mcp.wroteSiblingDueToConflict) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.mcpUnreadable'),
+            t('tui.migration.mcpUnreadable'),
           ),
         );
       }
       if (r.notices.mcpOauthServersRequiringReauth.length > 0) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.mcpNeedsAuth', { count: String(r.notices.mcpOauthServersRequiringReauth.length) }),
+            t('tui.migration.mcpNeedsAuth', { count: String(r.notices.mcpOauthServersRequiringReauth.length) }),
           ),
         );
       }
       if (sum.sessions.sessionsFailed.length > 0) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.sessionsFailed', { count: String(sum.sessions.sessionsFailed.length) }),
+            t('tui.migration.sessionsFailed', { count: String(sum.sessions.sessionsFailed.length) }),
           ),
         );
       }
       if (sum.sessions.sessionsConflicts.length > 0) {
         lines.push(
           chalk.hex(colors.warning)(
-            t('migration.sessionsSkipped', { count: String(sum.sessions.sessionsConflicts.length) }),
+            t('tui.migration.sessionsSkipped', { count: String(sum.sessions.sessionsConflicts.length) }),
           ),
         );
       }
@@ -403,17 +403,17 @@ export class MigrationScreenComponent extends Container implements Focusable {
       if (sum.sessions.sessionsSkippedEmpty > 0) {
         lines.push(
           chalk.hex(colors.textMuted)(
-            t('migration.emptySessionsSkipped', { count: String(sum.sessions.sessionsSkippedEmpty) }),
+            t('tui.migration.emptySessionsSkipped', { count: String(sum.sessions.sessionsSkippedEmpty) }),
           ),
         );
       }
       lines.push('');
       lines.push(
-        chalk.hex(colors.textMuted)(t('migration.oldDataKept')),
+        chalk.hex(colors.textMuted)(t('tui.migration.oldDataKept')),
       );
     }
     lines.push('');
-    lines.push(chalk.hex(colors.textMuted)(t('migration.continueHint')));
+    lines.push(chalk.hex(colors.textMuted)(t('tui.migration.continueHint')));
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((l) => truncateToWidth(l, width));
   }
@@ -423,14 +423,14 @@ export class MigrationScreenComponent extends Container implements Focusable {
     const spinner = SPINNER_FRAMES[this.spinnerFrame] ?? SPINNER_FRAMES[0];
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(t('migration.progressTitle')),
+      chalk.hex(colors.primary).bold(t('tui.migration.progressTitle')),
       '',
     ];
     if (this.progressTotal > 0) {
       lines.push(
         chalk.hex(colors.accent)(`  ${spinner}  `) +
           chalk.hex(colors.text)(
-            t('migration.progressTranslating', { done: String(this.progressDone), total: String(this.progressTotal) }),
+            t('tui.migration.progressTranslating', { done: String(this.progressDone), total: String(this.progressTotal) }),
           ),
       );
       lines.push('');
@@ -453,11 +453,11 @@ export class MigrationScreenComponent extends Container implements Focusable {
     const step = this.currentStep();
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(t('migration.title')),
+      chalk.hex(colors.primary).bold(t('tui.migration.title')),
       '',
     ];
     if (this.phase === 'ask1') {
-      lines.push(chalk.hex(colors.text)(t('migration.foundExisting')));
+      lines.push(chalk.hex(colors.text)(t('tui.migration.foundExisting')));
       lines.push(chalk.hex(colors.textMuted)(`   ${summarizePlan(this.opts.plan)}`));
       lines.push('');
     }
@@ -476,7 +476,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
     lines.push('');
     lines.push(
       chalk.hex(colors.textMuted)(
-        t('migration.navHintAsk', { action: this.opts.skipDecisionStep === true ? 'cancel' : 'later' }),
+        t('tui.migration.navHintAsk', { action: this.opts.skipDecisionStep === true ? 'cancel' : 'later' }),
       ),
     );
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
@@ -535,11 +535,11 @@ function summarizePlan(plan: MigrationPlan): string {
 function stepFor(phase: Phase, plan: MigrationPlan): StepDef {
   if (phase === 'ask1') {
     return {
-      title: t('migration.ask1Title'),
+      title: t('tui.migration.ask1Title'),
       options: [
-        { label: t('migration.migrateNow'), value: 'now' satisfies Prompt1Choice },
-        { label: t('migration.askLater'), value: 'later' satisfies Prompt1Choice },
-        { label: t('migration.neverAgain'), value: 'never' satisfies Prompt1Choice },
+        { label: t('tui.migration.migrateNow'), value: 'now' satisfies Prompt1Choice },
+        { label: t('tui.migration.askLater'), value: 'later' satisfies Prompt1Choice },
+        { label: t('tui.migration.neverAgain'), value: 'never' satisfies Prompt1Choice },
       ],
     };
   }
@@ -548,12 +548,12 @@ function stepFor(phase: Phase, plan: MigrationPlan): StepDef {
   // word only (no count) when no sessions were detected.
   const sessionsLabel =
     plan.totalSessions > 0
-      ? t('migration.configPlusSessions', { count: String(plan.totalSessions) })
-      : t('migration.configPlusAllSessions');
+      ? t('tui.migration.configPlusSessions', { count: String(plan.totalSessions) })
+      : t('tui.migration.configPlusAllSessions');
   return {
-    title: t('migration.ask2Title'),
+    title: t('tui.migration.ask2Title'),
     options: [
-      { label: t('migration.configOnly'), value: 'config-only' satisfies Prompt2Choice },
+      { label: t('tui.migration.configOnly'), value: 'config-only' satisfies Prompt2Choice },
       { label: sessionsLabel, value: 'all-sessions' satisfies Prompt2Choice },
     ],
   };

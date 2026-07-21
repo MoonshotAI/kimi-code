@@ -98,12 +98,14 @@ export async function handleDiscussCommand(
 
   // Build participant configs
   const participants = roles.map((role) => {
-    const safeName = role.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_');
+    // Escape quotes/backslashes so user-supplied roles can't break the
+    // quoted string structure of the generated prompt.
+    const safeRole = role.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const assignedStance = stances[role];
     const stanceField = assignedStance
-      ? `, assignedStance: "${assignedStance.replace(/"/g, '\\"')}"`
+      ? `, assignedStance: "${assignedStance.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
       : '';
-    return `{ profileName: "coder", roleDescription: "You are a ${role} participating in a roundtable ${mode}.",${stanceField} }`;
+    return `{ profileName: "coder", roleDescription: "You are a ${safeRole} participating in a roundtable ${mode}.",${stanceField} }`;
   }).join(',\n      ');
 
   const prompt = [

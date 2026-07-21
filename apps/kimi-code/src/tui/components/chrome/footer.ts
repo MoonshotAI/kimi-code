@@ -238,7 +238,7 @@ export class FooterComponent implements Component {
     }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
-    this.syncPulseTimer(state.thinkingEffort !== 'off');
+    this.syncPulseTimer(state.thinkingEffort !== 'off' && state.streamingPhase !== 'idle');
     this.state = state;
   }
 

@@ -161,6 +161,7 @@
         "yolo": "yolo",
         "plan": "plan",
         "swarm": "swarm",
+        "swarmPlan": "swarm-plan",
         "turn": "turn",
         "turns": "turns"
       },

@@ -21,7 +21,7 @@ import { SettingsSelectorComponent, type SettingsSelection } from '../components
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { AstronSettingsComponent } from '../components/dialogs/astron-settings';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
+import { DEFAULT_TUI_CONFIG, loadTuiConfig, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import type { Locale } from '#/i18n';
@@ -50,7 +50,10 @@ function hasConversationHistory(host: SlashCommandHost): boolean {
   );
 }
 
-function currentTuiConfig(host: SlashCommandHost): TuiConfig {
+async function currentTuiConfig(host: SlashCommandHost): Promise<TuiConfig> {
+  // Settings not mirrored into appState (e.g. astron) must survive unrelated
+  // saves — seed them from the persisted config instead of defaults.
+  const persisted = await loadTuiConfig().catch(() => null);
   return {
     theme: host.state.appState.theme,
     locale: host.state.appState.locale as Locale,
@@ -58,7 +61,7 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
-    astron: DEFAULT_TUI_CONFIG.astron,
+    astron: persisted?.astron ?? DEFAULT_TUI_CONFIG.astron,
   };
 }
 
@@ -89,7 +92,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   else if (subcmd === 'on') enabled = true;
   else if (subcmd === 'off') enabled = false;
   else {
-    host.showError(t('tui.dialogs.config.configUnknownPlanSubcommand', { subcmd }));
+    host.showError(t('tui.messages.configUnknownPlanSubcommand', { subcmd }));
     return;
   }
 
@@ -104,7 +107,7 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
       const plan = await session.getPlan().catch(() => null);
       host.showNotice(
         t('tui.statusMessages.planModeOn'),
-        plan?.path !== undefined ? t('tui.dialogs.config.configPlanPath', { path: plan.path }) : undefined,
+        plan?.path !== undefined ? t('tui.messages.configPlanPath', { path: plan.path }) : undefined,
       );
       return;
     }
@@ -246,7 +249,7 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
-    host.showError(t('tui.dialogs.config.configUnknownModelAlias', { alias }));
+    host.showError(t('tui.messages.configUnknownModelAlias', { alias }));
     return;
   }
   showModelPicker(host, alias);
@@ -271,13 +274,13 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     const protocol = effective.protocol ?? providerType;
     if (protocol !== 'anthropic') {
       host.showError(
-        t('tui.dialogs.config.configUnsupportedEffort', { arg, alias, segments: segments.join(', ') }),
+        t('tui.messages.configUnsupportedEffort', { arg, alias, segments: segments.join(', ') }),
       );
       return;
     }
-    const knownEfforts = effective.supportEfforts?.join(', ') ?? t('tui.dialogs.config.configNoneDeclared');
+    const knownEfforts = effective.supportEfforts?.join(', ') ?? t('tui.messages.configNoneDeclared');
     host.showStatus(
-      t('tui.dialogs.config.configUnknownEffort', { arg, alias, knownEfforts }),
+      t('tui.messages.configUnknownEffort', { arg, alias, knownEfforts }),
       'warning',
     );
   }
@@ -296,7 +299,7 @@ function showEffortPicker(
     new EffortSelectorComponent({
       efforts: segments,
       currentValue,
-      warning: hasConversationHistory(host) ? t('tui.dialogs.config.configEffortCachedWarning') : undefined,
+      warning: hasConversationHistory(host) ? t('tui.messages.configEffortCachedWarning') : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, effort, true);
@@ -340,10 +343,10 @@ async function refreshModelsForPicker(host: SlashCommandHost): Promise<void> {
     );
     if (result === undefined) return;
     for (const f of result.failed) {
-      host.showStatus(t('tui.dialogs.config.configSkippedRefreshing', { provider: f.provider, reason: f.reason }), 'warning');
+      host.showStatus(t('tui.messages.configSkippedRefreshing', { provider: f.provider, reason: f.reason }), 'warning');
     }
   } catch (error) {
-    host.showStatus(t('tui.dialogs.config.configSkippedRefreshingModels', { error: formatErrorMessage(error) }), 'warning');
+    host.showStatus(t('tui.messages.configSkippedRefreshingModels', { error: formatErrorMessage(error) }), 'warning');
   }
 }
 
@@ -366,19 +369,19 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 async function applyEditorChoice(host: SlashCommandHost, value: string): Promise<void> {
   const previous = host.state.appState.editorCommand ?? '';
   if (value === previous && value.length > 0) {
-    host.showStatus(t('tui.dialogs.config.configEditorUnchanged', { value: value.length > 0 ? value : t('tui.dialogs.config.configEditorAutoDetect') }));
+    host.showStatus(t('tui.messages.configEditorUnchanged', { value: value.length > 0 ? value : t('tui.messages.configEditorAutoDetect') }));
     return;
   }
 
   const editorCommand = value.length > 0 ? value : null;
   try {
     await saveTuiConfig({
-      ...currentTuiConfig(host),
+      ...(await currentTuiConfig(host)),
       editorCommand,
     });
   } catch (error) {
     host.showStatus(
-      t('tui.dialogs.config.configEditorSaveFailed', { error: formatErrorMessage(error) }),
+      t('tui.messages.configEditorSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -387,8 +390,8 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   host.setAppState({ editorCommand });
   host.showStatus(
     value.length > 0
-      ? t('tui.dialogs.config.configEditorSet', { value })
-      : t('tui.dialogs.config.configEditorAutoSet'),
+      ? t('tui.messages.configEditorSet', { value })
+      : t('tui.messages.configEditorAutoSet'),
   );
 }
 
@@ -413,7 +416,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
-      warning: hasConversationHistory(host) ? t('tui.dialogs.config.configModelCachedWarning') : undefined,
+      warning: hasConversationHistory(host) ? t('tui.messages.configModelCachedWarning') : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking, true);
@@ -436,7 +439,7 @@ async function performModelSwitch(
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError(t('tui.dialogs.config.configCannotSwitchWhileStreaming'));
+    host.showError(t('tui.messages.configCannotSwitchWhileStreaming'));
     return;
   }
 
@@ -504,7 +507,7 @@ async function performModelSwitch(
       );
     } catch (error) {
       const msg = formatErrorMessage(error);
-      host.showError(t('tui.dialogs.config.configModelSwitchedSaveFailed', { name: displayName, msg }));
+      host.showError(t('tui.messages.configModelSwitchedSaveFailed', { name: displayName, msg }));
       return;
     }
   }
@@ -512,16 +515,16 @@ async function performModelSwitch(
   let status: string;
   if (effectiveModelChanged) {
     status = persist
-      ? t('tui.dialogs.config.configModelSwitched', { name: displayName, effort: effectiveEffort })
-      : t('tui.dialogs.config.configModelSwitchedSession', { name: displayName, effort: effectiveEffort });
+      ? t('tui.messages.configModelSwitched', { name: displayName, effort: effectiveEffort })
+      : t('tui.messages.configModelSwitchedSession', { name: displayName, effort: effectiveEffort });
   } else if (effectiveEffortChanged) {
     status = persist
-      ? t('tui.dialogs.config.configThinkingSet', { effort: effectiveEffort })
-      : t('tui.dialogs.config.configThinkingSetSession', { effort: effectiveEffort });
+      ? t('tui.messages.configThinkingSet', { effort: effectiveEffort })
+      : t('tui.messages.configThinkingSetSession', { effort: effectiveEffort });
   } else if (persist && persisted) {
-    status = t('tui.dialogs.config.configModelSavedDefault', { name: displayName, effort: effectiveEffort });
+    status = t('tui.messages.configModelSavedDefault', { name: displayName, effort: effectiveEffort });
   } else {
-    status = t('tui.dialogs.config.configModelAlreadyUsing', { name: displayName, effort: effectiveEffort });
+    status = t('tui.messages.configModelAlreadyUsing', { name: displayName, effort: effectiveEffort });
   }
   host.showStatus(status, 'success');
 }
@@ -573,7 +576,7 @@ function showThemePicker(host: SlashCommandHost): void {
 async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promise<void> {
   if (theme === host.state.appState.theme) {
     if (theme === 'auto') host.refreshTerminalThemeTracking();
-    host.showStatus(t('tui.dialogs.config.configThemeUnchanged', { theme }));
+    host.showStatus(t('tui.messages.configThemeUnchanged', { theme }));
     return;
   }
 
@@ -583,19 +586,19 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   if (!isBuiltInTheme(theme)) {
     const palette = await loadCustomThemeMerged(theme);
     if (palette === null) {
-      host.showStatus(t('tui.dialogs.config.configThemeLoadFailed', { theme }), 'error');
+      host.showStatus(t('tui.messages.configThemeLoadFailed', { theme }), 'error');
       return;
     }
   }
 
   try {
     await saveTuiConfig({
-      ...currentTuiConfig(host),
+      ...(await currentTuiConfig(host)),
       theme,
     });
   } catch (error) {
     host.showStatus(
-      t('tui.dialogs.config.configThemeSaveFailed', { error: formatErrorMessage(error) }),
+      t('tui.messages.configThemeSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -607,8 +610,8 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   await host.applyTheme(theme, resolved);
   host.refreshTerminalThemeTracking();
   host.track('theme_switch', { theme });
-  const detail = theme === 'auto' ? t('tui.dialogs.config.configThemeTracking', { resolved }) : '';
-  host.showStatus(t('tui.dialogs.config.configThemeSet', { theme, detail }));
+  const detail = theme === 'auto' ? t('tui.messages.configThemeTracking', { resolved }) : '';
+  host.showStatus(t('tui.messages.configThemeSet', { theme, detail }));
 }
 
 export function showLocalePicker(host: SlashCommandHost): void {
@@ -628,18 +631,18 @@ export function showLocalePicker(host: SlashCommandHost): void {
 
 async function applyLocaleChoice(host: SlashCommandHost, locale: Locale): Promise<void> {
   if (locale === host.state.appState.locale) {
-    host.showStatus(t('tui.dialogs.config.configLanguageUnchanged', { locale }));
+    host.showStatus(t('tui.messages.configLanguageUnchanged', { locale }));
     return;
   }
 
   try {
     await saveTuiConfig({
-      ...currentTuiConfig(host),
+      ...(await currentTuiConfig(host)),
       locale,
     });
   } catch (error) {
     host.showStatus(
-      t('tui.dialogs.config.configLanguageSaveFailed', { error: formatErrorMessage(error) }),
+      t('tui.messages.configLanguageSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -647,7 +650,7 @@ async function applyLocaleChoice(host: SlashCommandHost, locale: Locale): Promis
 
   setLocale(locale);
   host.setAppState({ locale });
-  host.showStatus(t('tui.dialogs.config.configLanguageSet', { locale }));
+  host.showStatus(t('tui.messages.configLanguageSet', { locale }));
 }
 
 export function showPermissionPicker(host: SlashCommandHost): void {
@@ -707,7 +710,7 @@ export async function applyExperimentalFeatureChanges(
 ): Promise<void> {
   if (changes.length === 0) {
     host.showStatus(
-      t('tui.dialogs.config.configNoExperimentalChanges'),
+      t('tui.messages.configNoExperimentalChanges'),
       'textMuted',
     );
     return;
@@ -773,19 +776,19 @@ export async function applyUpdatePreferenceChoice(
   autoInstall: boolean,
 ): Promise<void> {
   if (autoInstall === host.state.appState.upgrade.autoInstall) {
-    host.showStatus(t('tui.dialogs.config.configAutoUpdateAlready', { state: autoInstall ? t('tui.dialogs.config.configAutoUpdateEnabled') : t('tui.dialogs.config.configAutoUpdateDisabled') }));
+    host.showStatus(t('tui.messages.configAutoUpdateAlready', { state: autoInstall ? t('tui.messages.configAutoUpdateEnabled') : t('tui.messages.configAutoUpdateDisabled') }));
     return;
   }
 
   const upgrade = { autoInstall };
   try {
     await saveTuiConfig({
-      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      ...(await currentTuiConfig(host as unknown as SlashCommandHost)),
       upgrade,
     });
   } catch (error) {
     host.showStatus(
-      t('tui.dialogs.config.configAutoUpdateSaveFailed', { error: formatErrorMessage(error) }),
+      t('tui.messages.configAutoUpdateSaveFailed', { error: formatErrorMessage(error) }),
       'error',
     );
     return;
@@ -793,12 +796,12 @@ export async function applyUpdatePreferenceChoice(
 
   host.setAppState({ upgrade });
   host.track('upgrade_preference_changed', { auto_install: autoInstall });
-  host.showStatus(t('tui.dialogs.config.configAutoUpdateSet', { state: autoInstall ? t('tui.dialogs.config.configAutoUpdateEnabled') : t('tui.dialogs.config.configAutoUpdateDisabled') }));
+  host.showStatus(t('tui.messages.configAutoUpdateSet', { state: autoInstall ? t('tui.messages.configAutoUpdateEnabled') : t('tui.messages.configAutoUpdateDisabled') }));
 }
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
   if (mode === host.state.appState.permissionMode) {
-    host.showStatus(t('tui.dialogs.config.configPermissionUnchanged', { mode }));
+    host.showStatus(t('tui.messages.configPermissionUnchanged', { mode }));
     return;
   }
 
@@ -811,7 +814,7 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(t('tui.dialogs.config.configPermissionMode', { mode }));
+  host.showNotice(t('tui.messages.configPermissionMode', { mode }));
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
@@ -847,13 +850,13 @@ async function handleGitHubTokenInput(host: SlashCommandHost): Promise<void> {
   const token = await promptApiKey(
     host,
     'GitHub',
-    [t('tui.dialogs.config.configGithubTokenInput')],
+    [t('tui.messages.configGithubTokenInput')],
   );
   if (token === undefined) return;
   try {
     await host.harness.setConfig({ experimental: { github_token: token } });
-    host.showStatus(t('tui.dialogs.config.configGithubTokenSaved'), 'success');
+    host.showStatus(t('tui.messages.configGithubTokenSaved'), 'success');
   } catch (error) {
-    host.showError(t('tui.dialogs.config.configGithubTokenSaveFailed', { error: formatErrorMessage(error) }));
+    host.showError(t('tui.messages.configGithubTokenSaveFailed', { error: formatErrorMessage(error) }));
   }
 }

@@ -334,13 +334,14 @@ async function resolveNativeSession(
       throw new Error(t('tui.statusMessages.sessionNotFound', { sessionId: opts.session! }));
     }
     if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
-      stderr.write(
+      // The session exists but belongs to another directory — say so in the
+      // thrown error instead of the contradictory "session not found".
+      throw new Error(
         t('tui.statusMessages.sessionDifferentDir', {
           sessionId: opts.session!,
           cwd: target.cwd,
-        }),
+        }).trimEnd(),
       );
-      throw new Error(t('tui.statusMessages.sessionNotFound', { sessionId: opts.session! }));
     }
     const session = await resumeById(opts.session);
     const agent = await ensureMainAgent(session);

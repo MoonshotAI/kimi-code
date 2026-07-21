@@ -9,7 +9,7 @@
 import { t } from '#/i18n';
 
 export function formatImportedBadge(): string {
-  return t('migration.badgeImported');
+  return t('tui.migration.badgeImported');
 }
 
 export interface SessionLabelInput {

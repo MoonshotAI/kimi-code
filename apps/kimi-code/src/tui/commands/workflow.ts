@@ -21,18 +21,17 @@ const trimmed = args.trim();
 
   // No args → show usage.
   if (trimmed.length === 0) {
-    const wf = t('tui.slashCommands.workflowHelp') as Record<string, string>;
     host.showNotice(
       t('tui.slashCommands.workflow'),
-[
-        wf.usage,
-        wf.list,
-        wf.run,
-        wf.status,
-        wf.cancel,
+      [
+        t('tui.slashCommands.workflowHelp.usage'),
+        t('tui.slashCommands.workflowHelp.list'),
+        t('tui.slashCommands.workflowHelp.run'),
+        t('tui.slashCommands.workflowHelp.status'),
+        t('tui.slashCommands.workflowHelp.cancel'),
         '',
-        wf.example,
-                t('tui.messages.workflowSearchExample'),
+        t('tui.slashCommands.workflowHelp.example'),
+        t('tui.messages.workflowSearchExample'),
       ].join('\n'),
     );
     return;
