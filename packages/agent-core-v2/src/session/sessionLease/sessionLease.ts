@@ -1,5 +1,5 @@
 /**
- * `sessionLease` domain (L6) — the per-session write lease.
+ * `sessionLease` domain (L1) — the per-session write lease.
  *
  * Defines `ISessionLeaseService`, the Session-scope seeded capability that
  * state writers use to verify they still own the session's durable state,

@@ -1,5 +1,5 @@
 /**
- * `sessionLease` domain (L6) — host-provided lease contact address.
+ * `sessionLease` domain (L1) — host-provided lease contact address.
  *
  * Holds what a session lease payload should advertise for this instance:
  * `{type: 'address', address}` when the host runs a routable network service

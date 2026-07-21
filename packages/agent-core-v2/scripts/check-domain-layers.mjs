@@ -102,6 +102,10 @@ const DOMAIN_LAYER = new Map([
   // Depends only on `_base`; sits in L1 beside the other program-control
   // layer substrates.
   ['task', 1],
+  // `sessionLease` owns the low-level per-session write-fencing capability.
+  // It depends only on the L1 cross-process lock and write-authority contracts
+  // (plus L0 infrastructure), so consumers must not pull it up to their layer.
+  ['sessionLease', 1],
   // persistence/ and os/ — the two-level scopes. `interface` holds contracts
   // (same layer as the old domains they replace); `backends` holds
   // implementations that may depend on cross-domain services at various layers.
@@ -241,13 +245,6 @@ const DOMAIN_LAYER = new Map([
   // through `profile` (L4). Its highest real dependency is `agentLifecycle`,
   // so it sits in L6 beside `workspaceCommand`.
   ['sessionInit', 6],
-  // `sessionLease` owns the per-session write lease (`SessionLease`, the
-  // Session-scope seeded `ISessionLeaseService` fencing capability, and the
-  // App-scope contact provider seed). It builds on the L1 cross-process lock
-  // and the L1 write-authority contract, and is consumed by `sessionLifecycle`
-  // and `sessionMetadata` (both L6); nothing it imports rises past L1, and it
-  // sits in L6 beside its consumers.
-  ['sessionLease', 6],
   // L7 — boundary
   ['approval', 7],
   ['question', 7],
