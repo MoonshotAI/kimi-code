@@ -478,3 +478,37 @@ describe('extractMediaSegments + materializeMediaSegments', () => {
     }
   });
 });
+
+describe('materializeMediaSegments failure mixing', () => {
+  it('inlines successful uploads and falls back per-video on individual failures', async () => {
+    const { cleanup } = setupTempCache();
+    const srcDir = makeTempDir();
+    try {
+      const srcA = join(srcDir, 'a.mp4');
+      const srcB = join(srcDir, 'b.mp4');
+      writeFileSync(srcA, 'a-bytes');
+      writeFileSync(srcB, 'b-bytes');
+      const store = new ImageAttachmentStore();
+      const vidA = store.addVideo('video/mp4', srcA);
+      const vidB = store.addVideo('video/mp4', srcB);
+      const r = extractMediaSegments(`${vidA.placeholder} then ${vidB.placeholder}`, store);
+
+      const parts = await materializeMediaSegments(r.segments, async (att) => {
+        if (att.sourcePath === srcB) throw new Error('upload failed');
+        return { type: 'video_url', videoUrl: { url: `ms://${att.sourcePath}` } };
+      });
+
+      // A inlined, B degraded to a cache tag — order and both contents kept.
+      expect(parts[0]).toEqual({ type: 'video_url', videoUrl: { url: `ms://${srcA}` } });
+      expect(parts[1]).toEqual({ type: 'text', text: ' then ' });
+      expect(parts[2]?.type).toBe('text');
+      const tag = (parts[2] as TextPart).text;
+      const m = /<video path="([^"]+)"><\/video>/.exec(tag);
+      expect(m).not.toBeNull();
+      expect(readFileSync(m![1]!, 'utf8')).toBe('b-bytes');
+    } finally {
+      cleanup();
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -269,3 +269,106 @@ describe('uploadVideo', () => {
     await expect(ctx.rpc.uploadVideo({ path })).rejects.toThrow(/100MB/);
   });
 });
+
+describe('uploadVideo input validation', () => {
+  const FTYP_MP4 = Buffer.from([
+    0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02,
+    0x00, 0x69, 0x73, 0x6f, 0x6d, 0x69, 0x73, 0x6f, 0x32,
+  ]);
+
+  function tempFile(name: string, bytes: Buffer): string {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-upload-video-'));
+    const path = join(dir, name);
+    writeFileSync(path, bytes);
+    return path;
+  }
+
+  async function stubFilesServer(): Promise<{ url: string; close: () => Promise<void> }> {
+    const server = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/files') {
+        req.resume();
+        req.on('end', () => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ id: 'stub-video-file', object: 'file', bytes: 0, created_at: 0, filename: 'x.mp4', purpose: 'video' }));
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${String(port)}`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it('trusts the video extension when magic bytes are absent (documented sniff fallback)', async () => {
+    // Some containers (MPEG-PS) carry no recognizable magic, so when the
+    // header cannot be sniffed the extension is the only signal — the same
+    // classification ReadMediaFile uses. A mislabeled file therefore passes
+    // validation and fails later, at the provider, not here.
+    const stub = await stubFilesServer();
+    try {
+      const ctx = testAgent();
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+      });
+      const part = await ctx.rpc.uploadVideo({
+        path: tempFile('fake.mp4', Buffer.from('definitely not a video')),
+      });
+      expect(part.videoUrl.url).toBe('ms://stub-video-file');
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('accepts video bytes in a .txt file (magic bytes win over the extension)', async () => {
+    const stub = await stubFilesServer();
+    try {
+      const ctx = testAgent();
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+      });
+      const part = await ctx.rpc.uploadVideo({ path: tempFile('video.txt', FTYP_MP4) });
+      expect(part.videoUrl.url).toBe('ms://stub-video-file');
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('accepts a video at exactly 100MB and rejects 100MB+1', async () => {
+    const stub = await stubFilesServer();
+    try {
+      const ctx = testAgent();
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+      });
+
+      const over = tempFile('over.mp4', FTYP_MP4);
+      truncateSync(over, 100 * 1024 * 1024 + 1);
+      await expect(ctx.rpc.uploadVideo({ path: over })).rejects.toThrow(/100MB/);
+
+      const exact = tempFile('exact.mp4', FTYP_MP4);
+      truncateSync(exact, 100 * 1024 * 1024);
+      const part = await ctx.rpc.uploadVideo({ path: exact });
+      expect(part.videoUrl.url).toBe('ms://stub-video-file');
+    } finally {
+      await stub.close();
+    }
+  }, 30000);
+
+  it('rejects a directory path', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+    const dir = mkdtempSync(join(tmpdir(), 'agent-upload-video-'));
+    await expect(ctx.rpc.uploadVideo({ path: dir })).rejects.toThrow();
+  });
+
+  it('rejects a nonexistent path', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+    await expect(ctx.rpc.uploadVideo({ path: '/no/such/file.mp4' })).rejects.toThrow();
+  });
+});

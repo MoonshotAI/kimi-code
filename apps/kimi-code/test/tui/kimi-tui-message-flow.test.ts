@@ -1607,6 +1607,82 @@ command = "vim"
     }
   });
 
+  it('keeps submit order when a video upload is in flight', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      driver.handleUserInput('plain follow-up');
+
+      // Nothing may overtake the in-flight upload.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(session.prompt).not.toHaveBeenCalled();
+
+      releaseUpload();
+      await vi.waitFor(() => {
+        expect(session.prompt).toHaveBeenCalledWith([
+          { type: 'text', text: 'watch ' },
+          { type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } },
+        ]);
+      });
+      // The video prompt starts a turn, so the follow-up holds in the queue —
+      // submission order is preserved either way.
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+      expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['plain follow-up']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('queues a pasted-video message with uploaded parts while streaming', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput(`describe ${attachment.placeholder}`);
+
+      // The upload completes even while the turn is busy; the queued message
+      // carries the final parts by the time it is drained.
+      await vi.waitFor(() => {
+        expect(driver.state.queuedMessages).toHaveLength(1);
+      });
+      expect(session.prompt).not.toHaveBeenCalled();
+      const queued = driver.state.queuedMessages[0];
+      expect(queued?.parts).toEqual([
+        { type: 'text', text: 'describe ' },
+        { type: 'video_url', videoUrl: { url: 'ms://stub-video', id: 'stub-video' } },
+      ]);
+
+      driver.sendQueuedMessage(session, queued!);
+      expect(session.prompt).toHaveBeenCalledWith([
+        { type: 'text', text: 'describe ' },
+        { type: 'video_url', videoUrl: { url: 'ms://stub-video', id: 'stub-video' } },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
