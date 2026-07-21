@@ -77,6 +77,7 @@ export function fakeMcpClient(
       }
       return { content: [{ type: 'text', text: 'ok' }], isError: false };
     },
+    async ping() {},
   };
 }
 

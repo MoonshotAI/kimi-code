@@ -1,7 +1,7 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 import { Jimp } from 'jimp';
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -392,6 +392,9 @@ describe('AgentMcpService', () => {
         onCall?.();
         throw makeError();
       },
+      async ping() {
+        throw makeError();
+      },
     };
   }
 
@@ -402,6 +405,7 @@ describe('AgentMcpService', () => {
         counter.calls += 1;
         return base.callTool(name, args, signal);
       },
+      ping: (signal) => base.ping(signal),
     };
   }
 
@@ -453,6 +457,7 @@ describe('AgentMcpService', () => {
       async callTool() {
         throw new McpError(ErrorCode.InvalidParams, 'Invalid tool arguments');
       },
+      ping: () => base.ping(),
     };
     let reconnects = 0;
     manager.reconnectHandler = async () => {
@@ -525,6 +530,7 @@ describe('AgentMcpService', () => {
       async callTool() {
         throw abortError('This operation was aborted');
       },
+      ping: () => base.ping(),
     };
     let reconnects = 0;
     manager.reconnectHandler = async () => {
@@ -691,6 +697,151 @@ describe('AgentMcpService', () => {
     expect(reconnects).toBe(0);
   });
 
+  it('rethrows a malformed tool result without reconnecting or retrying when the server answered', async () => {
+    const manager = new FakeMcpManager();
+    const base = fakeMcpClient();
+    const malformed = CallToolResultSchema.safeParse({ content: [{ text: 'missing type' }] });
+    if (malformed.success) throw new Error('expected the fixture result to fail validation');
+    let calls = 0;
+    const client: MCPClient = {
+      listTools: () => base.listTools(),
+      ping: () => base.ping(),
+      async callTool() {
+        calls += 1;
+        throw malformed.error;
+      },
+    };
+    let reconnects = 0;
+    manager.reconnectHandler = async () => {
+      reconnects += 1;
+    };
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    await expect(
+      executeTool(echo!, {
+        turnId: 1,
+        toolCallId: 'tc-malformed-result',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toBe(malformed.error);
+    expect(calls).toBe(1);
+    expect(reconnects).toBe(0);
+  });
+
+  it('retries a transient transport failure in place without reconnecting', async () => {
+    const manager = new FakeMcpManager();
+    const base = fakeMcpClient();
+    let calls = 0;
+    const flakyClient: MCPClient = {
+      listTools: () => base.listTools(),
+      ping: () => base.ping(),
+      callTool: (name, args, signal) => {
+        calls += 1;
+        if (calls === 1) return Promise.reject(new TypeError('fetch failed'));
+        return base.callTool(name, args, signal);
+      },
+    };
+    let reconnects = 0;
+    manager.reconnectHandler = async () => {
+      reconnects += 1;
+    };
+    manager.setResolved('s', flakyClient, await discoverTools(flakyClient));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-transient',
+      args: { text: 'hello again' },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe('hello again');
+    expect(calls).toBe(2);
+    expect(reconnects).toBe(0);
+  });
+
+  it('reconnects when the transport failure persists past a successful probe', async () => {
+    const manager = new FakeMcpManager();
+    const base = fakeMcpClient();
+    let calls = 0;
+    const deadClient: MCPClient = {
+      listTools: () => base.listTools(),
+      ping: () => base.ping(),
+      async callTool() {
+        calls += 1;
+        throw new TypeError('fetch failed');
+      },
+    };
+    const freshClient = fakeMcpClient();
+    let reconnects = 0;
+    manager.reconnectHandler = async (name) => {
+      reconnects += 1;
+      manager.setResolved(name, freshClient, await discoverTools(freshClient));
+      manager.connect(name);
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-persistent-transport',
+      args: { text: 'hello again' },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe('hello again');
+    expect(calls).toBe(2);
+    expect(reconnects).toBe(1);
+  });
+
+  it('abandons the retry when the call is aborted during the liveness probe', async () => {
+    const manager = new FakeMcpManager();
+    const base = fakeMcpClient();
+    const probeStarted = deferred<void>();
+    const releaseProbe = deferred<void>();
+    const client: MCPClient = {
+      listTools: () => base.listTools(),
+      async ping() {
+        probeStarted.resolve();
+        await releaseProbe.promise;
+      },
+      async callTool() {
+        throw new TypeError('fetch failed');
+      },
+    };
+    let reconnects = 0;
+    manager.reconnectHandler = async () => {
+      reconnects += 1;
+    };
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const controller = new AbortController();
+    const call = executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-abort-during-probe',
+      args: { text: 'hi' },
+      signal: controller.signal,
+    });
+    await probeStarted.promise;
+    controller.abort(new Error('cancelled by test'));
+    releaseProbe.resolve();
+    await expect(call).rejects.toThrow('cancelled by test');
+    expect(reconnects).toBe(0);
+  });
+
   it('truncates oversized MCP text output through the wrapped tool path', async () => {
     const manager = new FakeMcpManager();
     const client: MCPClient = {
@@ -709,6 +860,7 @@ describe('AgentMcpService', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     manager.setResolved('s', client, await discoverTools(client));
     createService(manager);
@@ -744,6 +896,7 @@ describe('AgentMcpService', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     manager.setResolved('s', client, await discoverTools(client));
     createService(manager);
@@ -790,6 +943,7 @@ describe('AgentMcpService', () => {
           isError: false,
         };
       },
+      async ping() {},
     };
     manager.setResolved('s', client, await discoverTools(client));
     createService(manager);
@@ -837,6 +991,7 @@ describe('AgentMcpService', () => {
         receivedSignal = signal;
         return { content: [{ type: 'text', text: String(args['text']) }], isError: false };
       },
+      async ping() {},
     };
     manager.setResolved('s', client, await discoverTools(client));
     createService(manager);

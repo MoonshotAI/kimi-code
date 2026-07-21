@@ -3,11 +3,24 @@
  *
  * Each tool exposed by a connected MCP server is adapted into an
  * `ExecutableTool` whose `resolveExecution` forwards the call to the client
- * and normalizes the result. When the call fails at the transport layer
- * (the stdio process exited, the remote server restarted, the client was
- * already closed), the adapter reconnects the server through
- * `options.reconnect` once and retries the call on the fresh client, so a
- * dropped connection surfaces as a slow call instead of a failed turn.
+ * and normalizes the result. When a call fails, the adapter picks one of
+ * three recoveries based on why it failed:
+ *
+ * - The server answered (a JSON-RPC error, or a response that failed
+ *   client-side schema validation) → the error is rethrown; reconnecting
+ *   would not change the answer.
+ * - The failure is ambiguous (a raw fetch/socket error) → the client is
+ *   probed with a ping: alive means a transient blip and the call is
+ *   retried once in place; dead means the transport is gone.
+ * - The transport is provably dead (the SDK fired `onclose`, or the probe
+ *   failed) → the server is reconnected once through `options.reconnect`
+ *   and the call retried on the fresh client, so a dropped connection
+ *   surfaces as a slow call instead of a failed turn.
+ *
+ * Retries are at-least-once: if the transport died after the server
+ * processed the call but before the response arrived, the retry may
+ * duplicate side effects. There is no protocol-level dedup across
+ * reconnects, so this trade-off is accepted deliberately.
  */
 
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
@@ -18,7 +31,12 @@ import { isAbortError } from '#/_base/utils/abort';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { MCPClient, MCPToolResult } from '#/agent/mcp/types';
-import { isMcpTransportFailure } from '#/agent/mcp/client-shared';
+import {
+  isMcpConnectionClosedError,
+  isMcpMalformedResultError,
+  isMcpTransportFailure,
+  probeMcpLiveness,
+} from '#/agent/mcp/client-shared';
 
 interface McpToolOptions {
   readonly originalsDir?: string;
@@ -45,7 +63,7 @@ export function createMcpTool(
         try {
           result = await callTool(client, args, context.signal);
         } catch (error) {
-          result = await retryAfterReconnect(error, args, context, options, callTool);
+          result = await retryAfterReconnect(error, client, args, context, options, callTool);
         }
         return normalizeMcpToolResult(
           await mcpResultToExecutableOutput(result, qualifiedName, {
@@ -60,20 +78,49 @@ export function createMcpTool(
 
 async function retryAfterReconnect(
   error: unknown,
+  client: MCPClient,
   args: unknown,
   context: Pick<ExecutableToolContext, 'signal' | 'onUpdate'>,
   options: McpToolOptions,
   callTool: (client: MCPClient, args: unknown, signal: AbortSignal) => Promise<MCPToolResult>,
 ): Promise<MCPToolResult> {
   const reconnect = options.reconnect;
-  if (
-    reconnect === undefined ||
+  // Errors that can never be fixed by a retry: user cancellation, and the
+  // server having answered — a JSON-RPC error (`McpError`, including a tool
+  // call timeout) or a malformed result that failed schema validation.
+  const isUnrecoverable = (e: unknown): boolean =>
     context.signal.aborted ||
-    isAbortError(error) ||
-    !isMcpTransportFailure(error)
-  ) {
+    isAbortError(e) ||
+    !isMcpTransportFailure(e) ||
+    isMcpMalformedResultError(e);
+  if (reconnect === undefined || isUnrecoverable(error)) {
     throw error;
   }
+
+  // A ConnectionClosed error is a measured death (the SDK already fired
+  // `onclose` and rejected every pending request), so it goes straight to
+  // reconnect. Anything else is ambiguous about whether the transport
+  // still works — probe it instead of guessing from the error's type.
+  let failure = error;
+  if (!isMcpConnectionClosedError(failure)) {
+    const alive = await probeMcpLiveness(client, context.signal);
+    context.signal.throwIfAborted();
+    if (alive) {
+      // The transport is fine and the failure was transient: retry once in
+      // place instead of paying a full reconnect for a network blip. If the
+      // transport dies between probe and retry, fall through to reconnect —
+      // still capped at one reconnect per call.
+      try {
+        return await callTool(client, args, context.signal);
+      } catch (retryError) {
+        if (isUnrecoverable(retryError)) {
+          throw retryError;
+        }
+        failure = retryError;
+      }
+    }
+  }
+
   context.onUpdate?.({ kind: 'status', text: 'MCP connection lost — reconnecting…' });
   let freshClient: MCPClient | undefined;
   try {
@@ -83,12 +130,12 @@ async function retryAfterReconnect(
       throw reconnectError;
     }
     throw new Error(
-      `${toErrorMessage(error)} (reconnecting the MCP server also failed: ${toErrorMessage(reconnectError)})`,
+      `${toErrorMessage(failure)} (reconnecting the MCP server also failed: ${toErrorMessage(reconnectError)})`,
       { cause: reconnectError },
     );
   }
   if (freshClient === undefined) {
-    throw error;
+    throw failure;
   }
   return callTool(freshClient, args, context.signal);
 }
