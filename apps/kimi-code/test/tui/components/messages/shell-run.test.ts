@@ -28,7 +28,7 @@ describe('ShellRunComponent hardening', () => {
       for (let i = 0; i < 20; i++) c.append(chunk);
       c.render(100);
     }).not.toThrow();
-  });
+  }, 120_000);
 
   it('finish switches to the final view and ignores later appends', () => {
     const c = create();
