@@ -204,6 +204,12 @@ export class BashTool implements BuiltinTool<BashInput> {
     return resolveAgentTaskConfig(this.config)?.bashAutoBackgroundOnTimeout ?? true;
   }
 
+  private detachTimeoutMs(): number {
+    const configuredS = resolveAgentTaskConfig(this.config)?.bashTaskTimeoutS;
+    if (configuredS === undefined) return DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND;
+    return configuredS * MS_PER_SECOND;
+  }
+
   get description(): string {
     if (!this.allowBackground()) return withoutBackgroundDescription(this.renderedDescription);
     if (!this.autoBackgroundOnTimeout()) {
@@ -304,7 +310,7 @@ export class BashTool implements BuiltinTool<BashInput> {
         {
           detached: startsInBackground,
           timeoutMs,
-          detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
+          detachTimeoutMs: this.detachTimeoutMs(),
           autoBackgroundOnTimeout: this.allowBackground() && this.autoBackgroundOnTimeout(),
           signal: startsInBackground ? undefined : signal,
         },
