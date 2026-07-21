@@ -75,7 +75,8 @@ export function stripEnvBoundFields<T>(bindings: EnvBindings<T>): ConfigStripEnv
         delete out[field];
       }
     }
-    return (out ?? value) as T;
+    if (out === undefined) return value;
+    return (Object.keys(out).length > 0 ? out : undefined) as T | undefined;
   };
 }
 

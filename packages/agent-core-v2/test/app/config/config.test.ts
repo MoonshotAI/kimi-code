@@ -43,6 +43,7 @@ import {
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
 } from '#/agent/loop/configSection';
+import { ENV_MODEL_ALIAS_KEY } from '#/app/model/envOverlay';
 import {
   THINKING_SECTION,
   type ThinkingConfig,
@@ -1051,6 +1052,56 @@ describe('subagent config section', () => {
     expect(config.inspect<SubagentConfig>(SUBAGENT_SECTION).userValue).toEqual({
       timeoutMs: 5000,
     });
+
+    disposables.dispose();
+  });
+
+  it('clears the raw section when stripping removes the last persisted field', async () => {
+    const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env);
+
+    // A client echoing the env-overlaid section back: nothing persistable
+    // remains, so the raw section is cleared instead of shadowing the default
+    // with an empty object.
+    await config.set(SUBAGENT_SECTION, { timeoutMs: 7000 });
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(7000);
+    expect(config.inspect<SubagentConfig>(SUBAGENT_SECTION).userValue).toBeUndefined();
+
+    delete env[SUBAGENT_TIMEOUT_ENV];
+    expect(config.get<SubagentConfig>(SUBAGENT_SECTION)).toEqual({
+      timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+    });
+
+    disposables.dispose();
+  });
+});
+
+describe('get() freshness for overlay-written domains', () => {
+  it('recomputes overlay values on every get()', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    env['KIMI_MODEL_NAME'] = 'env-model';
+    env['KIMI_MODEL_API_KEY'] = 'sk-test';
+    expect(config.get<Record<string, unknown>>('models')).toHaveProperty(ENV_MODEL_ALIAS_KEY);
+    expect(config.get<string>('defaultModel')).toBe(ENV_MODEL_ALIAS_KEY);
+
+    delete env['KIMI_MODEL_NAME'];
+    delete env['KIMI_MODEL_API_KEY'];
+    expect(config.get<Record<string, unknown> | undefined>('models') ?? {}).not.toHaveProperty(
+      ENV_MODEL_ALIAS_KEY,
+    );
+    expect(config.get<string | undefined>('defaultModel')).toBeUndefined();
 
     disposables.dispose();
   });

@@ -267,11 +267,7 @@ export class ConfigService extends Disposable implements IConfigService {
     if (Object.prototype.hasOwnProperty.call(this.memory, domain)) {
       return this.memory[domain] as T;
     }
-    const section = this.registry.getSection(domain);
-    if (section?.env !== undefined) {
-      return this.freshEffective()[domain] as T;
-    }
-    return this.effective[domain] as T;
+    return this.freshEffective()[domain] as T;
   }
 
   inspect<T = unknown>(domain: string): ConfigInspectValue<T> {
