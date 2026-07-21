@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix cross-process state corruption by replacing ad-hoc lockfiles with kernel-backed locks for server and database coordination, with automatic release when a process exits.
+Fix occasional state corruption when multiple CLI or server instances run at the same time.

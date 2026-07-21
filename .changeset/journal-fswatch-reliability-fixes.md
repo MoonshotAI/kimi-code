@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix the server event journal silently dropping events on write failure and on shutdown, and make `.gitignore` edits take effect immediately for file listing and file watching.
+Fix `.gitignore` edits not taking effect until restart for file listing and file watching.
