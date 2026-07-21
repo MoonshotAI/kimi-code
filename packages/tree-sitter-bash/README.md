@@ -2,34 +2,21 @@
 
 A pure-TypeScript bash parser that produces a syntax tree whose named node
 types match [tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash)
-one-to-one, built for agent-side command permission analysis.
+0.25.0 one-to-one, built for agent-side command permission analysis.
 
 - No native addons; offsets are UTF-16 code units (`node.text` is always a
   direct `source.slice(startIndex, endIndex)`).
-- Parsing runs under a hard budget (default 50 ms / 50 000 nodes); exceeding
-  it returns `{ ok: false, reason: 'aborted' }` instead of throwing. The
-  budget caps total work, not input size: a multi-hundred-KB string or
-  heredoc body parses fine (it produces only a handful of nodes), but a
-  source whose tree would exceed 50 000 nodes — a megabyte-long `case`
-  statement, tens of thousands of arithmetic expressions — is aborted
-  under the defaults. Pass `timeoutMs` / `maxNodes` to raise the limits.
-- Malformed input never throws either. Unterminated constructs (quotes,
-  expansions, substitutions, heredocs, compound commands) are kept as
-  partial nodes and flagged with `hasError: true`; tokens that cannot start
-  or continue a statement (stray `)`, a leading `&&`, …) are wrapped in
-  `ERROR` nodes and parsing continues.
-- Newlines never appear in the tree: statement-terminating `\n`s produce no
-  nodes at all (matching tree-sitter-bash, whose scanner only emits `\n`
-  tokens in heredoc position), while `;` / `&` terminators are anonymous
-  children.
-- Recursion is depth-capped so pathological nesting degrades locally
-  (ERROR nodes, `hasError: true`) instead of overflowing the stack:
-  `MAX_SUBSTITUTION_DEPTH = 150` for the $( … ) / `…` / <( … ) sub-parser
-  chain (the deepest per level, ~13 frames — measured stack overflow at
-  ~380–500 levels on a default Node stack, so the cap keeps a ≥2.5×
-  margin), `MAX_PARSE_DEPTH = 500` for subshell/compound/`${…}`/expression
-  nesting (verified safe at those caps), and `MAX_SCAN_DEPTH = 1024` for
-  the lexer's own scan recursion.
+- Parsing runs under a hard budget and never throws: budget exhaustion
+  returns `{ ok: false, reason: 'aborted' }`, malformed input returns a
+  degraded tree with `hasError: true`.
+- Correctness is enforced by a differential test suite that parses hundreds
+  of samples — plus the complete official tree-sitter-bash 0.25.0 corpus —
+  with both this parser and the real tree-sitter-bash (wasm) and compares
+  the trees byte-for-byte (see `test/fixtures/`). The only remaining
+  deviations are the documented ones listed under
+  [Known differences](#known-differences-from-tree-sitter-bash) below.
+
+## API
 
 ```ts
 import { parse } from '@moonshot-ai/tree-sitter-bash';
@@ -40,11 +27,59 @@ if (result.ok) {
 }
 ```
 
+- `parse(source: string, options?: ParseOptions): ParseResult`
+- `ParseResult` is one of:
+  - `{ ok: true; rootNode: SyntaxNode; hasError: boolean }`
+  - `{ ok: false; reason: 'aborted' }`
+- `ParseOptions`: `{ timeoutMs?: number; maxNodes?: number }` (defaults
+  50 ms / 50 000 nodes; `timeoutMs: Infinity` disables the time check).
+- `SyntaxNode`: `{ type, text, startIndex, endIndex, isNamed, parent,
+  children, namedChildren }`. Named node types come from tree-sitter-bash's
+  `node-types.json`; `children` includes the anonymous (punctuation /
+  keyword token) nodes as well, `namedChildren` only the named ones, and
+  `descendantsOfType(root, ...types)` walks named descendants.
+- Depth caps (pathological nesting degrades locally — ERROR nodes,
+  `hasError: true` — instead of overflowing the stack):
+  - `MAX_SUBSTITUTION_DEPTH = 150` for the $( … ) / `…` / <( … )
+    sub-parser chain (the deepest per level, ~13 frames — measured stack
+    overflow at ~380–500 levels on a default Node stack, so the cap keeps
+    a ≥2.5× margin);
+  - `MAX_PARSE_DEPTH = 500` for subshell/compound/`${…}`/expression
+    nesting (verified safe at those caps);
+  - `MAX_SCAN_DEPTH = 1024` for the lexer's own scan recursion.
+
+## Budget semantics
+
+The budget caps total work, not input size: a multi-hundred-KB string or
+heredoc body parses fine (it produces only a handful of nodes), but a
+source whose tree would exceed 50 000 nodes — a megabyte-long `case`
+statement, tens of thousands of arithmetic expressions — is aborted under
+the defaults. Every created node ticks the budget; long character-level
+scan loops re-check the deadline periodically. When either limit is hit,
+`parse` returns `{ ok: false, reason: 'aborted' }` and the abort is prompt
+(see Performance). Pass `timeoutMs` / `maxNodes` to raise the limits.
+
+## Error recovery
+
+Malformed input never throws either. Unterminated constructs (quotes,
+expansions, substitutions, heredocs, compound commands) are kept as
+partial nodes and flagged with `hasError: true`; tokens that cannot start
+or continue a statement (stray `)`, a leading `&&`, …) are wrapped in
+`ERROR` nodes and parsing continues. Newlines never appear in the tree:
+statement-terminating `\n`s produce no nodes at all (matching
+tree-sitter-bash, whose scanner only emits `\n` tokens in heredoc
+position), while `;` / `&` terminators are anonymous children. As a
+last-resort guard against parser bugs, any unexpected internal exception
+degrades to a `program` root with a single `ERROR` child spanning the
+source and `hasError: true` — callers still get a usable tree.
+
 ## Known differences from tree-sitter-bash
 
 Named node types always come from tree-sitter-bash's `node-types.json`, but
 for the following constructs the tree shape deliberately deviates from what
-tree-sitter-bash 0.25.0 produces (verified against the real parser):
+tree-sitter-bash 0.25.0 produces (each verified against the real parser,
+and pinned by a stored expectation in `test/fixtures/` — see
+`test/helpers/known-differences.ts`):
 
 - `<>` (read-write redirect) is parsed as a normal `file_redirect`
   operator; tree-sitter-bash 0.25.0 fails to parse it.
@@ -63,6 +98,10 @@ tree-sitter-bash 0.25.0 produces (verified against the real parser):
   substitutions are parsed as `command_substitution` children.
   tree-sitter-bash's scanner hides the leading chunk and swallows backticks
   into the content.
+- A `$'` sequence inside an unquoted heredoc body is plain text here
+  (bash does not expand ANSI-C strings in heredocs; the reference does the
+  same mid-line). Quirk: when a body line STARTS with `$'…'`, the
+  reference's scanner errors and drops the whole `heredoc_redirect`.
 - A heredoc redirect at statement start (`<<EOF cat`) parses normally;
   tree-sitter-bash errors.
 - Unterminated or invalid constructs keep their partial nodes with
@@ -91,10 +130,14 @@ tree-sitter-bash 0.25.0 produces (verified against the real parser):
 - A trailing connector (`ls &&`, `ls |`) yields a single-child
   `list` / `pipeline` with `hasError: true`; tree-sitter-bash inserts a
   zero-width `command` recovery node.
-- An empty backtick substitution (`` `` ``) is a `command_substitution`
-  with no statements; tree-sitter-bash treats the two backticks as a single
-  `` `` `` token that is only valid inside a concatenation and errors in
-  argument position.
+- An empty backtick substitution (`` `` ``), or a pair containing only
+  whitespace, is a `command_substitution` with no statements;
+  tree-sitter-bash treats the two backticks as a single `` `` `` token
+  that is only valid inside a concatenation and errors in argument
+  position.
+- An empty command substitution (`$( )`) is a clean `command_substitution`
+  with no statements here; the reference inserts a zero-width `command`
+  recovery node (and flags `hasError`).
 - In arithmetic, a hex literal is a `number` (`$((0x1F))` → number
   "0x1F"); the reference's arithmetic number token does not cover hex and
   produces a `variable_name` "0x1F" instead (a reference quirk — bash does
@@ -103,14 +146,40 @@ tree-sitter-bash 0.25.0 produces (verified against the real parser):
   parses cleanly here as nested `parenthesized_expression`s; the reference
   mis-reads it as an `arithmetic_expansion` with an embedded `ERROR` node
   (a reference quirk — the valid `[[ ((a)) == x ]]` form matches exactly).
+- An extglob group the reference rejects — one that directly follows a
+  pure literal or a dot (`x@(y|z)w`, `*.@(a|b)`, `_@(y)`, `*@(y)`,
+  `.@(y)`) — is an error there (an `ERROR` node inside the comparison);
+  this parser ends the pattern at the group and recovers with a different
+  error shape. Groups the reference ACCEPTS — at the start of the right
+  side (`+(a|b)`) or after glob characters (`*/@(default).vim`,
+  `*_@(LIB|SYMLINK)`, `@(LLD|GNU\ ld)*`, `*([0-9])([0-9])`, `\"+(?)\"`) —
+  match exactly, as do right sides split around one substitution or quote
+  (`*${var}*`, `*/${a}*`, `*"7f 45"*`).
+- An extglob group the reference rejects in a case pattern (`x@(y))`, and
+  the same mechanism for `.(` (`x.(y))`, `*.(a|b))` — `.` is not a sigil,
+  but the reference rejects it identically): the reference reparses the
+  group as the start of a new case item; this parser degrades the whole
+  pattern to an `ERROR` node. (Accepted groups — `*(a|b))`,
+  `*([0-9])([0-9]))` — match exactly.)
+- A single-dash short-option case pattern (`-o)`) is a `word` — the form
+  this parser always produces — but the reference's classification flips
+  with leftover scanner state (a first case item right after the `in`
+  line's newline parses it as an `extglob_pattern`).
+- A case pattern directly after a line continuation (`| \<newline>`) is a
+  `word` in the reference even when its content would make it a glob
+  (`cmake_modules` — a scanner-state quirk); this parser classifies
+  patterns by content, so such a pattern is an `extglob_pattern` here. A
+  continuation INSIDE a pattern (`cont\<newline>ued)`) is an error in the
+  reference (word "cont" + `ERROR` "ued", `hasError: true`), and a
+  continuation fused with a digit (`a\<newline>1)`) is an
+  `extglob_pattern` there; this parser keeps the continuation and parses
+  the whole pattern cleanly as one `word` — which is also how bash itself
+  reads it.
+- A comparison right side with TWO substitutions or quotes
+  (`*${x}*${y}`, `*"s"*"t"`) does not fit the reference's one-construct
+  pattern rule either; it recovers with a nested `binary_expression`
+  there, while this parser keeps a single `concatenation` right side.
 - A few `[[ … ]]` comparison right-hand sides deviate:
-  - An extglob group in the MIDDLE of a pattern (`foo*(.txt|.log)`,
-    `*foo*(a)`, `[a-z]*(x)`) is one `extglob_pattern` node in the
-    reference; this parser ends the pattern at the group paren and flags
-    `hasError: true` with an `ERROR` tail. A group at the START of the
-    right side (`+(a|b)`) matches the reference exactly, and a group
-    directly after a pure literal (`x@(y|z)w`) is an error in the
-    reference too (an `ERROR` node there).
   - A negative decimal operand (`[[ $n == -0.5 ]]`) is a
     `unary_expression` (`-` over word "0.5") in the reference; this parser
     produces a single `extglob_pattern` "-0.5" (the unary-minus reading
@@ -123,10 +192,40 @@ tree-sitter-bash 0.25.0 produces (verified against the real parser):
     expression in the reference — `binary_expression(==, extglob "foo\")`
     then `|` then word "bar" (a reference quirk); this parser keeps one
     `extglob_pattern` "foo\|bar".
+- `${!# }` and `${!## }` (and `${!##/}`) are pathological expansion forms:
+  the reference recovers with zero-width operator tokens, this parser with
+  a flagged partial `expansion`; the shapes differ. (The sane forms
+  `${#}`, `${!#}`, `${!##}`, `${#!}` all match exactly.)
+- A base prefix fused with an expansion (`10#${x}`) is one `number` node
+  spanning the expansion in the reference (a quirk); this parser produces
+  a `concatenation` of word "10#" and the expansion.
+- `${v:-(default)}` (a parenthesized default value) is a plain `word`
+  here; the reference parses it as an `array` node (a quirk).
+- `${=1}` (zsh-style word splitting flag) produces a `variable_name` "1"
+  in the reference; this parser produces a `word`.
+- An escaped space or tab between arguments is dropped by the reference
+  as invisible extras (its tree has gaps: `echo 1 \ 2` produces number
+  "1" and number "2", and `echo a\<TAB>b` splits into word "a" and word
+  "b"); this parser keeps the escape inside the word. (An escaped space
+  INSIDE a word, `a\ b`, is kept by both parsers and matches.)
+- A `$` directly fused with a backtick substitution (`` $`echo x` ``) is
+  one `command_substitution` with a `$`+backtick token in the reference;
+  this parser produces a `($)` token followed by the substitution.
+- A non-ASCII “identifier” in assignment position (`变量=值`, `é=1`) is a
+  `variable_assignment` flagged `hasError` in the reference; this parser
+  keeps it a plain command word — which is also how bash itself treats it
+  (variable names are ASCII-only, so the text runs as a command).
+- A negative literal after a compound assignment in a c-style for header
+  (`for (( … j *= -1, … ))`) is folded into a `number` "-1" by the
+  reference; this parser produces a `unary_expression` (`-` over number
+  "1") — matching what the reference itself produces everywhere else.
+- A double backslash in a replacement value (`${x// /\\|}`) loses its
+  first backslash in the reference's tree (a quirk — the `word` starts
+  one character later); this parser keeps both.
 - `string_content` is not split at newlines (tree-sitter-bash's scanner
   splits it).
 
-For completeness, two constructs that LOOK like deviations but are not —
+For completeness, a few constructs that LOOK like deviations but are not —
 the reference behaves the same way (verified):
 
 - `coproc` has no grammar support in tree-sitter-bash 0.25.0 and parses as
@@ -152,3 +251,23 @@ the reference behaves the same way (verified):
   `cmd` the `command_name`), while redirects after the command name consume
   every following word (`cmd > out arg` puts both words in the redirect) —
   this matches tree-sitter-bash's actual disambiguation.
+
+## Performance
+
+Measured on an Apple-silicon MacBook (Node 24, default 50 ms / 50 000-node
+budget):
+
+- A typical one-line command (`git status && rm -rf /`): ~4 µs per parse.
+- A 100 KB realistic deployment script (functions, loops, redirects,
+  expansions, heredocs): tens of milliseconds per parse (~20–60 ms across
+  runs and machines) — the same order of magnitude as the default 50 ms
+  budget, so such inputs may return `ok: true` or a prompt abort depending
+  on the machine; raise `timeoutMs` when parsing whole scripts.
+- A 500 KB heredoc body: parses within the default budget (the tree has
+  only a handful of nodes).
+- The abort path is prompt: a 400 KB node-budget bomb aborts in ~20 ms
+  (hard guarantee asserted by the test suite: < 100 ms).
+
+These numbers are smoke-tested as orders of magnitude in
+`test/performance.test.ts` to guard against accidental quadratic
+complexity; absolute timings vary by machine.

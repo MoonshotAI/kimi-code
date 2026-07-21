@@ -1,0 +1,650 @@
+@match: [[ -f file.txt ]]
+[[ -f file.txt ]]
+===
+@match: [[ $x == "foo" ]]
+[[ $x == "foo" ]]
+===
+@match: [[ $x =~ ^ab+c$ ]]
+[[ $x =~ ^ab+c$ ]]
+===
+@match: [[ -n $s && -d /tmp ]]
+[[ -n $s && -d /tmp ]]
+===
+@match: [[ a < b || ! -e f ]]
+[[ a < b || ! -e f ]]
+===
+@match: [ -f file ]
+[ -f file ]
+===
+@match: [ "$a" = "b" ]
+[ "$a" = "b" ]
+===
+@match: ! [[ -f x ]]
+! [[ -f x ]]
+===
+@match: [ -f file
+[ -f file
+===
+@match: [ x ]
+[ x ]
+===
+@match: while [[ -n $s ]]; do s=; done
+while [[ -n $s ]]; do s=; done
+===
+@match: foo() [[ -f x ]]
+foo() [[ -f x ]]
+===
+@match: [[ -z $s ]]
+[[ -z $s ]]
+===
+@match: [[ $a -eq 3 ]]
+[[ $a -eq 3 ]]
+===
+@match: [[ $a -nt $b ]]
+[[ $a -nt $b ]]
+===
+@match: [[ "x" ]]
+[[ "x" ]]
+===
+@match: [[ ]]
+[[ ]]
+===
+@match: [[ a = b*c ]]
+[[ a = b*c ]]
+===
+@match: [[ a = bc ]]
+[[ a = bc ]]
+===
+@match: [[ $x == b*c ]]
+[[ $x == b*c ]]
+===
+@match: [[ $x == a"b" ]]
+[[ $x == a"b" ]]
+===
+@match: [[ $x =~ ^a.*b$ ]]
+[[ $x =~ ^a.*b$ ]]
+===
+@match: [[ a != b ]]
+[[ a != b ]]
+===
+@match: [[ (a == b) && c ]]
+[[ (a == b) && c ]]
+===
+@match: [[ -v var ]]
+[[ -v var ]]
+===
+@match: [[ -o opt ]]
+[[ -o opt ]]
+===
+@match: [[ $x -eq 1 && $y -ne 2 ]]
+[[ $x -eq 1 && $y -ne 2 ]]
+===
+@match: [[ $x == b ]]
+[[ $x == b ]]
+===
+@known-diff recovery-partial-nodes: [[ $x =~ ^a b$ ]]
+[[ $x =~ ^a b$ ]]
+---
+hasError: true
+program [0,17] "[[ $x =~ ^a b$ ]]"
+  test_command [0,17] "[[ $x =~ ^a b$ ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,11] "$x =~ ^a"
+      simple_expansion [3,5] "$x"
+        ($) [3,4] "$"
+        variable_name [4,5] "x"
+      (=~) [6,8] "=~"
+      regex [9,11] "^a"
+    ERROR [12,15] "b$ "
+    (]]) [15,17] "]]"
+===
+@match: [[ $x =~ a|b ]]
+[[ $x =~ a|b ]]
+===
+@match: [[ $x == b && $y == c ]]
+[[ $x == b && $y == c ]]
+===
+@match: [[ $x == 123 ]]
+[[ $x == 123 ]]
+===
+@match: [[ -t 1 ]]
+[[ -t 1 ]]
+===
+@match: [[ $x =~ $re ]]
+[[ $x =~ $re ]]
+===
+@match: [[ $x =~ "a b" ]]
+[[ $x =~ "a b" ]]
+===
+@match: [[ a=b ]]
+[[ a=b ]]
+===
+@match: [[ $a==b* ]]
+[[ $a==b* ]]
+===
+@match: [[ ( $a == x* ) ]]
+[[ ( $a == x* ) ]]
+===
+@match: [[ ( $a = x* ) ]]
+[[ ( $a = x* ) ]]
+===
+@match: [[ $x == b=c ]]
+[[ $x == b=c ]]
+===
+@match: [[ a == =b ]]
+[[ a == =b ]]
+===
+@match: [[ a = b=c ]]
+[[ a = b=c ]]
+===
+@match: [[ -f file
+[[ -f file
+===
+@known-diff recovery-partial-nodes: [[ $a
+[[ $a
+---
+hasError: true
+program [0,5] "[[ $a"
+  test_command [0,5] "[[ $a"
+    ([[) [0,2] "[["
+    simple_expansion [3,5] "$a"
+      ($) [3,4] "$"
+      variable_name [4,5] "a"
+    (]]) [5,5] ""
+===
+@match: [ 1 ]
+[ 1 ]
+===
+@match: [[ 1 ]]
+[[ 1 ]]
+===
+@match: [[ $f == foo*(.txt|.log) ]]
+[[ $f == foo*(.txt|.log) ]]
+===
+@match: [[ $f == *foo*(a) ]]
+[[ $f == *foo*(a) ]]
+===
+@match: [[ $f == [a-z]*(x) ]]
+[[ $f == [a-z]*(x) ]]
+===
+@known-diff test-extglob-rejected-group: [[ $f == x@(y|z)w ]]
+[[ $f == x@(y|z)w ]]
+---
+hasError: true
+program [0,20] "[[ $f == x@(y|z)w ]]"
+  test_command [0,20] "[[ $f == x@(y|z)w ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,11] "$f == x@"
+      simple_expansion [3,5] "$f"
+        ($) [3,4] "$"
+        variable_name [4,5] "f"
+      (==) [6,8] "=="
+      word [9,11] "x@"
+    ERROR [11,18] "(y|z)w "
+    (]]) [18,20] "]]"
+===
+@known-diff test-negative-decimal: [[ $n == -0.5 ]]
+[[ $n == -0.5 ]]
+---
+hasError: false
+program [0,16] "[[ $n == -0.5 ]]"
+  test_command [0,16] "[[ $n == -0.5 ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,13] "$n == -0.5"
+      simple_expansion [3,5] "$n"
+        ($) [3,4] "$"
+        variable_name [4,5] "n"
+      (==) [6,8] "=="
+      extglob_pattern [9,13] "-0.5"
+    (]]) [14,16] "]]"
+===
+@known-diff test-fused-operator-expansion: [[ -x$f && -d /tmp ]]
+[[ -x$f && -d /tmp ]]
+---
+hasError: false
+program [0,21] "[[ -x$f && -d /tmp ]]"
+  test_command [0,21] "[[ -x$f && -d /tmp ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,18] "-x$f && -d /tmp"
+      concatenation [3,7] "-x$f"
+        word [3,5] "-x"
+        simple_expansion [5,7] "$f"
+          ($) [5,6] "$"
+          variable_name [6,7] "f"
+      (&&) [8,10] "&&"
+      unary_expression [11,18] "-d /tmp"
+        test_operator [11,13] "-d"
+        word [14,18] "/tmp"
+    (]]) [19,21] "]]"
+===
+@known-diff test-escaped-pipe-pattern: [[ $a == foo\|bar ]]
+[[ $a == foo\|bar ]]
+---
+hasError: false
+program [0,20] "[[ $a == foo\\|bar ]]"
+  test_command [0,20] "[[ $a == foo\\|bar ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,17] "$a == foo\\|bar"
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      extglob_pattern [9,17] "foo\\|bar"
+    (]]) [18,20] "]]"
+===
+@known-diff recovery-partial-nodes: [[ -f
+[[ -f
+---
+hasError: true
+program [0,5] "[[ -f"
+  test_command [0,5] "[[ -f"
+    ([[) [0,2] "[["
+    word [3,5] "-f"
+    (]]) [5,5] ""
+===
+@known-diff recovery-partial-nodes: [[ a
+[[ a
+---
+hasError: true
+program [0,4] "[[ a"
+  test_command [0,4] "[[ a"
+    ([[) [0,2] "[["
+    word [3,4] "a"
+    (]]) [4,4] ""
+===
+@known-diff recovery-partial-nodes: [[ a == b
+[[ a == b
+---
+hasError: true
+program [0,9] "[[ a == b"
+  test_command [0,9] "[[ a == b"
+    ([[) [0,2] "[["
+    binary_expression [3,9] "a == b"
+      word [3,4] "a"
+      (==) [5,7] "=="
+      word [8,9] "b"
+    (]]) [9,9] ""
+===
+@known-diff recovery-partial-nodes: [[ a &&
+[[ a &&
+---
+hasError: true
+program [0,7] "[[ a &&"
+  test_command [0,7] "[[ a &&"
+    ([[) [0,2] "[["
+    binary_expression [3,7] "a &&"
+      word [3,4] "a"
+      (&&) [5,7] "&&"
+    (]]) [7,7] ""
+===
+@match: [[ -f file 
+[[ -f file 
+===
+@match: [[ a = =b ]]
+[[ a = =b ]]
+===
+@match: [[ $a =~^x ]]
+[[ $a =~^x ]]
+===
+@match: [[ !x = y ]]
+[[ !x = y ]]
+===
+@match: [[ a =b ]]
+[[ a =b ]]
+===
+@match: [[ a!=b ]]
+[[ a!=b ]]
+===
+@match: [[ a ==b ]]
+[[ a ==b ]]
+===
+@match: [[ $a == foo ]]
+[[ $a == foo ]]
+===
+@match: [[ $a == x.y ]]
+[[ $a == x.y ]]
+===
+@match: [[ ( $a == x ) ]]
+[[ ( $a == x ) ]]
+===
+@match: [[ $a == x1 ]]
+[[ $a == x1 ]]
+===
+@match: [[ $a == foo- ]]
+[[ $a == foo- ]]
+===
+@match: [[ $a == x_ ]]
+[[ $a == x_ ]]
+===
+@match: [[ a == b*c=d ]]
+[[ a == b*c=d ]]
+===
+@match: [[ a == bc=d ]]
+[[ a == bc=d ]]
+===
+@match: [[ a == b?=e ]]
+[[ a == b?=e ]]
+===
+@match: [[ a == .x ]]
+[[ a == .x ]]
+===
+@match: [[ $a == a-b ]]
+[[ $a == a-b ]]
+===
+@match: [[ ((a)) == x ]]
+[[ ((a)) == x ]]
+===
+@match: [[ $a == -foo ]]
+[[ $a == -foo ]]
+===
+@match: [[ $a == -f ]]
+[[ $a == -f ]]
+===
+@match: [[ -foo == x ]]
+[[ -foo == x ]]
+===
+@match: [[ $a == -1 ]]
+[[ $a == -1 ]]
+===
+@match: [[ $a -eq -1 ]]
+[[ $a -eq -1 ]]
+===
+@match: [[ $a == +(!a) ]]
+[[ $a == +(!a) ]]
+===
+@match: [[ $a == ?(a|b) ]]
+[[ $a == ?(a|b) ]]
+===
+@match: [[ $a == !(x) ]]
+[[ $a == !(x) ]]
+===
+@match: [[ $a == b\*c ]]
+[[ $a == b\*c ]]
+===
+@match: [[ $ver == [0-9]* ]]
+[[ $ver == [0-9]* ]]
+===
+@match: [[ $a == [abc] ]]
+[[ $a == [abc] ]]
+===
+@match: [[ ( $a == [xyz] ) ]]
+[[ ( $a == [xyz] ) ]]
+===
+@match: [[ $a = [abc] ]]
+[[ $a = [abc] ]]
+===
+@match: [[ $a == [!a]* ]]
+[[ $a == [!a]* ]]
+===
+@match: [[ $a == foo\ bar ]]
+[[ $a == foo\ bar ]]
+===
+@known-diff test-paren-group-logical: [[ ((a) == x) && y ]]
+[[ ((a) == x) && y ]]
+---
+hasError: false
+program [0,21] "[[ ((a) == x) && y ]]"
+  test_command [0,21] "[[ ((a) == x) && y ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,18] "((a) == x) && y"
+      parenthesized_expression [3,13] "((a) == x)"
+        (() [3,4] "("
+        binary_expression [4,12] "(a) == x"
+          parenthesized_expression [4,7] "(a)"
+            (() [4,5] "("
+            word [5,6] "a"
+            ()) [6,7] ")"
+          (==) [8,10] "=="
+          word [11,12] "x"
+        ()) [12,13] ")"
+      (&&) [14,16] "&&"
+      word [17,18] "y"
+    (]]) [19,21] "]]"
+===
+@match: [ ! command -v go &>/dev/null ] && return
+[ ! command -v go &>/dev/null ] && return
+===
+@match: [[ ${f} != */@(default).vim ]]
+[[ ${f} != */@(default).vim ]]
+===
+@match: [[ $(LC_ALL=C $(tc-getCC) ${LDFLAGS} -Wl,--version 2>/dev...
+[[ $(LC_ALL=C $(tc-getCC) ${LDFLAGS} -Wl,--version 2>/dev/null) != @(LLD|GNU\ ld)* ]]
+===
+@match: [[ ${test} == @($(IFS='|'; echo "${skip[*]}")) ]]
+[[ ${test} == @($(IFS='|'; echo "${skip[*]}")) ]]
+===
+@match: [[ ${SRC_URI} == */${a}* ]]
+[[ ${SRC_URI} == */${a}* ]]
+===
+@match: [[ a == *_@(LIB|SYMLINK) ]]
+[[ a == *_@(LIB|SYMLINK) ]]
+===
+@match: [[ "35d8b" =~ ^[0-9a-fA-F] ]]
+[[ "35d8b" =~ ^[0-9a-fA-F] ]]
+===
+@match: [[ $CMD =~ (^|;)update_terminal_cwd($|;) ]]
+[[ $CMD =~ (^|;)update_terminal_cwd($|;) ]]
+===
+@match: [[ ! " ${completions[*]} " =~ " $alias_cmd " ]]
+[[ ! " ${completions[*]} " =~ " $alias_cmd " ]]
+===
+@match: ! [[ "$a" =~ ^a|b\ *c|d$ ]]
+! [[ "$a" =~ ^a|b\ *c|d$ ]]
+===
+@match: [[ "$1" =~ ^${var}${var}*=..* ]]
+[[ "$1" =~ ^${var}${var}*=..* ]]
+===
+@match: [[ "$1" =~ ^\-${var}+ ]]
+[[ "$1" =~ ^\-${var}+ ]]
+===
+@match: [[ ${var1} == *${var2}* ]]
+[[ ${var1} == *${var2}* ]]
+===
+@match: [[ "$server" =~ [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]...
+[[ "$server" =~ [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3} ]]
+===
+@match: [[ -f ${x} && $(od -t x1 -N 4 "${x}") == *"7f 45 4c 46"* ]]
+[[ -f ${x} && $(od -t x1 -N 4 "${x}") == *"7f 45 4c 46"* ]]
+===
+@match: [[ " ${REPLACING_VERSIONS} " != *\ ${PVR}\ * ]]
+[[ " ${REPLACING_VERSIONS} " != *\ ${PVR}\ * ]]
+===
+@match: [[ ${file} == @(*${GENTOO_PATCH_NAME}.tar.xz|*.asc|*.sig) ]]
+[[ ${file} == @(*${GENTOO_PATCH_NAME}.tar.xz|*.asc|*.sig) ]]
+===
+@match: [[ $RUBY_TARGETS != *$( eselect ruby show | awk 'NR==2' |...
+[[ $RUBY_TARGETS != *$( eselect ruby show | awk 'NR==2' | tr  -d ' '  )* ]]
+===
+@match: [[ " ${m[0]##*/}" =~ ^(\ ${skip_files[*]/%/.*|\\} ) ]]
+[[ " ${m[0]##*/}" =~ ^(\ ${skip_files[*]/%/.*|\\} ) ]]
+===
+@match: [[ ' boop xyz' =~ ' boop '(.*)$ ]]
+[[ ' boop xyz' =~ ' boop '(.*)$ ]]
+===
+@match: [[ $b = foo* ]]
+[[ $b = foo* ]]
+===
+@match: [[ a == \"+(?)\" ]]
+[[ a == \"+(?)\" ]]
+===
+@match: [[ ${PV} != $(sed -n -e 's/^Version: //p' "${ED}/usr/$(ge...
+[[ ${PV} != $(sed -n -e 's/^Version: //p' "${ED}/usr/$(get_libdir)/pkgconfig/tss2-tcti-tabrmd.pc" || die) ]]
+===
+@match: [[ "${MY_LOCALES}" != *en_US* || a != 2 ]]
+[[ "${MY_LOCALES}" != *en_US* || a != 2 ]]
+===
+@match: [[ -f "${EROOT}/usr/share/php/.packagexml/${MY_P}.xml" && \
+[[ -f "${EROOT}/usr/share/php/.packagexml/${MY_P}.xml" && \
+	-x "${EROOT}/usr/bin/peardev" ]]
+===
+@match: [[ ${1} =~ \.(lisp|lsp|cl)$ ]]
+[[ ${1} =~ \.(lisp|lsp|cl)$ ]]
+===
+@match: [[ a == - ]]
+[[ a == - ]]
+===
+@match: run_test_command() [[ -e foo ]]
+run_test_command() [[ -e foo ]]
+===
+@known-diff test-extglob-rejected-group: [[ $a == *.@(txt|log) ]]
+[[ $a == *.@(txt|log) ]]
+---
+hasError: true
+program [0,24] "[[ $a == *.@(txt|log) ]]"
+  test_command [0,24] "[[ $a == *.@(txt|log) ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,12] "$a == *.@"
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      word [9,12] "*.@"
+    ERROR [12,22] "(txt|log) "
+    (]]) [22,24] "]]"
+===
+@known-diff test-extglob-rejected-group: [[ $a == x@(y) ]]
+[[ $a == x@(y) ]]
+---
+hasError: true
+program [0,17] "[[ $a == x@(y) ]]"
+  test_command [0,17] "[[ $a == x@(y) ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,11] "$a == x@"
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      word [9,11] "x@"
+    ERROR [11,15] "(y) "
+    (]]) [15,17] "]]"
+===
+@match: [[ $a == ?(a) ]]
+[[ $a == ?(a) ]]
+===
+@known-diff test-pattern-two-constructs: [[ $a == *${x}*${y} ]]
+[[ $a == *${x}*${y} ]]
+---
+hasError: false
+program [0,22] "[[ $a == *${x}*${y} ]]"
+  test_command [0,22] "[[ $a == *${x}*${y} ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,19] "$a == *${x}*${y}"
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      extglob_pattern [9,10] "*"
+      expansion [10,14] "${x}"
+        (${) [10,12] "${"
+        variable_name [12,13] "x"
+        (}) [13,14] "}"
+      extglob_pattern [14,19] "*${y}"
+    (]]) [20,22] "]]"
+===
+@match: [[ $a == ${x}* ]]
+[[ $a == ${x}* ]]
+===
+@known-diff test-pattern-two-constructs: [[ $a == *"s"*"t" ]]
+[[ $a == *"s"*"t" ]]
+---
+hasError: false
+program [0,20] "[[ $a == *\"s\"*\"t\" ]]"
+  test_command [0,20] "[[ $a == *\"s\"*\"t\" ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,17] "$a == *\"s\"*\"t\""
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      extglob_pattern [9,10] "*"
+      string [10,13] "\"s\""
+        (") [10,11] "\""
+        string_content [11,12] "s"
+        (") [12,13] "\""
+      extglob_pattern [13,17] "*\"t\""
+    (]]) [18,20] "]]"
+===
+@match: [ -f x ]
+[ -f x ]
+===
+@match: [ ! -f x ]
+[ ! -f x ]
+===
+@match: [ a = b ] 2>/dev/null
+[ a = b ] 2>/dev/null
+===
+@match: [[ $a == @(y) ]]
+[[ $a == @(y) ]]
+===
+@known-diff test-extglob-rejected-group: [[ $a == *@(y) ]]
+[[ $a == *@(y) ]]
+---
+hasError: true
+program [0,17] "[[ $a == *@(y) ]]"
+  test_command [0,17] "[[ $a == *@(y) ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,11] "$a == *@"
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      word [9,11] "*@"
+    ERROR [11,15] "(y) "
+    (]]) [15,17] "]]"
+===
+@match: [[ $a == */@(y) ]]
+[[ $a == */@(y) ]]
+===
+@known-diff test-extglob-rejected-group: [[ $a == .@(y) ]]
+[[ $a == .@(y) ]]
+---
+hasError: true
+program [0,17] "[[ $a == .@(y) ]]"
+  test_command [0,17] "[[ $a == .@(y) ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,11] "$a == .@"
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      word [9,11] ".@"
+    ERROR [11,15] "(y) "
+    (]]) [15,17] "]]"
+===
+@known-diff test-extglob-rejected-group: [[ $a == _@(y) ]]
+[[ $a == _@(y) ]]
+---
+hasError: true
+program [0,17] "[[ $a == _@(y) ]]"
+  test_command [0,17] "[[ $a == _@(y) ]]"
+    ([[) [0,2] "[["
+    binary_expression [3,11] "$a == _@"
+      simple_expansion [3,5] "$a"
+        ($) [3,4] "$"
+        variable_name [4,5] "a"
+      (==) [6,8] "=="
+      word [9,11] "_@"
+    ERROR [11,15] "(y) "
+    (]]) [15,17] "]]"
+===
+@match: [[ $a == ?*(y) ]]
+[[ $a == ?*(y) ]]
+===
+@match: [[ $a == a*(y) ]]
+[[ $a == a*(y) ]]
+===
+@match: [[ $a == *?(y) ]]
+[[ $a == *?(y) ]]
+===
+@match: [[ $a =~ 'a'b ]]
+[[ $a =~ 'a'b ]]
+===
+@match: [[ $a =~ a'b'c ]]
+[[ $a =~ a'b'c ]]
+===
+@match: [ ! command -v go ]
+[ ! command -v go ]
+===
+@match: [ command -v go &>/dev/null ]
+[ command -v go &>/dev/null ]
+===
