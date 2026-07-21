@@ -198,6 +198,13 @@ export class Session {
   private agentsMdWarning: string | undefined;
   private printSteerDeadline: number | undefined;
   private printSteerTurns = 0;
+  /**
+   * Live session override for the subagent model alias (the
+   * `dual-model-routing` experimental feature). When set and the flag is
+   * enabled, subagents use this model instead of the parent's. When unset,
+   * falls back to `config.defaultSubagentModel`, then the parent's model.
+   */
+  private subagentModelAlias: string | undefined;
 
   constructor(public readonly options: SessionOptions) {
     // Attach the per-session log sink up front so the constructor's
@@ -576,6 +583,29 @@ export class Session {
       count += agent.background.list(true).length;
     }
     return count;
+  }
+
+  /**
+   * The live subagent model alias override for this session
+   * (`dual-model-routing` experimental feature). Set via the
+   * `setSubagentModel` RPC; takes precedence over
+   * `config.defaultSubagentModel`.
+   *
+   * Returns `undefined` when the flag is OFF, so the status surface and any
+   * consumer that does not independently gate on the flag never observes a
+   * subagent model. The runtime resolver (`resolveSubagentModelAlias`) also
+   * checks the flag, but gating here is the single source of truth that keeps
+   * `getStatus`, the TUI footer, and the sync paths correct regardless of who
+   * calls this accessor.
+   */
+  getSubagentModel(): string | undefined {
+    if (!this.experimentalFlags.enabled('dual-model-routing')) return undefined;
+    return this.subagentModelAlias ?? this.options.config?.defaultSubagentModel;
+  }
+
+  /** Set or clear the live session subagent model override. */
+  setSubagentModelAlias(alias: string | undefined): void {
+    this.subagentModelAlias = alias;
   }
 
   /**

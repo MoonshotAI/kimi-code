@@ -16,6 +16,7 @@ import type {
   EnterSwarmPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  GetSubagentModelResult,
   ImportContextPayload,
   McpServerInfo,
   McpStartupMetrics,
@@ -28,6 +29,8 @@ import type {
   SetActiveToolsPayload,
   SetModelPayload,
   SetPermissionPayload,
+  SetSubagentModelPayload,
+  SetSubagentModelResult,
   SetThinkingPayload,
   SkillSummary,
   PluginCommandDef,
@@ -161,6 +164,16 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async getModel({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).getModel(payload);
+  }
+
+  setSubagentModel(payload: SetSubagentModelPayload): SetSubagentModelResult {
+    const alias = payload.model.trim();
+    this.session.setSubagentModelAlias(alias.length > 0 ? alias : undefined);
+    return { subagentModel: this.session.getSubagentModel() };
+  }
+
+  getSubagentModel(_payload: EmptyPayload): GetSubagentModelResult {
+    return { subagentModel: this.session.getSubagentModel() };
   }
 
   async enterPlan({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

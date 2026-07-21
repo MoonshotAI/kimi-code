@@ -938,6 +938,20 @@ support_efforts = ["low", "high"]
 
     expect(overrides['support_efforts']).toEqual(['low', 'high']);
   });
+
+  it('round-trips default_subagent_model through parse and serialization', () => {
+    const config = parseConfigString('default_subagent_model = "glm-5.2"\n');
+    expect(config.defaultSubagentModel).toBe('glm-5.2');
+
+    const data = configToTomlData(config);
+    expect(data['default_subagent_model']).toBe('glm-5.2');
+  });
+
+  it('omits default_subagent_model from serialization when unset', () => {
+    const config = parseConfigString('default_model = "kimi-k3"\n');
+    const data = configToTomlData(config);
+    expect(data['default_subagent_model']).toBeUndefined();
+  });
 });
 
 describe('applyPrintModeConfigDefaults', () => {

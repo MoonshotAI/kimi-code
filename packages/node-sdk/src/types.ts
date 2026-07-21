@@ -231,6 +231,7 @@ export interface SessionUsage {
 
 export interface SessionStatus {
   readonly model?: string;
+  readonly subagentModel?: string | undefined;
   readonly thinkingEffort: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;

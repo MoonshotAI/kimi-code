@@ -13,6 +13,7 @@ import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
+import { isExperimentalFlagEnabled } from '#/tui/commands/experimental-flags';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
@@ -139,6 +140,19 @@ function modelDisplayName(state: AppState): string {
   const model = state.availableModels[state.model];
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   return effective?.displayName ?? effective?.model ?? state.model;
+}
+
+/**
+ * Display name for the subagent model (`dual-model-routing` experimental
+ * feature). Returns the empty string when no subagent model is set, so the
+ * caller can skip rendering it.
+ */
+function subagentModelDisplayName(state: AppState): string {
+  const alias = state.subagentModel;
+  if (alias === undefined || alias.length === 0) return '';
+  const model = state.availableModels[alias];
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.displayName ?? effective?.model ?? alias;
 }
 
 function shortenCwd(path: string): string {
@@ -282,6 +296,17 @@ export class FooterComponent implements Component {
         renderedModelLabel = renderDanceFooterModel(modelLabel);
       }
       left.push(renderedModelLabel);
+    }
+
+    // Subagent model badge — only shown when the `dual-model-routing`
+    // experimental feature is active and a distinct subagent model is set.
+    // The flag check is defense-in-depth: getSubagentModel() / getStatus also
+    // gate on the flag, so appState.subagentModel should already be undefined
+    // when the feature is off.
+    const subagentLabel =
+      isExperimentalFlagEnabled('dual-model-routing') ? subagentModelDisplayName(state) : '';
+    if (subagentLabel.length > 0) {
+      left.push(chalk.hex(colors.textDim)('subagents:') + ' ' + chalk.hex(colors.text)(subagentLabel));
     }
 
     // Background-task badges sit immediately before cwd. `bash-*` tasks

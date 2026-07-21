@@ -90,6 +90,18 @@ export interface SetSessionModelRpcResult {
   readonly providerName?: string | undefined;
 }
 
+export interface SetSessionSubagentModelRpcInput extends SessionIdRpcInput {
+  readonly model: string;
+}
+
+export interface SetSessionSubagentModelRpcResult {
+  readonly subagentModel?: string | undefined;
+}
+
+export interface GetSessionSubagentModelRpcResult {
+  readonly subagentModel?: string | undefined;
+}
+
 export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
   readonly effort: string;
 }
@@ -415,6 +427,25 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async setSubagentModel(
+    input: SetSessionSubagentModelRpcInput,
+  ): Promise<SetSessionSubagentModelRpcResult> {
+    const rpc = await this.getRpc();
+    return rpc.setSubagentModel({
+      sessionId: input.sessionId,
+      model: input.model,
+    });
+  }
+
+  async getSubagentModel(
+    input: SessionIdRpcInput,
+  ): Promise<GetSessionSubagentModelRpcResult> {
+    const rpc = await this.getRpc();
+    return rpc.getSubagentModel({
+      sessionId: input.sessionId,
+    });
+  }
+
   async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.setThinking({
@@ -571,6 +602,9 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
+    const subagentModel = await rpc.getSubagentModel({
+      sessionId: input.sessionId,
+    });
     const maxContextTokens = config.modelCapabilities?.max_context_tokens ?? 0;
     const contextTokens = context.tokenCount;
     const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
@@ -578,6 +612,7 @@ export abstract class SDKRpcClientBase {
       usage.byModel !== undefined || usage.total !== undefined || usage.currentTurn !== undefined;
     return {
       model: config.modelAlias ?? config.provider?.model,
+      subagentModel: subagentModel.subagentModel,
       thinkingEffort: config.thinkingEffort,
       permission: permission.mode,
       planMode: plan !== null,

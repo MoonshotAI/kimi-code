@@ -14,6 +14,7 @@ import {
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { ModelScopeSelectorComponent, type ModelScope } from '../components/dialogs/model-scope-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -26,7 +27,7 @@ import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
-import { setExperimentalFeatures } from './experimental-flags';
+import { isExperimentalFlagEnabled, setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -239,6 +240,12 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
 export async function handleModelCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = args.trim();
   await refreshModelsForPicker(host);
+  // When dual-model routing is active and no explicit alias is given, let the
+  // user choose which scope (main agent / subagents) to configure first.
+  if (alias.length === 0 && isExperimentalFlagEnabled('dual-model-routing')) {
+    showModelScopePicker(host);
+    return;
+  }
   if (alias.length === 0) {
     showModelPicker(host);
     return;
@@ -313,6 +320,131 @@ function showEffortPicker(
 // ---------------------------------------------------------------------------
 // Pickers & config apply
 // ---------------------------------------------------------------------------
+
+/**
+ * Show the model-scope picker (Main agent / Subagents) used when the
+ * `dual-model-routing` experimental feature is active. Selecting a scope
+ * opens the matching model picker.
+ */
+function showModelScopePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ModelScopeSelectorComponent({
+      currentModel: host.state.appState.model,
+      currentSubagentModel: host.state.appState.subagentModel,
+      availableModels: host.state.appState.availableModels,
+      onSelect: (scope: ModelScope) => {
+        host.restoreEditor();
+        if (scope === 'subagent') {
+          showSubagentModelPicker(host);
+        } else {
+          showModelPicker(host);
+        }
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+/**
+ * Show the model picker for the subagent scope (`dual-model-routing`
+ * experimental feature). Reuses the tabbed model selector; the selected
+ * alias is applied via `performSubagentModelSwitch`. Thinking effort is
+ * carried through for parity with the main picker but is not separately
+ * persisted for subagents.
+ */
+function showSubagentModelPicker(host: SlashCommandHost): void {
+  const models = Object.fromEntries(
+    Object.entries(host.state.appState.availableModels).map(([alias, model]) => [
+      alias,
+      effectiveModelForHost(host, model),
+    ]),
+  );
+  const entries = Object.entries(models);
+  if (entries.length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+    );
+    return;
+  }
+  host.mountEditorReplacement(
+    new TabbedModelSelectorComponent({
+      models,
+      currentValue: host.state.appState.subagentModel ?? host.state.appState.model,
+      currentThinkingEffort: host.state.appState.thinkingEffort,
+      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
+      onSelect: ({ alias }) => {
+        host.restoreEditor();
+        void performSubagentModelSwitch(host, alias, true);
+      },
+      onSessionOnlySelect: ({ alias }) => {
+        host.restoreEditor();
+        void performSubagentModelSwitch(host, alias, false);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+/**
+ * Apply a subagent model selection. Pushes the live session override and,
+ * when persisting, writes `defaultSubagentModel` to config.toml.
+ */
+async function performSubagentModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  persist: boolean,
+): Promise<void> {
+  if (host.state.appState.streamingPhase !== 'idle') {
+    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    return;
+  }
+
+  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  const session = host.session;
+  try {
+    if (session !== undefined) {
+      await session.setSubagentModel(alias);
+    }
+  } catch (error) {
+    host.showError(`Failed to switch subagent model: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  host.setAppState({ subagentModel: alias });
+
+  let persisted = false;
+  if (persist) {
+    try {
+      persisted = await persistSubagentModelSelection(host, alias);
+    } catch (error) {
+      host.showError(`Switched subagents to ${displayName}, but failed to save default: ${formatErrorMessage(error)}`);
+      return;
+    }
+  }
+
+  const status = persist
+    ? persisted
+      ? `Saved ${displayName} as the default subagent model.`
+      : `Subagent model set to ${displayName}.`
+    : `Subagent model set to ${displayName} for this session only.`;
+  host.showStatus(status, 'success');
+  host.track('subagent_model_switch', { model: alias, persist });
+}
+
+async function persistSubagentModelSelection(
+  host: SlashCommandHost,
+  alias: string,
+): Promise<boolean> {
+  const config = await host.harness.getConfig({ reload: true });
+  if (config.defaultSubagentModel === alias) return false;
+  await host.harness.setConfig({ defaultSubagentModel: alias });
+  return true;
+}
 
 function showEditorPicker(host: SlashCommandHost): void {
   const currentValue = host.state.appState.editorCommand ?? '';
@@ -673,6 +805,15 @@ export async function applyExperimentalFeatureChanges(
     setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
+    // Sync the subagent-model app state with the flag: load it from config
+    // when dual-model routing is on, clear it when off so the footer and
+    // /model scope picker reflect the feature's actual state.
+    const config = await host.harness.getConfig({ reload: true });
+    host.setAppState({
+      subagentModel: isExperimentalFlagEnabled('dual-model-routing')
+        ? (config.defaultSubagentModel ?? undefined)
+        : undefined,
+    });
     if (host.session !== undefined) {
       await host.session.reloadSession();
       await host.reloadCurrentSessionView(

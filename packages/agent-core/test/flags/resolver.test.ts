@@ -201,4 +201,15 @@ describe('FLAG_DEFINITIONS invariants', () => {
       seenId.add(def.id);
     }
   });
+
+  it('registers the dual-model-routing flag (default off, env-driven)', () => {
+    const def = FLAG_DEFINITIONS.find((d) => d.id === 'dual-model-routing');
+    expect(def).toBeDefined();
+    expect(def!.env).toBe('KIMI_CODE_EXPERIMENTAL_DUAL_MODEL_ROUTING');
+    expect(def!.default).toBe(false);
+
+    const resolver = new FlagResolver({ KIMI_CODE_EXPERIMENTAL_DUAL_MODEL_ROUTING: 'true' });
+    expect(resolver.enabled('dual-model-routing')).toBe(true);
+    expect(new FlagResolver({}).enabled('dual-model-routing')).toBe(false);
+  });
 });

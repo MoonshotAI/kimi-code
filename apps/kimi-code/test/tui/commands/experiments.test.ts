@@ -39,6 +39,7 @@ function makeHost() {
     },
     harness: {
       setConfig: vi.fn(async () => ({ providers: {} })),
+      getConfig: vi.fn(async () => ({ providers: {} })),
       getExperimentalFeatures: vi.fn(async () => [
         feature({ enabled: false, source: 'config', configValue: false }),
       ]),
@@ -50,10 +51,12 @@ function makeHost() {
     restoreEditor: vi.fn(),
     showStatus: vi.fn(),
     showError: vi.fn(),
+    setAppState: vi.fn(),
     track: vi.fn(),
   } as unknown as SlashCommandHost & {
     harness: {
       setConfig: ReturnType<typeof vi.fn>;
+      getConfig: ReturnType<typeof vi.fn>;
       getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };
     refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;

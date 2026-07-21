@@ -182,7 +182,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       this.emitSubagentSpawned(parent, agentId, profileName, runOptions);
       try {
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias: this.resolveSubagentModelAlias(parent) });
         return await this.runPromptTurn(parent, agentId, child, profileName, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, agentId, runOptions, error);
@@ -198,7 +198,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       try {
         runOptions.signal.throwIfAborted();
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias: this.resolveSubagentModelAlias(parent) });
         this.emitSubagentStarted(parent, agentId);
         const turnId = child.turn.retry('agent-host');
         if (turnId === null) {
@@ -260,7 +260,7 @@ export class SessionSubagentHost {
     );
 
     child.config.update({
-      modelAlias: parent.config.modelAlias,
+      modelAlias: this.resolveSubagentModelAlias(parent),
       thinkingEffort: parent.config.thinkingEffort,
       systemPrompt: parent.config.systemPrompt,
     });
@@ -315,6 +315,23 @@ export class SessionSubagentHost {
       throw new Error(`Subagent profile "${profileName}" was not found`);
     }
     return profile;
+  }
+
+  /**
+   * Resolve the model alias a subagent should run on. When the
+   * `dual-model-routing` experimental flag is enabled, subagents use the
+   * session's live subagent-model override (set via `/model`) or fall back to
+   * `config.defaultSubagentModel`. When the flag is off, or no subagent model
+   * is configured, subagents inherit the parent agent's live model.
+   *
+   * `Session.getSubagentModel()` is the single flag-aware source of truth — it
+   * returns `undefined` when the flag is off, so this resolver falls through to
+   * the parent model automatically.
+   */
+  private resolveSubagentModelAlias(parent: Agent): string | undefined {
+    const subagentModel = this.session.getSubagentModel();
+    if (subagentModel !== undefined && subagentModel.length > 0) return subagentModel;
+    return parent.config.modelAlias;
   }
 
   private runWithActiveChild(
@@ -401,10 +418,12 @@ export class SessionSubagentHost {
     child: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    // A subagent always inherits the parent agent's model.
+    // When the `dual-model-routing` experimental flag is enabled, subagents use
+    // a dedicated model (the live session override or config default). When the
+    // flag is off, subagents inherit the parent agent's model as before.
     child.config.update({
       cwd: parent.config.cwd,
-      modelAlias: parent.config.modelAlias,
+      modelAlias: this.resolveSubagentModelAlias(parent),
       thinkingEffort: parent.config.thinkingEffort,
     });
 

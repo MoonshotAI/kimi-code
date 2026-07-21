@@ -477,6 +477,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   const scalarFields: (keyof KimiConfig)[] = [
     'defaultProvider',
     'defaultModel',
+    'defaultSubagentModel',
     'planMode',
     'yolo',
     'defaultPermissionMode',

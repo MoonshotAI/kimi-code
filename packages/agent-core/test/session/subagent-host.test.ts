@@ -1596,6 +1596,9 @@ function fakeSession(
     writeMetadata: vi.fn(async () => {}),
     systemContextKaos: vi.fn((cwd: string) => parent.kaos.withCwd(cwd)),
     getReadyAgent: vi.fn((id: string) => agents.get(id)),
+    // dual-model-routing defaults to off; subagents inherit the parent model.
+    getSubagentModel: vi.fn(() => undefined),
+    experimentalFlags: { enabled: () => false },
     ensureAgentResumed: vi.fn(async (id: string) => {
       const agent = agents.get(id);
       if (agent === undefined) {

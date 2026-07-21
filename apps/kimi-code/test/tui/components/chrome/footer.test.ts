@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -185,5 +186,64 @@ describe('FooterComponent displayName override', () => {
 
     expect(footer.render(120).join('\n')).toContain('Custom Name');
     expect(footer.render(120).join('\n')).not.toContain('Remote Name');
+  });
+});
+
+describe('FooterComponent subagent model badge', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
+  it('hides the subagent badge when the dual-model-routing flag is off', () => {
+    setExperimentalFeatures([]);
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k3',
+      subagentModel: 'glm-5.2',
+      availableModels: {
+        'kimi-k3': { provider: 'managed:kimi-code', model: 'kimi-k3', maxContextSize: 262144 },
+        'glm-5.2': { provider: 'zai', model: 'glm-5.2', maxContextSize: 131072, displayName: 'GLM-5.2' },
+      },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(140).join('\n');
+
+    // Even with a subagentModel set, the badge is hidden when the flag is off.
+    expect(rendered).not.toContain('subagents:');
+  });
+
+  it('hides the subagent badge when no subagent model is set', () => {
+    setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
+    const footer = new FooterComponent(appState);
+    const rendered = footer.render(120).join('\n');
+
+    expect(rendered).not.toContain('subagents:');
+  });
+
+  it('shows the subagent model when the flag is on and a distinct model is set', () => {
+    setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k3',
+      subagentModel: 'glm-5.2',
+      availableModels: {
+        'kimi-k3': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k3',
+          maxContextSize: 262144,
+        },
+        'glm-5.2': {
+          provider: 'zai',
+          model: 'glm-5.2',
+          maxContextSize: 131072,
+          displayName: 'GLM-5.2',
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(140).join('\n');
+
+    expect(rendered).toContain('subagents:');
+    expect(rendered).toContain('GLM-5.2');
   });
 });

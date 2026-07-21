@@ -203,6 +203,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
       : 'manual';
   return {
     model: '',
+    subagentModel: undefined,
     workDir: input.workDir,
     additionalDirs: [...(input.additionalDirs ?? [])],
     sessionId: '',
@@ -1536,6 +1537,7 @@ export class KimiTUI {
     this.setAppState({
       sessionId: session.id,
       model: status.model ?? '',
+      subagentModel: status.subagentModel,
       thinkingEffort: status.thinkingEffort,
       permissionMode: status.permission,
       planMode: status.planMode,
