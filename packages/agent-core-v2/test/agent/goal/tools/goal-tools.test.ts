@@ -72,7 +72,7 @@ describe('goal tools', () => {
     eventBus.publish({ type: 'turn.started', turnId: 6, origin: USER_PROMPT_ORIGIN });
     const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
     if (tool === undefined) throw new Error('CreateGoal should be registered');
-    const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
+    const execution = await tool.resolveExecution({ objective: 'stale task', completionCriterion: 'all tasks finished', replace: true });
     if (execution.isError === true) throw new Error('execution should not be an error');
     const replacement = await goals.createGoal({ objective: 'new task', replace: true });
 
@@ -93,7 +93,7 @@ describe('goal tools', () => {
     eventBus.publish({ type: 'turn.started', turnId: 7, origin: USER_PROMPT_ORIGIN });
     const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
     if (tool === undefined) throw new Error('CreateGoal should be registered');
-    const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
+    const execution = await tool.resolveExecution({ objective: 'stale task', completionCriterion: 'all tasks finished', replace: true });
     if (execution.isError === true) throw new Error('execution should not be an error');
     const created = await goals.createGoal({ objective: 'external task' });
 
@@ -210,7 +210,7 @@ describe('goal tools', () => {
 
     const results = await executeGoalCalls(
       [
-        goalToolCall('call_create', 'CreateGoal', { objective: 'new task' }),
+        goalToolCall('call_create', 'CreateGoal', { objective: 'new task', completionCriterion: 'all tasks finished' }),
         goalToolCall('call_budget', 'SetGoalBudget', { value: 5, unit: 'turns' }),
       ],
       2,
@@ -231,7 +231,7 @@ describe('goal tools', () => {
 
     const results = await executeGoalCalls(
       [
-        goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', replace: true }),
+        goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', completionCriterion: 'all tasks finished', replace: true }),
         goalToolCall('call_budget', 'SetGoalBudget', { value: 5, unit: 'turns' }),
       ],
       3,
@@ -349,7 +349,7 @@ describe('goal tools', () => {
 
       const results = await executeGoalCalls(
         [
-          goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', replace: true }),
+          goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', completionCriterion: 'all tasks finished', replace: true }),
           goalToolCall('call_outcome', 'UpdateGoal', { status: updateStatus }),
         ],
         4,
@@ -374,7 +374,7 @@ describe('goal tools', () => {
 
       const results = await executeGoalCalls(
         [
-          goalToolCall('call_create', 'CreateGoal', { objective: 'new task', replace: true }),
+          goalToolCall('call_create', 'CreateGoal', { objective: 'new task', completionCriterion: 'all tasks finished', replace: true }),
           goalToolCall('call_outcome', 'UpdateGoal', { status: updateStatus }),
         ],
         5,

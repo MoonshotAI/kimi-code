@@ -178,6 +178,9 @@ export class PluginManager {
       return;
     }
     await this.persist();
+    // Clean up the managed plugin directory on disk.
+    const managedRoot = path.join(this.kimiHomeDir, 'plugins', 'managed', key);
+    await rm(managedRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 
   async reload(): Promise<ReloadSummary> {

@@ -111,8 +111,26 @@ export class TranscriptService {
   }
 
   /**
+   * Drop every live store and clear the pending heal timers. This is safe for
+   * tests that create multiple service instances — in production the service
+   * lives for the process lifetime so it's never called.
+   */
+  dispose(): void {
+    for (const [sessionId] of this.live) this.dropSession(sessionId);
+    for (const [, h] of this.healTimers) clearTimeout(h.timer);
+    this.healTimers.clear();
+    this.opsListeners.clear();
+  }
+
+  /**
    * Get (or create + bind) the transcript store for a session that is live in
    * this process. Returns `undefined` when the session is not in memory.
+   *
+   * This method is synchronous: the store is created and the binding is wired
+   * without yielding, so there is no window for concurrent callers to create
+   * duplicate entries. Callers that need `await`-dependent work (backfill,
+   * pending interactions) should follow up with `whenReady` and
+   * `ensureAgentHistory`.
    */
   forSessionLive(sessionId: string): TranscriptStore | undefined {
     const existing = this.live.get(sessionId);
@@ -432,6 +450,9 @@ export class TranscriptService {
     if (summary === undefined) return undefined;
     let meta: SessionMeta;
     try {
+      if (summary.workspaceId.includes('..') || summary.workspaceId.includes('\0')) {
+        return [];
+      }
       const raw = await readFile(
         join(this.deps.homeDir, SESSIONS_ROOT, summary.workspaceId, sessionId, STATE_FILE),
         'utf-8',

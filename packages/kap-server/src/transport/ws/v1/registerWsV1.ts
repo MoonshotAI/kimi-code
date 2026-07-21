@@ -40,7 +40,7 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
   const { registry, broadcaster } = opts;
 
   wss.on('connection', (socket, req) => {
-    const conn = new WsConnectionV1({
+    new WsConnectionV1({
       socket,
       broadcaster,
       fsWatchBridge: opts.fsWatchBridge,
@@ -54,7 +54,6 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       maxBatchSize: opts.maxBatchSize,
       highWaterMarkBytes: opts.highWaterMarkBytes,
     });
-    socket.on('close', () => registry.remove(conn.id));
   });
 
   return wss;

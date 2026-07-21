@@ -8,13 +8,15 @@ Call `CreateGoal` only when:
 Do NOT create a goal for greetings, ordinary questions, or vague requests that lack a
 verifiable completion condition. A goal needs a checkable end state.
 
-When the request is vague, ask the user for the missing completion criterion before creating
-the goal. If the user clearly insists after you warn them that the wording is vague or risky,
-respect that and create the goal.
+`completionCriterion` is required. When the request is vague (e.g. "finish the project",
+"make it better"), you MUST first ask the user — via `AskUserQuestion` — what "done"
+concretely means and how it will be verified, then create the goal with their answer.
+Do not invent a completion criterion on your own; a fabricated criterion sends you
+autonomously chasing a target the user never agreed to. If the user clearly insists on a
+vague goal after you warn them, record their own wording as the criterion and proceed.
 
-Include a `completionCriterion` when the user provides one, or when it can be stated without
-inventing new requirements. Keep `objective` concise; reference long task descriptions by file
-path rather than pasting them.
+Keep `objective` concise; reference long task descriptions by file path rather than pasting
+them.
 
 Creating a goal fails if one already exists, so use `replace: true` only when the user explicitly
 wants to abandon the current goal and start a new one.

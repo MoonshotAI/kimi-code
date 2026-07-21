@@ -95,6 +95,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly broadcaster: SessionEventBroadcaster;
   private readonly fsWatchBridge?: FsWatchBridge;
   private readonly validateCredential?: CredentialValidator;
+  private readonly connectionRegistry: IConnectionRegistry;
   private readonly maxBufferSize: number;
   private readonly flushIntervalMs: number;
   private readonly maxBatchSize: number;
@@ -122,6 +123,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.broadcaster = opts.broadcaster;
     this.fsWatchBridge = opts.fsWatchBridge;
     this.validateCredential = opts.validateCredential;
+    this.connectionRegistry = opts.connectionRegistry;
     this.logger = opts.logger;
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
@@ -484,7 +486,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.outbound = [];
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     this.fsWatchBridge?.detachConnection(this);
-    // registry removal is handled by registerWsV1 on the socket 'close' event.
+    this.connectionRegistry.remove(this.id);
   }
 }
 

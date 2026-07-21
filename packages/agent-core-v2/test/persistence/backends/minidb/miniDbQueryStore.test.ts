@@ -220,5 +220,5 @@ describe('MiniDbQueryStore', () => {
     await store.close();
     await expect(store.close()).resolves.toBeUndefined();
   });
-  });
+
 });

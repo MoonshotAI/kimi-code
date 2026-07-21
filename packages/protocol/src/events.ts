@@ -203,7 +203,7 @@ export interface GoalChangeStats {
   readonly wallClockMs: number;
 }
 
-export type GoalChangeKind = 'lifecycle' | 'completion';
+export type GoalChangeKind = 'created' | 'lifecycle' | 'completion';
 
 export interface GoalChange {
   readonly kind: GoalChangeKind;
@@ -1136,7 +1136,7 @@ export const goalChangeStatsSchema = z.object({
   wallClockMs: z.number(),
 }) satisfies z.ZodType<GoalChangeStats>;
 
-export const goalChangeKindSchema = z.enum(['lifecycle', 'completion']) satisfies z.ZodType<GoalChangeKind>;
+export const goalChangeKindSchema = z.enum(['created', 'lifecycle', 'completion']) satisfies z.ZodType<GoalChangeKind>;
 
 export const goalChangeSchema = z.object({
   kind: goalChangeKindSchema,

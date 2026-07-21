@@ -218,7 +218,7 @@ export interface GoalChangeStats {
  *   `terminal` name, which since the state consolidation only ever meant
  *   `complete` — `blocked` is a resumable `lifecycle` change, not a completion.
  */
-export type GoalChangeKind = 'lifecycle' | 'completion';
+export type GoalChangeKind = 'created' | 'lifecycle' | 'completion';
 
 export interface GoalChange {
   readonly kind: GoalChangeKind;

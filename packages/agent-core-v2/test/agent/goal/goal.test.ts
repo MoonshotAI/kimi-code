@@ -870,7 +870,7 @@ describe('AgentGoalService core workflow hooks', () => {
       type: 'function',
       id: 'call_replace_goal',
       name: 'CreateGoal',
-      arguments: JSON.stringify({ objective: 'new task', replace: true }),
+      arguments: JSON.stringify({ objective: 'new task', completionCriterion: 'all tests pass', replace: true }),
     };
     const results = await executeToolCall(toolExecutor, turn, toolCall);
     expect(results[0]?.result.isError).not.toBe(true);
@@ -901,7 +901,7 @@ describe('AgentGoalService core workflow hooks', () => {
       type: 'function',
       id: 'call_replace_goal',
       name: 'CreateGoal',
-      arguments: JSON.stringify({ objective: 'new task', replace: true }),
+      arguments: JSON.stringify({ objective: 'new task', completionCriterion: 'all tests pass', replace: true }),
     };
     await executeToolCall(toolExecutor, turn, toolCall);
 

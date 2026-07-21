@@ -11,6 +11,8 @@ export const GoalErrors = {
     GOAL_NOT_FOUND: 'goal.not_found',
     GOAL_OBJECTIVE_EMPTY: 'goal.objective_empty',
     GOAL_OBJECTIVE_TOO_LONG: 'goal.objective_too_long',
+    GOAL_COMPLETION_CRITERION_EMPTY: 'goal.completion_criterion_empty',
+    GOAL_COMPLETION_CRITERION_TOO_SHORT: 'goal.completion_criterion_too_short',
     GOAL_STATUS_INVALID: 'goal.status_invalid',
     GOAL_METADATA_RESERVED: 'goal.metadata_reserved',
     GOAL_NOT_RESUMABLE: 'goal.not_resumable',
@@ -40,6 +42,18 @@ export const GoalErrors = {
       retryable: false,
       public: true,
       action: t('v2Errors.goalObjectiveTooLongAction'),
+    },
+    'goal.completion_criterion_empty': {
+      title: t('v2Errors.goalCompletionCriterionEmpty'),
+      retryable: false,
+      public: true,
+      action: t('v2Errors.goalCompletionCriterionEmptyAction'),
+    },
+    'goal.completion_criterion_too_short': {
+      title: t('v2Errors.goalCompletionCriterionTooShort'),
+      retryable: false,
+      public: true,
+      action: t('v2Errors.goalCompletionCriterionTooShortAction'),
     },
     'goal.status_invalid': {
       title: t('v2Errors.goalStatusInvalid'),

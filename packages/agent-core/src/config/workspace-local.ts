@@ -316,7 +316,9 @@ async function pathExists(kaos: Kaos, filePath: string): Promise<boolean> {
 
 function cloneRecord(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) return {};
-  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+  // Use structuredClone instead of JSON serialisation to preserve TOML-native
+  // types (Date, NaN, Infinity) that JSON.stringify would silently drop.
+  return structuredClone(value) as Record<string, unknown>;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -48,11 +48,24 @@ function parseVerdict(result: string): GoalVerificationResult {
       feedback: reasons.length > 0 ? reasons : result.trim(),
     };
   }
-  // Explicit PASS, or no clear verdict at all. A missing verdict means the
-  // verifier could not check (malfunction, non-verdict output) — fail open
-  // rather than block completion indefinitely; the worker cannot influence the
-  // independent verifier's output, so this cannot dodge an explicit FAIL.
-  return { passed: true, feedback: '' };
+  // Explicit PASS, or no clear verdict at all.
+  // When the verifier returned a PASS marker, accept it regardless of
+  // surrounding text.
+  if (passIndex !== -1) {
+    return { passed: true, feedback: '' };
+  }
+  // No verdict marker at all. When the result is empty we fail open rather
+  // than block completion indefinitely (the verifier likely didn't run at
+  // all). When the result is non-empty but contains no verdict marker, the
+  // verifier ran but produced garbled output — treat that as inconclusive
+  // rather than silently passing.
+  if (result.trim().length === 0) {
+    return { passed: true, feedback: '' };
+  }
+  return {
+    passed: false,
+    feedback: 'Verifier produced no clear verdict. Treating as inconclusive — the worker should re-check the objective manually.',
+  };
 }
 
 /**
@@ -71,14 +84,20 @@ export async function runGoalCompletionVerifier(
     return { passed: true, feedback: '' };
   }
 
-  const handle = await host.spawn({
-    profileName: 'explore',
-    parentToolCallId: `goal-verify-${goal.goalId}`,
-    prompt: buildVerifierPrompt(goal, claim),
-    description: 'Verify goal completion',
-    runInBackground: false,
-    signal,
-  });
-  const { result } = await handle.completion;
-  return parseVerdict(result);
+  try {
+    const handle = await host.spawn({
+      profileName: 'explore',
+      parentToolCallId: `goal-verify-${goal.goalId}`,
+      prompt: buildVerifierPrompt(goal, claim),
+      description: 'Verify goal completion',
+      runInBackground: false,
+      signal,
+    });
+    const { result } = await handle.completion;
+    return parseVerdict(result);
+  } catch {
+    // Verifier subagent failed to spawn or crashed — fail open so
+    // completion is not permanently blocked by an infrastructure error.
+    return { passed: true, feedback: '' };
+  }
 }

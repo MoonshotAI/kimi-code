@@ -1,3 +1,7 @@
+# NOTE: v1 legacy — the active engine is `agent-core-v2`. This prompt is only
+# loaded by the v1 engine and is kept for test continuity. New changes to goal
+# creation instructions should go to `packages/agent-core-v2/src/agent/goal/tools/create-goal.md`.
+
 Create a durable, structured goal that the runtime will pursue across multiple turns.
 
 Call `CreateGoal` only when:

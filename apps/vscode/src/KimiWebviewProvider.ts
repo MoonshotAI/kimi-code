@@ -4,12 +4,7 @@ import { Events } from "../shared/bridge";
 import { BridgeHandler } from "./bridge-handler";
 
 function getNonce(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let nonce = "";
-  for (let i = 0; i < 32; i++) {
-    nonce += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return nonce;
+  return crypto.randomUUID();
 }
 
 /**
@@ -36,11 +31,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     );
   }
 
-  dispose(): void {
-    void this.bridgeHandler.dispose();
-  }
-
-  shutdown(): Promise<void> {
+  dispose(): Promise<void> {
     return this.bridgeHandler.dispose();
   }
 

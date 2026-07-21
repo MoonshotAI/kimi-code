@@ -91,6 +91,9 @@ import { t } from '@moonshot-ai/kimi-i18n';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
+const DEFAULT_MAX_STEPS = 100;
+const ABSOLUTE_MAX_STEPS = 200;
+
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
@@ -243,6 +246,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private maybeSettle(): void {
     if (this.activeTurnJob !== undefined || this.pendingTurns.length > 0) return;
+    this.nextReservedTurnId = undefined;
     if (this.settleWaiters.length === 0) return;
     const waiters = this.settleWaiters.splice(0);
     for (const resolve of waiters) resolve();
@@ -469,7 +473,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     } else if (result?.type === 'cancelled') {
       ready.reject(result.reason instanceof Error ? result.reason : abortError('Turn cancelled'));
     } else {
-      ready.reject(new Error2(ErrorCodes.INTERNAL, 'Turn ended before first step'));
+      ready.resolve();
     }
   }
 
@@ -567,8 +571,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         },
       };
     }
-    const maxSteps = this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
-    if (maxSteps !== undefined && maxSteps > 0 && runtime.steps >= maxSteps) {
+    const maxSteps = Math.min(
+      this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn ?? DEFAULT_MAX_STEPS,
+      ABSOLUTE_MAX_STEPS,
+    );
+    if (maxSteps > 0 && runtime.steps >= maxSteps) {
       throw createMaxStepsExceededError(maxSteps);
     }
     const batch = runtime.queue.takeNextBatch();
@@ -927,7 +934,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.hooks.onDidFinishStep.run(context);
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
-      console.error(error);
+      this.eventBus.publish({
+        type: 'error',
+        event: 'hook.onDidFinishStep',
+        message: String(error),
+      });
     }
     return context.stopTurn;
   }

@@ -25,7 +25,9 @@ export const CreateGoalToolInputSchema = z
     completionCriterion: z
       .string()
       .optional()
-      .describe('How to verify the goal is complete. Include when the user provides one.'),
+      .describe(
+        'How to verify the goal is complete — a concrete, checkable condition (e.g. a test passing, a search returning zero matches, a command exiting 0). Required. When the user\\u2019s request is vague, you MUST first ask them — via AskUserQuestion — what \"done\" concretely means and how it will be verified; do not invent a criterion on your own. If the user clearly insists on a vague goal after you warn them, record their own wording as the criterion and proceed.',
+      ),
     replace: z
       .boolean()
       .optional()
@@ -58,6 +60,17 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
           (currentGoal === null || !this.goal.isGoalToolTarget(turnId, currentGoal.goalId))
         ) {
           return { output: 'Goal not created: the current goal changed.' };
+        }
+        // Reject missing or placeholder completion criteria at the tool boundary
+        // so the model is forced to provide a concrete, verifiable check.
+        const criterion = args.completionCriterion?.trim();
+        if (!criterion || criterion.length < 10) {
+          return {
+            output:
+              'Completion criterion is required and must be at least 10 characters. ' +
+              'Provide a concrete, verifiable check — e.g. what test to run, what command should succeed, ' +
+              'what condition must hold. If the user\'s request is vague, ask them via AskUserQuestion first.',
+          };
         }
         const snapshot = await this.goal.createGoal(
           {

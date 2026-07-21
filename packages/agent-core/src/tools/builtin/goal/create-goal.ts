@@ -2,6 +2,12 @@
  * CreateGoalTool — lets the main agent start an explicit goal on the user's
  * behalf. The goal becomes durable, structured state owned by the agent's
  * GoalMode, not text parsed from a slash command.
+ *
+ * @deprecated This v1 engine is no longer the primary runtime. The active goal
+ * path is `@moonshot-ai/agent-core-v2` (`packages/agent-core-v2/src/agent/goal/tools/create-goal.ts`).
+ * This file is kept for legacy reference and test continuity; new goal features
+ * should land in the v2 engine. Over time, v1 code should migrate to v2 and
+ * this copy be removed.
  */
 
 import type { Agent } from '#/agent';

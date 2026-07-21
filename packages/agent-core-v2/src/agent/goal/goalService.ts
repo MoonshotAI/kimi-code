@@ -88,6 +88,9 @@ const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 
 const MAX_GOAL_COMPLETION_CRITERION_LENGTH = MAX_GOAL_OBJECTIVE_LENGTH;
 
+/** Minimum completionCriterion length to reject placeholders and empty strings. */
+const MIN_GOAL_COMPLETION_CRITERION_LENGTH = 10;
+
 const GOAL_CANCELLED_REMINDER = t('v2Goal.cancelledReminder');
 
 const GOAL_FORK_CLEARED_REMINDER = t('v2Goal.forkClearedReminder');
@@ -318,13 +321,16 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     this.assertSupportedAgent();
     const objective = this.validateObjective(input.objective);
+    const completionCriterion = normalizeCompletionCriterion(
+      this.validateCompletionCriterion(input.completionCriterion),
+    );
     this.prepareForGoalCreation(input.replace === true);
     const wallClockResumedAt = Date.now();
     this.wire.dispatch(
       createGoal({
         goalId: randomUUID(),
         objective,
-        completionCriterion: normalizeCompletionCriterion(input.completionCriterion),
+        completionCriterion,
         wallClockResumedAt,
       }),
     );
@@ -349,6 +355,21 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       );
     }
     return objective;
+  }
+
+  private validateCompletionCriterion(value: string | undefined): string | undefined {
+    if (value === undefined) return undefined;
+    const criterion = value.trim();
+    if (criterion.length === 0) {
+      throw new Error2(ErrorCodes.GOAL_COMPLETION_CRITERION_EMPTY, t('v2Goal.completionCriterionEmpty'));
+    }
+    if (criterion.length < MIN_GOAL_COMPLETION_CRITERION_LENGTH) {
+      throw new Error2(
+        ErrorCodes.GOAL_COMPLETION_CRITERION_TOO_SHORT,
+        t('v2Goal.completionCriterionTooShort', { min: String(MIN_GOAL_COMPLETION_CRITERION_LENGTH) }),
+      );
+    }
+    return criterion;
   }
 
   private prepareForGoalCreation(replace: boolean): void {

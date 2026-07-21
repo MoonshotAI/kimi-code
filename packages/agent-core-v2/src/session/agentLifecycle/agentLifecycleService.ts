@@ -206,6 +206,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   // skips the lazy proxy at resolve time — so they must be resolved here or
   // their registrations (built-in tools, loop error handlers, MCP tools) would
   // never happen.
+  //
+  // Fail-fast by design: all services are critical for correct agent operation;
+  // if any fails to initialise the error propagates to the caller's catch-block
+  // so the half-built agent is dropped instead of returning a zombie.
   private igniteEagerServices(handle: IAgentScopeHandle): void {
     handle.accessor.get(IAgentBuiltinToolsRegistrar);
     handle.accessor.get(IAgentMediaToolsRegistrar);
