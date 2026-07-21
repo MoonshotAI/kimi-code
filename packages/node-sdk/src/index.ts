@@ -22,6 +22,7 @@ export {
   catalogModelToAlias,
   catalogProviderModels,
   catalogProviderNeedsBaseUrl,
+  adaptBaseUrlForWire,
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,

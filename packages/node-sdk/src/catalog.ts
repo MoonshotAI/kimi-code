@@ -3,6 +3,7 @@ import {
   catalogBaseUrl,
   catalogProviderModels,
   catalogProviderNeedsBaseUrl,
+  adaptBaseUrlForWire,
   inferWireType,
   isGuessedWireType,
   type Catalog,
@@ -12,7 +13,7 @@ import {
   type ProviderType,
 } from '@moonshot-ai/kosong';
 
-export { catalogBaseUrl, catalogProviderModels, catalogProviderNeedsBaseUrl, inferWireType, isGuessedWireType };
+export { catalogBaseUrl, catalogProviderModels, catalogProviderNeedsBaseUrl, adaptBaseUrlForWire, inferWireType, isGuessedWireType };
 export type { Catalog, CatalogModel, CatalogProviderEntry };
 
 export const DEFAULT_CATALOG_URL = 'https://models.dev/api.json';

@@ -39,6 +39,7 @@ export type { ModelCapability } from './capability';
 
 // Model catalog (models.dev-style) metadata
 export {
+  adaptBaseUrlForWire,
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,

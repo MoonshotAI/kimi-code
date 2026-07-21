@@ -1074,9 +1074,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       options?.thinking ??
       (this._thinkingEffort !== undefined ? { effort: this._thinkingEffort } : undefined);
     if (thinking !== undefined) {
-      // 'on' sends no effort field; 'off' sends the model's declared off
-      // value (e.g. 'none') when one is configured, and omits the field
-      // otherwise. Both suppress any seeded effort.
       const effort =
         thinking.effort === 'off'
           ? this._offEffort

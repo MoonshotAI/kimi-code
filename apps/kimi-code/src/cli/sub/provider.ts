@@ -24,6 +24,7 @@ import {
   catalogBaseUrl,
   catalogProviderModels,
   catalogProviderNeedsBaseUrl,
+  adaptBaseUrlForWire,
   CatalogFetchError,
   createKimiHarness,
   DEFAULT_CATALOG_URL,
@@ -343,7 +344,7 @@ export async function handleCatalogAdd(
   }
   let baseUrl =
     trimmedBaseUrl !== undefined && trimmedBaseUrl.length > 0
-      ? trimmedBaseUrl
+      ? adaptBaseUrlForWire(trimmedBaseUrl, wire)
       : catalogBaseUrl(entry, wire);
   if (baseUrl === undefined && catalogProviderNeedsBaseUrl(entry, wire)) {
     deps.stderr.write(

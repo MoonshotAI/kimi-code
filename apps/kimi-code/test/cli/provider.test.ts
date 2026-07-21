@@ -907,6 +907,34 @@ describe('kimi provider catalog add', () => {
     });
   });
 
+  it('strips a trailing /v1 from --base-url for Anthropic-wire imports', async () => {
+    mockRegistryFetch({
+      'claude-gateway': {
+        id: 'claude-gateway',
+        name: 'Claude Gateway',
+        npm: '@custom/claude-gateway',
+        models: { 'claude-x': { id: 'claude-x', limit: { context: 1000 } } },
+      },
+    });
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'claude-gateway', {
+        apiKey: 'sk-gw',
+        baseUrl: 'https://claude-gateway.example.test/v1',
+      }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().providers['claude-gateway']).toMatchObject({
+      type: 'anthropic',
+      // The Anthropic SDK appends /v1/messages itself — persisting the /v1
+      // would double it (/v1/v1/messages).
+      baseUrl: 'https://claude-gateway.example.test',
+    });
+  });
+
   it('rejects an empty --base-url instead of persisting a blank endpoint', async () => {
     mockRegistryFetch(CATALOG_BODY);
     const { harness } = makeHarness({ providers: {} } as KimiConfig);

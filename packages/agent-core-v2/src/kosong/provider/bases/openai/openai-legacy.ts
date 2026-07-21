@@ -725,10 +725,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       }
     }
 
-    // 'on' has no wire encoding; only a concrete effort is passed through.
-    // 'off' sends the model's declared off value (e.g. 'none') when one is
-    // configured and must also suppress the history-based auto-enable below
-    // (issue #1616), so it stays distinguishable from "never configured".
     let reasoningEffort: string | undefined =
       explicitThinkingEffort === 'off'
         ? this._offEffort

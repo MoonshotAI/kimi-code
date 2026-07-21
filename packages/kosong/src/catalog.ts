@@ -139,12 +139,13 @@ function isUsableChatModel(model: CatalogModelEntry): boolean {
  * work — callers keep refusing those instead.
  */
 export function inferWireType(entry: CatalogProviderEntry): ProviderType | undefined {
+  // An explicit `type` is authoritative: honored when known, refused when
+  // not — a future catalog protocol must never be silently rewired through
+  // npm/id inference or the fallback below.
+  if (isWireType(entry.type)) return entry.type;
+  if (typeof entry.type === 'string' && entry.type.length > 0) return undefined;
   const declared = inferDeclaredWireType(entry);
   if (declared !== undefined) return declared;
-  // An explicit but unrecognized `type` is a protocol this client version
-  // does not know — refuse it rather than guessing (a future kokub protocol
-  // must not be silently wired as OpenAI).
-  if (typeof entry.type === 'string' && entry.type.length > 0) return undefined;
   // SDKs known to be non-OpenAI proprietary — the fallback below would write
   // a config that can never work (Bedrock Converse API, Cohere's native chat
   // API), so callers keep refusing those instead.
@@ -196,8 +197,17 @@ export function catalogBaseUrl(
 ): string | undefined {
   const api = entry.api;
   if (typeof api !== 'string' || api.length === 0 || api.includes('${')) return undefined;
-  if (wire === 'anthropic') return api.replace(/\/v1\/?$/, '');
-  return api;
+  return adaptBaseUrlForWire(api, wire);
+}
+
+/**
+ * Adapts a base URL to the wire's SDK convention: the Anthropic SDK appends
+ * `/v1/messages` itself, so a trailing `/v1` is stripped (otherwise requests
+ * land on `/v1/v1/messages`); other wires pass through unchanged. Applied to
+ * catalog-declared and user-supplied URLs alike.
+ */
+export function adaptBaseUrlForWire(baseUrl: string, wire: ProviderType): string {
+  return wire === 'anthropic' ? baseUrl.replace(/\/v1\/?$/, '') : baseUrl;
 }
 
 /**

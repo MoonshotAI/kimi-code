@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  adaptBaseUrlForWire,
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,
@@ -28,6 +29,9 @@ describe('inferWireType', () => {
   it('refuses an explicit but unrecognized type instead of guessing', () => {
     expect(inferWireType({ id: 'x', type: 'not-a-wire' })).toBeUndefined();
     expect(isGuessedWireType({ id: 'x', type: 'not-a-wire' })).toBe(false);
+    // … even when npm/id would have been inferable: the explicit declaration
+    // is authoritative, so a future catalog protocol is never miswired.
+    expect(inferWireType({ id: 'x', type: 'kokub', npm: '@ai-sdk/openai-compatible' })).toBeUndefined();
   });
 
   it('falls back to openai for vendor-specific SDKs models.dev does not type', () => {
@@ -144,6 +148,19 @@ describe('catalogBaseUrl', () => {
     expect(
       catalogBaseUrl({ id: 'azure', api: 'https://${AZURE_RESOURCE_NAME}.example.test/anthropic/v1' }, 'anthropic'),
     ).toBeUndefined();
+  });
+
+  it('adaptBaseUrlForWire strips a trailing /v1 only for the Anthropic wire', () => {
+    expect(adaptBaseUrlForWire('https://gateway.example.test/v1', 'anthropic')).toBe(
+      'https://gateway.example.test',
+    );
+    expect(adaptBaseUrlForWire('https://gateway.example.test/v1/', 'anthropic')).toBe(
+      'https://gateway.example.test',
+    );
+    expect(adaptBaseUrlForWire('https://gateway.example.test/v1', 'openai')).toBe(
+      'https://gateway.example.test/v1',
+    );
+    expect(adaptBaseUrlForWire('https://host/v1beta', 'anthropic')).toBe('https://host/v1beta');
   });
 });
 

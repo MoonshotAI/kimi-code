@@ -9,6 +9,7 @@ import {
   catalogBaseUrl,
   catalogProviderModels,
   catalogProviderNeedsBaseUrl,
+  adaptBaseUrlForWire,
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
@@ -205,8 +206,15 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
 
   let baseUrl = catalogBaseUrl(entry, wire);
   if (baseUrl === undefined && catalogProviderNeedsBaseUrl(entry, wire)) {
-    baseUrl = await promptBaseUrl(host, entry.name ?? providerId);
-    if (baseUrl === undefined) return;
+    const entered = await promptBaseUrl(host, entry.name ?? providerId);
+    if (entered === undefined) return;
+    if (entered.includes('${')) {
+      host.showError(
+        `Base URL "${entered}" contains an env placeholder. Enter the resolved URL instead.`,
+      );
+      return;
+    }
+    baseUrl = adaptBaseUrlForWire(entered, wire);
   }
 
   const apiKey = await promptApiKey(host, entry.name ?? providerId);
