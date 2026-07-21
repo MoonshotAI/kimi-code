@@ -150,8 +150,17 @@ Each field is an `EnvBinding` — a string (env var name) or
 section. Empty nested entries (no field resolved) are omitted, so a synthetic
 entry like `__kimi_env__` only appears when at least one of its env vars is set.
 
-`stripEnv(value, rawSnake?)` removes env-derived fields before `set`/`replace`
-persists, so env overrides never leak into `config.toml`.
+`stripEnv(value, rawSnake?, getEnv?)` removes env-derived fields before `set`/`replace`
+persists, so env overrides never leak into `config.toml`. `rawSnake` is the
+section's on-disk sub-object (looked up by the snake_case key, so camelCase
+domains like `loopControl` resolve correctly), and `getEnv` reads the live env
+bag. For fields that are **both user-persistable and env-overridable**, register
+`stripEnvBoundFields<Section>([{ field, env }])` (from `#/app/config/config`):
+while a field's env var is set, writes restore the field's raw on-disk value
+(or drop it) instead of persisting an echoed env value; when unset, normal
+writes persist. Env-only fields/sections need no env check — strip them
+unconditionally (e.g. thinking's `forcedEffort`, cron's whole-section
+`() => undefined`).
 
 Business domains read `config.get('section')`; they never read env directly, and
 never write their own env-merge logic.

@@ -13,6 +13,8 @@
 import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
+import { isPlainObject } from './configPure';
+
 export interface ConfigSchema<T> {
   parse(value: unknown): T;
 }
@@ -35,7 +37,49 @@ export function envBindings<T>(_schema: ConfigSchema<T>, bindings: EnvBindings<T
   return bindings;
 }
 
-export type ConfigStripEnv<T> = (value: T, rawSnake?: unknown) => T | undefined;
+export type ConfigStripEnv<T> = (
+  value: T,
+  rawSnake?: unknown,
+  getEnv?: (name: string) => string | undefined,
+) => T | undefined;
+
+export interface EnvBoundField {
+  /** camelCase in-memory field name; the snake_case on-disk key is derived from it. */
+  readonly field: string;
+  /** Env var that owns the field while set. */
+  readonly env: string;
+}
+
+function camelToSnake(str: string): string {
+  return str.replaceAll(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
+}
+
+/**
+ * Build a `stripEnv` for sections whose fields are both user-persistable and
+ * env-overridable. While a field's env var is set, the env value owns the
+ * field: `set`/`replace` restores the field to its raw on-disk value (or drops
+ * it when absent on disk), so an env overlay echoed back through a config
+ * write can never be persisted. Fields whose env var is not set pass through
+ * unchanged, so normal writes keep working.
+ */
+export function stripEnvBoundFields<T>(fields: readonly EnvBoundField[]): ConfigStripEnv<T> {
+  return (value, rawSnake, getEnv) => {
+    if (getEnv === undefined || value === null || typeof value !== 'object') return value;
+    const raw = isPlainObject(rawSnake) ? rawSnake : {};
+    let out: Record<string, unknown> | undefined;
+    for (const { field, env } of fields) {
+      if (getEnv(env) === undefined) continue;
+      out ??= { ...(value as Record<string, unknown>) };
+      const snake = camelToSnake(field);
+      if (raw[snake] !== undefined) {
+        out[field] = raw[snake];
+      } else {
+        delete out[field];
+      }
+    }
+    return (out ?? value) as T;
+  };
+}
 
 export type ConfigFromToml = (rawSnake: unknown) => unknown;
 

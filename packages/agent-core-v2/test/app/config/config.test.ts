@@ -58,7 +58,9 @@ import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSubagentTimeoutMs,
+  SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
+  type SubagentConfig,
 } from '#/session/subagent/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -534,6 +536,41 @@ describe('image config section', () => {
 
     disposables.dispose();
   });
+
+  it('restores env-owned fields to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { 'KIMI_IMAGE_MAX_EDGE_PX': '1500' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[image]\nread_byte_budget = 131072\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    // A client echoing the env-overlaid section back (plus a genuine edit).
+    await config.set(IMAGE_SECTION, { maxEdgePx: 1500, readByteBudget: 262144 });
+
+    // Runtime resolution still lets the env win…
+    expect(config.get<ImageConfig>(IMAGE_SECTION)).toEqual({
+      maxEdgePx: 1500,
+      readByteBudget: 262144,
+    });
+    // …but persistence drops the env-owned field and keeps the genuine edit.
+    expect(config.inspect<ImageConfig>(IMAGE_SECTION).userValue).toEqual({
+      readByteBudget: 262144,
+    });
+
+    disposables.dispose();
+  });
 });
 
 describe('loopControl config section', () => {
@@ -579,6 +616,76 @@ describe('loopControl config section', () => {
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '50';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(50);
+
+    disposables.dispose();
+  });
+
+  it('restores env-owned fields to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = {
+      [LOOP_MAX_STEPS_PER_TURN_ENV]: '7',
+      [LOOP_MAX_RETRIES_PER_STEP_ENV]: '2',
+    };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_steps_per_turn = 100\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    // A client echoing the env-overlaid section back (plus a genuine edit).
+    await config.set(LOOP_CONTROL_SECTION, {
+      maxStepsPerTurn: 7,
+      maxRetriesPerStep: 2,
+      reservedContextSize: 5000,
+    });
+
+    // Runtime resolution still lets the env win…
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxStepsPerTurn: 7,
+      maxRetriesPerStep: 2,
+      reservedContextSize: 5000,
+    });
+    // …but persistence keeps the raw value and drops the env-only field.
+    expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
+      maxStepsPerTurn: 100,
+      reservedContextSize: 5000,
+    });
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_steps_per_turn = 100');
+    expect(onDisk).toContain('reserved_context_size = 5000');
+    expect(onDisk).not.toContain('max_retries_per_step');
+
+    disposables.dispose();
+  });
+
+  it('persists env-bound fields normally when no env var is set', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 50 });
+
+    expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
+      maxStepsPerTurn: 50,
+    });
 
     disposables.dispose();
   });
@@ -670,6 +777,38 @@ describe('task config section', () => {
     );
 
     expect(resolveAgentTaskConfig(config)?.maxRunningTasks).toBe(8);
+
+    disposables.dispose();
+  });
+
+  it('restores env-owned fields to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = {
+      [KEEP_ALIVE_ON_EXIT_ENV]: 'true',
+      [MAX_RUNNING_TASKS_ENV]: '8',
+    };
+    const { config, disposables } = await createTaskConfig(
+      env,
+      '[background]\nmax_running_tasks = 3\n',
+    );
+
+    // A client echoing the env-overlaid section back (plus a genuine edit).
+    await config.set('background', {
+      keepAliveOnExit: true,
+      maxRunningTasks: 8,
+      killGracePeriodMs: 25,
+    });
+
+    // Runtime resolution still lets the env win…
+    expect(config.get<AgentTaskConfig>('background')).toEqual({
+      keepAliveOnExit: true,
+      maxRunningTasks: 8,
+      killGracePeriodMs: 25,
+    });
+    // …but persistence keeps the raw value and drops the env-only field.
+    expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
+      maxRunningTasks: 3,
+      killGracePeriodMs: 25,
+    });
 
     disposables.dispose();
   });
@@ -785,6 +924,23 @@ describe('subagent config section', () => {
 
     env[SUBAGENT_TIMEOUT_ENV] = '7000';
     expect(resolveSubagentTimeoutMs(config)).toBe(7000);
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned timeout to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env, '[subagent]\ntimeout_ms = 5000\n');
+
+    // A client echoing the env-overlaid section back.
+    await config.set(SUBAGENT_SECTION, { timeoutMs: 7000 });
+
+    // Runtime resolution still lets the env win…
+    expect(resolveSubagentTimeoutMs(config)).toBe(7000);
+    // …but persistence keeps the raw value.
+    expect(config.inspect<SubagentConfig>(SUBAGENT_SECTION).userValue).toEqual({
+      timeoutMs: 5000,
+    });
 
     disposables.dispose();
   });

@@ -11,14 +11,14 @@
  * `env > config.toml > default` and re-applies the env binding on every read.
  * Self-registered at module load via `registerConfigSection`.
  *
- * No `stripEnv` is registered: nothing calls `set`/`replace` for `loopControl`,
- * and `raw`/`rawSnake` are always env-free (the env overlay lands only in
- * `effective`), so an env override can never be written to `config.toml`.
+ * While a field's env var is set, `stripEnvBoundFields` restores its raw
+ * on-disk value before `set`/`replace` persists, so an env override echoed
+ * back through a config write can never leak into `config.toml`.
  */
 
 import { z } from 'zod';
 
-import { type EnvBindings, envBindings } from '#/app/config/config';
+import { type EnvBindings, envBindings, stripEnvBoundFields } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import { plainObjectToToml, transformPlainObject } from '#/app/config/toml';
 
@@ -50,6 +50,11 @@ export const loopControlEnvBindings: EnvBindings<LoopControl> = envBindings(Loop
   maxRetriesPerStep: { env: LOOP_MAX_RETRIES_PER_STEP_ENV, parse: parseNonNegativeInt },
 });
 
+export const stripLoopControlEnv = stripEnvBoundFields<LoopControl>([
+  { field: 'maxStepsPerTurn', env: LOOP_MAX_STEPS_PER_TURN_ENV },
+  { field: 'maxRetriesPerStep', env: LOOP_MAX_RETRIES_PER_STEP_ENV },
+]);
+
 export const loopControlFromToml = (rawSnake: unknown): unknown => {
   if (rawSnake === null || typeof rawSnake !== 'object' || Array.isArray(rawSnake)) return rawSnake;
   const out = transformPlainObject(rawSnake as Record<string, unknown>);
@@ -69,4 +74,5 @@ registerConfigSection(LOOP_CONTROL_SECTION, LoopControlSchema, {
   fromToml: loopControlFromToml,
   toToml: loopControlToToml,
   env: loopControlEnvBindings,
+  stripEnv: stripLoopControlEnv,
 });

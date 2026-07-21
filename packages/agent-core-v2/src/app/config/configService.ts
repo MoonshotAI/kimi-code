@@ -367,7 +367,10 @@ export class ConfigService extends Disposable implements IConfigService {
     let result = value;
     const section = this.registry.getSection(domain);
     if (section?.stripEnv !== undefined) {
-      result = section.stripEnv(result, this.rawSnake[domain]);
+      const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
+      // On-disk sections are keyed snake_case (see applySectionToToml), so a
+      // camelCase domain like `loopControl` lives at rawSnake['loop_control'].
+      result = section.stripEnv(result, this.rawSnake[camelToSnake(domain)], getEnv);
     }
     if (result === undefined) return result;
     for (const overlay of this.registry.listEffectiveOverlays()) {

@@ -8,7 +8,9 @@
  * `keepAliveOnExit` and `maxRunningTasks` also
  * accept the v1 env overrides `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` /
  * `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`
- * (applied live by the config env overlay, never persisted). Also owns the
+ * (applied live by the config env overlay; while a field's env var is set,
+ * `stripEnvBoundFields` restores its raw on-disk value before persistence, so
+ * env values never leak into `config.toml`). Also owns the
  * `kimi -p` print-mode background policy (`printBackgroundMode` /
  * `printWaitCeilingS` / `printMaxTurns`), resolved with v1 semantics by
  * `resolvePrintBackgroundMode`. Self-registered
@@ -19,7 +21,12 @@
 import { z } from 'zod';
 
 import { parseBooleanEnv } from '#/_base/utils/env';
-import { type EnvBindings, envBindings, type IConfigService } from '#/app/config/config';
+import {
+  type EnvBindings,
+  envBindings,
+  stripEnvBoundFields,
+  type IConfigService,
+} from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 
 export const TASK_SECTION = 'task';
@@ -79,5 +86,16 @@ export const taskEnvBindings: EnvBindings<AgentTaskConfig> = envBindings(AgentTa
   maxRunningTasks: { env: MAX_RUNNING_TASKS_ENV, parse: parsePositiveInt },
 });
 
-registerConfigSection(TASK_SECTION, AgentTaskConfigSchema, { env: taskEnvBindings });
-registerConfigSection(LEGACY_BACKGROUND_SECTION, AgentTaskConfigSchema, { env: taskEnvBindings });
+export const stripTaskEnv = stripEnvBoundFields<AgentTaskConfig>([
+  { field: 'keepAliveOnExit', env: KEEP_ALIVE_ON_EXIT_ENV },
+  { field: 'maxRunningTasks', env: MAX_RUNNING_TASKS_ENV },
+]);
+
+registerConfigSection(TASK_SECTION, AgentTaskConfigSchema, {
+  env: taskEnvBindings,
+  stripEnv: stripTaskEnv,
+});
+registerConfigSection(LEGACY_BACKGROUND_SECTION, AgentTaskConfigSchema, {
+  env: taskEnvBindings,
+  stripEnv: stripTaskEnv,
+});
