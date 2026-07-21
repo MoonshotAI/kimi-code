@@ -224,6 +224,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private readonly deliveredNotificationKeys = new Set<string>();
   private readonly persistence: AgentTaskPersistence;
   private activeTaskReminderPending = false;
+  private _closing = false;
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -300,6 +301,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.tasks.has(taskId)) continue;
       this.ghosts.set(taskId, info);
     }
+  }
+
+  beginClose(): void {
+    this._closing = true;
   }
 
   registerTask(task: AgentTask, options: RegisterAgentTaskOptions = {}): string {
@@ -868,6 +873,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private assertCanRegister(detached: boolean): void {
+    if (this._closing) throw new Error('Agent task service is closing.');
     const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
     if (maxRunningTasks === undefined) return;
     if (!detached) return;

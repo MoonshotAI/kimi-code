@@ -474,6 +474,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
 
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
+    beginClose: () => {},
     flushPersistence: async () => {},
     track(): never {
       throw new Error('fake IAgentTaskService.track is not implemented');

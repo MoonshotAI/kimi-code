@@ -14,6 +14,7 @@ import {
   type HeldByPeerDetails,
   type SessionOwnershipDetails,
 } from '../api/daemon/sessionOwnership';
+import { getCredential, withServerCredentialFragment } from '../api/daemon/serverAuth';
 import {
   bumpRedirectBudget,
   decideSessionOwnershipAction,
@@ -1460,7 +1461,11 @@ function handleSessionOwnership(details: SessionOwnershipDetails, ctx: { operati
       pushWarning(ownershipNotice('redirecting', { origin: action.origin }));
       persistPeerRedirectBudgetSafe(bumpRedirectBudget(readPeerRedirectBudgetSafe(Date.now())));
       if (typeof window !== 'undefined') {
-        window.location.assign(action.url);
+        const credential = getCredential();
+        const target = credential === undefined
+          ? action.url
+          : withServerCredentialFragment(action.url, credential);
+        window.location.assign(target);
       }
       return;
     }

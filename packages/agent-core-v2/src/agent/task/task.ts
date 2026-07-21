@@ -83,6 +83,7 @@ export interface IAgentTaskService {
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];
+  beginClose(): void;
   persistOutput(taskId: string): void;
   flushPersistence(): Promise<void>;
   getOutputSnapshot(

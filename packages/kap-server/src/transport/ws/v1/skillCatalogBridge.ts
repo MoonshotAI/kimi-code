@@ -59,14 +59,29 @@ interface SessionWatch {
   sub: IDisposable | undefined;
 }
 
-export class SkillCatalogBridge {
+export class SkillCatalogBridge implements IDisposable {
   private readonly core: Scope;
   private readonly logger: JournalLogger | undefined;
+  private readonly sessionReleaseHook: IDisposable;
   private readonly bySession = new Map<string, SessionWatch>();
 
   constructor(opts: { core: Scope; logger?: JournalLogger }) {
     this.core = opts.core;
     this.logger = opts.logger;
+    this.sessionReleaseHook = this.core.accessor
+      .get(ISessionLifecycleService)
+      .hooks.onWillReleaseSession.register(
+        'skillCatalogBridge',
+        async ({ sessionId }, next) => {
+          this.releaseSession(sessionId);
+          await next();
+        },
+      );
+  }
+
+  dispose(): void {
+    this.sessionReleaseHook.dispose();
+    for (const sw of Array.from(this.bySession.values())) this.teardownSession(sw);
   }
 
   /** Start delivering the session's catalog hints to `conn` (session subscribe). */
@@ -112,6 +127,11 @@ export class SkillCatalogBridge {
     sw.sub?.dispose();
     sw.sub = undefined;
     this.bySession.delete(sw.id);
+  }
+
+  private releaseSession(sessionId: string): void {
+    const sw = this.bySession.get(sessionId);
+    if (sw !== undefined) this.teardownSession(sw);
   }
 
   private onSessionEvent(sessionId: string, sourceId: string): void {

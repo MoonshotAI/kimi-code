@@ -18,6 +18,7 @@
 
 const STORAGE_KEY = 'kimi-web.server-credential';
 const FRAGMENT_PARAM = 'token';
+const REDIRECT_HASH_PARAM = 'redirect_hash';
 const CREDENTIAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface StoredCredential {
@@ -38,16 +39,27 @@ function readFragmentToken(): string | undefined {
   const params = new URLSearchParams(hash.slice(1));
   const token = params.get(FRAGMENT_PARAM);
   if (!token) return undefined;
+  const redirectHash = params.get(REDIRECT_HASH_PARAM);
   // Scrub the fragment (keep path + query) so the token is not left in the
   // address bar, browser history, or any screenshot of the window.
   const url = new URL(window.location.href);
-  url.hash = '';
+  url.hash = redirectHash ?? '';
   window.history.replaceState(
     window.history.state,
     '',
-    `${url.pathname}${url.search}`,
+    `${url.pathname}${url.search}${url.hash}`,
   );
   return token;
+}
+
+export function withServerCredentialFragment(targetUrl: string, credential: string): string {
+  const url = new URL(targetUrl);
+  const redirectHash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;
+  const params = new URLSearchParams();
+  params.set(FRAGMENT_PARAM, credential);
+  if (redirectHash !== '') params.set(REDIRECT_HASH_PARAM, redirectHash);
+  url.hash = params.toString();
+  return url.toString();
 }
 
 function createStoredCredential(credential: string): StoredCredential {

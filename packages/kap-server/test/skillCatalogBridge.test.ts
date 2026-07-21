@@ -17,8 +17,10 @@ import {
   ISessionSkillCatalog,
   ISessionLifecycleService,
   type ISessionScopeHandle,
+  type SessionLifecycleHooks,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { createHooks } from '@moonshot-ai/agent-core-v2/hooks';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -65,8 +67,19 @@ function makeCatalog(): FakeCatalog {
   };
 }
 
-function makeCore(sessions: Map<string, ISessionScopeHandle>): Scope {
-  const lifecycle = { get: (sid: string) => sessions.get(sid) };
+function createSessionLifecycleHooks() {
+  return createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
+    'onDidCreateSession',
+    'onWillCloseSession',
+    'onWillReleaseSession',
+  ]);
+}
+
+function makeCore(
+  sessions: Map<string, ISessionScopeHandle>,
+  hooks = createSessionLifecycleHooks(),
+): Scope {
+  const lifecycle = { get: (sid: string) => sessions.get(sid), hooks };
   return {
     accessor: {
       get: (decorator: unknown) => {
@@ -192,5 +205,25 @@ describe('SkillCatalogBridge', () => {
     catalog1.fire('plugin');
     expect(a.frames).toHaveLength(1);
     expect(a.frames[0]).toMatchObject({ seq: 1, payload: { sourceId: 'plugin' } });
+  });
+
+  it('rebinds to the restored session catalog after the previous scope is released', async () => {
+    const first = makeCatalog();
+    const restored = makeCatalog();
+    const sessions = new Map([['sess_1', makeSession(first.service)]]);
+    const hooks = createSessionLifecycleHooks();
+    const bridge = new SkillCatalogBridge({ core: makeCore(sessions, hooks) });
+    const a = makeConn('conn_a');
+    bridge.attachSession(a.conn, 'sess_1');
+
+    await hooks.onWillReleaseSession.run({ sessionId: 'sess_1', reason: 'archive' });
+    sessions.set('sess_1', makeSession(restored.service));
+    bridge.attachSession(a.conn, 'sess_1');
+    restored.fire('workspace-file');
+
+    expect(first.dispose).toHaveBeenCalledOnce();
+    expect(restored.onDidChange).toHaveBeenCalledOnce();
+    expect(a.frames).toHaveLength(1);
+    expect(a.frames[0]).toMatchObject({ seq: 1, payload: { sourceId: 'workspace-file' } });
   });
 });

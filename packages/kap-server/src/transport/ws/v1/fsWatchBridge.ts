@@ -91,15 +91,31 @@ interface SessionWatch {
   sub: IDisposable | undefined;
 }
 
-export class FsWatchBridge {
+export class FsWatchBridge implements IDisposable {
   private readonly core: Scope;
   private readonly logger: JournalLogger | undefined;
+  private readonly sessionReleaseHook: IDisposable;
   private readonly bySession = new Map<string, SessionWatch>();
   private readonly connPathCount = new Map<string, number>();
 
   constructor(opts: { core: Scope; logger?: JournalLogger }) {
     this.core = opts.core;
     this.logger = opts.logger;
+    this.sessionReleaseHook = this.core.accessor
+      .get(ISessionLifecycleService)
+      .hooks.onWillReleaseSession.register(
+        'fsWatchBridge',
+        async ({ sessionId }, next) => {
+          this.releaseSession(sessionId);
+          await next();
+        },
+      );
+  }
+
+  dispose(): void {
+    this.sessionReleaseHook.dispose();
+    for (const sw of Array.from(this.bySession.values())) this.dropSession(sw, 'teardown');
+    this.connPathCount.clear();
   }
 
   async addWatch(
@@ -212,9 +228,25 @@ export class FsWatchBridge {
   }
 
   private teardownSession(sw: SessionWatch): void {
+    this.dropSession(sw, 'teardown');
+  }
+
+  private releaseSession(sessionId: string): void {
+    const sw = this.bySession.get(sessionId);
+    if (sw === undefined) return;
+    this.dropSession(sw, 'scope-released');
+  }
+
+  private dropSession(sw: SessionWatch, reason: 'teardown' | 'scope-released'): void {
     sw.sub?.dispose();
     sw.sub = undefined;
-    sw.fsWatch.setWatchedPaths([]);
+    for (const entry of sw.conns.values()) {
+      const remaining = Math.max(0, this.countFor(entry.conn.id) - entry.paths.size);
+      if (remaining === 0) this.connPathCount.delete(entry.conn.id);
+      else this.connPathCount.set(entry.conn.id, remaining);
+    }
+    sw.conns.clear();
+    if (reason === 'teardown') sw.fsWatch.setWatchedPaths([]);
     this.bySession.delete(sw.id);
   }
 

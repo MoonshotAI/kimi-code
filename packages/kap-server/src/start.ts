@@ -526,6 +526,8 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   app.addHook('onClose', async () => {
     connectionRegistry.closeAll('server shutting down');
     wssV1.close();
+    fsWatchBridge.dispose();
+    skillCatalogBridge.dispose();
     await broadcaster.close();
   });
 

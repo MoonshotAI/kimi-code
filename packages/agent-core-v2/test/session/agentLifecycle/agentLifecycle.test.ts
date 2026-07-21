@@ -150,7 +150,9 @@ describe('AgentLifecycleService', () => {
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
+  let beginTaskClose: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
+  let flushPersistence: ReturnType<typeof vi.fn>;
   let loopActiveTurnId: number | undefined;
   let loopPendingTurnIds: number[];
   let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
@@ -343,11 +345,14 @@ describe('AgentLifecycleService', () => {
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
     ix.set(ISessionMcpService, new SyncDescriptor(SessionMcpService));
+    beginTaskClose = vi.fn();
     stopAllOnExit = vi.fn(async () => []);
+    flushPersistence = vi.fn(async () => {});
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
+      beginClose: beginTaskClose,
       stopAllOnExit,
-      flushPersistence: async () => {},
+      flushPersistence,
     } as unknown as IAgentTaskService);
     ix.stub(IAgentFullCompactionService, {
       _serviceBrand: undefined,
@@ -389,6 +394,49 @@ describe('AgentLifecycleService', () => {
 
     expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([2, 3, undefined]);
     expect(loopSettled).toHaveBeenCalledOnce();
+  });
+
+  it('remove closes task admission before cancelling the active turn', async () => {
+    loopActiveTurnId = 1;
+    let admissionWasOpenAtCancellation = false;
+    beginTaskClose.mockImplementation(() => {});
+    loopCancel.mockImplementation((turnId) => {
+      if (turnId === undefined) {
+        admissionWasOpenAtCancellation = beginTaskClose.mock.calls.length === 0;
+        loopActiveTurnId = undefined;
+      }
+      return true;
+    });
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    await svc.remove('main');
+
+    expect(admissionWasOpenAtCancellation).toBe(false);
+  });
+
+  it('remove performs the final task drain after the active turn settles', async () => {
+    loopActiveTurnId = 1;
+    let producerSettled = false;
+    let stoppedBeforeProducerSettled = false;
+    let flushedBeforeProducerSettled = false;
+    loopSettled.mockImplementation(async () => {
+      producerSettled = true;
+    });
+    stopAllOnExit.mockImplementation(async () => {
+      stoppedBeforeProducerSettled = !producerSettled;
+      return [];
+    });
+    flushPersistence.mockImplementation(async () => {
+      flushedBeforeProducerSettled = !producerSettled;
+    });
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    await svc.remove('main');
+
+    expect(stoppedBeforeProducerSettled).toBe(false);
+    expect(flushedBeforeProducerSettled).toBe(false);
   });
 
   it('remove waits for an active full compaction to reject after aborting it', async () => {

@@ -88,6 +88,18 @@ async function createSession(r: RunningServer): Promise<string> {
   return env.data.id;
 }
 
+async function runSessionAction(
+  r: RunningServer,
+  sessionId: string,
+  action: 'archive' | 'restore',
+): Promise<void> {
+  const res = await fetch(`${addressOf(r)}/api/v1/sessions/${sessionId}:${action}`, {
+    method: 'POST',
+  });
+  const env = (await res.json()) as { code: number };
+  if (env.code !== 0) throw new Error(`${action} session failed: ${JSON.stringify(env)}`);
+}
+
 interface WsFrame {
   type: string;
   payload?: Record<string, unknown>;
@@ -490,6 +502,38 @@ describe('WS fs watch (kap-server)', () => {
     const payload = ack.payload as { watched_paths: string[]; current_count: number };
     expect(payload.watched_paths).toEqual(['docs']);
     expect(payload.current_count).toBe(1);
+
+    conn.ws.close();
+  });
+
+  it('rebinds file watches after an archived session is restored on the same connection', async () => {
+    const r = await boot();
+    const sid = await createSession(r);
+    const conn = await openConn(wsUrl(r));
+    await helloAndSubscribe(conn, 'A', sid);
+
+    conn.ws.send(
+      JSON.stringify({ type: 'watch_fs_add', id: 'before', payload: { session_id: sid, paths: ['src'] } }),
+    );
+    await receiveType(conn, 'ack', 1000);
+    await runSessionAction(r, sid, 'archive');
+    await runSessionAction(r, sid, 'restore');
+
+    conn.ws.send(
+      JSON.stringify({ type: 'watch_fs_add', id: 'after', payload: { session_id: sid, paths: ['src'] } }),
+    );
+    const ack = await receiveType(conn, 'ack', 1000);
+    expect(ack.code).toBe(0);
+    expect(ack.payload).toMatchObject({ watched_paths: ['src'], current_count: 1 });
+
+    await sleep(WATCH_SETTLE_MS);
+    writeFileSync(join(workspace, 'src', 'restored.ts'), 'export const restored = true;\n');
+
+    const ev = await receiveType(conn, 'event.fs.changed', 2000);
+    expect(ev.session_id).toBe(sid);
+    expect((ev.payload as { changes: Array<{ path: string }> }).changes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: 'src/restored.ts' })]),
+    );
 
     conn.ws.close();
   });
