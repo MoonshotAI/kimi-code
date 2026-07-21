@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -882,6 +882,7 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
   beforeEach(async () => {
     stubBodies = [];
     let uploadCounter = 0;
+    const pendingGenerations: ServerResponse[] = [];
     const stub = createServer((req, res) => {
       if (req.method === 'POST' && req.url === '/files') {
         const chunks: Buffer[] = [];
@@ -904,9 +905,15 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
         return;
       }
       if (req.method === 'POST' && req.url === '/chat/completions') {
-        // The turn is aborted by the test; this answer is never needed.
-        res.writeHead(404);
-        res.end();
+        // Hang until the turn is aborted: an answered request (404 or a
+        // completed stream) can end the turn before the test's abort lands,
+        // making the cleanup racy.
+        pendingGenerations.push(res);
+        req.on('close', () => {
+          const index = pendingGenerations.indexOf(res);
+          if (index >= 0) pendingGenerations.splice(index, 1);
+          res.end();
+        });
         return;
       }
       res.writeHead(404);
@@ -914,7 +921,11 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
     });
     await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
     const { port } = stub.address() as AddressInfo;
-    stubClose = () => new Promise<void>((resolve) => stub.close(() => resolve()));
+    stubClose = () =>
+      new Promise<void>((resolve) => {
+        for (const pending of pendingGenerations.splice(0)) pending.destroy();
+        stub.close(() => resolve());
+      });
 
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-prompts-kimi-'));
     await writeFile(join(home, 'config.toml'), kimiToml(`http://127.0.0.1:${String(port)}`), 'utf-8');
