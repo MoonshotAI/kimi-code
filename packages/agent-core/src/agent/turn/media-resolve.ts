@@ -13,8 +13,10 @@
  * Two entry points:
  *   - `resolvePromptMedia` (async): the primary prompt path. Validates and
  *     uploads through the provider's channel (see `deliverVideoContent`),
- *     degrading to a `<video path>` tag on validation failure and re-throwing
- *     auth rejections so the turn fails visibly.
+ *     degrading to a `<video path>` tag on validation failure, re-throwing
+ *     auth rejections so the turn fails visibly, and re-throwing the abort
+ *     reason when the turn is cancelled mid-upload so the cancellation ends
+ *     the turn instead of appending a degraded message.
  *   - `degradeUnresolvedVideoToTag` (sync): the always-safe floor for the few
  *     append sites that cannot await an upload (steer-buffer flushes, the
  *     budget-exhausted goal turn). The local video becomes a `<video path>`
@@ -30,6 +32,7 @@ import type { Agent } from '..';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '../../tools/support/file-type';
 import { deliverVideoContent, isAuthUploadError } from '../../tools/support/video-delivery';
 import { MAX_MEDIA_BYTES } from '../../tools/builtin/file/read-media';
+import { abortReason } from '../../utils/abort';
 
 /** The local filesystem path behind a prompt-attached `file://` video part. */
 function localVideoUrl(part: ContentPart): string | undefined {
@@ -108,8 +111,12 @@ async function resolveOneVideo(
       signal,
     );
   } catch (error) {
-    // Auth rejections must surface (credential refresh + clear error); any
+    // A cancelled turn surfaces as its abort reason — whatever error the
+    // interrupted read/upload happened to produce, the user's cancellation is
+    // the real outcome, not a delivery failure to degrade around. Auth
+    // rejections must also surface (credential refresh + clear error); any
     // other read/upload failure degrades to the always-safe tag form.
+    if (signal?.aborted) throw abortReason(signal);
     if (isAuthUploadError(error)) throw error;
     return videoTag(path);
   }

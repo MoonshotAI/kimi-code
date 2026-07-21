@@ -209,6 +209,31 @@ describe('AgentVideoResolverService', () => {
     ).rejects.toThrow('unauthorized');
   });
 
+  it('rethrows a cancelled upload without memoizing the fallback', async () => {
+    const controller = new AbortController();
+    // The rejection is deliberately NOT abort-shaped: the aborted signal alone
+    // must decide cancellation, since abort error shapes vary by provider.
+    const interrupted = vi.fn(async () => {
+      controller.abort();
+      throw new Error('socket closed');
+    });
+    const resolver = new AgentVideoResolverService(
+      fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
+      blobStore(),
+      telemetry,
+    );
+    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+
+    await expect(
+      resolver.resolve([message], requester({ uploadVideo: interrupted }), controller.signal),
+    ).rejects.toThrow('socket closed');
+
+    const retry = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
+    const out = await resolver.resolve([message], requester({ uploadVideo: retry }));
+    expect(firstPart(out)).toEqual(msPart('prov-1'));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
   it('tags when the bytes do not sniff as a video', async () => {
     const upload = vi.fn();
     const out = await new AgentVideoResolverService(

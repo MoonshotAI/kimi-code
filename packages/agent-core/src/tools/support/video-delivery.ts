@@ -4,10 +4,12 @@
  * A local video becomes a model-visible content part through one channel:
  * upload it via the provider's video upload channel (the tiny `ms://<id>`
  * reference), and only fall back to an inline base64 `data:` part when the
- * channel is missing or the upload fails for a non-auth reason. Auth
- * rejections (401/403) are the exception: they must surface so credential
- * refresh runs and the user sees a clear auth error, instead of being masked
- * behind an inline payload the next request would also reject.
+ * channel is missing or the upload fails for a non-auth reason. Two failures
+ * are the exception and must surface instead of being masked behind an inline
+ * payload: auth rejections (401/403), which drive credential refresh and a
+ * clear auth error, and a cancelled delivery signal — the caller is tearing
+ * the turn down, so the interruption propagates as the signal's abort reason
+ * rather than silently delivering a degraded part.
  *
  * Both ReadMediaFile (videos the model reads itself) and the turn-level
  * prompt-media resolver (videos attached directly to a prompt) share this
@@ -17,6 +19,7 @@
 import type { ContentPart, VideoUploadInput, VideoURLPart } from '@moonshot-ai/kosong';
 
 import { ErrorCodes } from '../../errors';
+import { abortReason } from '../../utils/abort';
 
 /** Uploads a local video and returns the provider-issued `video_url` part. */
 export type VideoUploader = (
@@ -42,7 +45,8 @@ export function isAuthUploadError(error: unknown): boolean {
  * falling back to an inline base64 part when the channel is missing or the
  * upload fails for a non-auth reason — a failed upload must not turn the whole
  * delivery into an error. Auth rejections (401/403) are re-thrown so the
- * caller can surface them.
+ * caller can surface them, and a cancelled `signal` re-throws its abort
+ * reason so cancellation ends the delivery instead of degrading it.
  */
 export async function deliverVideoContent(
   input: VideoUploadInput,
@@ -56,6 +60,9 @@ export async function deliverVideoContent(
       // as before signal support existed.
       return await (signal === undefined ? uploader(input) : uploader(input, { signal }));
     } catch (error) {
+      // The signal check (not the error's shape) decides cancellation: abort
+      // rejections vary by provider, but our own aborted signal is definitive.
+      if (signal?.aborted) throw abortReason(signal);
       if (isAuthUploadError(error)) throw error;
       // Fall through to the inline form.
     }

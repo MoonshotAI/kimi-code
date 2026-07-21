@@ -263,6 +263,48 @@ describe('prompt-attached video resolution', () => {
     }
   });
 
+  it('ends the turn as cancelled when the user aborts mid-upload, appending nothing', async () => {
+    // A /files stub that never responds: the upload only settles when the
+    // turn's abort signal tears the in-flight request down, so the rejection
+    // reaching the resolver is whatever shape the HTTP client aborts with —
+    // the aborted signal alone must classify it as a cancellation.
+    let requestArrived!: () => void;
+    const arrived = new Promise<void>((resolve) => {
+      requestArrived = resolve;
+    });
+    const server = createServer((req) => {
+      req.resume();
+      requestArrived();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const ctx = testAgent();
+      ctx.configure({
+        provider: kimiProvider(`http://127.0.0.1:${String(port)}`),
+        modelCapabilities: VIDEO_CAPS,
+      });
+
+      await ctx.rpc.prompt({ input: [{ type: 'video_url', videoUrl: { url: fileUrl(tempVideo()) } }] });
+      await arrived;
+      await ctx.rpc.cancel({ turnId: 0 });
+      const events = await ctx.untilTurnEnd();
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'cancelled' }),
+        }),
+      );
+      // The cancelled prompt is not delivered at all: no user message enters
+      // history, and in particular no inline-base64 degraded copy of it.
+      expect(ctx.agent.context.data().history).toEqual([]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('degrades to a <video path> tag when the model lacks video_in (no upload)', async () => {
     const stub = await stubFilesServer();
     try {
