@@ -9,7 +9,8 @@
  *   POST /mcp/servers/{mcp_server_id}:restart    body: empty             data: {restarting: true}
  *
  * **Thin wrapper over Agent-scoped services**: `IAgentToolRegistryService.list` /
- * `IAgentMcpService.list` / `IAgentMcpService.reconnect` are already exposed on the
+ * `IAgentToolPolicyService.isToolActive` / `IAgentMcpService.list` /
+ * `IAgentMcpService.reconnect` are already exposed on the
  * RPC dispatcher (`/api/v1/debug`). These
  * REST routes borrow them by interface and project their v2 models into the
  * protocol's `ToolDescriptor` / `McpServer` shapes.
@@ -30,6 +31,9 @@
  *     `parameters`, but we keep byte-for-byte wire parity with v1.
  *   - Tool `mcp_server_id`: parsed from the qualified name `mcp__<server>__<tool>`
  *     (v2's double-underscore form, not v1's `mcp:<server>:<tool>` colon form).
+ *   - Tool `active`: effective availability from `IAgentToolPolicyService.isToolActive`
+ *     (bound profile policy ∩ global `[tools]` config ∩ session denylist).
+ *     Deliberate v2 extension beyond the v1 wire shape — v1 had no tool gates.
  *   - MCP `status`: `pending`→`connecting`, `connected`→`connected`,
  *     `failed`/`needs-auth`→`error`, `disabled`→`disconnected`.
  *   - MCP `last_error`: carried from `entry.error` when non-empty.
@@ -49,6 +53,7 @@ import {
   ISessionIndex,
   ISessionLifecycleService,
   IAgentToolRegistryService,
+  IAgentToolPolicyService,
   Error2,
   type Scope,
   type ToolInfo,
@@ -107,10 +112,15 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const agent = await resolveEffectiveAgent(core, req.query.session_id);
-      const tools =
-        agent === undefined
-          ? []
-          : agent.accessor.get(IAgentToolRegistryService).list().map(toProtocolTool);
+      if (agent === undefined) {
+        reply.send(okEnvelope({ tools: [] }, req.id));
+        return;
+      }
+      const registry = agent.accessor.get(IAgentToolRegistryService);
+      const policy = agent.accessor.get(IAgentToolPolicyService);
+      const tools = registry
+        .list()
+        .map((info) => toProtocolTool(info, policy.isToolActive(info.name, info.source)));
       reply.send(okEnvelope({ tools }, req.id));
     },
   );
@@ -253,13 +263,14 @@ function parseMcpServerId(toolName: string): string | undefined {
   return rest.slice(0, sep);
 }
 
-function toProtocolTool(info: ToolInfo): ToolDescriptor {
+function toProtocolTool(info: ToolInfo, active: boolean): ToolDescriptor {
   const source = mapToolSource(info.source);
   const base: ToolDescriptor = {
     name: info.name,
     description: info.description,
     input_schema: null,
     source,
+    active,
   };
   if (source === 'mcp') {
     const serverId = parseMcpServerId(info.name);
