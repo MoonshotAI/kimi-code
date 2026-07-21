@@ -257,6 +257,11 @@ html[data-color-scheme="dark"] {
   /* -- shadows (light) ----------------------------------------------------- */
   --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  /* Dropdown menu / popover panels: three-layer neutral ramp, ≤4% opacity. */
+  --shadow-menu:
+    0 6px 18px lch(0% 0 0 / 0.02),
+    0 3px 9px lch(0% 0 0 / 0.04),
+    0 1px 1px lch(0% 0 0 / 0.04);
   /* Chat-input elevation (Kimi tokens `effect.shadow.inputDefault`): single
      layer, negative spread — sits closer to the page than --shadow-md. */
   --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
@@ -371,6 +376,12 @@ html[data-color-scheme="dark"] {
   --color-info: #58a6ff;
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  /* Dropdown menu / popover panels: three-layer neutral ramp, dark strength
+     matching the scale. */
+  --shadow-menu:
+    0 6px 18px rgba(0, 0, 0, 0.2),
+    0 3px 9px rgba(0, 0, 0, 0.24),
+    0 1px 1px rgba(0, 0, 0, 0.24);
   /* Dark value is a local fill-in — the Kimi token only defines light. */
   --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
@@ -418,6 +429,12 @@ html[data-color-scheme="dark"] {
     --color-info: #58a6ff;
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+    /* Dropdown menu / popover panels: three-layer neutral ramp, dark
+       strength matching the scale. */
+    --shadow-menu:
+      0 6px 18px rgba(0, 0, 0, 0.2),
+      0 3px 9px rgba(0, 0, 0, 0.24),
+      0 1px 1px rgba(0, 0, 0, 0.24);
     /* Dark value is a local fill-in — the Kimi token only defines light. */
     --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);

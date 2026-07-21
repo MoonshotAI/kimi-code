@@ -1,21 +1,24 @@
 <!-- ChatDock.vue -->
-<!-- Bottom dock that belongs to the chat tab: goal strip, running-task chips, -->
-<!-- pending question/approval cards, and the composer. Only rendered inside a -->
-<!-- chat-pane group so it never leaks into files/tasks/preview/btw panes. -->
+<!-- Bottom dock that belongs to the chat tab: work pills (goal, running -->
+<!-- tasks, todos), pending question/approval cards, and the composer. Only -->
+<!-- rendered inside a chat-pane group so it never leaks into -->
+<!-- files/tasks/preview/btw panes. -->
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
-import GoalStrip from './GoalStrip.vue';
+import GoalPanel from './GoalPanel.vue';
 import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
 import TodoCard from './TodoCard.vue';
-import { Icon, Pill } from '@moonshot-ai/web-ui';
+import { Button, Icon, Pill } from '@moonshot-ai/web-ui';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
+import { formatTokens } from '../../lib/formatTokens';
 
 const props = defineProps<{
   sessionId?: string;
@@ -37,8 +40,7 @@ const props = defineProps<{
   starredIds?: string[];
   skills?: AppSkill[];
   goal?: AppGoal | null;
-  goalExpandSignal?: number;
-  dockPanel: 'bash' | 'subagent' | 'todos' | null;
+  dockPanel: 'bash' | 'subagent' | 'todos' | 'goal' | null;
   bashTasks: TaskItem[];
   subagentTasks: TaskItem[];
   bashRunning: number;
@@ -79,20 +81,61 @@ const emit = defineEmits<{
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
   cancelTask: [taskId: string];
-  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos'];
+  'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos' | 'goal'];
   'close-dock-panel': [];
   /** A background subagent chip was clicked — open its live detail panel. */
   openAgent: [taskId: string];
 }>();
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
+
+// The goal rides the dock as one more workbar pill; the label it carries (and
+// the panel head's) is its live status.
+const goalStatusLabel = computed(() => {
+  switch (props.goal?.status) {
+    case 'active': return t('status.goalStatusActive');
+    case 'paused': return t('status.goalStatusPaused');
+    case 'blocked': return t('status.goalStatusBlocked');
+    case 'complete': return t('status.goalStatusComplete');
+    default: return '';
+  }
+});
+
+// Goal panel chrome: the actions ride the panel head, the budget percentage
+// feeds the footer's stats row.
+const goalTokenPct = computed(() => {
+  const budget = props.goal?.budget.tokenBudget;
+  if (!props.goal || !budget || budget <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((props.goal.tokensUsed / budget) * 100)));
+});
+
+function formatGoalMs(ms: number): string {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  if (min <= 0) return `${rem}s`;
+  if (min < 60) return `${min}m ${rem}s`;
+  const hour = Math.floor(min / 60);
+  return `${hour}h ${min % 60}m`;
+}
+
+async function onGoalCancel(): Promise<void> {
+  const confirmed = await confirm({
+    title: t('status.goalCancel'),
+    message: t('status.goalCancelConfirm'),
+    confirmLabel: t('status.goalCancelConfirmYes'),
+    cancelLabel: t('status.goalCancelConfirmNo'),
+    variant: 'danger',
+  });
+  if (confirmed) emit('controlGoal', 'cancel');
+}
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
   loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
 } | null>(null);
 const workPanelRef = ref<HTMLElement | null>(null);
-const workbarRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
 
 function loadForEdit(value: string): boolean {
@@ -117,16 +160,58 @@ function onDocumentMouseDown(event: MouseEvent): void {
   const target = event.target as Node | null;
   if (!target) return;
   if (workPanelRef.value?.contains(target)) return;
-  if (workbarRef.value?.contains(target)) return;
+  // Only the pills themselves are exempt (their toggle owns the click) —
+  // blank workbar space dismisses like anywhere else.
+  if (target instanceof Element && target.closest('.ui-pill')) return;
   emit('close-dock-panel');
 }
 
+// Scroll-linked edge fades on the work panel (the session list's vocabulary):
+// the pinned head — and the goal footer — cast a soft ramp only while more
+// content exists beyond that edge.
+const workBodyRef = ref<HTMLElement | null>(null);
+const bodyScrolledUp = ref(false);
+const bodyScrolledDown = ref(false);
+
+function updateWorkBodyScrollState(): void {
+  const el = workBodyRef.value;
+  if (!el) {
+    bodyScrolledUp.value = false;
+    bodyScrolledDown.value = false;
+    return;
+  }
+  bodyScrolledUp.value = el.scrollTop > 0;
+  bodyScrolledDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+}
+
+function onWorkBodyScroll(e: Event): void {
+  const el = e.target as HTMLElement;
+  bodyScrolledUp.value = el.scrollTop > 0;
+  bodyScrolledDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+}
+
+let workBodyResizeObserver: ResizeObserver | null = null;
+
 watch(
   () => props.dockPanel,
-  (panel) => {
-    if (typeof document === 'undefined') return;
-    document.removeEventListener('mousedown', onDocumentMouseDown, true);
-    if (panel) document.addEventListener('mousedown', onDocumentMouseDown, true);
+  async (panel) => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('mousedown', onDocumentMouseDown, true);
+      if (panel) document.addEventListener('mousedown', onDocumentMouseDown, true);
+    }
+    workBodyResizeObserver?.disconnect();
+    workBodyResizeObserver = null;
+    if (panel) {
+      await nextTick();
+      updateWorkBodyScrollState();
+      if (typeof ResizeObserver === 'function' && workBodyRef.value) {
+        workBodyResizeObserver = new ResizeObserver(updateWorkBodyScrollState);
+        workBodyResizeObserver.observe(workBodyRef.value);
+      }
+    } else {
+      bodyScrolledUp.value = false;
+      bodyScrolledDown.value = false;
+    }
   },
   { immediate: true },
 );
@@ -154,6 +239,8 @@ onUnmounted(() => {
   }
   dockResizeObserver?.disconnect();
   dockResizeObserver = null;
+  workBodyResizeObserver?.disconnect();
+  workBodyResizeObserver = null;
 });
 
 defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
@@ -166,6 +253,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
         ref="workPanelRef"
         v-if="dockPanel"
         class="dock-work-panel"
+        :class="{ 'body-scrolled-up': bodyScrolledUp, 'body-scrolled-down': bodyScrolledDown }"
         @click.stop
       >
         <div class="dock-work-head">
@@ -187,8 +275,48 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
           >
             {{ t('tasks.dockTodos') }} · {{ todoDoneCount }}/{{ todos?.length ?? 0 }}
           </span>
+          <span
+            v-else-if="dockPanel === 'goal'"
+            class="dock-work-tab static"
+          >
+            {{ t('status.goalLabel') }} · {{ goalStatusLabel }}
+          </span>
+          <!-- The goal's controls ride the panel head — the decision cards'
+               action vocabulary: exactly one accent primary (resume while
+               paused), the rest quiet semantic variants. -->
+          <span v-if="dockPanel === 'goal' && goal" class="dock-work-head-actions">
+            <Button
+              v-if="goal.status === 'active'"
+              size="sm"
+              variant="secondary"
+              class="dock-goal-action"
+              @click.stop="emit('controlGoal', 'pause')"
+            >
+              <Icon name="pause" size="md" />
+              <span>{{ t('status.goalPause') }}</span>
+            </Button>
+            <Button
+              v-if="goal.status === 'paused' || goal.status === 'blocked'"
+              size="sm"
+              variant="primary"
+              class="dock-goal-action"
+              @click.stop="emit('controlGoal', 'resume')"
+            >
+              <Icon name="play" size="md" />
+              <span>{{ t('status.goalResume') }}</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="danger-soft"
+              class="dock-goal-action"
+              @click.stop="onGoalCancel"
+            >
+              <Icon name="close" size="md" />
+              <span>{{ t('status.goalCancel') }}</span>
+            </Button>
+          </span>
         </div>
-        <div class="dock-work-body">
+        <div ref="workBodyRef" class="dock-work-body" @scroll="onWorkBodyScroll">
           <TasksPane
             v-if="dockPanel === 'bash'"
             :tasks="bashTasks"
@@ -204,11 +332,33 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
             v-else-if="dockPanel === 'todos'"
             :todos="todos ?? []"
           />
+          <GoalPanel
+            v-else-if="dockPanel === 'goal' && goal"
+            :goal="goal"
+          />
+        </div>
+        <!-- Goal-only footer: the stats row (turns / tokens / wall time /
+             budget) at the panel's bottom-left. -->
+        <div v-if="dockPanel === 'goal' && goal" class="dock-work-foot">
+          <span>{{ goal.turnsUsed }} turns</span>
+          <span>{{ formatTokens(goal.tokensUsed) }} tokens</span>
+          <span>{{ formatGoalMs(goal.wallClockMs) }}</span>
+          <span v-if="goal.budget.tokenBudget !== null">{{ goalTokenPct }}% token budget</span>
         </div>
       </div>
     </Transition>
 
-    <div v-if="hasDockWork" ref="workbarRef" class="dock-workbar">
+    <div v-if="hasDockWork" class="dock-workbar">
+      <Pill
+        v-if="goal"
+        :active="dockPanel === 'goal'"
+        :aria-pressed="dockPanel === 'goal'"
+        @click="emit('toggle-dock-panel', 'goal')"
+      >
+        <Icon name="target" size="md" />
+        <span>{{ t('status.goalLabel') }}</span>
+        <span class="dw-goal-status" :class="`dw-goal-status--${goal.status}`">{{ goalStatusLabel }}</span>
+      </Pill>
       <Pill
         v-if="bashTasks.length > 0"
         :active="dockPanel === 'bash'"
@@ -240,13 +390,6 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
         <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
       </Pill>
     </div>
-    <GoalStrip
-      v-if="goal"
-      :goal="goal"
-      :force-expanded="goalExpandSignal"
-      @control-goal="emit('controlGoal', $event)"
-    />
-
     <QuestionCard
       v-if="pendingQuestion"
       :key="pendingQuestion.questionId"
@@ -325,7 +468,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 
 /* Bottom veil — the dock floats over the scrolling transcript, so without a
    backdrop the text underneath bleeds through around the composer card, the
-   toolbar, the workbar pills, and the goal strip. The layer extends --fade
+   toolbar, and the workbar pills. The layer extends --fade
    above the dock (its top edge is anchored there) and reaches full opacity
    --veil below its own top edge — deliberately past the dock's top edge, so
    the ramp stays long and soft instead of snapping to solid at the content
@@ -370,8 +513,10 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   right: calc(16px + var(--panes-scrollbar-width, 0px));
   bottom: 100%;
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--color-line-strong);
+  border-radius: var(--radius-xl);
+  /* The dropdown family surface: menu-panel shadow token (Menu.vue). */
+  box-shadow: var(--shadow-menu);
   margin-bottom: 7px;
   max-height: min(360px, 50vh);
   display: flex;
@@ -382,8 +527,10 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--color-line);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 0.5px solid var(--color-line);
+  position: relative;
+  z-index: 1;
 }
 .dock-work-tab {
   font-size: var(--text-base);
@@ -392,7 +539,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   padding: 3px 8px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
 }
 .dock-work-tab.static {
   background: transparent;
@@ -400,9 +547,67 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   padding-left: 2px;
 }
 .dock-work-body {
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   overflow-y: auto;
   min-height: 0;
+}
+/* The goal panel's head actions and footer stats — chrome shared by no other
+   panel, so it stays here next to the work-panel rules. */
+.dock-work-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+.dock-goal-action :deep(.ui-button__content) {
+  gap: var(--space-1);
+}
+.dock-work-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 0.5px solid var(--color-line);
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-option-label);
+  font-variant-numeric: tabular-nums;
+  position: relative;
+  z-index: 1;
+}
+/* Scroll-linked edge fades (the session list's vocabulary): the pinned head
+   — and the goal footer — cast a soft 18px ramp over the scrolling body,
+   shown only while more content exists beyond that edge. */
+.dock-work-head::after,
+.dock-work-foot::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.dock-work-head::after {
+  top: 100%;
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+}
+.dock-work-foot::before {
+  bottom: 100%;
+  background:
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+}
+.dock-work-panel.body-scrolled-up .dock-work-head::after,
+.dock-work-panel.body-scrolled-down .dock-work-foot::before {
+  opacity: 1;
 }
 .dock-work-body :deep(.taskspane) {
   border: none;
@@ -416,22 +621,60 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 .dock-workbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  /* With the goal pill aboard, narrow panes can overflow one row — wrap
+     instead of clipping (pills stay reachable, the dock height observes). */
+  flex-wrap: wrap;
+  gap: var(--space-1) 6px;
   padding: 4px var(--dock-inline-right) 2px var(--dock-inline-left);
 }
+/* Work pills ride the composer family's round vocabulary (big-radius
+   container, circle send button, stadium model pill): stadium-shaped with a
+   soft sunken fill and the system hairline edge (0.5px, like the composer
+   container) — no shadow. Hover takes the global hover wash; while its
+   panel is open the primitive's accent-soft active state shows through. */
 .dock-workbar :deep(.ui-pill) {
-  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
-  border-color: var(--color-line);
-  box-shadow: var(--shadow-xs);
+  position: relative;
+  padding: 0 12px;
+  border: 0.5px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  /* One rung above the page in BOTH schemes: --color-surface-sunken is
+     degenerate in dark mode (it equals --color-bg), so the pill vanished
+     there; --color-surface lifts off the page in dark and stays a quiet
+     chip in light — the same material as the popover it opens. */
+  background: var(--color-surface);
+  /* Fill already carries its own tone — keep the label at full text
+     colour (the composer toolbar pills' rung) or the pair reads washed. */
+  color: var(--color-text);
 }
-.dock-workbar :deep(.ui-pill:hover:not(:disabled)) {
-  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
+/* The hover wash floats over the fill as its own layer so it can fade in
+   and out (background gradients don't interpolate — they'd snap). */
+.dock-workbar :deep(.ui-pill)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-hover);
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+  pointer-events: none;
 }
+.dock-workbar :deep(.ui-pill:hover:not(:disabled))::after {
+  opacity: 1;
+}
+/* The base fill/color above must not swallow the open-panel state — restate
+   the primitive's active styling at higher precedence. */
 .dock-workbar :deep(.ui-pill.is-active) {
-  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface) 80%);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
 }
 .dock-workbar .dw-count { margin-left: 1px; }
 .dock-workbar .dw-count b { font-weight: 500; }
+/* The goal pill carries its live status (the same label the panel head
+   repeats), coloured by state. */
+.dock-workbar .dw-goal-status { font-weight: var(--weight-medium); }
+.dock-workbar .dw-goal-status--active { color: var(--color-success); }
+.dock-workbar .dw-goal-status--paused { color: var(--color-warning); }
+.dock-workbar .dw-goal-status--blocked { color: var(--color-danger); }
 
 .dock-approval {
   margin-top: 8px;

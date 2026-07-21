@@ -1335,7 +1335,14 @@ function selectModel(modelId: string): void {
 }
 .composer-card:focus-within {
   border-color: var(--color-accent);
-  box-shadow: var(--shadow-input), 0 0 0 3px var(--color-accent-soft);
+  /* A 0.5px hairline can't get visibly bluer, and widening the border would
+     shift layout — so the focus edge adds a hairline-scale 0.5px accent
+     ring by shadow (border + ring read as one uniform 1px edge) under the
+     soft halo. */
+  box-shadow:
+    var(--shadow-input),
+    0 0 0 0.5px var(--color-accent),
+    0 0 0 3px var(--color-accent-soft);
 }
 
 

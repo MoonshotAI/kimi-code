@@ -23,10 +23,7 @@ defineExpose({ el });
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow:
-    0 6px 18px lch(0% 0 0 / 0.02),
-    0 3px 9px lch(0% 0 0 / 0.04),
-    0 1px 1px lch(0% 0 0 / 0.04);
+  box-shadow: var(--shadow-menu);
   display: flex;
   flex-direction: column;
 }

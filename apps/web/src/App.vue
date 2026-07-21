@@ -1407,18 +1407,18 @@ function openPr(url: string): void {
   -webkit-app-region: no-drag;
 }
 
-/* While a menu opened from the conversation header is up (the kebab
-   more-menu, the open-in menu), drop EVERY window-drag region: in a drag
-   region macOS consumes the press for window dragging, so the page never
-   sees the mousedown and the menu's outside-click dismiss never fires —
-   no matter which drag strip (chat header, sidebar header, panel header)
-   the user clicks. Window dragging is simply paused while the transient
-   menu is open. Cross-component by nature, so it lives in this global
+/* While a transient overlay opened from the page is up (the kebab more-menu,
+   the open-in menu, a dock work panel), drop EVERY window-drag region: in a
+   drag region macOS consumes the press for window dragging, so the page
+   never sees the mousedown and the overlay's outside-click dismiss never
+   fires — no matter which drag strip (chat header, sidebar header, panel
+   header) the user clicks. Window dragging is simply paused while the
+   overlay is open. Cross-component by nature, so it lives in this global
    block. (The empty-state .empty-drag band needs no carve-out: with no
    ChatHeader rendered there is no menu to dismiss.) */
-.app.macos-desktop:has(.ch-menu, .open-in-menu) .chat-header,
-.app.macos-desktop:has(.ch-menu, .open-in-menu) .side .ch,
-.app.macos-desktop:has(.ch-menu, .open-in-menu) .global-preview .ui-panel-header {
+.app.macos-desktop:has(.ch-menu, .open-in-menu, .dock-work-panel) .chat-header,
+.app.macos-desktop:has(.ch-menu, .open-in-menu, .dock-work-panel) .side .ch,
+.app.macos-desktop:has(.ch-menu, .open-in-menu, .dock-work-panel) .global-preview .ui-panel-header {
   -webkit-app-region: no-drag;
 }
 </style>

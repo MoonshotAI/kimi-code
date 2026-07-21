@@ -185,7 +185,6 @@ const chatPaneRef = ref<InstanceType<typeof ChatPane> | null>(null);
 const emptyComposerRef = ref<ComposerHandle | null>(null);
 const dockedComposerRef = ref<ComposerHandle | null>(null);
 const copyConversationCopied = ref(false);
-const goalExpandSignal = ref(0);
 let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Load text (and any attachments) into whichever composer is currently mounted
@@ -217,10 +216,6 @@ function handleCopyConversationCopied(): void {
   }, 2000);
 }
 
-function focusGoal(): void {
-  goalExpandSignal.value++;
-}
-
 const bashTasks = computed(() => props.tasks.filter((t) => t.kind !== 'subagent'));
 // The dock lists only BACKGROUND subagents. Foreground subagents render inline
 // in the message flow as the `Agent` tool card, so showing them here too would
@@ -250,16 +245,19 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
 provide('resolveAgentTaskId', resolveAgentTaskId);
 provide('pinScroll', pinScrollFor);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
+// The goal rides the dock as one more work pill, so it keeps the workbar (and
+// the panel) alive even without task/todo items.
 const hasDockWork = computed(() =>
+  props.goal != null ||
   bashTasks.value.length > 0 ||
   subagentTasks.value.length > 0 ||
   (props.todos?.length ?? 0) > 0 ||
   (props.queued?.length ?? 0) > 0,
 );
-const dockPanel = ref<'bash' | 'subagent' | 'todos' | null>(null);
+const dockPanel = ref<'bash' | 'subagent' | 'todos' | 'goal' | null>(null);
 const changesCount = computed(() => (props.gitInfo ? props.changes?.length ?? 0 : 0));
 
-function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos'): void {
+function toggleDockPanel(panel: 'bash' | 'subagent' | 'todos' | 'goal'): void {
   dockPanel.value = dockPanel.value === panel ? null : panel;
 }
 
@@ -267,9 +265,28 @@ function closeDockPanel(): void {
   dockPanel.value = null;
 }
 
-watch(hasDockWork, (hasWork) => {
-  if (!hasWork) closeDockPanel();
-});
+function focusGoal(): void {
+  // The composer toolbar's goal button opens the goal's dock panel (the goal
+  // pill's expanded view).
+  if (props.goal) dockPanel.value = 'goal';
+}
+
+// A panel whose backing item went away closes itself — the goal pill's panel
+// would otherwise linger empty after a cancel/complete while other dock work
+// remains (hasDockWork only watches the aggregate).
+watch(
+  () => [props.goal, bashTasks.value.length, subagentTasks.value.length, props.todos?.length] as const,
+  () => {
+    const panel = dockPanel.value;
+    if (panel === null) return;
+    const backed =
+      (panel === 'goal' && props.goal != null) ||
+      (panel === 'bash' && bashTasks.value.length > 0) ||
+      (panel === 'subagent' && subagentTasks.value.length > 0) ||
+      (panel === 'todos' && (props.todos?.length ?? 0) > 0);
+    if (!backed) closeDockPanel();
+  },
+);
 
 function tocTitle(turn: ChatTurn): string {
   if (turn.role === 'compaction') return t('conversation.compactedPlain');
@@ -1535,7 +1552,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :starred-ids="starredIds"
         :skills="skills"
         :goal="goal"
-        :goal-expand-signal="goalExpandSignal"
         :dock-panel="dockPanel"
         :bash-tasks="bashTasks"
         :subagent-tasks="subagentTasks"

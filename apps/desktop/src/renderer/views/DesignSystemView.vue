@@ -752,7 +752,7 @@ onUnmounted(() => {
             <p><b>Settings regions</b>: The settings title and close action belong to the right content region. The navigation is a separate full-height region that starts at the dialog's top edge, not content beneath a dialog-wide header.</p>
             <p><b>Archived sessions</b>: Start with the localized page title. Do not add a repeated English kicker above it.</p>
             <p><b>Settings interaction</b>: Notification labels and descriptions are not selectable; their switches remain fully interactive.</p>
-            <p><b>Conversation chrome</b>: Header labels are not selectable; the rename input remains selectable and editable. Branch names start with a 14px branch icon. The overflow trigger is a compact 24px control with a 14px icon. Below a 720px header container, hide the workspace prefix and give the conversation title the available width. On macOS desktop the header doubles as the window-drag region and interactive controls opt out with no-drag; while one of its menus is open every window-drag strip (chat header, sidebar header, panel header) drops the drag region so an outside press anywhere reaches the page and dismisses the menu (window dragging is simply paused).</p>
+            <p><b>Conversation chrome</b>: Header labels are not selectable; the rename input remains selectable and editable. Branch names start with a 14px branch icon. The overflow trigger is a compact 24px control with a 14px icon. Below a 720px header container, hide the workspace prefix and give the conversation title the available width. On macOS desktop the header doubles as the window-drag region and interactive controls opt out with no-drag; while one of its menus or a dock work panel is open every window-drag strip (chat header, sidebar header, panel header) drops the drag region so an outside press anywhere reaches the page and dismisses the overlay (window dragging is simply paused).</p>
             <p><b>Session search</b>: follows the §09 flush picker anatomy — a boxed Input under the head, and a result list that fills the body's available height and owns vertical scrolling.</p>
             <p><b>Model picker</b>: follows the §09 flush picker anatomy; the provider filter remains horizontally scrollable without showing a persistent scrollbar. Only the model list scrolls; the shortcut bar remains pinned at the bottom.</p>
 
@@ -827,7 +827,7 @@ onUnmounted(() => {
             <!-- ===== Menu / Dropdown ===== -->
             <h3 class="sub">Menu / Dropdown</h3>
             <p>Desktop menus use a 3.5px panel inset. Standard items use 5px × 9px padding and a 7px icon gap. Their three-layer neutral shadow stays below 4% opacity.</p>
-            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-sm</code>, flat-leaning). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 12px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size. A dropdown menu pops in from its trigger corner — fade plus a slight 0.97 scale over <code>--duration-base</code> (exit <code>--duration-fast</code>), the composer model dropdown's motion language; the transform origin and the nudge direction follow the anchoring, including the upward flip near the viewport edge.</p>
+            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-menu</code>, a three-layer neutral ramp). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 12px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size. A dropdown menu pops in from its trigger corner — fade plus a slight 0.97 scale over <code>--duration-base</code> (exit <code>--duration-fast</code>), the composer model dropdown's motion language; the transform origin and the nudge direction follow the anchoring, including the upward flip near the viewport edge.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Menu · dropdown menu</span></div>
               <div class="stage p col" style="align-items:flex-start">
@@ -1155,9 +1155,9 @@ onUnmounted(() => {
 
                   <!-- todo -->
                   <div class="p-todo">
-                    <div class="p-todo-row done"><span class="p-todo-check">✓</span>Replace session with JWT signing</div>
-                    <div class="p-todo-row active"><span class="p-todo-check">●</span>Refactor the auth middleware</div>
-                    <div class="p-todo-row"><span class="p-todo-check">○</span>Add unit tests</div>
+                    <div class="p-todo-row done"><span class="p-todo-check"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m10 15.17l9.192-9.191l1.414 1.414L10 17.999l-6.364-6.364l1.414-1.414z"/></svg></span>Replace session with JWT signing</div>
+                    <div class="p-todo-row active"><span class="p-todo-check"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3.5"/></svg></span>Refactor the auth middleware</div>
+                    <div class="p-todo-row"><span class="p-todo-check"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="3.5"/></svg></span>Add unit tests</div>
                   </div>
 
                 </div>
@@ -1256,7 +1256,7 @@ onUnmounted(() => {
             </ul>
 
             <h3 class="sub">Composer</h3>
-            <p>Unified into a single rounded container: <code>--radius-xl</code> with a stable 0.5px border; focus changes it to blue and adds a soft ring without changing the container size. The textarea uses <code>text-autospace: normal</code> for mixed CJK and Latin input. Toolbar controls all use the Pill / IconButton primitives; the context ring drops horizontal inset so it sits close to the model switcher, and the send button is a 32px circle.</p>
+            <p>Unified into a single rounded container: <code>--radius-xl</code> with a stable 0.5px border; focus changes it to blue and adds a hairline-scale 0.5px accent ring by <code>box-shadow</code> — border and ring read as one uniform 1px edge — plus a soft halo, so the emphasis never changes the container size. The textarea uses <code>text-autospace: normal</code> for mixed CJK and Latin input. Toolbar controls all use the Pill / IconButton primitives; the context ring drops horizontal inset so it sits close to the model switcher, and the send button is a 32px circle.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Composer</span></div>
               <div class="stage p col" style="align-items:center;background:#fff">
@@ -1277,7 +1277,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="callout info"><span class="ico">i</span><div>
-              <b>Site-wide consistency</b>: the composer has only one radius (<code>--radius-xl</code> · 16px) and one height; toolbar controls all use the Pill / IconButton primitives, and the send button is a 32px circle — it no longer drifts with the theme. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair an icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room.
+              <b>Site-wide consistency</b>: the composer has only one radius (<code>--radius-xl</code> · 16px) and one height; toolbar controls all use the Pill / IconButton primitives, and the send button is a 32px circle — it no longer drifts with the theme. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair an icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room. The dock's workbar above the composer carries one compact pill vocabulary — stadium-shaped (<code>--radius-full</code>) with a <code>--color-surface</code> fill (one rung above the page in both schemes — sunken is degenerate in dark — the same material as the popover it opens) and the system hairline edge (0.5px at <code>--color-line-strong</code>, one rung up for presence; no shadow), icon + label + a count or status — for background bash tasks, background sub-agents, todos, and the goal alike, matching the composer's big-radius family (xl container, circle send button, stadium model pill); a pill toggles the shared work panel (itself at <code>--radius-xl</code> with the same 0.5px <code>--color-line-strong</code> edge outside — inner separators stay <code>--color-line</code> — and the menu panel's <code>--shadow-menu</code>), and the goal's detail (full objective, completion criterion) fills the panel body while its pause / resume / cancel controls ride the panel head (the decision cards' action vocabulary — exactly one accent primary, resume while paused; secondary pause while active; danger-soft cancel) and the meta counts (turns / tokens / time / budget) sit in a hairline footer — never a separate full-width strip.
             </div></div>
 
             <h3 class="sub">Responsive</h3>
@@ -2179,7 +2179,9 @@ onUnmounted(() => {
   .p-todo-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--p-r-md); font-size: var(--p-font-size-base); color: var(--p-text); }
   .p-todo-row.done { color: var(--p-text-faint); text-decoration: line-through; }
   .p-todo-row.active { background: var(--p-accent-soft); color: var(--p-text); }
-  .p-todo-check { width: 16px; flex: none; font-size: var(--p-font-size-base); line-height: 1; text-align: center; user-select: none; color: var(--p-text-faint); }
+  .p-todo-check { width: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; user-select: none; color: var(--p-text-faint); }
+  .p-todo-check svg { width: 14px; height: 14px; }
+  .p-todo-row.active .p-todo-check { color: var(--p-accent); }
   .p-todo-row.done .p-todo-check { color: var(--p-success); }
   .p-todo-row.active .p-todo-check { color: var(--p-accent); font-weight: 500; }
 
