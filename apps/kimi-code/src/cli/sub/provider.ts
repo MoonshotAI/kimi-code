@@ -336,7 +336,15 @@ export async function handleCatalogAdd(
     deps.exit(1);
   }
 
-  let baseUrl = catalogBaseUrl(entry, wire) ?? opts.baseUrl;
+  const trimmedBaseUrl = opts.baseUrl?.trim();
+  if (trimmedBaseUrl !== undefined && trimmedBaseUrl.length === 0) {
+    deps.stderr.write('--base-url cannot be empty.\n');
+    deps.exit(1);
+  }
+  let baseUrl =
+    trimmedBaseUrl !== undefined && trimmedBaseUrl.length > 0
+      ? trimmedBaseUrl
+      : catalogBaseUrl(entry, wire);
   if (baseUrl === undefined && catalogProviderNeedsBaseUrl(entry, wire)) {
     deps.stderr.write(
       `The catalog does not declare an endpoint for "${providerId}". Pass --base-url <url> (e.g. the vendor's OpenAI-compatible base URL).\n`,

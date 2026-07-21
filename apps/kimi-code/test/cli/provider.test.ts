@@ -888,6 +888,65 @@ describe('kimi provider catalog add', () => {
     expect(current().providers['openai']).toMatchObject({ apiKey: 'sk-env' });
   });
 
+  it('lets --base-url override the catalog-declared endpoint', async () => {
+    mockRegistryFetch(CATALOG_BODY);
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'openai', {
+        apiKey: 'sk-o',
+        baseUrl: 'https://proxy.example.test/v1',
+      }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().providers['openai']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://proxy.example.test/v1',
+    });
+  });
+
+  it('rejects an empty --base-url instead of persisting a blank endpoint', async () => {
+    mockRegistryFetch(CATALOG_BODY);
+    const { harness } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleCatalogAdd(deps, 'openai', { apiKey: 'sk-o', baseUrl: '   ' }));
+
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('--base-url cannot be empty');
+    await expect(harness.getConfig().then((c) => c.providers['openai'])).resolves.toBeUndefined();
+  });
+
+  it('requires --base-url for a non-official Anthropic-compatible vendor without one', async () => {
+    mockRegistryFetch({
+      'claude-gateway': {
+        id: 'claude-gateway',
+        name: 'Claude Gateway',
+        npm: '@custom/claude-gateway',
+        models: { 'claude-x': { id: 'claude-x', limit: { context: 1000 } } },
+      },
+    });
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleCatalogAdd(deps, 'claude-gateway', { apiKey: 'sk-gw' }));
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('--base-url');
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'claude-gateway', {
+        apiKey: 'sk-gw',
+        baseUrl: 'https://claude-gateway.example.test',
+      }),
+    );
+    expect(current().providers['claude-gateway']).toMatchObject({
+      type: 'anthropic',
+      baseUrl: 'https://claude-gateway.example.test',
+    });
+  });
+
   it('exits 1 when the api key is missing and skips the network', async () => {
     const fetchMock = mockRegistryFetch(CATALOG_BODY);
     const { harness } = makeHarness({ providers: {} } as KimiConfig);

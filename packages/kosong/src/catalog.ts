@@ -202,16 +202,19 @@ export function catalogBaseUrl(
  * catalog supplies none (or only an env placeholder), and the wire's built-in
  * default endpoint only applies to the vendor's official SDK package — for
  * every other npm it would silently point at the wrong host (e.g. an xai key
- * sent to api.openai.com). Vertex/google wires resolve their endpoint from
- * env coordinates and official SDKs, so they never need the prompt.
+ * sent to api.openai.com, or a gateway's Anthropic-compatible key sent to
+ * api.anthropic.com). Vertex/google wires resolve their endpoint from env
+ * coordinates and official SDKs, so they never need the prompt.
  */
 export function catalogProviderNeedsBaseUrl(
   entry: CatalogProviderEntry,
   wire: ProviderType,
 ): boolean {
-  if (wire !== 'openai' && wire !== 'openai_responses') return false;
   if (catalogBaseUrl(entry, wire) !== undefined) return false;
-  return (entry.npm ?? '').toLowerCase() !== '@ai-sdk/openai';
+  const npm = (entry.npm ?? '').toLowerCase();
+  if (wire === 'openai' || wire === 'openai_responses') return npm !== '@ai-sdk/openai';
+  if (wire === 'anthropic') return npm !== '@ai-sdk/anthropic';
+  return false;
 }
 
 /** Normalizes one catalog model entry into a {@link CatalogModel}; skips invalid entries. */

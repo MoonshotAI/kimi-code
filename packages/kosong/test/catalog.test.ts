@@ -76,9 +76,34 @@ describe('catalogProviderNeedsBaseUrl', () => {
     ).toBe(true);
   });
 
-  it('never requires a URL for non-OpenAI wires', () => {
+  it('never requires a URL for non-OpenAI wires with an official SDK or env-resolved endpoint', () => {
     expect(catalogProviderNeedsBaseUrl({ id: 'anthropic', npm: '@ai-sdk/anthropic' }, 'anthropic')).toBe(false);
     expect(catalogProviderNeedsBaseUrl({ id: 'google-vertex', npm: '@ai-sdk/google-vertex' }, 'vertexai')).toBe(false);
+  });
+
+  it('requires a URL for non-official Anthropic-compatible vendors without one', () => {
+    // google-vertex-anthropic shape: Anthropic wire, vendor npm, no api —
+    // without a prompt the key would be sent to api.anthropic.com.
+    expect(
+      catalogProviderNeedsBaseUrl(
+        { id: 'google-vertex-anthropic', npm: '@ai-sdk/google-vertex/anthropic' },
+        'anthropic',
+      ),
+    ).toBe(true);
+    // A declared concrete api still satisfies the requirement.
+    expect(
+      catalogProviderNeedsBaseUrl(
+        { id: 'kimi-for-coding', npm: '@ai-sdk/anthropic', api: 'https://api.kimi.com/coding/v1' },
+        'anthropic',
+      ),
+    ).toBe(false);
+    // An env-placeholder api does not.
+    expect(
+      catalogProviderNeedsBaseUrl(
+        { id: 'azure-claude', npm: '@ai-sdk/azure/anthropic', api: 'https://${AZURE_RESOURCE_NAME}.example.test/anthropic/v1' },
+        'anthropic',
+      ),
+    ).toBe(true);
   });
 });
 
