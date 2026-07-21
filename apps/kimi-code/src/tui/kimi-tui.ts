@@ -85,7 +85,10 @@ import {
 import { StepSummaryComponent } from './components/messages/step-summary';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
-import { UserMessageComponent } from './components/messages/user-message';
+import {
+  ReplayTurnBoundaryComponent,
+  UserMessageComponent,
+} from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
@@ -2020,7 +2023,8 @@ export class KimiTUI {
     if (
       !(child instanceof UserMessageComponent) &&
       !(child instanceof SkillActivationComponent) &&
-      !(child instanceof PluginCommandComponent)
+      !(child instanceof PluginCommandComponent) &&
+      !(child instanceof ReplayTurnBoundaryComponent)
     ) {
       return false;
     }
@@ -2108,7 +2112,10 @@ export class KimiTUI {
   }
 
   mergeCurrentTurnSteps(): boolean {
-    return this.foldCurrentTurnContent(TRANSCRIPT_KEEP_RECENT_STEPS, TRANSCRIPT_KEEP_RECENT_ASSISTANT);
+    return this.foldCurrentTurnContent(
+      TRANSCRIPT_KEEP_RECENT_STEPS,
+      TRANSCRIPT_KEEP_RECENT_ASSISTANT,
+    );
   }
 
   /**
