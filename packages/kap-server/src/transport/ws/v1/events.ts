@@ -225,6 +225,8 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.started',
   'shell.completed',
   'agent.status.updated',
+  'event.session.interaction_requested',
+  'event.session.interaction_resolved',
 ] as const;
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];

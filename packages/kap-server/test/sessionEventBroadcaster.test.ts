@@ -22,7 +22,10 @@ import {
   ISessionMetadata,
   SessionInteractionService,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentEvent } from '../src/transport/ws/v1/events';
+import {
+  type AgentEvent,
+  isVolatileEventType,
+} from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -35,6 +38,13 @@ import { TranscriptService } from '../src/services/transcript/transcriptService'
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
+
+describe('v1 event volatility', () => {
+  it('classifies global interaction notifications as volatile', () => {
+    expect(isVolatileEventType('event.session.interaction_requested')).toBe(true);
+    expect(isVolatileEventType('event.session.interaction_resolved')).toBe(true);
+  });
+});
 
 /** The fake bus carries wire agent events and v2-internal ones alike. */
 type FakeBusEvent = { type: string };
