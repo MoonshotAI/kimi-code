@@ -68,6 +68,7 @@ import { ConfigErrors } from '../../app/config/errors';
 import {
   LATEST_OPUS_PROFILE,
   matchKnownAnthropicModelProfile,
+  matchUnknownClaudeProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
 import {
   DEFAULT_PROVIDER_SECTION,
@@ -685,7 +686,8 @@ function buildProtocolProviderOptions(
  * The Anthropic effort profile the effective pass applies, recomputed for
  * attribution only — mirrors `withAnthropicProfile`'s gate exactly (the
  * trait-driven vendor check routes through the registry, never a string
- * compare). `inferred` marks the unknown-name fallback to LATEST_OPUS_PROFILE.
+ * compare). `inferred` marks the unknown-name fallback, which only applies
+ * to names still carrying a Claude marker (see `matchUnknownClaudeProfile`).
  */
 function profileForAttribution(
   configuredModel: ModelRecord,
@@ -700,7 +702,10 @@ function profileForAttribution(
     profileArg !== undefined &&
     !drivesThinkingThroughTraits(profileArg) &&
     gateProtocol === 'anthropic';
-  if (infer) return { profile: known ?? LATEST_OPUS_PROFILE, inferred: known === undefined };
+  if (infer) {
+    const fallback = known ?? matchUnknownClaudeProfile(wireName);
+    return { profile: fallback, inferred: known === undefined && fallback !== undefined };
+  }
   return { profile: known, inferred: false };
 }
 

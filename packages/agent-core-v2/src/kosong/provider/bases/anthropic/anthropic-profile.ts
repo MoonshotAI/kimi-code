@@ -143,3 +143,16 @@ export function matchKnownAnthropicModelProfile(model: string): AnthropicModelPr
 export function inferAnthropicModelProfile(model: string): AnthropicModelProfile {
   return matchKnownAnthropicModelProfile(model) ?? LATEST_OPUS_PROFILE;
 }
+
+/**
+ * Fallback profile for Anthropic-compatible endpoints whose model name is
+ * recognizably a Claude model but encodes no known version (e.g. a proxied
+ * `claude-latest`). Clearly non-Claude names (Kimi `k3`, GLM, DeepSeek, …
+ * served over the Anthropic protocol) return undefined so the catalog never
+ * advertises Claude effort levels for them. The wire-path counterpart
+ * {@link inferAnthropicModelProfile} keeps its unconditional fallback: an
+ * Anthropic-protocol endpoint still needs some profile to shape requests.
+ */
+export function matchUnknownClaudeProfile(model: string): AnthropicModelProfile | undefined {
+  return model.toLowerCase().includes('claude') ? LATEST_OPUS_PROFILE : undefined;
+}

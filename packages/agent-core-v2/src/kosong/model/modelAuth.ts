@@ -22,8 +22,8 @@ import type { ResolutionTrace } from '#/kosong/contract/inspection';
 import { ConfigErrors } from '../../app/config/errors';
 import {
   BUDGET_THINKING_EFFORTS,
-  inferAnthropicModelProfile,
   matchKnownAnthropicModelProfile,
+  matchUnknownClaudeProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
 import type { ProviderConfig } from '../provider/provider';
 import { explainProviderEndpoint } from '../provider/providerDefinition';
@@ -121,11 +121,15 @@ export function effectiveModelConfig(
 function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelRecord {
   const wireName = model.name ?? model.model;
   const protocol = model.protocol ?? providerType;
+  // The inferred fallback only applies to names that still carry a Claude
+  // marker (e.g. a proxied `claude-latest`): clearly non-Claude models served
+  // over the Anthropic protocol (catalog-imported Kimi `k3`, GLM, …) must
+  // not advertise Claude effort levels.
   const profile =
     wireName === undefined
       ? undefined
       : providerType !== undefined && !drivesThinkingThroughTraits(providerType) && protocol === 'anthropic'
-        ? inferAnthropicModelProfile(wireName)
+        ? (matchKnownAnthropicModelProfile(wireName) ?? matchUnknownClaudeProfile(wireName))
         : matchKnownAnthropicModelProfile(wireName);
   if (profile === undefined) return model;
   const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';

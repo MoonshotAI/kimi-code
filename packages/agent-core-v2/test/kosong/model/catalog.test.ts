@@ -898,12 +898,12 @@ describe('ModelCatalog enumeration', () => {
     }
   });
 
-  it('projects latest Opus efforts for unknown Anthropic-compatible models', async () => {
+  it('projects latest Opus efforts for unknown Claude-marked Anthropic-compatible models', async () => {
     const sections = structuredClone(catalogSections);
     (sections['providers'] as Record<string, ProviderConfig>)['custom'] = { type: 'anthropic' };
     (sections['models'] as Record<string, ModelRecord>)['compatible'] = {
       provider: 'custom',
-      model: 'compatible-model',
+      model: 'custom-claude-model',
       maxContextSize: 128000,
     };
     const { host, catalog } = createHost(sections);
@@ -919,12 +919,31 @@ describe('ModelCatalog enumeration', () => {
     }
   });
 
-  it('projects latest Opus efforts for a flat providerless Anthropic model', async () => {
+  it('does not project fallback efforts for clearly non-Claude Anthropic-compatible models', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['providers'] as Record<string, ProviderConfig>)['custom'] = { type: 'anthropic' };
+    (sections['models'] as Record<string, ModelRecord>)['compatible'] = {
+      provider: 'custom',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const compatible = (await catalog.listModels()).find((model) => model.model === 'compatible');
+      expect(compatible?.capabilities).toBeUndefined();
+      expect(compatible?.support_efforts).toBeUndefined();
+      expect(compatible?.default_effort).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects latest Opus efforts for a flat providerless Claude-marked Anthropic model', async () => {
     const { host, catalog } = createHost({
       providers: {},
       models: {
         compatible: {
-          model: 'compatible-model',
+          model: 'custom-claude-model',
           baseUrl: 'https://anthropic.example.test',
           protocol: 'anthropic',
           maxContextSize: 128000,
@@ -938,6 +957,28 @@ describe('ModelCatalog enumeration', () => {
         support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         default_effort: 'high',
       });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('does not project fallback efforts for a flat providerless non-Claude Anthropic model', async () => {
+    const { host, catalog } = createHost({
+      providers: {},
+      models: {
+        compatible: {
+          model: 'compatible-model',
+          baseUrl: 'https://anthropic.example.test',
+          protocol: 'anthropic',
+          maxContextSize: 128000,
+        },
+      },
+    });
+    try {
+      const compatible = (await catalog.listModels()).find((model) => model.model === 'compatible');
+      expect(compatible?.capabilities).toBeUndefined();
+      expect(compatible?.support_efforts).toBeUndefined();
+      expect(compatible?.default_effort).toBeUndefined();
     } finally {
       host.dispose();
     }

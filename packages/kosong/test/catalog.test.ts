@@ -138,6 +138,64 @@ describe('catalogModelToCapability', () => {
     const model = catalogModelToCapability({ id: 'm', limit: { context: 1000 }, interleaved });
     expect(model?.reasoningKey).toBe(expected);
   });
+
+  it('extracts declared effort levels from reasoning_options', () => {
+    // The models.dev `kimi-for-coding`/`k3` shape: toggle plus effort values.
+    const model = catalogModelToCapability({
+      id: 'k3',
+      reasoning: true,
+      reasoning_options: [
+        { type: 'toggle' },
+        { type: 'effort', values: ['low', 'high', 'max'] },
+      ],
+      limit: { context: 1048576 },
+    });
+    expect(model?.supportEfforts).toEqual(['low', 'high', 'max']);
+    expect(model?.capability.thinking).toBe(true);
+  });
+
+  it("drops the 'none' pseudo-effort (the UI already offers 'off')", () => {
+    const model = catalogModelToCapability({
+      id: 'grok',
+      reasoning_options: [{ type: 'effort', values: ['none', 'low', 'medium', 'high'] }],
+      limit: { context: 1000 },
+    });
+    expect(model?.supportEfforts).toEqual(['low', 'medium', 'high']);
+
+    const upper = catalogModelToCapability({
+      id: 'grok',
+      reasoning_options: [{ type: 'effort', values: ['None', 'high'] }],
+      limit: { context: 1000 },
+    });
+    expect(upper?.supportEfforts).toEqual(['high']);
+  });
+
+  it('yields no effort list for toggle-only, budget_tokens, or empty reasoning_options', () => {
+    for (const reasoning_options of [
+      [{ type: 'toggle' }],
+      [{ type: 'budget_tokens', min: 1024, max: 32768 }],
+      [],
+    ] as const) {
+      const model = catalogModelToCapability({
+        id: 'm',
+        reasoning: true,
+        reasoning_options,
+        limit: { context: 1000 },
+      });
+      expect(model?.supportEfforts).toBeUndefined();
+      expect(model?.capability.thinking).toBe(true);
+    }
+  });
+
+  it('treats declared effort levels as thinking support when reasoning is absent', () => {
+    const model = catalogModelToCapability({
+      id: 'm',
+      reasoning_options: [{ type: 'effort', values: ['low', 'high'] }],
+      limit: { context: 1000 },
+    });
+    expect(model?.supportEfforts).toEqual(['low', 'high']);
+    expect(model?.capability.thinking).toBe(true);
+  });
 });
 
 describe('catalogProviderModels', () => {

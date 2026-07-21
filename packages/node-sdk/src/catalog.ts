@@ -73,6 +73,7 @@ export function catalogModelToAlias(providerId: string, model: CatalogModel): Mo
     capabilities: capabilityToStrings(model.capability),
     displayName: model.name,
     reasoningKey: model.reasoningKey,
+    supportEfforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
   };
 }
 

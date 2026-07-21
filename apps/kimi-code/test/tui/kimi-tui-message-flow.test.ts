@@ -5381,7 +5381,33 @@ describe('/effort support_efforts override', () => {
     expect(transcript).toContain('Thinking set to max.');
   });
 
-  it('offers the latest Opus efforts for an unknown Anthropic-compatible model', async () => {
+  it('offers the latest Opus efforts for an unknown Claude-marked Anthropic-compatible model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-claude-model',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('offers no fallback efforts for a clearly non-Claude Anthropic-compatible model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {
@@ -5404,7 +5430,7 @@ describe('/effort support_efforts override', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
     });
     const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).toContain('Max');
+    expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
   it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
@@ -5434,14 +5460,14 @@ describe('/effort support_efforts override', () => {
     expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
-  it('offers the latest Opus efforts for a flat providerless Anthropic model', async () => {
+  it('offers the latest Opus efforts for a flat providerless Claude-marked Anthropic model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {},
         models: {
           // v2 flat model shape: no named provider, inline endpoint + protocol.
           k2: {
-            model: 'compatible-model',
+            model: 'compatible-claude-model',
             baseUrl: 'https://anthropic.example.test',
             protocol: 'anthropic',
             maxContextSize: 100,

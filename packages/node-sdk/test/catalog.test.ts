@@ -150,6 +150,45 @@ describe('applyCatalogProvider', () => {
     });
   });
 
+  it('writes declared effort levels from reasoning_options into the model alias', () => {
+    // The models.dev `kimi-for-coding` provider shape for `k3`.
+    const models = catalogProviderModels({
+      id: 'kimi-for-coding',
+      models: {
+        k3: {
+          id: 'k3',
+          name: 'Kimi K3',
+          limit: { context: 1048576, output: 131072 },
+          reasoning: true,
+          reasoning_options: [
+            { type: 'toggle' },
+            { type: 'effort', values: ['low', 'high', 'max'] },
+          ],
+          tool_call: true,
+          modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+        },
+      },
+    });
+    const config = { providers: {} } as KimiConfig;
+
+    applyCatalogProvider(config, {
+      providerId: 'kimi-for-coding',
+      wire: 'anthropic',
+      baseUrl: 'https://api.kimi.com/coding',
+      apiKey: 'sk',
+      models,
+      selectedModelId: 'k3',
+      thinking: true,
+    });
+
+    expect(config.models?.['kimi-for-coding/k3']).toMatchObject({
+      provider: 'kimi-for-coding',
+      model: 'k3',
+      capabilities: ['image_in', 'video_in', 'thinking', 'tool_use'],
+      supportEfforts: ['low', 'high', 'max'],
+    });
+  });
+
   it('clears stale aliases for the same provider but keeps others', () => {
     const config = {
       providers: { anthropic: { type: 'anthropic', apiKey: 'old' } },

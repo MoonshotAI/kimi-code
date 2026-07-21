@@ -13,6 +13,13 @@ export interface CatalogModelEntry {
   readonly limit?: { readonly context?: number; readonly output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
+  /**
+   * models.dev reasoning declaration: `[{ type: 'toggle' }, ...]` entries.
+   * Only `{ type: 'effort', values: [...] }` maps onto concrete thinking
+   * effort levels; `toggle` is the boolean form and `budget_tokens` a token
+   * budget — neither yields an effort list.
+   */
+  readonly reasoning_options?: readonly CatalogReasoningOption[];
   /** Accepts message-level tool declarations (`messages[].tools`). Defaults to false. */
   readonly dynamically_loaded_tools?: boolean;
   readonly interleaved?: boolean | { readonly field?: string };
@@ -20,6 +27,11 @@ export interface CatalogModelEntry {
     readonly input?: readonly string[];
     readonly output?: readonly string[];
   };
+}
+
+export interface CatalogReasoningOption {
+  readonly type?: string;
+  readonly values?: unknown;
 }
 
 export interface CatalogProviderEntry {
@@ -45,6 +57,8 @@ export interface CatalogModel {
   readonly name?: string;
   readonly maxOutputSize?: number;
   readonly reasoningKey?: string;
+  /** Declared thinking effort levels from `reasoning_options`, when present. */
+  readonly supportEfforts?: readonly string[];
   readonly capability: ModelCapability;
 }
 
@@ -126,21 +140,46 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
   if (!isUsableChatModel(model)) return undefined;
   const inputs = model.modalities?.input ?? [];
   const output = model.limit?.output;
+  const supportEfforts = catalogSupportEfforts(model.reasoning_options);
   return {
     id: model.id,
     name: typeof model.name === 'string' && model.name.length > 0 ? model.name : undefined,
     maxOutputSize: typeof output === 'number' && output > 0 ? output : undefined,
     reasoningKey: catalogReasoningKey(model.interleaved),
+    supportEfforts,
     capability: {
       image_in: inputs.includes('image'),
       video_in: inputs.includes('video'),
       audio_in: inputs.includes('audio'),
-      thinking: Boolean(model.reasoning),
+      // Declaring concrete effort levels implies thinking support even when
+      // the `reasoning` boolean is absent (mirrors the api.json importer).
+      thinking: Boolean(model.reasoning) || supportEfforts !== undefined,
       tool_use: model.tool_call ?? true,
       max_context_tokens: context,
       dynamically_loaded_tools: model.dynamically_loaded_tools === true,
     },
   };
+}
+
+/**
+ * Extracts the declared effort levels from a `reasoning_options` list — the
+ * `{ type: 'effort', values: [...] }` entry. The value `'none'` means
+ * "reasoning can be disabled" (e.g. xai grok); the UI already expresses that
+ * with its own `off` entry, so it is not a selectable level and is dropped.
+ */
+function catalogSupportEfforts(
+  options: CatalogModelEntry['reasoning_options'],
+): readonly string[] | undefined {
+  if (!Array.isArray(options)) return undefined;
+  for (const option of options) {
+    if (option?.type !== 'effort' || !Array.isArray(option.values)) continue;
+    const efforts = option.values.filter(
+      (value: unknown): value is string =>
+        typeof value === 'string' && value.length > 0 && value.toLowerCase() !== 'none',
+    );
+    if (efforts.length > 0) return efforts;
+  }
+  return undefined;
 }
 
 function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): string | undefined {
