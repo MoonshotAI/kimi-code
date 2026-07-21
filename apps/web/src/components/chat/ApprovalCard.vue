@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock, FilePreviewRequest } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
-import { Badge, Button, Icon, IconButton, Spinner } from '@moonshot-ai/web-ui';
+import { Badge, Button, Icon, IconButton, Spinner, openDialogCount } from '@moonshot-ai/web-ui';
 import HighlightedCode from '../HighlightedCode.vue';
 
 const props = defineProps<{
@@ -187,6 +187,9 @@ function rejectAndExitPlan(): void { act('rejectAndExit', { decision: 'rejected'
 function handleKeydown(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName ?? '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
+  // A modal dialog/lightbox owns the keyboard — never fire decision shortcuts
+  // through it (mirrors QuestionCard's openDialogCount guard).
+  if (openDialogCount.value > 0 || e.defaultPrevented) return;
   // Esc anywhere outside the textarea also cancels the feedback mode.
   if (feedbackOpen.value) {
     if (e.key === 'Escape') { e.preventDefault(); cancelFeedback(); }

@@ -1,7 +1,8 @@
 <!-- apps/web/src/components/chat/AttachmentChip.vue -->
 <!-- One attachment rendered as a pill chip — the SAME component for the
-     composer's pending-attachment strip and for sent messages in the chat
-     bubble. Context differences are props, not restyled variants:
+     composer's pending-attachment strip and for FILE attachments in sent
+     messages (bubble images/videos render as plain thumbnails in ChatPane).
+     Context differences are props, not restyled variants:
        - composer: uploading spinner, error tint, remove button
        - bubble:   plain chip, click opens preview / downloads
      Tile rule: images show a real thumbnail, videos a play glyph, files a

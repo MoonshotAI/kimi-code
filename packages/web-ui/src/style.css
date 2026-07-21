@@ -238,6 +238,12 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-text-on-accent: #ffffff;
   --color-line: #e7eaee;
   --color-line-strong: #d4d9e0;
+  /* Modal scrim — the dark veil behind dialogs/lightboxes. Shared by both
+     themes (a scrim is inherently dark); the v2 Dialog overlay, BottomSheet
+     and composer att-lightbox historically hardcode their own rgba() and can
+     migrate here. The on-scrim text colour is likewise constant. */
+  --color-scrim: rgba(20, 23, 28, 0.62);
+  --color-text-on-scrim: #ffffff;
   /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
      accent-tinted, so selection reads as "where I am", not as an action. */
   --color-selected: #00000014;

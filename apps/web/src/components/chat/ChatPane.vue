@@ -12,6 +12,7 @@ import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
 import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
+import MediaLightbox from './MediaLightbox.vue';
 import AttachmentChip from './AttachmentChip.vue';
 import { Icon, MoonSpinner, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
@@ -469,6 +470,26 @@ function copyUserMessage(turn: ChatTurn): void {
   }).catch(() => {/* ignore */});
 }
 
+/** User-bubble attachments split two ways: images/videos render as text-free
+    rounded thumbnails; every other kind keeps the AttachmentChip row. */
+function isMediaAttachment(att: TurnAttachment): boolean {
+  return att.kind === 'image' || att.kind === 'video';
+}
+
+function mediaAttachments(turn: ChatTurn): TurnAttachment[] {
+  return (turn.attachments ?? []).filter(isMediaAttachment);
+}
+
+function fileAttachments(turn: ChatTurn): TurnAttachment[] {
+  return (turn.attachments ?? []).filter((att) => !isMediaAttachment(att));
+}
+
+/** Tooltip/accessible label for a media thumbnail (pasted media may be unnamed). */
+function mediaAttachmentLabel(att: TurnAttachment): string {
+  if (att.name) return att.name;
+  return att.kind === 'video' ? t('composer.attachmentVideo') : t('composer.attachmentImage');
+}
+
 function userAttachmentMedia(att: TurnAttachment): ToolMedia {
   // User-uploaded media carries no path/mime metadata; the preview panel falls
   // back to a generic label and sniffs the mime from the URL when needed. When
@@ -482,9 +503,15 @@ function userAttachmentMedia(att: TurnAttachment): ToolMedia {
 const unsupportedOpenName = ref<string | null>(null);
 let unsupportedOpenTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Floating media preview for user-bubble thumbnails (image/video). Replaces
+// the right-side detail panel for user uploads — and gives VIDEOS a working
+// preview at all (openMediaPreview ignores non-images, so chip clicks on
+// videos used to be dead).
+const mediaLightbox = ref<ToolMedia | null>(null);
+
 function onAttachmentClick(att: TurnAttachment): void {
   if (att.kind === 'image' || att.kind === 'video') {
-    emit('openMedia', userAttachmentMedia(att));
+    mediaLightbox.value = userAttachmentMedia(att);
     return;
   }
   // Generic files open in a new tab, but only whitelisted inert types —
@@ -591,10 +618,41 @@ function streamingTailIndex(turn: ChatTurn): number | null {
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
-            <!-- Unified attachment chips: files, images and videos -->
-            <div v-if="turn.attachments && turn.attachments.length > 0" class="u-atts">
+            <!-- Image/video attachments: text-free rounded thumbnails that
+                 open the floating preview on click -->
+            <div v-if="mediaAttachments(turn).length > 0" class="u-media">
+              <button
+                v-for="(att, ai) in mediaAttachments(turn)"
+                :key="ai"
+                type="button"
+                class="u-thumb"
+                :title="mediaAttachmentLabel(att)"
+                :aria-label="mediaAttachmentLabel(att)"
+                @click="onAttachmentClick(att)"
+              >
+                <!-- Videos with a fileId render a static play tile instead of
+                     AuthMedia: downloading the whole blob just for a first
+                     frame is too eager while scrolling history — the lightbox
+                     fetches it on activation. -->
+                <AuthMedia
+                  v-if="att.kind === 'image' || att.fileId === undefined"
+                  :url="att.url"
+                  :kind="att.kind === 'video' ? 'video' : 'image'"
+                  :file-id="att.fileId"
+                  media-class="u-thumb-media"
+                  :controls="false"
+                  muted
+                />
+                <span v-else class="u-thumb-media u-thumb-tile" aria-hidden="true" />
+                <span v-if="att.kind === 'video'" class="u-thumb-play">
+                  <Icon name="play" size="sm" />
+                </span>
+              </button>
+            </div>
+            <!-- File attachments keep the chip row -->
+            <div v-if="fileAttachments(turn).length > 0" class="u-atts">
               <AttachmentChip
-                v-for="(att, ai) in turn.attachments"
+                v-for="(att, ai) in fileAttachments(turn)"
                 :key="ai"
                 :kind="att.kind"
                 :name="att.name"
@@ -621,8 +679,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               </div>
               <div v-if="turn.pluginCommand.args" class="skill-act-args">{{ turn.pluginCommand.args }}</div>
             </div>
-            <!-- User input renders verbatim (pre-wrap), never through Markdown -->
-            <div v-else class="u-text">{{ turn.text }}</div>
+            <!-- User input renders verbatim (pre-wrap), never through Markdown;
+                 skipped when empty so media-only messages hold no dead text div -->
+            <div v-else-if="turn.text" class="u-text">{{ turn.text }}</div>
           </div>
           <div v-if="turn.createdAt || canEditTurn(turn)" class="u-meta">
             <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
@@ -814,6 +873,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   <div v-if="unsupportedOpenName !== null" class="open-unsupported" role="status">
     {{ t('composer.attachmentOpenUnsupported', { name: unsupportedOpenName }) }}
   </div>
+
+  <!-- Floating preview for user-bubble media thumbnails (image/video). -->
+  <MediaLightbox v-if="mediaLightbox" :media="mediaLightbox" @close="mediaLightbox = null" />
 </template>
 
 <style scoped>
@@ -1179,8 +1241,67 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   }
 }
 
-/* Unified attachment chips (files / images / videos) above the bubble text —
-   the chip itself is AttachmentChip; this is only the row layout. */
+/* Image/video attachments: text-free rounded-rect thumbnails above the bubble
+   text — click opens the floating MediaLightbox preview. Files keep the
+   AttachmentChip row. */
+.u-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.u-media:not(:last-child) {
+  margin-bottom: var(--space-2);
+}
+.u-thumb {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) ease;
+}
+.u-thumb:hover {
+  border-color: var(--color-line-strong);
+}
+.u-thumb:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.u-thumb-media {
+  display: block;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+}
+/* Static tile for file-store videos (see the template note) — the bubble
+   thumbnail skips the blob fetch; the button's sunken fill shows through. */
+.u-thumb-tile {
+  object-fit: none;
+}
+/* Video marker: a small raised play badge centred on the first frame. */
+.u-thumb-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+
+/* File attachment chips above the bubble text — the chip itself is
+   AttachmentChip; this is only the row layout. */
 .u-atts {
   display: flex;
   flex-wrap: wrap;

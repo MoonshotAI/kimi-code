@@ -229,6 +229,9 @@ function handleKeydown(e: KeyboardEvent): void {
   // While an answer/dismiss is in flight, ignore shortcuts so a stray Enter
   // can't fire a duplicate submit.
   if (busy.value) return;
+  // A modal dialog/lightbox owns the whole keyboard — Enter included. No card
+  // shortcut fires through it (the Esc branch adds a defaultPrevented check).
+  if (openDialogCount.value > 0) return;
 
   // Enter advances to the next question (or submits when all are answered).
   // Allowed even while focus is in the "Other" text input, but not while the
