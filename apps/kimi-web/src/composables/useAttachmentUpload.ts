@@ -353,6 +353,16 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         void getKimiWebApi()
           .getLlmFileBlob(att.llmFileId)
           .then((blob) => {
+            // The same authenticated bytes drive the preview: the protected
+            // llm URL would 401 as a native <video src>, so swap previewUrl
+            // for this blob URL (mirroring the fileId branch above).
+            const blobUrl = URL.createObjectURL(blob);
+            const current = attachmentsBySession.value[sid] ?? [];
+            if (!current.some((a) => a.localId === localId)) {
+              URL.revokeObjectURL(blobUrl);
+              return null;
+            }
+            patchAttachment(sid, localId, { previewUrl: blobUrl });
             const fname = name.includes('.') ? name : `${name}.${blob.type.split('/')[1] ?? 'bin'}`;
             return upload(blob, fname);
           })
