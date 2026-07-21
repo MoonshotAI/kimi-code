@@ -59,7 +59,7 @@ interface FakeSessionHandle {
   setThinkingCalls: string[];
 }
 
-function makeFakeSession(sessionId: string): FakeSessionHandle {
+function makeFakeSession(sessionId: string, statusEffort?: string): FakeSessionHandle {
   const planModeCalls: boolean[] = [];
   const setPermissionCalls: PermissionMode[] = [];
   const setModelCalls: string[] = [];
@@ -82,6 +82,12 @@ function makeFakeSession(sessionId: string): FakeSessionHandle {
     setThinking: async (effort: string) => {
       setThinkingCalls.push(effort);
     },
+    // Present only when the test exercises the status-reconciliation path;
+    // `typeof === 'function'` guards elsewhere treat `undefined` as absent.
+    getStatus:
+      statusEffort === undefined
+        ? undefined
+        : async () => ({ thinkingEffort: statusEffort }),
   } as unknown as Session;
   return { session, planModeCalls, setPermissionCalls, setModelCalls, setThinkingCalls };
 }
@@ -385,14 +391,10 @@ describe('AcpServer session/set_config_option', () => {
     // Always-thinking effort model: the client asks for `off`, the engine
     // clamps it back to the default level — the status channel is the
     // source of truth for what the snapshot renders.
-    const handle = makeFakeSession('sess-thinking-clamped');
-    const session = {
-      ...handle.session,
-      getStatus: async () => ({ thinkingEffort: 'high' }),
-    } as unknown as Session;
+    const handle = makeFakeSession('sess-thinking-clamped', 'high');
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
+      createSession: async () => handle.session,
       getConfig: async () => ({
         providers: {},
         defaultModel: 'kimi-deep',
