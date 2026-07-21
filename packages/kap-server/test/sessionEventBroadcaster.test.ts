@@ -6,7 +6,6 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
 import {
   ContextSizeModel,
   IAgentActivityView,
@@ -21,7 +20,11 @@ import {
   IWireService,
   ISessionMetadata,
   SessionInteractionService,
+  type IScopeHandle,
+  type SessionLifecycleHooks,
+  type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { createHooks } from '@moonshot-ai/agent-core-v2/hooks';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -214,6 +217,7 @@ function makeCore(
   sessions: Map<string, FakeLifecycle>,
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
+  lifecycleHooks = createSessionLifecycleHooks(),
 ): Scope {
   const accessor = {
     get(token: unknown): unknown {
@@ -223,6 +227,7 @@ function makeCore(
           // Inert lifecycle events (TranscriptService subscribes on construction).
           onDidCloseSession: () => ({ dispose: () => {} }),
           onDidArchiveSession: () => ({ dispose: () => {} }),
+          hooks: lifecycleHooks,
           get: (sid: string) => {
             const lifecycle = sessions.get(sid);
             if (lifecycle === undefined) return undefined;
@@ -243,6 +248,14 @@ function makeCore(
     },
   };
   return { accessor } as unknown as Scope;
+}
+
+function createSessionLifecycleHooks() {
+  return createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
+    'onDidCreateSession',
+    'onWillCloseSession',
+    'onWillReleaseSession',
+  ]);
 }
 
 function agentEvent(type: string, extra: Record<string, unknown> = {}): AgentEvent {
@@ -269,6 +282,7 @@ describe('SessionEventBroadcaster', () => {
   let dir: string;
   let sessions: Map<string, FakeLifecycle>;
   let eventBus: FakeEventBus;
+  let lifecycleHooks: ReturnType<typeof createSessionLifecycleHooks>;
   let bc: SessionEventBroadcaster;
 
   beforeEach(async () => {
@@ -277,10 +291,11 @@ describe('SessionEventBroadcaster', () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-test-'));
     sessions = new Map();
     eventBus = new FakeEventBus();
+    lifecycleHooks = createSessionLifecycleHooks();
     bc = new SessionEventBroadcaster({
       eventsDir: dir,
       homeDir: dir,
-      core: makeCore(sessions, eventBus),
+      core: makeCore(sessions, eventBus, {}, lifecycleHooks),
       maxBufferSize: 3,
     });
   });
@@ -330,6 +345,35 @@ describe('SessionEventBroadcaster', () => {
       true,
     );
     expect(durable[0]!.volatile).toBeUndefined();
+  });
+
+  it('rebuilds subscriptions and the journal writer after a session is released', async () => {
+    const firstLifecycle = new FakeLifecycle();
+    const firstMain = firstLifecycle.addAgent('main');
+    sessions.set('s1', firstLifecycle);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+    firstMain.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    const firstSeq = (await bc.getCursor('s1')).seq;
+    expect(firstSeq).toBe(2);
+
+    await lifecycleHooks.onWillReleaseSession.run({ sessionId: 's1', reason: 'archive' });
+    firstMain.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+
+    const restoredLifecycle = new FakeLifecycle();
+    const restoredMain = restoredLifecycle.addAgent('main');
+    sessions.set('s1', restoredLifecycle);
+    expect(await bc.subscribe('s1', target)).toBe(true);
+    restoredMain.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    await bc.getCursor('s1');
+
+    const durable = envelopes.filter((event) => event.volatile !== true);
+    expect(durable.some((event) => event.type === 'turn.ended')).toBe(false);
+    expect(durable.at(-1)).toMatchObject({
+      type: 'turn.started',
+      seq: firstSeq + 2,
+      payload: { turnId: 2, agentId: 'main', sessionId: 's1' },
+    });
   });
 
   it('fans out volatile events with the current watermark + offset, not journaled', async () => {

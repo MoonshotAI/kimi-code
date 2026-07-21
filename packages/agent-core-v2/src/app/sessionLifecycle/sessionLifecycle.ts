@@ -65,9 +65,17 @@ export interface SessionWillCloseEvent {
   readonly reason: SessionCloseReason;
 }
 
+export type SessionReleaseReason = 'close' | 'archive' | 'dirty-abort';
+
+export interface SessionWillReleaseEvent {
+  readonly sessionId: string;
+  readonly reason: SessionReleaseReason;
+}
+
 export type SessionLifecycleHooks = {
   readonly onDidCreateSession: SessionCreatedEvent;
   readonly onWillCloseSession: SessionWillCloseEvent;
+  readonly onWillReleaseSession: SessionWillReleaseEvent;
 };
 
 export interface SessionArchivedEvent {

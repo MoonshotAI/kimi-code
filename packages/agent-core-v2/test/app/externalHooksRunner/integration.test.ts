@@ -187,6 +187,7 @@ function stubSessionLifecycle(): ISessionLifecycleService {
     hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
       'onDidCreateSession',
       'onWillCloseSession',
+      'onWillReleaseSession',
     ]),
     onDidCreateSession: Event.None as ISessionLifecycleService['onDidCreateSession'],
     onDidCloseSession: Event.None as ISessionLifecycleService['onDidCloseSession'],

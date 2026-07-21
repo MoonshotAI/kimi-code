@@ -232,8 +232,10 @@ export class SessionEventBroadcaster {
    * per-chunk `AABBCC` stream while every seq and offset still looks valid.
    */
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
+  private readonly releasingSessions = new Map<string, Promise<void>>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
+  private readonly sessionReleaseHook: IDisposable;
   /** Fire-and-forget dispatches still in flight (possibly inside `ensureState`). */
   private readonly inFlightDispatches = new Set<Promise<void>>();
   private closed = false;
@@ -259,6 +261,15 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
+    this.sessionReleaseHook = opts.core.accessor
+      .get(ISessionLifecycleService)
+      .hooks.onWillReleaseSession.register(
+        'sessionEventBroadcaster',
+        async ({ sessionId }, next) => {
+          await this.releaseSessionState(sessionId);
+          await next();
+        },
+      );
   }
 
   /**
@@ -739,13 +750,11 @@ export class SessionEventBroadcaster {
     await this.drainDispatches();
     this.closed = true;
     this.coreEventSubscription.dispose();
-    for (const [sessionId, state] of this.sessions) {
-      await disposeSessionState(state);
-      // Transcript bindings die with the session stream (its store
-      // subscriptions were disposed above; the producer binding goes here).
-      this.opts.transcriptService?.dropSession(sessionId);
+    this.sessionReleaseHook.dispose();
+    const sessionIds = new Set([...this.sessions.keys(), ...this.pendingStates.keys()]);
+    for (const sessionId of sessionIds) {
+      await this.releaseSessionState(sessionId);
     }
-    this.sessions.clear();
   }
 
   /**
@@ -762,7 +771,7 @@ export class SessionEventBroadcaster {
   }
 
   private ensureState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return Promise.resolve(undefined);
+    if (this.closed || this.releasingSessions.has(sessionId)) return Promise.resolve(undefined);
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return Promise.resolve(existing);
     let pending = this.pendingStates.get(sessionId);
@@ -787,7 +796,7 @@ export class SessionEventBroadcaster {
       sessionJournalPath(this.opts.eventsDir, sessionId),
       this.opts.logger,
     );
-    if (this.closed) {
+    if (this.closed || this.releasingSessions.has(sessionId)) {
       await journal.close();
       return undefined;
     }
@@ -829,6 +838,30 @@ export class SessionEventBroadcaster {
       throw error;
     }
     return state;
+  }
+
+  private releaseSessionState(sessionId: string): Promise<void> {
+    const existing = this.releasingSessions.get(sessionId);
+    if (existing !== undefined) return existing;
+    const release = this.disposeSession(sessionId).finally(() => {
+      if (this.releasingSessions.get(sessionId) === release) {
+        this.releasingSessions.delete(sessionId);
+      }
+    });
+    this.releasingSessions.set(sessionId, release);
+    return release;
+  }
+
+  private async disposeSession(sessionId: string): Promise<void> {
+    await this.pendingStates.get(sessionId);
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    this.sessions.delete(sessionId);
+    try {
+      await disposeSessionState(state);
+    } finally {
+      this.opts.transcriptService?.dropSession(sessionId);
+    }
   }
 
   private onCoreEvent(event: GlobalEvent): void {

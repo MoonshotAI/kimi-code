@@ -318,13 +318,11 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     // Stop the sessions-tree watcher first: a debounced hint firing mid-close
     // would publish into an event bus whose subscribers are already unwinding.
     sessionListWatch.dispose();
-    // Release-order contract: sessions close FIRST (each runs the
-    // onWillCloseSession hooks and drains agents while the transport is still
-    // alive, so teardown events still fan out and land in the journal), the
-    // transport/app next (its onClose hook closes connections, stops the WS
-    // servers and flushes every journal — including the tail events queued
-    // during session teardown), and only then the core scope, the failure
-    // limiter/scheduler, and the registration handle.
+    // Release-order contract: sessions close FIRST while the transport is
+    // still alive, so teardown events still fan out; each session's release
+    // hook drains and closes its event journal before the write lease is
+    // released. The transport/app closes next, followed by the core scope, the
+    // failure limiter/scheduler, and the registration handle.
     //
     // Before any session scope is disposed, settle the broadcaster's in-flight
     // dispatches: an `ensureState` resumed after its session's scope died

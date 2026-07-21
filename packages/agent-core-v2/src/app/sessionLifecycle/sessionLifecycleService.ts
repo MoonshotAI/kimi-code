@@ -129,6 +129,7 @@ import {
   type SessionForkedEvent,
   type SessionLifecycleHooks,
   type SessionWillCloseEvent,
+  type SessionWillReleaseEvent,
   ISessionLifecycleService,
 } from './sessionLifecycle';
 
@@ -167,6 +168,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   readonly hooks = createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
     'onDidCreateSession',
     'onWillCloseSession',
+    'onWillReleaseSession',
   ]);
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly inFlightOperations = new Set<Promise<unknown>>();
@@ -481,6 +483,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.hooks.onWillCloseSession.run(event);
   }
 
+  private async announceWillRelease(
+    event: SessionWillReleaseEvent,
+    entry: SessionEntry,
+  ): Promise<void> {
+    try {
+      await this.hooks.onWillReleaseSession.run(event);
+    } catch (error) {
+      entry.phase = 'flush-failed';
+      throw error;
+    }
+  }
+
   private async drainAgents(handle: ISessionScopeHandle): Promise<void> {
     const agentLifecycle = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agentLifecycle.list()) {
@@ -517,7 +531,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async runSessionClose(sessionId: string, entry: SessionEntry): Promise<void> {
     const kind = entry.closeKind ?? 'close';
-    const stepCount = kind === 'close' ? 3 : 5;
+    const stepCount = kind === 'close' ? 4 : 6;
     while (entry.closeStep < stepCount) {
       if (kind === 'close') {
         await this.runCloseStep(sessionId, entry);
@@ -553,6 +567,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       case 2:
         this.disposeSessionHandle(entry);
         return;
+      case 3:
+        await this.announceWillRelease({ sessionId, reason: 'close' }, entry);
+        return;
     }
   }
 
@@ -575,6 +592,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         return;
       case 4:
         this.disposeSessionHandle(entry);
+        return;
+      case 5:
+        await this.announceWillRelease({ sessionId, reason: 'archive' }, entry);
         return;
     }
   }
@@ -962,15 +982,25 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       this.disposeSessionHandle(entry);
     } catch {
     }
-    const dirtyAbortPromise = Promise.allSettled(
-      taskServices.map((tasks) => tasks.flushPersistence()),
-    ).then(() => {
+    const dirtyAbortPromise = (async (): Promise<void> => {
+      try {
+        await this.hooks.onWillReleaseSession.run({
+          sessionId: entry.handle.id,
+          reason: 'dirty-abort',
+        });
+      } catch (error) {
+        this.log.warn('session release hook failed during dirty abort', {
+          sessionId: entry.handle.id,
+          error: String(error),
+        });
+      }
+      await Promise.allSettled(taskServices.map((tasks) => tasks.flushPersistence()));
       try {
         entry.registration.dispose();
       } catch {
       }
       entry.lease.release();
-    });
+    })();
     entry.dirtyAbortPromise = dirtyAbortPromise;
     void dirtyAbortPromise.catch(() => {});
     return dirtyAbortPromise;

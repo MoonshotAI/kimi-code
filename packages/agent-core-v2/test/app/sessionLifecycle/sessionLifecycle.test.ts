@@ -1064,10 +1064,16 @@ describe('SessionLifecycleService', () => {
       } as unknown as IAgentLifecycleService),
     ]);
     const archived: string[] = [];
+    const releasing: string[] = [];
     svc.onDidArchiveSession((e) => archived.push(e.sessionId));
+    svc.hooks.onWillReleaseSession.register('test', async (event, next) => {
+      releasing.push(`${event.reason}:${event.sessionId}`);
+      await next();
+    });
     await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     await svc.archive('s1');
     expect(archived).toEqual(['s1']);
+    expect(releasing).toEqual(['archive:s1']);
   });
 
   describe('additional dirs', () => {
@@ -1611,6 +1617,41 @@ describe('SessionLifecycleService', () => {
       expect(disk).toBe('{"tail":true}\n');
       await expect(stat(leaseFile(root, 's1'))).resolves.toBeDefined();
       await expect(stat(leaseOwnerFile(root, 's1'))).rejects.toThrow();
+    });
+
+    it('keeps the session lease until release hooks settle', async () => {
+      const root = await makeTmpRoot();
+      const svc = build(realInstanceSeeds(root));
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+      let enterHook!: () => void;
+      const hookEntered = new Promise<void>((resolve) => {
+        enterHook = resolve;
+      });
+      let releaseHook!: () => void;
+      const hookGate = new Promise<void>((resolve) => {
+        releaseHook = resolve;
+      });
+      svc.hooks.onWillReleaseSession.register('lease-test', async (event, next) => {
+        expect(event).toEqual({ sessionId: 's1', reason: 'close' });
+        expect(disposedSessionServices).toBe(1);
+        enterHook();
+        await hookGate;
+        await next();
+      });
+
+      const closing = svc.close('s1');
+      await hookEntered;
+
+      try {
+        await expect(
+          new CrossProcessLockService().acquire(leaseFile(root, 's1')),
+        ).rejects.toMatchObject({ code: CrossProcessLockErrorCode.Held });
+      } finally {
+        releaseHook();
+        await closing;
+      }
+      const successor = await new CrossProcessLockService().acquire(leaseFile(root, 's1'));
+      successor.release();
     });
 
     it('keeps authority and lease when the session durability barrier fails', async () => {

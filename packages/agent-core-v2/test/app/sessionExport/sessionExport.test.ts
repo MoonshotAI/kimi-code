@@ -856,6 +856,7 @@ function registerSessionExportServices(
     hooks: createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
       'onDidCreateSession',
       'onWillCloseSession',
+      'onWillReleaseSession',
     ]),
     create: async () => {
       throw new Error('create should not be called by session export');
