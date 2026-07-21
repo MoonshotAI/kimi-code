@@ -1039,7 +1039,7 @@ describe('kimi provider catalog add', () => {
 
     expect(exitCodes).toEqual([1]);
     expect(stderr.join('')).toContain('--base-url');
-    expect(harness.getConfig().then((c) => c.providers['xai'])).resolves.toBeUndefined();
+    await expect(harness.getConfig().then((c) => c.providers['xai'])).resolves.toBeUndefined();
   });
 
   it('imports a guessed vendor with --base-url, carrying off_effort and a guess note', async () => {
