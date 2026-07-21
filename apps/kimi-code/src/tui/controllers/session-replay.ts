@@ -301,17 +301,10 @@ export class SessionReplayRenderer {
       this.renderCronMissed(context, message);
       return;
     }
-    if (isGoalForkClearedSystemReminder(message)) {
-      return;
-    }
-    const goalReminder = goalOutcomeReminderFromSystemMessage(message);
-    if (goalReminder !== null) {
-      if (goalReminder !== undefined) {
-        this.flushAssistant(context);
-        this.host.appendTranscriptEntry(
-          replayEntry(context, 'assistant', goalReminder, 'markdown'),
-        );
-      }
+    // System-trigger messages (goal continuation prompts, goal outcome
+    // reminders, stop-hook reasons, …) are model-facing only: the live event
+    // stream never renders them, so replay must not leak them either.
+    if (message.origin?.kind === 'system_trigger') {
       return;
     }
 
@@ -739,18 +732,6 @@ function goalLifecycleReplayContent(change: GoalReplayLifecycleChange): string {
 
 function isModelBlockedGoalLifecycle(change: GoalReplayLifecycleChange): boolean {
   return change.status === 'blocked' && change.actor === 'model';
-}
-
-function goalOutcomeReminderFromSystemMessage(message: ContextMessage): string | undefined | null {
-  if (message.origin?.kind !== 'system_trigger') return null;
-  if (message.origin.name !== 'goal_completion' && message.origin.name !== 'goal_blocked') {
-    return null;
-  }
-  return undefined;
-}
-
-function isGoalForkClearedSystemReminder(message: ContextMessage): boolean {
-  return message.origin?.kind === 'system_trigger' && message.origin.name === 'goal_fork_cleared';
 }
 
 function extractCronPrompt(text: string): string {
