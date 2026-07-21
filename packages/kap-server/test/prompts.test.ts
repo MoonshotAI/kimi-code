@@ -920,6 +920,12 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
       'max_context_size = 1000',
       'capabilities = [ "video_in", "image_in" ]',
       '',
+      '[models.stub2]',
+      'provider = "stub"',
+      'model = "stub2"',
+      'max_context_size = 1000',
+      'capabilities = [ "video_in", "image_in" ]',
+      '',
     ].join('\n');
   }
 
@@ -1154,6 +1160,36 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
     expect(String(content[1]?.['text'])).toMatch(/<video path="[^"]+"><\/video>/);
 
     await abortPrompt(id, submitted.data.prompt_id);
+  });
+
+  it('rejects the submission when the model switches mid-upload', async () => {
+    const id = await createSessionWithAgent();
+    const fileId = await uploadVideoFile('clip.mp4', Buffer.from('0123456789'));
+
+    let releaseUpload!: () => void;
+    uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    const submit = fetch(`${base}/api/v1/sessions/${id}/prompts`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        model: 'stub',
+        content: [
+          { type: 'text', text: 'watch this' },
+          { type: 'video', source: { kind: 'file', file_id: fileId } },
+        ],
+      }),
+    } as never);
+
+    // A concurrent model switch lands while the upload is parked.
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const agent = session!.accessor.get(IAgentLifecycleService).get('main')!;
+    await agent.accessor.get(IAgentProfileService).setModel('stub2');
+    releaseUpload();
+
+    const body = (await (await submit).json()) as Envelope<null>;
+    expect(body.code).toBe(40901);
   });
 
   it('serializes concurrent submissions so a media upload cannot be overtaken', async () => {

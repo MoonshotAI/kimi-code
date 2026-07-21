@@ -152,27 +152,32 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
 }
 
 /**
- * Build the prompt-time video uploader from the session's effective model.
- * `undefined` when the model cannot ingest video (no `video_in` capability
- * or no provider upload channel) — prompt videos then fall back to the
- * file-tag form and the model opens them with ReadMediaFile.
+ * Build the prompt-time video uploader from the model the submission will
+ * use, resolved TRANSIENTLY (no bind/setModel): `modelOverride` when the
+ * body names one, else the agent's currently bound alias. `undefined` when
+ * no model is determinable (unbound agent without an override — that
+ * submission is invalid anyway), when the model cannot ingest video (no
+ * `video_in` capability), or when the provider has no upload channel —
+ * prompt videos then fall back to the file-tag form and the model opens
+ * them with ReadMediaFile.
  */
 function promptVideoUploader(
+  modelOverride: string | undefined,
   profile: IAgentProfileService,
   modelCatalog: IModelCatalog,
   telemetry: ITelemetryService,
 ): ((input: VideoUploadInput) => Promise<VideoURLPart>) | undefined {
-  if (!profile.getModelCapabilities().video_in) return undefined;
-  const modelAlias = profile.getModel();
-  if (modelAlias === '') return undefined;
-  const requester = modelCatalog.getRequester(modelAlias);
-  const model = requester.model;
+  const alias = modelOverride ?? profile.getModel();
+  if (alias === '') return undefined;
+  const model = modelCatalog.get(alias);
+  if (!model.capabilities.video_in) return undefined;
+  const requester = modelCatalog.getRequester(alias);
   return createVideoUploader(requester, {
     client: telemetry,
     props: {
-      model: modelAlias,
-      provider_type: model?.providerType ?? model?.protocol,
-      protocol: model?.protocol,
+      model: alias,
+      provider_type: model.providerType ?? model.protocol,
+      protocol: model.protocol,
     },
   });
 }
@@ -293,10 +298,59 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         // mutated: a bad `file_id` must not create the agent, register `main`
         // in session metadata, or touch the session's controls.
         await assertPromptFileRefs(req.body, core.accessor.get(IFileService));
-        // Resolve the agent and apply profile/model overrides first: prompt
-        // media resolution (video upload) keys off the effective model.
         const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
         await resolved.auth.ensureReady();
+
+        // Media resolution runs BEFORE any control mutation: the uploader is
+        // resolved transiently from the requested (or currently bound) model,
+        // so a failed submission leaves the session's controls untouched.
+        const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
+        const boundBeforeMedia = resolved.profile.getModel();
+        const resolvedBody = await resolvePromptMediaFiles(
+          req.body,
+          core.accessor.get(IFileService),
+          core.accessor.get(IBootstrapService).cacheDir,
+          {
+            telemetry,
+            videoUploader: promptVideoUploader(
+              req.body.model,
+              resolved.profile,
+              core.accessor.get(IModelCatalog),
+              // Agent-level events (video_upload) need the target agent's
+              // ambient identity, not the Core-scoped session view above.
+              resolved.telemetry.withContext({ sessionId: session_id }),
+            ),
+            onVideoInlined: async (localFileId, llmFileId) => {
+              // Best effort — a lost mapping only means the web UI cannot
+              // play this prompt video back from daemon storage.
+              await recordLlmVideoRef(core.accessor.get(IBlobStore), llmFileId, localFileId).catch(
+                () => undefined,
+              );
+            },
+            resolveOriginalsDir: async () => {
+              const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+              if (session === undefined) return undefined;
+              return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
+            },
+            resolveAttachmentsDir: async () => {
+              const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
+              if (session === undefined) return undefined;
+              return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
+            },
+          },
+        );
+
+        // A concurrent model switch during preparation must not receive a
+        // reference uploaded for the previous model — reject instead of
+        // enqueueing an account-scoped id against the wrong provider.
+        if (resolved.profile.getModel() !== boundBeforeMedia) {
+          throw new Error2(
+            'session.busy',
+            'the model changed while the prompt was being prepared; resubmit',
+          );
+        }
+
+        // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
         if (req.body.profile !== undefined) {
           thinkingConsumed =
@@ -323,39 +377,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             throw error;
           }
         }
-        const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
-        const resolvedBody = await resolvePromptMediaFiles(
-          req.body,
-          core.accessor.get(IFileService),
-          core.accessor.get(IBootstrapService).cacheDir,
-          {
-            telemetry,
-            videoUploader: promptVideoUploader(
-              resolved.profile,
-              core.accessor.get(IModelCatalog),
-              // Agent-level events (video_upload) need the target agent's
-              // ambient identity, not the Core-scoped session view above.
-              resolved.telemetry.withContext({ sessionId: session_id }),
-            ),
-            onVideoInlined: async (localFileId, llmFileId) => {
-              // Best effort — a lost mapping only means the web UI cannot
-              // play this prompt video back from daemon storage.
-              await recordLlmVideoRef(core.accessor.get(IBlobStore), llmFileId, localFileId).catch(
-                () => undefined,
-              );
-            },
-            resolveOriginalsDir: async () => {
-              const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
-              if (session === undefined) return undefined;
-              return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
-            },
-            resolveAttachmentsDir: async () => {
-              const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
-              if (session === undefined) return undefined;
-              return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
-            },
-          },
-        );
         const parts = contentToCoreParts(resolvedBody.content);
         const session = await resolveSession(core, session_id);
         await applyPromptMetadataUpdate({
