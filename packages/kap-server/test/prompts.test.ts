@@ -1192,6 +1192,37 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
     expect(body.code).toBe(40901);
   });
 
+  it('inlines videos on a first prompt that binds a profile without an explicit model', async () => {
+    const id = await createSessionWithAgent();
+    const videoBytes = Buffer.from('tiny fake mp4 bytes');
+    const fileId = await uploadVideoFile('clip.mp4', videoBytes);
+
+    // `profile` without `model`: the uploader must resolve the configured
+    // default model (video-capable) instead of falling back to a path tag.
+    const submitRes = await fetch(`${base}/api/v1/sessions/${id}/prompts`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        profile: 'agent',
+        content: [
+          { type: 'text', text: 'what happens in this video?' },
+          { type: 'video', source: { kind: 'file', file_id: fileId } },
+        ],
+      }),
+    } as never);
+    const submitted = (await submitRes.json()) as Envelope<PromptItemWire>;
+    expect(submitted.code).toBe(0);
+
+    const content = submitted.data.content as Array<Record<string, unknown>>;
+    expect(content[1]).toEqual({
+      type: 'video',
+      source: { kind: 'url', url: 'ms://stub-llm-video-1', id: 'stub-llm-video-1' },
+    });
+    expect(stubBodies).toHaveLength(1);
+
+    await abortPrompt(id, submitted.data.prompt_id);
+  });
+
   it('serializes concurrent submissions so a media upload cannot be overtaken', async () => {
     const id = await createSessionWithAgent();
     const fileId = await uploadVideoFile('clip.mp4', Buffer.from('0123456789'));

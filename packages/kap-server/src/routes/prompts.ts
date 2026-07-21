@@ -20,6 +20,7 @@ import {
   IAgentPromptService,
   IAuthSummaryService,
   IBlobStore,
+  IConfigService,
   IEventService,
   IFileService,
   IModelCatalog,
@@ -153,22 +154,29 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
 
 /**
  * Build the prompt-time video uploader from the model the submission will
- * use, resolved TRANSIENTLY (no bind/setModel): `modelOverride` when the
- * body names one, else the agent's currently bound alias. `undefined` when
- * no model is determinable (unbound agent without an override — that
- * submission is invalid anyway), when the model cannot ingest video (no
+ * use, resolved TRANSIENTLY (no bind/setModel) with the same rules as
+ * `AgentProfileService.bind`: an explicit body model wins; a profile bind
+ * without one falls back to the configured global default model; otherwise
+ * the agent's currently bound alias. `undefined` when no model is
+ * determinable (unbound, no override, no configured default — that
+ * submission fails on bind anyway), when the model cannot ingest video (no
  * `video_in` capability), or when the provider has no upload channel —
  * prompt videos then fall back to the file-tag form and the model opens
  * them with ReadMediaFile.
  */
 function promptVideoUploader(
-  modelOverride: string | undefined,
+  body: { readonly model?: string | undefined; readonly profile?: string | undefined },
   profile: IAgentProfileService,
   modelCatalog: IModelCatalog,
+  config: IConfigService,
   telemetry: ITelemetryService,
 ): ((input: VideoUploadInput) => Promise<VideoURLPart>) | undefined {
-  const alias = modelOverride ?? profile.getModel();
-  if (alias === '') return undefined;
+  const alias =
+    body.model ??
+    (body.profile !== undefined
+      ? config.get<string>('defaultModel')
+      : profile.getModel());
+  if (alias === undefined || alias === '') return undefined;
   const model = modelCatalog.get(alias);
   if (!model.capabilities.video_in) return undefined;
   const requester = modelCatalog.getRequester(alias);
@@ -313,9 +321,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           {
             telemetry,
             videoUploader: promptVideoUploader(
-              req.body.model,
+              req.body,
               resolved.profile,
               core.accessor.get(IModelCatalog),
+              core.accessor.get(IConfigService),
               // Agent-level events (video_upload) need the target agent's
               // ambient identity, not the Core-scoped session view above.
               resolved.telemetry.withContext({ sessionId: session_id }),
