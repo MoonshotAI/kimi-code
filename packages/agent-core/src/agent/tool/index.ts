@@ -788,7 +788,7 @@ export class ToolManager {
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
-        ...(this.agent.experimentalFlags.enabled('github_tools') ? b.createGitHubTools(this.agent.kimiConfig?.experimental?.github_token as string | undefined) : []),
+        ...(this.agent.experimentalFlags.enabled('github_tools') ? b.createGitHubTools(this.agent.kimiConfig?.experimental?.['github_token'] as string | undefined) : []),
       ]
         .filter((tool) => !!tool)
         .map((tool) => [tool.name, tool] as const),

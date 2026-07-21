@@ -170,7 +170,7 @@ function toMilliseconds(
 }
 
 function enginePatchToBudgetLimits(patch: Record<string, unknown>): GoalBudgetLimits {
-  const result: GoalBudgetLimits = {};
+  const result: { tokenBudget?: number; turnBudget?: number; wallClockBudgetMs?: number } = {};
   if (typeof patch['tokenBudget'] === 'number') {
     result.tokenBudget = patch['tokenBudget'];
   }

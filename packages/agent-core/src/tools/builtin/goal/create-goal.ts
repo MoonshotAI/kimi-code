@@ -20,8 +20,10 @@ export const CreateGoalToolInputSchema = z
     objective: z.string().min(1).describe('The objective to pursue. Must have a verifiable end state.'),
     completionCriterion: z
       .string()
-      .optional()
-      .describe('How to verify the goal is complete. Include when the user provides one.'),
+      .min(1)
+      .describe(
+        'How to verify the goal is complete — a concrete, checkable condition (e.g. a test passing, a search returning zero matches, a command exiting 0). Required. If the user\u2019s goal is vague, first ask them (via AskUserQuestion) what "done" concretely means and how to verify it; do not invent a criterion.',
+      ),
     replace: z
       .boolean()
       .optional()

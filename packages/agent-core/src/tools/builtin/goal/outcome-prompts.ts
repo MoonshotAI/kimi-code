@@ -16,6 +16,21 @@ export function buildGoalBlockedReasonPrompt(goal: GoalSnapshot): string {
   ].join('\n');
 }
 
+export function buildGoalVerificationFailedPrompt(
+  feedback: string,
+  rejections: number,
+  maxRejections: number,
+): string {
+  return [
+    `Completion rejected by the independent verifier (attempt ${String(rejections)} of ${String(maxRejections)}). The goal is NOT complete.`,
+    '',
+    'The verifier found:',
+    feedback,
+    '',
+    'Address every point above, then verify the work yourself before calling `complete` again. The goal remains active — keep working. If the verifier keeps rejecting and you cannot resolve it, call `blocked` with the concrete reasons.',
+  ].join('\n');
+}
+
 function buildGoalCompletionPromptMessage(goal: GoalSnapshot): string {
   const head = `Goal completed successfully${goal.terminalReason ? `: ${goal.terminalReason}` : ''}.`;
   const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;

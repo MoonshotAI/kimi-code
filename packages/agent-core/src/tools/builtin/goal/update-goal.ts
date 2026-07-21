@@ -17,19 +17,24 @@ import { z } from 'zod';
 import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
+  buildGoalVerificationFailedPrompt,
 } from './outcome-prompts';
+import { runGoalCompletionVerifier } from '../../../agent/goal/completion-verifier';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { tryNativeGoalEngineDecideBlockedAudit } from '../native-tools';
 import DESCRIPTION from './update-goal.md?raw';
 
+/** Consecutive verifier-rejected completions before the goal is marked blocked. */
+const MAX_COMPLETION_REJECTIONS = 2;
+
 export const UpdateGoalToolInputSchema = z
   .object({
     status: z
       .enum(['complete', 'blocked'])
       .describe(
-        'The lifecycle status to set for the current goal. Use `complete` only when the objective has actually been achieved and no required work remains, verified against the actual current state. Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same blocking condition repeats for at least 3 consecutive goal turns and you cannot make meaningful progress without user input or an external-state change.',
+        'The lifecycle status to set for the current goal. Use `complete` only when the objective has actually been achieved and no required work remains, verified against the actual current state — note that an independent verifier will check the work before completion is granted, and will reject it if the objective or completion criterion is not verifiably satisfied. Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same blocking condition repeats for at least 3 consecutive goal turns and you cannot make meaningful progress without user input or an external-state change.',
       ),
   })
   .strict();
@@ -60,8 +65,39 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
       description: `Setting goal status: ${status}`,
       stopBatchAfterThis: goalIsActive,
       approvalRule: this.name,
-      execute: async () => {
+      execute: async (ctx) => {
         if (status === 'complete') {
+          if (!goalIsActive || currentGoal === undefined) {
+            return { output: 'Goal not completed: no active goal.' };
+          }
+          // Completion is not granted on the worker's own say-so: an isolated
+          // verifier independently checks the work against the objective and
+          // completion criterion first (gated by an experimental flag).
+          const verifierEnabled =
+            this.agent.experimentalFlags?.enabled('goal_completion_verifier') === true;
+          const verification = verifierEnabled
+            ? await runGoalCompletionVerifier(this.agent, currentGoal, '', ctx.signal)
+            : { passed: true, feedback: '' };
+          if (!verification.passed) {
+            const rejections = await goal.recordCompletionRejection();
+            if (rejections >= MAX_COMPLETION_REJECTIONS) {
+              const blocked = await goal.markBlocked(
+                { reason: `Completion verifier rejected the goal: ${verification.feedback}` },
+                'model',
+              );
+              if (blocked === null) {
+                return { output: 'Goal not blocked: no active goal.' };
+              }
+              return { output: buildGoalBlockedReasonPrompt(blocked), stopTurn: true };
+            }
+            return {
+              output: buildGoalVerificationFailedPrompt(
+                verification.feedback,
+                rejections,
+                MAX_COMPLETION_REJECTIONS,
+              ),
+            };
+          }
           const completed = await goal.markComplete({}, 'model');
           if (completed === null) {
             return { output: 'Goal not completed: no active goal.' };

@@ -66,7 +66,7 @@ function toConfigResponse(config: KimiConfig): ConfigResponse {
     extra_skill_dirs: config.extraSkillDirs,
     loop_control: config.loopControl,
     background: config.background,
-    experimental: config.experimental,
+    experimental: config.experimental as Record<string, boolean> | undefined,
     telemetry: config.telemetry,
     raw: config.raw,
   };

@@ -154,6 +154,8 @@ interface GoalState {
   terminalReason?: string;
   /** Consecutive goal turns that encountered blocking conditions. Reset on resume. */
   blockedStreak?: number;
+  /** Consecutive completion attempts rejected by the completion verifier. */
+  completionRejections?: number;
   /** Epoch milliseconds when the goal was created. */
   createdAt: number;
   /** Epoch milliseconds when the goal was last updated. */
@@ -331,6 +333,9 @@ export class GoalMode {
       state.wallClockResumedAt = undefined;
     }
     if (record.budgetLimits !== undefined) state.budgetLimits = record.budgetLimits;
+    if (record.completionRejections !== undefined) {
+      state.completionRejections = record.completionRejections;
+    }
     if (status === undefined) return;
 
     this.agent.replayBuilder.push({
@@ -553,7 +558,7 @@ export class GoalMode {
       JSON.stringify({ value, unit }),
     );
     if (result !== undefined && !result.ok) {
-      throw new KimiError(ErrorCodes.INVALID_INPUT, result.error);
+      throw new KimiError(ErrorCodes.INTERNAL, result.error);
     }
   }
 
@@ -684,6 +689,19 @@ export class GoalMode {
     this.persistState(state, { silent: true });
     this.appendGoalUpdate({ blockedStreak: state.blockedStreak });
     return this.toSnapshot(state);
+  }
+
+  /**
+   * Record a completion attempt rejected by the completion verifier. Returns the
+   * new rejection count so the caller can enforce the loop-prevention cap.
+   */
+  async recordCompletionRejection(): Promise<number> {
+    const state = this.state;
+    if (state === undefined) return 0;
+    state.completionRejections = (state.completionRejections ?? 0) + 1;
+    this.persistState(state, { silent: true });
+    this.appendGoalUpdate({ completionRejections: state.completionRejections });
+    return state.completionRejections;
   }
 
   async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {

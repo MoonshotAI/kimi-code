@@ -434,6 +434,69 @@ describe('UpdateGoalTool', () => {
     expect(result.stopTurn).toBeFalsy();
     expect(result.output).toBe(output);
   });
+
+  function agentWithVerifier(store: GoalMode, verdict: string): Agent {
+    return {
+      type: 'main',
+      goal: store,
+      context: { appendSystemReminder: () => {} },
+      experimentalFlags: { enabled: (id: string) => id === 'goal_completion_verifier' },
+      subagentHost: {
+        spawn: () =>
+          Promise.resolve({
+            agentId: 'verifier-1',
+            profileName: 'explore',
+            resumed: false,
+            completion: Promise.resolve({ result: verdict }),
+          }),
+      },
+    } as unknown as Agent;
+  }
+
+  it('completes the goal when the completion verifier passes', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work', completionCriterion: 'tests pass' });
+    const tool = new UpdateGoalTool(agentWithVerifier(store, 'All checks pass.\nVERDICT: PASS'));
+
+    const result = await executeTool(tool, ctx({ status: 'complete' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('Goal completed successfully.');
+    expect(store.getGoal().goal).toBeNull();
+  });
+
+  it('rejects completion and keeps the goal active when the verifier fails', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work', completionCriterion: 'tests pass' });
+    const tool = new UpdateGoalTool(
+      agentWithVerifier(store, 'VERDICT: FAIL: the tests are still failing'),
+    );
+
+    const result = await executeTool(tool, ctx({ status: 'complete' }));
+
+    expect(result.stopTurn).toBeFalsy();
+    expect(result.output).toContain('Completion rejected by the independent verifier');
+    expect(result.output).toContain('the tests are still failing');
+    expect(store.getGoal().goal?.status).toBe('active');
+  });
+
+  it('marks the goal blocked after the verifier rejects completion twice', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work', completionCriterion: 'tests pass' });
+    const tool = new UpdateGoalTool(
+      agentWithVerifier(store, 'VERDICT: FAIL: still not done'),
+    );
+
+    const first = await executeTool(tool, ctx({ status: 'complete' }));
+    expect(first.stopTurn).toBeFalsy();
+    expect(store.getGoal().goal?.status).toBe('active');
+
+    const second = await executeTool(tool, ctx({ status: 'complete' }));
+    expect(second.stopTurn).toBe(true);
+    expect(second.output).toContain('Goal blocked.');
+    expect(store.getGoal().goal?.status).toBe('blocked');
+  });
 });
 
 describe('ToolManager goal tool registration', () => {
@@ -486,7 +549,8 @@ describe('ToolManager goal tool registration', () => {
 
 describe('CreateGoalToolInputSchema', () => {
   it('accepts a minimal objective and a full payload', () => {
-    expect(CreateGoalToolInputSchema.safeParse({ objective: 'x' }).success).toBe(true);
+    expect(CreateGoalToolInputSchema.safeParse({ objective: 'x', completionCriterion: 'done' }).success).toBe(true);
+    expect(CreateGoalToolInputSchema.safeParse({ objective: 'x' }).success).toBe(false);
     expect(
       CreateGoalToolInputSchema.safeParse({
         objective: 'x',

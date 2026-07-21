@@ -116,6 +116,7 @@ export interface AgentRecordEvents {
     reason?: string;
     actor?: GoalActor;
     blockedStreak?: number;
+    completionRejections?: number;
   };
   'goal.clear': {};
 
