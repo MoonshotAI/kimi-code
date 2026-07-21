@@ -144,7 +144,7 @@ function formatErrorMessage(error: unknown): string {
 const OFFICIAL_INSTALL_URL = 'https://www.kimi.com/code';
 
 const THIRD_PARTY_SOURCE_NOTE =
-  '\nNote: Third-party sources may lag behind the latest release.\n' +
+  '\nNote: Third-party sources may lag behind the official release.\n' +
   `For the latest updates, use the official installer: ${OFFICIAL_INSTALL_URL}\n`;
 
 export function renderManualUpdateMessage(
