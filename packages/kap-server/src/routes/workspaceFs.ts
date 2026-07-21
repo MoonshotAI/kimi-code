@@ -225,6 +225,19 @@ async function handleFsContent(
     );
     return;
   }
+  // Only regular files are served: device nodes (/dev/zero streams forever),
+  // FIFOs (reads block), sockets, and /proc-style zero-size virtual files
+  // would otherwise hang or produce malformed responses.
+  if (!st.isFile) {
+    reply.send(
+      errEnvelope(
+        ErrorCode.VALIDATION_FAILED,
+        `path is not a regular file: ${path}`,
+        requestId,
+      ),
+    );
+    return;
+  }
 
   // Sample the leading bytes only to refine the mime fallback for unknown
   // extensions (octet-stream vs text/plain), mirroring session fs downloads.

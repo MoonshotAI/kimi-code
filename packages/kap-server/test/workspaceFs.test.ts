@@ -315,6 +315,13 @@ describe('server-v2 /api/v1 fs:content', () => {
     expect(body.code).toBe(40906);
   });
 
+  // /dev/null is a character device, not a regular file.
+  it.skipIf(process.platform === 'win32')('rejects non-regular files (40001)', async () => {
+    const res = await getContent('/dev/null');
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40001);
+  });
+
   it('does not serve the double-colon URL', async () => {
     const res = await fetch(`${base}/api/v1/fs::content?path=%2Ftmp`, {
       headers: authHeaders(server as RunningServer),

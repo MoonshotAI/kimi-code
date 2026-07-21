@@ -2,19 +2,21 @@
  * File content metadata helpers — binary detection, line counting, etag, and
  * extension-based mime / language guessing.
  *
- * Shared by the fs edge domains (`sessionFs`, `hostFileReader`) so every
- * read-style surface classifies and labels file content the same way. Pure
- * functions over bytes, text, and stat-like shapes; no io happens here.
+ * Shared by the fs edge domains (`sessionFs`) and the kap-server fs routes so
+ * every read-style surface classifies and labels file content the same way.
+ * Pure functions over bytes, text, and stat-like shapes; no io happens here.
+ * Binary detection samples the leading `FS_BINARY_SAMPLE_BYTES` of a file and
+ * flags it as binary when the non-printable fraction exceeds
+ * `FS_BINARY_NONPRINTABLE_FRACTION`; etags are built from any stat-like shape
+ * carrying `size` / `mtimeMs` / `ino` (`FileMetaStat`, satisfied by
+ * `HostFileStat`).
  */
 
 import { extname } from 'node:path';
 
-/** Number of leading bytes sampled for binary detection. */
 export const FS_BINARY_SAMPLE_BYTES = 4096;
-/** Fraction of non-printable bytes above which a sample counts as binary. */
 export const FS_BINARY_NONPRINTABLE_FRACTION = 0.3;
 
-/** Minimal stat shape needed to build an etag (satisfied by `HostFileStat`). */
 export interface FileMetaStat {
   readonly size: number;
   readonly mtimeMs?: number;
