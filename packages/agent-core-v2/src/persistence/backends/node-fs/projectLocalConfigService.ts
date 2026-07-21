@@ -2,9 +2,12 @@
  * `FileProjectLocalConfigService` — node-fs backend for `IProjectLocalConfigService`.
  *
  * Discovers project roots, parses and writes project-local
- * `.kimi-code/local.toml`, resolves additional directories with
- * v1-compatible OS-home expansion through `bootstrap`, and accesses the local
- * filesystem through `hostFs`. Works purely by path (project-root discovery
+ * `.kimi-code/local.toml` (the `[workspace]` additional-dir list plus the
+ * `[subagent.<type>]` / `[subagent-slot.<name>]` model/effort binding
+ * tables), resolves additional directories with v1-compatible OS-home
+ * expansion through `bootstrap`, and accesses the local filesystem through
+ * `hostFs`. Binding writes preserve unrelated TOML content and drop a
+ * section table that goes empty. Works purely by path (project-root discovery
  * via the nearest `.git` ancestor); it never touches the workspace catalog or
  * a `workspaceId`. Bound at App scope.
  */
@@ -19,10 +22,17 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
   type ProjectAdditionalDirsLoadResult,
+  type SubagentBinding,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
+
+const SubagentBindingTomlSchema = z.object({
+  model: z.string().optional(),
+  thinking_effort: z.string().optional(),
+  inherit: z.boolean().optional(),
+});
 
 const ProjectLocalTomlSchema = z.object({
   workspace: z
@@ -30,9 +40,13 @@ const ProjectLocalTomlSchema = z.object({
       additional_dir: z.array(z.string()),
     })
     .optional(),
+  subagent: z.record(z.string(), SubagentBindingTomlSchema).optional(),
+  'subagent-slot': z.record(z.string(), SubagentBindingTomlSchema).optional(),
 });
 
 type ProjectLocalToml = z.infer<typeof ProjectLocalTomlSchema>;
+
+type BindingSection = 'subagent' | 'subagent-slot';
 
 interface ProjectLocalTomlFile {
   readonly raw: Record<string, unknown>;
@@ -97,6 +111,30 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
   }
 
+  readSubagentBinding(workDir: string, agentType: string): Promise<SubagentBinding | undefined> {
+    return this.readBindingEntry(workDir, 'subagent', agentType);
+  }
+
+  writeSubagentBinding(
+    workDir: string,
+    agentType: string,
+    binding: SubagentBinding | undefined,
+  ): Promise<{ readonly configPath: string }> {
+    return this.writeBindingEntry(workDir, 'subagent', agentType, binding);
+  }
+
+  readSubagentSlotBinding(workDir: string, slot: string): Promise<SubagentBinding | undefined> {
+    return this.readBindingEntry(workDir, 'subagent-slot', slot);
+  }
+
+  writeSubagentSlotBinding(
+    workDir: string,
+    slot: string,
+    binding: SubagentBinding | undefined,
+  ): Promise<{ readonly configPath: string }> {
+    return this.writeBindingEntry(workDir, 'subagent-slot', slot, binding);
+  }
+
   private getProjectLocalConfigPath(projectRoot: string): string {
     return join(projectRoot, '.kimi-code', 'local.toml');
   }
@@ -148,6 +186,59 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     }
 
     return { raw: cloneRecord(raw), parsed: parseProjectLocalToml(raw) };
+  }
+
+  private async readBindingEntry(
+    workDir: string,
+    section: BindingSection,
+    name: string,
+  ): Promise<SubagentBinding | undefined> {
+    const projectRoot = await this.findProjectRoot(workDir);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const file = await this.readProjectLocalToml(configPath);
+    const entry = file?.parsed[section]?.[name];
+    if (entry === undefined) return undefined;
+    return {
+      model: entry.model,
+      thinkingEffort: entry.thinking_effort,
+      inherit: entry.inherit,
+    };
+  }
+
+  private async writeBindingEntry(
+    workDir: string,
+    section: BindingSection,
+    name: string,
+    binding: SubagentBinding | undefined,
+  ): Promise<{ readonly configPath: string }> {
+    const projectRoot = await this.findProjectRoot(workDir);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
+
+    const record = cloneRecord(file.raw[section]);
+    if (binding === undefined) {
+      delete record[name];
+    } else {
+      const entry: Record<string, unknown> = {};
+      if (binding.model !== undefined) entry['model'] = binding.model;
+      if (binding.thinkingEffort !== undefined) entry['thinking_effort'] = binding.thinkingEffort;
+      if (binding.inherit !== undefined) entry['inherit'] = binding.inherit;
+      record[name] = entry;
+    }
+    if (Object.keys(record).length === 0) {
+      delete file.raw[section];
+    } else {
+      file.raw[section] = record;
+    }
+
+    try {
+      await this.fs.mkdir(dirname(configPath), { recursive: true });
+      await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+    } catch (error: unknown) {
+      throw toStorageIoError(error, { path: configPath, op: 'write' });
+    }
+
+    return { configPath };
   }
 
   private async resolveAdditionalDirsInternal(

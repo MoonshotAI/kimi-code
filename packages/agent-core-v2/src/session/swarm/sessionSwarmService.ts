@@ -5,7 +5,9 @@
  * `AgentRunBatchLauncher` on top of the `agentLifecycle` primitives
  * (`create({ binding })`, `run`), drives the internal `AgentRunBatch`
  * scheduler, and tracks one `AbortController` per caller so `cancel` can abort
- * every in-flight run. The caller ↔ child association is this domain's own
+ * every in-flight run. Spawn attempts resolve the workspace model bindings
+ * (`subagent/bindingResolution`) behind the `subagent-model-selection`
+ * experimental flag before falling back to the caller model. The caller ↔ child association is this domain's own
  * business data: requester-side display facts (`subagent.spawned` wire signals
  * carrying the swarm's tool-call context, `subagent.suspended` when a task is
  * requeued after a provider rate limit) are emitted here / via the
@@ -24,8 +26,11 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
+import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   isSubagentMeta,
@@ -33,6 +38,8 @@ import {
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
+import { resolveSubagentSpawnBinding } from '#/session/subagent/bindingResolution';
+import { SUBAGENT_MODEL_SELECTION_FLAG_ID } from '#/session/subagent/flag';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -82,6 +89,9 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
+    @IFlagService private readonly flags: IFlagService,
+    @IWorkspaceLocalConfigService private readonly workspaceLocalConfig: IWorkspaceLocalConfigService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
 
   async getSwarmItem(args: {
@@ -141,14 +151,31 @@ export class SessionSwarmService implements ISessionSwarmService {
       throw new Error(`Unknown agent type: "${options.profileName}"`);
     }
     const callerData = caller.accessor.get(IAgentProfileService).data();
-    if (callerData.modelAlias === undefined) {
+    const bindingResolution = await resolveSubagentSpawnBinding(
+      {
+        flags: this.flags,
+        workspaceLocalConfig: this.workspaceLocalConfig,
+        modelCatalog: this.modelCatalog,
+      },
+      {
+        workDir: this.sessionContext.cwd,
+        profileName: profile.name,
+      },
+    );
+    if (bindingResolution.warning !== undefined) {
+      this.log.warn('subagent binding resolution', { warning: bindingResolution.warning });
+    }
+    const model = bindingResolution.model ?? callerData.modelAlias;
+    if (model === undefined) {
       throw new Error('Caller agent has no model bound');
     }
+    const thinking = bindingResolution.thinking ?? callerData.thinkingLevel;
+    const selectionEnabled = this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID);
     const child = await this.lifecycle.create({
       binding: {
         profile: profile.name,
-        model: callerData.modelAlias,
-        thinking: callerData.thinkingLevel,
+        model,
+        thinking,
         cwd: callerData.cwd,
       },
       labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
@@ -166,6 +193,8 @@ export class SessionSwarmService implements ISessionSwarmService {
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
+      modelAlias: selectionEnabled ? model : undefined,
+      thinkingEffort: selectionEnabled ? thinking : undefined,
     });
     const promptText = await applyProfilePromptPrefix(profile, options.prompt, {
       cwd: this.sessionContext.cwd,

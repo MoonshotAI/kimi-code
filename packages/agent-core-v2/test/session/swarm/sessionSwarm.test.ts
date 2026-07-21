@@ -13,6 +13,10 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
+import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { type SubagentSpawnedEvent } from '#/session/subagent/mirrorAgentRun';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
@@ -49,6 +53,8 @@ import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/ses
 import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
+import { stubFlag } from '../../app/flag/stubs';
+import { stubWorkspaceLocalConfig } from '../../app/workspaceLocalConfig/stubs';
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -903,6 +909,9 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(IFlagService, stubFlag(false));
+    ix.stub(IWorkspaceLocalConfigService, stubWorkspaceLocalConfig());
+    ix.stub(IModelCatalog, modelCatalogStub(['kimi-test']));
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
 
@@ -1000,6 +1009,99 @@ describe('SessionSwarmService metadata compatibility', () => {
           cwd: '/repo',
         },
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+      }),
+    );
+  });
+
+  it('keeps inheriting the caller model when the binding flag is disabled', async () => {
+    ix.stub(
+      IWorkspaceLocalConfigService,
+      stubWorkspaceLocalConfig({
+        bindings: { coder: { model: 'sub/model', thinkingEffort: 'high' } },
+      }),
+    );
+    const published: DomainEvent[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+      published.push(event);
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({ callerAgentId: 'main', tasks: [spawnSessionTask('src/a.ts')] });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          profile: 'coder',
+          model: 'kimi-test',
+          thinking: 'medium',
+          cwd: '/repo',
+        },
+      }),
+    );
+    const spawned = published.find(
+      (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+    );
+    expect(spawned).toBeDefined();
+    expect(spawned?.modelAlias).toBeUndefined();
+    expect(spawned?.thinkingEffort).toBeUndefined();
+  });
+
+  it('applies the workspace type binding to swarm spawns when the flag is enabled', async () => {
+    ix.stub(IFlagService, stubFlag(true));
+    ix.stub(
+      IWorkspaceLocalConfigService,
+      stubWorkspaceLocalConfig({
+        bindings: { coder: { model: 'sub/model', thinkingEffort: 'high' } },
+      }),
+    );
+    ix.stub(IModelCatalog, modelCatalogStub(['kimi-test', 'sub/model']));
+    const published: DomainEvent[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+      published.push(event);
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({ callerAgentId: 'main', tasks: [spawnSessionTask('src/a.ts')] });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          profile: 'coder',
+          model: 'sub/model',
+          thinking: 'high',
+          cwd: '/repo',
+        },
+      }),
+    );
+    const spawned = published.find(
+      (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+    );
+    expect(spawned).toMatchObject({
+      modelAlias: 'sub/model',
+      thinkingEffort: 'high',
+    });
+  });
+
+  it('falls back to the caller model when the bound alias is not configured', async () => {
+    ix.stub(IFlagService, stubFlag(true));
+    ix.stub(
+      IWorkspaceLocalConfigService,
+      stubWorkspaceLocalConfig({
+        bindings: { coder: { model: 'gone/model', thinkingEffort: 'high' } },
+      }),
+    );
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({ callerAgentId: 'main', tasks: [spawnSessionTask('src/a.ts')] });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          profile: 'coder',
+          model: 'kimi-test',
+          thinking: 'medium',
+          cwd: '/repo',
+        },
       }),
     );
   });
@@ -1338,6 +1440,17 @@ function eventBusStub(): IEventBus {
     publish: vi.fn((_: DomainEvent) => {}),
     subscribe: vi.fn(() => ({ dispose: () => {} })) as IEventBus['subscribe'],
   };
+}
+
+function modelCatalogStub(validAliases: readonly string[]): IModelCatalog {
+  const valid = new Set(validAliases);
+  return {
+    _serviceBrand: undefined,
+    get: (alias: string): Model => {
+      if (!valid.has(alias)) throw new Error(`model.not_configured: ${alias}`);
+      return {} as Model;
+    },
+  } as unknown as IModelCatalog;
 }
 
 type MockAgentRunAttemptOutcome<T> =

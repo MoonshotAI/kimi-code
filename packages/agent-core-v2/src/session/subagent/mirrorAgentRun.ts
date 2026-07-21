@@ -44,6 +44,10 @@ export interface SubagentSpawnedEvent {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
+  /** Effective model alias the subagent will run with (after override resolution). */
+  readonly modelAlias?: string;
+  /** Effective thinking effort the subagent will run with (after override resolution). */
+  readonly thinkingEffort?: string;
 }
 
 export interface SubagentStartedEvent {
@@ -81,6 +85,10 @@ export interface AgentRunSpawnedMeta {
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground?: boolean;
+  /** Effective model alias the subagent will run with (after override resolution). */
+  readonly modelAlias?: string;
+  /** Effective thinking effort the subagent will run with (after override resolution). */
+  readonly thinkingEffort?: string;
 }
 
 export interface MirrorAgentRunOptions {
@@ -107,6 +115,8 @@ export function emitAgentRunSpawned(
     description: meta.description,
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
+    modelAlias: meta.modelAlias,
+    thinkingEffort: meta.thinkingEffort,
   });
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,
