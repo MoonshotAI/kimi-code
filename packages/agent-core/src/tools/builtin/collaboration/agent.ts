@@ -195,9 +195,20 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     ) {
       const missingModel = binding.model;
       if (allowAsk && this.askBinding !== undefined) {
-        // A dismissed re-ask leaves the broken binding in place; the user is
-        // asked again on the next spawn, matching the unbound-ask semantics.
-        binding = await this.askBinding(profileName, { missingModel });
+        const repaired = await this.askBinding(profileName, { missingModel });
+        if (repaired !== undefined) {
+          binding = repaired;
+        } else {
+          // Dismissed re-ask — including non-interactive sessions where the
+          // question channel exists but can never be answered (e.g. `kimi
+          // -p`). Inherit, but say so explicitly: a silently ignored broken
+          // binding is worse than a warned one.
+          warning =
+            `warning: workspace binding for subagent type "${profileName}" references unknown ` +
+            `model alias "${missingModel}"; inheriting the main agent model. Update it with ` +
+            `/subagent-model set ${profileName} or in .kimi-code/local.toml.`;
+          binding = undefined;
+        }
       } else {
         warning =
           `warning: workspace binding for subagent type "${profileName}" references unknown ` +

@@ -1039,7 +1039,7 @@ describe('AgentTool', () => {
     expect(result.output).toContain('inheriting the main agent model');
   });
 
-  it('does not fall through to the plain ask when the missing-model re-ask is dismissed', async () => {
+  it('warns on inheritance when the missing-model re-ask is dismissed', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -1057,12 +1057,21 @@ describe('AgentTool', () => {
       isModelAliasKnown: () => false,
     });
 
-    await executeTool(tool, context({ prompt: 'Investigate', description: 'Find cause' }));
+    const result = await executeTool(
+      tool,
+      context({ prompt: 'Investigate', description: 'Find cause' }),
+    );
 
+    // Dismissed re-ask (e.g. non-interactive `kimi -p` where the question
+    // channel exists but is never answered): no second ask, inherit, and an
+    // explicit warning — never a silently ignored broken binding.
     expect(askBinding).toHaveBeenCalledTimes(1);
     expect(host.spawn).toHaveBeenCalledWith(
       expect.objectContaining({ modelAlias: undefined, thinkingEffort: undefined }),
     );
+    expect(result.output).toContain('warning:');
+    expect(result.output).toContain('gone/model-x');
+    expect(result.output).toContain('inheriting the main agent model');
   });
 
   it('inherits plainly when the binding is an explicit inherit choice', async () => {
