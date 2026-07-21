@@ -282,6 +282,8 @@ export * from '#/app/workspaceRegistry/workspacePersistence';
 export * from '#/app/workspaceRegistry/fileWorkspacePersistence';
 import '#/app/workspaceRegistry/workspaceQueryService';
 import '#/app/git/gitService';
+export * from '#/app/bashParser/bashParser';
+import '#/app/bashParser/bashParserService';
 export * from '#/session/process/processRunner';
 export * from '#/session/process/processRunnerService';
 export * from '#/session/sessionFs/errors';
