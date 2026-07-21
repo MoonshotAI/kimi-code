@@ -60,6 +60,7 @@ export class AuthFlowController {
       maxContextTokens: 0,
       contextUsage: 0,
       sessionTitle: null,
+      showSessionTitleInFooter: false,
     });
     this.host.appendStartupNotice(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
     this.host.setStartupReady();
@@ -110,6 +111,7 @@ export class AuthFlowController {
       sessionId: '',
       model: '',
       sessionTitle: null,
+      showSessionTitleInFooter: false,
     });
     await this.host.refreshSkillCommands();
     await this.host.refreshPluginCommands();

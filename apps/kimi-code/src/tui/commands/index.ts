@@ -28,7 +28,13 @@ export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand, parseGoalCommand } from './goal';
 export { goalArgumentCompletions } from './registry';
-export { handleForkCommand, handleInitCommand, handleTitleCommand } from './session';
+export {
+  handleForkCommand,
+  handleInitCommand,
+  handleTitleCommand,
+  handleTitleOffCommand,
+  handleTitleOnCommand,
+} from './session';
 export { handleUndoCommand } from './undo';
 export { handleWebCommand } from './web';
 export {

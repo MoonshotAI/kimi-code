@@ -1,4 +1,8 @@
 import chalk from 'chalk';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
@@ -38,6 +42,7 @@ const appState: AppState = {
   additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
+  showSessionTitleInFooter: false,
   model: 'kimi-k2',
   permissionMode: 'manual',
   thinkingEffort: 'off',
@@ -185,5 +190,146 @@ describe('FooterComponent displayName override', () => {
 
     expect(footer.render(120).join('\n')).toContain('Custom Name');
     expect(footer.render(120).join('\n')).not.toContain('Remote Name');
+  });
+});
+
+const ANSI_PATTERN = /\u001B\[[0-9;]*m/g;
+
+function stripAnsi(text: string): string {
+  return text.replaceAll(ANSI_PATTERN, '');
+}
+
+describe('FooterComponent session title', () => {
+  const previousChalkLevel = chalk.level;
+
+  beforeEach(() => {
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    chalk.level = previousChalkLevel;
+  });
+
+  it('hides the session title when the toggle is off', () => {
+    const state: AppState = {
+      ...appState,
+      sessionTitle: 'My session',
+      showSessionTitleInFooter: false,
+    };
+    const footer = new FooterComponent(state);
+
+    expect(stripAnsi(footer.render(120).join('\n'))).not.toContain('My session');
+  });
+
+  it('shows the session title after the git badge when the toggle is on', () => {
+    const state: AppState = {
+      ...appState,
+      sessionTitle: 'My session',
+      showSessionTitleInFooter: true,
+    };
+    const footer = new FooterComponent(state);
+
+    const rendered = stripAnsi(footer.render(120).join('\n'));
+    expect(rendered).toContain('My session');
+    // Line 1 joins items with two spaces: cwd, then title (no git repo here).
+    const line1 = rendered.split('\n')[0] ?? '';
+    const cwdIndex = line1.indexOf('/tmp/project');
+    const titleIndex = line1.indexOf('My session');
+    expect(cwdIndex).toBeGreaterThanOrEqual(0);
+    expect(titleIndex).toBeGreaterThan(cwdIndex);
+  });
+
+  it('renders no empty segment when the toggle is on but the title is null', () => {
+    const withToggle: AppState = {
+      ...appState,
+      sessionTitle: null,
+      showSessionTitleInFooter: true,
+    };
+    const withoutToggle: AppState = {
+      ...appState,
+      sessionTitle: null,
+      showSessionTitleInFooter: false,
+    };
+
+    expect(new FooterComponent(withToggle).render(120).join('\n')).toBe(
+      new FooterComponent(withoutToggle).render(120).join('\n'),
+    );
+  });
+
+  it('renders the title right after the git branch badge', () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-title-'));
+    try {
+      execFileSync('git', ['init', '-b', 'trunk', repoDir]);
+      const state: AppState = {
+        ...appState,
+        workDir: repoDir,
+        sessionTitle: 'My session',
+        showSessionTitleInFooter: true,
+      };
+      const footer = new FooterComponent(state);
+
+      const line1 = stripAnsi(footer.render(160).join('\n')).split('\n')[0] ?? '';
+      const branchIndex = line1.indexOf('trunk');
+      const titleIndex = line1.indexOf('My session');
+      expect(branchIndex).toBeGreaterThanOrEqual(0);
+      expect(titleIndex).toBeGreaterThan(branchIndex);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it('renders a title of exactly 40 columns without an ellipsis', () => {
+    const state: AppState = {
+      ...appState,
+      sessionTitle: 'a'.repeat(40),
+      showSessionTitleInFooter: true,
+    };
+    const footer = new FooterComponent(state);
+
+    const rendered = stripAnsi(footer.render(200).join('\n'));
+    expect(rendered).toContain('a'.repeat(40));
+    expect(rendered).not.toContain('…');
+  });
+
+  it('truncates a 41-column title to width 40 with an ellipsis', () => {
+    const state: AppState = {
+      ...appState,
+      sessionTitle: 'a'.repeat(41),
+      showSessionTitleInFooter: true,
+    };
+    const footer = new FooterComponent(state);
+
+    const rendered = stripAnsi(footer.render(200).join('\n'));
+    // Width-aware: 39 columns of text + the 1-column ellipsis.
+    expect(rendered).toContain(`${'a'.repeat(39)}…`);
+    expect(rendered).not.toContain('a'.repeat(40));
+  });
+
+  it('caps wide titles by display width, not character count', () => {
+    const state: AppState = {
+      ...appState,
+      sessionTitle: 'a'.repeat(50),
+      showSessionTitleInFooter: true,
+    };
+    const footer = new FooterComponent(state);
+
+    const rendered = stripAnsi(footer.render(200).join('\n'));
+    expect(rendered).toContain(`${'a'.repeat(39)}…`);
+    expect(rendered).not.toContain('a'.repeat(40));
+  });
+
+  it('caps CJK titles by display width (2 columns per character)', () => {
+    const state: AppState = {
+      ...appState,
+      // 25 CJK characters = 50 columns, over the 40-column cap.
+      sessionTitle: '汉'.repeat(25),
+      showSessionTitleInFooter: true,
+    };
+    const footer = new FooterComponent(state);
+
+    const rendered = stripAnsi(footer.render(200).join('\n'));
+    // 19 CJK chars (38 columns) + the 1-column ellipsis = 39 columns.
+    expect(rendered).toContain(`${'汉'.repeat(19)}…`);
+    expect(rendered).not.toContain('汉'.repeat(20));
   });
 });

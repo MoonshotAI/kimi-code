@@ -31,6 +31,8 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/tasks` | `/task` | Browse the background task list | Yes |
 | `/fork` | — | Fork a new session from the current one, preserving the full conversation history | No |
 | `/title [<text>]` | `/rename` | Without arguments, display the current session title; with an argument, set a new title (max 200 characters) | Yes |
+| `/titleon` | — | Show the current session title in the footer after the git branch (session-only, not persisted) | Yes |
+| `/titleoff` | — | Hide the session title from the footer | Yes |
 | `/compact [<instruction>]` | — | Compact the current conversation context to free up token usage; an optional custom instruction can hint to the model what to preserve | No |
 | `/undo [<count>]` | — | Undo recent prompts from the active context. Without a count, opens a selector; with a count, undoes that many prompts. Prompts before the last compaction cannot be undone | No |
 | `/reload` | — | Reload the current session and apply the latest `config.toml` settings (providers, models, etc.) and `tui.toml` UI preferences, without restarting the CLI | No |

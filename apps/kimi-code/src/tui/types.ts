@@ -55,6 +55,9 @@ export interface AppState {
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
+  /** Session-only toggle (/titleon, /titleoff): show the session title in the
+   *  footer after the git badge. Not persisted; resets on session switch. */
+  showSessionTitleInFooter: boolean;
   /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
   goal?: GoalSnapshot | null;
   mcpServersSummary: string | null;

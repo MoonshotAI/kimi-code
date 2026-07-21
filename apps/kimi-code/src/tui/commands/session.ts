@@ -46,6 +46,40 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
   host.showStatus(`Session title set to: ${newTitle}`);
 }
 
+// Narrowed host for the /titleon and /titleoff footer toggles (mirrors the
+// UpdatePreferenceHost pattern in config.ts) so tests can use a plain fake.
+type SessionTitleFooterHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'showSessionTitleInFooter'
+    >;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'showSessionTitleInFooter'>): void;
+  showStatus(msg: string, color?: string): void;
+  track: SlashCommandHost['track'];
+};
+
+export function handleTitleOnCommand(host: SessionTitleFooterHost): void {
+  if (host.state.appState.showSessionTitleInFooter) {
+    host.showStatus('Session title is already shown in the footer.');
+    return;
+  }
+  host.setAppState({ showSessionTitleInFooter: true });
+  host.track('session_title_footer_changed', { visible: true });
+  host.showStatus('Session title now shown in the footer (this session only).');
+}
+
+export function handleTitleOffCommand(host: SessionTitleFooterHost): void {
+  if (!host.state.appState.showSessionTitleInFooter) {
+    host.showStatus('Session title is already hidden from the footer.');
+    return;
+  }
+  host.setAppState({ showSessionTitleInFooter: false });
+  host.track('session_title_footer_changed', { visible: false });
+  host.showStatus('Session title hidden from the footer.');
+}
+
 export async function handleForkCommand(host: SlashCommandHost, args: string): Promise<void> {
   void args;
   const session = host.session;

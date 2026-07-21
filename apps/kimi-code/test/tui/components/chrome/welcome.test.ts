@@ -15,6 +15,7 @@ const appState: AppState = {
   additionalDirs: [],
   sessionId: 'ses-1',
   sessionTitle: null,
+  showSessionTitleInFooter: false,
   model: 'kimi-k2',
   permissionMode: 'manual',
   thinkingEffort: 'off',
