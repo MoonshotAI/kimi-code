@@ -51,6 +51,15 @@ import { Button, Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop } from './lib/desktopFlag';
 import { useFullscreen } from './composables/useFullscreen';
 import { useTrayAttention } from './composables/useTrayAttention';
+import { matchShortcutAction } from './composables/useShortcuts';
+import { shortcutActionById } from './lib/keymap';
+import {
+  canOpenInNative,
+  listNativeOpenInApps,
+  openInNativeApp,
+  resolveOpenInTarget,
+  useDefaultOpenInTarget,
+} from './lib/nativeOpenIn';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -197,10 +206,34 @@ onMounted(() => {
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
+  // Bubble-phase global shortcut dispatcher (desktop-only customizable keys;
+  // see lib/keymap.ts). Components get first claim via preventDefault.
+  window.addEventListener('keydown', onShortcutKeydown);
+  // Native app menu commands forward here over the preload bridge
+  // (main/menu.ts → kimi:menu-action): Settings / New Chat / Open Folder map
+  // onto the same shortcut actions as the renderer keymap, so a menu click and
+  // the (menu-shadowed) key always do the same thing.
+  offMenuAction =
+    (window as { kimiDesktop?: { onMenuAction?: (cb: (id: string) => void) => () => void } })
+      .kimiDesktop?.onMenuAction?.((menuId) => {
+      const actionId = MENU_ACTION_TO_SHORTCUT[menuId];
+      if (actionId === undefined) return;
+      // Menu clicks bypass the keydown dispatcher, so apply the same overlay
+      // ownership here: opening the settings dialog on top of another modal
+      // would stack competing focus traps — only the closing press (settings
+      // already open) is allowed through.
+      if (anyOverlayOpen.value && !(actionId === 'openSettings' && showSettings.value)) return;
+      runShortcutAction(actionId);
+    }) ?? null;
 });
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  window.removeEventListener('keydown', onShortcutKeydown);
+  if (offMenuAction !== null) {
+    offMenuAction();
+    offMenuAction = null;
+  }
   window.visualViewport?.removeEventListener('resize', syncAppHeight);
   window.visualViewport?.removeEventListener('scroll', syncAppHeight);
   window.removeEventListener('resize', syncAppHeight);
@@ -225,6 +258,104 @@ function onGlobalKeydown(e: KeyboardEvent): void {
     e.stopPropagation();
     e.preventDefault();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Customizable keyboard shortcuts (desktop-only — web keeps its hardcoded
+// keys, see docs/native-todos.md). Global-scope actions dispatch through this
+// one window listener; the composer/conversation scopes stay in their own
+// components, which read the same registry via useShortcuts.
+// ---------------------------------------------------------------------------
+let offMenuAction: (() => void) | null = null;
+
+// Native menu item id → shortcut action id (main/menu.ts); both entry points
+// run the same handler.
+const MENU_ACTION_TO_SHORTCUT: Record<string, string> = {
+  'open-settings': 'openSettings',
+  'new-chat': 'newSession',
+  'open-folder': 'openFolder',
+};
+
+const sidebarRef = ref<InstanceType<typeof Sidebar> | null>(null);
+
+// "Open in <default app>": same target resolution as the header menu pick
+// (nativeOpenIn.ts owns the persisted default), keyed off the same root the
+// ChatHeader gets.
+async function openWorkspaceInDefaultApp(): Promise<void> {
+  const root = client.visibleWorkspace.value?.root ?? client.status.value.cwd;
+  if (!root || !canOpenInNative()) return;
+  const apps = await listNativeOpenInApps();
+  const target = resolveOpenInTarget(
+    apps.map((app) => app.id),
+    useDefaultOpenInTarget().value,
+  );
+  if (target === null) return;
+  await openInNativeApp(target, root);
+}
+
+function runShortcutAction(id: string): void {
+  switch (id) {
+    case 'openSettings':
+      showSettings.value = !showSettings.value;
+      break;
+    case 'toggleSidebar':
+      toggleSidebarCollapse();
+      break;
+    case 'searchSessions':
+      sidebarRef.value?.toggleSearch();
+      break;
+    case 'newSession':
+      handleCreateSession();
+      break;
+    case 'archiveSession': {
+      // The shortcut archives immediately (no confirm dialog) by design.
+      const sid = client.activeSessionId.value;
+      if (sid) void client.archiveSession(sid);
+      break;
+    }
+    case 'toggleSideChat':
+      // Same toggle as a bare `/btw` (see handleCommand).
+      if (client.sideChatVisible.value) {
+        closeSideChat();
+      } else {
+        void openSideChatTab();
+      }
+      break;
+    case 'openFolder':
+      void requestAddWorkspace();
+      break;
+    case 'openInDefaultApp':
+      void openWorkspaceInDefaultApp();
+      break;
+  }
+}
+
+function onShortcutKeydown(e: KeyboardEvent): void {
+  // A component (composer, dialog, recorder…) already claimed this key —
+  // preventDefault is always set before the window bubble listener runs.
+  if (e.defaultPrevented) return;
+  if (e.isComposing || e.keyCode === 229) return;
+  // Key-repeat must never re-fire an action: holding the archive combo would
+  // otherwise archive chat after chat (no confirm), and toggles would flap.
+  if (e.repeat) return;
+  const id = matchShortcutAction(e, 'global');
+  if (id === null) return;
+  // Session-scoped actions (archive / side chat / open-in) only fire with an
+  // active chat — never on the new-chat draft or onboarding pages.
+  const action = shortcutActionById(id);
+  if (action?.requiresSession === true && !client.activeSessionId.value) return;
+  // Overlays own the keyboard while open — the only exceptions are presses
+  // that CLOSE the dialog that's already open (settings/search toggles).
+  // Opening another dialog on top of a modal would stack competing focus
+  // traps and Escape handlers.
+  if (anyOverlayOpen.value) {
+    const closesOpenDialog =
+      (id === 'openSettings' && showSettings.value) ||
+      (id === 'searchSessions' && sidebarRef.value?.isSearchOpen() === true);
+    if (!closesOpenDialog) return;
+  }
+  e.preventDefault();
+  runShortcutAction(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,30 +453,6 @@ const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
-
-// Desktop-only: native menu commands forward here over the preload bridge
-// (main/menu.ts → kimi:menu-action): App menu "设置… / Settings…" →
-// 'open-settings', File menu "新建会话 / New Chat" → 'new-chat'. The bridge
-// exists only in Electron, so on web this is a no-op and the Sidebar's own
-// Cmd/Ctrl+N keydown stays the only path (the no-bridge fallback, per
-// native-todos.md).
-let offMenuAction: (() => void) | undefined;
-onMounted(() => {
-  offMenuAction = (
-    window as {
-      kimiDesktop?: { onMenuAction?: (cb: (id: string) => void) => () => void };
-    }
-  ).kimiDesktop?.onMenuAction?.((id) => {
-    if (id === 'open-settings') {
-      showSettings.value = true;
-    } else if (id === 'new-chat') {
-      handleCreateSession();
-    }
-  });
-});
-onUnmounted(() => {
-  offMenuAction?.();
-});
 
 type SubmitPayload = {
   text: string;
@@ -798,6 +905,7 @@ function openPr(url: string): void {
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
       <Sidebar
+        ref="sidebarRef"
         :collapsed="sidebarCollapsed"
         :dragging="sidebarDragging"
         :col-width="sideWidth"

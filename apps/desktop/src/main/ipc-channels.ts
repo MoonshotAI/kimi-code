@@ -22,6 +22,8 @@ export const IPC = {
   trayAttention: 'kimi:tray-attention',
   traySelectSession: 'kimi:tray-select-session',
   locale: 'kimi:locale',
+  menuShortcut: 'kimi:menu-shortcut',
+  menuSuspend: 'kimi:menu-suspend',
   petDragStart: 'kimi:pet-drag-start',
   petDragMove: 'kimi:pet-drag-move',
   petDragEnd: 'kimi:pet-drag-end',

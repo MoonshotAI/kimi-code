@@ -60,6 +60,7 @@ import RiCheckLine from '~icons/ri/check-line';
 import RiCloseLine from '~icons/ri/close-line';
 import RiCodeLine from '~icons/ri/code-line';
 import RiCollapseDiagonalLine from '~icons/ri/collapse-diagonal-line';
+import RiDeleteBinLine from '~icons/ri/delete-bin-line';
 import RiDownloadLine from '~icons/ri/download-line';
 import RiDraggable from '~icons/ri/draggable';
 import RiEqualizerLine from '~icons/ri/equalizer-line';
@@ -78,6 +79,7 @@ import RiGitPullRequestLine from '~icons/ri/git-pull-request-line';
 import RiGlobalLine from '~icons/ri/global-line';
 import RiImageLine from '~icons/ri/image-line';
 import RiInformationLine from '~icons/ri/information-line';
+import RiKeyboardLine from '~icons/ri/keyboard-line';
 import RiLinksLine from '~icons/ri/links-line';
 import RiListCheck from '~icons/ri/list-check';
 import RiListUnordered from '~icons/ri/list-unordered';
@@ -139,6 +141,7 @@ import RawCheckLine from '~icons/ri/check-line?raw';
 import RawCloseLine from '~icons/ri/close-line?raw';
 import RawCodeLine from '~icons/ri/code-line?raw';
 import RawCollapseDiagonalLine from '~icons/ri/collapse-diagonal-line?raw';
+import RawDeleteBinLine from '~icons/ri/delete-bin-line?raw';
 import RawDownloadLine from '~icons/ri/download-line?raw';
 import RawDraggable from '~icons/ri/draggable?raw';
 import RawEqualizerLine from '~icons/ri/equalizer-line?raw';
@@ -157,6 +160,7 @@ import RawGitPullRequestLine from '~icons/ri/git-pull-request-line?raw';
 import RawGlobalLine from '~icons/ri/global-line?raw';
 import RawImageLine from '~icons/ri/image-line?raw';
 import RawInformationLine from '~icons/ri/information-line?raw';
+import RawKeyboardLine from '~icons/ri/keyboard-line?raw';
 import RawLinksLine from '~icons/ri/links-line?raw';
 import RawListCheck from '~icons/ri/list-check?raw';
 import RawListUnordered from '~icons/ri/list-unordered?raw';
@@ -240,6 +244,8 @@ export type IconName =
   | 'globe'
   | 'check-list'
   | 'bolt'
+  | 'keyboard'
+  | 'trash'
   | 'git-fork'
   | 'git-pull-request'
   | 'message'
@@ -333,6 +339,8 @@ export const ICONS: Record<IconName, IconEntry> = {
   globe: entry(RiGlobalLine, RawGlobalLine),
   'check-list': entry(RiListCheck, RawListCheck),
   bolt: entry(RiFlashlightLine, RawFlashlightLine),
+  keyboard: entry(RiKeyboardLine, RawKeyboardLine),
+  trash: entry(RiDeleteBinLine, RawDeleteBinLine),
   'git-fork': entry(RiGitForkLine, RawGitForkLine),
   'git-pull-request': entry(RiGitPullRequestLine, RawGitPullRequestLine),
   message: entry(RiMessageLine, RawMessageLine),
@@ -443,6 +451,8 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'globe',
       'check-list',
       'bolt',
+      'keyboard',
+      'trash',
       'git-fork',
       'git-pull-request',
       'archive',

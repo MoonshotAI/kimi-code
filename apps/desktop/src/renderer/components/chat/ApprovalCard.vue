@@ -191,6 +191,9 @@ function rejectAndExitPlan(): void { act('rejectAndExit', { decision: 'rejected'
 function handleKeydown(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName ?? '').toLowerCase();
   if (tag === 'input' || tag === 'textarea') return;
+  // Bare-key conveniences only: a modified chord (⌘1, Ctrl+2, …) belongs to
+  // the shortcut system or the browser, never to the card.
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   // A modal dialog/lightbox owns the keyboard — never fire decision shortcuts
   // through it (mirrors QuestionCard's openDialogCount guard).
   if (openDialogCount.value > 0 || e.defaultPrevented) return;

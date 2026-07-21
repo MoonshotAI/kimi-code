@@ -7,6 +7,7 @@ export default {
     account: '账户',
     advanced: '高级',
     archived: '已归档',
+    shortcuts: '键盘快捷键',
   },
   appearance: '外观',
   notifications: '通知',

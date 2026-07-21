@@ -40,6 +40,8 @@ const WHITELIST = [
   'petDragMove',
   'petDragStart',
   'setLocale',
+  'setMenuShortcuts',
+  'setMenuSuspended',
   'setTheme',
   'setTrayAttention',
   'showOpenDialog',
@@ -107,6 +109,19 @@ describe('kimiDesktop preload bridge', () => {
     exposed.setLocale('fr'); // unsupported locale ignored
     expect(send).toHaveBeenCalledTimes(3);
 
+    // Menu shortcuts: the action→binding map forwards; junk is ignored.
+    exposed.setMenuShortcuts({ openSettings: 'mod+,', newSession: null });
+    expect(send).toHaveBeenCalledWith('kimi:menu-shortcut', { openSettings: 'mod+,', newSession: null });
+    exposed.setMenuShortcuts('mod+,'); // junk ignored
+    exposed.setMenuShortcuts(null);
+    expect(send).toHaveBeenCalledTimes(4);
+
+    // Menu suspend: booleans forward; junk is ignored.
+    exposed.setMenuSuspended(true);
+    expect(send).toHaveBeenCalledWith('kimi:menu-suspend', true);
+    exposed.setMenuSuspended('yes'); // junk ignored
+    expect(send).toHaveBeenCalledTimes(5);
+
     // Pet drag: validated screen points forward; junk never reaches main.
     exposed.petDragStart({ screenX: 100, screenY: 200 });
     expect(send).toHaveBeenCalledWith('kimi:pet-drag-start', { screenX: 100, screenY: 200 });
@@ -114,10 +129,10 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:pet-drag-move', { screenX: 120, screenY: 220 });
     exposed.petDragStart({ screenX: '100', screenY: 200 });
     exposed.petDragMove({ screenX: Number.NaN, screenY: 0 });
-    expect(send).toHaveBeenCalledTimes(5);
+    expect(send).toHaveBeenCalledTimes(7);
     exposed.petDragEnd();
     expect(send).toHaveBeenCalledWith('kimi:pet-drag-end');
-    expect(send).toHaveBeenCalledTimes(6);
+    expect(send).toHaveBeenCalledTimes(8);
 
     exposed.showWindow();
     expect(send).toHaveBeenCalledWith('kimi:show-window');

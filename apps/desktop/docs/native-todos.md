@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 20 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 25 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意三点：
 
@@ -49,10 +49,14 @@
   - 现状：自研 Promise 化确认框 `useConfirmDialog.ts` + `ConfirmDialogHost.vue`。
   - 做法：desktop 下换 `dialog.showMessageBox`。
 
-- [ ] **应用级快捷键进原生菜单**
-  - 现状：大量 web `keydown` 监听（Esc 关侧栏/中断运行、Cmd+K 搜索、Enter 发送等，散在 `App.vue` / `ConversationPane.vue` / `Sidebar.vue` / `Composer.vue`）；编辑类快捷键靠 `editMenu` role 白送，应用级命令没有原生 accelerator。
-  - 做法：高频命令（新建会话、设置、搜索等）注册到 `src/main/menu.ts`，经 `kimi:menu-action` 转发 renderer（channel 已存在，renderer 未监听）。
-  - 进展（2026-07）：「设置…」（`CmdOrCtrl+,`）已按此路径落地，renderer `App.vue` 开始监听 `onMenuAction`（见下方「App 菜单」条）；新建会话 / 搜索等仍待做。
+- [x] **自定义键盘快捷键**（已完成，desktop 专属；替代原「应用级快捷键进原生菜单」条目——菜单项与 renderer 快捷键统一走同一张注册表）
+  - 实现：`src/renderer/lib/keymap.ts` 纯函数层——action 注册表（id/scope/i18n key/默认绑定/requiresSession）、canonical 绑定格式（修饰键定序 `ctrl/alt/shift/mod` + 键名，`mod` = macOS ⌘ / 其他 Ctrl）、`matchBinding` / `bindingFromEvent`（录制）/ `isValidBinding`（禁裸可打印字符）/ `findConflict`（同 scope 查重）/ `formatBindingKeys`（Kbd 键帽，两平台）。**匹配走物理键位 `e.code`**：macOS 会把 ⌥+字母变成变形字符（⌥A='å'、⌥B='∫'、⌥O='ø'），按 `e.key` 永远匹配不上。响应式状态在 `composables/useShortcuts.ts`：模块级 overrides（localStorage `kimi-web.shortcut-overrides`，值 null=未分配、缺省=默认，nativeOpenIn 同款 mirror 模式），watch 持久化并把菜单相关绑定（openSettings/newSession/openFolder）经新桥 `setMenuShortcuts`（map 形态）推主进程（immediate 兼作启动首推）。
+  - 分发：全局 scope 由 `App.vue` 的 `onShortcutKeydown`（window bubble）统一处理——`defaultPrevented`/IME/`e.repeat` 跳过，overlay 打开时除"关闭自己"（openSettings/searchSessions）外全禁，requiresSession 的 action（归档/侧边聊天/Open in）无活动会话时 no-op；8 个 action（设置 ⌘,、侧栏 ⌘B、搜索 ⌘K、新建 ⌘N、归档 ⌥⌘A 无确认、btw ⌥⌘B、打开文件夹 ⌘O 走 `requestAddWorkspace`、Open in 默认应用 ⌥⌘O）全部复用现有 handler。默认键体系参考 VS Code（⌘,/⌘B/⌘N/⌘O 对齐，应用特有动作用 ⌥⌘+字母一族）。composer scope（发送/换行）留在 `Composer.vue` 读同一注册表——默认 Shift+Enter 走浏览器原生插入 + stopPropagation（保原生 undo），重绑的组合手动插 `\n`；expanded 模式默认发送认 mod+enter 与 ctrl+enter 双别名，用户自定义后精确匹配。**steer（Ctrl/Cmd+S）与中断（Esc）按用户决策保持硬编码、不可自定义**（steer 恢复旧条件 `ctrlKey || metaKey`，匹配即 consume 防漏给全局 dispatcher；中断恢复原 Escape + 4 重守卫）。`Sidebar.vue` 的原 `Cmd+K/Cmd+N` 监听已删（迁入注册表），键帽改读 `resolvedBindingKeys`，搜索对话框经 `defineExpose({ openSearch, toggleSearch, isSearchOpen })` 给 App 调用。
+  - 设置页：`SettingsDialog.vue` 新 tab「键盘快捷键」+ `components/settings/ShortcutsPanel.vue`（搜索过滤、单卡片平铺列表、Kbd 键帽、录制交互——accent 描边录制框实时回显按住的修饰键 + 显式取消按钮/Esc 取消，capture 阶段 preventDefault+stopPropagation 防 App dispatcher 与对话框 Esc 抢键，非法/冲突就地报错、单条重置/取消分配/全部重置）。
+  - 原生菜单联动（合入「App/File/Help 菜单扩展」后）：菜单项「设置…」「新建会话」「打开文件夹」的 accelerator **跟随用户绑定**——renderer 经 `kimi:menu-shortcut` 推送 map，主进程 `menu.ts` 的 `MENU_SHORTCUT_DEFAULTS` + `setMenuShortcuts` 存 overrides 并 `buildMenu()`，`bindingToAccelerator` 转换（转不了则不显示，renderer 绑定兜底）；三项 click 均 `showMainWindow()` + `kimi:menu-action` 转发，renderer 端菜单 id 经 `MENU_ACTION_TO_SHORTCUT` 映射到同一批 shortcut action（菜点击与按键永远同效；菜单 accelerator 会遮蔽 renderer keydown，所以 click 必须存在）。「新建窗口」仍 display-only（真多窗口要动 mainWindow 单例模型，未做）。
+  - **web 刻意不改**：整套自定义能力 desktop-only（用户明确决定），web 保持硬编码键位。分叉块：`App.vue`（dispatcher + 菜单监听 + import）、`Sidebar.vue`（键帽 + expose + 删监听）、`Composer.vue`（steer/send/newline 读绑定 + `insertNewlineAtCaret`）、`ConversationPane.vue`（interrupt 读绑定）、`SettingsDialog.vue`（shortcuts tab）、`lib/icons.ts`（keyboard/trash 图标）、`lib/storage.ts`（shortcutOverrides key）；新文件 keymap.ts / useShortcuts.ts / ShortcutsPanel.vue 不同步。i18n 的 `shortcuts.*` 与 `settings.tabs.shortcuts` 在共享包（web 不使用，无副作用）。整目录 re-copy 时需保留以上全部。
+  - 测试：`tests/renderer/keymap.test.ts`（22 用例：平台判定/解析/精确修饰键匹配/⌥ 变形字符按 code 匹配/录制/校验/查重/键帽）；`tests/main/menu.test.ts`（设置/新建/打开文件夹项 accelerator 跟随/缺省 + bindingToAccelerator）；`tests/main/preload.test.ts`（白名单 + setMenuShortcuts 通道校验）。
+  - 明确未做：web 端、OS 级全局快捷键（globalShortcut 仍只有 smoke-test 的 Cmd+Alt+K，renderer 仍未消费 `onShortcut`）、右侧面板/diff 快捷键、跨端同步、多窗口。
 
 - [ ] **最近工作区接入 OS**
   - 现状：全靠 localStorage + server `recentRoots`。
@@ -154,5 +158,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（18 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（25 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

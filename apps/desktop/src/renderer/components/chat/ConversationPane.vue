@@ -1224,7 +1224,8 @@ function onKeyDown(event: KeyboardEvent): void {
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
   // an active IME composition (it only cancels the candidate), or any earlier
   // handler that consumed the key (defaultPrevented). The same keypress must
-  // not also interrupt a running prompt behind any of these.
+  // not also interrupt a running prompt behind any of these. (Hardcoded to
+  // Escape by decision — not customizable.)
   if (
     event.key === 'Escape' &&
     !props.overlayOpen &&

@@ -27,6 +27,7 @@ import onboarding from './zh/onboarding';
 import settings from './zh/settings';
 import header from './zh/header';
 import sideChat from './zh/sideChat';
+import shortcuts from './zh/shortcuts';
 
 export default {
   common,
@@ -58,4 +59,5 @@ export default {
   settings,
   header,
   sideChat,
+  shortcuts,
 };

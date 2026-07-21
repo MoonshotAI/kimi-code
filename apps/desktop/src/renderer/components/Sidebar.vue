@@ -31,6 +31,7 @@ import UpdateIndicator from './UpdateIndicator.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
+import { resolvedBindingKeys } from '../composables/useShortcuts';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -138,8 +139,10 @@ const emit = defineEmits<{
 // Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
 const showSearch = ref(false);
-const sessionSearchKeys = isAppleShortcutPlatform() ? ['⌘', 'K'] : ['Ctrl', 'K'];
-const newChatKeys = isAppleShortcutPlatform() ? ['⌘', 'N'] : ['Ctrl', 'N'];
+// Keycap hints follow the user's actual bindings (desktop-only customizable
+// shortcuts, lib/keymap.ts); empty array = unassigned → no caps rendered.
+const sessionSearchKeys = computed(() => resolvedBindingKeys('searchSessions'));
+const newChatKeys = computed(() => resolvedBindingKeys('newSession'));
 
 function openSearch(): void {
   // Sessions are loaded per-workspace (first page only); lazily drain the rest
@@ -148,28 +151,18 @@ function openSearch(): void {
   showSearch.value = true;
 }
 
-function onSearchKeydown(e: KeyboardEvent): void {
-  if (!(e.metaKey || e.ctrlKey)) return;
-
-  if (e.key.toLowerCase() === 'k') {
-    e.preventDefault();
+// Popup-style shortcuts toggle: the same binding that opens also closes.
+function toggleSearch(): void {
+  if (showSearch.value) {
+    showSearch.value = false;
+  } else {
     openSearch();
-  } else if (e.key.toLowerCase() === 'n') {
-    e.preventDefault();
-    emit('create');
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onSearchKeydown));
-onBeforeUnmount(() => window.removeEventListener('keydown', onSearchKeydown));
-
-function isAppleShortcutPlatform(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  if (/Mac|iPod|iPhone|iPad/.test(navigator.platform)) return true;
-
-  const userAgentData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
-  return userAgentData?.platform === 'macOS' || userAgentData?.platform === 'iOS';
-}
+// App.vue's shortcut dispatcher drives the dialog through these exposes
+// (isSearchOpen lets it allow the closing press through the overlay guard).
+defineExpose({ openSearch, toggleSearch, isSearchOpen: () => showSearch.value });
 
 // Scroll-linked seams: each edge shows a soft 18px fade only while more session
 // content exists beyond that edge. This keeps the pinned actions and Settings

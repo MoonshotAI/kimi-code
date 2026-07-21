@@ -9,6 +9,7 @@ import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import type { AppSession } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
+import ShortcutsPanel from './ShortcutsPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
@@ -84,7 +85,7 @@ function commitUiFontSize(): void {
   setUiFontSize(value);
 }
 
-type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
+type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived' | 'shortcuts';
 
 const activeTab = ref<SettingsTab>('general');
 
@@ -92,6 +93,8 @@ const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
   { id: 'general', labelKey: 'settings.tabs.general', icon: 'sliders' },
   { id: 'agent', labelKey: 'settings.tabs.agent', icon: 'sparkles' },
   { id: 'account', labelKey: 'settings.tabs.account', icon: 'user' },
+  // Desktop-only tab (web's copy stops at 'archived'; docs/native-todos.md).
+  { id: 'shortcuts', labelKey: 'settings.tabs.shortcuts', icon: 'keyboard' },
   { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'tool' },
   { id: 'archived', labelKey: 'settings.tabs.archived', icon: 'archive' },
 ];
@@ -792,6 +795,14 @@ function archiveTime(iso: string): string {
               {{ archivedItems.length === 0 ? t('settings.archivedEmpty') : t('settings.archivedNoMatch') }}
             </div>
           </template>
+        </section>
+
+        <!-- Keyboard Shortcuts (desktop-only). v-if (not v-show): the panel
+             owns a document-level recording listener, so it must unmount
+             when the tab is hidden — a hidden-but-mounted recorder would
+             keep swallowing keys typed in the now-visible tab. -->
+        <section v-if="activeTab === 'shortcuts'" class="panel">
+          <ShortcutsPanel />
         </section>
 
         </div>

@@ -19,7 +19,6 @@ interface MenuStrings {
   window: string;
   closeWindow: string;
   file: string;
-  newWindow: string;
   newChat: string;
   openFolder: string;
   aboutApp: string;
@@ -44,7 +43,6 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     window: '窗口',
     closeWindow: '关闭窗口',
     file: '文件',
-    newWindow: '新建窗口',
     newChat: '新建会话',
     openFolder: '打开文件夹…',
     aboutApp: '关于 Kimi Code',
@@ -67,7 +65,6 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     window: 'Window',
     closeWindow: 'Close Window',
     file: 'File',
-    newWindow: 'New Window',
     newChat: 'New Chat',
     openFolder: 'Open Folder…',
     aboutApp: 'About Kimi Code',
@@ -123,6 +120,103 @@ export function setMenuPetVisible(visible: boolean): void {
   buildMenu();
 }
 
+// Menu items whose accelerators mirror the renderer's customizable bindings
+// (renderer/lib/keymap.ts canonical format), pushed over IPC.menuShortcut on
+// startup and on every rebind. Null/unconvertible = no accelerator shown; the
+// renderer's own key handling is always the fallback.
+const MENU_SHORTCUT_DEFAULTS: Record<string, string | null> = {
+  openSettings: 'mod+,',
+  newSession: 'mod+n',
+  openFolder: 'mod+o',
+};
+
+let menuShortcutOverrides: Record<string, string | null> = {};
+
+/** Effective menu binding for an action: the renderer override when pushed
+ *  (null stays unassigned), otherwise the default above. */
+function menuBinding(overrides: Record<string, string | null>, id: string): string | null {
+  if (id in overrides) return overrides[id] ?? null;
+  return MENU_SHORTCUT_DEFAULTS[id] ?? null;
+}
+
+/** Follow the renderer's keymap: rebuild the menu so the Settings / New Chat /
+ *  Open Folder items show (and trigger) the user's own bindings. */
+export function setMenuShortcuts(bindings: Record<string, string | null>): void {
+  menuShortcutOverrides = { ...bindings };
+  buildMenu();
+}
+
+// While the settings panel records a shortcut, every menu accelerator must go
+// silent: they intercept keys BEFORE the renderer, so recording ⌘R would
+// reload the app instead of showing the reserved hint. The renderer toggles
+// this around each recording (and on panel unmount).
+let menuSuspended = false;
+
+/** Silence (or restore) all menu accelerators during shortcut recording. */
+export function setMenuSuspended(suspended: boolean): void {
+  if (suspended === menuSuspended) {
+    return;
+  }
+  menuSuspended = suspended;
+  buildMenu();
+}
+
+// Accelerator key names for the non-printable canonical keys; single
+// printable chars upper-case themselves (Electron takes 'A', digits, and
+// punctuation like ',' verbatim).
+const ACCELERATOR_KEYS: Record<string, string> = {
+  enter: 'Enter',
+  escape: 'Esc',
+  tab: 'Tab',
+  space: 'Space',
+  backspace: 'Backspace',
+  delete: 'Delete',
+  insert: 'Insert',
+  home: 'Home',
+  end: 'End',
+  pageup: 'PageUp',
+  pagedown: 'PageDown',
+  arrowup: 'Up',
+  arrowdown: 'Down',
+  arrowleft: 'Left',
+  arrowright: 'Right',
+  plus: 'Plus',
+  ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`f${i + 1}`, `F${i + 1}`])),
+};
+
+const ACCELERATOR_MODS: Record<string, string> = {
+  mod: 'CommandOrControl',
+  ctrl: 'Control',
+  alt: 'Alt',
+  shift: 'Shift',
+};
+
+// Single printable chars Electron accepts as accelerator key codes: letters,
+// digits, and the documented punctuation set — which notably does NOT
+// include the single quote (see the Electron accelerator key-code list).
+const ACCELERATOR_PUNCT = new Set([',', '.', '/', '\\', ';', '[', ']', '-', '=', '`']);
+
+/** Canonical renderer binding ('shift+mod+a') → Electron accelerator
+ *  ('Shift+CommandOrControl+A'); undefined when the combo can't be expressed
+ *  (the menu then shows no accelerator and the renderer binding still works). */
+export function bindingToAccelerator(binding: string | null): string | undefined {
+  if (binding === null) return undefined;
+  const tokens = binding.split('+').filter((token) => token !== '');
+  if (tokens.length === 0) return undefined;
+  const key = tokens[tokens.length - 1] as string;
+  const mods: string[] = [];
+  for (const token of tokens.slice(0, -1)) {
+    const mod = ACCELERATOR_MODS[token];
+    if (mod === undefined) return undefined;
+    mods.push(mod);
+  }
+  const accelKey =
+    ACCELERATOR_KEYS[key] ??
+    (/^[a-z0-9]$/.test(key) || ACCELERATOR_PUNCT.has(key) ? key.toUpperCase() : undefined);
+  if (accelKey === undefined) return undefined;
+  return [...mods, accelKey].join('+');
+}
+
 // Menu-triggered update check: unlike the silent scheduled checks (updater.ts
 // swallows their failures), a menu click deserves explicit feedback — a native
 // dialog for every outcome. A found update offers a Download button; the
@@ -170,10 +264,15 @@ async function runMenuUpdateCheck(): Promise<void> {
 // Bring All to Front with NO Close item — Close lives in the File menu
 // instead (macOS convention; putting it in both would bind Cmd+W twice).
 // Other platforms keep the role, whose expansion already ends with Close.
+// `shortcutOverrides` carries the renderer's customizable bindings (canonical
+// keymap format, keyed by action id); convertible ones show as accelerators
+// on the matching menu items.
 export function menuTemplate(
   isMac: boolean,
   locale: TrayLocale,
   pet = false,
+  shortcutOverrides: Record<string, string | null> = {},
+  suspended = false,
 ): MenuItemConstructorOptions[] {
   const strings = MENU_STRINGS[locale];
   const appMenu: MenuItemConstructorOptions = {
@@ -193,7 +292,7 @@ export function menuTemplate(
       {
         id: 'open-settings',
         label: strings.settings,
-        accelerator: 'CmdOrCtrl+,',
+        accelerator: bindingToAccelerator(menuBinding(shortcutOverrides, 'openSettings')),
         click: () => {
           // The dialog lives in the renderer; the window may be hidden
           // (macOS hide-on-close), so surface it before forwarding.
@@ -234,29 +333,35 @@ export function menuTemplate(
     ],
   };
 
-  // New Window / Open Folder are display-only for now (structure first,
-  // wiring later): labels + accelerators, no click handlers — activating
-  // them is a no-op. New Chat is wired (menuAction → renderer's create
-  // entry); its accelerator MUST be wired — a handler-less accelerator would
-  // shadow the renderer's own Cmd/Ctrl+N keydown with a no-op. Close is
-  // role-driven, so it works out of the box (role default accelerator Cmd+W;
-  // closing the window leaves the app resident, recreated via Dock
-  // `activate` / the tray).
+  // New Chat / Open Folder are wired: the click MUST exist whenever the
+  // accelerator does — a handler-less accelerator would shadow the renderer's
+  // own keydown with a no-op. Their accelerators follow the renderer's
+  // customizable bindings (menuShortcut overrides). Close is role-driven, so
+  // it works out of the box (role default accelerator Cmd+W; closing the
+  // window leaves the app resident, recreated via Dock `activate` / the
+  // tray).
   const fileMenu: MenuItemConstructorOptions = {
     label: strings.file,
     submenu: [
-      { id: 'new-window', label: strings.newWindow, accelerator: 'Shift+CmdOrCtrl+N' },
       {
         id: 'new-chat',
         label: strings.newChat,
-        accelerator: 'CmdOrCtrl+N',
+        accelerator: bindingToAccelerator(menuBinding(shortcutOverrides, 'newSession')),
         click: () => {
           showMainWindow();
           sendToRenderer(IPC.menuAction, 'new-chat');
         },
       },
       { type: 'separator' },
-      { id: 'open-folder', label: strings.openFolder, accelerator: 'CmdOrCtrl+O' },
+      {
+        id: 'open-folder',
+        label: strings.openFolder,
+        accelerator: bindingToAccelerator(menuBinding(shortcutOverrides, 'openFolder')),
+        click: () => {
+          showMainWindow();
+          sendToRenderer(IPC.menuAction, 'open-folder');
+        },
+      },
       { type: 'separator' },
       { role: 'close', label: strings.closeWindow },
     ],
@@ -332,13 +437,37 @@ export function menuTemplate(
     ],
   };
 
-  return [appMenu, fileMenu, { role: 'editMenu' }, viewMenu, windowMenu, helpMenu];
+  const template: MenuItemConstructorOptions[] = [appMenu, fileMenu, { role: 'editMenu' }, viewMenu, windowMenu, helpMenu];
+  if (!suspended) return template;
+  // Shortcut recording: strip every key equivalent outright. On macOS a
+  // DISABLED item's accelerator can still fire while the menu is closed
+  // (menuNeedsUpdate refreshes state on the key press), so silencing must
+  // remove the accelerators, not the items: every non-editMenu item becomes
+  // a plain label — no role, no accelerator, no click — which has no key
+  // equivalent at all. editMenu stays functional (copy/paste); its
+  // accelerators are harmless during recording and already reserved.
+  const silence = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+    items.map((item) => {
+      if (item.type === 'separator') return item;
+      if (item.role === 'editMenu') return item;
+      return {
+        label: item.label,
+        submenu: Array.isArray(item.submenu) ? silence(item.submenu as MenuItemConstructorOptions[]) : undefined,
+      };
+    });
+  return silence(template);
 }
 
 export function buildMenu(): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
-      menuTemplate(process.platform === 'darwin', effectiveMenuLocale(), petVisible),
+      menuTemplate(
+        process.platform === 'darwin',
+        effectiveMenuLocale(),
+        petVisible,
+        menuShortcutOverrides,
+        menuSuspended,
+      ),
     ),
   );
 }

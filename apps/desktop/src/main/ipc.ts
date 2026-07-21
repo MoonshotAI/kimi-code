@@ -6,7 +6,7 @@ import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
 import { getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
-import { setMenuLocale } from './menu';
+import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -77,6 +77,29 @@ export function registerIpcHandlers(): void {
     if (locale === 'en' || locale === 'zh') {
       setTrayLocale(locale);
       setMenuLocale(locale);
+    }
+  });
+  // The renderer's customizable shortcut bindings (canonical keymap format,
+  // action id → binding | null) — the matching menu items show them as
+  // accelerators (menu.ts owns the conversion + rebuild).
+  ipcMain.on(IPC.menuShortcut, (_event, payload: unknown) => {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      return;
+    }
+    const bindings: Record<string, string | null> = {};
+    for (const [id, value] of Object.entries(payload as Record<string, unknown>)) {
+      if (typeof value === 'string' || value === null) {
+        bindings[id] = value;
+      }
+    }
+    setMenuShortcuts(bindings);
+  });
+  // The settings panel's shortcut recorder silences every menu accelerator
+  // while it listens (they would otherwise fire before the renderer sees the
+  // key — recording ⌘R would reload the app).
+  ipcMain.on(IPC.menuSuspend, (_event, suspended: unknown) => {
+    if (typeof suspended === 'boolean') {
+      setMenuSuspended(suspended);
     }
   });
   // Renderer-initiated "bring the window back" (notification clicks): with

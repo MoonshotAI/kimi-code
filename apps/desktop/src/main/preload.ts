@@ -200,6 +200,13 @@ export type KimiDesktopApi = {
   /** Sync the in-app language so native surfaces (today: the tray menu and
    *  tooltip) follow it instead of only the OS language. */
   setLocale: (locale: 'en' | 'zh') => void;
+  /** Push the renderer's customizable bindings (canonical keymap format,
+   *  action id → binding | null) so the matching native menu items show them
+   *  as accelerators. */
+  setMenuShortcuts: (bindings: Record<string, string | null>) => void;
+  /** Silence (true) or restore (false) all native menu accelerators while
+   *  the settings panel records a shortcut. */
+  setMenuSuspended: (suspended: boolean) => void;
   /** Desktop-pet window drag lifecycle (pet.html only). Positions are global
    *  screen coordinates from PointerEvent.screenX/screenY; the main process
    *  moves the window keeping the offset captured at drag start. */
@@ -290,6 +297,16 @@ export const api: KimiDesktopApi = {
   setLocale: (locale) => {
     if (locale === 'en' || locale === 'zh') {
       ipcRenderer.send('kimi:locale', locale);
+    }
+  },
+  setMenuShortcuts: (bindings) => {
+    if (bindings !== null && typeof bindings === 'object' && !Array.isArray(bindings)) {
+      ipcRenderer.send('kimi:menu-shortcut', bindings);
+    }
+  },
+  setMenuSuspended: (suspended) => {
+    if (typeof suspended === 'boolean') {
+      ipcRenderer.send('kimi:menu-suspend', suspended);
     }
   },
   petDragStart: (pos) => {

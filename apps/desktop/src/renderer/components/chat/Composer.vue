@@ -23,6 +23,8 @@ import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
 import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
+import { matchBinding } from '../../lib/keymap';
+import { resolvedBinding } from '../../composables/useShortcuts';
 import { openFileAttachment } from '../../lib/openFileAttachment';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import AttachmentChip from './AttachmentChip.vue';
@@ -486,10 +488,12 @@ function handleKeydown(e: KeyboardEvent): void {
     }
   }
 
-  // Ctrl+S / Cmd+S — steer into the running turn (TUI parity)
+  // Ctrl+S / Cmd+S — steer into the running turn (TUI parity). Hardcoded by
+  // decision (not customizable). The chord is consumed even when idle so it
+  // can't leak to the global dispatcher or the send/newline handling below.
   if (e.key === 's' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
     if (props.running) {
-      e.preventDefault();
       handleSteer();
     }
     return;
@@ -525,17 +529,65 @@ function handleKeydown(e: KeyboardEvent): void {
     }
   }
 
-  // Normal Enter / Shift+Enter
-  if (e.key === 'Enter' && !e.shiftKey) {
-    // Expanded editor: Enter inserts a newline; Cmd/Ctrl+Enter sends.
-    // (Clicking the send button always sends.) Shift+Enter already falls
-    // through to the default newline above, so behavior matches either way.
-    if (expanded.value && !(e.metaKey || e.ctrlKey)) {
-      return;
+  // Send / newline — customizable bindings (defaults: Enter sends, Shift+Enter
+  // inserts a newline). The default Shift+Enter is left to the browser so the
+  // newline lands in the textarea's native undo history; only rebound combos
+  // (which have no browser default) get the manual insert.
+  const newlineBinding = resolvedBinding('composer.newline');
+  if (newlineBinding !== null && matchBinding(e, newlineBinding)) {
+    if (newlineBinding !== 'shift+enter') {
+      e.preventDefault();
+      insertNewlineAtCaret();
+    } else {
+      // The browser inserts the newline natively (native undo history), but
+      // the event must not bubble on to the global shortcut dispatcher — a
+      // global action rebound to the same combo would otherwise fire too.
+      e.stopPropagation();
     }
+    return;
+  }
+  const sendBinding = resolvedBinding('composer.send');
+  // Default send ('enter') keeps the legacy aliases in BOTH modes: plain
+  // Enter sends in the collapsed composer, and mod+Enter / Ctrl+Enter send
+  // in either mode (all were the pre-customization chords). The expanded
+  // editor only drops plain Enter — it inserts newlines there. A custom
+  // send binding wins in both modes and matches exactly.
+  const sendMatches =
+    sendBinding !== null &&
+    (sendBinding === 'enter'
+      ? matchBinding(e, 'mod+enter') || matchBinding(e, 'ctrl+enter') || (!expanded.value && matchBinding(e, 'enter'))
+      : matchBinding(e, sendBinding));
+  if (sendMatches) {
     e.preventDefault();
     handleSubmit();
+    return;
   }
+  // The default newline combo was rebound away (or unassigned): swallow its
+  // browser default so the old key stops inserting newlines behind the
+  // user's back. Runs AFTER the send match so a send rebound to Shift+Enter
+  // still wins the chord.
+  if (newlineBinding !== 'shift+enter' && matchBinding(e, 'shift+enter')) {
+    e.preventDefault();
+  }
+}
+
+// Insert '\n' at the caret programmatically: a rebound newline combo (say
+// Ctrl+Enter) has no browser default, so the composer has to do it itself.
+// Goes through the v-model ref so the draft watcher / autosize run as usual.
+function insertNewlineAtCaret(): void {
+  const el = textareaRef.value;
+  if (!el) {
+    text.value += '\n';
+    handleInput();
+    return;
+  }
+  const start = el.selectionStart ?? text.value.length;
+  const end = el.selectionEnd ?? text.value.length;
+  text.value = `${text.value.slice(0, start)}\n${text.value.slice(end)}`;
+  handleInput();
+  void nextTick(() => {
+    el.selectionStart = el.selectionEnd = start + 1;
+  });
 }
 
 // ---------------------------------------------------------------------------

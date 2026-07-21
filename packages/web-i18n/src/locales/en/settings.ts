@@ -7,6 +7,7 @@ export default {
     account: 'Account',
     advanced: 'Advanced',
     archived: 'Archived',
+    shortcuts: 'Keyboard Shortcuts',
   },
   appearance: 'Appearance',
   notifications: 'Notifications',

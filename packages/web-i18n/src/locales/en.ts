@@ -27,6 +27,7 @@ import onboarding from './en/onboarding';
 import settings from './en/settings';
 import header from './en/header';
 import sideChat from './en/sideChat';
+import shortcuts from './en/shortcuts';
 
 export default {
   common,
@@ -58,4 +59,5 @@ export default {
   settings,
   header,
   sideChat,
+  shortcuts,
 };

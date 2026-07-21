@@ -230,6 +230,9 @@ const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = us
 function handleKeydown(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName ?? '').toLowerCase();
   const inField = tag === 'input' || tag === 'textarea';
+  // Bare-key conveniences only: a modified chord (⌘Enter, Ctrl+1, …) belongs
+  // to the shortcut system or the browser, never to the card.
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   // While an answer/dismiss is in flight, ignore shortcuts so a stray Enter
   // can't fire a duplicate submit.
   if (busy.value) return;
