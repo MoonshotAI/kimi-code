@@ -103,12 +103,16 @@ tools:
     ]);
     const coderPrompt = profiles['coder']?.systemPrompt(promptContext);
 
-    expect(profiles['coder']?.description).toBe('Coder child subagent');
+    // Edge descriptions apply on the owner→subagent edge, not the shared target.
+    expect(profiles['coder']?.description).toBeUndefined();
+    expect(profiles['agent']?.subagents?.['coder']?.description).toBe('Coder child subagent');
     expect(profiles['coder']?.tools).toEqual(['Bash', 'Skill']);
-    expect(profiles['agent']?.subagents?.['shared']).toBe(profiles['shared']);
-    expect(profiles['agent']?.subagents?.['coder']).toBe(profiles['coder']);
+    // Edges are scoped views of the target, not the shared profile object.
+    expect(profiles['agent']?.subagents?.['shared']?.name).toBe('shared');
+    expect(profiles['agent']?.subagents?.['coder']?.name).toBe('coder');
+    expect(profiles['agent']?.subagents?.['coder']).not.toBe(profiles['coder']);
     expect(profiles['coder']?.subagents).toBeUndefined();
-    expect(profiles['shared']?.description).toBe('Shared parent subagent');
+    expect(profiles['agent']?.subagents?.['shared']?.description).toBe('Shared parent subagent');
     expect(coderPrompt).toContain('os=macOS');
     expect(coderPrompt).toContain('cwd=/workspace');
     expect(coderPrompt).toContain('listing=README.md');
@@ -145,7 +149,7 @@ tools:
     ).toThrow(/agent -> coder -> agent/);
   });
 
-  it('applies subagent model and thinking-effort bindings to the linked profile', () => {
+  it('applies subagent model and thinking-effort bindings to the edge, not the shared target', () => {
     const profiles = resolveAgentProfiles([
       {
         name: 'agent',
@@ -162,11 +166,42 @@ tools:
       { name: 'explore', systemPromptTemplate: 'explore prompt' },
     ]);
 
-    expect(profiles['coder']?.modelAlias).toBe('cheap-model');
-    expect(profiles['coder']?.thinkingEffort).toBe('high');
-    expect(profiles['agent']?.subagents?.['coder']).toBe(profiles['coder']);
+    // The owner→subagent edge carries the override...
+    expect(profiles['agent']?.subagents?.['coder']?.modelAlias).toBe('cheap-model');
+    expect(profiles['agent']?.subagents?.['coder']?.thinkingEffort).toBe('high');
+    // ...while the shared resolved target stays unmodified.
+    expect(profiles['coder']?.modelAlias).toBeUndefined();
+    expect(profiles['coder']?.thinkingEffort).toBeUndefined();
     expect(profiles['explore']?.modelAlias).toBeUndefined();
     expect(profiles['explore']?.thinkingEffort).toBeUndefined();
+  });
+
+  it('lets two owners bind the same subagent type differently without leakage', () => {
+    const profiles = resolveAgentProfiles([
+      {
+        name: 'agent',
+        subagents: {
+          coder: { description: 'Owner A coder', modelAlias: 'model-a' },
+        },
+      },
+      {
+        name: 'other',
+        systemPromptTemplate: 'other prompt',
+        subagents: {
+          coder: { description: 'Owner B coder', modelAlias: 'model-b', thinkingEffort: 'low' },
+        },
+      },
+      { name: 'coder', systemPromptTemplate: 'coder prompt' },
+    ]);
+
+    expect(profiles['agent']?.subagents?.['coder']?.modelAlias).toBe('model-a');
+    expect(profiles['agent']?.subagents?.['coder']?.description).toBe('Owner A coder');
+    expect(profiles['other']?.subagents?.['coder']?.modelAlias).toBe('model-b');
+    expect(profiles['other']?.subagents?.['coder']?.thinkingEffort).toBe('low');
+    expect(profiles['other']?.subagents?.['coder']?.description).toBe('Owner B coder');
+    // Neither edge leaks into the shared target profile.
+    expect(profiles['coder']?.modelAlias).toBeUndefined();
+    expect(profiles['coder']?.description).toBeUndefined();
   });
 
   it('fails loudly when an embedded system prompt source is missing', () => {
@@ -180,15 +215,14 @@ tools:
 
 describe('default agent profiles', () => {
   it('links bundled subagents and keeps role-specific tool sets observable', () => {
-    expect(DEFAULT_AGENT_PROFILES['agent']?.subagents?.['coder']).toBe(
-      DEFAULT_AGENT_PROFILES['coder'],
-    );
-    expect(DEFAULT_AGENT_PROFILES['agent']?.subagents?.['explore']).toBe(
-      DEFAULT_AGENT_PROFILES['explore'],
-    );
-    expect(DEFAULT_AGENT_PROFILES['agent']?.subagents?.['plan']).toBe(
-      DEFAULT_AGENT_PROFILES['plan'],
-    );
+    const agentSubagents = DEFAULT_AGENT_PROFILES['agent']?.subagents;
+    expect(agentSubagents?.['coder']?.name).toBe('coder');
+    expect(agentSubagents?.['explore']?.name).toBe('explore');
+    expect(agentSubagents?.['plan']?.name).toBe('plan');
+    // Edges are views; the shared targets stay unmodified (no bundled owner
+    // declares model/effort overrides today).
+    expect(DEFAULT_AGENT_PROFILES['coder']?.modelAlias).toBeUndefined();
+    expect(agentSubagents?.['coder']?.tools).toEqual(DEFAULT_AGENT_PROFILES['coder']?.tools);
 
     expect(DEFAULT_AGENT_PROFILES['agent']?.tools).toEqual(
       expect.arrayContaining([

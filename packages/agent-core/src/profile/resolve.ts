@@ -46,7 +46,6 @@ export function resolveAgentProfiles(
     resolvedCache.set(profile.name, toResolvedProfile(merged));
   }
 
-  applySubagentOverrides(mergedCache, resolvedCache);
   linkResolvedSubagents(mergedCache, resolvedCache);
 
   const result: Record<string, ResolvedAgentProfile> = {};
@@ -166,49 +165,30 @@ function buildTemplateVars(
   };
 }
 
-function applySubagentOverrides(
+function linkResolvedSubagents(
   mergedProfiles: Map<string, MergedAgentProfile>,
   resolvedProfiles: Map<string, ResolvedAgentProfile>,
 ): void {
-  // Note: overrides are applied to the shared resolved target profile, the
-  // same mechanism `description` already uses. With a single bundled owner
-  // profile this is safe; if multiple owners ever bind the same subagent type
-  // differently, the first owner processed wins for all of them. Move
-  // overrides onto the owner→subagent edge if that becomes a real config.
+  // Overrides (`description` / `modelAlias` / `thinkingEffort` on an owner's
+  // `subagents` entry) are properties of the owner→subagent edge, not of the
+  // shared target profile. Each edge gets its own view of the target with
+  // the overrides applied, so two owners can bind the same subagent type
+  // differently without leaking into each other or into the shared profile.
   for (const [ownerName, owner] of mergedProfiles) {
     if (owner.subagents === undefined) continue;
+
+    const subagents: Record<string, ResolvedAgentProfile> = {};
     for (const [subagentName, subagent] of Object.entries(owner.subagents)) {
       const target = resolvedProfiles.get(subagentName);
       if (target === undefined) {
         throwMissingSubagent(ownerName, subagentName);
       }
-      if (target.description === undefined && subagent.description !== undefined) {
-        target.description = subagent.description;
-      }
-      if (target.modelAlias === undefined && subagent.modelAlias !== undefined) {
-        target.modelAlias = subagent.modelAlias;
-      }
-      if (target.thinkingEffort === undefined && subagent.thinkingEffort !== undefined) {
-        target.thinkingEffort = subagent.thinkingEffort;
-      }
-    }
-  }
-}
-
-function linkResolvedSubagents(
-  mergedProfiles: Map<string, MergedAgentProfile>,
-  resolvedProfiles: Map<string, ResolvedAgentProfile>,
-): void {
-  for (const [ownerName, owner] of mergedProfiles) {
-    if (owner.subagents === undefined) continue;
-
-    const subagents: Record<string, ResolvedAgentProfile> = {};
-    for (const subagentName of Object.keys(owner.subagents)) {
-      const target = resolvedProfiles.get(subagentName);
-      if (target === undefined) {
-        throwMissingSubagent(ownerName, subagentName);
-      }
-      subagents[subagentName] = target;
+      subagents[subagentName] = {
+        ...target,
+        description: target.description ?? subagent.description,
+        modelAlias: target.modelAlias ?? subagent.modelAlias,
+        thinkingEffort: target.thinkingEffort ?? subagent.thinkingEffort,
+      };
     }
 
     const resolved = resolvedProfiles.get(ownerName);
