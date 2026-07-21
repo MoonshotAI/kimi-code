@@ -98,7 +98,7 @@ const rootRef = ref<HTMLElement | null>(null);
 // Content type detection
 // ---------------------------------------------------------------------------
 
-type ContentKind = 'markdown' | 'json' | 'html' | 'pdf' | 'csv' | 'image' | 'text' | 'binary';
+type ContentKind = 'markdown' | 'json' | 'html' | 'pdf' | 'csv' | 'image' | 'video' | 'text' | 'binary';
 
 const contentKind = computed<ContentKind>(() => {
   const f = props.file;
@@ -113,6 +113,7 @@ const contentKind = computed<ContentKind>(() => {
   if (mime === 'application/pdf' || lowerPath.endsWith('.pdf')) return 'pdf';
   if (mime === 'text/csv' || lang === 'csv' || lowerPath.endsWith('.csv')) return 'csv';
   if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
   if (f.isBinary) return 'binary';
   // text/* and code files
   if (mime.startsWith('text/') || lang !== '') return 'text';
@@ -306,6 +307,14 @@ const imageSrc = computed<string | null>(() => {
   if (f.mime === 'image/svg+xml') {
     return `data:${f.mime};charset=utf-8,${encodeURIComponent(f.content)}`;
   }
+  return null;
+});
+
+const videoSrc = computed<string | null>(() => {
+  const f = props.file;
+  if (!f || contentKind.value !== 'video') return null;
+  if (f.sourceUrl) return f.sourceUrl;
+  if (f.encoding === 'base64') return `data:${f.mime};base64,${f.content}`;
   return null;
 });
 
@@ -623,6 +632,19 @@ function truncatePath(path: string, maxLen = 55): string {
             <Icon name="image-off" size="lg" />
           </span>
           <span class="fp-binary-label">{{ t('filePreview.imageNoPreview', { mime: file.mime, size: formatSize(file.size) }) }}</span>
+        </div>
+      </div>
+
+      <!-- Body: Video -->
+      <div v-else-if="contentKind === 'video'" class="fp-body fp-image-wrap">
+        <template v-if="videoSrc">
+          <video :src="videoSrc" class="fp-image" controls playsinline preload="metadata" />
+        </template>
+        <div v-else class="fp-binary-card">
+          <span class="fp-binary-icon">
+            <Icon name="image-off" size="lg" />
+          </span>
+          <span class="fp-binary-label">{{ t('filePreview.videoNoPreview', { mime: file.mime, size: formatSize(file.size) }) }}</span>
         </div>
       </div>
 

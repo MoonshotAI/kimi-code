@@ -155,27 +155,35 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
   }
 
   function openMediaPreview(media: ToolMedia): void {
-    if (media.kind !== 'image') return;
+    if (media.kind !== 'image' && media.kind !== 'video') return;
     const seq = ++previewRequestSeq;
     revokeMediaObjectUrl();
     detailTarget.value = 'file';
     previewTarget.value = null;
     previewNormalizedPath.value = null;
     previewError.value = null;
+    const isVideo = media.kind === 'video';
     const base = {
-      path: media.path ?? 'ReadMediaFile image',
+      path: media.path ?? (isVideo ? 'Video' : 'ReadMediaFile image'),
       content: '',
       encoding: 'utf-8' as const,
-      mime: media.mimeType ?? mimeFromDataUrl(media.url) ?? 'image/*',
+      mime: media.mimeType ?? mimeFromDataUrl(media.url) ?? (isVideo ? 'video/*' : 'image/*'),
       isBinary: true,
       size: media.bytes ?? 0,
     };
-    if (media.fileId) {
-      // The raw getFileUrl 401s under daemon auth (browsers load <img> without
-      // the Bearer token), so fetch the bytes with auth and preview a blob URL.
+    // The raw URL 401s under daemon auth (browsers load media without the
+    // Bearer token), so fetch the bytes with auth and preview a blob URL —
+    // from the file store for uploads, from the llm redirect for provider
+    // references.
+    const authedFetch = media.fileId
+      ? () => getKimiWebApi().getFileBlob(media.fileId!)
+      : media.llmFileId
+        ? () => getKimiWebApi().getLlmFileBlob(media.llmFileId!)
+        : null;
+    if (authedFetch !== null) {
       previewLoading.value = true;
       previewFile.value = base;
-      void getKimiWebApi().getFileBlob(media.fileId).then((blob) => {
+      void authedFetch().then((blob) => {
         if (seq !== previewRequestSeq) return;
         // The user may have switched to another detail panel while this was in
         // flight — don't create (and leak) a blob URL for a hidden panel.
