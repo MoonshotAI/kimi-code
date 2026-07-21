@@ -8,7 +8,7 @@ import { createWindow, selectSessionInRenderer, showMainWindow } from './window'
 import { createPetWindow, isPetVisible } from './pet';
 import { createTray, destroyTray } from './tray';
 import { buildMenu, setMenuPetVisible } from './menu';
-import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './shortcuts';
+import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
 
@@ -38,7 +38,9 @@ export function main(): void {
       app.dock?.setIcon(nativeImage.createFromPath(join(app.getAppPath(), 'build', 'icon.png')));
     }
     registerRendererProtocol(rendererDistRoot);
-    registerGlobalShortcuts();
+    // No startup global-shortcut registration: the renderer replays the saved
+    // binding over IPC on boot (shortcuts.ts is push-driven), so nothing is
+    // grabbed before the user's setting is known.
     buildMenu();
     createWindow();
     // Desktop pet: macOS only for now. Lives independently of the main window

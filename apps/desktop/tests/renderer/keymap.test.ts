@@ -4,6 +4,8 @@ import {
   bindingsEquivalent,
   findConflict,
   formatBindingKeys,
+  isAcceleratorExpressible,
+  isAltGrShapedBinding,
   isAppleShortcutPlatform,
   isHardcodedBinding,
   isReservedBinding,
@@ -12,6 +14,7 @@ import {
   matchBinding,
   MENU_SYNCED_ACTIONS,
   normalizeEventKey,
+  OS_GLOBAL_ACTIONS,
   parseBinding,
   RESERVED_NATIVE_BINDINGS,
   serializeBinding,
@@ -314,6 +317,17 @@ describe('findConflict', () => {
     expect(findConflict({}, 'global', 'enter', 'openSettings')).toBe('composer.send');
   });
 
+  it('OS-global actions conflict across scopes like menu-backed ones (both directions)', () => {
+    stubPlatform('MacIntel');
+    // summonApp defaults to 'shift+mod+space' and is registered with
+    // globalShortcut: the OS consumes the chord even while the app is
+    // focused, so a composer action bound to it would never fire.
+    expect(findConflict({}, 'composer', 'shift+mod+space', 'composer.send')).toBe('summonApp');
+    // …and binding summonApp to a composer-owned alias (the expanded send's
+    // mod+enter) conflicts the same way — no renderer fallback exists here.
+    expect(findConflict({}, 'global', 'mod+enter', 'summonApp')).toBe('composer.send');
+  });
+
   it('does not cross scopes for non-menu-backed actions', () => {
     stubPlatform('MacIntel');
     // searchSessions (global, not menu-backed) holds 'mod+k' — a composer
@@ -395,6 +409,46 @@ describe('isValidMenuBinding', () => {
   });
 });
 
+describe('isAcceleratorExpressible', () => {
+  it('accepts letters, digits, named keys, and Electron punctuation', () => {
+    expect(isAcceleratorExpressible('mod+a')).toBe(true);
+    expect(isAcceleratorExpressible('mod+1')).toBe(true);
+    expect(isAcceleratorExpressible('shift+mod+space')).toBe(true);
+    expect(isAcceleratorExpressible('mod+enter')).toBe(true);
+    expect(isAcceleratorExpressible('f5')).toBe(true);
+    expect(isAcceleratorExpressible('mod+,')).toBe(true);
+    expect(isAcceleratorExpressible('mod+plus')).toBe(true);
+    expect(isAcceleratorExpressible('shift+mod+=')).toBe(true);
+  });
+
+  it('rejects the single quote (bindable via Quote, but not an accelerator key code)', () => {
+    expect(isAcceleratorExpressible("mod+'")).toBe(false);
+    expect(isAcceleratorExpressible("'")).toBe(false);
+  });
+
+  it('rejects malformed bindings', () => {
+    expect(isAcceleratorExpressible('mod')).toBe(false);
+    expect(isAcceleratorExpressible('mod+unknownkey')).toBe(false);
+  });
+});
+
+describe('isAltGrShapedBinding', () => {
+  it('flags alt+(mod|ctrl) chords on non-Apple platforms only', () => {
+    stubPlatform('Win32');
+    expect(isAltGrShapedBinding('alt+mod+e')).toBe(true);
+    expect(isAltGrShapedBinding('alt+ctrl+e')).toBe(true);
+    expect(isAltGrShapedBinding('alt+shift+mod+e')).toBe(true);
+    // Alt alone is not AltGr-shaped, and neither are alt-free chords.
+    expect(isAltGrShapedBinding('alt+e')).toBe(false);
+    expect(isAltGrShapedBinding('alt+f5')).toBe(false);
+    expect(isAltGrShapedBinding('mod+e')).toBe(false);
+    // Apple platforms have no AltGr — the same chords stay bindable.
+    stubPlatform('MacIntel');
+    expect(isAltGrShapedBinding('alt+mod+e')).toBe(false);
+    expect(isAltGrShapedBinding('alt+ctrl+e')).toBe(false);
+  });
+});
+
 describe('registry defaults sanity', () => {
   it('every default binding is valid, unreserved, unhardcoded, and conflict-free on both platforms', () => {
     for (const platform of ['MacIntel', 'Win32'] as const) {
@@ -409,6 +463,13 @@ describe('registry defaults sanity', () => {
         expect(findConflict({}, action.scope, def, action.id), `${label} conflicts`).toBeNull();
         if (MENU_SYNCED_ACTIONS.includes(action.id)) {
           expect(isValidMenuBinding(def), `${label} menu-invalid`).toBe(true);
+        }
+        if (OS_GLOBAL_ACTIONS.includes(action.id)) {
+          // OS-global bindings have no renderer fallback — the default must be
+          // a real Electron accelerator with a real modifier, or the feature
+          // ships dead (or steals a bare key system-wide).
+          expect(isValidMenuBinding(def), `${label} os-global-invalid`).toBe(true);
+          expect(isAcceleratorExpressible(def), `${label} accelerator-inexpressible`).toBe(true);
         }
         for (const extra of action.extraBindings ?? []) {
           expect(findConflict({}, action.scope, extra, action.id), `${label} extra ${extra} conflicts`).toBeNull();
@@ -450,8 +511,6 @@ describe('isReservedBinding', () => {
     // …and the NumpadAdd form.
     expect(isReservedBinding('mod+plus')).toBe(true);
     expect(isReservedBinding('shift+mod+plus')).toBe(true);
-    // The app's OS-global smoke-test shortcut (CommandOrControl+Alt+K).
-    expect(isReservedBinding('alt+mod+k')).toBe(true);
     // The non-mac DevTools chord is NOT reserved on macOS.
     expect(isReservedBinding('shift+ctrl+i')).toBe(false);
     // Nor is Alt+F4 (no macOS system meaning).
@@ -470,7 +529,6 @@ describe('isReservedBinding', () => {
     expect(isReservedBinding('f11')).toBe(true);
     expect(isReservedBinding('alt+f4')).toBe(true);
     expect(isReservedBinding('mod+plus')).toBe(true);
-    expect(isReservedBinding('alt+mod+k')).toBe(true);
     // Non-mac paste-and-match-style (⇧⌃V) and Windows-only redo (Ctrl+Y).
     expect(isReservedBinding('shift+mod+v')).toBe(true);
     expect(isReservedBinding('mod+y')).toBe(true);

@@ -52,6 +52,10 @@ export interface ShortcutAction {
 // Registry order is the settings panel's display order (one flat list).
 export const SHORTCUT_ACTIONS: readonly ShortcutAction[] = [
   // Global
+  // summonApp is an OS-level global shortcut: the main process registers it
+  // with globalShortcut and shows the window even from outside the app. It is
+  // NOT dispatched through the renderer keydown (main/shortcuts.ts owns it).
+  { id: 'summonApp', scope: 'global', labelKey: 'shortcuts.actions.summonApp.label', descKey: 'shortcuts.actions.summonApp.desc', defaultBinding: 'shift+mod+space' },
   { id: 'newSession', scope: 'global', labelKey: 'shortcuts.actions.newSession.label', descKey: 'shortcuts.actions.newSession.desc', defaultBinding: 'mod+n' },
   { id: 'searchSessions', scope: 'global', labelKey: 'shortcuts.actions.searchSessions.label', descKey: 'shortcuts.actions.searchSessions.desc', defaultBinding: 'mod+k' },
   { id: 'archiveSession', scope: 'global', labelKey: 'shortcuts.actions.archiveSession.label', descKey: 'shortcuts.actions.archiveSession.desc', defaultBinding: 'alt+mod+a', requiresSession: true },
@@ -341,19 +345,64 @@ export function isValidBinding(binding: string, scope: ShortcutScope): boolean {
  *  treats them as crossing every scope (in both directions). */
 export const MENU_SYNCED_ACTIONS: readonly string[] = ['openSettings', 'newSession', 'openFolder'];
 
+/** Actions the main process registers as OS-level global shortcuts
+ *  (main/shortcuts.ts globalShortcut). Like menu accelerators, the OS
+ *  intercepts the chord before the renderer ever sees it — even while the
+ *  app is focused — so conflict detection must treat them as crossing every
+ *  scope, and a binding Electron accelerators can't express has NO renderer
+ *  fallback (the recorder rejects it via isAcceleratorExpressible). */
+export const OS_GLOBAL_ACTIONS: readonly string[] = ['summonApp'];
+
+/** True for every action whose binding is intercepted natively (menu
+ *  accelerator or OS global shortcut) rather than by the renderer's scoped
+ *  keydown dispatcher. */
+function isNativeWideAction(id: string): boolean {
+  return MENU_SYNCED_ACTIONS.includes(id) || OS_GLOBAL_ACTIONS.includes(id);
+}
+
+/** True on non-Apple platforms for chords shaped like AltGr (alt combined
+ *  with mod/ctrl): Ctrl+Alt IS AltGr on many Windows/Linux layouts, so any
+ *  NATIVE registration with that shape (menu accelerator, OS global
+ *  shortcut) fires while the user types AltGr characters — before the
+ *  renderer's AltGraph guard ever runs. Rejected at record time for every
+ *  natively-registered action. */
+export function isAltGrShapedBinding(binding: string): boolean {
+  if (isAppleShortcutPlatform()) return false;
+  const parsed = parseBinding(binding);
+  if (parsed === null) return false;
+  return parsed.alt && (parsed.mod || parsed.ctrl);
+}
+
 /** Menu-backed bindings must carry a real shortcut modifier (mod/ctrl/alt —
  *  Shift alone is a text modifier): a menu accelerator intercepts the combo
  *  app-wide, so a bare Enter/Escape or Shift+Enter there would eat normal
- *  typing everywhere. On non-Apple platforms Ctrl+Alt IS AltGr on many
- *  layouts, so alt+(mod|ctrl) chords are rejected too — the native
- *  accelerator would fire while the user types AltGr characters, before the
- *  renderer's AltGraph guard ever runs. */
+ *  typing everywhere. AltGr-shaped chords are rejected too (see
+ *  isAltGrShapedBinding). */
 export function isValidMenuBinding(binding: string): boolean {
   const parsed = parseBinding(binding);
   if (parsed === null) return false;
   if (!(parsed.mod || parsed.ctrl || parsed.alt)) return false;
-  if (!isAppleShortcutPlatform() && parsed.alt && (parsed.mod || parsed.ctrl)) return false;
+  if (isAltGrShapedBinding(binding)) return false;
   return true;
+}
+
+// Single printable chars Electron accepts as accelerator key codes — mirrors
+// ACCELERATOR_PUNCT in main/menu.ts (letters/digits pass via the regex; every
+// canonical named key already has an accelerator form there). Notably absent:
+// the single quote, which keymap binds fine (Quote → `'`) but Electron cannot
+// register.
+const ACCELERATOR_EXPRESSIBLE_PUNCT = new Set([',', '.', '/', '\\', ';', '[', ']', '-', '=', '`']);
+
+/** True when the binding can be expressed as an Electron accelerator
+ *  (menu.ts bindingToAccelerator). Bindings registered NATIVELY with no
+ *  renderer fallback — OS_GLOBAL_ACTIONS — must be rejected at record time
+ *  when this is false, or the settings row would show a shortcut that can
+ *  never fire. */
+export function isAcceleratorExpressible(binding: string): boolean {
+  const parsed = parseBinding(binding);
+  if (parsed === null) return false;
+  if (parsed.key.length !== 1) return true;
+  return /^[a-z0-9]$/.test(parsed.key) || ACCELERATOR_EXPRESSIBLE_PUNCT.has(parsed.key);
 }
 
 /** Bindings already owned by the native menu (main/menu.ts role items —
@@ -389,9 +438,6 @@ const RESERVED_COMMON: readonly string[] = [
   'mod+m',
   // Close window (File menu role, CmdOrCtrl+W)
   'mod+w',
-  // The app's own OS-global smoke-test shortcut (main/shortcuts.ts
-  // globalShortcut CommandOrControl+Alt+K) — consumed before the renderer.
-  'alt+mod+k',
 ];
 
 export const RESERVED_NATIVE_BINDINGS: { readonly apple: readonly string[]; readonly other: readonly string[] } = {
@@ -456,17 +502,18 @@ export function bindingsEquivalent(a: string, b: string): boolean {
 /** First other action already bound to `binding`; null when free. `overrides`
  *  maps action id → binding (null = unassigned; absent = default), mirroring
  *  the persistence shape in useShortcuts. Comparison is platform-aware
- *  (bindingsEquivalent) and menu-backed actions conflict across scopes. */
+ *  (bindingsEquivalent) and native-wide actions (menu accelerators, OS
+ *  global shortcuts) conflict across scopes. */
 export function findConflict(
   overrides: Record<string, string | null>,
   scope: ShortcutScope,
   binding: string,
   excludeId: string,
 ): string | null {
-  const excludeIsMenuBacked = MENU_SYNCED_ACTIONS.includes(excludeId);
+  const excludeIsNativeWide = isNativeWideAction(excludeId);
   for (const action of SHORTCUT_ACTIONS) {
     if (action.id === excludeId) continue;
-    const crossesScopes = excludeIsMenuBacked || MENU_SYNCED_ACTIONS.includes(action.id);
+    const crossesScopes = excludeIsNativeWide || isNativeWideAction(action.id);
     if (!crossesScopes && action.scope !== scope) continue;
     const override = overrides[action.id];
     // The extra aliases stay owned whenever the EFFECTIVE binding equals the

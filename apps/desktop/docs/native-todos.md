@@ -56,7 +56,16 @@
   - 原生菜单联动（合入「App/File/Help 菜单扩展」后）：菜单项「设置…」「新建会话」「打开文件夹」的 accelerator **跟随用户绑定**——renderer 经 `kimi:menu-shortcut` 推送 map，主进程 `menu.ts` 的 `MENU_SHORTCUT_DEFAULTS` + `setMenuShortcuts` 存 overrides 并 `buildMenu()`，`bindingToAccelerator` 转换（转不了则不显示，renderer 绑定兜底）；三项 click 均 `showMainWindow()` + `kimi:menu-action` 转发，renderer 端菜单 id 经 `MENU_ACTION_TO_SHORTCUT` 映射到同一批 shortcut action（菜点击与按键永远同效；菜单 accelerator 会遮蔽 renderer keydown，所以 click 必须存在）。「新建窗口」仍 display-only（真多窗口要动 mainWindow 单例模型，未做）。
   - **web 刻意不改**：整套自定义能力 desktop-only（用户明确决定），web 保持硬编码键位。分叉块：`App.vue`（dispatcher + 菜单监听 + import）、`Sidebar.vue`（键帽 + expose + 删监听）、`Composer.vue`（steer/send/newline 读绑定 + `insertNewlineAtCaret`）、`ConversationPane.vue`（interrupt 读绑定）、`SettingsDialog.vue`（shortcuts tab）、`lib/icons.ts`（keyboard/trash 图标）、`lib/storage.ts`（shortcutOverrides key）；新文件 keymap.ts / useShortcuts.ts / ShortcutsPanel.vue 不同步。i18n 的 `shortcuts.*` 与 `settings.tabs.shortcuts` 在共享包（web 不使用，无副作用）。整目录 re-copy 时需保留以上全部。
   - 测试：`tests/renderer/keymap.test.ts`（22 用例：平台判定/解析/精确修饰键匹配/⌥ 变形字符按 code 匹配/录制/校验/查重/键帽）；`tests/main/menu.test.ts`（设置/新建/打开文件夹项 accelerator 跟随/缺省 + bindingToAccelerator）；`tests/main/preload.test.ts`（白名单 + setMenuShortcuts 通道校验）。
-  - 明确未做：web 端、OS 级全局快捷键（globalShortcut 仍只有 smoke-test 的 Cmd+Alt+K，renderer 仍未消费 `onShortcut`）、右侧面板/diff 快捷键、跨端同步、多窗口。
+  - 明确未做：web 端、右侧面板/diff 快捷键、跨端同步、多窗口。
+
+- [x] **OS 级全局唤起快捷键**（已完成，desktop 专属）
+  - 实现：注册表新增 `summonApp` action（默认 `shift+mod+space`，canonical 格式），`main/shortcuts.ts` 用 `globalShortcut` 注册并回调 `showMainWindow()`——应用隐藏/未聚焦时也能唤出，替代原 smoke-test 的 `Cmd+Alt+K`（`kimi:shortcut` 通道保留未用）。**注册完全由 renderer 推送驱动，主进程启动不预注册**（否则每次启动都先抢默认组合、renderer 失败时默认组合永远挂着）：`useShortcuts.ts` 的 immediate watch 每次启动重放存档绑定（默认/自定义/null）经 `setGlobalShortcut`（IPC `kimi:global-shortcut`）推给主进程；主进程状态模型 **committed / deferred 分离**——`currentBinding` 只存注册成功才提交的生效绑定，候选经 `activate()` 试注册（先注册新值、成功才注销旧值；相同 accelerator 直接 no-op），被 OS 拒绝时旧注册与状态原样保留；null 立即生效并注销。录制期挂起：ShortcutsPanel 录制任意快捷键时除 `setMenuSuspended` 外同步 `setGlobalShortcutSuspended(true)`（IPC `kimi:global-shortcut-suspend`），防止当前生效的 OS 级组合被系统先消费、录不进 recorder；挂起期间的推送记 `deferredBinding`，恢复时先试它、失败回落 committed——否则失败候选会污染 `currentBinding`，一次挂起-恢复（或重启）就把仍好用的旧快捷键永久清掉。
+  - 冲突与校验（review 后补）：`keymap.ts` 新增 `OS_GLOBAL_ACTIONS`（与 `MENU_SYNCED_ACTIONS` 并列），`findConflict` 的跨 scope 查重改为认两者的并集（`isNativeWideAction`）——OS 级注册与菜单 accelerator 同性质（app 聚焦时也先拦截），summonApp 与 composer 动作互绑不再漏检。录制 summonApp 的准入 = `isValidMenuBinding`（必带修饰键——裸键会被系统级抢占到所有应用；AltGr 防护抽成 `isAltGrShapedBinding` 与菜单复用——非 Apple 平台 alt+(mod|ctrl) 形组合在很多布局上就是 AltGr，系统级注册会在用户正常输入时唤起应用）+ `isAcceleratorExpressible`（拒绝无法转为 Electron accelerator 的绑定，如 `⌘'`——keymap 经 Quote 收到 `'`，但 Electron 键码表不含单引号；summonApp 无 renderer 兜底，不设防会在设置页留下永远不响的快捷键）；报错文案 `shortcuts.notGlobal`。
+  - 注册失败回执与提示（review 后补，两轮）：`kimi:global-shortcut-suspend` 与 `kimi:global-shortcut` 均改 invoke（preload 两方法返回 `Promise<boolean>`，非 true 一律按 false 处理）——恢复注册/直接推送都返回"请求的绑定是否生效"，OS 拒绝（已被系统/他应用占用）则保留已生效绑定并返回 false。录制路径：面板录制 summonApp 完成时 `finishOsGlobalRecording` 先 `await nextTick()` 把 deferred 推送冲到主进程再恢复，失败则回滚 override（恢复录制前的值）并在行内报错 `shortcuts.globalTaken`。非录制路径（启动重放、恢复默认/全部恢复、重绑回滚后的重推）：`useShortcuts.ts` 的 `osGlobalFailures` 响应式表记录被 OS 拒绝的 action（成功即清除），面板该行常驻显示 `shortcuts.globalTaken`——恢复默认不做强制回滚（那是用户的显式选择，给提示比静默改回去诚实，也避免回滚再失败打乒乓），但持久化一个永远不响的绑定也绝不能看起来成功。
+  - 录制中关窗恢复（review 后补）：macOS 关窗=隐藏（renderer 保活不卸载），录制中关窗曾把菜单 accelerator 与 OS 级唤起快捷键一直挂起到用户回来取消——而窗口被隐藏时正是最需要唤起键的时候。面板监听 `visibilitychange`，窗口变 hidden 且正在录制则 `stopRecording()`（取消录制并恢复两边注册，回来是干净行而非半截录制态）。
+  - Linux Wayland：`index.ts` 在加载 `./app` 前 append `enable-features=GlobalShortcutsPortal`（仅 linux 平台；Wayland 会话下 `globalShortcut` 必须走 XDG portal，X11 与其他平台无影响）。
+  - **web 刻意不改**：浏览器无 globalShortcut；`summonApp` 在 `SHORTCUT_ACTIONS` 中 scope 为 global 但不进 `App.vue` 的 renderer dispatcher（主进程直接处理，renderer 无需消费）。
+  - 测试：`tests/main/shortcuts.test.ts`（14 用例：推送前不注册/推送注册/回调 showMainWindow/重绑/清空/注册失败/重绑失败保旧值（含返回值断言）/重绑失败后挂起循环恢复 committed/deferred 失败回落 committed 并返回 false/恢复回执 true+false/挂起中取消分配/挂起-恢复/相同绑定 no-op/卸载全清）；`tests/main/preload.test.ts` 白名单 + 两全局快捷键通道 invoke 回执校验；`tests/renderer/keymap.test.ts` 补 OS-global 跨 scope 双向查重、`isAcceleratorExpressible`（单引号拒绝）、`isAltGrShapedBinding`（平台分流）、OS-global 默认值可转换+带修饰键 sanity；`tests/renderer/useShortcuts.test.ts`（3 用例：拒绝置位/成功清除/重绑推送/无桥静默）。
 
 - [ ] **最近工作区接入 OS**
   - 现状：全靠 localStorage + server `recentRoots`。
@@ -104,9 +113,9 @@
     暂缓双语，后续随菜单整体 l10n 补回；点击调 `pet.ts` 的 `togglePetVisibility()`
     并把勾选态吸附到实际结果；app.ts 在 createPetWindow 后用
     `setMenuPetVisible(isPetVisible())` 播种初值——buildMenu 先于宠物窗创建）。可见性与
-    位置一起存 `pet-state.json`（`{x, y, visible}`；老的仅位置文件按 visible=true
-    兼容）。隐藏用 `hide()` 而不是销毁——Rive runtime 不重建，窗口被 occlude 后渲染
-    自动暂停。
+    位置一起存 `pet-state.json`（`{x, y, visible}`；**默认隐藏**——无文件、畸形 JSON、
+    老的仅位置文件都按 `visible: false` 处理，仅显式 `visible: true` 恢复显示）。隐藏用
+    `hide()` 而不是销毁——Rive runtime 不重建，窗口被 occlude 后渲染自动暂停。
   - **app.ts 必修**：`showMainWindow()` 与 `activate` 原来按 `getAllWindows()[0]` /
     `length === 0` 判断主窗口，宠物窗会混进来——已改走 `window.ts` 的 `getMainWindow()`。
   - **web 无对应物**：浏览器没有桌面浮窗；`pet.html` 与 `pet/` 不在 web 快照内，整目录

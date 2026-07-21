@@ -7,6 +7,7 @@ import { listAvailableOpenInApps, openInApp } from './open-in';
 import { getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
+import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -101,6 +102,32 @@ export function registerIpcHandlers(): void {
     if (typeof suspended === 'boolean') {
       setMenuSuspended(suspended);
     }
+  });
+  // The summon-app global shortcut follows the renderer's customizable binding
+  // (canonical keymap format). Registration lives in the main process because
+  // globalShortcut must fire even when the window is hidden or unfocused.
+  // Returns whether the binding went live (false = OS refused it, the previous
+  // working shortcut stays) so the renderer can flag dead bindings.
+  ipcMain.handle(IPC.globalShortcut, (_event, payload: unknown) => {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      return false;
+    }
+    const { action, binding } = payload as Record<string, unknown>;
+    if (action !== 'summonApp' || (binding !== null && typeof binding !== 'string')) {
+      return false;
+    }
+    return setGlobalShortcut(binding as string | null);
+  });
+  // Same recording problem as the menu: the current OS-level combo would be
+  // consumed by the system and never reach the renderer's recorder, so the
+  // panel unregisters it for the duration of a recording. Returns whether the
+  // requested binding went live on resume (false = OS refused it, committed
+  // binding restored) so the panel can roll back a dead override.
+  ipcMain.handle(IPC.globalShortcutSuspend, (_event, suspended: unknown) => {
+    if (typeof suspended !== 'boolean') {
+      return false;
+    }
+    return setGlobalShortcutSuspended(suspended);
   });
   // Renderer-initiated "bring the window back" (notification clicks): with
   // macOS hide-on-close the window may be alive but hidden, and the web

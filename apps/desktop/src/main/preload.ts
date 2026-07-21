@@ -207,6 +207,17 @@ export type KimiDesktopApi = {
   /** Silence (true) or restore (false) all native menu accelerators while
    *  the settings panel records a shortcut. */
   setMenuSuspended: (suspended: boolean) => void;
+  /** Push the summon-app binding (canonical keymap format) so the main
+   *  process registers it as an OS-level global shortcut. Resolves false
+   *  when the OS refused the binding (already taken) — the previous working
+   *  shortcut stays live. */
+  setGlobalShortcut: (action: string, binding: string | null) => Promise<boolean>;
+  /** Unregister (true) or restore (false) the summon-app global shortcut
+   *  while the settings panel records a shortcut — the OS would otherwise
+   *  consume the current combo before the recorder sees it. Resuming
+   *  resolves false when the OS refused the new binding (the previous
+   *  working shortcut was restored), so the panel can roll back. */
+  setGlobalShortcutSuspended: (suspended: boolean) => Promise<boolean>;
   /** Desktop-pet window drag lifecycle (pet.html only). Positions are global
    *  screen coordinates from PointerEvent.screenX/screenY; the main process
    *  moves the window keeping the offset captured at drag start. */
@@ -308,6 +319,20 @@ export const api: KimiDesktopApi = {
     if (typeof suspended === 'boolean') {
       ipcRenderer.send('kimi:menu-suspend', suspended);
     }
+  },
+  setGlobalShortcut: async (action, binding) => {
+    if (typeof action !== 'string' || (binding !== null && typeof binding !== 'string')) {
+      return false;
+    }
+    const result: unknown = await ipcRenderer.invoke('kimi:global-shortcut', { action, binding });
+    return result === true;
+  },
+  setGlobalShortcutSuspended: async (suspended) => {
+    if (typeof suspended !== 'boolean') {
+      return false;
+    }
+    const result: unknown = await ipcRenderer.invoke('kimi:global-shortcut-suspend', suspended);
+    return result === true;
   },
   petDragStart: (pos) => {
     if (asScreenPoint(pos)) {

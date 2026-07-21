@@ -113,11 +113,47 @@ function pushMenuShortcuts(): void {
   bridge.setMenuShortcuts(bindings);
 }
 
+// ---------------------------------------------------------------------------
+// OS-level global shortcut sync: summonApp is registered with
+// globalShortcut by the main process (main/shortcuts.ts) so it fires even
+// when the window is hidden or unfocused. Pushed on every change and once at
+// startup (same immediate watch); no bridge → no-op.
+// ---------------------------------------------------------------------------
+
+const GLOBAL_SHORTCUT_ACTIONS = ['summonApp'] as const;
+
+interface GlobalShortcutBridge {
+  setGlobalShortcut?: (action: string, binding: string | null) => Promise<boolean>;
+}
+
+/** OS-global bindings the OS refused to register (already taken by the system
+ *  or another app), keyed by action id. The settings panel shows these inline
+ *  — a persisted binding that can never fire must not look successful. Covers
+ *  every push path (startup replay, reset-to-default, rebind rollback); the
+ *  recording flow has its own await-and-roll-back path on top. Cleared on the
+ *  next successful registration. */
+export const osGlobalFailures = reactive<Record<string, true>>({});
+
+async function pushGlobalShortcuts(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const bridge = (window as { kimiDesktop?: GlobalShortcutBridge }).kimiDesktop;
+  if (typeof bridge?.setGlobalShortcut !== 'function') return;
+  for (const id of GLOBAL_SHORTCUT_ACTIONS) {
+    const ok = await bridge.setGlobalShortcut(id, resolvedBinding(id));
+    if (ok) {
+      delete osGlobalFailures[id];
+    } else {
+      osGlobalFailures[id] = true;
+    }
+  }
+}
+
 watch(
   overrides,
   () => {
     safeSetJson(STORAGE_KEYS.shortcutOverrides, { ...overrides });
     pushMenuShortcuts();
+    void pushGlobalShortcuts();
   },
   { deep: true, immediate: true },
 );

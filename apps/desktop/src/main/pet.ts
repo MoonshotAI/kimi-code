@@ -118,8 +118,8 @@ function stateFile(): string {
 /** Persisted pet state: last dragged position + tray-toggle visibility. */
 export interface PetState {
   position: PetPosition | null;
-  /** Defaults to true — the pet shows on first run and on pre-toggle state
-      files that only carry a position. */
+  /** Defaults to false — the pet stays hidden until the user enables it from
+      the View menu; only an explicit `visible: true` brings it back. */
   visible: boolean;
 }
 
@@ -134,10 +134,10 @@ export function loadPetState(stateFilePath: string): PetState {
       typeof parsed.x === 'number' && typeof parsed.y === 'number'
         ? { x: parsed.x, y: parsed.y }
         : null;
-    return { position, visible: parsed.visible !== false };
+    return { position, visible: parsed.visible === true };
   } catch {
-    // No saved state yet, or it is unreadable — corner + visible.
-    return { position: null, visible: true };
+    // No saved state yet, or it is unreadable — corner + hidden.
+    return { position: null, visible: false };
   }
 }
 

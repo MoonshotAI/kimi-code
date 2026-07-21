@@ -1,5 +1,6 @@
 export default {
   actions: {
+    summonApp: { label: '显示应用窗口', desc: '从任意位置将应用窗口唤起到前台' },
     newSession: { label: '新聊天', desc: '在当前工作区开始一个新聊天' },
     searchSessions: { label: '搜索会话', desc: '打开会话搜索弹窗' },
     archiveSession: { label: '归档任务', desc: '立即归档当前聊天' },
@@ -19,6 +20,8 @@ export default {
   resetAll: '全部恢复默认',
   recording: '按下新的快捷键…',
   invalid: '该按键组合不能用作快捷键',
+  notGlobal: '该按键组合无法注册为系统级快捷键',
+  globalTaken: '该快捷键已被系统或其他应用占用',
   reserved: '系统菜单已占用该快捷键',
   reservedSteer: 'steer 固定快捷键（Ctrl/Cmd+S），不可占用',
   conflict: '已被「{action}」占用',

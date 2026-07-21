@@ -1,5 +1,6 @@
 export default {
   actions: {
+    summonApp: { label: 'Show App Window', desc: 'Bring the app window to the foreground from anywhere' },
     newSession: { label: 'New Chat', desc: 'Start a new chat in the current workspace' },
     searchSessions: { label: 'Search Chats', desc: 'Open the session search dialog' },
     archiveSession: { label: 'Archive Chat', desc: 'Archive the current chat right away' },
@@ -19,6 +20,8 @@ export default {
   resetAll: 'Reset all to defaults',
   recording: 'Press the new shortcut…',
   invalid: 'This key combination can’t be used as a shortcut',
+  notGlobal: 'This key combination can’t be registered as a system-wide shortcut',
+  globalTaken: 'This shortcut is already taken by the system or another app',
   reserved: 'Reserved by the system menu',
   reservedSteer: 'Reserved for steer (Ctrl/Cmd+S)',
   conflict: 'Already used by “{action}”',

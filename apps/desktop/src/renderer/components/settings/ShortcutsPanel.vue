@@ -9,25 +9,28 @@
      cancels; pure modifier presses keep waiting. Illegal combos (bare
      printable keys) and same-scope conflicts are rejected inline. -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Icon, IconButton, Kbd } from '@moonshot-ai/web-ui';
 import {
   bindingFromEvent,
   findConflict,
   formatBindingKeys,
+  isAcceleratorExpressible,
   isAppleShortcutPlatform,
   isHardcodedBinding,
   isReservedBinding,
   isValidBinding,
   isValidMenuBinding,
   MENU_SYNCED_ACTIONS,
+  OS_GLOBAL_ACTIONS,
   SHORTCUT_ACTIONS,
   shortcutActionById,
   type ShortcutAction,
 } from '../../lib/keymap';
 import {
   isShortcutCustomized,
+  osGlobalFailures,
   resetAllShortcutBindings,
   resetShortcutBinding,
   resolvedBinding,
@@ -83,6 +86,7 @@ function startRecording(action: ShortcutAction): void {
   rowError.value = null;
   liveKeys.value = [];
   setMenuSuspended(true);
+  setGlobalShortcutSuspended(true);
 }
 
 function stopRecording(): void {
@@ -90,18 +94,51 @@ function stopRecording(): void {
   recordError.value = null;
   liveKeys.value = [];
   setMenuSuspended(false);
+  setGlobalShortcutSuspended(false);
 }
 
 // While recording, the native menu's accelerators must not fire either —
 // they intercept BEFORE the renderer (recording ⌘R would reload the app
 // instead of showing the reserved hint). The main process disables the
-// whole menu bar (editMenu excepted) until the recording ends.
+// whole menu bar (editMenu excepted) until the recording ends. The summon-app
+// global shortcut has the same problem at the OS level: the current combo
+// would be consumed before reaching the recorder, so it unregisters too.
 interface MenuSuspendBridge {
   setMenuSuspended?: (suspended: boolean) => void;
+  setGlobalShortcutSuspended?: (suspended: boolean) => Promise<boolean>;
 }
 
 function setMenuSuspended(suspended: boolean): void {
   (window as { kimiDesktop?: MenuSuspendBridge }).kimiDesktop?.setMenuSuspended?.(suspended);
+}
+
+function setGlobalShortcutSuspended(suspended: boolean): void {
+  void (window as { kimiDesktop?: MenuSuspendBridge }).kimiDesktop?.setGlobalShortcutSuspended?.(suspended);
+}
+
+/** Finish an OS-global recording: resume registrations with the new chord
+ *  (the override → main-process push is deferred while suspended; nextTick
+ *  flushes it ahead of the resume) and roll back with an inline error when
+ *  the OS refuses it (already taken by the system or another app) — without
+ *  the rollback the row would show a binding that can never fire. */
+async function finishOsGlobalRecording(
+  id: string,
+  previous: { customized: boolean; binding: string | null | undefined },
+): Promise<void> {
+  await nextTick();
+  const bridge = (window as { kimiDesktop?: MenuSuspendBridge }).kimiDesktop;
+  const ok = (await bridge?.setGlobalShortcutSuspended?.(false)) ?? true;
+  recordingId.value = null;
+  recordError.value = null;
+  liveKeys.value = [];
+  setMenuSuspended(false);
+  if (ok) return;
+  if (previous.customized) {
+    setShortcutBinding(id, previous.binding ?? null);
+  } else {
+    resetShortcutBinding(id);
+  }
+  rowError.value = { id, message: t('shortcuts.globalTaken') };
 }
 
 function onRecordKeydown(e: KeyboardEvent): void {
@@ -145,6 +182,16 @@ function onRecordKeydown(e: KeyboardEvent): void {
     liveKeys.value = [];
     return;
   }
+  // OS-global actions (summonApp) are registered with globalShortcut and have
+  // NO renderer fallback: they need a real modifier (a bare key would be
+  // stolen from every app system-wide), must not be AltGr-shaped (would fire
+  // while typing AltGr characters), and must be expressible as an Electron
+  // accelerator (e.g. ⌘' can never fire) — reject all of it up front.
+  if (OS_GLOBAL_ACTIONS.includes(id) && (!isValidMenuBinding(binding) || !isAcceleratorExpressible(binding))) {
+    recordError.value = t('shortcuts.notGlobal');
+    liveKeys.value = [];
+    return;
+  }
   // Native menu role accelerators (reload, close window, edit menu, …) win
   // over the renderer keydown, so a colliding custom binding would be dead —
   // or dangerous ('mod+r' reloads the app).
@@ -167,7 +214,15 @@ function onRecordKeydown(e: KeyboardEvent): void {
     liveKeys.value = [];
     return;
   }
+  const previous = { customized: isShortcutCustomized(id), binding: overrides[id] };
   setShortcutBinding(id, binding);
+  // OS-global actions: the binding only goes live when the suspended
+  // registration resumes — finalize asynchronously so a refused chord rolls
+  // back with an error instead of sitting dead in the row.
+  if (OS_GLOBAL_ACTIONS.includes(id)) {
+    void finishOsGlobalRecording(id, previous);
+    return;
+  }
   stopRecording();
 }
 
@@ -216,9 +271,25 @@ function onRecordKeyup(e: KeyboardEvent): void {
 
 onMounted(() => document.addEventListener('keyup', onRecordKeyup, true));
 onUnmounted(() => document.removeEventListener('keyup', onRecordKeyup, true));
+// macOS close-hides the window instead of destroying it — the panel never
+// unmounts, so a recording left open would keep the menu accelerators and the
+// OS-level summon shortcut suspended while the window is hidden (exactly when
+// the user needs the summon chord to bring it back). Cancel the recording on
+// hide instead: the user returns to a clean row, not a half-open recorder.
+function onVisibilityChange(): void {
+  if (document.hidden && recordingId.value !== null) {
+    stopRecording();
+  }
+}
+
+onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange));
+onUnmounted(() => document.removeEventListener('visibilitychange', onVisibilityChange));
 // The panel unmounts on a tab switch (v-if) even mid-recording — never leave
-// the native menu suspended behind our back.
-onUnmounted(() => setMenuSuspended(false));
+// the native menu or the global shortcut suspended behind our back.
+onUnmounted(() => {
+  setMenuSuspended(false);
+  setGlobalShortcutSuspended(false);
+});
 </script>
 
 <template>
@@ -236,6 +307,7 @@ onUnmounted(() => setMenuSuspended(false));
             <span class="hint">{{ t(action.descKey) }}</span>
             <span v-if="rowError?.id === action.id" class="hint sc-error">{{ rowError.message }}</span>
             <span v-else-if="recordingId === action.id && recordError !== null" class="hint sc-error">{{ recordError }}</span>
+            <span v-else-if="osGlobalFailures[action.id]" class="hint sc-error">{{ t('shortcuts.globalTaken') }}</span>
           </span>
           <span class="sc-binding">
             <!-- Recording: a focused "press the shortcut" box + explicit

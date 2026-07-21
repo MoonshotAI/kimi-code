@@ -39,6 +39,8 @@ const WHITELIST = [
   'petDragEnd',
   'petDragMove',
   'petDragStart',
+  'setGlobalShortcut',
+  'setGlobalShortcutSuspended',
   'setLocale',
   'setMenuShortcuts',
   'setMenuSuspended',
@@ -121,6 +123,27 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:menu-suspend', true);
     exposed.setMenuSuspended('yes'); // junk ignored
     expect(send).toHaveBeenCalledTimes(5);
+
+    // Global shortcut: action + nullable binding invoke; the boolean result
+    // is validated (non-true resolves false); junk never reaches the channel.
+    invoke.mockResolvedValueOnce(true);
+    await expect(exposed.setGlobalShortcut('summonApp', 'mod+space')).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith('kimi:global-shortcut', { action: 'summonApp', binding: 'mod+space' });
+    invoke.mockResolvedValueOnce(true);
+    await expect(exposed.setGlobalShortcut('summonApp', null)).resolves.toBe(true);
+    invoke.mockResolvedValueOnce('junk');
+    await expect(exposed.setGlobalShortcut('summonApp', 'mod+space')).resolves.toBe(false);
+    await expect(exposed.setGlobalShortcut('summonApp', 42)).resolves.toBe(false);
+    await expect(exposed.setGlobalShortcut(42, 'mod+space')).resolves.toBe(false);
+
+    // Global-shortcut suspend: booleans invoke and the boolean result is
+    // validated (non-true resolves false); junk never reaches the channel.
+    invoke.mockResolvedValueOnce(true);
+    await expect(exposed.setGlobalShortcutSuspended(true)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith('kimi:global-shortcut-suspend', true);
+    invoke.mockResolvedValueOnce('junk');
+    await expect(exposed.setGlobalShortcutSuspended(false)).resolves.toBe(false);
+    await expect(exposed.setGlobalShortcutSuspended('yes')).resolves.toBe(false);
 
     // Pet drag: validated screen points forward; junk never reaches main.
     exposed.petDragStart({ screenX: 100, screenY: 200 });

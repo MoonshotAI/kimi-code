@@ -3,9 +3,19 @@
 // would execute that module and its whole dependency tree (kap-server,
 // agent-core, native modules) before any statement here runs, leaving
 // load-time crashes with neither a log line nor the crash guard.
+import { app } from 'electron';
+
 import { initMainLogging } from './log';
 
 initMainLogging();
+
+// Linux Wayland sessions: globalShortcut only reaches the app through the
+// XDG GlobalShortcuts portal, which Electron wires up via this feature
+// switch. Must be appended before the app is ready; X11 and other platforms
+// are unaffected.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
+}
 
 // Loaded dynamically so the import graph above stays minimal; a load-time
 // failure in ./app rejects this promise and lands in the crash guard's

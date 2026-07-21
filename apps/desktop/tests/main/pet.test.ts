@@ -139,18 +139,25 @@ describe('pet-state.json persistence', () => {
     expect(loadPetState(file)).toEqual({ position: null, visible: true });
   });
 
-  it('defaults to visible with no file, malformed JSON, or a legacy position-only file', () => {
+  it('defaults to hidden with no file, malformed JSON, or a legacy position-only file', () => {
     dir = mkdtempSync(join(tmpdir(), 'kimi-pet-'));
     const file = join(dir, 'pet-state.json');
-    expect(loadPetState(file)).toEqual({ position: null, visible: true });
+    expect(loadPetState(file)).toEqual({ position: null, visible: false });
     writeFileSync(file, 'not json{');
-    expect(loadPetState(file)).toEqual({ position: null, visible: true });
-    // Legacy files (position only, no visible flag) keep the position and
-    // stay visible — the toggle didn't exist when they were written.
+    expect(loadPetState(file)).toEqual({ position: null, visible: false });
+    // Legacy files (position only, no visible flag) keep the position but
+    // stay hidden — the pet only shows after an explicit View-menu enable.
     writeFileSync(file, JSON.stringify({ x: 1, y: 2 }));
-    expect(loadPetState(file)).toEqual({ position: { x: 1, y: 2 }, visible: true });
+    expect(loadPetState(file)).toEqual({ position: { x: 1, y: 2 }, visible: false });
     // Wrong-shaped coordinates drop the position but not the app.
     writeFileSync(file, JSON.stringify({ x: '1', y: 2, visible: false }));
     expect(loadPetState(file)).toEqual({ position: null, visible: false });
+  });
+
+  it('honours an explicit visible: true', () => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-pet-'));
+    const file = join(dir, 'pet-state.json');
+    writeFileSync(file, JSON.stringify({ x: 1, y: 2, visible: true }));
+    expect(loadPetState(file)).toEqual({ position: { x: 1, y: 2 }, visible: true });
   });
 });

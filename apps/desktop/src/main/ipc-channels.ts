@@ -24,6 +24,8 @@ export const IPC = {
   locale: 'kimi:locale',
   menuShortcut: 'kimi:menu-shortcut',
   menuSuspend: 'kimi:menu-suspend',
+  globalShortcut: 'kimi:global-shortcut',
+  globalShortcutSuspend: 'kimi:global-shortcut-suspend',
   petDragStart: 'kimi:pet-drag-start',
   petDragMove: 'kimi:pet-drag-move',
   petDragEnd: 'kimi:pet-drag-end',
