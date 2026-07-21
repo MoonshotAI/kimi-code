@@ -1777,6 +1777,90 @@ command = "vim"
     }
   });
 
+  it('queues a skill activation behind a pending video upload', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(session.uploadVideo).toHaveBeenCalled();
+      });
+
+      (
+        driver as unknown as {
+          sendSkillActivation(s: unknown, skillName: string, args: string): void;
+        }
+      ).sendSkillActivation(session, 'review', 'src/tui');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(session.activateSkill).not.toHaveBeenCalled();
+
+      releaseUpload();
+      await vi.waitFor(() => {
+        expect(session.activateSkill).toHaveBeenCalledWith('review', 'src/tui');
+      });
+      // The video prompt owns the turn by the time the skill fires.
+      expect(session.prompt).toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('queues a plugin command behind a pending video upload', async () => {
+    const activatePluginCommand = vi.fn(async () => {});
+    const session = makeSession({ activatePluginCommand });
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(session.uploadVideo).toHaveBeenCalled();
+      });
+
+      (
+        driver as unknown as {
+          activatePluginCommand(s: unknown, pluginId: string, command: string, args: string): void;
+        }
+      ).activatePluginCommand(session, 'plug', 'cmd', 'args');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(activatePluginCommand).not.toHaveBeenCalled();
+
+      releaseUpload();
+      await vi.waitFor(() => {
+        expect(activatePluginCommand).toHaveBeenCalledWith('plug', 'cmd', 'args');
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('queues a pasted-video message with uploaded parts while streaming', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);

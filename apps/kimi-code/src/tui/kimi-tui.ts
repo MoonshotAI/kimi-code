@@ -1388,11 +1388,27 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
-    this.beginSessionRequest();
-    void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
-      const message = formatErrorMessage(error);
-      this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
-    });
+    const modelAtSubmit = this.state.appState.model;
+    const dispatch = (): void => {
+      if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
+        this.showError(
+          'The session or model changed while the video was uploading — please resend.',
+        );
+        return;
+      }
+      this.beginSessionRequest();
+      void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
+        const message = formatErrorMessage(error);
+        this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
+      });
+    };
+    // A pending video upload is busy time: chain behind it so the skill
+    // prompt cannot start a turn ahead of the earlier message.
+    if (this.pendingSubmits > 0) {
+      this.inputSubmitChain = this.inputSubmitChain.then(dispatch);
+      return;
+    }
+    dispatch();
   }
 
   activatePluginCommand(
@@ -1412,13 +1428,29 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
-    this.beginSessionRequest();
-    void session
-      .activatePluginCommand(pluginId, commandName, rewrite.text)
-      .catch((error: unknown) => {
-        const message = formatErrorMessage(error);
-        this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
-      });
+    const modelAtSubmit = this.state.appState.model;
+    const dispatch = (): void => {
+      if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
+        this.showError(
+          'The session or model changed while the video was uploading — please resend.',
+        );
+        return;
+      }
+      this.beginSessionRequest();
+      void session
+        .activatePluginCommand(pluginId, commandName, rewrite.text)
+        .catch((error: unknown) => {
+          const message = formatErrorMessage(error);
+          this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
+        });
+    };
+    // A pending video upload is busy time: chain behind it so the command
+    // prompt cannot start a turn ahead of the earlier message.
+    if (this.pendingSubmits > 0) {
+      this.inputSubmitChain = this.inputSubmitChain.then(dispatch);
+      return;
+    }
+    dispatch();
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
