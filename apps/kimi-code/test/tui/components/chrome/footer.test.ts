@@ -221,6 +221,34 @@ describe('FooterComponent session title', () => {
     expect(stripAnsi(footer.render(120).join('\n'))).not.toContain('My session');
   });
 
+  it('collapses a multiline session title to a single line', () => {
+    const state: AppState = {
+      ...appState,
+      sessionTitle: 'first line\nsecond line',
+      showSessionTitleInFooter: true,
+    };
+    const footer = new FooterComponent(state);
+
+    const rendered = footer.render(120);
+    const line1 = stripAnsi(rendered[0] ?? '');
+    expect(line1).toContain('first line second line');
+    // The newline must not leak into later footer lines either.
+    expect(stripAnsi(rendered.join('\n'))).not.toContain('\nsecond line');
+  });
+
+  it('collapses tabs and runs of whitespace in the session title', () => {
+    const state: AppState = {
+      ...appState,
+      sessionTitle: 'my\t  session   title',
+      showSessionTitleInFooter: true,
+    };
+    const footer = new FooterComponent(state);
+
+    const line1 = stripAnsi(footer.render(120).join('\n')).split('\n')[0] ?? '';
+    expect(line1).toContain('my session title');
+    expect(line1).not.toContain('\t');
+  });
+
   it('shows the session title after the git badge when the toggle is on', () => {
     const state: AppState = {
       ...appState,

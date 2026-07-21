@@ -310,8 +310,14 @@ export class FooterComponent implements Component {
     }
 
     if (state.showSessionTitleInFooter && state.sessionTitle) {
-      const title = truncateToWidth(state.sessionTitle, MAX_FOOTER_TITLE_LENGTH, '…');
-      left.push(chalk.hex(colors.textDim)(title));
+      // /title accepts pasted multiline text; keep the footer on one line
+      // (same collapse as the session picker's singleLine).
+      const title = state.sessionTitle.replaceAll(/\s+/g, ' ').trim();
+      if (title.length > 0) {
+        left.push(
+          chalk.hex(colors.textDim)(truncateToWidth(title, MAX_FOOTER_TITLE_LENGTH, '…')),
+        );
+      }
     }
 
     const leftLine = left.join('  ');
