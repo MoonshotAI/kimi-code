@@ -60,6 +60,10 @@ const ModelAliasBaseSchema = z.object({
   // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
   // managed Kimi Code models that declare `protocol: 'anthropic'`.
   betaApi: z.boolean().optional(),
+  // Per-model endpoint override, paired with `protocol`. Catalog imports set
+  // it when a gateway provider serves this model over a different endpoint
+  // than the provider default.
+  baseUrl: z.string().optional(),
 });
 
 export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
@@ -67,6 +71,7 @@ export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
   model: true,
   protocol: true,
   betaApi: true,
+  baseUrl: true,
 }).partial();
 
 export type ModelAliasOverrides = z.infer<typeof ModelAliasOverrideSchema>;

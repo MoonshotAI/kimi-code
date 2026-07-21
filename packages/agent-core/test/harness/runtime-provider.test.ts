@@ -283,6 +283,77 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('prefers alias.baseUrl over the provider base URL for the anthropic wire', () => {
+    // Catalog gateway shape: provider default is the OpenAI wire, one model
+    // carries an Anthropic protocol + endpoint override.
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          gateway: {
+            type: 'openai',
+            apiKey: 'sk-gateway',
+            baseUrl: 'https://gateway.example.test/api/v1',
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'gateway/claude-model': {
+            provider: 'gateway',
+            model: 'vendor/claude-model',
+            maxContextSize: 200000,
+            protocol: 'anthropic',
+            baseUrl: 'https://gateway.example.test/api/anthropic',
+          },
+          'gateway/plain-model': {
+            provider: 'gateway',
+            model: 'vendor/plain-model',
+            maxContextSize: 1000,
+            protocol: 'anthropic',
+          },
+        },
+      },
+      model: 'gateway/claude-model',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      baseUrl: 'https://gateway.example.test/api/anthropic',
+    });
+
+    const fallback = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          gateway: {
+            type: 'openai',
+            apiKey: 'sk-gateway',
+            baseUrl: 'https://gateway.example.test/api/v1',
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'gateway/plain-model': {
+            provider: 'gateway',
+            model: 'vendor/plain-model',
+            maxContextSize: 1000,
+            protocol: 'anthropic',
+          },
+        },
+      },
+      model: 'gateway/plain-model',
+    });
+
+    // Without an alias endpoint the provider base URL applies (stripped of
+    // the trailing /v1 for the Anthropic SDK, as before).
+    expect(fallback.provider).toMatchObject({
+      type: 'anthropic',
+      baseUrl: 'https://gateway.example.test/api',
+    });
+  });
+
   it('omits defaultMaxTokens when alias.maxOutputSize is unset', () => {
     const resolved = resolveRuntimeProvider({
       config: {

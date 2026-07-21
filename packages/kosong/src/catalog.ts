@@ -10,7 +10,7 @@ export interface CatalogModelEntry {
   readonly id?: string;
   readonly name?: string;
   readonly family?: string;
-  readonly limit?: { readonly context?: number; readonly output?: number };
+  readonly limit?: { readonly context?: number; readonly input?: number; readonly output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
   /**
@@ -20,6 +20,14 @@ export interface CatalogModelEntry {
    * budget — neither yields an effort list.
    */
   readonly reasoning_options?: readonly CatalogReasoningOption[];
+  /** Lifecycle marker: `'deprecated'` models are dropped at import. */
+  readonly status?: string;
+  /**
+   * Per-model serving override on gateway providers (zenmux, opencode, …):
+   * the model speaks a different protocol (`npm`) and/or lives on a different
+   * endpoint (`api`) than the provider default.
+   */
+  readonly provider?: CatalogModelProviderOverride;
   /** Accepts message-level tool declarations (`messages[].tools`). Defaults to false. */
   readonly dynamically_loaded_tools?: boolean;
   readonly interleaved?: boolean | { readonly field?: string };
@@ -32,6 +40,11 @@ export interface CatalogModelEntry {
 export interface CatalogReasoningOption {
   readonly type?: string;
   readonly values?: unknown;
+}
+
+export interface CatalogModelProviderOverride {
+  readonly npm?: string;
+  readonly api?: string;
 }
 
 export interface CatalogProviderEntry {
@@ -59,6 +72,13 @@ export interface CatalogModel {
   readonly reasoningKey?: string;
   /** Declared thinking effort levels from `reasoning_options`, when present. */
   readonly supportEfforts?: readonly string[];
+  /**
+   * Per-model protocol override from the catalog entry's `provider` field
+   * (gateway providers serving this model over the Anthropic protocol).
+   */
+  readonly protocol?: 'anthropic';
+  /** Endpoint paired with {@link protocol}, adapted to the wire's SDK convention. */
+  readonly baseUrl?: string;
   readonly capability: ModelCapability;
 }
 
@@ -84,6 +104,10 @@ function hasEmbeddingMarker(value: string | undefined): boolean {
 function isUsableChatModel(model: CatalogModelEntry): boolean {
   const outputModalities = model.modalities?.output;
   if (outputModalities !== undefined && !outputModalities.includes('text')) return false;
+  // Deprecated models are shut down or scheduled for removal upstream; do not
+  // offer them for new imports (existing configs are cleaned up on refresh
+  // because the alias is no longer listed upstream).
+  if (model.status === 'deprecated') return false;
   return (
     !hasEmbeddingMarker(model.family) &&
     !hasEmbeddingMarker(model.id) &&
@@ -141,6 +165,14 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
   const inputs = model.modalities?.input ?? [];
   const output = model.limit?.output;
   const supportEfforts = catalogSupportEfforts(model.reasoning_options);
+  // `limit.input` is the true prompt cap when declared (e.g. gpt-5: 400k
+  // context window but a 272k input limit); sizing the context budget to the
+  // total window would let the prompt overflow before compaction kicks in.
+  const input = model.limit?.input;
+  const maxContextTokens =
+    typeof input === 'number' && Number.isInteger(input) && input > 0
+      ? Math.min(input, context)
+      : context;
   return {
     id: model.id,
     name: typeof model.name === 'string' && model.name.length > 0 ? model.name : undefined,
@@ -155,7 +187,7 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
       // the `reasoning` boolean is absent (mirrors the api.json importer).
       thinking: Boolean(model.reasoning) || supportEfforts !== undefined,
       tool_use: model.tool_call ?? true,
-      max_context_tokens: context,
+      max_context_tokens: maxContextTokens,
       dynamically_loaded_tools: model.dynamically_loaded_tools === true,
     },
   };
@@ -194,8 +226,35 @@ function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): str
 
 /** Extracts the valid, normalized models from a catalog provider entry. */
 export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel[] {
-  const models = entry.models ?? {};
-  return Object.values(models)
-    .map((model) => catalogModelToCapability(model))
+  const providerWire = inferWireType(entry);
+  return Object.values(entry.models ?? {})
+    .map((raw) => applyModelProviderOverride(catalogModelToCapability(raw), raw, entry, providerWire))
     .filter((model): model is CatalogModel => model !== undefined);
+}
+
+/**
+ * Gateway providers (zenmux, opencode, azure, …) may declare a per-model
+ * `provider` override when a model is served over a different protocol than
+ * the provider default. Only overrides whose `npm` explicitly targets an
+ * Anthropic SDK are materialized — the model-alias schema cannot express
+ * other per-model protocols yet, and a partial override is worse than none.
+ * Overrides without a usable endpoint (env-placeholder URLs like `${VAR}`,
+ * or no URL on either level) are skipped so provider-level resolution keeps
+ * applying.
+ */
+function applyModelProviderOverride(
+  model: CatalogModel | undefined,
+  raw: CatalogModelEntry,
+  entry: CatalogProviderEntry,
+  providerWire: ProviderType | undefined,
+): CatalogModel | undefined {
+  if (model === undefined) return undefined;
+  const override = raw.provider;
+  if (override === undefined || typeof override.npm !== 'string') return model;
+  if (!override.npm.toLowerCase().includes('anthropic') || providerWire === 'anthropic') {
+    return model;
+  }
+  const api = override.api ?? entry.api;
+  if (typeof api !== 'string' || api.length === 0 || api.includes('${')) return model;
+  return { ...model, protocol: 'anthropic', baseUrl: catalogBaseUrl({ api }, 'anthropic') };
 }

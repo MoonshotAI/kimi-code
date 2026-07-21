@@ -189,6 +189,54 @@ describe('applyCatalogProvider', () => {
     });
   });
 
+  it('writes per-model protocol/baseUrl overrides and the input-limited context size', () => {
+    // The zenmux gateway shape: provider defaults to the OpenAI wire, one
+    // model is served over Anthropic on its own endpoint; plus a gpt-5-style
+    // input cap below the total context window.
+    const models = catalogProviderModels({
+      id: 'gateway',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://gateway.example.test/api/v1',
+      models: {
+        'vendor/claude-model': {
+          id: 'vendor/claude-model',
+          name: 'Gateway Claude',
+          limit: { context: 200000 },
+          provider: {
+            npm: '@ai-sdk/anthropic',
+            api: 'https://gateway.example.test/api/anthropic/v1',
+          },
+        },
+        'vendor/gpt-model': {
+          id: 'vendor/gpt-model',
+          limit: { context: 400000, input: 272000, output: 128000 },
+        },
+      },
+    });
+    const config = { providers: {} } as KimiConfig;
+
+    applyCatalogProvider(config, {
+      providerId: 'gateway',
+      wire: 'openai',
+      baseUrl: 'https://gateway.example.test/api/v1',
+      apiKey: 'sk',
+      models,
+      selectedModelId: 'vendor/claude-model',
+      thinking: false,
+    });
+
+    expect(config.models?.['gateway/vendor/claude-model']).toMatchObject({
+      provider: 'gateway',
+      model: 'vendor/claude-model',
+      protocol: 'anthropic',
+      baseUrl: 'https://gateway.example.test/api/anthropic',
+    });
+    const plain = config.models?.['gateway/vendor/gpt-model'];
+    expect(plain).toMatchObject({ maxContextSize: 272000 });
+    expect(plain?.protocol).toBeUndefined();
+    expect(plain?.baseUrl).toBeUndefined();
+  });
+
   it('clears stale aliases for the same provider but keeps others', () => {
     const config = {
       providers: { anthropic: { type: 'anthropic', apiKey: 'old' } },

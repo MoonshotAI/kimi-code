@@ -126,6 +126,7 @@ export class ProviderManager implements ModelProvider {
       providerConfig,
       alias.model,
       alias.protocol,
+      alias.baseUrl,
       this.options.kimiRequestHeaders,
       effectiveAlias.maxOutputSize,
       effectiveAlias.reasoningKey,
@@ -252,6 +253,7 @@ function toKosongProviderConfig(
   provider: ProviderConfig,
   model: string,
   modelProtocol: ModelAlias['protocol'],
+  modelBaseUrl: string | undefined,
   kimiRequestHeaders: Record<string, string> | undefined,
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
@@ -264,7 +266,10 @@ function toKosongProviderConfig(
   const envCustomHeaders = parseKimiCodeCustomHeaders();
   switch (effectiveType) {
     case 'anthropic': {
-      const baseUrl = providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
+      // A per-model endpoint (catalog gateway override) wins over the
+      // provider-level base URL; it is already adapted to the wire convention.
+      const baseUrl =
+        modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
       return {
         type: 'anthropic',
         model,

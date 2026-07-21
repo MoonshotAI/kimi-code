@@ -74,6 +74,8 @@ export function catalogModelToAlias(providerId: string, model: CatalogModel): Mo
     displayName: model.name,
     reasoningKey: model.reasoningKey,
     supportEfforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
+    protocol: model.protocol,
+    baseUrl: model.baseUrl,
   };
 }
 

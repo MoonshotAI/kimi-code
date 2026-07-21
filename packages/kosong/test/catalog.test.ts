@@ -196,6 +196,39 @@ describe('catalogModelToCapability', () => {
     expect(model?.supportEfforts).toEqual(['low', 'high']);
     expect(model?.capability.thinking).toBe(true);
   });
+
+  it('prefers limit.input over limit.context for the context budget', () => {
+    // The gpt-5 shape on models.dev: 400k window but a 272k input cap.
+    expect(
+      catalogModelToCapability({ id: 'm', limit: { context: 400000, input: 272000 } })?.capability
+        .max_context_tokens,
+    ).toBe(272000);
+    // A bogus or inconsistent input limit never exceeds the total window.
+    expect(
+      catalogModelToCapability({ id: 'm', limit: { context: 1000, input: 5000 } })?.capability
+        .max_context_tokens,
+    ).toBe(1000);
+    expect(
+      catalogModelToCapability({ id: 'm', limit: { context: 1000, input: 0 } })?.capability
+        .max_context_tokens,
+    ).toBe(1000);
+    expect(
+      catalogModelToCapability({ id: 'm', limit: { context: 1000 } })?.capability
+        .max_context_tokens,
+    ).toBe(1000);
+  });
+
+  it('skips deprecated models but keeps beta and alpha ones', () => {
+    expect(
+      catalogModelToCapability({ id: 'old', status: 'deprecated', limit: { context: 1000 } }),
+    ).toBeUndefined();
+    expect(
+      catalogModelToCapability({ id: 'new', status: 'beta', limit: { context: 1000 } })?.id,
+    ).toBe('new');
+    expect(
+      catalogModelToCapability({ id: 'newer', status: 'alpha', limit: { context: 1000 } })?.id,
+    ).toBe('newer');
+  });
 });
 
 describe('catalogProviderModels', () => {
@@ -209,5 +242,95 @@ describe('catalogProviderModels', () => {
     });
     expect(models).toHaveLength(1);
     expect(models[0]?.id).toBe('good');
+  });
+
+  it('materializes a per-model Anthropic override with its own endpoint (zenmux shape)', () => {
+    const models = catalogProviderModels({
+      id: 'zenmux',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://zenmux.example.test/api/v1',
+      models: {
+        'vendor/claude-model': {
+          id: 'vendor/claude-model',
+          limit: { context: 200000 },
+          provider: { npm: '@ai-sdk/anthropic', api: 'https://zenmux.example.test/api/anthropic/v1' },
+        },
+        'vendor/plain-model': { id: 'vendor/plain-model', limit: { context: 1000 } },
+      },
+    });
+    expect(models[0]).toMatchObject({
+      id: 'vendor/claude-model',
+      protocol: 'anthropic',
+      baseUrl: 'https://zenmux.example.test/api/anthropic',
+    });
+    expect(models[1]).toMatchObject({ id: 'vendor/plain-model' });
+    expect(models[1]?.protocol).toBeUndefined();
+    expect(models[1]?.baseUrl).toBeUndefined();
+  });
+
+  it('falls back to the provider api when the override declares only npm (opencode shape)', () => {
+    const models = catalogProviderModels({
+      id: 'opencode',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://opencode.example.test/zen/v1',
+      models: {
+        'vendor/claude-model': {
+          id: 'vendor/claude-model',
+          limit: { context: 200000 },
+          provider: { npm: '@ai-sdk/anthropic' },
+        },
+      },
+    });
+    expect(models[0]).toMatchObject({
+      protocol: 'anthropic',
+      baseUrl: 'https://opencode.example.test/zen',
+    });
+  });
+
+  it('skips the override when the provider already speaks Anthropic, the npm is not Anthropic, or the URL is unusable', () => {
+    // freemodel shape: provider is Anthropic, model override targets OpenAI —
+    // not expressible per-model, left to provider-level resolution.
+    const reverse = catalogProviderModels({
+      id: 'freemodel',
+      npm: '@ai-sdk/anthropic',
+      api: 'https://freemodel.example.test/v1',
+      models: {
+        'vendor/gpt': {
+          id: 'vendor/gpt',
+          limit: { context: 1000 },
+          provider: { npm: '@ai-sdk/openai-compatible' },
+        },
+      },
+    });
+    expect(reverse[0]?.protocol).toBeUndefined();
+
+    // google-vertex shape: no api anywhere — the vertex wire keeps applying.
+    const noEndpoint = catalogProviderModels({
+      id: 'google-vertex',
+      npm: '@ai-sdk/google-vertex',
+      models: {
+        'claude-model': {
+          id: 'claude-model',
+          limit: { context: 200000 },
+          provider: { npm: '@ai-sdk/google-vertex/anthropic' },
+        },
+      },
+    });
+    expect(noEndpoint[0]?.protocol).toBeUndefined();
+
+    // Env-placeholder URLs are SDK-side interpolations the config cannot express.
+    const placeholder = catalogProviderModels({
+      id: 'neon',
+      npm: '@ai-sdk/openai-compatible',
+      api: '${NEON_BASE_URL}/v1',
+      models: {
+        'vendor/claude-model': {
+          id: 'vendor/claude-model',
+          limit: { context: 200000 },
+          provider: { npm: '@ai-sdk/anthropic', api: '${NEON_BASE_URL}/anthropic/v1' },
+        },
+      },
+    });
+    expect(placeholder[0]?.protocol).toBeUndefined();
   });
 });
