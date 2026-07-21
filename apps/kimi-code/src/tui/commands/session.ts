@@ -10,6 +10,7 @@ import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
+import { slashBusyMessage, slashCommandBusyReason } from './resolve';
 import { buildExportMarkdown } from '../utils/export-markdown';
 import type { SlashCommandHost } from './dispatch';
 
@@ -172,6 +173,16 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
 }
 
 async function runInit(host: SlashCommandHost, session: Session): Promise<void> {
+  // The resolver blocks /init while busy; keep that behavior when the
+  // deferred callback lands on an already-running turn.
+  const busy = slashCommandBusyReason({
+    isStreaming: host.state.appState.streamingPhase !== 'idle',
+    isCompacting: host.state.appState.isCompacting,
+  });
+  if (busy !== undefined) {
+    host.showError(slashBusyMessage('init', busy));
+    return;
+  }
   host.deferUserMessages = true;
   host.beginSessionRequest();
   try {

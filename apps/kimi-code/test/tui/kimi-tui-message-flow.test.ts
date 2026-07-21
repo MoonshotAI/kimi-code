@@ -1811,9 +1811,13 @@ command = "vim"
 
       releaseUpload();
       await vi.waitFor(() => {
-        expect(session.activateSkill).toHaveBeenCalledWith('review', 'src/tui');
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'Cannot /review while streaming',
+        );
       });
-      // The video prompt owns the turn by the time the skill fires.
+      // The video turn is active by then, so the deferred skill is blocked
+      // with the same message the resolver shows while streaming.
+      expect(session.activateSkill).not.toHaveBeenCalled();
       expect(session.prompt).toHaveBeenCalled();
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1855,8 +1859,11 @@ command = "vim"
 
       releaseUpload();
       await vi.waitFor(() => {
-        expect(activatePluginCommand).toHaveBeenCalledWith('plug', 'cmd', 'args');
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'Cannot /plug:cmd while streaming',
+        );
       });
+      expect(activatePluginCommand).not.toHaveBeenCalled();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -1935,9 +1942,13 @@ command = "vim"
 
       releaseUpload();
       await vi.waitFor(() => {
-        expect(session.compact).toHaveBeenCalled();
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'Cannot /compact while streaming',
+        );
       });
-      // The video prompt landed before compaction starts.
+      // The video turn is active, so the deferred /compact is blocked like
+      // the resolver would block it while streaming.
+      expect(session.compact).not.toHaveBeenCalled();
       expect(session.prompt).toHaveBeenCalled();
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1973,8 +1984,11 @@ command = "vim"
 
       releaseUpload();
       await vi.waitFor(() => {
-        expect(session.init).toHaveBeenCalled();
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'Cannot /init while streaming',
+        );
       });
+      expect(session.init).not.toHaveBeenCalled();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

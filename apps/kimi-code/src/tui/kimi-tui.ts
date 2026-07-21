@@ -138,6 +138,7 @@ import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaSegments, materializeMediaSegments, rewriteMediaPlaceholders, segmentsToPromptParts } from './utils/image-placeholder';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
+import { slashBusyMessage, slashCommandBusyReason } from './commands/resolve';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -1431,6 +1432,16 @@ export class KimiTUI {
         );
         return;
       }
+      // The resolver blocks skill commands while busy; keep that behavior
+      // when the deferred callback lands on an already-running turn.
+      const busy = slashCommandBusyReason({
+        isStreaming: this.state.appState.streamingPhase !== 'idle',
+        isCompacting: this.state.appState.isCompacting,
+      });
+      if (busy !== undefined) {
+        this.showError(slashBusyMessage(skillName, busy));
+        return;
+      }
       this.beginSessionRequest();
       void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
         const message = formatErrorMessage(error);
@@ -1469,6 +1480,16 @@ export class KimiTUI {
         this.showError(
           'The session or model changed while the video was uploading — please resend.',
         );
+        return;
+      }
+      // The resolver blocks plugin commands while busy; keep that behavior
+      // when the deferred callback lands on an already-running turn.
+      const busy = slashCommandBusyReason({
+        isStreaming: this.state.appState.streamingPhase !== 'idle',
+        isCompacting: this.state.appState.isCompacting,
+      });
+      if (busy !== undefined) {
+        this.showError(slashBusyMessage(`${pluginId}:${commandName}`, busy));
         return;
       }
       this.beginSessionRequest();
