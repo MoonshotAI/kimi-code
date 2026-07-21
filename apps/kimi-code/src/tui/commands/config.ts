@@ -20,6 +20,7 @@ import { PermissionSelectorComponent } from '../components/dialogs/permission-se
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
+import { AstronSettingsComponent } from '../components/dialogs/astron-settings';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
@@ -827,6 +828,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;
     case 'github_token': void handleGitHubTokenInput(host); return;
+    case 'astron': showAstronSettingsPanel(host); return;
   }
 }
 
@@ -843,4 +845,15 @@ async function handleGitHubTokenInput(host: SlashCommandHost): Promise<void> {
   } catch (error) {
     host.showError(t('tui.dialogs.config.configGithubTokenSaveFailed', { error: formatErrorMessage(error) }));
   }
+}
+
+function showAstronSettingsPanel(host: SlashCommandHost): void {
+  const panel = new AstronSettingsComponent();
+  panel.on('cancel', () => {
+    host.restoreEditor();
+  });
+  panel.on('saved', () => {
+    host.showStatus(t('tui.dialogs.astronSettings.saved'));
+  });
+  host.mountEditorReplacement(panel);
 }

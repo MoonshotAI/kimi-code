@@ -3,10 +3,12 @@ import type { ChatProvider } from '../provider';
 import { AnthropicChatProvider, type AnthropicOptions } from './anthropic';
 import {
   getAnthropicModelCapability,
+  getAstronModelCapability,
   getGoogleGenAIModelCapability,
   getOpenAILegacyModelCapability,
   getOpenAIResponsesModelCapability,
 } from './capability-registry';
+import { AstronChatProvider } from './astron';
 import { GoogleGenAIChatProvider, type GoogleGenAIOptions } from './google-genai';
 import { KimiChatProvider, type KimiOptions } from './kimi';
 import { OpenAILegacyChatProvider, type OpenAILegacyOptions } from './openai-legacy';
@@ -19,7 +21,8 @@ export type ProviderConfig =
   | ({ type: 'kimi' } & KimiOptions)
   | ({ type: 'google-genai' } & GoogleGenAIOptions)
   | ({ type: 'openai_responses' } & OpenAIResponsesOptions)
-  | ({ type: 'vertexai' } & GoogleGenAIOptions);
+  | ({ type: 'vertexai' } & GoogleGenAIOptions)
+  | ({ type: 'astron' } & OpenAILegacyOptions);
 
 export type ProviderType = ProviderConfig['type'];
 
@@ -37,6 +40,8 @@ export function createProvider(config: ProviderConfig): ChatProvider {
       return new OpenAIResponsesChatProvider(config);
     case 'vertexai':
       return new GoogleGenAIChatProvider(config);
+    case 'astron':
+      return new AstronChatProvider(config);
     default: {
       const exhaustive: never = config;
       throw new Error(`Unknown provider type: ${String(exhaustive)}`);
@@ -65,6 +70,8 @@ export function getModelCapability(wire: ProviderType, modelName: string): Model
       return getGoogleGenAIModelCapability(modelName);
     case 'kimi':
       return UNKNOWN_CAPABILITY;
+    case 'astron':
+      return getAstronModelCapability(modelName);
     default: {
       const exhaustive: never = wire;
       void exhaustive;

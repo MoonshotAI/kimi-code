@@ -119,6 +119,7 @@ export type {
 
 export {
   applyOpenPlatformConfig,
+  ASTRON_PLATFORM_MODELS,
   capabilitiesForModel,
   fetchOpenPlatformModels,
   filterModelsByPrefix,
@@ -130,6 +131,7 @@ export {
 } from './open-platform';
 export type {
   ApplyOpenPlatformResult,
+  AstronPlatformModelInfo,
   OpenPlatformDefinition,
 } from './open-platform';
 

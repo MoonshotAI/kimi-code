@@ -208,3 +208,47 @@ export function usesOpenAIResponsesDeveloperRole(modelName: string): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Astron Coding Plan — static model capability table
+// ---------------------------------------------------------------------------
+
+/** All astron models support tool_use and thinking. */
+const BASE_CAPABILITY: ModelCapability = {
+  image_in: false,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 200_000,
+};
+
+const ASTRON_MODEL_CAPABILITIES: Record<string, ModelCapability> = {
+  'astron-code-latest': { ...BASE_CAPABILITY, max_context_tokens: 200_000 },
+  'xsparkx2agent': { ...BASE_CAPABILITY, max_context_tokens: 256_000 },
+  'xsparkx2': { ...BASE_CAPABILITY, max_context_tokens: 128_000 },
+  'xsparkx2flash': { ...BASE_CAPABILITY, max_context_tokens: 256_000 },
+  auto: { ...BASE_CAPABILITY, max_context_tokens: 200_000 },
+  xopglm5: { ...BASE_CAPABILITY, max_context_tokens: 200_000 },
+  xopglm51: { ...BASE_CAPABILITY, max_context_tokens: 200_000 },
+  xopglm52: { ...BASE_CAPABILITY, max_context_tokens: 500_000 },
+  xopglmv47flash: { ...BASE_CAPABILITY, max_context_tokens: 128_000 },
+  xopdeepseekv4pro: { ...BASE_CAPABILITY, max_context_tokens: 1_000_000 },
+  xopdeepseekv4flash: { ...BASE_CAPABILITY, max_context_tokens: 1_000_000 },
+  xopdeepseekv32: { ...BASE_CAPABILITY, max_context_tokens: 128_000 },
+  xopkimik26: { ...BASE_CAPABILITY, max_context_tokens: 256_000 },
+  xopkimik25: { ...BASE_CAPABILITY, max_context_tokens: 128_000 },
+  xminimaxm25: { ...BASE_CAPABILITY, max_context_tokens: 128_000 },
+  xopqwen35397b: { ...BASE_CAPABILITY, max_context_tokens: 256_000 },
+  xopqwen36v35b: { ...BASE_CAPABILITY, max_context_tokens: 128_000 },
+  xopqwen35v35b: { ...BASE_CAPABILITY, max_context_tokens: 128_000 },
+  xop3qwencodernext: { ...BASE_CAPABILITY, max_context_tokens: 256_000 },
+};
+
+/**
+ * Look up declared {@link ModelCapability} for an Astron Coding Plan model.
+ * Returns a conservative default for unknown model names.
+ */
+export function getAstronModelCapability(modelName: string): ModelCapability {
+  return ASTRON_MODEL_CAPABILITIES[modelName] ?? BASE_CAPABILITY;
+}

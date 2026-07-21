@@ -10,7 +10,8 @@ export type SettingsSelection =
   | 'experiments'
   | 'upgrade'
   | 'usage'
-  | 'github_token';
+  | 'github_token'
+  | 'astron';
 
 function getSettingsOptions(): readonly ChoiceOption[] {
   return [
@@ -59,6 +60,11 @@ function getSettingsOptions(): readonly ChoiceOption[] {
       label: t('tui.dialogs.settingsSelector.githubToken'),
       description: t('tui.dialogs.settingsSelector.githubTokenDesc'),
     },
+    {
+      value: 'astron',
+      label: t('tui.dialogs.settingsSelector.astron'),
+      description: t('tui.dialogs.settingsSelector.astronDesc'),
+    },
   ];
 }
 
@@ -72,7 +78,8 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'experiments' ||
     value === 'upgrade' ||
     value === 'usage' ||
-    value === 'github_token'
+    value === 'github_token' ||
+    value === 'astron'
   );
 }
 

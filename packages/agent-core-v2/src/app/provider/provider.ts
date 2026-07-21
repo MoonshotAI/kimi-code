@@ -33,6 +33,7 @@ export const ProviderTypeSchema = z.enum([
   'google-genai',
   'openai_responses',
   'vertexai',
+  'astron',
 ]);
 
 export type ProviderType = z.infer<typeof ProviderTypeSchema>;

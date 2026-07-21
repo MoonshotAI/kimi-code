@@ -11,6 +11,7 @@ import {
   type ProviderType,
 } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
+import { flags } from '../flags';
 
 export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean }): Promise<string>;
@@ -261,6 +262,14 @@ function toKosongProviderConfig(
   betaApi: boolean | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
+
+  if (effectiveType === 'astron' && !flags.enabled('xunfei_coding_plan')) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      'The "astron" provider type is experimental. Enable it with KIMI_CODE_EXPERIMENTAL_XUNFEI_CODING_PLAN=1.',
+    );
+  }
+
   const envCustomHeaders = parseKimiCodeCustomHeaders();
   switch (effectiveType) {
     case 'anthropic': {
@@ -368,6 +377,23 @@ function toKosongProviderConfig(
         }),
       };
     }
+    case 'astron':
+      return {
+        type: 'astron',
+        model,
+        baseUrl: providerValue(
+          provider.baseUrl,
+          provider.env,
+          'ASTRON_BASE_URL',
+        ) ?? 'https://maas-coding-api.cn-huabei-1.xf-yun.com/v2',
+        apiKey: providerApiKey(provider),
+        reasoningKey,
+        ...defaultHeadersField({
+          ...envCustomHeaders,
+          ...kimiUserAgentHeader(kimiRequestHeaders),
+          ...provider.customHeaders,
+        }),
+      };
     default: {
       const exhaustive: never = effectiveType;
       throw new KimiError(
@@ -418,6 +444,8 @@ function providerApiKey(provider: ProviderConfig): string | undefined {
         envValue(provider.env, 'VERTEXAI_API_KEY') ??
         envValue(provider.env, 'GOOGLE_API_KEY')
       );
+    case 'astron':
+      return provider.apiKey;
     default: {
       const exhaustive: never = provider.type;
       throw new KimiError(

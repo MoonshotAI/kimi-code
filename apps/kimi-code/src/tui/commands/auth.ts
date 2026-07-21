@@ -4,6 +4,7 @@ import {
   filterModelsByPrefix,
   getOpenPlatformById,
   OpenPlatformApiError,
+  ASTRON_PLATFORM_MODELS,
   type ManagedKimiCodeModelInfo,
   type ManagedKimiConfigShape,
   type OpenPlatformDefinition,
@@ -121,6 +122,12 @@ async function handleOpenPlatformLogin(
   };
   host.cancelInFlight = cancelLogin;
 
+  // Astron Coding Plan: use embedded model list, no remote fetch.
+  if (platform.id === 'astron') {
+    await handleAstronPlatformLogin(host, platform, apiKey, controller, cancelLogin);
+    return;
+  }
+
   let models: ManagedKimiCodeModelInfo[];
   try {
     models = await fetchOpenPlatformModels(platform, apiKey, fetch, controller.signal);
@@ -171,6 +178,77 @@ async function handleOpenPlatformLogin(
   await host.harness.setConfig({
     providers: config.providers,
     models: config.models,
+    defaultModel: config.defaultModel,
+    thinking: config.thinking,
+  });
+
+  await host.authFlow.refreshConfigAfterLogin();
+  host.track('login', { provider: platform.id, method: 'api_key' });
+  host.showStatus(t('tui.statusMessages.setupComplete', { platformName: platform.name, modelId: selection.model.id }));
+}
+
+async function handleAstronPlatformLogin(
+  host: SlashCommandHost,
+  platform: OpenPlatformDefinition,
+  apiKey: string,
+  controller: AbortController,
+  cancelLogin: () => void,
+): Promise<void> {
+  // Validate the API key with a minimal test request.
+  try {
+    const res = await fetch(`${platform.baseUrl.replace(/\/+$/, '')}/models`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (res.status === 401 || res.status === 403) {
+      host.showError(t('tui.statusMessages.failedToVerifyApiKey', { error: `HTTP ${res.status}` }));
+      return;
+    }
+  } catch {
+    if (controller.signal.aborted) return;
+    // Network errors during validation are non-fatal.
+  } finally {
+    if (host.cancelInFlight === cancelLogin) {
+      host.cancelInFlight = undefined;
+    }
+  }
+
+  // Use embedded model list instead of remote fetch.
+  const astronModels: ManagedKimiCodeModelInfo[] = ASTRON_PLATFORM_MODELS.map((m) => ({
+    id: m.id,
+    contextLength: m.contextLength,
+    supportsReasoning: true,
+    supportsImageIn: false,
+    supportsVideoIn: false,
+    supportsToolUse: true,
+  }));
+
+  const selection = await promptModelSelectionForOpenPlatform(host, astronModels, platform);
+  if (selection === undefined) return;
+
+  const existingConfig = await host.harness.getConfig();
+  if (existingConfig.providers[platform.id] !== undefined) {
+    await host.harness.removeProvider(platform.id);
+  }
+
+  const config = await host.harness.getConfig();
+  // Only write the provider config — models are injected at runtime by the overlay.
+  config.providers[platform.id] = {
+    type: 'astron' as const,
+    baseUrl: platform.baseUrl,
+    apiKey,
+  };
+  config.defaultModel = `astron/${selection.model.id}`;
+  config.thinking = {
+    ...config.thinking,
+    enabled: selection.thinking !== 'off',
+    ...(selection.thinking !== 'off' && selection.thinking !== 'on'
+      ? { effort: selection.thinking }
+      : {}),
+  };
+
+  await host.harness.setConfig({
+    providers: config.providers,
     defaultModel: config.defaultModel,
     thinking: config.thinking,
   });

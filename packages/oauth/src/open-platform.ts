@@ -34,6 +34,40 @@ export const OPEN_PLATFORMS: readonly OpenPlatformDefinition[] = [
     consoleUrl: 'https://platform.kimi.ai',
     allowedPrefixes: ['kimi-k'],
   },
+  {
+    id: 'astron',
+    name: 'Xunfei Coding Plan (API key · xfyun.cn)',
+    baseUrl: 'https://maas-coding-api.cn-huabei-1.xf-yun.com/v2',
+    consoleUrl: 'https://www.xfyun.cn',
+  },
+];
+
+export interface AstronPlatformModelInfo {
+  readonly id: string;
+  readonly contextLength: number;
+}
+
+/** Embedded model list for iFlytek Astron Coding Plan — no remote fetch needed. */
+export const ASTRON_PLATFORM_MODELS: readonly AstronPlatformModelInfo[] = [
+  { id: 'astron-code-latest', contextLength: 200_000 },
+  { id: 'xsparkx2agent', contextLength: 256_000 },
+  { id: 'xsparkx2', contextLength: 128_000 },
+  { id: 'xsparkx2flash', contextLength: 256_000 },
+  { id: 'auto', contextLength: 200_000 },
+  { id: 'xopglm5', contextLength: 200_000 },
+  { id: 'xopglm51', contextLength: 200_000 },
+  { id: 'xopglm52', contextLength: 500_000 },
+  { id: 'xopglmv47flash', contextLength: 128_000 },
+  { id: 'xopdeepseekv4pro', contextLength: 1_000_000 },
+  { id: 'xopdeepseekv4flash', contextLength: 1_000_000 },
+  { id: 'xopdeepseekv32', contextLength: 128_000 },
+  { id: 'xopkimik26', contextLength: 256_000 },
+  { id: 'xopkimik25', contextLength: 128_000 },
+  { id: 'xminimaxm25', contextLength: 128_000 },
+  { id: 'xopqwen35397b', contextLength: 256_000 },
+  { id: 'xopqwen36v35b', contextLength: 128_000 },
+  { id: 'xopqwen35v35b', contextLength: 128_000 },
+  { id: 'xop3qwencodernext', contextLength: 256_000 },
 ];
 
 export function getOpenPlatformById(id: string): OpenPlatformDefinition | undefined {

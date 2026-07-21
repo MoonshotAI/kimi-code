@@ -462,9 +462,21 @@
         "usage": "Usage",
         "usageDesc": "Show session tokens, context window, and plan quotas.",
         "githubToken": "GitHub Token",
-        "githubTokenDesc": "Set the GitHub personal access token for built-in GitHub tools."
+        "githubTokenDesc": "Set the GitHub personal access token for built-in GitHub tools.",
+        "astron": "Xunfei Coding Plan",
+        "astronDesc": "Configure Stream, Temperature, Max tokens, and web search for Astron."
       },
-      "permissionSelector": {
+      "astronSettings": {
+        "title": "Xunfei Coding Plan Settings",
+        "hint": "↑↓ select  Enter toggle/edit  Ctrl+S save  Esc back",
+        "stream": "Stream output",
+        "temperature": "Temperature",
+        "maxTokens": "Max tokens",
+        "searchDisable": "Disable web search",
+        "on": "ON",
+        "off": "OFF",
+        "saved": "Astron settings saved"
+      },
         "title": "Select permission mode",
         "manual": "Manual",
         "manualDesc": "Approve every action yourself.",

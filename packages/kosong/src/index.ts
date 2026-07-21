@@ -76,9 +76,6 @@ export {
   isToolExchangeAdjacencyError,
 } from './errors';
 
-/**
- * Concrete provider adapters stay off the root barrel because their SDK type
- * graphs pollute downstream declaration bundles. Import them from subpaths:
- * `@moonshot-ai/kosong/providers/kimi`,
- * `@moonshot-ai/kosong/providers/openai-legacy`, etc.
- */
+/** Embedded model definitions for iFlytek Astron Coding Plan. */
+export { ASTRON_MODEL_DEFS, ASTRON_PROVIDER_KEY } from './providers/astron-models';
+export type { AstronModelDef } from './providers/astron-models';

@@ -28,6 +28,8 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 
+参考目录/
+
 docs/superpowers/
 reports/
 .superpowers/

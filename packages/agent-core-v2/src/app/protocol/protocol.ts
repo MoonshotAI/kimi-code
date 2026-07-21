@@ -26,6 +26,7 @@ export const ProtocolSchema = z.enum([
   'openai_responses',
   'google-genai',
   'vertexai',
+  'astron',
 ]);
 
 export type Protocol = z.infer<typeof ProtocolSchema>;

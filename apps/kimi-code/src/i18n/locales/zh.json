@@ -462,9 +462,21 @@
         "usage": "用量",
         "usageDesc": "查看会话令牌数、上下文窗口和计划配额。",
         "githubToken": "GitHub Token",
-        "githubTokenDesc": "设置内置 GitHub 工具的 Personal Access Token。"
+        "githubTokenDesc": "设置内置 GitHub 工具的 Personal Access Token。",
+        "astron": "讯飞 Coding Plan",
+        "astronDesc": "配置 Astron 的 Stream、Temperature、Max tokens 和联网搜索。"
       },
-      "permissionSelector": {
+      "astronSettings": {
+        "title": "讯飞 Coding Plan 设置",
+        "hint": "↑↓选择  Enter切换/编辑  Ctrl+S保存  Esc返回",
+        "stream": "Stream 流式输出",
+        "temperature": "Temperature 温度",
+        "maxTokens": "Max Tokens 最大输出",
+        "searchDisable": "关闭联网搜索",
+        "on": "开",
+        "off": "关",
+        "saved": "讯飞设置已保存"
+      },
         "title": "选择权限模式",
         "manual": "手动",
         "manualDesc": "自行审批每个操作。",

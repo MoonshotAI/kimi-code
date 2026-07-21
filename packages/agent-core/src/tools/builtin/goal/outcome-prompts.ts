@@ -27,7 +27,7 @@ export function buildGoalVerificationFailedPrompt(
     'The verifier found:',
     feedback,
     '',
-    'Address every point above, then verify the work yourself before calling `complete` again. The goal remains active — keep working. If the verifier keeps rejecting and you cannot resolve it, call `blocked` with the concrete reasons.',
+    'The feedback is structured as "## NEW issues" (blocking, must fix) and "## PRE-EXISTING issues" (optional, for user review). Fix every NEW issue, then verify the work yourself before calling `complete` again. For PRE-EXISTING issues: present them to the user along with severity and estimated fix cost, and ask whether to fix now, defer, or skip. The goal remains active — keep working. If the verifier keeps rejecting and you cannot resolve it, call `blocked` with the concrete reasons.',
   ].join('\n');
 }
 

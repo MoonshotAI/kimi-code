@@ -5,7 +5,6 @@
  * kimi-code client preferences such as terminal UI and update behavior.
  */
 
-import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -32,6 +31,22 @@ export const UpgradePreferencesSchema = z.object({
   autoInstall: z.boolean(),
 });
 
+export const AstronSettingsSchema = z.object({
+  stream: z.boolean(),
+  temperature: z.number(),
+  maxTokens: z.number(),
+  searchDisable: z.boolean(),
+});
+
+export type AstronSettings = z.infer<typeof AstronSettingsSchema>;
+
+export const ASTRON_DEFAULT_SETTINGS: AstronSettings = {
+  stream: true,
+  temperature: 1.0,
+  maxTokens: 32768,
+  searchDisable: true,
+};
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   disable_paste_burst: z.boolean().optional(),
@@ -52,6 +67,14 @@ export const TuiConfigFileSchema = z.object({
       auto_install: z.boolean().optional(),
     })
     .optional(),
+  astron: z
+    .object({
+      stream: z.boolean().optional(),
+      temperature: z.number().optional(),
+      max_tokens: z.number().optional(),
+      search_disable: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -61,6 +84,7 @@ export const TuiConfigSchema = z.object({
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
+  astron: AstronSettingsSchema,
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
@@ -84,6 +108,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
+  astron: ASTRON_DEFAULT_SETTINGS,
 });
 
 /**
@@ -105,18 +130,16 @@ export function getTuiConfigPath(): string {
   return join(getDataDir(), 'tui.toml');
 }
 
-export async function loadTuiConfig(filePath: string = getTuiConfigPath()): Promise<TuiConfig> {
-  if (!existsSync(filePath)) {
-    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
-    return DEFAULT_TUI_CONFIG;
-  }
-
-  try {
-    const text = await readFile(filePath, 'utf-8');
-    return parseTuiConfig(text);
-  } catch {
-    throw new TuiConfigParseError(DEFAULT_TUI_CONFIG);
-  }
+export function loadTuiConfig(filePath: string = getTuiConfigPath()): Promise<TuiConfig> {
+  return readFile(filePath, 'utf-8')
+    .then(parseTuiConfig)
+    .catch(async (err) => {
+      if (err.code === 'ENOENT') {
+        await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
+        return DEFAULT_TUI_CONFIG;
+      }
+      throw new TuiConfigParseError(DEFAULT_TUI_CONFIG);
+    });
 }
 
 export function parseTuiConfig(tomlText: string): TuiConfig {
@@ -138,6 +161,7 @@ export async function saveTuiConfig(
 
 export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
   const command = config.editor?.command?.trim();
+  const astronRaw = config.astron;
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
@@ -150,6 +174,12 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
     },
     upgrade: {
       autoInstall: config.upgrade?.auto_install ?? DEFAULT_UPGRADE_PREFERENCES.autoInstall,
+    },
+    astron: {
+      stream: astronRaw?.stream ?? ASTRON_DEFAULT_SETTINGS.stream,
+      temperature: astronRaw?.temperature ?? ASTRON_DEFAULT_SETTINGS.temperature,
+      maxTokens: astronRaw?.max_tokens ?? ASTRON_DEFAULT_SETTINGS.maxTokens,
+      searchDisable: astronRaw?.search_disable ?? ASTRON_DEFAULT_SETTINGS.searchDisable,
     },
   });
 }
@@ -172,6 +202,12 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
+
+[astron]
+stream = ${String(config.astron.stream)} # true | false
+temperature = ${config.astron.temperature} # 0.0 ~ 2.0
+max_tokens = ${config.astron.maxTokens} # max output tokens
+search_disable = ${String(config.astron.searchDisable)} # true | false
 `;
 }
 
@@ -179,9 +215,11 @@ function escapeTomlBasicString(value: string): string {
   return value
     .replaceAll('\\', '\\\\')
     .replaceAll('"', '\\"')
-    .replaceAll('\b', '\\b')
+    .replaceAll('\x08', '\\b')
     .replaceAll('\t', '\\t')
     .replaceAll('\n', '\\n')
     .replaceAll('\f', '\\f')
-    .replaceAll('\r', '\\r');
+    .replaceAll('\r', '\\r')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, (ch) =>
+      `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
