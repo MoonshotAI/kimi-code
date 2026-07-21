@@ -8,7 +8,7 @@
  * memory and the route falls back to the wire-records rebuild.
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,6 +19,7 @@ import {
   IEventBus,
   ISessionInteractionService,
   ISessionLifecycleService,
+  ISessionMetadata,
   ISessionQuestionService,
   IModelCatalog,
   type ContextMessage,
@@ -449,6 +450,69 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const none = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=nope`);
     expect(none.body.code).toBe(0);
     expect(none.body.data.items).toEqual([]);
+  });
+
+  it('excludes inherited fork context from the child agent transcript', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'parent question' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'parent answer' }], toolCalls: [] },
+    ]);
+
+    // Bind the live transcript producer before the fork. The fork publishes
+    // append-only context.spliced events while copying the parent context;
+    // those live events must be ignored just like the cold rebuild filters
+    // the inherited wire prefix.
+    await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript`);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id)!;
+    const child = await session.accessor
+      .get(IAgentLifecycleService)
+      .fork('main', { agentId: 'btw-1' });
+    await child.accessor.get(IWireService).flush();
+
+    // A BTW panel subscribes immediately after the fork, before its first
+    // prompt is persisted. The inherited model context must not flash as
+    // visible child history during that window.
+    const beforePrompt = await getJson<TranscriptWire>(
+      `/api/v1/sessions/${id}/transcript?agent_id=btw-1`,
+    );
+    expect(beforePrompt.body.data.items).toEqual([]);
+
+    const meta = await session.accessor.get(ISessionMetadata).read();
+    const wirePath = join(meta.agents!['btw-1']!.homedir!, 'wire.jsonl');
+    const time = Date.now() + 1;
+    await appendFile(
+      wirePath,
+      [
+        { type: 'turn.prompt', time, input: [{ type: 'text', text: 'aside' }], origin: { kind: 'user' } },
+        {
+          type: 'context.append_message',
+          time,
+          message: { role: 'user', content: [{ type: 'text', text: 'aside' }], toolCalls: [] },
+        },
+        {
+          type: 'context.append_message',
+          time: time + 1,
+          message: { role: 'assistant', content: [{ type: 'text', text: 'aside answer' }], toolCalls: [] },
+        },
+      ].map((record) => JSON.stringify(record)).join('\n') + '\n',
+    );
+
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const { body } = await getJson<TranscriptWire>(
+      `/api/v1/sessions/${id}/transcript?agent_id=btw-1`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.items).toHaveLength(1);
+    const turn = body.data.items[0] as TurnWire;
+    expect(turn.prompt).toBe('aside');
+    expect(JSON.stringify(turn)).not.toContain('parent question');
+    expect(JSON.stringify(turn)).not.toContain('parent answer');
   });
 
   it('backfills an unmaterialized subagent for a resumed live session', async () => {

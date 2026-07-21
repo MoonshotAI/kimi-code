@@ -480,7 +480,32 @@ export class TranscriptService {
       }
       throw error;
     }
-    const messages = [...reduceContextTranscript(records).entries];
+    let forkedAgent = false;
+    if (agentId !== MAIN_AGENT_ID) {
+      try {
+        const raw = await readFile(
+          join(this.deps.homeDir, SESSIONS_ROOT, summary.workspaceId, sessionId, STATE_FILE),
+          'utf-8',
+        );
+        const meta = JSON.parse(raw) as SessionMeta;
+        forkedAgent = typeof meta.agents?.[agentId]?.forkedFrom === 'string';
+      } catch {
+        // Old/corrupt metadata still gets the legacy best-effort rebuild.
+      }
+    }
+    const reduced = reduceContextTranscript(records);
+    const firstPromptTime = records.find((record) => record.type === 'turn.prompt')?.['time'];
+    // Forked agents (currently BTW) persist the copied parent context before
+    // their first own `turn.prompt`. That context is useful to the model but
+    // is not part of the child agent's visible transcript. Reduce the whole
+    // journal first so rollback/compaction still see the inherited baseline,
+    // then keep only messages written from the first owned turn onward.
+    let messages = [...reduced.entries];
+    if (forkedAgent && typeof firstPromptTime === 'number') {
+      messages = reduced.entries.filter((_, index) => (reduced.times[index] ?? 0) >= firstPromptTime);
+    } else if (forkedAgent) {
+      messages = [];
+    }
     return groupMessagesIntoSnapshot(messages);
   }
 

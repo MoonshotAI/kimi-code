@@ -1316,6 +1316,49 @@ describe('SessionEventBroadcaster', () => {
     expect(envelopes[1]!.volatile).toBeUndefined();
   });
 
+  it('seeds a hello-only target that connects after an already-busy producer mounted', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    main.set(IAgentActivityView, {
+      state: () => ({
+        lifecycle: 'ready',
+        turn: {
+          turnId: 5,
+          phase: 'running',
+          step: 0,
+          ending: false,
+          pendingApprovals: [],
+          activeToolCalls: [],
+          since: 0,
+        },
+        background: [],
+      }),
+    });
+
+    // The session producer mounts before any connection has completed hello.
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    const { target, envelopes } = collectingTarget();
+    bc.registerGlobalTarget(target);
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 0,
+      volatile: true,
+      session_id: 's1',
+      payload: { busy: true, main_turn_active: true, pending_interaction: 'none' },
+    });
+
+    // Repeated hello handling is idempotent and does not duplicate the seed.
+    bc.registerGlobalTarget(target);
+    await bc.getCursor('s1');
+    expect(envelopes).toHaveLength(1);
+  });
+
   it('fans interaction notifications out to every global target while legacy events stay per-session', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');

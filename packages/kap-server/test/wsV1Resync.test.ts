@@ -372,4 +372,38 @@ describe('server-v2 /api/v1/ws resync', () => {
     c2.ws.close();
     await Promise.all([c1.closed, c2.closed]);
   });
+
+  it('seeds current work facts when a hello-only connection arrives after the work', async () => {
+    const sid = await createSession();
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const interactions = session!.accessor.get(ISessionInteractionService);
+    interactions.enqueue({
+      id: 'q-before-hello',
+      kind: 'question',
+      payload: { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }] },
+    });
+
+    const client = await openConn(wsUrl, server!.authTokenService.getToken());
+    try {
+      await client.next((frame) => frame.type === 'server_hello');
+      client.send({
+        type: 'client_hello',
+        id: 'late-hello',
+        payload: withToken({ client_id: 'late-client', subscriptions: [] }),
+      });
+      await client.next((frame) => frame.type === 'ack' && frame.id === 'late-hello');
+
+      const catchup = await client.next(
+        (frame) =>
+          frame.type === 'event.session.work_changed' &&
+          frame.session_id === sid &&
+          frame.payload?.['pending_interaction'] === 'question',
+      );
+      expect(catchup).toMatchObject({ volatile: true, session_id: sid });
+    } finally {
+      interactions.respond('q-before-hello', null);
+      client.ws.close();
+      await client.closed;
+    }
+  });
 });

@@ -201,9 +201,13 @@ export class AgentTranscriptProjector {
           }),
         ];
       case 'context.spliced':
-        // Known limitation: undo/clear projects as a bare 'undo' marker (raw
-        // payload attached); no `items.remove` reconstruction in v1.
-        return [this.markerOp('undo', restOf(event))];
+        // ContextMemory publishes the same event for ordinary append-only
+        // messages (including the copied context of a fork). Those messages
+        // are already represented by turn/frame events and must not become
+        // timeline markers — besides duplicating prompts, doing so would leak
+        // inherited parent context into a child transcript. Only an actual
+        // removal/replacement is the undo/clear signal in v1.
+        return event.deleteCount > 0 ? [this.markerOp('undo', restOf(event))] : [];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':

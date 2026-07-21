@@ -710,6 +710,23 @@ describe('AgentTranscriptProjector', () => {
     expect(markers[5]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
   });
 
+  it('does not turn append-only context changes into undo markers', () => {
+    const projector = new AgentTranscriptProjector('main');
+
+    expect(
+      projector.map(
+        ev({
+          type: 'context.spliced',
+          start: 0,
+          deleteCount: 0,
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it('projects error / warning events as notice markers outside any step', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');

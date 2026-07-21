@@ -41,11 +41,10 @@
  * per-session frames still reach subscribers only. Two global-only producers
  * ride this fan-out:
  *
- *   - A mount catch-up: a producer mounted after the session already
- *     accumulated a work-fact (busy turn, pending interaction) re-emits the
- *     current fact once to the global targets, volatile — the `emitted*`
- *     dedup seeding would otherwise keep it silent until the next change,
- *     and hello-only connections would never learn the state.
+ *   - Work-fact catch-up in both arrival orders: a late producer seeds existing
+ *     global targets, and a late hello target is seeded from existing producers.
+ *     Both re-emit the current non-idle fact as volatile — the `emitted*` dedup
+ *     state would otherwise keep it silent until the next change.
  *   - `event.session.interaction_requested` / `..._resolved`: volatile
  *     notification counterparts of the legacy durable per-session
  *     approval/question events (which keep flowing unchanged).
@@ -294,7 +293,14 @@ export class SessionEventBroadcaster {
    * pair with {@link unregisterGlobalTarget} on connection close.
    */
   registerGlobalTarget(target: BroadcastTarget): void {
+    if (this.closed || this.globalTargets.has(target)) return;
     this.globalTargets.add(target);
+    // A client may hello long after live sessions mounted their producers.
+    // Seed that connection with every non-idle current work fact now; future
+    // changes continue through the ordinary global fan-out.
+    for (const state of this.sessions.values()) {
+      this.enqueueWorkFactCatchup(state, [target]);
+    }
   }
 
   unregisterGlobalTarget(target: BroadcastTarget): void {
@@ -768,7 +774,9 @@ export class SessionEventBroadcaster {
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') return undefined;
       throw error;
     }
-    this.enqueueWorkFactCatchup(state);
+    // Snapshot the current targets at mount time. A target registered after
+    // this point gets the same seed from registerGlobalTarget instead.
+    this.enqueueWorkFactCatchup(state, [...this.globalTargets]);
     return state;
   }
 
@@ -1132,17 +1140,21 @@ export class SessionEventBroadcaster {
   }
 
   /**
-   * Re-emit the work-fact the producer mounted with, once, to the global
-   * targets. The `emitted*` seeding at activation suppresses the first dedup
+   * Re-emit the current work fact to the supplied global targets. This seeds
+   * both connections already present when a producer mounts and connections
+   * that hello after the producer is live. The `emitted*` state suppresses the first dedup
    * pass, so a producer mounted after the session already accumulated state
    * (busy turn, pending interaction) would stay silent until the next change
-   * — and hello-only connections would never learn it. Volatile: it re-states
+   * — and a hello-only connection would never learn it. Volatile: it re-states
    * current facts rather than recording a new one, so the journal and the
    * durable watermark stay untouched; later changes flow through
    * `enqueueWorkChanged` as usual. A quiet session emits nothing — idle is
    * every client's default assumption.
    */
-  private enqueueWorkFactCatchup(state: SessionState): void {
+  private enqueueWorkFactCatchup(
+    state: SessionState,
+    targets: readonly BroadcastTarget[],
+  ): void {
     if (
       !state.emittedBusy &&
       !state.emittedMainTurnActive &&
@@ -1165,7 +1177,8 @@ export class SessionEventBroadcaster {
           epoch: state.journal.epoch,
           volatile: true,
         });
-        for (const target of this.globalTargets) {
+        for (const target of targets) {
+          if (!this.globalTargets.has(target)) continue;
           try {
             target.send(envelope);
           } catch {
