@@ -331,4 +331,18 @@ describe('GET /api/v1/files/llm/{llm_id} (server-v2)', () => {
     expect(res.statusCode).toBe(404);
     expect((res.json() as Envelope).code).toBe(40407);
   });
+
+  it('rejects ids outside the provider-id alphabet (no blob-key traversal)', async () => {
+    const r = await boot();
+    // Encoded separators land inside the {llm_id} param after URL decoding;
+    // the schema must reject them before the value reaches the blob store.
+    for (const bad of ['..%2F..%2Ffiles%2Ff_x', 'a%2Fb', '%2Fetc%2Fpasswd', 'a b']) {
+      const res = await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/files/llm/${bad}`,
+      });
+      expect((res.json() as Envelope).code, `llm_id ${bad}`).toBe(40001);
+      expect(res.statusCode).not.toBe(302);
+    }
+  });
 });

@@ -18,7 +18,9 @@ export const getFileParamSchema = z.object({
 export type GetFileParam = z.infer<typeof getFileParamSchema>;
 
 export const getLlmVideoParamSchema = z.object({
-  llm_id: z.string().min(1),
+  // The id is used as a blob-store key; keep it inside the provider-id
+  // alphabet so a crafted value can never address another storage path.
+  llm_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
 });
 export type GetLlmVideoParam = z.infer<typeof getLlmVideoParamSchema>;
 
