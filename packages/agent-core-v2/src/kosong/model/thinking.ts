@@ -269,7 +269,6 @@ export function resolveThinkingEffortForModel(
   }
 
   if (effort === 'off' && model?.alwaysThinking === true) {
-    // A configured 'off' is treated as absent: the model default applies.
     effort =
       configured !== undefined && configured !== 'off'
         ? configured
