@@ -220,6 +220,30 @@ describe('stripEnvModelConfig (write-back guard)', () => {
     expect(stripped.providers[ENV_MODEL_PROVIDER_KEY]).toBeUndefined();
     expect(stripped.models?.[ENV_MODEL_ALIAS_KEY]).toBeUndefined();
   });
+
+  it('restores an env-alias default_subagent_model from raw instead of persisting it', () => {
+    // Simulates /model saving the env alias as the subagent default while
+    // KIMI_MODEL_* is active; raw carries the on-disk value.
+    const runtime = applyEnvModelConfig(getDefaultConfig(), { ...MIN });
+    runtime.defaultSubagentModel = ENV_MODEL_ALIAS_KEY;
+    runtime.raw = { default_subagent_model: 'glm-5.2' };
+    const stripped = stripEnvModelConfig(runtime);
+    expect(stripped.defaultSubagentModel).toBe('glm-5.2');
+  });
+
+  it('drops an env-alias default_subagent_model when raw has none', () => {
+    const runtime = applyEnvModelConfig(getDefaultConfig(), { ...MIN });
+    runtime.defaultSubagentModel = ENV_MODEL_ALIAS_KEY;
+    const stripped = stripEnvModelConfig(runtime);
+    expect(stripped.defaultSubagentModel).toBeUndefined();
+  });
+
+  it('keeps a non-env default_subagent_model', () => {
+    const runtime = applyEnvModelConfig(getDefaultConfig(), { ...MIN });
+    runtime.defaultSubagentModel = 'glm-5.2';
+    const stripped = stripEnvModelConfig(runtime);
+    expect(stripped.defaultSubagentModel).toBe('glm-5.2');
+  });
 });
 
 describe('writeConfigFile never persists the env model', () => {

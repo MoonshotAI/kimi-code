@@ -11,6 +11,7 @@ import {
   type RefreshResult,
 } from '../utils/refresh-providers';
 import { thinkingEffortFromConfig } from '../utils/thinking-config';
+import { isExperimentalFlagEnabled } from '../commands/experimental-flags';
 import type { SessionEventHandler } from './session-event-handler';
 import type { AppState, KimiTUIOptions } from '../types';
 import type { TUIState } from '../tui-state';
@@ -110,6 +111,8 @@ export class AuthFlowController {
       sessionId: '',
       model: '',
       sessionTitle: null,
+      subagentModel: undefined,
+      subagentThinkingEffort: undefined,
     });
     await this.host.refreshSkillCommands();
     await this.host.refreshPluginCommands();
@@ -134,6 +137,12 @@ export class AuthFlowController {
       availableProviders,
       model: defaultModel,
       maxContextTokens: selected.maxContextSize,
+      subagentModel: isExperimentalFlagEnabled('dual-model-routing')
+        ? (config.defaultSubagentModel ?? undefined)
+        : undefined,
+      subagentThinkingEffort: isExperimentalFlagEnabled('dual-model-routing')
+        ? (config.defaultSubagentThinkingEffort ?? undefined)
+        : undefined,
     };
     host.setAppState(appStatePatch);
   }
@@ -148,6 +157,8 @@ export class AuthFlowController {
       maxContextTokens: 0,
       contextUsage: 0,
       contextTokens: 0,
+      subagentModel: undefined,
+      subagentThinkingEffort: undefined,
     });
   }
 

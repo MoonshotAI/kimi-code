@@ -171,7 +171,8 @@ export function stripEnvModelConfig(config: KimiConfig): KimiConfig {
   const hasProvider = ENV_MODEL_PROVIDER_KEY in config.providers;
   const hasModel = config.models !== undefined && ENV_MODEL_ALIAS_KEY in config.models;
   const defaultIsEnv = config.defaultModel === ENV_MODEL_ALIAS_KEY;
-  if (!hasProvider && !hasModel && !defaultIsEnv) return config;
+  const subagentDefaultIsEnv = config.defaultSubagentModel === ENV_MODEL_ALIAS_KEY;
+  if (!hasProvider && !hasModel && !defaultIsEnv && !subagentDefaultIsEnv) return config;
 
   const providers = { ...config.providers };
   delete providers[ENV_MODEL_PROVIDER_KEY];
@@ -192,12 +193,21 @@ export function stripEnvModelConfig(config: KimiConfig): KimiConfig {
     // synthetic provider/model exist), so these may be env values; an unset raw
     // field restores to undefined (i.e. drops it).
     ...(defaultIsEnv ? { defaultModel: rawDefaultModel(config) } : {}),
+    // Same guard for the subagent default: the env alias is runtime-only, so a
+    // `default_subagent_model` pointing at it (e.g. saved via /model while
+    // KIMI_MODEL_* is active) is restored from raw rather than persisted.
+    ...(subagentDefaultIsEnv ? { defaultSubagentModel: rawDefaultSubagentModel(config) } : {}),
     thinking: rawThinking(config),
   };
 }
 
 function rawDefaultModel(config: KimiConfig): string | undefined {
   const raw = config.raw?.['default_model'];
+  return typeof raw === 'string' ? raw : undefined;
+}
+
+function rawDefaultSubagentModel(config: KimiConfig): string | undefined {
+  const raw = config.raw?.['default_subagent_model'];
   return typeof raw === 'string' ? raw : undefined;
 }
 

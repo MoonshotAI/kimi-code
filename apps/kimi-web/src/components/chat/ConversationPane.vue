@@ -95,6 +95,9 @@ const props = defineProps<{
   pr?: { number: number; state: string; url: string } | null;
   /** Conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
   conversationToc?: boolean;
+  /** True when the dual-model-routing experimental flag is on (gates the
+   *  subagent model pill in the composer). */
+  dualModelRouting?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -119,6 +122,10 @@ const emit = defineEmits<{
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
+  /** Open the full model picker for the subagent model (dual-model-routing). */
+  pickSubagentModel: [];
+  /** Clear the subagent model (revert to "same as main"). */
+  clearSubagentModel: [];
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
   openThinking: [target: { turnId: string; blockIndex: number }];
@@ -1385,6 +1392,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :starred-ids="starredIds"
               :skills="skills"
               :starting="starting"
+              :dual-model-routing="dualModelRouting"
+              :subagent-model-id="status.subagentModelId"
               hide-context
               @submit="handleComposerSubmit"
               @steer="emit('steer', $event)"
@@ -1404,6 +1413,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @compact="emit('compact')"
               @pick-model="emit('pickModel')"
               @select-model="emit('selectModel', $event)"
+              @pick-subagent-model="emit('pickSubagentModel')"
+              @clear-subagent-model="emit('clearSubagentModel')"
             />
             <div class="empty-spacer" />
           </template>
@@ -1474,6 +1485,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :pending-approval="pendingApproval"
         :approval-busy="approvalBusy"
         :mobile="mobile"
+        :dual-model-routing="dualModelRouting"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
         @open-agent="emit('openAgent', $event)"
@@ -1497,6 +1509,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
           @compact="emit('compact')"
           @pick-model="emit('pickModel')"
           @select-model="emit('selectModel', $event)"
+          @pick-subagent-model="emit('pickSubagentModel')"
+          @clear-subagent-model="emit('clearSubagentModel')"
       />
     </div>
 

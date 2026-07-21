@@ -54,6 +54,8 @@ const props = defineProps<{
   /** True while the visible approval has a respond in flight. */
   approvalBusy?: boolean;
   mobile?: boolean;
+  /** True when the dual-model-routing experimental flag is on. */
+  dualModelRouting?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -74,6 +76,8 @@ const emit = defineEmits<{
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
+  pickSubagentModel: [];
+  clearSubagentModel: [];
   answer: [questionId: string, response: QuestionResponse];
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
@@ -282,6 +286,8 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       :starred-ids="starredIds"
       :skills="skills"
       :starting="starting"
+      :dual-model-routing="dualModelRouting"
+      :subagent-model-id="status.subagentModelId"
       @submit="emit('submit', $event)"
       @steer="emit('steer', $event)"
       @command="emit('command', $event)"
@@ -299,6 +305,8 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       @compact="emit('compact')"
       @pick-model="emit('pickModel')"
       @select-model="emit('selectModel', $event)"
+      @pick-subagent-model="emit('pickSubagentModel')"
+      @clear-subagent-model="emit('clearSubagentModel')"
     />
   </div>
 </template>

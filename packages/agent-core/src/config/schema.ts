@@ -305,6 +305,20 @@ export const KimiConfigSchema = z.object({
   providers: z.record(z.string(), ProviderConfigSchema).default({}),
   defaultProvider: z.string().optional(),
   defaultModel: z.string().optional(),
+  /**
+   * Default model alias used by subagents when the `dual-model-routing`
+   * experimental flag is enabled. When unset, subagents fall back to
+   * `defaultModel` (the main-agent model). Only takes effect while the
+   * flag is on; otherwise subagents inherit the parent's live model.
+   */
+  defaultSubagentModel: z.string().optional(),
+  /**
+   * Default thinking effort used by subagents when the `dual-model-routing`
+   * experimental flag is enabled. When unset, subagents fall back to the
+   * parent's live thinking effort. Only takes effect while the flag is on;
+   * otherwise subagents inherit the parent's thinking effort.
+   */
+  defaultSubagentThinkingEffort: z.string().optional(),
   models: z.record(z.string(), ModelAliasSchema).optional(),
   thinking: ThinkingConfigSchema.optional(),
   planMode: z.boolean().optional(),
@@ -349,6 +363,8 @@ export const KimiConfigPatchSchema = z
     providers: z.record(z.string(), ProviderConfigPatchSchema).optional(),
     defaultProvider: z.string().optional(),
     defaultModel: z.string().optional(),
+    defaultSubagentModel: z.string().optional(),
+    defaultSubagentThinkingEffort: z.string().optional(),
     models: z.record(z.string(), ModelAliasPatchSchema).optional(),
     thinking: ThinkingConfigPatchSchema.optional(),
     planMode: z.boolean().optional(),

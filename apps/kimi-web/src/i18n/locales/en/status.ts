@@ -45,6 +45,11 @@ export default {
     'Note: Switching models or thinking effort invalidates the existing prompt cache. Start a new chat to avoid extra token costs.',
   starredModels: 'Starred',
   moreModels: 'More models…',
+  // Subagent model pill (dual-model-routing experimental flag)
+  subagentLabel: 'Subagents',
+  subagentSameAsMain: 'Same as main',
+  subagentModelSet: 'Click to change the subagent model',
+  subagentClear: 'Clear subagent model',
   // Status panel
   statusPanelTitle: 'Session status',
   statusPanelClose: 'Close',

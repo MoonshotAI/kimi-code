@@ -107,6 +107,8 @@ import type {
   GetCronTasksResult,
   GetKimiConfigPayload,
   GetPluginInfoPayload,
+  GetSubagentModelResult,
+  GetSubagentThinkingResult,
   InstallPluginPayload,
   ImportContextPayload,
   ListSessionsPayload,
@@ -134,6 +136,10 @@ import type {
   SetPermissionPayload,
   SetPluginEnabledPayload,
   SetPluginMcpServerEnabledPayload,
+  SetSubagentModelPayload,
+  SetSubagentModelResult,
+  SetSubagentThinkingPayload,
+  SetSubagentThinkingResult,
   SetThinkingPayload,
   SkillSummary,
   PluginCommandDef,
@@ -677,6 +683,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     delete config.providers[input.providerId];
 
     let removedDefault = false;
+    let removedSubagentDefault = false;
     const existingModels = config.models ?? {};
     for (const [key, model] of Object.entries(existingModels)) {
       if (
@@ -687,12 +694,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       ) {
         delete existingModels[key];
         if (config.defaultModel === key) removedDefault = true;
+        if (config.defaultSubagentModel === key) removedSubagentDefault = true;
       }
     }
     config.models = existingModels;
 
     if (removedDefault) {
       config.defaultModel = undefined;
+    }
+
+    // The subagent default (`dual-model-routing`) must not outlive its model
+    // either — a stale alias would fail provider resolution on the next spawn.
+    if (removedSubagentDefault) {
+      config.defaultSubagentModel = undefined;
     }
 
     if (config.defaultProvider === input.providerId) {
@@ -839,6 +853,34 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getModel({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
     return this.sessionApi(sessionId).getModel(payload);
+  }
+
+  setSubagentModel({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<SetSubagentModelPayload>): SetSubagentModelResult {
+    return this.sessionApi(sessionId).setSubagentModel(payload);
+  }
+
+  getSubagentModel({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): GetSubagentModelResult {
+    return this.sessionApi(sessionId).getSubagentModel(payload);
+  }
+
+  setSubagentThinking({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<SetSubagentThinkingPayload>): SetSubagentThinkingResult {
+    return this.sessionApi(sessionId).setSubagentThinking(payload);
+  }
+
+  getSubagentThinking({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): GetSubagentThinkingResult {
+    return this.sessionApi(sessionId).getSubagentThinking(payload);
   }
 
   enterPlan({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {

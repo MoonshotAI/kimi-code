@@ -32,6 +32,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'dual-model-routing',
+    title: 'Dual model routing (separate subagent model)',
+    description:
+      'Route the main agent and its subagents to different models. Subagents use a dedicated subagent model (configurable via /model) instead of inheriting the main agent model. When disabled, subagents inherit the main model as before.',
+    env: 'KIMI_CODE_EXPERIMENTAL_DUAL_MODEL_ROUTING',
+    default: false,
+    surface: 'both',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

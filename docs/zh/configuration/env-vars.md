@@ -131,6 +131,7 @@ kimi
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Agent 单轮最大步数；优先级高于 `config.toml` 的 `[loop_control] max_steps_per_turn`（不设或 `0` 表示无上限） | 非负整数；非法值被忽略 |
 | `KIMI_LOOP_MAX_RETRIES_PER_STEP` | 单步失败后的最大重试次数；优先级高于 `config.toml` 的 `[loop_control] max_retries_per_step`（默认 `10`） | 非负整数；非法值被忽略 |
 | `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有已注册的实验功能 | `1`、`true`、`yes`、`on` |
+| `KIMI_CODE_EXPERIMENTAL_DUAL_MODEL_ROUTING` | 启用双模型路由（实验性）：让主 Agent 与其子 Agent 使用不同模型。该开关仅启用能力——委派子 Agent 在配置了 `default_subagent_model` 和 `default_subagent_thinking_effort`（或通过 `/model` 实时设置）时使用专用模型和 effort；两者都未设置时仍继承主 Agent 的模型和 effort | `1`、`true`、`yes`、`on` |
 | `KIMI_SHELL_PATH` | Windows 上覆盖 Git Bash 路径（自动探测失败时使用） | 绝对路径 |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | 单步 LLM 请求的 `max_completion_tokens` 硬上限，仅对 `kimi` 供应商生效 | 正整数；`0` 或负数禁用 clamp |
 | `KIMI_MODEL_TEMPERATURE` | 每次请求的采样温度，仅对 `kimi` 供应商生效（全局生效，不依赖 `KIMI_MODEL_NAME`） | 数字，如 `0.3` |

@@ -98,6 +98,8 @@ timeout = 5
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
+| `default_subagent_model` | `string` | — | 子 Agent 的默认模型别名（实验性 `dual-model-routing` 功能），必须在 `models` 中定义。功能启用且设置该字段时，委派子 Agent 使用此模型，而不是继承 `default_model` |
+| `default_subagent_thinking_effort` | `string` | — | 子 Agent 的默认 thinking effort（实验性 `dual-model-routing` 功能）。功能启用且设置该字段时，委派子 Agent 使用此 effort，而不是继承主 Agent 的 effort |
 | `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`yolo`（自动批准工具操作，Agent 仍可能提问）、`auto`（完全自主，Agent 自己做决定，不再提问） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
@@ -114,6 +116,10 @@ timeout = 5
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
+
+::: tip 子 Agent 模型与 thinking effort 默认值
+`default_subagent_model` 和 `default_subagent_thinking_effort` 仅在启用实验性 `dual-model-routing` 功能时生效。委派子 Agent（`task` / `explore` / `AgentSwarm`）使用专用的模型和 effort；旁问（`/btw`）Agent 则始终继承主 Agent 的模型和 effort——它会重放主 Agent 的 prompt 前缀并共享其前缀缓存，把它路由到别处会在冷缓存上重新处理整个对话。这些默认值在会话创建或恢复时读取；会话进行中修改不会影响当前会话，直到重新加载或恢复。会话内的临时覆盖请使用 `/model` 的范围选择器。
+:::
 
 以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission` 等嵌套表逐一展开。
 

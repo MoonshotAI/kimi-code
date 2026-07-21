@@ -419,6 +419,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
       goalObjective?: string;
       goalControl?: 'pause' | 'resume' | 'cancel';
       thinking?: string;
+      subagentModel?: string;
+      subagentThinkingEffort?: string;
     },
   ): Promise<AppSession> {
     const body: Record<string, unknown> = {};
@@ -432,6 +434,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
     if (input.goalObjective !== undefined) agentConfig['goal_objective'] = input.goalObjective;
     if (input.goalControl !== undefined) agentConfig['goal_control'] = input.goalControl;
     if (input.thinking !== undefined) agentConfig['thinking'] = input.thinking;
+    if (input.subagentModel !== undefined) agentConfig['subagent_model'] = input.subagentModel;
+    if (input.subagentThinkingEffort !== undefined)
+      agentConfig['subagent_thinking_effort'] = input.subagentThinkingEffort;
     if (Object.keys(agentConfig).length > 0) body['agent_config'] = agentConfig;
     const data = await this.http.post<WireSession>(
       `/sessions/${encodeURIComponent(sessionId)}/profile`,
@@ -459,6 +464,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
       contextTokens: data.context_tokens ?? 0,
       maxContextTokens: data.max_context_tokens ?? 0,
       contextUsage: data.context_usage ?? 0,
+      subagentModel:
+        typeof data.subagent_model === 'string' && data.subagent_model.length > 0
+          ? data.subagent_model
+          : undefined,
+      subagentThinkingEffort:
+        typeof data.subagent_thinking_effort === 'string' && data.subagent_thinking_effort.length > 0
+          ? data.subagent_thinking_effort
+          : undefined,
     };
   }
 

@@ -21,6 +21,7 @@ import {
   type CreateAgentOptions,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
+import { ISubagentRoutingService } from '#/session/subagent/subagentRouting';
 import { createHooks } from '#/hooks';
 import {
   type AgentTaskHooks,
@@ -903,6 +904,16 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     });
     ix.stub(ILogService, stubLog());
+    ix.stub(ISubagentRoutingService, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      getSubagentModel: () => undefined,
+      getSubagentThinkingEffort: () => undefined,
+      resolveChildModel: (parent: string) => parent,
+      resolveChildThinkingEffort: (parent: string) => parent,
+      setSubagentModel: async () => {},
+      setSubagentThinkingEffort: async () => {},
+    });
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
 

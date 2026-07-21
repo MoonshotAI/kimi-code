@@ -65,6 +65,8 @@ export interface PersistSessionProfilePatch {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
+  subagentModel?: string;
+  subagentThinkingEffort?: string;
 }
 
 export interface UseModelProviderStateDeps {
@@ -572,6 +574,39 @@ export function useModelProviderState(
     if (next !== undefined) persistGlobalThinking(next);
   }
 
+  /**
+   * Switch the active session's subagent model via POST /sessions/{id}/profile
+   * (dual-model-routing experimental flag). Pass `undefined` (or empty) to
+   * clear the subagent model so subagents fall back to the main model. The
+   * profile echo can return '', so the authoritative value comes from
+   * GET /sessions/{id}/status, re-read right after. Optimistic + rollback on
+   * failure, mirroring setModel. Never throws — failures surface via
+   * pushOperationFailure.
+   */
+  async function setSubagentModel(modelId: string | undefined): Promise<boolean> {
+    const sid = rawState.activeSessionId;
+    if (!sid) return false;
+    const prev = rawState.subagentModelBySession[sid];
+    // Empty/undefined both mean "same as main" — normalize to undefined.
+    const next = modelId && modelId.length > 0 ? modelId : undefined;
+    // Optimistic update.
+    rawState.subagentModelBySession = { ...rawState.subagentModelBySession, [sid]: next };
+    try {
+      await getKimiWebApi().updateSession(sid, {
+        // Empty string clears the field on the server.
+        subagentModel: next ?? '',
+      });
+    } catch (err) {
+      // Roll back to the previous value.
+      rawState.subagentModelBySession = { ...rawState.subagentModelBySession, [sid]: prev };
+      pushOperationFailure('setSubagentModel', err, { sessionId: sid });
+      return false;
+    }
+    // refreshSessionStatus folds the authoritative value from /status back in.
+    await refreshSessionStatus(sid);
+    return true;
+  }
+
   return {
     // state
     models,
@@ -586,6 +621,7 @@ export function useModelProviderState(
     loadModels,
     loadProviders,
     setModel,
+    setSubagentModel,
     thinkingLevelForModelId,
     thinkingLevelForSessionId,
     resolveThinkingForPrompt,

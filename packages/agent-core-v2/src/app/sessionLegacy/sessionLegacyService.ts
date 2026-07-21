@@ -35,6 +35,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { ISubagentRoutingService } from '#/session/subagent/subagentRouting';
 
 import { ISessionLegacyService, type SessionWireFields } from './sessionLegacy';
 
@@ -94,6 +95,20 @@ export class SessionLegacyService implements ISessionLegacyService {
     }
     if (agentConfig.thinking !== undefined) {
       profile.setThinking(agentConfig.thinking);
+    }
+    if (agentConfig.subagent_model !== undefined) {
+      const routing = agent.accessor.get(ISubagentRoutingService);
+      await routing.setSubagentModel(
+        agentConfig.subagent_model === '' ? undefined : agentConfig.subagent_model,
+      );
+    }
+    if (agentConfig.subagent_thinking_effort !== undefined) {
+      const routing = agent.accessor.get(ISubagentRoutingService);
+      await routing.setSubagentThinkingEffort(
+        agentConfig.subagent_thinking_effort === ''
+          ? undefined
+          : agentConfig.subagent_thinking_effort,
+      );
     }
     if (agentConfig.permission_mode !== undefined) {
       agent.accessor
@@ -158,6 +173,8 @@ export class SessionLegacyService implements ISessionLegacyService {
     const permission = agent.accessor.get(IAgentPermissionModeService);
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
+    const routing = agent.accessor.get(ISubagentRoutingService);
+    await routing.ready;
 
     const model = profile.getModel();
     const caps = profile.getModelCapabilities() as { max_context_tokens?: number };
@@ -170,6 +187,8 @@ export class SessionLegacyService implements ISessionLegacyService {
       busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
       thinking_level: profile.getEffectiveThinkingLevel(),
+      subagent_model: routing.getSubagentModel(),
+      subagent_thinking_effort: routing.getSubagentThinkingEffort(),
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,

@@ -106,6 +106,11 @@ export interface AppSessionRuntimeStatus {
   contextTokens: number;
   maxContextTokens: number;
   contextUsage: number;
+  /** Separate model used for subagents when dual-model-routing is enabled.
+   *  Empty/undefined means subagents use the main model. */
+  subagentModel?: string;
+  /** Separate thinking effort for subagents (dual-model-routing). */
+  subagentThinkingEffort?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -704,7 +709,7 @@ export interface KimiWebApi {
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;
-  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel'; thinking?: string }): Promise<AppSession>;
+  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; swarmMode?: boolean; goalObjective?: string; goalControl?: 'pause' | 'resume' | 'cancel'; thinking?: string; subagentModel?: string; subagentThinkingEffort?: string }): Promise<AppSession>;
   getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus>;
   /** Current goal snapshot, or null when the session has no active goal. */
   getSessionGoal(sessionId: string): Promise<AppGoal | null>;

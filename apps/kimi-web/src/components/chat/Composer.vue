@@ -64,6 +64,11 @@ const props = withDefaults(defineProps<{
   skills?: AppSkill[];
   /** Hide the context-usage indicator (used on the empty-session landing page). */
   hideContext?: boolean;
+  /** True when the dual-model-routing experimental flag is enabled on the
+   *  server. Gates the subagent model pill in the toolbar. */
+  dualModelRouting?: boolean;
+  /** Subagent model id for the active session (undefined = same as main). */
+  subagentModelId?: string;
 }>(), {
   running: false,
   starting: false,
@@ -73,6 +78,8 @@ const props = withDefaults(defineProps<{
   models: () => [],
   starredIds: () => [],
   skills: () => [],
+  dualModelRouting: false,
+  subagentModelId: undefined,
 });
 
 const placeholder = computed(() =>
@@ -105,6 +112,10 @@ const emit = defineEmits<{
   compact: [];
   pickModel: [];
   selectModel: [modelId: string];
+  /** Open the full model picker for the subagent model. */
+  pickSubagentModel: [];
+  /** Clear the subagent model (revert to "same as main"). */
+  clearSubagentModel: [];
 }>();
 
 const { t, locale } = useI18n();
@@ -825,6 +836,16 @@ const starredSet = computed(() => new Set(props.starredIds ?? []));
 function isStarred(modelId: string): boolean {
   return starredSet.value.has(modelId);
 }
+
+/** Display name for the subagent model pill. Resolved against the catalog;
+ *  falls back to the raw id. Empty when no subagent model is set. */
+const subagentDisplay = computed<string>(() => {
+  const id = props.subagentModelId;
+  if (!id) return '';
+  const matched =
+    props.models.find((m) => m.id === id) ?? props.models.find((m) => m.model === id);
+  return matched?.displayName ?? matched?.model ?? (id.includes('/') ? id.split('/').pop()! : id);
+});
 const starredOtherModels = computed(() => {
   if (!props.models?.length) return [];
   return props.models.filter(
@@ -1116,6 +1137,36 @@ function selectModel(modelId: string): void {
             <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
             <Icon class="cv" name="chevron-down" size="sm" />
           </span>
+          <!-- Subagent model pill (dual-model-routing experimental flag).
+               Unobtrusive: only renders when the flag is on. Shows the subagent
+               model name, or a subtle "same as main" hint when unset. -->
+          <Tooltip
+            v-if="status && dualModelRouting"
+            :text="subagentDisplay ? t('status.subagentModelSet') : t('status.subagentSameAsMain')"
+          >
+            <span
+              class="subagent-pill"
+              :class="{ 'is-set': !!subagentDisplay }"
+              role="button"
+              tabindex="0"
+              :aria-label="t('status.subagentLabel')"
+              @click.stop="emit('pickSubagentModel')"
+              @keydown.enter.prevent="emit('pickSubagentModel')"
+              @keydown.space.prevent="emit('pickSubagentModel')"
+            >
+              <span class="subagent-label">{{ t('status.subagentLabel') }}</span>
+              <span v-if="subagentDisplay" class="subagent-name">{{ subagentDisplay }}</span>
+              <span v-else class="subagent-hint">{{ t('status.subagentSameAsMain') }}</span>
+              <Icon
+                v-if="subagentDisplay"
+                class="subagent-clear"
+                name="close"
+                size="sm"
+                :aria-label="t('status.subagentClear')"
+                @click.stop="emit('clearSubagentModel')"
+              />
+            </span>
+          </Tooltip>
           <Tooltip v-if="running" :text="t('composer.interruptTitle')">
             <button
               class="stop"
@@ -1652,6 +1703,55 @@ function selectModel(modelId: string): void {
 }
 .model-pill:hover .cv,
 .model-pill.open .cv {
+  color: var(--color-accent-hover);
+}
+
+/* Subagent model pill — a secondary, unobtrusive pill that appears next to the
+   main model pill when the dual-model-routing experimental flag is on. */
+.subagent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  font-size: var(--ui-font-size);
+  line-height: var(--leading-normal);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+  max-width: 240px;
+}
+.subagent-pill:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+.subagent-pill.is-set {
+  color: var(--color-text);
+}
+.subagent-label {
+  color: var(--faint);
+  flex-shrink: 0;
+  font-weight: var(--weight-medium);
+}
+.subagent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.subagent-hint {
+  color: var(--dim);
+  white-space: nowrap;
+}
+.subagent-clear {
+  color: var(--faint);
+  flex: none;
+  border-radius: var(--radius-xs);
+}
+.subagent-clear:hover {
   color: var(--color-accent-hover);
 }
 

@@ -237,6 +237,18 @@ export interface SessionUsage {
 
 export interface SessionStatus {
   readonly model?: string;
+  /**
+   * Effective subagent model override (the `dual-model-routing` experimental
+   * feature). Undefined when the flag is off or nothing is configured, meaning
+   * subagents inherit the main agent's model.
+   */
+  readonly subagentModel?: string | undefined;
+  /**
+   * Effective subagent thinking-effort override (the `dual-model-routing`
+   * experimental feature). Undefined when the flag is off or nothing is
+   * configured, meaning subagents inherit the main agent's thinking effort.
+   */
+  readonly subagentThinkingEffort?: string | undefined;
   readonly thinkingEffort: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;

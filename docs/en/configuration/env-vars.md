@@ -131,6 +131,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_LOOP_MAX_STEPS_PER_TURN` | Maximum Agent steps per turn; takes higher priority than `[loop_control] max_steps_per_turn` in `config.toml` (unset or `0` means unlimited) | Non-negative integer; invalid values are ignored |
 | `KIMI_LOOP_MAX_RETRIES_PER_STEP` | Maximum retries after a step failure; takes higher priority than `[loop_control] max_retries_per_step` in `config.toml` (default `10`) | Non-negative integer; invalid values are ignored |
 | `KIMI_CODE_EXPERIMENTAL_FLAG` | Enable all registered experimental features for this process | `1`, `true`, `yes`, `on` |
+| `KIMI_CODE_EXPERIMENTAL_DUAL_MODEL_ROUTING` | Enable dual model routing (experimental): route the main agent and its subagents to different models. The flag only enables the capability — delegated subagents use the dedicated `default_subagent_model` and `default_subagent_thinking_effort` when one is configured (or set live via `/model`); when neither is set they still inherit the main agent's model and effort | `1`, `true`, `yes`, `on` |
 | `KIMI_SHELL_PATH` | Override the Git Bash path on Windows (used when auto-detection fails) | Absolute path |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | Hard cap on `max_completion_tokens` per LLM step; applies to the `kimi` provider only | Positive integer; `0` or negative disables clamping |
 | `KIMI_MODEL_TEMPERATURE` | Sampling temperature for every request; applies to the `kimi` provider only (global — independent of `KIMI_MODEL_NAME`) | Number, e.g. `0.3` |

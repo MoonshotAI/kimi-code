@@ -26,6 +26,18 @@ export interface BannerState {
 
 export interface AppState {
   model: string;
+  /**
+   * Live subagent model alias (`dual-model-routing` experimental feature).
+   * Undefined when the feature is off or no subagent model is set (subagents
+   * then inherit the main model). Keyed into `availableModels`.
+   */
+  subagentModel?: string;
+  /**
+   * Live subagent thinking effort (`dual-model-routing` experimental feature).
+   * Undefined when the feature is off or no subagent effort is set (subagents
+   * then inherit the main agent's thinking effort).
+   */
+  subagentThinkingEffort?: string;
   workDir: string;
   additionalDirs: readonly string[];
   sessionId: string;

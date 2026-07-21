@@ -14,6 +14,8 @@ import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
+import { ErrorCodes, isKimiError } from '../../src/errors';
+import { FlagResolver } from '../../src/flags/resolver';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createScriptedGenerate } from '../agent/harness/scripted-generate';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
@@ -819,3 +821,149 @@ function wrapReadTextWithError(inner: Kaos, cause: Error): Kaos {
     },
   });
 }
+
+describe('SessionAPIImpl subagent model/thinking RPCs (dual-model-routing)', () => {
+  // These tests exercise the eager validation, flag gating, and round-trip
+  // behavior of setSubagentModel/setSubagentThinking without spinning up a
+  // full agent. The Session is constructed directly so we can inject a flag
+  // resolver and a minimal provider manager.
+
+  function makeSession(options: {
+    readonly flagOn: boolean;
+    readonly models?: Record<string, unknown>;
+  }): Session {
+    const events: Array<Record<string, unknown>> = [];
+    const flagEnv: Record<string, string | undefined> = options.flagOn
+      ? { KIMI_CODE_EXPERIMENTAL_DUAL_MODEL_ROUTING: '1' }
+      : {};
+    const extraModels = options.models ?? {};
+    return new Session({
+      id: 'test-subagent-rpc',
+      kaos: testKaos,
+      homedir: '/tmp/kimi-subagent-rpc',
+      rpc: createSessionRpc(events),
+      experimentalFlags: new FlagResolver(flagEnv),
+      providerManager: new ProviderManager({
+        config: {
+          providers: {
+            test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey },
+          },
+          models: {
+            [MOCK_PROVIDER.model]: {
+              provider: 'test',
+              model: MOCK_PROVIDER.model,
+              maxContextSize: 1_000_000,
+            },
+            ...extraModels,
+          },
+        },
+      }),
+      initializeMainAgent: false,
+    });
+  }
+
+  it('setSubagentModel round-trips a valid alias when the flag is on', () => {
+    const session = makeSession({
+      flagOn: true,
+      models: {
+        'glm-5.2': { provider: 'test', model: 'glm-5.2', maxContextSize: 1_000_000 },
+      },
+    });
+    const api = new SessionAPIImpl(session);
+    const result = api.setSubagentModel({ model: 'glm-5.2' });
+    expect(result).toEqual({ subagentModel: 'glm-5.2' });
+    expect(api.getSubagentModel({})).toEqual({ subagentModel: 'glm-5.2' });
+  });
+
+  it('setSubagentModel clears the override when given an empty string', () => {
+    const session = makeSession({
+      flagOn: true,
+      models: {
+        'glm-5.2': { provider: 'test', model: 'glm-5.2', maxContextSize: 1_000_000 },
+      },
+    });
+    const api = new SessionAPIImpl(session);
+    api.setSubagentModel({ model: 'glm-5.2' });
+    expect(api.getSubagentModel({}).subagentModel).toBe('glm-5.2');
+
+    const result = api.setSubagentModel({ model: '' });
+    expect(result.subagentModel).toBeUndefined();
+  });
+
+  it('setSubagentModel throws CONFIG_INVALID for an unknown alias', () => {
+    const session = makeSession({ flagOn: true });
+    const api = new SessionAPIImpl(session);
+    try {
+      api.setSubagentModel({ model: 'nonexistent-model' });
+      throw new Error('expected setSubagentModel to throw');
+    } catch (error: unknown) {
+      expect(isKimiError(error)).toBe(true);
+      if (isKimiError(error)) {
+        expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
+        expect(error.message).toContain('nonexistent-model');
+      }
+    }
+  });
+
+  it('setSubagentModel throws when the flag is off', () => {
+    const session = makeSession({ flagOn: false });
+    const api = new SessionAPIImpl(session);
+    try {
+      api.setSubagentModel({ model: 'mock-model' });
+      throw new Error('expected setSubagentModel to throw');
+    } catch (error: unknown) {
+      expect(isKimiError(error)).toBe(true);
+      if (isKimiError(error)) {
+        expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
+        expect(error.message).toContain('dual-model-routing');
+      }
+    }
+  });
+
+  it('setSubagentThinking round-trips and clears when the flag is on', () => {
+    const session = makeSession({ flagOn: true });
+    const api = new SessionAPIImpl(session);
+    const result = api.setSubagentThinking({ effort: 'high' });
+    expect(result).toEqual({ subagentThinkingEffort: 'high' });
+    expect(api.getSubagentThinking({})).toEqual({ subagentThinkingEffort: 'high' });
+
+    const cleared = api.setSubagentThinking({ effort: '' });
+    expect(cleared.subagentThinkingEffort).toBeUndefined();
+  });
+
+  it('setSubagentThinking throws when the flag is off', () => {
+    const session = makeSession({ flagOn: false });
+    const api = new SessionAPIImpl(session);
+    try {
+      api.setSubagentThinking({ effort: 'high' });
+      throw new Error('expected setSubagentThinking to throw');
+    } catch (error: unknown) {
+      expect(isKimiError(error)).toBe(true);
+      if (isKimiError(error)) {
+        expect(error.code).toBe(ErrorCodes.CONFIG_INVALID);
+        expect(error.message).toContain('dual-model-routing');
+      }
+    }
+  });
+
+  it('getSubagentModel/getSubagentThinking return undefined when the flag is off', () => {
+    const session = makeSession({ flagOn: false });
+    const api = new SessionAPIImpl(session);
+    expect(api.getSubagentModel({}).subagentModel).toBeUndefined();
+    expect(api.getSubagentThinking({}).subagentThinkingEffort).toBeUndefined();
+  });
+
+  it('setSubagentModel persists when session metadata has no custom map', () => {
+    const session = makeSession({ flagOn: true });
+    // Legacy state.json may lack the `custom` key; spreading undefined is a
+    // no-op, so persisting the override must rebuild the map, not throw.
+    session.metadata = {
+      ...session.metadata,
+      custom: undefined as unknown as Record<string, unknown>,
+    };
+    const api = new SessionAPIImpl(session);
+    const result = api.setSubagentModel({ model: 'mock-model' });
+    expect(result).toEqual({ subagentModel: 'mock-model' });
+    expect(session.metadata.custom['subagentModelAlias']).toBe('mock-model');
+  });
+});
