@@ -306,7 +306,10 @@ function toKosongProviderConfig(
       return {
         type: 'openai',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
+        // A per-model endpoint (catalog gateway override) wins over the
+        // provider-level base URL, same as the Anthropic branch.
+        baseUrl:
+          modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
         offEffort,
@@ -350,7 +353,8 @@ function toKosongProviderConfig(
       return {
         type: 'openai_responses',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
+        baseUrl:
+          modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         offEffort,
         // Session affinity: same `prompt_cache_key` intent as the `openai`

@@ -2,6 +2,7 @@ import type { KimiConfig, ModelAlias } from '@moonshot-ai/agent-core';
 import {
   catalogBaseUrl,
   catalogProviderModels,
+  inferWireType,
   resolveCatalogImport,
   type Catalog,
   type CatalogImportInvalidReason,
@@ -12,7 +13,7 @@ import {
   type ProviderType,
 } from '@moonshot-ai/kosong';
 
-export { catalogBaseUrl, catalogProviderModels, resolveCatalogImport };
+export { catalogBaseUrl, catalogProviderModels, inferWireType, resolveCatalogImport };
 export type { CatalogImportInvalidReason, CatalogImportResolution };
 export type { Catalog, CatalogModel, CatalogProviderEntry };
 

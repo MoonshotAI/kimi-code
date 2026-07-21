@@ -5,9 +5,20 @@ import {
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,
+  inferWireType,
   resolveCatalogImport,
   type CatalogModelEntry,
 } from '../src/catalog';
+
+describe('inferWireType (deprecated compatibility wrapper)', () => {
+  it('answers only the wire, or undefined when the entry is not importable', () => {
+    expect(inferWireType({ id: 'xai', npm: '@ai-sdk/xai' })).toBe('openai');
+    expect(inferWireType({ id: 'x', type: 'openai_responses' })).toBe('openai_responses');
+    expect(inferWireType({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toBeUndefined();
+    expect(inferWireType({ id: 'cohere', npm: '@ai-sdk/cohere' })).toBeUndefined();
+    expect(inferWireType({ id: 'x', type: 'kokub', npm: '@ai-sdk/openai-compatible' })).toBeUndefined();
+  });
+});
 
 describe('resolveCatalogImport — wire resolution', () => {
   it('honors an explicit valid type', () => {
@@ -581,6 +592,47 @@ describe('catalogProviderModels', () => {
       },
     });
     expect(models).toHaveLength(1);
+    expect(models[0]?.protocol).toBeUndefined();
+  });
+
+  it('carries a same-wire override endpoint that differs from the provider api', () => {
+    const models = catalogProviderModels({
+      id: 'gateway',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://gateway.example.test/v1',
+      models: {
+        'tenant-model': {
+          id: 'tenant-model',
+          limit: { context: 1000 },
+          provider: { npm: '@ai-sdk/openai-compatible', api: 'https://tenant.example.test/v1' },
+        },
+        // Same endpoint as the provider — nothing to carry.
+        'shared-model': {
+          id: 'shared-model',
+          limit: { context: 1000 },
+          provider: { npm: '@ai-sdk/openai-compatible', api: 'https://gateway.example.test/v1' },
+        },
+      },
+    });
+    expect(models[0]).toMatchObject({ baseUrl: 'https://tenant.example.test/v1' });
+    expect(models[0]?.protocol).toBeUndefined();
+    expect(models[1]?.baseUrl).toBeUndefined();
+  });
+
+  it('carries a same-wire Anthropic override endpoint, adapted to the SDK convention', () => {
+    const models = catalogProviderModels({
+      id: 'claude-gw',
+      npm: '@ai-sdk/anthropic',
+      api: 'https://gw.example.test',
+      models: {
+        'tenant-claude': {
+          id: 'tenant-claude',
+          limit: { context: 200000 },
+          provider: { npm: '@ai-sdk/anthropic', api: 'https://tenant.example.test/v1' },
+        },
+      },
+    });
+    expect(models[0]).toMatchObject({ baseUrl: 'https://tenant.example.test' });
     expect(models[0]?.protocol).toBeUndefined();
   });
 });

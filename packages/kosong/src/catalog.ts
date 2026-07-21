@@ -230,6 +230,16 @@ function resolveCatalogWire(entry: CatalogProviderEntry): ProviderType | undefin
   return 'openai';
 }
 
+/**
+ * @deprecated Use {@link resolveCatalogImport}. This compatibility wrapper
+ * answers only the wire (`undefined` when the entry is not importable) and
+ * is kept until the next major release for downstream consumers of the
+ * previous public API.
+ */
+export function inferWireType(entry: CatalogProviderEntry): ProviderType | undefined {
+  return resolveCatalogWire(entry);
+}
+
 function inferDeclaredWireType(entry: CatalogProviderEntry): ProviderType | undefined {
   if (isWireType(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
@@ -400,13 +410,14 @@ export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel
 
 /**
  * Gateway providers (zenmux, opencode, azure, …) may declare a per-model
- * `provider` override when a model is served over a different protocol than
- * the provider default. Overrides targeting Anthropic with a usable endpoint
- * are materialized into a per-model protocol + base URL; overrides pointing
- * at a different wire that cannot be materialized cause the model to be
- * skipped — importing it under the provider's wire would be the silently
- * wrong protocol. Overrides matching the provider's wire (or that we cannot
- * identify) leave the model untouched.
+ * `provider` override when a model is served over a different protocol or
+ * endpoint than the provider default. Overrides targeting Anthropic with a
+ * usable endpoint are materialized into a per-model protocol + base URL;
+ * overrides pointing at a different wire that cannot be materialized cause
+ * the model to be skipped — importing it under the provider's wire would be
+ * the silently wrong protocol. Overrides on the provider's own wire keep the
+ * model but still carry their own endpoint when it differs from the
+ * provider's.
  */
 function applyModelProviderOverride(
   model: CatalogModel | undefined,
@@ -423,9 +434,18 @@ function applyModelProviderOverride(
     : npm.includes('openai')
       ? 'openai'
       : undefined;
-  // Nothing to express when the override targets the wire the provider
-  // already resolves to (or one we cannot identify).
-  if (overrideWire === undefined || overrideWire === providerWire) return model;
+  if (overrideWire === undefined) return model;
+  const api = override.api ?? entry.api;
+  const usableApi =
+    typeof api === 'string' && api.length > 0 && !api.includes('${') ? api : undefined;
+  // Same wire as the provider: no protocol to re-route, but a distinct usable
+  // endpoint still applies to this model specifically.
+  if (overrideWire === providerWire) {
+    if (usableApi !== undefined && usableApi !== entry.api) {
+      return { ...model, baseUrl: adaptBaseUrlForWire(usableApi, overrideWire) };
+    }
+    return model;
+  }
   // Only Anthropic-direction overrides are materializable (the alias schema
   // cannot express other per-model protocols), and only with a usable
   // endpoint. Anything else would be imported under the provider's wire —
@@ -433,11 +453,8 @@ function applyModelProviderOverride(
   // freemodel's gpt entries on an Anthropic provider, or Claude models on
   // google-vertex (whose wire here is Gemini-mode Vertex, not
   // Anthropic-over-Vertex).
-  if (overrideWire === 'anthropic') {
-    const api = override.api ?? entry.api;
-    if (typeof api === 'string' && api.length > 0 && !api.includes('${')) {
-      return { ...model, protocol: 'anthropic', baseUrl: catalogBaseUrl({ api }, 'anthropic') };
-    }
+  if (overrideWire === 'anthropic' && usableApi !== undefined) {
+    return { ...model, protocol: 'anthropic', baseUrl: adaptBaseUrlForWire(usableApi, 'anthropic') };
   }
   return undefined;
 }

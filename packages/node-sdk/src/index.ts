@@ -24,6 +24,7 @@ export {
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
+  inferWireType,
   loadBuiltInCatalog,
   resolveCatalogImport,
 } from '#/catalog';

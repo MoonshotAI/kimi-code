@@ -116,9 +116,12 @@ export function resolveThinkingEffort(
   if (effort === 'off' && effectiveModel?.capabilities?.includes('always_thinking') === true) {
     // always_thinking forces thinking on, but an explicitly configured effort
     // is still honored — `enabled = false` only expresses the intent to
-    // disable, it should not also discard a chosen effort. Fall back to the
-    // model default only when no effort is configured.
-    effort = config?.effort ?? defaultThinkingEffortFor(effectiveModel);
+    // disable, it should not also discard a chosen effort. A configured
+    // 'off' is treated as absent: the model default applies instead.
+    effort =
+      config?.effort !== undefined && config.effort.trim().toLowerCase() !== 'off'
+        ? config.effort
+        : defaultThinkingEffortFor(effectiveModel);
   }
 
   return normalizeThinkingEffortForModel(effort, effectiveModel, kimiProtocol);

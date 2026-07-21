@@ -158,6 +158,18 @@ describe('resolveThinkingEffortForModel', () => {
     expect(resolveThinkingEffortForModel('off', undefined, alwaysThinkingModel)).toBe('on');
   });
 
+  it('treats a configured off as absent when clamping always-thinking models', () => {
+    expect(resolveThinkingEffortForModel(undefined, { effort: 'off' }, alwaysThinkingEffortModel)).toBe(
+      'high',
+    );
+    expect(
+      resolveThinkingEffortForModel(undefined, { enabled: false, effort: 'off' }, alwaysThinkingEffortModel),
+    ).toBe('high');
+    expect(
+      resolveThinkingEffortForModel(undefined, { enabled: false, effort: 'max' }, alwaysThinkingEffortModel),
+    ).toBe('max');
+  });
+
   it('carries custom requested efforts through', () => {
     expect(resolveThinkingEffortForModel('xhigh', undefined, undefined)).toBe('xhigh');
     expect(resolveThinkingEffortForModel('bogus', { effort: 'low' }, undefined)).toBe('bogus');

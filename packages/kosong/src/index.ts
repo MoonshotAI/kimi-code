@@ -42,6 +42,7 @@ export {
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,
+  inferWireType,
   resolveCatalogImport,
 } from './catalog';
 export type {
