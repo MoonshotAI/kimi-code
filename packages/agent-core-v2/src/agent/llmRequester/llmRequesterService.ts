@@ -245,10 +245,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       protocol: model?.protocol,
       retryable: isRetryableGenerateError(error),
       duration_ms: Math.max(0, Date.now() - startedAt),
+      turn_id: source?.turnId,
+      request_kind: requestKindForTelemetry(source),
       trace_id: traceId,
     };
     if (source?.type === 'turn') {
-      properties['turn_id'] = source.turnId;
       if (source.step !== undefined) properties['step_no'] = source.step;
     }
     const statusCode = apiStatusCode(error);
@@ -703,6 +704,12 @@ function logFieldsForSource(source: AgentLLMRequestSource | undefined): AgentLLM
     default:
       return {};
   }
+}
+
+function requestKindForTelemetry(source: AgentLLMRequestSource | undefined): string | undefined {
+  if (source?.type === 'turn') return 'turn';
+  if (source?.type === 'operation') return source.requestKind ?? 'operation';
+  return undefined;
 }
 
 function providerVisibleTools(tools: readonly Tool[]): readonly Tool[] {

@@ -5,8 +5,9 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
-import { ProfileModel } from '#/agent/profile/profileOps';
-import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { ActiveToolsModel, ProfileModel } from '#/agent/profile/profileOps';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
@@ -14,6 +15,7 @@ import { IProtocolAdapterRegistry, type Protocol } from '#/kosong/protocol/proto
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -22,6 +24,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
@@ -46,6 +49,7 @@ function createTelemetryStub(): ITelemetryService {
 function createConfigStub(): IConfigService {
   return {
     _serviceBrand: undefined,
+    onDidSectionChange: () => ({ dispose: () => {} }),
     get: ((key: string) => configValues[key]) as unknown as IConfigService['get'],
   } as unknown as IConfigService;
 }
@@ -194,7 +198,11 @@ function buildHost(key: string): {
   host.stub(IFileSystemStorageService, new InMemoryStorageService());
   host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   host.stub(ITelemetryService, createTelemetryStub());
-  host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
+  host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+  host.stub(
+    IAgentTelemetryContextService,
+    new AgentTelemetryContextService(),
+  );
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelCatalog, modelCatalog);
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
@@ -203,8 +211,15 @@ function buildHost(key: string): {
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());
-  host.stub(IAgentProfileCatalogService, stubUnused());
+  host.stub(ISessionAgentProfileCatalog, stubUnused());
   host.stub(ISessionSkillCatalog, stubUnused());
+  host.stub(ISessionToolPolicy, {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidChange: () => ({ dispose: () => {} }),
+    disabledTools: () => [],
+    setDisabledTools: () => Promise.resolve(),
+  });
   host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
   const wire = registerTestAgentWire(host, testWireScope(SCOPE, key), {
     log: host.get(IAppendLogStore),
@@ -243,6 +258,10 @@ function modelOf(target: IWireService) {
   return target.getModel(ProfileModel);
 }
 
+function activeToolsOf(target: IWireService) {
+  return target.getModel(ActiveToolsModel);
+}
+
 describe('AgentProfileService (wire-backed config.update)', () => {
   it('update persists a flat config.update record and resolves thinkingLevel as wire thinkingEffort at the call site', async () => {
     svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME, systemPrompt: 'You are helpful.' });
@@ -272,6 +291,34 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     const before = modelOf(wire);
     svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME });
     expect(modelOf(wire)).toBe(before);
+  });
+
+  it('persists and replays an allowlist reset to unrestricted', async () => {
+    svc.applyBindingSnapshot({
+      cwd: '/work',
+      profileName: 'restricted',
+      thinkingLevel: 'off',
+      systemPrompt: 'restricted',
+      activeToolNames: ['Read'],
+    });
+    svc.applyBindingSnapshot({
+      cwd: '/work',
+      profileName: 'unrestricted',
+      thinkingLevel: 'off',
+      systemPrompt: 'unrestricted',
+      activeToolNames: undefined,
+    });
+    expect(activeToolsOf(wire)).toBeUndefined();
+
+    const replay = buildHost('profile-replay-active-tools');
+    await restoreTestAgentWire(
+      replay.wire,
+      log,
+      testWireScope(SCOPE, KEY),
+      await readRecords(),
+    );
+    expect(activeToolsOf(replay.wire)).toBeUndefined();
+    replay.ix.dispose();
   });
 
   it('chdir and emitStatusUpdated run live-only and are silent during replay', async () => {

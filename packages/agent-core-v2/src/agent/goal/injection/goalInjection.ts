@@ -31,38 +31,47 @@ export class GoalInjection extends Disposable {
   }
 }
 
+const BUDGET_GUIDANCE_NEARING =
+  'Budget guidance: you are nearing a budget. Converge on the objective and avoid starting new discretionary work.';
+const BUDGET_GUIDANCE_WITHIN =
+  'Budget guidance: you are within budget. Make steady, focused progress toward the objective.';
+
 function buildBlockedNote(goal: GoalSnapshot): string {
-  const reason = goal.terminalReason;
   return renderPrompt(GOAL_BLOCKED_REMINDER, {
-    reason: reason === undefined ? '' : escapeUntrustedText(reason),
+    reason_suffix: reasonSuffix(goal),
     objective: escapeUntrustedText(goal.objective),
-    completionCriterion: escapedCompletionCriterion(goal),
+    completion_criterion_block: completionCriterionBlock(goal),
   });
 }
 
 function buildPausedNote(goal: GoalSnapshot): string {
-  const reason = goal.terminalReason;
   return renderPrompt(GOAL_PAUSED_REMINDER, {
-    reason: reason === undefined ? '' : escapeUntrustedText(reason),
+    reason_suffix: reasonSuffix(goal),
     objective: escapeUntrustedText(goal.objective),
-    completionCriterion: escapedCompletionCriterion(goal),
+    completion_criterion_block: completionCriterionBlock(goal),
   });
 }
 
 function buildGoalReminder(goal: GoalSnapshot): string {
+  const budgets = formatBudgets(goal);
   return renderPrompt(GOAL_ACTIVE_REMINDER, {
     objective: escapeUntrustedText(goal.objective),
-    completionCriterion: escapedCompletionCriterion(goal),
+    completion_criterion_block: completionCriterionBlock(goal),
     status: goal.status,
     progress: `${goal.turnsUsed} continuation turns, ${goal.tokensUsed} tokens, ${formatElapsed(goal.wallClockMs)} elapsed`,
-    budgets: formatBudgets(goal),
-    nearingBudget: isNearingBudget(goal),
+    budgets_block: budgets.length > 0 ? `Budgets: ${budgets}.\n` : '',
+    budget_guidance: isNearingBudget(goal) ? BUDGET_GUIDANCE_NEARING : BUDGET_GUIDANCE_WITHIN,
   });
 }
 
-function escapedCompletionCriterion(goal: GoalSnapshot): string {
+function reasonSuffix(goal: GoalSnapshot): string {
+  const reason = goal.terminalReason;
+  return reason === undefined ? '' : ` (${escapeUntrustedText(reason)})`;
+}
+
+function completionCriterionBlock(goal: GoalSnapshot): string {
   if (goal.completionCriterion === undefined) return '';
-  return escapeUntrustedText(goal.completionCriterion);
+  return `<untrusted_completion_criterion>\n${escapeUntrustedText(goal.completionCriterion)}\n</untrusted_completion_criterion>\n`;
 }
 
 function formatBudgets(goal: GoalSnapshot): string {

@@ -16,6 +16,7 @@ import {
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentToolPolicyService,
   IAgentPromptService,
   IAuthSummaryService,
   IBlobStore,
@@ -25,6 +26,7 @@ import {
   ISessionMetadata,
   createVideoUploader,
   promptMetadataTextFromContentParts,
+  ProfileError,
   type ContentPart,
   type PromptHandle,
   type PromptQueueSnapshot,
@@ -39,6 +41,7 @@ import {
   decodeBase64Prefix,
   isError2,
   Error2,
+  ErrorCodes,
   isModelAcceptedImageMime,
   normalizeImageMime,
   persistOriginalImage,
@@ -138,6 +141,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     prompt: agent.accessor.get(IAgentPromptService),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
+    toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
   };
 }
@@ -166,6 +170,45 @@ function promptVideoUploader(
       protocol: model?.protocol,
     },
   });
+}
+
+/**
+ * Bind the resolved agent to the profile named by a prompt submission's
+ * `profile` field. First-bind semantics live in the engine: a same-name
+ * repeat is short-circuited here as a no-op, while an unknown name or a
+ * post-bind switch is rejected by `AgentProfileService.bind` with a coded
+ * `ProfileError` — this edge only maps it onto 40001. Checking anything
+ * beyond the no-op shortcut here would re-introduce a check-then-act window
+ * the engine guard has already closed.
+ *
+ * `model` falls back to the configured default inside the engine. `thinking`
+ * rides along in the bind so an unsupported effort rejects atomically —
+ * before any state mutation — instead of wedging the session's identity with
+ * a successful bind followed by a failed `setThinking`.
+ *
+ * Returns true when a bind happened (i.e. `thinking` was consumed by it).
+ */
+async function applyProfileSelection(
+  profile: IAgentProfileService,
+  profileName: string,
+  model: string | undefined,
+  thinking: string | undefined,
+): Promise<boolean> {
+  if (profile.data().profileName === profileName) return false;
+  try {
+    await profile.bind({
+      profile: profileName,
+      model,
+      thinking,
+      strictThinking: thinking !== undefined,
+    });
+  } catch (error) {
+    if (error instanceof ProfileError) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+    }
+    throw error;
+  }
+  return true;
 }
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
@@ -216,13 +259,36 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        // Resolve the agent and apply profile overrides first: prompt media
-        // resolution (video upload) keys off the effective model.
+        // Resolve the agent and apply profile/model overrides first: prompt
+        // media resolution (video upload) keys off the effective model.
         const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
         await resolved.auth.ensureReady();
+        let thinkingConsumed = false;
+        if (req.body.profile !== undefined) {
+          thinkingConsumed =
+            (await applyProfileSelection(
+              resolved.profile,
+              req.body.profile,
+              req.body.model,
+              req.body.thinking,
+            )) && req.body.thinking !== undefined;
+        }
         if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
-        if (req.body.thinking !== undefined) resolved.profile.setThinking(req.body.thinking);
+        if (req.body.thinking !== undefined && !thinkingConsumed)
+          resolved.profile.setThinking(req.body.thinking);
         if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+        if (req.body.disabled_tools !== undefined) {
+          // A session denylist before bind throws `profile.not_bound` — map it
+          // onto 40001 like the profile-selection errors above.
+          try {
+            await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
+          } catch (error) {
+            if (error instanceof ProfileError) {
+              throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+            }
+            throw error;
+          }
+        }
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         const resolvedBody = await resolvePromptMediaFiles(
           req.body,

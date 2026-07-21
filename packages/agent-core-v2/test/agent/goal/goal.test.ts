@@ -574,7 +574,7 @@ describe('AgentGoalService', () => {
         'goal_status_changed',
         'goal_cleared',
       ]);
-      expect(telemetry[0]?.properties).toEqual({ actor: 'user', replace: true });
+      expect(telemetry[0]?.properties).toEqual({ agent_id: 'main', actor: 'user', replace: true });
       expect(telemetry[1]?.properties).toMatchObject({ actor: 'model', has_token_budget: true });
       expect(telemetry[3]?.properties).toMatchObject({ status: 'paused', actor: 'user' });
       expect(JSON.stringify(telemetry)).not.toContain('private objective');

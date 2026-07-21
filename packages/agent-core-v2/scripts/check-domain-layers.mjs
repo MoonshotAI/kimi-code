@@ -134,6 +134,8 @@ const DOMAIN_LAYER = new Map([
   ['skill', 3],
   ['skillCatalog', 3],
   ['sessionSkillCatalog', 3],
+  ['sessionAgentProfileCatalog', 3],
+  ['sessionToolPolicy', 3],
   ['permissionGate', 3],
   ['flag', 3],
   ['toolExecutor', 3],
@@ -147,6 +149,7 @@ const DOMAIN_LAYER = new Map([
   ['record', 3],
   ['modelCatalog', 3],
   ['agentProfileCatalog', 3],
+  ['agentFileCatalog', 3],
   // L4 — agent behaviour
   // `activityView` is the Agent-scope read model folding the agent's own event
   // bus into the activity projection (`agent.activity.updated`); it owns no
@@ -164,6 +167,7 @@ const DOMAIN_LAYER = new Map([
   ['runtime', 4],
   ['toolDedupe', 4],
   ['toolSelect', 4],
+  ['toolPolicy', 4],
   ['contextMemory', 4],
   ['contextInjector', 4],
   ['agentPlugin', 4],

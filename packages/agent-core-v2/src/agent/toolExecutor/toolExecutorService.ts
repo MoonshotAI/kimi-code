@@ -41,6 +41,7 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import {
   IAgentToolExecutorService,
   type MissingToolDescriber,
+  type ToolCallGuard,
   type ToolCallDupType,
   type ToolExecutionResult,
   type ToolExecutorExecuteOptions,
@@ -97,11 +98,19 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
   private missingToolDescriber: MissingToolDescriber | undefined;
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
+  private toolCallGuard: ToolCallGuard | undefined;
   private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
   private dupTypeTurnId: number | undefined;
 
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void {
     this.toolCallDupTypes.set(toolCallId, dupType);
+  }
+
+  registerToolCallGuard(guard: ToolCallGuard) {
+    this.toolCallGuard = guard;
+    return toDisposable(() => {
+      if (this.toolCallGuard === guard) this.toolCallGuard = undefined;
+    });
   }
 
   registerUnavailableToolDescriber(describer: UnavailableToolDescriber) {
@@ -141,6 +150,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       preflightToolCall(
         this.toolRegistry,
         call,
+        this.toolCallGuard,
         this.unavailableToolDescriber,
         this.missingToolDescriber,
         this.log,
@@ -646,6 +656,7 @@ function buildWillExecuteContext(
 function preflightToolCall(
   toolRegistry: IAgentToolRegistryService,
   toolCall: ToolCall,
+  guard: ToolCallGuard | undefined,
   describeUnavailableTool: UnavailableToolDescriber | undefined,
   describeMissingTool: MissingToolDescriber | undefined,
   log?: ILogService,
@@ -660,16 +671,6 @@ function preflightToolCall(
       error: parsedArgs.error,
     });
   }
-  const unavailable = describeUnavailableTool?.(toolName);
-  if (unavailable !== undefined) {
-    return {
-      kind: 'rejected',
-      toolCall,
-      toolName,
-      args: parsedArgs.data,
-      output: unavailable,
-    };
-  }
   const tool = toolRegistry.resolve(toolName);
   if (tool === undefined) {
     return {
@@ -678,6 +679,27 @@ function preflightToolCall(
       toolName,
       args: parsedArgs.data,
       output: describeMissingTool?.(toolName) ?? `Tool "${toolName}" not found`,
+    };
+  }
+  const source = toolRegistry.list().find((entry) => entry.name === toolName)?.source ?? 'builtin';
+  const denied = guard?.({ name: toolName, source });
+  if (denied !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: denied,
+    };
+  }
+  const unavailable = describeUnavailableTool?.(toolName);
+  if (unavailable !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: unavailable,
     };
   }
   const validationError = validateExecutableToolArgs(tool, parsedArgs.data);

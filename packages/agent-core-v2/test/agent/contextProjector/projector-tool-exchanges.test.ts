@@ -17,6 +17,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { toProtocolMessage } from '#/agent/contextMemory/messageProjection';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { Message } from '#/kosong/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -113,6 +114,10 @@ describe('projector tool-exchange normalization', () => {
     const ix = disposables.add(new TestInstantiationService());
     ix.set(ILogService, createCapturingLog(warnings));
     ix.set(ITelemetryService, recordingTelemetry(telemetryRecords));
+    ix.set(
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+    );
     ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
     projector = ix.get(IAgentContextProjectorService);
   });

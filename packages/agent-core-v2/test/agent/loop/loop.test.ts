@@ -667,7 +667,14 @@ describe('turn telemetry', () => {
 
       expect(records).toContainEqual({
         event: 'turn_started',
-        properties: { turn_id: 0, mode: 'agent', provider_type: 'kimi', protocol: 'openai', thinking_effort: 'off' },
+        properties: {
+          turn_id: 0,
+          agent_id: 'main',
+          mode: 'agent',
+          provider_type: 'kimi',
+          protocol: 'openai',
+          thinking_effort: 'off',
+        },
       });
       expect(records).toContainEqual({
         event: 'turn_ended',

@@ -299,6 +299,7 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
+        agent_id: 'main',
         source: 'manual',
         tokens_before: 39,
         tokens_after: expect.any(Number),
@@ -964,6 +965,7 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'cancel',
       properties: {
+        agent_id: 'main',
         from: 'compacting',
         trace_id: 'trace-compact-retry',
       },
@@ -1007,6 +1009,7 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_failed',
       properties: expect.objectContaining({
+        agent_id: 'main',
         source: 'manual',
         tokens_before: 25,
         duration_ms: expect.any(Number),
@@ -1612,6 +1615,61 @@ describe('FullCompaction', () => {
         tokens_after: 166,
         compacted_count: 7,
         retry_count: 0,
+      }),
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('attributes background auto compaction to the turn that started it', async () => {
+    const compactionRequested = deferred<void>();
+    const releaseCompaction = deferred<void>();
+    const records: TelemetryRecord[] = [];
+    let ctx!: TestAgentContext;
+    let llmCallCount = 0;
+    const generate: GenerateFn = async () => {
+      llmCallCount += 1;
+      if (llmCallCount === 1) return textResult('Turn response.');
+      if (llmCallCount === 2) {
+        compactionRequested.resolve();
+        await releaseCompaction.promise;
+        return textResult('Background compacted summary.');
+      }
+      throw new Error(`Unexpected generate call ${String(llmCallCount)}`);
+    };
+    ctx = testAgent({
+      generate,
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    ctx.get(IAgentLoopService).hooks.onDidFinishStep.register(
+      'test-auto-compaction',
+      async (_step, next) => {
+        if (!ctx.get(IAgentFullCompactionService).begin({ source: 'auto' })) {
+          throw new Error('Expected auto compaction to start');
+        }
+        await next();
+      },
+    );
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start background compaction' }] });
+    await compactionRequested.promise;
+    await ctx.untilTurnEnd();
+
+    releaseCompaction.resolve();
+    await ctx.once('compaction.completed');
+
+    expect(records).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: 0,
+        source: 'auto',
       }),
     });
     await ctx.expectResumeMatches();
@@ -2336,6 +2394,8 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: expect.any(Number),
         source: 'auto',
         thinking_effort: 'on',
       }),

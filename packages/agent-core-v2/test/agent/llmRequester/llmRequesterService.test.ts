@@ -164,7 +164,6 @@ function createService(
       thinkingLevel,
       systemPrompt: 'system',
     }),
-    isToolActive: () => true,
   };
   const contextSize = {
     get: () => ({ size: 0, measured: 0, estimated: 0 }),

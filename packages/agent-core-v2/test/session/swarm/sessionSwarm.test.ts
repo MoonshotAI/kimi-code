@@ -13,7 +13,7 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -858,8 +858,9 @@ describe('SessionSwarmService metadata compatibility', () => {
 
     ix.stub(IAgentLifecycleService, lifecycle);
     ix.stub(ISessionSubagentService, subagents);
-    ix.stub(IAgentProfileCatalogService, {
+    ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
+      ready: Promise.resolve(),
       get: (name: string) =>
         name === 'coder'
           ? { name: 'coder', tools: [], systemPrompt: () => '' }

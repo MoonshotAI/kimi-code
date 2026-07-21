@@ -1,3 +1,18 @@
+/**
+ * `profile` domain (L4) — `IAgentProfileService` contract.
+ *
+ * Owns the active agent's identity: bound profile, model alias, thinking
+ * level, system prompt, and active-tool set. `bind()` takes an optional
+ * `model`, falling back to the configured `defaultModel` so edges don't each
+ * re-implement the fallback (a missing model everywhere throws
+ * `model.not_configured`), and an optional `thinking`; `strictThinking` marks
+ * `thinking` as an explicit user request (edge input) rather than inherited
+ * state, so the effort is validated against the model's supported efforts and
+ * the bind rejects up front when unsupported — internal spawns pass inherited
+ * thinking without the flag, and a persisted effort that drifted out of the
+ * model's support list clamps instead of breaking the spawn.
+ */
+
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
@@ -6,7 +21,6 @@ import type { ModelRequestParams } from '#/kosong/model/modelRequester';
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';
 import { Error2 } from '#/_base/errors/errors';
-import type { ToolSource } from '#/tool/toolContract';
 
 import { ProfileErrors } from './errors';
 
@@ -46,6 +60,8 @@ export type ResolvedAgentProfile = AgentProfile;
 
 export interface ProfileData extends AgentConfigData {
   readonly activeToolNames?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+  readonly subagents?: readonly string[];
 }
 
 export type ProfileUpdateData = Partial<{
@@ -54,8 +70,20 @@ export type ProfileUpdateData = Partial<{
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
+  disallowedTools: readonly string[];
   activeToolNames: readonly string[];
 }>;
+
+export interface ProfileBindingSnapshot {
+  readonly cwd: string;
+  readonly modelAlias?: string;
+  readonly profileName?: string;
+  readonly thinkingLevel: string;
+  readonly systemPrompt: string;
+  readonly activeToolNames?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+  readonly subagents?: readonly string[];
+}
 
 export interface ProfileServiceOptions {
   readonly cwd?: string | (() => string | undefined);
@@ -84,8 +112,9 @@ export interface ProfileSetModelResult {
 
 export interface BindAgentInput {
   readonly profile: string;
-  readonly model: string;
+  readonly model?: string;
   readonly thinking?: string;
+  readonly strictThinking?: boolean;
   readonly cwd?: string;
 }
 
@@ -94,6 +123,7 @@ export interface IAgentProfileService {
 
   configure(options: ProfileServiceOptions): void;
   update(changed: ProfileUpdateData): void;
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void;
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;
@@ -118,7 +148,6 @@ export interface IAgentProfileService {
   hasProvider(): boolean;
   getSystemPrompt(): string;
   getActiveToolNames(): readonly string[] | undefined;
-  isToolActive(name: string, source?: ToolSource): boolean;
   addActiveTool(name: string): void;
   removeActiveTool(name: string): void;
 }

@@ -111,6 +111,9 @@ export function emitAgentRunSpawned(
   requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
+    agent_id: targetAgentId,
+    parent_agent_id: requester.id,
+    parent_tool_call_id: meta.parentToolCallId ?? '',
   });
 }
 

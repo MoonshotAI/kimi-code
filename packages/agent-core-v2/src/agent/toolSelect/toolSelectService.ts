@@ -18,6 +18,7 @@ import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { ToolInfo } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -44,6 +45,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
@@ -179,7 +181,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   private loadableToolNames(): string[] {
     return this.toolRegistry
       .list()
-      .filter((info) => info.source === 'mcp' && this.profile.isToolActive(info.name, info.source))
+      .filter((info) => info.source === 'mcp' && this.toolPolicy.isToolActive(info.name, info.source))
       .map((info) => info.name)
       .toSorted((a, b) => a.localeCompare(b));
   }
@@ -204,7 +206,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   }
 
   private isLoadedToolActive(name: string): boolean {
-    return this.profile.isToolActive(name, 'mcp');
+    return this.toolPolicy.isToolActive(name, 'mcp');
   }
 
   private shapeActiveHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
@@ -259,8 +261,10 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i]!;
       const active =
-        this.profile.isToolActive(entry.name, entry.source) ||
-        (disclosure && entry.name === SELECT_TOOLS_TOOL_NAME);
+        this.toolPolicy.isToolActive(entry.name, entry.source) ||
+        (disclosure &&
+          entry.name === SELECT_TOOLS_TOOL_NAME &&
+          this.toolPolicy.isToolActiveForDisclosure(entry.name, entry.source));
       const keep = active && (disclosure || entry.name !== SELECT_TOOLS_TOOL_NAME);
       if (keep) {
         if (filtered !== undefined) filtered.push(entry);

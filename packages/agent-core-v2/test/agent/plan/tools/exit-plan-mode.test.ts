@@ -14,6 +14,7 @@ import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
 
+
 const options = [
   { label: 'Approach A', description: 'Small change.' },
   { label: 'Approach B', description: 'Larger change.' },
@@ -200,7 +201,9 @@ describe('ExitPlanMode option output', () => {
     // so the output keeps the user-approved wording.
     expect(result.output).toContain('## Approved Plan:');
     expect(result.output).not.toContain('auto-approved');
-    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', { outcome: 'approved' });
+    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', {
+      outcome: 'approved',
+    });
   });
 
   it('returns success without a "User feedback:" prefix when revise has no feedback', async () => {

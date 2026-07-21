@@ -223,7 +223,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
   ): void {
     this.toolExecutor.recordDupType(toolCallId, dupType);
     const properties: ToolCallDedupDetectedEvent = {
-      turn_id: this.activeTurnId ?? 0,
+      turn_id: this.activeTurnId,
       step_no: this.activeStep,
       tool_call_id: toolCallId,
       tool_name: toolName,
@@ -284,6 +284,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
 
     if (streak >= 2) {
       const properties: ToolCallRepeatEvent = {
+        turn_id: this.activeTurnId,
         tool_name: toolName,
         repeat_count: streak,
         action,
