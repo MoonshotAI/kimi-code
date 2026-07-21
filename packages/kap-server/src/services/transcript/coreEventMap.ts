@@ -19,9 +19,12 @@
  *     limitation.
  *   - `error` / `warning` become `marker.upsert{ marker: 'notice' }` and never
  *     enter a step.
- *   - No `swarm.*` / `plan.*` mode-transition events exist on the v2 bus today;
+ *   - `swarm.*` / plan-mode transition events do not exist on the v2 bus;
  *     mode badges flow from the `planMode` / `swarmMode` slices of
- *     `agent.status.updated`.
+ *     `agent.status.updated`. Plan content revisions DO arrive as a dedicated
+ *     `plan.revision` event (the `plan.revision` op's `toEvent`), projected
+ *     as a 'plan.revision' marker plus — while plan mode is active — a
+ *     `meta.merge` refining the plan badge with `reviewPath` / `version`.
  *
  * Event payloads are typed by the core `DomainEvent` union (the
  * `DomainEventMap` augmentations in `packages/agent-core-v2/src`, e.g.
@@ -64,6 +67,14 @@ export interface ProjectorInteraction {
   readonly payload: unknown;
   readonly origin: { readonly agentId?: string; readonly turnId?: number };
 }
+
+/**
+ * The plan domain's `plan.revision` event (agent-core-v2 `planOps.ts` — the
+ * persisted op's `toEvent`): one per ExitPlanMode review submission, carrying
+ * the reference to the offloaded plan file version. Derived from `DomainEvent`
+ * so a shape drift on the engine side fails the compile here.
+ */
+type PlanRevisionEvent = Extract<DomainEvent, { type: 'plan.revision' }>;
 
 /**
  * Read access to one step's current frames (the producer store). Used for
@@ -123,6 +134,8 @@ export class AgentTranscriptProjector {
   /** interaction id → the pending entity as last emitted (resolve spreads it). */
   private readonly interactions = new Map<string, TranscriptInteraction>();
   private markerSeq = 0;
+  /** Tracked from `agent.status.updated` planMode slices; gates the badge refinement on `plan.revision`. */
+  private planModeActive = false;
 
   constructor(
     readonly agentId: string,
@@ -131,6 +144,8 @@ export class AgentTranscriptProjector {
 
   map(event: DomainEvent): TranscriptOperation[] {
     switch (event.type) {
+      case 'plan.revision':
+        return this.onPlanRevision(event);
       case 'turn.started':
         return this.onTurnStarted(event);
       case 'turn.ended':
@@ -820,12 +835,35 @@ export class AgentTranscriptProjector {
     // exit (`false`) clears the badge: `null` deletes the key in the reducer,
     // so clients never keep showing a mode that already ended.
     const modes: { plan?: Record<string, never> | null; swarm?: Record<string, never> | null } = {};
-    if (event.planMode === true) modes.plan = {};
-    else if (event.planMode === false) modes.plan = null;
+    if (event.planMode === true) {
+      modes.plan = {};
+      this.planModeActive = true;
+    } else if (event.planMode === false) {
+      modes.plan = null;
+      this.planModeActive = false;
+    }
     if (event.swarmMode === true) modes.swarm = {};
     else if (event.swarmMode === false) modes.swarm = null;
     if (modes.plan === undefined && modes.swarm === undefined) return [];
     return [{ op: 'meta.merge', meta: { modes } }];
+  }
+
+  /**
+   * `plan.revision` — a plan content version was offloaded on review
+   * submission. Always lands as a 'plan.revision' timeline marker (it stays
+   * after plan mode exits); while plan mode is still active it also refines
+   * the plan badge with the revision reference (`exit`/`cancel` later clear
+   * the badge via the `planMode: false` slice, as before).
+   */
+  private onPlanRevision(event: PlanRevisionEvent): TranscriptOperation[] {
+    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', restOf(event))];
+    if (this.planModeActive) {
+      ops.push({
+        op: 'meta.merge',
+        meta: { modes: { plan: { reviewPath: event.path, version: event.version } } },
+      });
+    }
+    return ops;
   }
 
   private markerOp(marker: string, payload: unknown): TranscriptOperation {

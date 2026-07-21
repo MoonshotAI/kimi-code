@@ -81,6 +81,22 @@ interface OpsCatchupWire {
   complete: boolean;
 }
 
+interface UserMessagesWire {
+  agents: {
+    agent_id: string;
+    messages: {
+      turn_id: string;
+      ordinal: number;
+      state: string;
+      origin: { kind: string };
+      prompt: string;
+      attachment_ids?: string[];
+      started_at?: string;
+    }[];
+    attachments: { attachmentId: string; mediaType: string; source?: unknown }[];
+  }[];
+}
+
 function serverEvent(payload: Record<string, unknown>): DomainEvent {
   return payload as unknown as DomainEvent;
 }
@@ -903,6 +919,159 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(negative.body.code).toBe(40001);
     const hostile = await getJson<null>(
       `/api/v1/sessions/${id}/transcript/ops?agent_id=${encodeURIComponent('../main')}&since_seq=0`,
+    );
+    expect(hostile.body.code).toBe(40001);
+  });
+
+  it('serves every prompted turn for one agent on the user-messages route (live)', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    // Bind the transcript before publishing live turns.
+    await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const bus = mainAgentBus(id);
+    bus.publish(
+      serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'first' }),
+    );
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    // A turn without a prompt (non-displayable origin) is projected out.
+    bus.publish(
+      serverEvent({ type: 'turn.started', turnId: 2, origin: { kind: 'task', taskId: 'task-1' } }),
+    );
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 2, reason: 'completed' }));
+    bus.publish(
+      serverEvent({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, prompt: 'second' }),
+    );
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 3, reason: 'completed' }));
+
+    const { body } = await getJson<UserMessagesWire>(
+      `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.agents).toHaveLength(1);
+    const main = body.data.agents[0]!;
+    expect(main.agent_id).toBe('main');
+    expect(main.messages.map((m) => [m.turn_id, m.prompt])).toEqual([
+      ['t1', 'first'],
+      ['t3', 'second'],
+    ]);
+    expect(main.messages[0]).toMatchObject({ ordinal: 1, state: 'completed' });
+    expect(main.messages[0]!.origin).toMatchObject({ kind: 'user' });
+    expect(main.attachments).toEqual([]);
+  });
+
+  it('serves per-agent user messages for every rostered agent when agent_id is omitted (live)', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    sub.accessor
+      .get(IAgentContextMemoryService)
+      .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
+    await sub.accessor.get(IWireService).flush();
+
+    // Bind the transcript BEFORE publishing live turns (an unbound store
+    // cannot project bus events, and live-only turns never reach the disk).
+    const bound = await getJson<UserMessagesWire>(`/api/v1/sessions/${id}/transcript/user-messages`);
+    const boundByAgent = new Map(bound.body.data.agents.map((a) => [a.agent_id, a]));
+    expect(boundByAgent.get('main')!.messages).toEqual([]);
+    // The agent_id-less read backfills sub-1 on demand: its persisted run
+    // prompt is that agent's own user message.
+    expect(boundByAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual(['scan the repo']);
+
+    const bus = mainAgentBus(id);
+    bus.publish(
+      serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'hello main' }),
+    );
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    const { body } = await getJson<UserMessagesWire>(
+      `/api/v1/sessions/${id}/transcript/user-messages`,
+    );
+    expect(body.code).toBe(0);
+    const byAgent = new Map(body.data.agents.map((a) => [a.agent_id, a]));
+    expect(byAgent.get('main')!.messages.map((m) => m.prompt)).toEqual(['hello main']);
+    expect(byAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual(['scan the repo']);
+  });
+
+  it('rebuilds per-agent user messages for a cold session, folding hidden origins', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+      // Folded away entirely (mid-turn context, opens no turn).
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'injected reminder' }],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: 'reminder' },
+      } as ContextMessage,
+      // Opens a promptless engine turn — projected out by the missing prompt.
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'subagent run prompt' }],
+        toolCalls: [],
+        origin: { kind: 'system_trigger', name: 'subagent' },
+      } as ContextMessage,
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'second question' },
+          { type: 'image', source: { kind: 'url', url: 'https://example.com/a.png' } },
+        ],
+        toolCalls: [],
+      } as ContextMessage,
+    ]);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+    sub.accessor
+      .get(IAgentContextMemoryService)
+      .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
+    await sub.accessor.get(IWireService).flush();
+
+    // Reboot on the same home — the session drops out of memory (cold path).
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const { body } = await getJson<UserMessagesWire>(
+      `/api/v1/sessions/${id}/transcript/user-messages`,
+    );
+    expect(body.code).toBe(0);
+    const byAgent = new Map(body.data.agents.map((a) => [a.agent_id, a]));
+
+    const main = byAgent.get('main')!;
+    expect(main.messages.map((m) => [m.turn_id, m.prompt])).toEqual([
+      ['t0', 'hi'],
+      ['t2', 'second question'],
+    ]);
+    // The image part became an attachment entity referenced by the turn.
+    expect(main.messages[1]!.attachment_ids).toEqual(['att_1']);
+    expect(main.attachments).toEqual([
+      expect.objectContaining({
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        source: { kind: 'url', url: 'https://example.com/a.png' },
+      }),
+    ]);
+
+    expect(byAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual(['scan the repo']);
+
+    // Narrowed to one agent, only that agent comes back.
+    const single = await getJson<UserMessagesWire>(
+      `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,
+    );
+    expect(single.body.data.agents.map((a) => a.agent_id)).toEqual(['main']);
+  });
+
+  it('answers 40401 for an unknown session and 40001 for a hostile agent id on the user-messages route', async () => {
+    const missing = await getJson<null>('/api/v1/sessions/nope/transcript/user-messages');
+    expect(missing.body.code).toBe(40401);
+
+    const id = await createSession();
+    const hostile = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/user-messages?agent_id=${encodeURIComponent('../main')}`,
     );
     expect(hostile.body.code).toBe(40001);
   });

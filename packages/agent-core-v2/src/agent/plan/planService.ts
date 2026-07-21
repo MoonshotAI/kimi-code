@@ -3,19 +3,27 @@
  *
  * Manages plan-mode state through `wire`, injects plan-mode context through
  * `contextInjector`, writes optional plan files through `hostFileSystem`,
- * and tags mode telemetry through `telemetry`. Also carries the plan-mode
- * Harness constraints as an executor `onBeforeExecuteTool` hook
- * (`'plan-guard'`, ordered before `'permission'` whenever the gate's hook
- * already exists): while a plan is active, Write/Edit calls targeting only
- * the current plan file are let through without the permission chain, any
- * other Write/Edit and every TaskStop/CronCreate/CronDelete call is blocked
- * with a `toolApproval.formatDenyMessage`-formatted reason, and an
+ * and tags mode telemetry through `telemetry`. Also snapshots submitted plan
+ * revisions: `recordRevision` reads the current plan file, writes it
+ * atomically through `IBlobStore` under the agent's own persistence scope
+ * (`agentCtx.scope()`, i.e. the homeDir-relative
+ * `sessions/<ws>/<sid>/agents/<agentId>` root — the same rooting
+ * `IAgentBlobService` uses for its `blobs` child scope) with the key
+ * `plan/<id>/v<N>.md`, and dispatches a reference-only `plan.revision` op
+ * carrying the homeDir-relative path, sha256 and byte length. N comes from
+ * the Model's replayed per-id `revisionCount`, starting at 1. Also carries
+ * the plan-mode Harness constraints as an executor `onBeforeExecuteTool`
+ * hook (`'plan-guard'`, ordered before `'permission'` whenever the gate's
+ * hook already exists): while a plan is active, Write/Edit calls targeting
+ * only the current plan file are let through without the permission chain,
+ * any other Write/Edit and every TaskStop/CronCreate/CronDelete call is
+ * blocked with a `toolApproval.formatDenyMessage`-formatted reason, and an
  * `ExitPlanMode` call outside `auto` mode goes through the
  * `exitPlanModeReview` user review instead of the permission chain. Bound at
  * Agent scope.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
@@ -37,6 +45,7 @@ import type {
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWireService } from '#/wire/wire';
 import type { ToolFileAccess } from '#/tool/toolContract';
@@ -52,6 +61,7 @@ import {
   planModeCancel,
   planModeEnter,
   planModeExit,
+  planRevision,
 } from './planOps';
 
 export class AgentPlanService extends Disposable implements IAgentPlanService {
@@ -62,6 +72,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @IBlobStore private readonly blobs: IBlobStore,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IWireService private readonly wire: IWireService,
@@ -217,6 +228,27 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   exit(id?: string): void {
     this.wire.dispatch(planModeExit({ id }));
     this.telemetryContext.set({ mode: 'agent' });
+  }
+
+  async recordRevision(): Promise<void> {
+    const state = this.wire.getModel(PlanModel);
+    if (!state.active || state.id === undefined) return;
+    const id = state.id;
+    const content = await this.hostFs.readText(this.planFilePathFor(id));
+    const bytes = Buffer.from(content, 'utf8');
+    const version = (state.revisionCount?.[id] ?? 0) + 1;
+    const scope = this.agentCtx.scope();
+    const key = `plan/${id}/v${version}.md`;
+    await this.blobs.put(scope, key, bytes);
+    this.wire.dispatch(
+      planRevision({
+        id,
+        version,
+        path: `${scope}/${key}`,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        bytes: bytes.byteLength,
+      }),
+    );
   }
 
   async status(): Promise<PlanData> {

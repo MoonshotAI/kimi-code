@@ -674,6 +674,60 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getMeta().modes).toBeUndefined();
   });
 
+  it('projects plan.revision as a marker and refines the active plan badge', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    const revision = {
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 1,
+      path: 'agents/main/plan/plan-1/v1.md',
+      sha256: 'deadbeef',
+      bytes: 128,
+    };
+
+    // Plan mode inactive: only the timeline marker lands (no badge).
+    tx.apply(projector.map(ev(revision)));
+    expect(tx.getMeta().modes).toBeUndefined();
+
+    // Active: a further revision refines the badge with its reference.
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
+    expect(tx.getMeta().modes).toEqual({ plan: {} });
+    tx.apply(
+      projector.map(ev({ ...revision, version: 2, path: 'agents/main/plan/plan-1/v2.md' })),
+    );
+    expect(tx.getMeta().modes).toEqual({
+      plan: { reviewPath: 'agents/main/plan/plan-1/v2.md', version: 2 },
+    });
+
+    // Both revisions stay in the timeline (live marker namespace), payload =
+    // the reference fields.
+    const markers = tx
+      .getItems()
+      .filter((item) => item.kind === 'marker' && item.marker === 'plan.revision');
+    expect(markers.map((item) => item.kind === 'marker' && item.markerId)).toEqual([
+      'live-m1',
+      'live-m2',
+    ]);
+    expect(markers[1]).toMatchObject({
+      payload: {
+        id: 'plan-1',
+        version: 2,
+        path: 'agents/main/plan/plan-1/v2.md',
+        sha256: 'deadbeef',
+        bytes: 128,
+      },
+    });
+
+    // Plan-mode exit clears the badge; the revision markers stay.
+    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
+    expect(tx.getMeta().modes).toBeUndefined();
+    expect(
+      tx.getItems().filter((item) => item.kind === 'marker' && item.marker === 'plan.revision'),
+    ).toHaveLength(2);
+  });
+
   it('projects skill / plugin-command / cron / compaction / undo markers', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
@@ -918,6 +972,149 @@ describe('AgentTranscriptProjector', () => {
     for (const hostile of ['../../main', '..', 'a/b', 'a\\b']) {
       const snapshot = await service.readColdSnapshot('s1', hostile);
       expect(snapshot?.items).toEqual([]);
+    }
+  });
+
+  it('readColdSnapshot folds task/todo/goal/plan/interaction records into the cold snapshot', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-facts-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'hi' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'running' }],
+            toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ls"}' }],
+          },
+          time: 2000,
+        },
+        {
+          type: 'tools.update_store',
+          key: 'todo',
+          value: [{ title: 'write tests', status: 'in_progress' }],
+          time: 3000,
+        },
+        { type: 'goal.create', goalId: 'g1', objective: 'fix the bug', time: 4000 },
+        { type: 'plan_mode.enter', id: 'plan-1', time: 5000 },
+        {
+          type: 'task.started',
+          info: {
+            taskId: 'task_1',
+            kind: 'process',
+            description: 'pnpm test',
+            status: 'running',
+            startedAt: 6000,
+            endedAt: null,
+          },
+          time: 6000,
+        },
+        {
+          type: 'task.terminated',
+          info: {
+            taskId: 'task_1',
+            kind: 'process',
+            description: 'pnpm test',
+            status: 'completed',
+            startedAt: 6000,
+            endedAt: 9000,
+          },
+          outputTail: '42 passed',
+          time: 9000,
+        },
+        {
+          type: 'interaction.request',
+          id: 'apr-1',
+          kind: 'approval',
+          toolCallId: 'call_1',
+          request: { toolName: 'Bash' },
+          time: 7000,
+        },
+        {
+          type: 'interaction.resolved',
+          id: 'apr-1',
+          response: { decision: 'approved' },
+          time: 8000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+
+      const service = new TranscriptService({
+        homeDir: home,
+        core: {
+          accessor: {
+            get: (token: unknown) => {
+              if (token === ISessionLifecycleService) {
+                return {
+                  onDidCloseSession: () => ({ dispose: () => undefined }),
+                  onDidArchiveSession: () => ({ dispose: () => undefined }),
+                };
+              }
+              if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+              return undefined;
+            },
+          },
+        } as unknown as Scope,
+      });
+      const snapshot = await service.readColdSnapshot('s1', 'main');
+      expect(snapshot).toBeDefined();
+
+      // Entities rebuilt from the non-context records.
+      expect(snapshot!.tasks).toEqual([
+        {
+          taskId: 'task_1',
+          kind: 'shell',
+          state: 'completed',
+          detached: true,
+          description: 'pnpm test',
+          agentId: undefined,
+          outputTail: '42 passed',
+          startedAt: new Date(6000).toISOString(),
+          endedAt: new Date(9000).toISOString(),
+        },
+      ]);
+      expect(snapshot!.todos).toEqual([
+        {
+          todoId: 'todo',
+          items: [{ title: 'write tests', status: 'in_progress' }],
+          updatedAt: new Date(3000).toISOString(),
+        },
+      ]);
+      expect(snapshot!.meta.goal).toMatchObject({ objective: 'fix the bug', status: 'active' });
+      expect(snapshot!.meta.modes).toEqual({ plan: {} });
+      expect(snapshot!.interactions).toEqual([
+        {
+          interactionId: 'apr-1',
+          interactionKind: 'approval',
+          toolCallId: 'call_1',
+          state: 'approved',
+          request: { toolName: 'Bash' },
+          response: { decision: 'approved' },
+        },
+      ]);
+
+      // The turn tree comes from the context records; markers/taskrefs from
+      // the fact fold append after it in record order.
+      const standalone = snapshot!.items.filter((item) => item.kind !== 'turn');
+      expect(standalone).toEqual([
+        expect.objectContaining({ kind: 'marker', marker: 'goal', markerId: 'm1' }),
+        expect.objectContaining({ kind: 'marker', marker: 'plan.enter', markerId: 'm2' }),
+        expect.objectContaining({ kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1' }),
+      ]);
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
     }
   });
 

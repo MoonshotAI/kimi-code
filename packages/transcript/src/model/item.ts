@@ -24,6 +24,7 @@ export const KNOWN_MARKERS = [
   'goal',
   'plan.enter',
   'plan.exit',
+  'plan.revision',
   'swarm.enter',
   'swarm.exit',
   'skill',

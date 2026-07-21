@@ -188,13 +188,16 @@ export const goalMetaSchema = z.object({
 });
 
 export const modesMetaSchema = z.object({
-  plan: z.object({ reviewPath: z.string().optional() }).optional(),
+  plan: z.object({ reviewPath: z.string().optional(), version: z.number().optional() }).optional(),
   swarm: z.object({ trigger: z.string().optional() }).optional(),
 });
 
 /** `meta.merge` wire shape: a mode key set to `null` clears that badge. */
 export const modesMetaMergeSchema = z.object({
-  plan: z.object({ reviewPath: z.string().optional() }).nullable().optional(),
+  plan: z
+    .object({ reviewPath: z.string().optional(), version: z.number().optional() })
+    .nullable()
+    .optional(),
   swarm: z.object({ trigger: z.string().optional() }).nullable().optional(),
 });
 
@@ -420,6 +423,39 @@ export const transcriptOpsCatchupResponseSchema = z.object({
   ),
   latest_seq: transcriptSeqSchema,
   complete: z.boolean(),
+});
+
+/**
+ * One turn-opening input, projected out of a transcript for the
+ * user-messages read: every turn whose `prompt` is defined (real user text,
+ * user-slash skill/plugin commands, cron prompts, …). `origin` stays on the
+ * entry so the caller can tell those kinds apart.
+ */
+export const transcriptUserMessageSchema = z.object({
+  turn_id: turnIdSchema,
+  ordinal: z.number().int(),
+  state: turnStateSchema,
+  origin: turnOriginSchema,
+  prompt: z.string(),
+  attachment_ids: z.array(z.string()).optional(),
+  started_at: z.string().optional(),
+});
+
+/**
+ * `GET /v1/sessions/{session_id}/transcript/user-messages` wire shape:
+ * per-agent user messages (agents are separate transcripts — user input is
+ * each agent's own). `agent_id` optional on the query: present reads one
+ * agent, absent reads every rostered agent. `attachments` carries the
+ * entities referenced by the listed messages (metadata only, never bytes).
+ */
+export const transcriptUserMessagesResponseSchema = z.object({
+  agents: z.array(
+    z.object({
+      agent_id: agentIdSchema,
+      messages: z.array(transcriptUserMessageSchema),
+      attachments: z.array(attachmentSchema).default([]),
+    }),
+  ),
 });
 
 // ---------------------------------------------------------------- WS payloads

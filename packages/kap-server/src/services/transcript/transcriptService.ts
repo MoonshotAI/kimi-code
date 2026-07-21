@@ -24,8 +24,10 @@
  * Cold path: rebuilds one agent's transcript from the persisted wire records
  * (`<sessionDir>/agents/<agentId>/wire.jsonl`), exactly the
  * `SnapshotReader` read (`readWireRecords` + `reduceContextTranscript`), then
- * groups the flat messages into a snapshot via
- * `groupMessagesIntoSnapshot` — best-effort fidelity.
+ * groups the flat messages into a base snapshot via
+ * `groupMessagesIntoSnapshot` and folds the non-`context.*` records
+ * (tasks / interactions / todos / goal / plan / swarm) on top via
+ * `foldWireRecordFacts` — best-effort fidelity.
  *
  * Lifecycle: entries are dropped when the session closes or archives
  * (`onDidCloseSession` / `onDidArchiveSession`, plus a lifecycle re-check on
@@ -55,6 +57,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import {
   TranscriptStore,
+  foldWireRecordFacts,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
   type AgentDescriptor,
@@ -567,7 +570,10 @@ export class TranscriptService {
       throw error;
     }
     const messages = [...reduceContextTranscript(records).entries];
-    return groupMessagesIntoSnapshot(messages);
+    const base = groupMessagesIntoSnapshot(messages);
+    // Second fold: tasks / interactions / todos / meta (goal, plan, swarm)
+    // come from the non-`context.*` records in the same journal.
+    return foldWireRecordFacts(records, base);
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */

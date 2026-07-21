@@ -283,6 +283,7 @@ export * from '#/app/sessionExport/zip';
 export * from '#/app/sessionLegacy/sessionLegacy';
 export * from '#/app/sessionLegacy/sessionLegacyService';
 export * from '#/session/interaction/interaction';
+export * from '#/session/interaction/interactionOps';
 export * from '#/session/interaction/interactionService';
 export * from '#/session/sessionContext/sessionContext';
 

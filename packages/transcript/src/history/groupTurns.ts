@@ -8,8 +8,10 @@
  *  - media content parts become attachment entities (metadata only — base64
  *    bytes are dropped, never shipped); mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
- *  - interactions do not appear: they are entities, live-only, never rebuilt
- *    from history (approvals are not persisted as context messages);
+ *  - only the turn tree is built here: tasks / interactions / todos / meta
+ *    (goal, plan, swarm) are NOT context messages — the companion fold
+ *    (`foldWireRecordFacts` in `foldFacts.ts`) rebuilds them from the
+ *    non-`context.*` wire records on top of this base snapshot;
  *  - persisted messages carry no turn ids, so turn ordinals are assigned by
  *    grouping — **0-based, matching the engine's live turn numbering** — and
  *    can drift from the engine's ids when hidden origins (e.g. retries) make
@@ -251,8 +253,9 @@ export function groupMessagesIntoSnapshot(
     }
   }
 
-  // Approvals / questions are never persisted, so a cold rebuild carries no
-  // interaction entities (interactions are live-only).
+  // The entity slots stay empty here: tasks / interactions / todos / meta are
+  // not context messages — `foldWireRecordFacts` fills them from the
+  // non-`context.*` wire records on top of this base snapshot.
   return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
 }
 
