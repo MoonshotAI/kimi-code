@@ -264,6 +264,31 @@ describe('events / display re-exports', () => {
     });
   });
 
+  it('validates global session interaction notifications', () => {
+    expect(
+      eventSchema.parse({
+        type: 'event.session.interaction_requested',
+        agentId: 'sub-1',
+        sessionId: 'sess_1',
+        interactionId: 'approval_1',
+        kind: 'approval',
+        toolName: 'Bash',
+      }),
+    ).toMatchObject({ interactionId: 'approval_1', kind: 'approval' });
+
+    expect(
+      eventSchema.parse({
+        type: 'event.session.interaction_resolved',
+        agentId: 'sub-1',
+        sessionId: 'sess_1',
+        interactionId: 'question_1',
+        kind: 'question',
+        questionPreview: 'Choose one',
+        state: 'answered',
+      }),
+    ).toMatchObject({ interactionId: 'question_1', state: 'answered' });
+  });
+
   it('rejects event.session.status_changed with invalid status', () => {
     expect(
       eventSchema.safeParse({

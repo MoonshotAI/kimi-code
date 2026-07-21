@@ -752,4 +752,36 @@ describe('ws-control — operation registry', () => {
 
     expect(wsOperations.some((op) => op.type === 'session_event')).toBe(true);
   });
+
+  it('accepts global interaction notifications in session event envelopes', () => {
+    for (const payload of [
+      {
+        type: 'event.session.interaction_requested',
+        agentId: 'main',
+        sessionId: 'sess_1',
+        interactionId: 'approval_1',
+        kind: 'approval',
+        toolName: 'Bash',
+      },
+      {
+        type: 'event.session.interaction_resolved',
+        agentId: 'main',
+        sessionId: 'sess_1',
+        interactionId: 'approval_1',
+        kind: 'approval',
+        state: 'approved',
+      },
+    ]) {
+      expect(
+        sessionEventMessageSchema.safeParse({
+          type: payload.type,
+          seq: 8,
+          volatile: true,
+          session_id: 'sess_1',
+          timestamp: TS,
+          payload,
+        }).success,
+      ).toBe(true);
+    }
+  });
 });
