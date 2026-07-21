@@ -750,7 +750,7 @@ export function messagesToTurns(
 
   function resolveMediaUrl(
     c: AppMessage['content'][number],
-  ): { url: string; kind: 'image' | 'video'; fileId?: string } | undefined {
+  ): { url: string; kind: 'image' | 'video'; fileId?: string; llmFileId?: string } | undefined {
     if (c.type === 'image' || c.type === 'video') {
       const kind = c.type;
       const src = c.source;
@@ -759,7 +759,7 @@ export function messagesToTurns(
         // uploaded video; the daemon serves the local bytes at /files/llm/<id>.
         const llmFileId = llmFileIdFromMsUrl(src.url);
         if (llmFileId !== undefined && getLlmFileUrl) {
-          return { url: getLlmFileUrl(llmFileId), kind };
+          return { url: getLlmFileUrl(llmFileId), kind, llmFileId };
         }
         return { url: src.url, kind };
       }
@@ -864,7 +864,7 @@ export function messagesToTurns(
             // instead of dumping the raw reference into the bubble.
             const llmFileId = llmVideoRefTag(c.text);
             if (llmFileId !== null && getLlmFileUrl) {
-              attachments.push({ url: getLlmFileUrl(llmFileId), kind: 'video' });
+              attachments.push({ url: getLlmFileUrl(llmFileId), kind: 'video', llmFileId });
               continue;
             }
             // A generic file upload comes back as an "Attached file …" notice;
@@ -895,6 +895,7 @@ export function messagesToTurns(
             kind: media.kind,
             name: c.type === 'file' ? c.name : undefined,
             fileId: media.fileId,
+            llmFileId: media.llmFileId,
           });
           continue;
         }

@@ -240,7 +240,7 @@ describe('messagesToTurns', () => {
     expect(turns).toHaveLength(1);
     expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
     expect(turns[0]?.attachments).toEqual([
-      { url: `/api/v1/files/llm/${llmFileId}`, kind: 'video' },
+      { url: `/api/v1/files/llm/${llmFileId}`, kind: 'video', llmFileId },
     ]);
   });
 
@@ -259,7 +259,7 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]?.attachments).toEqual([
-      { url: '/api/v1/files/llm/file-abc123', kind: 'video' },
+      { url: '/api/v1/files/llm/file-abc123', kind: 'video', llmFileId: 'file-abc123' },
     ]);
   });
 

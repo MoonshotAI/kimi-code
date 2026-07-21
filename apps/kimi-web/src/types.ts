@@ -110,6 +110,9 @@ export interface ToolMedia {
   /** File-store id when the media is an uploaded file. The preview fetches its
    *  bytes with the Bearer credential (a bare getFileUrl src 401s in <img>). */
   fileId?: string;
+  /** Provider-issued file id of an inlined video (`ms://<id>`); the preview
+   *  fetches through the daemon's authenticated llm redirect, not the bare URL. */
+  llmFileId?: string;
 }
 
 export type AgentPhase = 'queued' | 'working' | 'suspended' | 'completed' | 'failed';
@@ -235,6 +238,10 @@ export interface TurnAttachment {
   kind: 'image' | 'video' | 'file';
   url: string;
   fileId?: string;
+  /** Provider-issued file id behind an inlined video (`ms://<id>`). Like
+   *  `fileId`, it selects an authenticated fetch (the daemon's llm redirect)
+   *  over a bare URL load, which would 401 under daemon auth. */
+  llmFileId?: string;
   name?: string;
   mediaType?: string;
   size?: number;
@@ -336,7 +343,7 @@ export interface QueuedPromptView {
   attachmentCount: number;
   /** Attachments waiting with this prompt, with resolved URLs for thumbnails
       (file attachments render an icon chip, no thumbnail). */
-  attachments?: { fileId: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[];
+  attachments?: { fileId: string; kind: 'image' | 'video' | 'file'; url: string; name?: string; llmFileId?: string }[];
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */

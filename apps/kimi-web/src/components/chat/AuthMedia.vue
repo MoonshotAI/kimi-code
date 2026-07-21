@@ -16,6 +16,9 @@ const props = withDefaults(
     /** File-store id. When present the bytes are fetched with auth and played
      *  from a blob URL; otherwise `url` is used directly (e.g. a data: URL). */
     fileId?: string;
+    /** Provider-issued file id of an inlined video (`ms://<id>`). Like fileId,
+     *  the bytes are fetched with auth — through the daemon's llm redirect. */
+    llmFileId?: string;
     mediaClass?: string;
     /** Video: show native controls. Defaults to true (chat bubble); queue
      *  thumbnails pass false. */
@@ -26,12 +29,12 @@ const props = withDefaults(
   { mediaClass: 'u-img', controls: true, muted: false },
 );
 
-const resolvedUrl = ref<string>(props.fileId ? '' : props.url);
+const resolvedUrl = ref<string>(props.fileId || props.llmFileId ? '' : props.url);
 const mediaEl = ref<HTMLElement | null>(null);
 // Flips true once the element nears the viewport, deferring the authenticated
 // download so a session with many historical large uploads doesn't fetch every
 // blob (and hold them in memory) before the user ever scrolls to or plays them.
-const visible = ref(!props.fileId);
+const visible = ref(!props.fileId && !props.llmFileId);
 let objectUrl: string | null = null;
 // Sequence guard + unmount flag: a reused component (e.g. queued thumbnails
 // keyed by index) can change fileId before a previous fetch resolves, and an
@@ -51,13 +54,18 @@ function revoke(): void {
 async function resolve(): Promise<void> {
   const seq = ++requestSeq;
   revoke();
-  if (!props.fileId) {
+  const authedFetch = props.fileId
+    ? () => getKimiWebApi().getFileBlob(props.fileId!)
+    : props.llmFileId
+      ? () => getKimiWebApi().getLlmFileBlob(props.llmFileId!)
+      : null;
+  if (authedFetch === null) {
     resolvedUrl.value = props.url;
     return;
   }
   if (!visible.value) return; // defer until near the viewport
   try {
-    const blob = await getKimiWebApi().getFileBlob(props.fileId);
+    const blob = await authedFetch();
     const url = URL.createObjectURL(blob);
     if (disposed || seq !== requestSeq) {
       URL.revokeObjectURL(url);
@@ -72,7 +80,11 @@ async function resolve(): Promise<void> {
   }
 }
 
-watch(() => [props.fileId, props.url, visible.value] as const, resolve, { immediate: true });
+watch(
+  () => [props.fileId, props.llmFileId, props.url, visible.value] as const,
+  resolve,
+  { immediate: true },
+);
 
 onMounted(() => {
   if (typeof IntersectionObserver === 'function' && mediaEl.value) {

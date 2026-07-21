@@ -477,8 +477,15 @@ function userAttachmentMedia(att: TurnAttachment): ToolMedia {
   // User-uploaded media carries no path/mime metadata; the preview panel falls
   // back to a generic label and sniffs the mime from the URL when needed. When
   // a fileId is present the preview fetches the bytes with auth (a bare
-  // getFileUrl src 401s under daemon auth).
-  return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId };
+  // getFileUrl src 401s under daemon auth); an llmFileId fetches through the
+  // daemon's authenticated llm redirect instead.
+  return {
+    kind: att.kind === 'video' ? 'video' : 'image',
+    url: att.url,
+    path: att.name,
+    fileId: att.fileId,
+    llmFileId: att.llmFileId,
+  };
 }
 
 // Transient "can't open this type" hint after clicking a file chip of a
@@ -735,6 +742,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
                 :url="att.url"
                 :kind="att.kind"
                 :file-id="att.fileId"
+                :llm-file-id="att.llmFileId"
                 media-class="q-img"
                 :controls="false"
                 muted
