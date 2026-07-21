@@ -185,6 +185,13 @@ describe('classifyFrame cron.fired', () => {
   });
 });
 
+describe('classifyFrame global interaction notifications', () => {
+  it('silently ignores names unsupported by the legacy web client', () => {
+    expect(classifyFrame('event.session.interaction_requested', {})).toEqual({ route: 'ignore' });
+    expect(classifyFrame('event.session.interaction_resolved', {})).toEqual({ route: 'ignore' });
+  });
+});
+
 // Session busy has a single source: the daemon's event.session.work_changed
 // (mapped by toAppEvent). The raw turn stream must NOT project a second
 // sessionWorkChanged per transition — when it did, every turn end fired
