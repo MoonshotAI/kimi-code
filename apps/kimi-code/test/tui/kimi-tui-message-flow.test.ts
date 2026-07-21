@@ -1658,6 +1658,78 @@ command = "vim"
     }
   });
 
+  it('drops a pending video submit when the model changes mid-upload', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(session.uploadVideo).toHaveBeenCalled();
+      });
+      driver.state.appState.model = 'another-model';
+      releaseUpload();
+
+      await vi.waitFor(() => {
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'The session or model changed while the video was uploading',
+        );
+      });
+      expect(session.prompt).not.toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops a pending video submit when the session changes mid-upload', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(session.uploadVideo).toHaveBeenCalled();
+      });
+      (driver as { session: unknown }).session = makeSession();
+      releaseUpload();
+
+      await vi.waitFor(() => {
+        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
+          'The session or model changed while the video was uploading',
+        );
+      });
+      expect(session.prompt).not.toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('queues a pasted-video message with uploaded parts while streaming', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);

@@ -1166,15 +1166,29 @@ export class KimiTUI {
     // Video attachments upload asynchronously before the prompt goes out.
     // Chain this submit (and any submitted while an upload is in flight) so
     // a slow upload cannot be overtaken by a later message.
+    const modelAtSubmit = this.state.appState.model;
     this.pendingSubmits += 1;
     this.inputSubmitChain = this.inputSubmitChain.then(async () => {
       try {
+        let parts: readonly PromptPart[] | undefined;
         if (extraction.hasMedia) {
-          const parts = hasVideo
+          parts = hasVideo
             ? await materializeMediaSegments(extraction.segments, (attachment) =>
                 session.uploadVideo(attachment.sourcePath),
               )
             : segmentsToPromptParts(extraction.segments);
+        }
+        // Re-checked at dispatch time: if the user switched the session or
+        // the model mid-upload, the provider-issued reference (or the upload
+        // itself) would now go to the wrong place. Drop the message and ask
+        // for a resend instead.
+        if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
+          this.showError(
+            'The session or model changed while the video was uploading — please resend.',
+          );
+          return;
+        }
+        if (parts !== undefined) {
           this.sendMessage(session, text, {
             hasMedia: true,
             parts,
