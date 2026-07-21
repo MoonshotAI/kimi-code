@@ -299,7 +299,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
    *  fetch an authenticated blob URL so the thumbnail doesn't 401. Replaces any
    *  unsent draft attachments (mirroring loadForEdit(text), which overwrites) so
    *  a later submit sends exactly the edited message's files, not a mix. */
-  function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
+  function loadAttachments(atts: { fileId?: string; llmFileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
     const sid = sessionId() ?? '';
     for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
     setForSession(sid, []);
@@ -334,6 +334,40 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
             // Keep the fallback previewUrl (honest broken state if it 401s).
           });
         }
+      } else if (att.llmFileId) {
+        // A provider-referenced video recovered after a reload: not resendable
+        // as-is (the ms:// reference can't ride a new prompt), so re-upload the
+        // bytes — fetched WITH auth through the daemon's llm redirect, unlike
+        // the plain-URL branch below which would 401 for this URL.
+        if (!att.url) continue;
+        const upload = uploadImage();
+        if (!upload) continue;
+        const entry: Attachment = {
+          localId,
+          name,
+          kind: att.kind,
+          previewUrl: att.url,
+          uploading: true,
+        };
+        setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
+        void getKimiWebApi()
+          .getLlmFileBlob(att.llmFileId)
+          .then((blob) => {
+            const fname = name.includes('.') ? name : `${name}.${blob.type.split('/')[1] ?? 'bin'}`;
+            return upload(blob, fname);
+          })
+          .then((result) => {
+            if (result === null) {
+              const current = attachmentsBySession.value[sid] ?? [];
+              setForSession(sid, current.filter((a) => a.localId !== localId));
+              return;
+            }
+            patchAttachment(sid, localId, { uploading: false, fileId: result.fileId });
+          })
+          .catch(() => {
+            const current = attachmentsBySession.value[sid] ?? [];
+            setForSession(sid, current.filter((a) => a.localId !== localId));
+          });
       } else {
         // No fileId (e.g. a server-base64-inlined image, or a URL-backed source
         // from the wire/REST prompt path): re-upload the URL so the chip is

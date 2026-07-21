@@ -428,7 +428,7 @@ const chatDockStyle = computed(() => ({
 }));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
-  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; llmFileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
 };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
