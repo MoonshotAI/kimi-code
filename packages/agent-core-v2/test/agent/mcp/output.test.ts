@@ -1,5 +1,5 @@
 import { ContentBlockSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { Jimp } from 'jimp';
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -536,6 +536,7 @@ describe('createMcpTool', () => {
       async callTool() {
         return { content: [{ type: 'text', text: 'ok' }], isError: false };
       },
+      async ping() {},
     } satisfies MCPClient;
     const tool = createMcpTool(
       'mcp__server__tool',

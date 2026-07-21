@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeHookRunner } from '../../agent/externalHooks/runner-stub';

@@ -302,6 +302,11 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
+        // Session affinity: route every request of this session through the
+        // same provider-side prompt cache (the OpenAI analog of Anthropic
+        // `metadata.user_id` above). Undefined values are stripped at
+        // generate time, matching the `kimi` branch below.
+        generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
@@ -339,6 +344,9 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        // Session affinity: same `prompt_cache_key` intent as the `openai`
+        // branch; the Responses API accepts it as a top-level request field.
+        generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),

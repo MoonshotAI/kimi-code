@@ -24,6 +24,8 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
+| `--agent <name>` | | Start the session with the specified agent as the main Agent (v2 engine only) |
+| `--agent-file <path>` | | Load a custom agent from a Markdown file for this launch and select it (v2 engine only). Cannot be repeated or combined with `--agent` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
@@ -93,6 +95,16 @@ There are two ways to specify Skills directories, with different semantics:
   ```
 
 - **`extra_skill_dirs`** (`config.toml`): **Adds** directories on top of the automatically discovered ones, taking effect permanently. Suitable for configuring team-shared Skills. See [Agent Skills](../customization/skills.md).
+
+### Custom Agents
+
+`--agent` and `--agent-file` select which agent drives the session. Both currently require the v2 engine — `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`:
+
+```sh
+KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"
+```
+
+`--agent-file` registers a single agent file at the highest priority for this launch only and selects it; the flag cannot be repeated, and `--agent` and `--agent-file` are mutually exclusive. The selection is fixed at the session's first bind: resuming with the same `--agent` is a no-op, and switching to a different one fails with an "already bound" error. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.
 
 ## Non-Interactive Execution
 
@@ -167,20 +179,16 @@ Multiple instances can share one home directory: each registers itself under `~/
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 
 ::: info
-The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The notice will be removed in the next major version of Kimi Code.
+The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The one exception is `kimi server kill`, which stays functional for stopping servers started by a version before 0.28.0. The notice will be removed in the next major version of Kimi Code.
 :::
 
 ::: danger
-`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with Ctrl+C when you are done (or run `kimi web kill <server-id>` from another terminal).
+`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with `Ctrl+C` when you are done.
 :::
 
-#### `kimi web kill [server-id|all]`
+#### `kimi server kill`
 
-Stop a running server instance: first tries `POST /api/v1/shutdown` for a graceful exit, then signals the instance pid with SIGTERM, escalating to SIGKILL when needed. With multiple instances sharing the home directory, `[server-id]` picks the target; without it the longest-running instance is stopped; the special keyword `all` stops every live instance; an unknown id errors with the live instance ids listed.
-
-#### `kimi web ps`
-
-List the clients currently connected to each instance (from `GET /api/v1/connections`), grouped by server id; `--json` prints the raw data nested per instance.
+Deprecated — only stops a server started by a version before 0.28.0. Those versions could leave a background server behind, recorded in the legacy single-instance lock at `~/.kimi-code/server/lock`; the command first tries `POST /api/v1/shutdown` for a graceful exit, then signals the recorded pid with SIGTERM, escalating to SIGKILL when needed, and removes the lock file once the process is confirmed dead. Servers started by `kimi web` run in the foreground — stop them with `Ctrl+C` instead.
 
 #### `kimi web rotate-token`
 
@@ -370,3 +378,4 @@ kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-
 - [Slash Commands](./slash-commands.md) — Quick reference for control commands in the interactive TUI
 - [Configuration Files](../configuration/config-files.md) — Persistent configuration for `default_model`, permission mode, and other startup parameters
 - [Agent Skills](../customization/skills.md) — Skill file format for directories loaded via `--skills-dir`
+- [Agents and Sub-Agents](../customization/agents.md) — Built-in sub-agents, custom agent files, and main Agent selection via `--agent`

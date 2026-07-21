@@ -17,7 +17,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { toProtocolMessage } from '#/agent/contextMemory/messageProjection';
-import type { Message } from '#/app/llmProtocol/message';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { Message } from '#/kosong/contract/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -113,6 +114,10 @@ describe('projector tool-exchange normalization', () => {
     const ix = disposables.add(new TestInstantiationService());
     ix.set(ILogService, createCapturingLog(warnings));
     ix.set(ITelemetryService, recordingTelemetry(telemetryRecords));
+    ix.set(
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+    );
     ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
     projector = ix.get(IAgentContextProjectorService);
   });
@@ -412,6 +417,66 @@ describe('projector tool-exchange normalization', () => {
     expect((projected[2]?.content[0] as { text: string }).text).toBe('late result');
   });
 
+  it('strict mode drops an assistant left with only vacuous content after deduping', () => {
+    const history = [
+      user('go'),
+      assistant('first', ['dup']),
+      toolResult('dup', 'one'),
+      {
+        role: 'assistant' as const,
+        content: [{ type: 'think' as const, think: '' }],
+        toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+      },
+      toolResult('dup', 'two'),
+      user('next'),
+    ];
+
+    const projected = projectStrict(history);
+
+    expect(
+      projected.map((message) =>
+        message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
+      ),
+    ).toEqual(['user', 'assistant', 'tool:dup', 'user']);
+    expect(repairPayloads(warnings)).toEqual([
+      expect.objectContaining({ duplicateCallsDropped: 1, vacuousDropped: 1 }),
+    ]);
+  });
+
+  it('strict mode keeps a deduped assistant whose remaining content is sendable', () => {
+    const history = [
+      user('go'),
+      assistant('first', ['dup']),
+      toolResult('dup', 'one'),
+      {
+        role: 'assistant' as const,
+        content: [
+          { type: 'think' as const, think: '' },
+          { type: 'text' as const, text: 'second' },
+        ],
+        toolCalls: [{ type: 'function' as const, id: 'dup', name: 'Lookup', arguments: '{}' }],
+      },
+      toolResult('dup', 'two'),
+      user('next'),
+    ];
+
+    const projected = projectStrict(history);
+
+    expect(
+      projected.map((message) =>
+        message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
+      ),
+    ).toEqual(['user', 'assistant', 'tool:dup', 'assistant', 'user']);
+    expect(projected[3]?.toolCalls).toEqual([]);
+    expect(projected[3]?.content).toEqual([
+      { type: 'think', think: '' },
+      { type: 'text', text: 'second' },
+    ]);
+    expect(repairPayloads(warnings)).toEqual([
+      expect.objectContaining({ duplicateCallsDropped: 1, vacuousDropped: 0 }),
+    ]);
+  });
+
   it('strict mode drops leading non-user messages', () => {
     const projected = projectStrict([assistant('stale'), toolResult('ghost', 'orphaned'), user('hi')]);
 
@@ -512,6 +577,7 @@ describe('projector tool-exchange normalization', () => {
             leading_dropped: 0,
             assistants_merged: 0,
             whitespace_dropped: 0,
+            vacuous_dropped: 0,
           },
         },
       ]);
@@ -521,6 +587,92 @@ describe('projector tool-exchange normalization', () => {
       project([user('go'), assistant('', ['c1']), toolResult('c1', 'one'), user('next')]);
       project([user('go'), assistant('', ['c1'])]);
       expect(telemetryRecords).toEqual([]);
+    });
+  });
+
+  describe('vacuous (thinking-only) messages', () => {
+    function thinkingAssistant(content: ContextMessage['content']): ContextMessage {
+      return { role: 'assistant', content: [...content], toolCalls: [] };
+    }
+
+    it('drops an assistant message whose only part is an empty think block', () => {
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '' }]),
+        reminder('ping'),
+      ];
+      expect(shape(history)).toEqual(['user', 'user']);
+      expect(repairPayloads(warnings)).toEqual([expect.objectContaining({ vacuousDropped: 1 })]);
+      expect(telemetryRecords).toEqual([
+        {
+          event: 'context_projection_repaired',
+          properties: expect.objectContaining({ vacuous_dropped: 1 }),
+        },
+      ]);
+    });
+
+    it('un-wedges a history poisoned by a filtered step (session regression)', () => {
+      const history = [
+        user('u1'),
+        assistant('', ['c1']),
+        toolResult('c1', 'one'),
+        thinkingAssistant([{ type: 'think', think: '' }]),
+        reminder('ping'),
+      ];
+      expect(shape(history)).toEqual(['user', 'assistant', 'tool:c1', 'user']);
+      expect(repairPayloads(warnings)).toEqual([expect.objectContaining({ vacuousDropped: 1 })]);
+    });
+
+    it('keeps a message with real text intact — including its empty think part', () => {
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '' }, { type: 'text', text: 'answer' }]),
+      ];
+      expect(project(history)[1]?.content).toEqual([
+        { type: 'think', think: '' },
+        { type: 'text', text: 'answer' },
+      ]);
+      expect(repairPayloads(warnings)).toEqual([]);
+    });
+
+    it('keeps a message whose think block has real content', () => {
+      const history = [user('u1'), thinkingAssistant([{ type: 'think', think: 'real reasoning' }])];
+      expect(shape(history)).toEqual(['user', 'assistant']);
+      expect(repairPayloads(warnings)).toEqual([]);
+    });
+
+    it('keeps a signed think block even when its text is empty', () => {
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '', encrypted: 'sig' }]),
+      ];
+      expect(shape(history)).toEqual(['user', 'assistant']);
+      expect(project(history)[1]?.content).toEqual([{ type: 'think', think: '', encrypted: 'sig' }]);
+    });
+
+    it('drops a message whose think block is whitespace-only', () => {
+      const history = [
+        user('u1'),
+        thinkingAssistant([{ type: 'think', think: '   ' }]),
+        reminder('ping'),
+      ];
+      expect(shape(history)).toEqual(['user', 'user']);
+      expect(repairPayloads(warnings)).toEqual([expect.objectContaining({ vacuousDropped: 1 })]);
+    });
+
+    it('keeps an assistant message with tool calls even when its think part is empty', () => {
+      const history = [
+        user('u1'),
+        {
+          role: 'assistant' as const,
+          content: [{ type: 'think' as const, think: '' }],
+          toolCalls: [{ type: 'function' as const, id: 'c1', name: 'Lookup', arguments: '{}' }],
+        },
+        toolResult('c1', 'one'),
+      ];
+      expect(shape(history)).toEqual(['user', 'assistant', 'tool:c1']);
+      expect(project(history)[1]?.content).toEqual([{ type: 'think', think: '' }]);
+      expect(repairPayloads(warnings)).toEqual([]);
     });
   });
 

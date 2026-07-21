@@ -235,6 +235,7 @@ export function bindSessionTranscript(
       agentDisposables.delete(agentId);
       subscribedAgents.delete(agentId);
       projectors.delete(agentId);
+      store.markDisposed(agentId, new Date().toISOString());
     }),
   );
 

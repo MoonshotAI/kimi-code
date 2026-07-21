@@ -41,6 +41,8 @@ describe('CLI options parsing', () => {
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
       expect(opts.skillsDirs).toEqual([]);
+      expect(opts.agent).toBeUndefined();
+      expect(opts.agentFiles).toEqual([]);
       expect(opts.addDirs).toEqual([]);
     });
   });
@@ -390,6 +392,85 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--agent / --agent-file', () => {
+    it('parses a single --agent', () => {
+      const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
+      expect(opts.agent).toBe('reviewer');
+      expect(opts.agentFiles).toEqual([]);
+    });
+
+    it('parses a single --agent-file', () => {
+      const opts = parse(['-p', 'hi', '--agent-file', 'a.md']);
+      expect(opts.agent).toBeUndefined();
+      expect(opts.agentFiles).toEqual(['a.md']);
+    });
+
+    it('rejects repeated --agent', () => {
+      expect(() => parse(['-p', 'hi', '--agent', 'reviewer', '--agent', 'writer'])).toThrow(
+        '--agent may only be specified once.',
+      );
+    });
+
+    it('rejects repeated --agent-file', () => {
+      expect(() =>
+        parse(['-p', 'hi', '--agent-file', 'a.md', '--agent-file', 'b.md']),
+      ).toThrow('--agent-file may only be specified once.');
+    });
+
+    it('rejects combining --agent with --agent-file', () => {
+      expect(() =>
+        parse(['-p', 'hi', '--agent', 'reviewer', '--agent-file', 'reviewer.md']),
+      ).toThrow("option '--agent <name>' cannot be used with option '--agent-file <path>'");
+    });
+
+    it('rejects multiple agent files passed directly to validation', () => {
+      const opts = parse(['-p', 'hi', '--agent-file', 'a.md']);
+      expect(() => validateOptions({ ...opts, agentFiles: ['a.md', 'b.md'] })).toThrow(
+        '--agent-file may only be specified once.',
+      );
+    });
+
+    it('rejects mixed agent selectors passed directly to validation', () => {
+      const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
+      expect(() => validateOptions({ ...opts, agentFiles: ['reviewer.md'] })).toThrow(
+        'Cannot combine --agent with --agent-file.',
+      );
+    });
+
+    it('rejects empty agent values', () => {
+      const opts = parse(['-p', 'hi', '--agent', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Agent cannot be empty.');
+    });
+
+    it('rejects empty agent file values', () => {
+      const opts = parse(['-p', 'hi', '--agent-file', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Agent file path cannot be empty.');
+    });
+
+    it('rejects the flags in shell mode', () => {
+      const opts = parse(['--agent', 'reviewer']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        '--agent/--agent-file are only available with the v2 engine',
+      );
+    });
+
+    it('rejects the flags in prompt mode without the v2 engine flag', () => {
+      const opts = parse(['-p', 'hi', '--agent-file', 'a.md']);
+      expect(() => validateOptions(opts, {})).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts, {})).toThrow(
+        '--agent/--agent-file are only available with the v2 engine',
+      );
+    });
+
+    it('accepts the flags in prompt mode with the v2 engine flag', () => {
+      const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
+      expect(validateOptions(opts, { KIMI_CODE_EXPERIMENTAL_FLAG: '1' }).uiMode).toBe('print');
+    });
+  });
+
   describe('--add-dir', () => {
     it('parses one additional workspace directory', () => {
       expect(parse(['--add-dir', '/shared']).addDirs).toEqual(['/shared']);
@@ -483,13 +564,11 @@ describe('CLI options parsing', () => {
         '--thinking',
         '--print',
         '--wire',
-        '--agent=default',
         '--raw-model',
         '--config-file=x',
         '--quiet',
         '--final-message-only',
         '--input-format=text',
-        '--agent-file=x',
         '--mcp-config={}',
         '--mcp-config-file=/',
       ]) {

@@ -5,6 +5,7 @@ import type { KimiHarness, ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import {
   deriveAlwaysThinking,
   deriveDefaultThinkingEffort,
+  deriveSupportEfforts,
   deriveThinkingSupported,
   listModelsFromHarness,
 } from '../src/model-catalog';
@@ -54,6 +55,25 @@ describe('deriveDefaultThinkingEffort', () => {
   });
 });
 
+describe('deriveSupportEfforts', () => {
+  it('returns the declared efforts after override resolution', () => {
+    expect(
+      deriveSupportEfforts({
+        ...alias('custom-model', ['thinking']),
+        supportEfforts: ['low', 'high', 'max'],
+        overrides: { supportEfforts: ['low', 'high'] },
+      }),
+    ).toEqual(['low', 'high']);
+  });
+
+  it('drops blank entries and yields an empty list for boolean models', () => {
+    expect(
+      deriveSupportEfforts({ ...alias('custom-model', ['thinking']), supportEfforts: [''] }),
+    ).toEqual([]);
+    expect(deriveSupportEfforts(alias('custom-model', ['thinking']))).toEqual([]);
+  });
+});
+
 describe('listModelsFromHarness', () => {
   it('advertises thinking with a high default for an unknown model using the Anthropic protocol', async () => {
     const harness = {
@@ -78,6 +98,7 @@ describe('listModelsFromHarness', () => {
         name: 'custom-anthropic-model',
         thinkingSupported: true,
         alwaysThinking: false,
+        supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         defaultThinkingEffort: 'high',
       },
     ]);
@@ -102,6 +123,7 @@ describe('listModelsFromHarness', () => {
         name: 'custom-anthropic-model',
         thinkingSupported: true,
         alwaysThinking: false,
+        supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         defaultThinkingEffort: 'high',
       },
     ]);
@@ -130,6 +152,7 @@ describe('listModelsFromHarness', () => {
         name: 'custom-anthropic-model',
         thinkingSupported: false,
         alwaysThinking: false,
+        supportEfforts: [],
         defaultThinkingEffort: 'on',
       },
     ]);
@@ -162,6 +185,7 @@ describe('listModelsFromHarness', () => {
         name: 'joint-model-0714-vibe',
         thinkingSupported: true,
         alwaysThinking: false,
+        supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         defaultThinkingEffort: 'high',
       },
     ]);

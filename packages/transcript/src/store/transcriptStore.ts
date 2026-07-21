@@ -18,6 +18,7 @@ export interface AgentDescriptor {
   readonly parentAgentId?: AgentId;
   readonly label?: string;
   readonly createdAt?: string;
+  readonly disposedAt?: string;
 }
 
 export type RosterListener = (agents: readonly AgentDescriptor[]) => void;
@@ -27,7 +28,7 @@ export class TranscriptStore {
   readonly #descriptors = new Map<AgentId, AgentDescriptor>();
   readonly #rosterListeners = new Set<RosterListener>();
 
-  constructor(readonly sessionId: string) {}
+  constructor(readonly sessionId: string) { }
 
   /** Lazily create (or fetch) the transcript for an agent. */
   ensureAgent(agentId: AgentId, descriptor?: AgentDescriptor): AgentTranscript {
@@ -60,6 +61,12 @@ export class TranscriptStore {
       this.#descriptors.set(descriptor.agentId, descriptor);
       this.#emitRoster();
     }
+  }
+
+  markDisposed(agentId: AgentId, disposedAt: string): void {
+    const descriptor = this.#descriptors.get(agentId);
+    if (descriptor === undefined || descriptor.disposedAt !== undefined) return;
+    this.describeAgent({ ...descriptor, disposedAt });
   }
 
   agents(): readonly AgentDescriptor[] {

@@ -3,7 +3,7 @@
  * subset of `agent-core-v2/agent/rpc/core-api.ts`; every method takes one
  * payload object. `PromptPayload.input` mirrors the `PromptPart` subset of
  * `ContentPart` (text / image_url / video_url) from
- * `agent-core-v2/app/llmProtocol/message.ts`. Task wire shapes mirror the
+ * `agent-core-v2/kosong/contract/message.ts`. Task wire shapes mirror the
  * `TaskInfo` union in `protocol/src/events.ts`.
  */
 
@@ -42,10 +42,15 @@ export const emptyPayloadSchema = z.object({});
 
 export const promptPayloadSchema = z.object({
   input: z.array(promptPartSchema),
+  // Mirrors `PromptPayload.disabledTools` in the engine (client-managed
+  // session denylist, full-replace).
+  disabledTools: z.array(z.string()).optional(),
 });
 
-/** Same shape as `PromptPayload` in the engine. */
-export const steerPayloadSchema = promptPayloadSchema;
+/** Same shape as `SteerPayload` in the engine. */
+export const steerPayloadSchema = z.object({
+  input: z.array(promptPartSchema),
+});
 
 export const promptLaunchResultSchema = z.object({
   turn_id: z.number(),

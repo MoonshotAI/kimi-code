@@ -24,6 +24,8 @@ kimi <subcommand> [options]
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
+| `--agent <name>` | | 以指定 Agent 作为主 Agent 启动会话（仅 v2 引擎） |
+| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent（仅本次启动、仅 v2 引擎）并选中它。不可重复传入，也不能与 `--agent` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
@@ -93,6 +95,16 @@ kimi --plan
   ```
 
 - **`extra_skill_dirs`**（`config.toml`）：**叠加**到自动发现的目录之上，长期生效，适合配置团队共享 Skills。详见 [Agent Skills](../customization/skills.md)。
+
+### 自定义 Agent
+
+`--agent` 和 `--agent-file` 用于选择驱动会话的 Agent。目前二者都要求 v2 引擎 —— 即 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 下的 `kimi -p`：
+
+```sh
+KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"
+```
+
+`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；该 flag 不可重复传入，且 `--agent` 与 `--agent-file` 互斥。选择在会话首次绑定后即固定：以相同的 `--agent` 恢复会话是 no-op，换成不同的 Agent 会报 "already bound" 错误。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
 
 ## 非交互执行
 
@@ -167,20 +179,16 @@ kimi web --port 58628    # 指定绑定端口
 `kimi web` 默认只绑定本机 loopback 地址，并在启动横幅中打印 bearer token；web UI 通过 URL 的 `#token=` 片段自动完成鉴权。
 
 ::: info 提示
-`kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。该提示将在 Kimi Code 下个大版本移除。
+`kimi server` 命令树已废弃：任何 `kimi server …` 调用（含全部旧子命令）只会打印弃用提示并以退出码 1 结束，请改用 `kimi web`。唯一的例外是 `kimi server kill`，它仍然可用，仅用于停止 0.28.0 之前版本启动的服务。该提示将在 Kimi Code 下个大版本移除。
 :::
 
 ::: danger 警告
-`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 Ctrl+C 停止服务（或在另一个终端运行 `kimi web kill <server-id>`）。
+`--dangerous-bypass-auth` 会彻底关闭鉴权。任何能访问该端口的人都能完全控制你的会话、文件系统和 shell。请仅在可信网络或自有鉴权反向代理之后使用，用完后按 `Ctrl+C` 停止服务。
 :::
 
-#### `kimi web kill [server-id|all]`
+#### `kimi server kill`
 
-停止运行中的服务实例：先请求 `POST /api/v1/shutdown` 优雅退出，再对实例 pid 发 SIGTERM、必要时升级为 SIGKILL。多实例并存时用 `[server-id]` 指定目标；缺省停止存活最久的实例；传入特殊关键字 `all` 停止全部实例；id 不存在时报错并列出所有存活实例 id。
-
-#### `kimi web ps`
-
-按 server-id 分组列出每个实例当前连接的客户端（来自 `GET /api/v1/connections`）；`--json` 输出按实例嵌套的原始数据。
+已废弃——仅用于停止 0.28.0 之前的 Kimi Code 版本启动的服务。那些版本可能在后台遗留服务进程，记录在 legacy 单实例锁文件 `~/.kimi-code/server/lock` 中；该命令先请求 `POST /api/v1/shutdown` 优雅退出，再对锁中记录的 pid 发 SIGTERM、必要时升级为 SIGKILL，并在确认进程退出后删除锁文件。`kimi web` 启动的服务在前台运行，直接用 `Ctrl+C` 停止即可。
 
 #### `kimi web rotate-token`
 
@@ -370,3 +378,4 @@ kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-
 - [斜杠命令](./slash-commands.md) — 交互式 TUI 内的控制命令速查
 - [配置文件](../configuration/config-files.md) — `default_model`、权限模式等启动参数的持久化配置
 - [Agent Skills](../customization/skills.md) — `--skills-dir` 加载的 Skill 文件格式
+- [Agent 与子 Agent](../customization/agents.md) — 内置子 Agent、自定义 Agent 文件与通过 `--agent` 选择主 Agent

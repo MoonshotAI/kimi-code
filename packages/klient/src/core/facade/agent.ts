@@ -6,7 +6,7 @@
  */
 
 import type { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/app/llmProtocol/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 
 import type { ScopeRef } from '../channel.js';
@@ -23,7 +23,10 @@ export type PlanData = Awaited<ReturnType<IAgentRPCService['getPlan']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentRPCService['getTasks']>>[number];
 
 export interface AgentFacade {
-  prompt(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
+  prompt(input: {
+    input: readonly ContentPart[];
+    disabledTools?: readonly string[];
+  }): Promise<PromptLaunchResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;

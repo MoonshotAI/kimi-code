@@ -10,7 +10,10 @@
  *   1. Subscribes to every agent's `IEventBus` via
  *      `IAgentLifecycleService` reach-down-via-handle (and `onDidCreate` /
  *      `onDidDispose` for late agents); `record` emissions are persisted and not
- *      broadcast (see step 3). Also subscribes to the session's
+ *      broadcast (see step 3). The same lifecycle callbacks fan durable
+ *      `agent.created` / `agent.disposed` facts out at session granularity
+ *      (they bypass per-subscription agent allowlists but never leave the
+ *      session). Also subscribes to the session's
  *      `ISessionInteractionService` and synthesizes the v1 approval/question
  *      protocol events from pending-set changes and resolutions.
  *   2. Attaches `agentId`/`sessionId` to build the wire `Event`.
@@ -827,12 +830,27 @@ export class SessionEventBroadcaster {
     };
     for (const handle of agents.list()) subscribeAgent(handle);
     state.lifecycleDisposables.push(
-      agents.onDidCreate((handle) => subscribeAgent(handle)),
+      agents.onDidCreate((handle) => {
+        subscribeAgent(handle);
+        // Session-grained lifecycle fact, ahead of any of the agent's own
+        // events: `onDidCreate` fires before the agent's eager services
+        // ignite, so this enqueue lands first in the queue.
+        this.enqueueDurable(state, {
+          type: 'agent.created',
+          agentId: handle.id,
+          sessionId,
+        });
+      }),
       agents.onDidDispose((agentId) => {
         const d = state.agentDisposables.get(agentId);
         if (d !== undefined) {
           d.dispose();
           state.agentDisposables.delete(agentId);
+          this.enqueueDurable(state, {
+            type: 'agent.disposed',
+            agentId,
+            sessionId,
+          });
         }
         // A removed agent can no longer contribute work; drop its fold and
         // re-evaluate the aggregate (its turn.ended normally lands first, but
@@ -1246,14 +1264,19 @@ function isGlobalEvent(type: string): boolean {
   );
 }
 
+function isAgentLifecycleEvent(type: string): boolean {
+  return type === 'agent.created' || type === 'agent.disposed';
+}
+
 /**
  * Per-subscription agent allowlist check — shared by live fan-out and replay.
  * Returns `true` when the envelope should be delivered to a subscriber carrying
  * `filter`:
  *   - `filter === undefined` → receive every agent (legacy session-grained
  *     behavior);
- *   - global events (session/workspace/config) are not agent
- *     events and always pass;
+ *   - global events (session/workspace/config) and agent lifecycle events
+ *     (`agent.created` / `agent.disposed`) are not per-agent stream content
+ *     and always pass;
  *   - events without a string `agentId` (should not happen on the v1 wire,
  *     where the broadcaster stamps every event) pass defensively rather than
  *     being dropped;
@@ -1262,6 +1285,7 @@ function isGlobalEvent(type: string): boolean {
 function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boolean {
   if (filter === undefined) return true;
   if (isGlobalEvent(envelope.type)) return true;
+  if (isAgentLifecycleEvent(envelope.type)) return true;
   const payload = envelope.payload;
   const agentId =
     typeof payload === 'object' && payload !== null
@@ -1367,8 +1391,8 @@ function sessionMetaUpdatedPayload(
   const title = typeof candidate.title === 'string' ? candidate.title : undefined;
   const patch =
     typeof candidate.patch === 'object' &&
-    candidate.patch !== null &&
-    !Array.isArray(candidate.patch)
+      candidate.patch !== null &&
+      !Array.isArray(candidate.patch)
       ? candidate.patch
       : undefined;
   if (title === undefined && patch === undefined) return undefined;
@@ -1399,8 +1423,8 @@ function sessionCreatedPayload(
       : undefined;
   const session =
     typeof candidate.session === 'object' &&
-    candidate.session !== null &&
-    !Array.isArray(candidate.session)
+      candidate.session !== null &&
+      !Array.isArray(candidate.session)
       ? (candidate.session as SessionCreatedEvent['session'])
       : undefined;
   if (sessionId === undefined || session === undefined) return undefined;
