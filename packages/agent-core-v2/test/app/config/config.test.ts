@@ -816,6 +816,38 @@ describe('loopControl config section', () => {
 
     disposables.dispose();
   });
+
+  it('rejects the write when the env-masked on-disk value is invalid', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_STEPS_PER_TURN_ENV]: '7' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_steps_per_turn = -1\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await expect(
+      config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7, reservedContextSize: 5000 }),
+    ).rejects.toThrow();
+
+    // Nothing is persisted: the invalid value stays quarantined on disk and
+    // the accompanying valid edit is not written either.
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_steps_per_turn = -1');
+    expect(onDisk).not.toContain('reserved_context_size');
+
+    disposables.dispose();
+  });
 });
 
 describe('task config section', () => {

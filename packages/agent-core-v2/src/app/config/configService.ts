@@ -4,7 +4,9 @@
  * Owns the section registry and the layered global config state: resolves a
  * value by precedence across defaults, the user config file, and per-run memory
  * overrides (highest, never persisted), and persists writes only for the `User`
- * target. Maintains five layered views of a domain — `rawSnake` (snake_case
+ * target — validating the merged patch and re-validating the stripped result,
+ * so a strip can never smuggle an unvalidated raw value (e.g. an env-masked
+ * invalid field) to disk. Maintains five layered views of a domain — `rawSnake` (snake_case
  * write base keyed by the on-disk section key, kept for lossless round-trip),
  * `raw` (camelCase, env-free), `validated` (validated `raw`, env-free — the
  * base every live env re-application starts from and never mutates, so a
@@ -318,6 +320,7 @@ export class ConfigService extends Disposable implements IConfigService {
       if (stripped === undefined) {
         delete this.raw[domain];
       } else {
+        this.registry.validate(domain, stripped);
         this.raw[domain] = stripped;
       }
       await this.persist(domain);
