@@ -345,4 +345,28 @@ describe('GET /api/v1/files/llm/{llm_id} (server-v2)', () => {
       expect(res.statusCode).not.toBe(302);
     }
   });
+
+  it('never writes a mapping whose provider id leaves the safe alphabet', async () => {
+    const writes: Array<[string, string]> = [];
+    const blobs = {
+      put: async (scope: string, key: string) => {
+        writes.push([scope, key]);
+      },
+      get: async () => undefined,
+      getStream: async function* () {},
+      has: async () => false,
+      delete: async () => {},
+    };
+    const { recordLlmVideoRef, resolveLlmVideoRef } = await import('../src/lib/llmVideoRefs');
+
+    await recordLlmVideoRef(blobs, 'good-id_1.2', 'f_local');
+    expect(writes).toEqual([['llm-video', 'good-id_1.2']]);
+
+    for (const bad of ['../escape', 'a/b', '..']) {
+      writes.length = 0;
+      await recordLlmVideoRef(blobs, bad, 'f_local');
+      expect(writes, `llm id ${bad}`).toEqual([]);
+      await expect(resolveLlmVideoRef(blobs, bad)).resolves.toBeUndefined();
+    }
+  });
 });
