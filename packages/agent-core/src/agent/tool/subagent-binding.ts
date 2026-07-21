@@ -23,9 +23,21 @@ export type ReadSubagentBindingCallback = (
   profileName: string,
 ) => Promise<SubagentBinding | undefined>;
 
+export interface AskSubagentBindingContext {
+  /**
+   * Set when the stored binding references a model alias that no longer
+   * exists in the user's models config — the ask explains why it is
+   * happening again and the new choice repairs the broken binding.
+   */
+  readonly missingModel?: string;
+}
+
 export type AskSubagentBindingCallback = (
   profileName: string,
+  context?: AskSubagentBindingContext,
 ) => Promise<SubagentBinding | undefined>;
+
+export type IsModelAliasKnownCallback = (alias: string) => boolean;
 
 const INHERIT_LABEL = 'Keep inheriting from the main agent';
 
@@ -41,17 +53,30 @@ export function createSubagentBindingCallbacks(
 ): {
   readBinding: ReadSubagentBindingCallback;
   askBinding?: AskSubagentBindingCallback;
+  isModelAliasKnown: IsModelAliasKnownCallback;
 } {
   const readBinding: ReadSubagentBindingCallback = (profileName) =>
     readSubagentBinding(kaos, workDir, profileName);
 
-  const requestQuestion = agent.rpc?.requestQuestion?.bind(agent.rpc);
-  if (requestQuestion === undefined) return { readBinding };
+  // Without a models config there is nothing to validate against — stay
+  // silent rather than nagging about every binding.
+  const isModelAliasKnown: IsModelAliasKnownCallback = (alias) => {
+    const models = agent.kimiConfig?.models;
+    if (models === undefined) return true;
+    return alias in models;
+  };
 
-  const askBinding: AskSubagentBindingCallback = async (profileName) => {
+  const requestQuestion = agent.rpc?.requestQuestion?.bind(agent.rpc);
+  if (requestQuestion === undefined) return { readBinding, isModelAliasKnown };
+
+  const askBinding: AskSubagentBindingCallback = async (profileName, context) => {
     const models = agent.kimiConfig?.models ?? {};
     const aliases = Object.keys(models).toSorted();
-    const modelQuestion = `Subagent type "${profileName}" has no model binding in this workspace. Bind a model for it?`;
+    const missingModel = context?.missingModel;
+    const modelQuestion =
+      missingModel === undefined
+        ? `Subagent type "${profileName}" has no model binding in this workspace. Bind a model for it?`
+        : `Subagent type "${profileName}" is bound to model "${missingModel}", but that alias no longer exists in your models config. Bind a model for it?`;
     const modelResult = await requestQuestion({
       questions: [
         {
@@ -101,7 +126,7 @@ export function createSubagentBindingCallbacks(
     return binding;
   };
 
-  return { readBinding, askBinding };
+  return { readBinding, askBinding, isModelAliasKnown };
 }
 
 function answerFor(result: QuestionResult, question: string): string | undefined {

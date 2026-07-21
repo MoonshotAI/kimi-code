@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import type {
   AskSubagentBindingCallback,
+  IsModelAliasKnownCallback,
   ReadSubagentBindingCallback,
 } from '../../../agent/tool/subagent-binding';
 import type { Logger } from '../../../logging';
@@ -123,6 +124,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       modelSelectionEnabled?: boolean | (() => boolean);
       readBinding?: ReadSubagentBindingCallback;
       askBinding?: AskSubagentBindingCallback;
+      isModelAliasKnown?: IsModelAliasKnownCallback;
     },
   ) {
     const log = options?.log;
@@ -137,6 +139,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         : () => modelSelectionEnabled;
     this.readBinding = options?.readBinding;
     this.askBinding = options?.askBinding;
+    this.isModelAliasKnown = options?.isModelAliasKnown;
     const typeLines = buildSubagentDescriptions(subagents);
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${
       this.allowBackground ? AGENT_BACKGROUND_DESCRIPTION : AGENT_BACKGROUND_DISABLED_DESCRIPTION
@@ -153,27 +156,63 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   private readonly isModelSelectionEnabled: () => boolean;
   private readonly readBinding?: ReadSubagentBindingCallback;
   private readonly askBinding?: AskSubagentBindingCallback;
+  private readonly isModelAliasKnown?: IsModelAliasKnownCallback;
 
   /**
    * Effective workspace binding for a spawn: read the stored binding; when
    * absent, asking is enabled, and an interactive ask callback exists, ask
-   * the user once and persist the answer. Returns `undefined` for resume,
-   * when the experiment is disabled, or when no binding applies (plain
-   * inheritance).
+   * the user once and persist the answer. When the stored binding references
+   * a model alias missing from the user's models config, interactively
+   * re-ask (repairing the binding) or — where asking is unavailable — fall
+   * back to plain inheritance with an explicit `warning`. Returns
+   * `undefined` for resume, when the experiment is disabled, or when no
+   * binding applies (plain inheritance).
    */
   private async resolveSpawnBinding(
     profileName: string,
     operation: 'spawn' | 'resume',
     allowAsk: boolean,
-  ): Promise<{ readonly modelAlias?: string; readonly thinkingEffort?: string } | undefined> {
+  ): Promise<
+    | {
+        readonly modelAlias?: string;
+        readonly thinkingEffort?: string;
+        readonly warning?: string;
+      }
+    | undefined
+  > {
     if (operation !== 'spawn' || !this.isModelSelectionEnabled()) return undefined;
+    let warning: string | undefined;
     let binding = await this.readBinding?.(profileName);
-    if (binding === undefined && allowAsk && this.askBinding !== undefined) {
-      binding = await this.askBinding(profileName);
+    if (binding === undefined) {
+      if (allowAsk && this.askBinding !== undefined) {
+        binding = await this.askBinding(profileName);
+      }
+    } else if (
+      binding.inherit !== true &&
+      binding.model !== undefined &&
+      this.isModelAliasKnown !== undefined &&
+      !this.isModelAliasKnown(binding.model)
+    ) {
+      const missingModel = binding.model;
+      if (allowAsk && this.askBinding !== undefined) {
+        // A dismissed re-ask leaves the broken binding in place; the user is
+        // asked again on the next spawn, matching the unbound-ask semantics.
+        binding = await this.askBinding(profileName, { missingModel });
+      } else {
+        warning =
+          `warning: workspace binding for subagent type "${profileName}" references unknown ` +
+          `model alias "${missingModel}"; inheriting the main agent model. Update it with ` +
+          `/subagent-model set ${profileName} or in .kimi-code/local.toml.`;
+        binding = undefined;
+      }
     }
-    if (binding === undefined || binding.inherit === true) return undefined;
-    if (binding.model === undefined && binding.thinkingEffort === undefined) return undefined;
-    return { modelAlias: binding.model, thinkingEffort: binding.thinkingEffort };
+    if (binding === undefined || binding.inherit === true) {
+      return warning === undefined ? undefined : { warning };
+    }
+    if (binding.model === undefined && binding.thinkingEffort === undefined) {
+      return warning === undefined ? undefined : { warning };
+    }
+    return { modelAlias: binding.model, thinkingEffort: binding.thinkingEffort, warning };
   }
 
   async resolveExecution(args: AgentToolInput): Promise<ToolExecution> {
@@ -244,6 +283,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       // Workspace model binding (experiment-gated): applied mechanically at
       // spawn; the first unbound spawn may ask the user once interactively.
       const binding = await this.resolveSpawnBinding(requestedProfileName ?? 'coder', operation, true);
+      const bindingWarning = binding?.warning;
+      const withWarning = (result: ExecutableToolResult): ExecutableToolResult =>
+        bindingWarning === undefined
+          ? result
+          : { ...result, output: `${bindingWarning}\n${result.output}` };
       const runOptions = {
         parentToolCallId: toolCallId,
         prompt: args.prompt,
@@ -303,28 +347,28 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
 
       if (runInBackground) {
-        return {
+        return withWarning({
           output: formatBackgroundAgentResult(
             taskId,
             handle,
             args.description,
             this.allowBackground,
           ),
-        };
+        });
       }
 
       const release = await this.backgroundManager.waitForForegroundRelease(taskId);
       if (release === 'detached') {
-        return {
+        return withWarning({
           output: formatBackgroundAgentResult(
             taskId,
             handle,
             args.description,
             this.allowBackground,
           ),
-        };
+        });
       }
-      return await this.formatForegroundResult(taskId, handle);
+      return withWarning(await this.formatForegroundResult(taskId, handle));
     } catch (error) {
       return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
     }

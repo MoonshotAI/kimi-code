@@ -982,6 +982,89 @@ describe('AgentTool', () => {
     );
   });
 
+  it('re-asks with the missing-model reason when the bound alias is gone', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        modelAlias: 'sub2/glm-5.2-x',
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const readBinding = vi.fn(async () => ({ model: 'gone/model-x' }));
+    const askBinding = vi.fn(async () => ({ model: 'sub2/glm-5.2-x' }));
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      readBinding,
+      askBinding,
+      isModelAliasKnown: (alias) => alias !== 'gone/model-x',
+    });
+
+    await executeTool(tool, context({ prompt: 'Investigate', description: 'Find cause' }));
+
+    expect(askBinding).toHaveBeenCalledTimes(1);
+    expect(askBinding).toHaveBeenCalledWith('coder', { missingModel: 'gone/model-x' });
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'sub2/glm-5.2-x' }),
+    );
+  });
+
+  it('inherits with an explicit warning when the bound alias is gone and asking is unavailable', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const readBinding = vi.fn(async () => ({ model: 'gone/model-x' }));
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      readBinding,
+      isModelAliasKnown: () => false,
+    });
+
+    const result = await executeTool(
+      tool,
+      context({ prompt: 'Investigate', description: 'Find cause' }),
+    );
+
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: undefined, thinkingEffort: undefined }),
+    );
+    expect(result.output).toContain('warning:');
+    expect(result.output).toContain('gone/model-x');
+    expect(result.output).toContain('inheriting the main agent model');
+  });
+
+  it('does not fall through to the plain ask when the missing-model re-ask is dismissed', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const readBinding = vi.fn(async () => ({ model: 'gone/model-x' }));
+    const askBinding = vi.fn(async () => undefined);
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      readBinding,
+      askBinding,
+      isModelAliasKnown: () => false,
+    });
+
+    await executeTool(tool, context({ prompt: 'Investigate', description: 'Find cause' }));
+
+    expect(askBinding).toHaveBeenCalledTimes(1);
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: undefined, thinkingEffort: undefined }),
+    );
+  });
+
   it('inherits plainly when the binding is an explicit inherit choice', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
