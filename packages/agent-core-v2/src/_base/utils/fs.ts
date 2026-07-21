@@ -1,6 +1,7 @@
 /**
  * Low-level filesystem helpers — durable file-write primitives (atomic writes
- * plus file and directory fsync) and stat classification shared by watchers.
+ * plus file and directory fsync), stat classification shared by watchers, and
+ * the stat-tuple comparison shared by every stat-only staleness check.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -18,6 +19,29 @@ import { dirname } from 'pathe';
  */
 export function isSpecialFileStat(stats: Stats | undefined): boolean {
   return stats !== undefined && !stats.isFile() && !stats.isDirectory() && !stats.isSymbolicLink();
+}
+
+/**
+ * The (`ino`, `mtimeMs`, `size`) tuple identifying one on-disk revision of a
+ * file — the comparison unit of every stat-only staleness check (write-path
+ * fencing, storage-watch fingerprints, read/edit TOCTOU revalidation).
+ * `ino`/`mtimeMs` are optional because not every stat source supplies them.
+ */
+export interface FileStatTuple {
+  readonly ino?: number;
+  readonly mtimeMs?: number;
+  readonly size: number;
+}
+
+/**
+ * Tuple equality tolerant of a missing stat (`undefined`): two missing
+ * tuples are equal, exactly one missing is not.
+ */
+export function fileStatTuplesEqual(
+  a: FileStatTuple | undefined,
+  b: FileStatTuple | undefined,
+): boolean {
+  return a?.ino === b?.ino && a?.mtimeMs === b?.mtimeMs && a?.size === b?.size;
 }
 
 export async function syncDir(dirPath: string): Promise<void> {

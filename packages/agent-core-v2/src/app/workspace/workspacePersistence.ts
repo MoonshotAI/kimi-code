@@ -36,12 +36,6 @@ export interface PersistedWorkspaceEntry {
   readonly last_opened_at: string;
 }
 
-export interface PersistedWorkspaceFile {
-  readonly version: number;
-  readonly workspaces: Record<string, PersistedWorkspaceEntry>;
-  readonly deleted_workspace_ids: string[];
-}
-
 export interface WorkspaceCatalog {
   readonly workspaces: readonly Workspace[];
   readonly deletedIds: readonly string[];

@@ -100,8 +100,8 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import {
   type HeldByPeerDetails,
+  HELD_BY_PEER_CREATING_DETAILS,
   heldByPeerDetailsFromInspection,
-  LEASE_CREATING_RETRY_AFTER_MS,
   SessionLease,
   sessionLeasePath,
   sessionLeaseSeed,
@@ -945,13 +945,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private heldByPeerDetails(inspection: CrossProcessLockInspection): HeldByPeerDetails {
     // A free lease here means the holder vanished between the failed acquire
     // and this probe; that race converges by retrying, same as 'creating'.
-    return (
-      heldByPeerDetailsFromInspection(inspection) ?? {
-        kind: 'held-by-peer',
-        phase: 'creating',
-        retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS,
-      }
-    );
+    return heldByPeerDetailsFromInspection(inspection) ?? HELD_BY_PEER_CREATING_DETAILS;
   }
 
   private async flushSessionTail(sessionId: string, scope: string): Promise<void> {

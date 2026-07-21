@@ -48,6 +48,7 @@ import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, type LineEndingStyle } from '#/_base/text/line-endings';
+import { fileStatTuplesEqual } from '#/_base/utils/fs';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import readDescriptionTemplate from './read.md?raw';
 
@@ -57,13 +58,6 @@ export const MAX_BYTES: number = 100 * 1024;
 
 const PositiveLineOffsetSchema = z.number().int().min(1);
 const TailLineOffsetSchema = z.number().int().min(-MAX_LINES).max(-1);
-
-function fileStatsEqual(
-  left: Awaited<ReturnType<IHostFileSystem['stat']>>,
-  right: Awaited<ReturnType<IHostFileSystem['stat']>>,
-): boolean {
-  return left.ino === right.ino && left.mtimeMs === right.mtimeMs && left.size === right.size;
-}
 
 export const ReadInputSchema = z.object({
   path: z
@@ -343,7 +337,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
             );
       if (result.isError === true) return result;
       observedStat ??= await this.fs.stat(safePath);
-      if (!fileStatsEqual(stat, observedStat)) {
+      if (!fileStatTuplesEqual(stat, observedStat)) {
         return {
           isError: true,
           output: `"${args.path}" changed while it was being read. Retry the read.`,

@@ -16,11 +16,12 @@
  * file-backed skill sources; not a DI service.
  */
 
-import { promises as fs } from 'node:fs';
 import { dirname } from 'pathe';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import type { HostFsChange, IHostFsWatchHandle, IHostFsWatchService } from '#/os/interface/hostFsWatch';
+
+import { isDir } from './skillRoots';
 
 const SKILL_WATCH_DEBOUNCE_MS = 300;
 
@@ -172,13 +173,5 @@ async function nearestExistingDir(root: string): Promise<string> {
     const parent = dirname(current);
     if (parent === current) return current;
     current = parent;
-  }
-}
-
-async function isDir(p: string): Promise<boolean> {
-  try {
-    return (await fs.stat(p)).isDirectory();
-  } catch {
-    return false;
   }
 }

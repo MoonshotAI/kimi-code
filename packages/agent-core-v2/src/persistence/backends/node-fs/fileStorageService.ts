@@ -34,7 +34,7 @@ import { DisposableStore, combinedDisposable, toDisposable, type IDisposable } f
 import { optional } from '#/_base/di/instantiation';
 import { Emitter, type Event } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { atomicWrite, isSpecialFileStat, syncDir } from '#/_base/utils/fs';
+import { atomicWrite, fileStatTuplesEqual, isSpecialFileStat, syncDir } from '#/_base/utils/fs';
 import {
   CrossProcessLockError,
   CrossProcessLockErrorCode,
@@ -65,14 +65,6 @@ function fingerprint(path: string): WatchFingerprint {
   } catch {
     return undefined;
   }
-}
-
-function sameFingerprint(left: WatchFingerprint, right: WatchFingerprint): boolean {
-  return (
-    left?.size === right?.size &&
-    left?.mtimeMs === right?.mtimeMs &&
-    left?.ino === right?.ino
-  );
 }
 
 function isEnoent(error: unknown): boolean {
@@ -233,7 +225,7 @@ export class FileStorageService implements IFileSystemStorageService {
         });
         watcher.on('error', (error: unknown) => onUnexpectedError(error));
         watcher.on('ready', () => {
-          if (!sameFingerprint(before, fingerprint(normalizedTarget))) schedule();
+          if (!fileStatTuplesEqual(before, fingerprint(normalizedTarget))) schedule();
         });
         watcher.add(dir);
       } catch (error) {

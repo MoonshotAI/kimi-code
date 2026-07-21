@@ -232,15 +232,14 @@ export class WsConnectionV1 implements BroadcastTarget {
       );
     }
 
-    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
-    this.sendFrame(
-      buildAck(frame.id ?? '', hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0, hasOwnershipFailure ? 'session held by peer' : 'success', {
-        accepted_subscriptions: accepted,
-        not_found: notFound,
-        resync_required: resyncRequired,
-        ownership_details: ownershipDetails,
-        cursors: serverCursors,
-      }),
+    this.sendSubscribeAck(
+      frame.id,
+      'accepted_subscriptions',
+      accepted,
+      notFound,
+      resyncRequired,
+      ownershipDetails,
+      serverCursors,
     );
   }
 
@@ -269,9 +268,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         transcriptSince: transcriptSince?.[sid],
       });
       if (!ok) {
-        const ownership = await this.broadcaster.getSubscriptionFailure(sid);
-        if (ownership !== undefined) ownershipDetails[sid] = ownership;
-        else notFound.push(sid);
+        await this.classifySubscriptionFailure(sid, ownershipDetails, notFound);
         continue;
       }
       this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
@@ -286,15 +283,14 @@ export class WsConnectionV1 implements BroadcastTarget {
       }
     }
 
-    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
-    this.sendFrame(
-      buildAck(frame.id ?? '', hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0, hasOwnershipFailure ? 'session held by peer' : 'success', {
-        accepted,
-        not_found: notFound,
-        resync_required: resyncRequired,
-        ownership_details: ownershipDetails,
-        cursors: serverCursors,
-      }),
+    this.sendSubscribeAck(
+      frame.id,
+      'accepted',
+      accepted,
+      notFound,
+      resyncRequired,
+      ownershipDetails,
+      serverCursors,
     );
   }
 
@@ -363,9 +359,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       transcriptSince,
     });
     if (!ok) {
-      const ownership = await this.broadcaster.getSubscriptionFailure(sid);
-      if (ownership !== undefined) ownershipDetails[sid] = ownership;
-      else notFound.push(sid);
+      await this.classifySubscriptionFailure(sid, ownershipDetails, notFound);
       return;
     }
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
@@ -378,6 +372,53 @@ export class WsConnectionV1 implements BroadcastTarget {
       const cur = await this.broadcaster.getCursor(sid);
       serverCursors[sid] = cur;
     }
+  }
+
+  /**
+   * Classify a failed subscribe: an ownership conflict carries the structured
+   * details so the client can redirect to the holder; anything else is a plain
+   * not-found.
+   */
+  private async classifySubscriptionFailure(
+    sid: string,
+    ownershipDetails: Record<string, SessionOwnershipDetails>,
+    notFound: string[],
+  ): Promise<void> {
+    const ownership = await this.broadcaster.getSubscriptionFailure(sid);
+    if (ownership !== undefined) ownershipDetails[sid] = ownership;
+    else notFound.push(sid);
+  }
+
+  /**
+   * Ack for `client_hello` / `subscribe`: an ownership failure on any session
+   * flips the whole ack to SESSION_HELD_BY_PEER (the per-session details ride
+   * `ownership_details`). The accepted-list key differs by entry point —
+   * `accepted_subscriptions` for `client_hello`, `accepted` for `subscribe`.
+   */
+  private sendSubscribeAck(
+    frameId: string | undefined,
+    acceptedKey: 'accepted' | 'accepted_subscriptions',
+    accepted: string[],
+    notFound: string[],
+    resyncRequired: string[],
+    ownershipDetails: Record<string, SessionOwnershipDetails>,
+    serverCursors: Record<string, { seq: number; epoch?: string }>,
+  ): void {
+    const hasOwnershipFailure = Object.keys(ownershipDetails).length > 0;
+    this.sendFrame(
+      buildAck(
+        frameId ?? '',
+        hasOwnershipFailure ? ErrorCode.SESSION_HELD_BY_PEER : 0,
+        hasOwnershipFailure ? 'session held by peer' : 'success',
+        {
+          [acceptedKey]: accepted,
+          not_found: notFound,
+          resync_required: resyncRequired,
+          ownership_details: ownershipDetails,
+          cursors: serverCursors,
+        },
+      ),
+    );
   }
 
   private async replay(

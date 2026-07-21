@@ -24,6 +24,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { fileStatTuplesEqual as statTuplesEqual } from '#/_base/utils/fs';
 
 export type FileStatTuple =
   | { readonly exists: false }
@@ -37,7 +38,7 @@ export type FileStatTuple =
 export function fileStatTuplesEqual(a: FileStatTuple, b: FileStatTuple): boolean {
   if (a.exists !== b.exists) return false;
   if (!a.exists || !b.exists) return true;
-  return a.ino === b.ino && a.mtimeMs === b.mtimeMs && a.size === b.size;
+  return statTuplesEqual(a, b);
 }
 
 export type FileLedgerVerdict = 'clean' | 'stale' | 'no-baseline';

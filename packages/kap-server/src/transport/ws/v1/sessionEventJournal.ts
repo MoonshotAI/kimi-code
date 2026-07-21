@@ -362,8 +362,7 @@ export class SessionEventJournal {
       if (this.consecutiveFailures > 0) {
         const committed = await countCommittedPrefix(this.filePath, lines);
         if (committed > 0) {
-          if (headerLine !== undefined) this.headerPending = false;
-          this.pendingLines.splice(0, Math.max(0, committed - (headerLine === undefined ? 0 : 1)));
+          this.dropCommittedLines(committed, headerLine);
           lines = lines.slice(committed);
           if (lines.length === 0) {
             this.consecutiveFailures = 0;
@@ -382,8 +381,7 @@ export class SessionEventJournal {
     } catch (error) {
       const committed = await countCommittedPrefix(this.filePath, lines);
       if (committed > 0) {
-        if (headerLine !== undefined) this.headerPending = false;
-        this.pendingLines.splice(0, Math.max(0, committed - (headerLine === undefined ? 0 : 1)));
+        this.dropCommittedLines(committed, headerLine);
         this.stickyError ??= new JournalStorageError(this.filePath, error);
         return true;
       }
@@ -417,6 +415,18 @@ export class SessionEventJournal {
     if (headerLine !== undefined) this.headerPending = false;
     this.consecutiveFailures = 0;
     return true;
+  }
+
+  /**
+   * Dequeue the prefix already durably on disk (counted by
+   * `countCommittedPrefix`) and release the header latch — the header leads
+   * the batch, so any committed prefix includes it. Shared by the retry path
+   * (a previous round may have written a prefix before failing) and the catch
+   * path (the write may have landed even though the round threw).
+   */
+  private dropCommittedLines(committed: number, headerLine: string | undefined): void {
+    if (headerLine !== undefined) this.headerPending = false;
+    this.pendingLines.splice(0, Math.max(0, committed - (headerLine === undefined ? 0 : 1)));
   }
 
   private async repairTail(): Promise<void> {

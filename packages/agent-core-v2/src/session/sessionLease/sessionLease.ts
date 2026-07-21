@@ -51,13 +51,22 @@ export type HeldByPeerDetails = {
 
 export type SessionOwnershipDetails = HeldByPeerDetails;
 
+/** `held-by-peer` details for the converging 'creating' phase. Shared by
+    `heldByPeerDetailsFromInspection` and the lifecycle's failed-acquire probe:
+    a holder that vanished mid-race converges by retrying, same as 'creating'. */
+export const HELD_BY_PEER_CREATING_DETAILS: HeldByPeerDetails = {
+  kind: 'held-by-peer',
+  phase: 'creating',
+  retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS,
+};
+
 /**
  * Classify a lease inspection into `held-by-peer` details. Shared by every
  * surface that reports session ownership — the lifecycle's
  * post-acquire-failure probe and kap-server's read-only probes — so all of
  * them classify the same lease the same way. Returns `undefined` when the
  * lease is free; a caller on a failed-acquire path should map that to
- * `'creating'`, since a holder that vanished mid-race converges by retrying.
+ * {@link HELD_BY_PEER_CREATING_DETAILS}.
  */
 export function heldByPeerDetailsFromInspection(
   inspection: CrossProcessLockInspection,
@@ -69,11 +78,7 @@ export function heldByPeerDetailsFromInspection(
       : { kind: 'held-by-peer', phase: 'held-by-local-instance' };
   }
   if (inspection.state === 'creating') {
-    return {
-      kind: 'held-by-peer',
-      phase: 'creating',
-      retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS,
-    };
+    return HELD_BY_PEER_CREATING_DETAILS;
   }
   return undefined;
 }

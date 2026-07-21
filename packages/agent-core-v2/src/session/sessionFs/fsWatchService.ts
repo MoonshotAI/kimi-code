@@ -105,7 +105,6 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
 
   private ensureHandle(): void {
     if (this.handle !== undefined) return;
-    if (this.watched.size === 0) return;
     this.loadGitignore();
     const handle = this.hostFsWatch.watch(this.workspace.workDir, { recursive: true });
     this.handle = handle;

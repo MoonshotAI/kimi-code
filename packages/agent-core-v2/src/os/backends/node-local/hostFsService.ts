@@ -228,15 +228,7 @@ export class HostFileSystem implements IHostFileSystem {
 
   async lstat(path: string): Promise<HostFileStat> {
     try {
-      const s = await lstat(path);
-      return {
-        isFile: s.isFile(),
-        isDirectory: s.isDirectory(),
-        isSymbolicLink: s.isSymbolicLink(),
-        size: s.size,
-        mtimeMs: s.mtimeMs,
-        ino: s.ino,
-      };
+      return toHostFileStat(await lstat(path));
     } catch (error) {
       throw toHostFsError(error, { path, op: 'lstat' });
     }

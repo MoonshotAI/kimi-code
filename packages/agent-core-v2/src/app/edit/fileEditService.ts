@@ -12,19 +12,12 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { fileStatTuplesEqual } from '#/_base/utils/fs';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { fileStatTuplesEqual } from '#/session/sessionFileLedger/fileLedger';
 
 import { EditService } from './editService';
 import { type FileEditInput, type FileEditResult, IFileEditService } from './fileEdit';
 import { TextModel } from './textModel';
-
-function sameRevision(
-  a: { readonly ino?: number; readonly mtimeMs?: number; readonly size: number },
-  b: { readonly ino?: number; readonly mtimeMs?: number; readonly size: number },
-): boolean {
-  return fileStatTuplesEqual({ exists: true, ...a }, { exists: true, ...b });
-}
 
 export class FileEditService implements IFileEditService {
   declare readonly _serviceBrand: undefined;
@@ -40,7 +33,7 @@ export class FileEditService implements IFileEditService {
       const beforeRead = await this.fs.stat(input.path);
       const raw = await this.fs.readText(input.path, { errors: 'strict' });
       const afterRead = await this.fs.stat(input.path);
-      if (!sameRevision(beforeRead, afterRead)) {
+      if (!fileStatTuplesEqual(beforeRead, afterRead)) {
         return {
           ok: false,
           error: `${input.displayPath} changed on disk while the edit was being prepared. Read it again, then retry.`,
@@ -57,7 +50,7 @@ export class FileEditService implements IFileEditService {
         return { ok: false, error: result.error };
       }
       const beforeWrite = await this.fs.stat(input.path);
-      if (!sameRevision(afterRead, beforeWrite)) {
+      if (!fileStatTuplesEqual(afterRead, beforeWrite)) {
         return {
           ok: false,
           error: `${input.displayPath} changed on disk while the edit was being prepared. Read it again, then retry.`,

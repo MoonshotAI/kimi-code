@@ -144,7 +144,7 @@ function resolveConfiguredDir(dir: string, projectRoot: string, osHomeDir: strin
   return path.resolve(projectRoot, dir);
 }
 
-async function isDir(p: string): Promise<boolean> {
+export async function isDir(p: string): Promise<boolean> {
   try {
     return (await fs.stat(p)).isDirectory();
   } catch {
