@@ -533,6 +533,12 @@ function copyDiff(code: string, idx: number) {
   font-size: var(--content-font-size);
 }
 
+/* Themed surfaces swallow white-on-transparent (light) or black-on-transparent
+   (dark) images; the checkerboard canvas keeps both visible. */
+.md :deep(.markdown-renderer img) {
+  background: var(--media-alpha-canvas);
+}
+
 /* Emphasis — keep the weight strong, but soften the ink slightly. */
 .md :deep(strong) {
   color: color-mix(in srgb, var(--color-text) 86%, var(--color-text-muted));
