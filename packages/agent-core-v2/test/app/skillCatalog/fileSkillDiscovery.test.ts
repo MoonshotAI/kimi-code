@@ -217,12 +217,36 @@ describe('FileSkillDiscovery', () => {
     const result = await discover([skillRoot('skills')]);
 
     expect(result.skills).toEqual([]);
+    expect(result.skipped).toEqual([
+      {
+        path: skillMdPath,
+        type: 'invalid-frontmatter',
+        reason: `Missing frontmatter in ${skillMdPath}`,
+      },
+    ]);
     expect(warnings).toEqual([
       {
         message: `Skipping invalid skill at ${skillMdPath}: Missing frontmatter in ${skillMdPath}`,
         payload: expect.any(Error),
       },
     ]);
+  });
+
+  it('skips (rather than silently drops) a description with an unquoted colon that breaks YAML', async () => {
+    // Regression for #1972: a `description` containing a bare "word: word"
+    // (e.g. "Triggers on: ...") is invalid as a plain YAML scalar, so the
+    // frontmatter fails to parse. The skill used to vanish with no signal
+    // beyond a log line nobody sees; it must now show up in `skipped`.
+    await writeSkill(
+      'skills/codebase-memory/SKILL.md',
+      'name: codebase-memory\ndescription: Explore the codebase. Triggers on: find callers of, trace the call chain.',
+    );
+
+    const result = await discover([skillRoot('skills')]);
+
+    expect(result.skills).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.type).toBe('invalid-frontmatter');
   });
 
   it('records a skill with an unsupported type as skipped instead of warning', async () => {

@@ -719,6 +719,30 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(sessionWarningsResponseSchema.parse(body.data)).toEqual({ warnings: [] });
   });
 
+  it('reports a skill-load-failed warning for a SKILL.md that fails to parse', async () => {
+    // Regression for #1972: an unquoted colon in `description` (e.g.
+    // "Triggers on: ...") makes the frontmatter invalid YAML, and the skill
+    // used to be dropped with no signal reaching the user.
+    const cwd = home as string;
+    const skillDir = join(cwd, '.kimi-code', 'skills', 'broken');
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: broken\ndescription: Explore the codebase. Triggers on: find callers of.\n---\n\nbody\n',
+    );
+
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const { status, body } = await getJson<{
+      warnings: { code: string; message: string; severity: string }[];
+    }>(`/api/v1/sessions/${created.body.data.id}/warnings`);
+
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    const skillWarning = body.data.warnings.find((w) => w.code === 'skill-load-failed');
+    expect(skillWarning?.message).toContain(join(skillDir, 'SKILL.md'));
+    expect(sessionWarningsResponseSchema.parse(body.data).warnings).toContainEqual(skillWarning);
+  });
+
   it('returns 40401 for warnings of a missing session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/sess_missing_warnings/warnings');
     expect(body.code).toBe(40401);
