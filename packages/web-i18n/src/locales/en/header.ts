@@ -22,4 +22,5 @@ export default {
   forkSession: 'Fork session',
   archiveSession: 'Archive',
   exportSession: 'Export session',
+  devBadge: 'Running in development mode',
 };

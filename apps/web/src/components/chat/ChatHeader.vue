@@ -220,12 +220,18 @@ function startArchive(): void {
   closeMenu();
   emit('archiveSession', props.sessionId);
 }
+
+// Dev-environment marker: only compiled into dev-server builds
+// (`import.meta.env.DEV`), tree-shaken out of production bundles.
+const isDev = import.meta.env.DEV;
 </script>
 
 <template>
   <header class="chat-header" :class="{ 'macos-desktop': isMacosDesktop }">
     <!-- Workspace / session breadcrumb -->
     <div class="ch-id">
+      <!-- Dev-environment badge (dev builds only): leads the breadcrumb. -->
+      <span v-if="isDev" class="ch-dev" :title="t('header.devBadge')">DEV</span>
       <span v-if="workspaceName" class="ch-ws">{{ workspaceName }}</span>
       <span v-if="workspaceName && sessionTitle" class="ch-sep">/</span>
       <input
@@ -451,6 +457,22 @@ function startArchive(): void {
 .chat-header .ch-act-more { width: 24px; height: 24px; border-radius: var(--radius-sm); }
 .chat-header .ch-act-more :deep(svg) { width: 14px; height: 14px; }
 .ch-act-more.open { background: var(--color-surface-sunken); color: var(--color-text); }
+
+/* Dev-environment badge — same pill language as the PR badge, in the warning
+   hue so a dev window is recognizable at a glance. Not interactive. */
+.ch-dev {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  flex: none;
+  border: 1px solid var(--color-warning-bd);
+  border-radius: var(--radius-full);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
 
 /* GitHub PR badge — semantic state colors aligned with GitHub
    (open=green, merged=purple, closed=red, draft=gray). */

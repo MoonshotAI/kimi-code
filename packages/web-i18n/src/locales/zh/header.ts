@@ -22,4 +22,5 @@ export default {
   forkSession: '分叉会话',
   archiveSession: '归档',
   exportSession: '导出会话',
+  devBadge: '开发环境运行中',
 };
