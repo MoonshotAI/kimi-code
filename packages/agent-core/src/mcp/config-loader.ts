@@ -7,6 +7,8 @@ import { McpServerConfigSchema, type McpServerConfig } from '#/config/schema';
 import { ErrorCodes, KimiError } from '#/errors';
 import { z } from 'zod';
 
+import { sanitizeMcpNamePart } from './tool-naming';
+
 const McpJsonFileSchema = z.object({
   mcpServers: z.record(z.string(), McpServerConfigSchema).default({}),
 });
@@ -37,6 +39,11 @@ export interface LoadMcpServersInput {
   readonly homeDir?: string;
 }
 
+export interface LoadMcpServersResult {
+  readonly servers: Record<string, McpServerConfig>;
+  readonly warnings: readonly string[];
+}
+
 /**
  * Load MCP server declarations from the user-global `~/.kimi-code/mcp.json`,
  * the project-root `<project root>/.mcp.json`, and the project-local
@@ -51,13 +58,44 @@ export interface LoadMcpServersInput {
 export async function loadMcpServers(
   input: LoadMcpServersInput,
 ): Promise<Record<string, McpServerConfig>> {
+  return (await loadMcpServersWithDiagnostics(input)).servers;
+}
+
+export async function loadMcpServersWithDiagnostics(
+  input: LoadMcpServersInput,
+): Promise<LoadMcpServersResult> {
   const paths = await resolveMcpJsonPaths({ cwd: input.cwd, homeDir: input.homeDir });
   const [user, projectRoot, project] = await Promise.all([
     readMcpJson(paths.user),
     readMcpJson(paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
     readMcpJson(paths.project),
   ]);
-  return { ...user, ...projectRoot, ...project };
+  return {
+    servers: { ...user, ...projectRoot, ...project },
+    warnings: [
+      ...mcpShadowWarnings(user, projectRoot, 'project-root'),
+      ...mcpShadowWarnings(user, project, 'project-local'),
+    ],
+  };
+}
+
+function mcpShadowWarnings(
+  userServers: Record<string, McpServerConfig>,
+  projectServers: Record<string, McpServerConfig>,
+  source: 'project-root' | 'project-local',
+): string[] {
+  return Object.keys(projectServers)
+    .filter((name) => Object.hasOwn(userServers, name))
+    .toSorted()
+    .map(
+      (name) => {
+        const permissionPattern = `mcp__${sanitizeMcpNamePart(name)}__*`;
+        return (
+          `Project MCP server "${name}" defined in ${source} config overrides a user-level MCP server. ` +
+          `Server-scoped permission rules such as "${permissionPattern}" may apply to the project-defined server.`
+        );
+      },
+    );
 }
 
 async function findProjectRoot(cwd: string): Promise<string> {

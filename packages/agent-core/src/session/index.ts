@@ -859,6 +859,9 @@ export class Session {
   private async loadMcpServers(): Promise<void> {
     const servers = this.options.mcpConfig?.servers;
     if (servers === undefined || Object.keys(servers).length === 0) return;
+    for (const warning of this.options.mcpConfig?.warnings ?? []) {
+      this.log.warn('mcp config warning', { warning });
+    }
     await this.mcp.connectAll(servers);
     const entries = this.mcp.list().filter((entry) => entry.status !== 'disabled');
     const totalCount = entries.length;
