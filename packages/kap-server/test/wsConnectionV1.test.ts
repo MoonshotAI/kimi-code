@@ -476,6 +476,61 @@ describe('WsConnectionV1 global target registration', () => {
     conn.close();
   });
 
+  it('does not register a socket that closes during client_hello replay', async () => {
+    const socket = new FakeSocket();
+    const registered: unknown[] = [];
+    let releaseReplay!: () => void;
+    const replayGate = new Promise<void>((resolve) => {
+      releaseReplay = resolve;
+    });
+    const replayStarted = vi.fn();
+    const transcriptSeeded = vi.fn();
+    const broadcaster = {
+      subscribe: async () => true,
+      unsubscribe: () => {},
+      registerGlobalTarget: (target: unknown) => registered.push(target),
+      unregisterGlobalTarget: () => {},
+      getCursor: async () => ({ seq: 1, epoch: 'e1' }),
+      getBufferedSince: async () => {
+        replayStarted();
+        await replayGate;
+        return {
+          events: [],
+          resyncRequired: false,
+          currentSeq: 1,
+          epoch: 'e1',
+        };
+      },
+      flushTranscriptSeed: async () => {
+        transcriptSeeded();
+      },
+    } as unknown as SessionEventBroadcaster;
+    makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h1',
+        payload: {
+          client_id: 'c1',
+          subscriptions: ['s1'],
+          cursors: { s1: { seq: 0, epoch: 'e1' } },
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(replayStarted).toHaveBeenCalledOnce();
+    });
+    socket.emit('close');
+    releaseReplay();
+    await vi.waitFor(() => {
+      expect(transcriptSeeded).toHaveBeenCalledOnce();
+    });
+
+    expect(registered).toHaveLength(0);
+  });
+
   it('does not register without a client_hello', () => {
     const socket = new FakeSocket();
     const { broadcaster, registered, unregistered } = makeRegisteringBroadcaster();

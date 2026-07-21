@@ -224,6 +224,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     // after every requested cursor replay so registerGlobalTarget's volatile
     // work-fact catchup cannot precede and then be overwritten by older
     // durable backlog for the same session.
+    if (this.closed) return;
     this.broadcaster.registerGlobalTarget(this);
 
     this.sendFrame(
