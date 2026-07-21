@@ -8,6 +8,14 @@
  * to edits through two change events — `onDidChangeConfiguration` (a domain was touched) and
  * `onDidSectionChange` (the delivered value actually changed, deep-diffed) —
  * each carrying the delivered `value` and `previousValue`.
+ *
+ * Sections may bind fields to env vars (`envBindings`), resolved as
+ * env > user config > default on every read; an env value that fails its
+ * binding's `parse` is ignored. `stripEnvBoundFields` builds the matching
+ * write guard for persistable env-bound fields: while a field's env var
+ * resolves to a value, `set`/`replace` restores the field's raw on-disk value
+ * (or drops it) instead of persisting an echoed env value; otherwise writes
+ * pass through untouched.
  */
 
 import type { Event } from '#/_base/event';
@@ -43,32 +51,26 @@ export type ConfigStripEnv<T> = (
   getEnv?: (name: string) => string | undefined,
 ) => T | undefined;
 
-export interface EnvBoundField {
-  /** camelCase in-memory field name; the snake_case on-disk key is derived from it. */
-  readonly field: string;
-  /** Env var that owns the field while set. */
-  readonly env: string;
+function isEnvBinding(value: unknown): value is EnvBinding {
+  return typeof value === 'string' || (isPlainObject(value) && 'env' in value);
 }
 
 function camelToSnake(str: string): string {
   return str.replaceAll(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
 }
 
-/**
- * Build a `stripEnv` for sections whose fields are both user-persistable and
- * env-overridable. While a field's env var is set, the env value owns the
- * field: `set`/`replace` restores the field to its raw on-disk value (or drops
- * it when absent on disk), so an env overlay echoed back through a config
- * write can never be persisted. Fields whose env var is not set pass through
- * unchanged, so normal writes keep working.
- */
-export function stripEnvBoundFields<T>(fields: readonly EnvBoundField[]): ConfigStripEnv<T> {
+export function stripEnvBoundFields<T>(bindings: EnvBindings<T>): ConfigStripEnv<T> {
   return (value, rawSnake, getEnv) => {
     if (getEnv === undefined || value === null || typeof value !== 'object') return value;
+    if (!isPlainObject(bindings) || isEnvBinding(bindings)) return value;
     const raw = isPlainObject(rawSnake) ? rawSnake : {};
     let out: Record<string, unknown> | undefined;
-    for (const { field, env } of fields) {
-      if (getEnv(env) === undefined) continue;
+    for (const [field, binding] of Object.entries(bindings)) {
+      if (binding === undefined || !isEnvBinding(binding)) continue;
+      const rawEnv = getEnv(typeof binding === 'string' ? binding : binding.env);
+      if (rawEnv === undefined) continue;
+      const parse = typeof binding === 'string' ? undefined : binding.parse;
+      if (parse !== undefined && parse(rawEnv) === undefined) continue;
       out ??= { ...(value as Record<string, unknown>) };
       const snake = camelToSnake(field);
       if (raw[snake] !== undefined) {

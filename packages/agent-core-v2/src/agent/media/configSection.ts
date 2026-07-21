@@ -49,10 +49,7 @@ export const imageEnvBindings: EnvBindings<ImageConfig> = envBindings(ImageConfi
   readByteBudget: { env: IMAGE_READ_BYTE_BUDGET_ENV, parse: parsePositiveInt },
 });
 
-export const stripImageEnv = stripEnvBoundFields<ImageConfig>([
-  { field: 'maxEdgePx', env: IMAGE_MAX_EDGE_ENV },
-  { field: 'readByteBudget', env: IMAGE_READ_BYTE_BUDGET_ENV },
-]);
+export const stripImageEnv = stripEnvBoundFields(imageEnvBindings);
 
 registerConfigSection(IMAGE_SECTION, ImageConfigSchema, {
   defaultValue: {},

@@ -37,7 +37,6 @@ export const LoopControlSchema = z.object({
 
 export type LoopControl = z.infer<typeof LoopControlSchema>;
 
-/** Parse the env overrides; anything but a non-negative integer is ignored. */
 function parseNonNegativeInt(raw: string): number | undefined {
   const value = raw.trim();
   if (value.length === 0 || !/^\d+$/.test(value)) return undefined;
@@ -50,10 +49,7 @@ export const loopControlEnvBindings: EnvBindings<LoopControl> = envBindings(Loop
   maxRetriesPerStep: { env: LOOP_MAX_RETRIES_PER_STEP_ENV, parse: parseNonNegativeInt },
 });
 
-export const stripLoopControlEnv = stripEnvBoundFields<LoopControl>([
-  { field: 'maxStepsPerTurn', env: LOOP_MAX_STEPS_PER_TURN_ENV },
-  { field: 'maxRetriesPerStep', env: LOOP_MAX_RETRIES_PER_STEP_ENV },
-]);
+export const stripLoopControlEnv = stripEnvBoundFields(loopControlEnvBindings);
 
 export const loopControlFromToml = (rawSnake: unknown): unknown => {
   if (rawSnake === null || typeof rawSnake !== 'object' || Array.isArray(rawSnake)) return rawSnake;

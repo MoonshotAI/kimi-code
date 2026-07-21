@@ -5,7 +5,8 @@
  * value by precedence across defaults, the user config file, and per-run memory
  * overrides (highest, never persisted), and persists writes only for the `User`
  * target. Maintains four layered views of a domain — `rawSnake` (snake_case
- * write base, kept for lossless round-trip), `raw` (camelCase, env-free),
+ * write base keyed by the on-disk section key, kept for lossless round-trip),
+ * `raw` (camelCase, env-free),
  * `effective` (validated, env overlay applied), and `memory` (per-run overrides)
  * — plus a `delivered` snapshot per domain used as the diff base for
  * `onDidSectionChange`. Reads config paths and the environment overlay through
@@ -368,8 +369,6 @@ export class ConfigService extends Disposable implements IConfigService {
     const section = this.registry.getSection(domain);
     if (section?.stripEnv !== undefined) {
       const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
-      // On-disk sections are keyed snake_case (see applySectionToToml), so a
-      // camelCase domain like `loopControl` lives at rawSnake['loop_control'].
       result = section.stripEnv(result, this.rawSnake[camelToSnake(domain)], getEnv);
     }
     if (result === undefined) return result;

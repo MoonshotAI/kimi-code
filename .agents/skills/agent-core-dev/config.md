@@ -155,12 +155,13 @@ persists, so env overrides never leak into `config.toml`. `rawSnake` is the
 section's on-disk sub-object (looked up by the snake_case key, so camelCase
 domains like `loopControl` resolve correctly), and `getEnv` reads the live env
 bag. For fields that are **both user-persistable and env-overridable**, register
-`stripEnvBoundFields<Section>([{ field, env }])` (from `#/app/config/config`):
-while a field's env var is set, writes restore the field's raw on-disk value
-(or drop it) instead of persisting an echoed env value; when unset, normal
-writes persist. Env-only fields/sections need no env check — strip them
-unconditionally (e.g. thinking's `forcedEffort`, cron's whole-section
-`() => undefined`).
+`stripEnv: stripEnvBoundFields(sectionEnvBindings)` (from `#/app/config/config`)
+— it derives the guard from the same bindings the read path uses: while a
+field's env var resolves to a value, writes restore the field's raw on-disk
+value (or drop it) instead of persisting an echoed env value; an env value that
+fails the binding's `parse` owns nothing, so writes pass through. Env-only
+fields/sections need no env check — strip them unconditionally (e.g. thinking's
+`forcedEffort`, cron's whole-section `() => undefined`).
 
 Business domains read `config.get('section')`; they never read env directly, and
 never write their own env-merge logic.

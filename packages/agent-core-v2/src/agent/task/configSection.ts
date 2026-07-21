@@ -73,7 +73,6 @@ export function resolvePrintBackgroundMode(config: IConfigService): PrintBackgro
 export const KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
 export const MAX_RUNNING_TASKS_ENV = 'KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS';
 
-/** Parse the env override; anything but a positive integer is ignored. */
 function parsePositiveInt(raw: string): number | undefined {
   const value = raw.trim();
   if (value.length === 0 || !/^\d+$/.test(value)) return undefined;
@@ -86,10 +85,7 @@ export const taskEnvBindings: EnvBindings<AgentTaskConfig> = envBindings(AgentTa
   maxRunningTasks: { env: MAX_RUNNING_TASKS_ENV, parse: parsePositiveInt },
 });
 
-export const stripTaskEnv = stripEnvBoundFields<AgentTaskConfig>([
-  { field: 'keepAliveOnExit', env: KEEP_ALIVE_ON_EXIT_ENV },
-  { field: 'maxRunningTasks', env: MAX_RUNNING_TASKS_ENV },
-]);
+export const stripTaskEnv = stripEnvBoundFields(taskEnvBindings);
 
 registerConfigSection(TASK_SECTION, AgentTaskConfigSchema, {
   env: taskEnvBindings,

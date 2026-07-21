@@ -689,6 +689,30 @@ describe('loopControl config section', () => {
 
     disposables.dispose();
   });
+
+  it('does not strip a field whose env value fails to parse', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_STEPS_PER_TURN_ENV]: 'abc' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 50 });
+
+    // The invalid env value is ignored on both the read and the write path.
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(50);
+    expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
+      maxStepsPerTurn: 50,
+    });
+
+    disposables.dispose();
+  });
 });
 
 describe('task config section', () => {
@@ -808,6 +832,21 @@ describe('task config section', () => {
     expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
       maxRunningTasks: 3,
       killGracePeriodMs: 25,
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not strip a field whose env value fails to parse', async () => {
+    const env: Record<string, string> = { [KEEP_ALIVE_ON_EXIT_ENV]: 'abc' };
+    const { config, disposables } = await createTaskConfig(env);
+
+    await config.set('background', { keepAliveOnExit: true });
+
+    // The invalid env value is ignored on both the read and the write path.
+    expect(config.get<AgentTaskConfig>('background')?.keepAliveOnExit).toBe(true);
+    expect(config.inspect<AgentTaskConfig>('background').userValue).toEqual({
+      keepAliveOnExit: true,
     });
 
     disposables.dispose();

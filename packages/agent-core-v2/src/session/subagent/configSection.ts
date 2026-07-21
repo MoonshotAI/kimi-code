@@ -51,9 +51,7 @@ export const subagentEnvBindings: EnvBindings<SubagentConfig> = envBindings(
   },
 );
 
-export const stripSubagentEnv = stripEnvBoundFields<SubagentConfig>([
-  { field: 'timeoutMs', env: SUBAGENT_TIMEOUT_ENV },
-]);
+export const stripSubagentEnv = stripEnvBoundFields(subagentEnvBindings);
 
 registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   defaultValue: { timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS },
