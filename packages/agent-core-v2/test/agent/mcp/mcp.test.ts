@@ -1,6 +1,7 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 import { Jimp } from 'jimp';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -366,11 +367,12 @@ describe('AgentMcpService', () => {
     expect(result.output).toBe('hello world');
   });
 
-  function throwingClient(base: MCPClient = fakeMcpClient()): MCPClient {
+  function throwingClient(base: MCPClient = fakeMcpClient(), onCall?: () => void): MCPClient {
     return {
       listTools: () => base.listTools(),
       async callTool() {
-        throw new Error('Connection closed');
+        onCall?.();
+        throw new McpError(ErrorCode.ConnectionClosed, 'Connection closed');
       },
     };
   }
@@ -385,9 +387,20 @@ describe('AgentMcpService', () => {
     };
   }
 
+  function deferred<T>(): {
+    readonly promise: Promise<T>;
+    readonly resolve: (value: T | PromiseLike<T>) => void;
+  } {
+    let resolvePromise!: (value: T | PromiseLike<T>) => void;
+    const promise = new Promise<T>((resolve) => {
+      resolvePromise = resolve;
+    });
+    return { promise, resolve: resolvePromise };
+  }
+
   it('reconnects the server and retries the call once when the transport dies', async () => {
     const manager = new FakeMcpManager();
-    const deadClient = throwingClient();
+    const deadClient = throwingClient(fakeMcpClient(), () => manager.fail('s'));
     const freshCounter = { calls: 0 };
     const freshClient = countingClient(fakeMcpClient(), freshCounter);
     let reconnects = 0;
@@ -414,9 +427,38 @@ describe('AgentMcpService', () => {
     expect(reconnects).toBe(1);
   });
 
+  it('returns a non-transport MCP error without reconnecting the server', async () => {
+    const manager = new FakeMcpManager();
+    const base = fakeMcpClient();
+    const client: MCPClient = {
+      listTools: () => base.listTools(),
+      async callTool() {
+        throw new McpError(ErrorCode.InvalidParams, 'Invalid tool arguments');
+      },
+    };
+    let reconnects = 0;
+    manager.reconnectHandler = async () => {
+      reconnects += 1;
+    };
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    await expect(
+      executeTool(echo!, {
+        turnId: 1,
+        toolCallId: 'tc-non-transport-error',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('Invalid tool arguments');
+    expect(reconnects).toBe(0);
+  });
+
   it('rethrows the original error when the server does not come back', async () => {
     const manager = new FakeMcpManager();
-    const deadClient = throwingClient();
+    const deadClient = throwingClient(fakeMcpClient(), () => manager.fail('s'));
     manager.reconnectHandler = async (name) => {
       manager.fail(name);
     };
@@ -438,7 +480,7 @@ describe('AgentMcpService', () => {
 
   it('reports both errors when the reconnect attempt itself fails', async () => {
     const manager = new FakeMcpManager();
-    const deadClient = throwingClient();
+    const deadClient = throwingClient(fakeMcpClient(), () => manager.fail('s'));
     manager.reconnectHandler = async () => {
       throw new Error('spawn failed');
     };
@@ -488,7 +530,7 @@ describe('AgentMcpService', () => {
 
   it('dedupes concurrent reconnects from parallel failing tool calls', async () => {
     const manager = new FakeMcpManager();
-    const deadClient = throwingClient();
+    const deadClient = throwingClient(fakeMcpClient(), () => manager.fail('s'));
     const freshClient = fakeMcpClient();
     let reconnects = 0;
     manager.reconnectHandler = async (name) => {
@@ -501,14 +543,16 @@ describe('AgentMcpService', () => {
     manager.connect('s');
 
     const registry = ix.get(IAgentToolRegistryService);
+    const echo = registry.resolve('mcp__s__echo');
+    const noop = registry.resolve('mcp__s__noop');
     const [echoResult, noopResult] = await Promise.all([
-      executeTool(registry.resolve('mcp__s__echo')!, {
+      executeTool(echo!, {
         turnId: 1,
         toolCallId: 'tc-par-1',
         args: { text: 'one' },
         signal: new AbortController().signal,
       }),
-      executeTool(registry.resolve('mcp__s__noop')!, {
+      executeTool(noop!, {
         turnId: 1,
         toolCallId: 'tc-par-2',
         args: {},
@@ -518,6 +562,50 @@ describe('AgentMcpService', () => {
 
     expect(echoResult.output).toBe('one');
     expect(noopResult.output).toBe('ok');
+    expect(reconnects).toBe(1);
+  });
+
+  it('keeps the shared reconnect alive when one parallel call is aborted', async () => {
+    const manager = new FakeMcpManager();
+    const reconnectStarted = deferred<void>();
+    const reconnectReleased = deferred<void>();
+    const deadClient = throwingClient(fakeMcpClient(), () => manager.fail('s'));
+    const freshClient = fakeMcpClient();
+    let reconnects = 0;
+    manager.reconnectHandler = async (name) => {
+      reconnects += 1;
+      reconnectStarted.resolve();
+      await reconnectReleased.promise;
+      manager.setResolved(name, freshClient, await discoverTools(freshClient));
+      manager.connect(name);
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const registry = ix.get(IAgentToolRegistryService);
+    const echo = registry.resolve('mcp__s__echo');
+    const noop = registry.resolve('mcp__s__noop');
+    const firstController = new AbortController();
+    const firstCall = executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-par-abort-1',
+      args: { text: 'one' },
+      signal: firstController.signal,
+    });
+    const secondCall = executeTool(noop!, {
+      turnId: 1,
+      toolCallId: 'tc-par-abort-2',
+      args: {},
+      signal: new AbortController().signal,
+    });
+
+    await reconnectStarted.promise;
+    firstController.abort(new Error('cancelled by test'));
+    await expect(firstCall).rejects.toThrow('cancelled by test');
+
+    reconnectReleased.resolve();
+    await expect(secondCall).resolves.toMatchObject({ output: 'ok' });
     expect(reconnects).toBe(1);
   });
 

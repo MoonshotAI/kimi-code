@@ -18,15 +18,12 @@ import { isAbortError } from '#/_base/utils/abort';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { MCPClient, MCPToolResult } from '#/agent/mcp/types';
+import { isMcpConnectionClosedError } from '#/agent/mcp/client-shared';
 
 interface McpToolOptions {
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
-  /**
-   * Reconnect the owning server and return its fresh client, `undefined`
-   * when the server did not come back. Called at most once per execution,
-   * only when the original call threw a non-abort error.
-   */
+  readonly isConnectionLost?: () => boolean;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
 }
 
@@ -70,7 +67,13 @@ async function retryAfterReconnect(
   callTool: (client: MCPClient, args: unknown, signal: AbortSignal) => Promise<MCPToolResult>,
 ): Promise<MCPToolResult> {
   const reconnect = options.reconnect;
-  if (reconnect === undefined || context.signal.aborted || isAbortError(error)) {
+  if (
+    reconnect === undefined ||
+    options.isConnectionLost?.() !== true ||
+    !isMcpConnectionClosedError(error) ||
+    context.signal.aborted ||
+    isAbortError(error)
+  ) {
     throw error;
   }
   context.onUpdate?.({ kind: 'status', text: 'MCP connection lost — reconnecting…' });
@@ -78,6 +81,9 @@ async function retryAfterReconnect(
   try {
     freshClient = await reconnect(context.signal);
   } catch (reconnectError) {
+    if (context.signal.aborted || isAbortError(reconnectError)) {
+      throw reconnectError;
+    }
     throw new Error(
       `${toErrorMessage(error)} (reconnecting the MCP server also failed: ${toErrorMessage(reconnectError)})`,
       { cause: reconnectError },

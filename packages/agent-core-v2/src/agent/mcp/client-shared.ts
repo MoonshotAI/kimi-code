@@ -1,4 +1,5 @@
 import { getCoreVersion } from '#/_base/version';
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 import type { MCPToolDefinition, MCPToolResult } from './types';
 
@@ -11,6 +12,13 @@ export interface UnexpectedCloseReason {
 }
 
 export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
+
+export function isMcpConnectionClosedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { readonly code?: unknown }).code === ErrorCode.ConnectionClosed
+  );
+}
 
 export interface McpRequestOptions {
   readonly timeout?: number;

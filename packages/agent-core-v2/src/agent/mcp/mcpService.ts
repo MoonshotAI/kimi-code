@@ -7,6 +7,7 @@ import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
+import { abortable } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
@@ -131,23 +132,24 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     signal?.throwIfAborted();
   }
 
-  /**
-   * Lazy reconnect behind a failing tool call: dedupes concurrent reconnects
-   * of the same server (parallel tool calls on a dead transport all fail at
-   * once) and resolves to the fresh client when the server came back.
-   */
   private reconnectForToolCall(serverName: string, signal?: AbortSignal): Promise<MCPClient | undefined> {
     const inFlight = this.reconnectingByServer.get(serverName);
-    if (inFlight !== undefined) return inFlight;
+    const work = inFlight ?? this.startToolCallReconnect(serverName);
+    return signal === undefined ? work : abortable(work, signal);
+  }
+
+  private startToolCallReconnect(serverName: string): Promise<MCPClient | undefined> {
     const work = (async () => {
-      try {
-        await this.reconnect(serverName, signal);
-        return this.resolved(serverName)?.client;
-      } finally {
-        this.reconnectingByServer.delete(serverName);
-      }
+      await this.reconnect(serverName);
+      return this.resolved(serverName)?.client;
     })();
     this.reconnectingByServer.set(serverName, work);
+    const clearInFlight = () => {
+      if (this.reconnectingByServer.get(serverName) === work) {
+        this.reconnectingByServer.delete(serverName);
+      }
+    };
+    void work.then(clearInFlight, clearInFlight);
     return work;
   }
 
@@ -288,6 +290,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
           createMcpTool(qualified, tool, client, {
             originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
             telemetry: this.telemetry,
+            isConnectionLost: () => this.resolved(serverName)?.client !== client,
             reconnect: (signal) => this.reconnectForToolCall(serverName, signal),
           }),
           { source: 'mcp' },
