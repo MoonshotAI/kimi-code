@@ -22,6 +22,15 @@ export function effectiveModelAlias(
     delete effective.defaultEffort;
   }
 
+  // The input cap can never exceed the effective total window (an override
+  // lowering max_context_size must not leave a stale, larger cap behind).
+  if (
+    effective.maxInputSize !== undefined &&
+    effective.maxInputSize > effective.maxContextSize
+  ) {
+    effective.maxInputSize = effective.maxContextSize;
+  }
+
   return withAnthropicProfile(effective, providerType);
 }
 

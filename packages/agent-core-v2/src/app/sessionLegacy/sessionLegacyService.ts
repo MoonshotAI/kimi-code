@@ -160,9 +160,14 @@ export class SessionLegacyService implements ISessionLegacyService {
     const swarm = agent.accessor.get(IAgentSwarmService);
 
     const model = profile.getModel();
-    const caps = profile.getModelCapabilities() as { max_context_tokens?: number };
+    const caps = profile.getModelCapabilities() as {
+      max_context_tokens?: number;
+      max_input_tokens?: number;
+    };
     const maxTokens =
-      model === '' ? resolveDefaultModelContextTokens(agent) : (caps.max_context_tokens ?? 0);
+      model === ''
+        ? resolveDefaultModelContextTokens(agent)
+        : (caps.max_input_tokens ?? caps.max_context_tokens ?? 0);
     const tokens = contextSize.get().size;
     const planData = await plan.status();
 

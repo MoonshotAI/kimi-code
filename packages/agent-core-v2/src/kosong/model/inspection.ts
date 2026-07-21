@@ -195,6 +195,17 @@ export function attributeEffectiveFields(
       });
       continue;
     }
+    if (
+      key === 'maxInputSize' &&
+      before !== undefined &&
+      JSON.stringify(before) !== JSON.stringify(after)
+    ) {
+      trace.record(path, {
+        kind: 'synthesized',
+        detail: 'clamped to the effective max_context_size',
+      });
+      continue;
+    }
     const profileTouched =
       (key === 'capabilities' || key === 'supportEfforts' || key === 'defaultEffort') &&
       profileDetail !== undefined &&
@@ -486,6 +497,17 @@ function attributeCapabilities(
     kind: 'synthesized',
     detail: 'forced to the resolved maxContextSize',
   });
+  // The capability-level input cap mirrors the field-level provenance of
+  // maxInputSize (config / override / clamp); without a declaration the
+  // total window is the only ceiling.
+  const maxInputSource = sources.get('model.effective.maxInputSize');
+  sources.set(
+    'resolved.capabilities.max_input_tokens',
+    maxInputSource ?? {
+      kind: 'none',
+      detail: 'no declared input limit — the total window applies',
+    },
+  );
 }
 
 function attributeHeaders(

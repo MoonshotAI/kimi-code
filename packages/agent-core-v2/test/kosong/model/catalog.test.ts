@@ -508,6 +508,9 @@ describe('ModelCatalog inspect', () => {
       expect(view.sources['resolved.capabilities.max_context_tokens']).toMatchObject({
         kind: 'synthesized',
       });
+      expect(view.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'none',
+      });
       expect(view.sources['resolved']).toMatchObject({ kind: 'synthesized' });
       // Kimi's definition capability is UNKNOWN — nothing is detected.
       expect(view.sources['resolved.capabilities.tool_use']).toMatchObject({ kind: 'none' });
@@ -581,6 +584,55 @@ describe('ModelCatalog inspect', () => {
       expect(view.sources['model.effective.maxContextSize']).toMatchObject({ kind: 'override' });
       expect(view.sources['resolved.maxContextSize']).toMatchObject({ kind: 'override' });
       expect(view.sources['model.effective.model']).toMatchObject({ kind: 'config' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('attributes the input cap to config, its clamp, and its absence', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        kimi: { type: 'kimi', apiKey: 'sk', baseUrl: 'https://api.example.test/v1' },
+      },
+      models: {
+        declared: {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 400000,
+          maxInputSize: 272000,
+        },
+        clamped: {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 400000,
+          maxInputSize: 272000,
+          overrides: { maxContextSize: 128000 },
+        },
+        plain: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 100 },
+      },
+    });
+    try {
+      const declaredView = catalog.inspect('declared');
+      expect(declaredView.resolved.maxInputSize).toBe(272000);
+      expect(declaredView.sources['model.effective.maxInputSize']).toMatchObject({ kind: 'config' });
+      expect(declaredView.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'config',
+      });
+
+      const clampedView = catalog.inspect('clamped');
+      expect(clampedView.resolved.maxInputSize).toBe(128000);
+      expect(clampedView.sources['model.effective.maxInputSize']).toMatchObject({
+        kind: 'synthesized',
+        detail: expect.stringContaining('clamped'),
+      });
+      expect(clampedView.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'synthesized',
+      });
+
+      const plainView = catalog.inspect('plain');
+      expect(plainView.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'none',
+      });
     } finally {
       host.dispose();
     }

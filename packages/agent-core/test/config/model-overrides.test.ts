@@ -16,6 +16,20 @@ function alias(overrides?: ModelAlias['overrides']): ModelAlias {
 }
 
 describe('effectiveModelAlias', () => {
+  it('clamps the input cap to the effective total window', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 400000,
+      maxInputSize: 272000,
+      overrides: { maxContextSize: 128000 },
+    };
+
+    const effective = effectiveModelAlias(model);
+    expect(effective.maxContextSize).toBe(128000);
+    expect(effective.maxInputSize).toBe(128000);
+  });
+
   it('returns the alias unchanged when there are no overrides', () => {
     const model = alias();
 

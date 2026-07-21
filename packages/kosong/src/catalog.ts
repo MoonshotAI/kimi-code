@@ -435,9 +435,11 @@ function applyModelProviderOverride(
   const override = raw.provider;
   if (override === undefined) return model;
   // An api-only override keeps the provider's wire; an npm override points at
-  // a (possibly different) one. Unidentified npm keeps the benefit of doubt.
+  // a (possibly different) one. Unrecognized npm gets the same
+  // OpenAI-compatible fallback as top-level entries so a concretely declared
+  // endpoint is not silently dropped.
   const overrideWire =
-    typeof override.npm === 'string' ? inferOverrideWire(override.npm) : providerWire;
+    typeof override.npm === 'string' ? (inferOverrideWire(override.npm) ?? 'openai') : providerWire;
   if (overrideWire === undefined) return model;
   const rawApi = override.api;
   const api = rawApi ?? entry.api;

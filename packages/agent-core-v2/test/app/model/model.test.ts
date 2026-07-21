@@ -28,6 +28,19 @@ import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 
 describe('effectiveModelConfig', () => {
+  it('clamps the input cap to the effective total window', () => {
+    const effective = effectiveModelConfig({
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 400000,
+      maxInputSize: 272000,
+      overrides: { maxContextSize: 128000 },
+    });
+
+    expect(effective.maxContextSize).toBe(128000);
+    expect(effective.maxInputSize).toBe(128000);
+  });
+
   it('derives the official effort metadata from a Claude model name', () => {
     expect(
       effectiveModelConfig({

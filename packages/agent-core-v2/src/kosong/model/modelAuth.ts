@@ -119,6 +119,13 @@ export function effectiveModelConfig(
   ) {
     delete effective.defaultEffort;
   }
+  if (
+    effective.maxInputSize !== undefined &&
+    effective.maxContextSize !== undefined &&
+    effective.maxInputSize > effective.maxContextSize
+  ) {
+    effective.maxInputSize = effective.maxContextSize;
+  }
   return withAnthropicProfile(effective, providerType);
 }
 

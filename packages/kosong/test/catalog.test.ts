@@ -699,4 +699,39 @@ describe('catalogProviderModels', () => {
     });
     expect(models).toHaveLength(0);
   });
+
+  it('falls back to the OpenAI wire for unrecognized override SDKs, preserving a concrete endpoint', () => {
+    // xai-flavored model on an OpenAI-compatible gateway: the npm is unknown
+    // but the endpoint is concrete — carry it (same-wire), do not drop it.
+    const models = catalogProviderModels({
+      id: 'gateway',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://gateway.example.test/v1',
+      models: {
+        'tenant-model': {
+          id: 'tenant-model',
+          limit: { context: 1000 },
+          provider: { npm: '@ai-sdk/xai', api: 'https://tenant.example.test/v1' },
+        },
+      },
+    });
+    expect(models[0]).toMatchObject({ baseUrl: 'https://tenant.example.test/v1' });
+    expect(models[0]?.protocol).toBeUndefined();
+  });
+
+  it('skips unrecognized-wire overrides when the provider speaks another wire', () => {
+    const models = catalogProviderModels({
+      id: 'claude-gw',
+      npm: '@ai-sdk/anthropic',
+      api: 'https://gw.example.test',
+      models: {
+        'vendor-model': {
+          id: 'vendor-model',
+          limit: { context: 1000 },
+          provider: { npm: '@ai-sdk/xai', api: 'https://tenant.example.test/v1' },
+        },
+      },
+    });
+    expect(models).toHaveLength(0);
+  });
 });

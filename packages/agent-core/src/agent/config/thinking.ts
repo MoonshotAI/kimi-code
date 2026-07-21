@@ -104,13 +104,16 @@ export function resolveThinkingEffort(
   kimiProtocol = false,
 ): ThinkingEffort {
   const effectiveModel = model === undefined ? undefined : effectiveModelAlias(model);
+  // Normalize the configured value once: 'OFF' / ' off ' must be read as off
+  // on every path, not passed upstream as a concrete effort.
+  const configured = config?.effort === undefined ? undefined : config.effort.trim().toLowerCase();
   let effort: ThinkingEffort;
   if (requested !== undefined) {
     effort = requested;
   } else if (config?.enabled === false) {
     effort = 'off';
   } else {
-    effort = config?.effort ?? defaultThinkingEffortFor(effectiveModel);
+    effort = configured ?? defaultThinkingEffortFor(effectiveModel);
   }
 
   if (effort === 'off' && effectiveModel?.capabilities?.includes('always_thinking') === true) {
@@ -119,8 +122,8 @@ export function resolveThinkingEffort(
     // disable, it should not also discard a chosen effort. A configured
     // 'off' is treated as absent: the model default applies instead.
     effort =
-      config?.effort !== undefined && config.effort.trim().toLowerCase() !== 'off'
-        ? config.effort
+      configured !== undefined && configured !== 'off'
+        ? configured
         : defaultThinkingEffortFor(effectiveModel);
   }
 
