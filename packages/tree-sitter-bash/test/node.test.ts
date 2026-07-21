@@ -48,6 +48,27 @@ describe('createNode', () => {
     a.addChild(child);
     expect(() => b.addChild(child)).toThrow(/already has a parent/);
   });
+
+  it('rejects children outside the parent range', () => {
+    const parent = createNode({ type: 'command', source: SOURCE, startIndex: 0, endIndex: 8 });
+    expect(() =>
+      parent.addChild(createNode({ type: 'word', source: SOURCE, startIndex: 0, endIndex: 9 })),
+    ).toThrow(RangeError);
+  });
+
+  it('rejects overlapping or out-of-order siblings', () => {
+    const parent = createNode({ type: 'command', source: SOURCE, startIndex: 0, endIndex: 8 });
+    parent.addChild(createNode({ type: 'word', source: SOURCE, startIndex: 2, endIndex: 5 }));
+    expect(() => parent.addChild(createNode({ type: 'word', source: SOURCE, startIndex: 4, endIndex: 7 }))).toThrow(
+      RangeError,
+    );
+    expect(() => parent.addChild(createNode({ type: 'word', source: SOURCE, startIndex: 0, endIndex: 2 }))).toThrow(
+      RangeError,
+    );
+    // Adjacent (start == previous end) is fine.
+    parent.addChild(createNode({ type: 'word', source: SOURCE, startIndex: 5, endIndex: 8 }));
+    expect(parent.children).toHaveLength(2);
+  });
 });
 
 describe('children vs namedChildren', () => {
@@ -94,5 +115,18 @@ describe('descendantsOfType', () => {
   it('does not include the root itself', () => {
     const leaf = createNode({ type: 'word', source: SOURCE, startIndex: 0, endIndex: 4 });
     expect(descendantsOfType(leaf, 'word')).toEqual([]);
+  });
+
+  it('handles pathologically deep trees without overflowing the stack', () => {
+    // 200k-deep chain; a recursive walk would overflow the call stack.
+    const depth = 200_000;
+    const nodes = [];
+    for (let i = 0; i < depth; i++) {
+      nodes.push(createNode({ type: 'word', source: SOURCE, startIndex: 0, endIndex: 1 }));
+    }
+    for (let i = depth - 2; i >= 0; i--) {
+      nodes[i]!.addChild(nodes[i + 1]!);
+    }
+    expect(descendantsOfType(nodes[0]!, 'word')).toHaveLength(depth - 1);
   });
 });

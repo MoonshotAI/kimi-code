@@ -71,9 +71,24 @@ export class SyntaxNodeBuilder {
   }
 
   /** Attach a child, wiring its parent pointer. Named children are also added
-   *  to `namedChildren`. Returns the child for chaining. */
+   *  to `namedChildren`. Returns the child for chaining.
+   *
+   *  Children must lie inside the parent's range and be appended in source
+   *  order without overlapping the previous sibling (a zero-width child may
+   *  start exactly where the previous sibling ends). */
   addChild<T extends SyntaxNodeBuilder>(child: T): T {
     if (child.parent !== null) throw new Error(`node '${child.type}' already has a parent`);
+    if (child.startIndex < this.startIndex || child.endIndex > this.endIndex) {
+      throw new RangeError(
+        `child '${child.type}' [${child.startIndex}, ${child.endIndex}) escapes parent '${this.type}' [${this.startIndex}, ${this.endIndex})`,
+      );
+    }
+    const last = this.children.at(-1);
+    if (last !== undefined && child.startIndex < last.endIndex) {
+      throw new RangeError(
+        `child '${child.type}' [${child.startIndex}, ${child.endIndex}) overlaps sibling '${last.type}' [${last.startIndex}, ${last.endIndex})`,
+      );
+    }
     child.parent = this;
     this.children.push(child);
     if (child.isNamed) this.namedChildren.push(child);
@@ -89,17 +104,18 @@ export function createNode(init: NodeInit): SyntaxNodeBuilder {
 /**
  * Pre-order traversal of the named descendants of `root` (not including
  * `root` itself), filtered to the given types. With no types, returns every
- * named descendant in pre-order.
+ * named descendant in pre-order. Iterative with an explicit stack so that
+ * pathologically deep trees cannot overflow the call stack.
  */
 export function descendantsOfType(root: SyntaxNode, ...types: string[]): SyntaxNode[] {
   const wanted = types.length > 0 ? new Set(types) : null;
   const out: SyntaxNode[] = [];
-  const walk = (node: SyntaxNode): void => {
-    for (const child of node.namedChildren) {
-      if (wanted === null || wanted.has(child.type)) out.push(child);
-      walk(child);
-    }
-  };
-  walk(root);
+  const stack: SyntaxNode[] = [];
+  for (let i = root.namedChildren.length - 1; i >= 0; i--) stack.push(root.namedChildren[i]!);
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (wanted === null || wanted.has(node.type)) out.push(node);
+    for (let i = node.namedChildren.length - 1; i >= 0; i--) stack.push(node.namedChildren[i]!);
+  }
   return out;
 }
