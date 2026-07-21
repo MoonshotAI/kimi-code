@@ -41,6 +41,16 @@ export function isAuthUploadError(error: unknown): boolean {
 }
 
 /**
+ * Whether the provider's wire format can carry an inline `data:` video part.
+ * The OpenAI family cannot: chat completions rejects the part outright and
+ * the Responses adapter degrades it to an omitted-video placeholder, so an
+ * inline fallback there only bloats history with bytes the model never sees.
+ */
+export function inlineVideoSupported(providerName: string): boolean {
+  return providerName !== 'openai' && providerName !== 'openai-responses';
+}
+
+/**
  * Deliver a video through the provider's upload channel when available,
  * falling back to an inline base64 part when the channel is missing or the
  * upload fails for a non-auth reason — a failed upload must not turn the whole

@@ -30,7 +30,11 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '../../tools/support/file-type';
-import { deliverVideoContent, isAuthUploadError } from '../../tools/support/video-delivery';
+import {
+  deliverVideoContent,
+  inlineVideoSupported,
+  isAuthUploadError,
+} from '../../tools/support/video-delivery';
 import { MAX_MEDIA_BYTES } from '../../tools/builtin/file/read-media';
 import { abortReason } from '../../utils/abort';
 
@@ -105,9 +109,21 @@ async function resolveOneVideo(
     if (stat.stSize > MAX_MEDIA_BYTES) return videoTag(path);
 
     const data = await agent.kaos.readBytes(path);
+    const uploader = agent.tools.videoUploader();
+    // No upload channel and a wire that drops inline video (OpenAI family):
+    // the tag is the only form that actually reaches the model — an inline
+    // part would persist ~4/3× the file size in history just to be degraded
+    // to a placeholder on every request.
+    if (
+      uploader === undefined &&
+      agent.config.hasProvider &&
+      !inlineVideoSupported(agent.config.provider.name)
+    ) {
+      return videoTag(path);
+    }
     return await deliverVideoContent(
       { data, mimeType: fileType.mimeType, filename: path.split(/[\\/]/).at(-1) },
-      agent.tools.videoUploader(),
+      uploader,
       signal,
     );
   } catch (error) {

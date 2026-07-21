@@ -333,7 +333,8 @@ describe('prompt-attached video resolution', () => {
   it('falls back to an inline base64 part when the provider has no upload channel', async () => {
     const ctx = testAgent();
     ctx.configure({
-      provider: { type: 'openai', apiKey: 'test-key', model: 'mock-model' },
+      // Anthropic: no upload channel, but the wire carries inline data: video.
+      provider: { type: 'anthropic', apiKey: 'test-key', model: 'mock-model' },
       modelCapabilities: VIDEO_CAPS,
     });
     ctx.mockNextResponse({ type: 'text', text: 'ok' });
@@ -344,6 +345,28 @@ describe('prompt-attached video resolution', () => {
     const part = firstUserContent(ctx).find((p) => p.type === 'video_url');
     expect(part?.type === 'video_url' && part.videoUrl.url).toMatch(/^data:video\/mp4;base64,/);
   });
+
+  it.each(['openai', 'openai_responses'] as const)(
+    'degrades to a <video path> tag for a no-upload %s provider whose wire drops inline video',
+    async (type) => {
+      const ctx = testAgent();
+      ctx.configure({
+        provider: { type, apiKey: 'test-key', model: 'mock-model' },
+        modelCapabilities: VIDEO_CAPS,
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'ok' });
+
+      const path = tempVideo();
+      await ctx.rpc.prompt({ input: [{ type: 'video_url', videoUrl: { url: fileUrl(path) } }] });
+      await ctx.untilTurnEnd();
+
+      const text = firstUserContent(ctx)
+        .map((p) => (p.type === 'text' ? p.text : ''))
+        .join('');
+      expect(text).toContain(`<video path="${path}">`);
+      expect(firstUserContent(ctx).some((p) => p.type === 'video_url')).toBe(false);
+    },
+  );
 
   it('falls back to an inline base64 part on a non-auth upload failure', async () => {
     const stub = await stubFilesServer(400);
