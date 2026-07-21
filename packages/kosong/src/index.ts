@@ -42,7 +42,9 @@ export {
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,
+  catalogProviderNeedsBaseUrl,
   inferWireType,
+  isGuessedWireType,
 } from './catalog';
 export type { Catalog, CatalogModel, CatalogModelEntry, CatalogProviderEntry } from './catalog';
 

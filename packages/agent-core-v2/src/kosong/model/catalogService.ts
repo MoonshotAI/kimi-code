@@ -654,6 +654,7 @@ function buildProtocolProviderOptions(
     case 'openai': {
       const reasoningKey = nonEmpty(model.reasoningKey);
       if (reasoningKey !== undefined) options.reasoningKey = reasoningKey;
+      if (model.offEffort !== undefined) options.offEffort = model.offEffort;
       break;
     }
     case 'google-genai': {
@@ -670,6 +671,7 @@ function buildProtocolProviderOptions(
       break;
     }
     case 'openai_responses':
+      if (model.offEffort !== undefined) options.offEffort = model.offEffort;
       break;
     default: {
       const exhaustive: never = protocol;
@@ -682,13 +684,6 @@ function buildProtocolProviderOptions(
     : undefined;
 }
 
-/**
- * The Anthropic effort profile the effective pass applies, recomputed for
- * attribution only — mirrors `withAnthropicProfile`'s gate exactly (the
- * trait-driven vendor check routes through the registry, never a string
- * compare). `inferred` marks the unknown-name fallback, which only applies
- * to names still carrying a Claude marker (see `matchUnknownClaudeProfile`).
- */
 function profileForAttribution(
   configuredModel: ModelRecord,
   providerConfig: ProviderConfig | undefined,

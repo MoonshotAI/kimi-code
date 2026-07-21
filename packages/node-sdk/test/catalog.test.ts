@@ -237,6 +237,52 @@ describe('applyCatalogProvider', () => {
     expect(plain?.baseUrl).toBeUndefined();
   });
 
+  it('maps always-thinking models to always_thinking and carries the off encoding', () => {
+    const models = catalogProviderModels({
+      id: 'gateway',
+      models: {
+        'gpt-5': {
+          id: 'gpt-5',
+          reasoning: true,
+          reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high'] }],
+          limit: { context: 400000, input: 272000 },
+        },
+        'grok-4': {
+          id: 'grok-4',
+          reasoning: true,
+          reasoning_options: [{ type: 'effort', values: ['none', 'low', 'medium', 'high'] }],
+          limit: { context: 256000 },
+        },
+      },
+    });
+    const config = { providers: {} } as KimiConfig;
+
+    applyCatalogProvider(config, {
+      providerId: 'gateway',
+      wire: 'openai',
+      baseUrl: 'https://gateway.example.test/v1',
+      apiKey: 'sk',
+      models,
+      selectedModelId: 'gpt-5',
+      thinking: true,
+    });
+
+    // No off option: thinking is locked on for a model that always reasons.
+    expect(config.models?.['gateway/gpt-5']).toMatchObject({
+      capabilities: ['thinking', 'tool_use'].map((c) => (c === 'thinking' ? 'always_thinking' : c)),
+      supportEfforts: ['low', 'medium', 'high'],
+    });
+    expect(config.models?.['gateway/gpt-5']?.capabilities).not.toContain('thinking');
+    expect(config.models?.['gateway/gpt-5']?.offEffort).toBeUndefined();
+
+    // 'none' becomes the off encoding; the level list stays selectable-only.
+    expect(config.models?.['gateway/grok-4']).toMatchObject({
+      capabilities: ['thinking', 'tool_use'],
+      supportEfforts: ['low', 'medium', 'high'],
+      offEffort: 'none',
+    });
+  });
+
   it('clears stale aliases for the same provider but keeps others', () => {
     const config = {
       providers: { anthropic: { type: 'anthropic', apiKey: 'old' } },

@@ -67,6 +67,7 @@ const ModelBaseSchema = z.object({
   betaApi: z.boolean().optional(),
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
+  offEffort: z.string().optional(),
 });
 
 export const ModelOverrideSchema = ModelBaseSchema.omit({

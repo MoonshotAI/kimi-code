@@ -14,6 +14,10 @@
  *    managed models routed through protocol `anthropic` — keep only
  *    catalog-declared effort metadata. The verdict comes from the registry
  *    (`drivesThinkingThroughTraits`), not from a vendor string compare.
+ *    The unknown-name fallback within that inference only applies to names
+ *    that still carry a Claude marker (a `claude` substring or a bare family
+ *    word like `sonnet-latest`); clearly non-Claude names served over the
+ *    Anthropic protocol get no synthesized effort metadata.
  */
 
 import { Error2 } from '#/_base/errors/errors';
@@ -121,10 +125,6 @@ export function effectiveModelConfig(
 function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelRecord {
   const wireName = model.name ?? model.model;
   const protocol = model.protocol ?? providerType;
-  // The inferred fallback only applies to names that still carry a Claude
-  // marker (e.g. a proxied `claude-latest`): clearly non-Claude models served
-  // over the Anthropic protocol (catalog-imported Kimi `k3`, GLM, …) must
-  // not advertise Claude effort levels.
   const profile =
     wireName === undefined
       ? undefined

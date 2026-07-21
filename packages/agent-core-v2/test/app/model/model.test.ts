@@ -60,6 +60,24 @@ describe('effectiveModelConfig', () => {
     });
   });
 
+  it('infers Anthropic effort metadata for a bare Claude family alias on a non-Kimi Anthropic provider', () => {
+    expect(
+      effectiveModelConfig(
+        {
+          provider: 'custom',
+          model: 'sonnet-latest',
+          maxContextSize: 200000,
+          protocol: 'anthropic',
+        },
+        'anthropic',
+      ),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
   it('does not infer Anthropic effort metadata for a clearly non-Claude model on a non-Kimi Anthropic provider', () => {
     expect(
       effectiveModelConfig(

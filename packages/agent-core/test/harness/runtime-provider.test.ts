@@ -283,6 +283,42 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.offEffort to the openai and openai_responses provider configs', () => {
+    const config = {
+      ...BASE_CONFIG,
+      providers: {
+        ...BASE_CONFIG.providers,
+        gateway: { type: 'openai', apiKey: 'sk-gateway' } as const,
+        responses: { type: 'openai_responses', apiKey: 'sk-responses' } as const,
+      },
+      models: {
+        ...BASE_CONFIG.models!,
+        'gateway/grok': {
+          provider: 'gateway',
+          model: 'grok-4',
+          maxContextSize: 256000,
+          supportEfforts: ['low', 'medium', 'high'],
+          offEffort: 'none',
+        },
+        'responses/grok': {
+          provider: 'responses',
+          model: 'grok-4',
+          maxContextSize: 256000,
+          offEffort: 'none',
+        },
+      },
+    } as KimiConfig;
+
+    expect(resolveRuntimeProvider({ config, model: 'gateway/grok' }).provider).toMatchObject({
+      type: 'openai',
+      offEffort: 'none',
+    });
+    expect(resolveRuntimeProvider({ config, model: 'responses/grok' }).provider).toMatchObject({
+      type: 'openai_responses',
+      offEffort: 'none',
+    });
+  });
+
   it('prefers alias.baseUrl over the provider base URL for the anthropic wire', () => {
     // Catalog gateway shape: provider default is the OpenAI wire, one model
     // carries an Anthropic protocol + endpoint override.

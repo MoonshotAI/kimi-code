@@ -216,6 +216,38 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('passes a declared offEffort through providerOptions for the OpenAI wires', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        gateway: { type: 'openai', apiKey: 'sk-gw', baseUrl: 'https://gateway.example.test/v1' },
+        responses: { type: 'openai_responses', apiKey: 'sk-r' },
+      },
+      models: {
+        grok: {
+          provider: 'gateway',
+          model: 'grok-4',
+          maxContextSize: 256000,
+          supportEfforts: ['low', 'medium', 'high'],
+          offEffort: 'none',
+        },
+        grokResponses: {
+          provider: 'responses',
+          model: 'grok-4',
+          maxContextSize: 256000,
+          offEffort: 'none',
+        },
+        plain: { provider: 'gateway', model: 'gpt-4.1', maxContextSize: 1000 },
+      },
+    });
+    try {
+      expect(catalog.get('grok').providerOptions).toEqual({ offEffort: 'none' });
+      expect(catalog.get('grokResponses').providerOptions).toEqual({ offEffort: 'none' });
+      expect(catalog.get('plain').providerOptions).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('enables google-genai vertex mode through providerOptions when project and location resolve', () => {
     const { host, catalog } = createHost({
       providers: {

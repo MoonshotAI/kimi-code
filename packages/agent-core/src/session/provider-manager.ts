@@ -132,6 +132,7 @@ export class ProviderManager implements ModelProvider {
       effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
       effectiveAlias.supportEfforts,
+      effectiveAlias.offEffort,
       effectiveAlias.adaptiveThinking,
       alias.betaApi,
     );
@@ -259,6 +260,7 @@ function toKosongProviderConfig(
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
   supportEfforts: readonly string[] | undefined,
+  offEffort: string | undefined,
   adaptiveThinking: boolean | undefined,
   betaApi: boolean | undefined,
 ): KosongProviderConfig {
@@ -307,6 +309,7 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
+        offEffort,
         // Session affinity: route every request of this session through the
         // same provider-side prompt cache (the OpenAI analog of Anthropic
         // `metadata.user_id` above). Undefined values are stripped at
@@ -349,6 +352,7 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        offEffort,
         // Session affinity: same `prompt_cache_key` intent as the `openai`
         // branch; the Responses API accepts it as a top-level request field.
         generationKwargs: { prompt_cache_key: promptCacheKey },

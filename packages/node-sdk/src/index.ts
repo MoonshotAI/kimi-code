@@ -21,10 +21,12 @@ export {
   catalogBaseUrl,
   catalogModelToAlias,
   catalogProviderModels,
+  catalogProviderNeedsBaseUrl,
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
+  isGuessedWireType,
   loadBuiltInCatalog,
 } from '#/catalog';
 export type {

@@ -23,11 +23,13 @@ import {
   applyCatalogProvider,
   catalogBaseUrl,
   catalogProviderModels,
+  catalogProviderNeedsBaseUrl,
   CatalogFetchError,
   createKimiHarness,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
+  isGuessedWireType,
   type Catalog,
   type CatalogProviderEntry,
   type KimiConfig,
@@ -67,6 +69,7 @@ interface CatalogAddOptions {
   readonly apiKey?: string;
   readonly defaultModel?: string;
   readonly url?: string;
+  readonly baseUrl?: string;
 }
 
 export async function handleProviderAdd(
@@ -276,9 +279,11 @@ export async function handleCatalogList(
 
   for (const [id, entry] of entries) {
     const modelCount = entry.models === undefined ? 0 : Object.keys(entry.models).length;
-    const wire = inferWireType(entry) ?? '?';
+    const wire = inferWireType(entry);
+    const wireLabel =
+      wire === undefined ? '?' : isGuessedWireType(entry) ? `${wire} (guessed)` : wire;
     deps.stdout.write(
-      `${id}  wire=${wire}  models=${String(modelCount)}  ${entry.name ?? ''}\n`,
+      `${id}  wire=${wireLabel}  models=${String(modelCount)}  ${entry.name ?? ''}\n`,
     );
   }
 }
@@ -312,7 +317,9 @@ export async function handleCatalogAdd(
 
   const wire = inferWireType(entry);
   if (wire === undefined) {
-    deps.stderr.write(`Provider "${providerId}" has an unsupported wire type in the catalog.\n`);
+    deps.stderr.write(
+      `Provider "${providerId}" uses a proprietary SDK this client cannot speak (e.g. Amazon Bedrock); it cannot be imported from the catalog.\n`,
+    );
     deps.exit(1);
   }
 
@@ -325,6 +332,20 @@ export async function handleCatalogAdd(
   if (opts.defaultModel !== undefined && !models.some((m) => m.id === opts.defaultModel)) {
     deps.stderr.write(
       `Model "${opts.defaultModel}" is not in provider "${providerId}". Run "kimi provider catalog list ${providerId}" to see available ids.\n`,
+    );
+    deps.exit(1);
+  }
+
+  let baseUrl = catalogBaseUrl(entry, wire) ?? opts.baseUrl;
+  if (baseUrl === undefined && catalogProviderNeedsBaseUrl(entry, wire)) {
+    deps.stderr.write(
+      `The catalog does not declare an endpoint for "${providerId}". Pass --base-url <url> (e.g. the vendor's OpenAI-compatible base URL).\n`,
+    );
+    deps.exit(1);
+  }
+  if (baseUrl !== undefined && baseUrl.includes('${')) {
+    deps.stderr.write(
+      `Base URL "${baseUrl}" contains an env placeholder. Pass --base-url with the resolved value.\n`,
     );
     deps.exit(1);
   }
@@ -346,7 +367,6 @@ export async function handleCatalogAdd(
     config = await harness.removeProvider(providerId);
   }
 
-  const baseUrl = catalogBaseUrl(entry, wire);
   // `applyCatalogProvider` always overwrites both `defaultModel` and
   // `[thinking]`. The values we pass here are temporary; we restore
   // a consistent state in the post-apply block below.
@@ -391,6 +411,11 @@ export async function handleCatalogAdd(
   deps.stdout.write(
     `Imported ${displayName} (${providerId}) with ${String(models.length)} model${models.length === 1 ? '' : 's'} from ${url}.\n`,
   );
+  if (isGuessedWireType(entry)) {
+    deps.stdout.write(
+      `Note: the catalog does not declare a protocol for "${providerId}"; guessed "openai". Edit "type" in config.toml if requests fail.\n`,
+    );
+  }
   if (opts.defaultModel !== undefined) {
     deps.stdout.write(`Default model set to ${providerId}/${opts.defaultModel}.\n`);
   }
@@ -481,11 +506,15 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
     .description('Import a known provider from the catalog by id.')
     .option('--api-key <key>', 'API key for the provider. Falls back to KIMI_REGISTRY_API_KEY.')
     .option('--default-model <modelId>', 'Mark the imported model as default_model after import.')
+    .option(
+      '--base-url <url>',
+      'Override the catalog endpoint. Required when the catalog declares none (or an env placeholder).',
+    )
     .option('--url <url>', `Override catalog URL. Defaults to ${DEFAULT_CATALOG_URL}.`)
     .action(
       async (
         providerId: string,
-        options: { apiKey?: string; defaultModel?: string; url?: string },
+        options: { apiKey?: string; defaultModel?: string; url?: string; baseUrl?: string },
       ) => {
         const resolved = resolveDeps(deps);
         await runAction(resolved, () =>
@@ -493,6 +522,7 @@ export function registerProviderCommand(parent: Command, deps?: Partial<Provider
             ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
             ...(options.defaultModel === undefined ? {} : { defaultModel: options.defaultModel }),
             ...(options.url === undefined ? {} : { url: options.url }),
+            ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
           }),
         );
       },

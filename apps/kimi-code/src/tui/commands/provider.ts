@@ -8,10 +8,12 @@ import {
   applyCatalogProvider,
   catalogBaseUrl,
   catalogProviderModels,
+  catalogProviderNeedsBaseUrl,
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
+  isGuessedWireType,
   type Catalog,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -33,6 +35,7 @@ import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { effectiveModelForHost } from './config';
 import {
   promptApiKey,
+  promptBaseUrl,
   promptCatalogProviderSelection,
 } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -192,15 +195,22 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     return;
   }
 
-  const apiKey = await promptApiKey(host, entry.name ?? providerId);
-  if (apiKey === undefined) return;
-
   const wire = inferWireType(entry);
   if (wire === undefined) {
-    host.showError(`Provider "${providerId}" has unsupported wire type.`);
+    host.showError(
+      `Provider "${providerId}" uses a proprietary SDK this client cannot speak (e.g. Amazon Bedrock); it cannot be imported from the catalog.`,
+    );
     return;
   }
-  const baseUrl = catalogBaseUrl(entry, wire);
+
+  let baseUrl = catalogBaseUrl(entry, wire);
+  if (baseUrl === undefined && catalogProviderNeedsBaseUrl(entry, wire)) {
+    baseUrl = await promptBaseUrl(host, entry.name ?? providerId);
+    if (baseUrl === undefined) return;
+  }
+
+  const apiKey = await promptApiKey(host, entry.name ?? providerId);
+  if (apiKey === undefined) return;
 
   // Persist the provider and all its models immediately after the api key is
   // entered. The model selector that follows is just a convenience to pick the
@@ -229,6 +239,11 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   await host.authFlow.refreshConfigAfterLogin();
   host.track('connect', { provider: providerId, method: 'catalog' });
   host.showStatus(`Provider added: ${entry.name ?? providerId}`);
+  if (isGuessedWireType(entry)) {
+    host.showStatus(
+      `Protocol guessed as "openai" for ${providerId} — edit "type" in config.toml if requests fail.`,
+    );
+  }
 
   // Build a merged model dictionary that includes existing models plus the
   // newly-persisted provider's models, so the tabbed selector shows every

@@ -56,6 +56,11 @@ const ModelAliasBaseSchema = z.object({
   // config.toml. The user's chosen effort is stored globally in thinking.effort.
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
+  // The effort value that encodes "thinking off" on the wire for this model
+  // (models.dev declares it as the "none" entry, e.g. xai grok). When set,
+  // turning thinking off sends this value instead of omitting the effort
+  // field — required by models whose default is to reason.
+  offEffort: z.string().optional(),
   // Route the Anthropic transport through the beta Messages API
   // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
   // managed Kimi Code models that declare `protocol: 'anthropic'`.

@@ -73,6 +73,18 @@ export interface CatalogModel {
   /** Declared thinking effort levels from `reasoning_options`, when present. */
   readonly supportEfforts?: readonly string[];
   /**
+   * The effort value that encodes "thinking off" for this model (models.dev
+   * declares it as the `'none'` entry in `reasoning_options`). Undefined when
+   * the model has no such value — then `off` simply sends no effort field.
+   */
+  readonly offEffort?: string;
+  /**
+   * True when the model declares effort levels without any way to disable
+   * thinking (no `toggle` entry and no `'none'` value) — it always reasons at
+   * some level, so the UI must not offer an off option.
+   */
+  readonly alwaysThinking?: boolean;
+  /**
    * Per-model protocol override from the catalog entry's `provider` field
    * (gateway providers serving this model over the Anthropic protocol).
    */
@@ -117,10 +129,36 @@ function isUsableChatModel(model: CatalogModelEntry): boolean {
 
 /**
  * Resolves a catalog provider entry to a supported wire type. Honors an
- * explicit `type`, otherwise infers from `npm`/`id`. Unknown providers return
- * `undefined` so callers can omit them instead of writing an invalid config.
+ * explicit `type`, otherwise infers from `npm`/`id`. models.dev omits `type`
+ * for vendor-specific SDKs; most of those speak OpenAI-compatible chat
+ * completions, so unknown providers fall back to `'openai'` (reported via
+ * {@link isGuessedWireType} so callers can surface the guess). The only
+ * `undefined` results are SDKs known to be non-OpenAI proprietary (e.g.
+ * Amazon Bedrock), where the fallback would write a config that can never
+ * work — callers keep refusing those instead.
  */
 export function inferWireType(entry: CatalogProviderEntry): ProviderType | undefined {
+  const declared = inferDeclaredWireType(entry);
+  if (declared !== undefined) return declared;
+  // An explicit but unrecognized `type` is a protocol this client version
+  // does not know — refuse it rather than guessing (a future kokub protocol
+  // must not be silently wired as OpenAI).
+  if (typeof entry.type === 'string' && entry.type.length > 0) return undefined;
+  const npm = (entry.npm ?? '').toLowerCase();
+  if (npm.includes('amazon-bedrock')) return undefined;
+  return 'openai';
+}
+
+/**
+ * True when the wire comes from the blanket `'openai'` fallback rather than
+ * an explicit `type` or a recognized `npm`/`id` — callers should tell the
+ * user the protocol was guessed (and may need a manual `base_url`).
+ */
+export function isGuessedWireType(entry: CatalogProviderEntry): boolean {
+  return inferDeclaredWireType(entry) === undefined && inferWireType(entry) !== undefined;
+}
+
+function inferDeclaredWireType(entry: CatalogProviderEntry): ProviderType | undefined {
   if (isWireType(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
   const id = (entry.id ?? '').toLowerCase();
@@ -145,15 +183,34 @@ export function inferWireType(entry: CatalogProviderEntry): ProviderType | undef
  * appends `/v1/messages` itself — so a catalog `api` ending in `/v1` would POST
  * to `/v1/v1/messages` (404). Strip the trailing `/v1` for anthropic. OpenAI
  * family SDKs append `/chat/completions` to a `/v1` base, so those pass through.
+ * URLs containing `${VAR}` are SDK-side env interpolations the config cannot
+ * express; they resolve to `undefined` so callers can ask for a URL instead.
  */
 export function catalogBaseUrl(
   entry: CatalogProviderEntry,
   wire: ProviderType,
 ): string | undefined {
   const api = entry.api;
-  if (typeof api !== 'string' || api.length === 0) return undefined;
+  if (typeof api !== 'string' || api.length === 0 || api.includes('${')) return undefined;
   if (wire === 'anthropic') return api.replace(/\/v1\/?$/, '');
   return api;
+}
+
+/**
+ * True when importing this provider needs a base URL from the user: the
+ * catalog supplies none (or only an env placeholder), and the wire's built-in
+ * default endpoint only applies to the vendor's official SDK package — for
+ * every other npm it would silently point at the wrong host (e.g. an xai key
+ * sent to api.openai.com). Vertex/google wires resolve their endpoint from
+ * env coordinates and official SDKs, so they never need the prompt.
+ */
+export function catalogProviderNeedsBaseUrl(
+  entry: CatalogProviderEntry,
+  wire: ProviderType,
+): boolean {
+  if (wire !== 'openai' && wire !== 'openai_responses') return false;
+  if (catalogBaseUrl(entry, wire) !== undefined) return false;
+  return (entry.npm ?? '').toLowerCase() !== '@ai-sdk/openai';
 }
 
 /** Normalizes one catalog model entry into a {@link CatalogModel}; skips invalid entries. */
@@ -164,7 +221,7 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
   if (!isUsableChatModel(model)) return undefined;
   const inputs = model.modalities?.input ?? [];
   const output = model.limit?.output;
-  const supportEfforts = catalogSupportEfforts(model.reasoning_options);
+  const thinking = catalogThinkingOptions(model.reasoning_options);
   // `limit.input` is the true prompt cap when declared (e.g. gpt-5: 400k
   // context window but a 272k input limit); sizing the context budget to the
   // total window would let the prompt overflow before compaction kicks in.
@@ -178,14 +235,18 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
     name: typeof model.name === 'string' && model.name.length > 0 ? model.name : undefined,
     maxOutputSize: typeof output === 'number' && output > 0 ? output : undefined,
     reasoningKey: catalogReasoningKey(model.interleaved),
-    supportEfforts,
+    supportEfforts: thinking.efforts,
+    offEffort: thinking.offEffort,
+    alwaysThinking: thinking.alwaysThinking,
     capability: {
       image_in: inputs.includes('image'),
       video_in: inputs.includes('video'),
       audio_in: inputs.includes('audio'),
-      // Declaring concrete effort levels implies thinking support even when
-      // the `reasoning` boolean is absent (mirrors the api.json importer).
-      thinking: Boolean(model.reasoning) || supportEfforts !== undefined,
+      // Declaring concrete effort levels (or a toggle) implies thinking
+      // support even when the `reasoning` boolean is absent (mirrors the
+      // api.json importer).
+      thinking:
+        Boolean(model.reasoning) || thinking.efforts !== undefined || thinking.hasToggle,
       tool_use: model.tool_call ?? true,
       max_context_tokens: maxContextTokens,
       dynamically_loaded_tools: model.dynamically_loaded_tools === true,
@@ -194,24 +255,42 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
 }
 
 /**
- * Extracts the declared effort levels from a `reasoning_options` list — the
- * `{ type: 'effort', values: [...] }` entry. The value `'none'` means
- * "reasoning can be disabled" (e.g. xai grok); the UI already expresses that
- * with its own `off` entry, so it is not a selectable level and is dropped.
+ * Reads a `reasoning_options` list: the `{ type: 'effort', values: [...] }`
+ * levels, the `'none'` pseudo-level, and the `{ type: 'toggle' }` boolean
+ * form. `'none'` is not a selectable level — it is the wire encoding for
+ * disabling thinking (e.g. xai grok) and becomes {@link CatalogModel.offEffort};
+ * the UI keeps using its own `off` entry for it. A model that declares levels
+ * with neither a toggle nor `'none'` always reasons — it cannot be turned off.
  */
-function catalogSupportEfforts(
-  options: CatalogModelEntry['reasoning_options'],
-): readonly string[] | undefined {
-  if (!Array.isArray(options)) return undefined;
-  for (const option of options) {
-    if (option?.type !== 'effort' || !Array.isArray(option.values)) continue;
-    const efforts = option.values.filter(
-      (value: unknown): value is string =>
-        typeof value === 'string' && value.length > 0 && value.toLowerCase() !== 'none',
-    );
-    if (efforts.length > 0) return efforts;
+function catalogThinkingOptions(options: CatalogModelEntry['reasoning_options']): {
+  readonly efforts: readonly string[] | undefined;
+  readonly offEffort: string | undefined;
+  readonly hasToggle: boolean;
+  readonly alwaysThinking: boolean | undefined;
+} {
+  if (!Array.isArray(options)) {
+    return { efforts: undefined, offEffort: undefined, hasToggle: false, alwaysThinking: undefined };
   }
-  return undefined;
+  let efforts: readonly string[] | undefined;
+  let offEffort: string | undefined;
+  let hasToggle = false;
+  for (const option of options) {
+    if (option?.type === 'toggle') {
+      hasToggle = true;
+      continue;
+    }
+    if (option?.type !== 'effort' || !Array.isArray(option.values)) continue;
+    const levels = (option.values as unknown[]).filter(
+      (value: unknown): value is string => typeof value === 'string' && value.length > 0,
+    );
+    const off = levels.find((value) => value.toLowerCase() === 'none');
+    if (off !== undefined) offEffort = off;
+    const selectable = levels.filter((value) => value.toLowerCase() !== 'none');
+    if (selectable.length > 0) efforts = selectable;
+  }
+  const alwaysThinking =
+    efforts !== undefined && offEffort === undefined && !hasToggle ? true : undefined;
+  return { efforts, offEffort, hasToggle, alwaysThinking };
 }
 
 function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): string | undefined {

@@ -4,7 +4,9 @@ import {
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,
+  catalogProviderNeedsBaseUrl,
   inferWireType,
+  isGuessedWireType,
   type CatalogModelEntry,
 } from '../src/catalog';
 
@@ -23,9 +25,60 @@ describe('inferWireType', () => {
     expect(inferWireType({ id: 'google-vertex' })).toBe('vertexai');
   });
 
-  it('returns undefined for unknown / invalid wire types', () => {
-    expect(inferWireType({ id: 'some-proxy' })).toBeUndefined();
+  it('refuses an explicit but unrecognized type instead of guessing', () => {
     expect(inferWireType({ id: 'x', type: 'not-a-wire' })).toBeUndefined();
+    expect(isGuessedWireType({ id: 'x', type: 'not-a-wire' })).toBe(false);
+  });
+
+  it('falls back to openai for vendor-specific SDKs models.dev does not type', () => {
+    // xai shape: vendor npm, no explicit type, no api.
+    expect(inferWireType({ id: 'xai', npm: '@ai-sdk/xai' })).toBe('openai');
+    expect(isGuessedWireType({ id: 'xai', npm: '@ai-sdk/xai' })).toBe(true);
+    // openrouter shape: vendor npm with its own api — still a guess, but a usable one.
+    expect(inferWireType({ id: 'openrouter', npm: '@openrouter/ai-sdk-provider' })).toBe('openai');
+    expect(isGuessedWireType({ id: 'openrouter', npm: '@openrouter/ai-sdk-provider' })).toBe(true);
+    // Recognized SDKs are never guesses.
+    expect(isGuessedWireType({ id: 'zenmux', npm: '@ai-sdk/openai-compatible' })).toBe(false);
+    expect(isGuessedWireType({ id: 'x', type: 'openai_responses' })).toBe(false);
+  });
+
+  it('refuses SDKs known to be proprietary instead of guessing', () => {
+    expect(inferWireType({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toBeUndefined();
+    expect(isGuessedWireType({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toBe(false);
+  });
+});
+
+describe('catalogProviderNeedsBaseUrl', () => {
+  it('requires a URL for guessed vendors without one (xai shape)', () => {
+    expect(
+      catalogProviderNeedsBaseUrl({ id: 'xai', npm: '@ai-sdk/xai' }, 'openai'),
+    ).toBe(true);
+  });
+
+  it('does not require a URL for the official OpenAI SDK or a declared api', () => {
+    expect(catalogProviderNeedsBaseUrl({ id: 'openai', npm: '@ai-sdk/openai' }, 'openai')).toBe(
+      false,
+    );
+    expect(
+      catalogProviderNeedsBaseUrl(
+        { id: 'openrouter', npm: '@openrouter/ai-sdk-provider', api: 'https://openrouter.ai/api/v1' },
+        'openai',
+      ),
+    ).toBe(false);
+  });
+
+  it('requires a URL when the catalog api is an env placeholder', () => {
+    expect(
+      catalogProviderNeedsBaseUrl(
+        { id: 'neon', npm: '@ai-sdk/openai-compatible', api: '${NEON_BASE_URL}/v1' },
+        'openai',
+      ),
+    ).toBe(true);
+  });
+
+  it('never requires a URL for non-OpenAI wires', () => {
+    expect(catalogProviderNeedsBaseUrl({ id: 'anthropic', npm: '@ai-sdk/anthropic' }, 'anthropic')).toBe(false);
+    expect(catalogProviderNeedsBaseUrl({ id: 'google-vertex', npm: '@ai-sdk/google-vertex' }, 'vertexai')).toBe(false);
   });
 });
 
@@ -57,6 +110,13 @@ describe('catalogBaseUrl', () => {
   it('returns undefined for a missing or empty api', () => {
     expect(catalogBaseUrl({ id: 'x' }, 'anthropic')).toBeUndefined();
     expect(catalogBaseUrl({ id: 'x', api: '' }, 'openai')).toBeUndefined();
+  });
+
+  it('returns undefined for env-placeholder URLs the config cannot express', () => {
+    expect(catalogBaseUrl({ id: 'neon', api: '${NEON_BASE_URL}/v1' }, 'openai')).toBeUndefined();
+    expect(
+      catalogBaseUrl({ id: 'azure', api: 'https://${AZURE_RESOURCE_NAME}.example.test/anthropic/v1' }, 'anthropic'),
+    ).toBeUndefined();
   });
 });
 
@@ -154,13 +214,17 @@ describe('catalogModelToCapability', () => {
     expect(model?.capability.thinking).toBe(true);
   });
 
-  it("drops the 'none' pseudo-effort (the UI already offers 'off')", () => {
+  it("reads the 'none' entry as the off encoding, not a selectable level", () => {
     const model = catalogModelToCapability({
       id: 'grok',
+      reasoning: true,
       reasoning_options: [{ type: 'effort', values: ['none', 'low', 'medium', 'high'] }],
       limit: { context: 1000 },
     });
     expect(model?.supportEfforts).toEqual(['low', 'medium', 'high']);
+    expect(model?.offEffort).toBe('none');
+    expect(model?.alwaysThinking).toBeUndefined();
+    expect(model?.capability.thinking).toBe(true);
 
     const upper = catalogModelToCapability({
       id: 'grok',
@@ -168,6 +232,33 @@ describe('catalogModelToCapability', () => {
       limit: { context: 1000 },
     });
     expect(upper?.supportEfforts).toEqual(['high']);
+    expect(upper?.offEffort).toBe('None');
+  });
+
+  it('marks effort models with no toggle and no none value as always-thinking', () => {
+    // gpt-5 shape: levels exist but reasoning cannot be disabled.
+    const model = catalogModelToCapability({
+      id: 'gpt-5',
+      reasoning: true,
+      reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high'] }],
+      limit: { context: 400000 },
+    });
+    expect(model?.supportEfforts).toEqual(['low', 'medium', 'high']);
+    expect(model?.offEffort).toBeUndefined();
+    expect(model?.alwaysThinking).toBe(true);
+
+    // A toggle entry makes thinking disable-able again (the k3 shape).
+    const toggleable = catalogModelToCapability({
+      id: 'k3',
+      reasoning: true,
+      reasoning_options: [
+        { type: 'toggle' },
+        { type: 'effort', values: ['low', 'high', 'max'] },
+      ],
+      limit: { context: 1000 },
+    });
+    expect(toggleable?.alwaysThinking).toBeUndefined();
+    expect(toggleable?.offEffort).toBeUndefined();
   });
 
   it('yields no effort list for toggle-only, budget_tokens, or empty reasoning_options', () => {

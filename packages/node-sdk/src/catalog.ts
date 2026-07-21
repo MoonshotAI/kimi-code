@@ -2,7 +2,9 @@ import type { KimiConfig, ModelAlias } from '@moonshot-ai/agent-core';
 import {
   catalogBaseUrl,
   catalogProviderModels,
+  catalogProviderNeedsBaseUrl,
   inferWireType,
+  isGuessedWireType,
   type Catalog,
   type CatalogModel,
   type CatalogProviderEntry,
@@ -10,7 +12,7 @@ import {
   type ProviderType,
 } from '@moonshot-ai/kosong';
 
-export { catalogBaseUrl, catalogProviderModels, inferWireType };
+export { catalogBaseUrl, catalogProviderModels, catalogProviderNeedsBaseUrl, inferWireType, isGuessedWireType };
 export type { Catalog, CatalogModel, CatalogProviderEntry };
 
 export const DEFAULT_CATALOG_URL = 'https://models.dev/api.json';
@@ -65,15 +67,22 @@ function capabilityToStrings(capability: ModelCapability): string[] | undefined 
 
 /** Builds a kimi-code model alias from a normalized catalog model. */
 export function catalogModelToAlias(providerId: string, model: CatalogModel): ModelAlias {
+  const caps = capabilityToStrings(model.capability);
   return {
     provider: providerId,
     model: model.id,
     maxContextSize: model.capability.max_context_tokens,
     maxOutputSize: model.maxOutputSize,
-    capabilities: capabilityToStrings(model.capability),
+    // A model that always reasons advertises `always_thinking` instead of
+    // `thinking`, so the UI locks thinking on and offers no off option.
+    capabilities:
+      model.alwaysThinking === true
+        ? caps?.map((cap) => (cap === 'thinking' ? 'always_thinking' : cap))
+        : caps,
     displayName: model.name,
     reasoningKey: model.reasoningKey,
     supportEfforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
+    offEffort: model.offEffort,
     protocol: model.protocol,
     baseUrl: model.baseUrl,
   };
