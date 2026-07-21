@@ -20,6 +20,18 @@
 //             a plain word character).
 //   eof       end of the lexer's range. Also carries pending heredoc bodies.
 //
+// Additionally:
+//   - `;&` and `;;&` are single op tokens (case_item fallthrough
+//     terminators).
+//   - `((...))` at token start is scanned as one word token (arithmetic
+//     command / c-style for header), so the parser can re-scan the range
+//     with its expression parser; the word ends right after the balanced
+//     close and does not merge with following word characters.
+//   - peekAt(n) looks arbitrarily far ahead (function_definition
+//     detection); reposition(pos) rewinds the stream (test commands parse
+//     their [[ ... ]] range character-wise and then resume tokenizing past
+//     the closer).
+//
 // The lexer is range-bounded: sub-parsers lex $(...) / `...` bodies with
 // their own Lexer over the same source but a narrower [start, end) window.
 //
@@ -76,7 +88,17 @@ export interface HeredocBody {
 /** How often long scan loops tick the budget, in scanned characters. */
 const SCAN_TICK_INTERVAL = 2048;
 
-const CONTROL_OPERATORS = ['&>>', '&>', '&&', '&', '|&', '||', '|', ';;', ';', '(', ')'] as const;
+/**
+ * Depth cap for the scanBalanced ↔ skipDoubleQuoted mutual recursion
+ * (`${a#"${a#"…` nests two scan frames per level). Beyond the cap the scan
+ * reports "unbalanced", letting the parser degrade the construct with
+ * hasError instead of overflowing the call stack. Sized above the parser's
+ * own nesting guards (which trigger first for parser-driven recursion);
+ * this cap only protects lexer-driven scans of pathological input.
+ */
+const MAX_SCAN_DEPTH = 1024;
+
+const CONTROL_OPERATORS = ['&>>', '&>', '&&', '&', '|&', '||', '|', ';;&', ';;', ';&', ';', '(', ')'] as const;
 const REDIRECT_OPERATORS = ['<<-', '<<<', '<<', '<&-', '<&', '<>', '<', '>&-', '>&', '>>', '>|', '>'] as const;
 
 function isWordChar(ch: string | undefined): boolean {
@@ -95,8 +117,10 @@ function isDigitAt(source: string, i: number): boolean {
 /** Skip a "..." quoted region starting at `i` (which points at the opening
  *  quote). Returns the index just past the closing quote, or `end` when the
  *  string is unterminated. Substitution-aware: $(...), ${...} and `...`
- *  inside the string may themselves contain quotes. */
-export function skipDoubleQuoted(source: string, budget: ParseBudget, i: number, end: number): number {
+ *  inside the string may themselves contain quotes. `depth` tracks the
+ *  scanBalanced ↔ skipDoubleQuoted recursion (see MAX_SCAN_DEPTH). */
+export function skipDoubleQuoted(source: string, budget: ParseBudget, i: number, end: number, depth = 0): number {
+  if (depth >= MAX_SCAN_DEPTH) return end;
   let j = i + 1;
   let sinceTick = 0;
   while (j < end) {
@@ -117,11 +141,11 @@ export function skipDoubleQuoted(source: string, budget: ParseBudget, i: number,
     if (ch === '$') {
       const next = source[j + 1];
       if (next === '(') {
-        j = scanBalanced(source, budget, j + 1, end, '(', ')').end;
+        j = scanBalancedStatements(source, budget, j + 1, end, depth + 1).end;
         continue;
       }
       if (next === '{') {
-        j = scanBalanced(source, budget, j + 1, end, '{', '}').end;
+        j = scanBalanced(source, budget, j + 1, end, '{', '}', depth + 1).end;
         continue;
       }
     }
@@ -166,7 +190,8 @@ export interface BalancedScan {
 }
 
 /** Scan a balanced open/close region starting at `i` (which points at the
- *  opening character). Quote- and escape-aware. */
+ *  opening character). Quote- and escape-aware. `depth` tracks the
+ *  scanBalanced ↔ skipDoubleQuoted recursion (see MAX_SCAN_DEPTH). */
 export function scanBalanced(
   source: string,
   budget: ParseBudget,
@@ -174,8 +199,10 @@ export function scanBalanced(
   end: number,
   open: string,
   close: string,
+  depth = 0,
 ): BalancedScan {
-  let depth = 0;
+  if (depth >= MAX_SCAN_DEPTH) return { end, balanced: false };
+  let nesting = 0;
   let j = i;
   let sinceTick = 0;
   while (j < end) {
@@ -189,12 +216,12 @@ export function scanBalanced(
       continue;
     }
     if (ch === open) {
-      depth++;
+      nesting++;
     } else if (ch === close) {
-      depth--;
-      if (depth === 0) return { end: j + 1, balanced: true };
+      nesting--;
+      if (nesting === 0) return { end: j + 1, balanced: true };
     } else if (ch === '"') {
-      j = skipDoubleQuoted(source, budget, j, end);
+      j = skipDoubleQuoted(source, budget, j, end, depth + 1);
       continue;
     } else if (ch === "'") {
       j = skipSingleQuoted(source, budget, j, end);
@@ -208,12 +235,128 @@ export function scanBalanced(
   return { end, balanced: false };
 }
 
+/** Words after which a `case` word opens a case_statement (statement
+ *  position) rather than being an ordinary argument. */
+const CASE_ENABLING_WORDS: ReadonlySet<string> = new Set(['if', 'then', 'elif', 'else', 'while', 'until', 'do']);
+
+/**
+ * Case-aware variant of scanBalanced for `(` … `)` regions that may hold
+ * full statements (command/process substitution bodies). A naive paren
+ * count closes the region early on a case_item pattern (`a) 1;; esac`):
+ * every item's `)` would decrement the depth. While a `case` is open (seen
+ * in statement position, not yet closed by `esac`), a `)` at the paren
+ * depth where the `case` started is a pattern close and does NOT count;
+ * parens from other constructs inside the case (subshells, $(…), the
+ * optional `(` of an item) balance themselves normally.
+ *
+ * Statement position is approximated lexically: `case` counts as a keyword
+ * after `(`, `;`, `&`, `|`, a newline, `{`, or one of the compound
+ * keywords in CASE_ENABLING_WORDS — so `echo case` does not confuse the
+ * scan. `esac` pops the innermost open case regardless of position (the
+ * reference scanner emits the esac token even in argument position).
+ */
+export function scanBalancedStatements(
+  source: string,
+  budget: ParseBudget,
+  i: number,
+  end: number,
+  depth = 0,
+): BalancedScan {
+  if (depth >= MAX_SCAN_DEPTH) return { end, balanced: false };
+  let nesting = 0;
+  /** Paren depths at which each open case_statement started. */
+  const caseDepths: number[] = [];
+  let j = i;
+  /** What preceded the current position: 'start' | 'sep' | 'keyword' | 'word'. */
+  let previous: 'start' | 'sep' | 'keyword' | 'word' = 'start';
+  let sinceTick = 0;
+  while (j < end) {
+    if (++sinceTick >= SCAN_TICK_INTERVAL) {
+      budget.progress();
+      sinceTick = 0;
+    }
+    const ch = source[j]!;
+    if (ch === '\\') {
+      j += 2;
+      continue;
+    }
+    if (ch === '"') {
+      j = skipDoubleQuoted(source, budget, j, end, depth + 1);
+      previous = 'word';
+      continue;
+    }
+    if (ch === "'") {
+      j = skipSingleQuoted(source, budget, j, end);
+      previous = 'word';
+      continue;
+    }
+    if (ch === '`') {
+      j = skipBacktick(source, budget, j, end);
+      previous = 'word';
+      continue;
+    }
+    if (ch === ' ' || ch === '\t' || ch === '\r') {
+      j++;
+      continue;
+    }
+    if (ch === '\n' || ch === ';' || ch === '&' || ch === '|') {
+      previous = 'sep';
+      j++;
+      continue;
+    }
+    if (ch === '{') {
+      previous = 'sep';
+      j++;
+      continue;
+    }
+    if (ch === '(') {
+      nesting++;
+      previous = 'sep';
+      j++;
+      continue;
+    }
+    if (ch === ')') {
+      if (caseDepths.length > 0 && caseDepths.at(-1) === nesting) {
+        // A case_item pattern close: not a paren.
+        previous = 'sep';
+        j++;
+        continue;
+      }
+      nesting--;
+      if (nesting === 0) return { end: j + 1, balanced: true };
+      previous = 'word';
+      j++;
+      continue;
+    }
+    // A word run: check for the case/esac keywords.
+    let k = j;
+    while (k < end && isWordChar(source[k])) k++;
+    if (k > j) {
+      const word = source.slice(j, k);
+      if (word === 'esac' && caseDepths.length > 0) {
+        caseDepths.pop();
+        previous = 'sep';
+      } else if (word === 'case' && previous !== 'word') {
+        caseDepths.push(nesting);
+        previous = 'word';
+      } else {
+        previous = CASE_ENABLING_WORDS.has(word) ? 'keyword' : 'word';
+      }
+      j = k;
+      continue;
+    }
+    previous = 'word';
+    j++;
+  }
+  return { end, balanced: false };
+}
+
 /** Skip a $-construct starting at `i` (which points at the `$`). Handles
  *  $(...), $((...)), ${...}, $name and the single-character specials. A `$`
  *  followed by anything else (including a quote) consumes just the `$`. */
 export function skipDollar(source: string, budget: ParseBudget, i: number, end: number): number {
   const next = source[i + 1];
-  if (next === '(') return scanBalanced(source, budget, i + 1, end, '(', ')').end;
+  if (next === '(') return scanBalancedStatements(source, budget, i + 1, end).end;
   if (next === '{') return scanBalanced(source, budget, i + 1, end, '{', '}').end;
   if (isWordChar(next)) {
     let j = i + 1;
@@ -227,7 +370,7 @@ export function skipDollar(source: string, budget: ParseBudget, i: number, end: 
 export class Lexer {
   /** Current scan position; exposed for the parser's heredoc bookkeeping. */
   pos: number;
-  private lookahead: Token | null = null;
+  private lookahead: Token[] = [];
   private readonly pendingHeredocs: HeredocSpec[] = [];
 
   constructor(
@@ -239,20 +382,37 @@ export class Lexer {
     this.pos = start;
   }
 
+  /** End of the lexer's range (exclusive). */
+  get rangeEnd(): number {
+    return this.end;
+  }
+
   /** Queue a heredoc body to be scanned after the current line. */
   queueHeredoc(spec: HeredocSpec): void {
     this.pendingHeredocs.push(spec);
   }
 
   peek(): Token {
-    this.lookahead ??= this.scanToken();
-    return this.lookahead;
+    return this.peekAt(0);
+  }
+
+  /** Look `n` tokens ahead (0 = the next token). Tokens are scanned
+   *  on demand and buffered, so lookahead never re-scans. */
+  peekAt(n: number): Token {
+    while (this.lookahead.length <= n) this.lookahead.push(this.scanToken());
+    return this.lookahead[n]!;
   }
 
   next(): Token {
-    const token = this.peek();
-    this.lookahead = null;
-    return token;
+    if (this.lookahead.length > 0) return this.lookahead.shift()!;
+    return this.scanToken();
+  }
+
+  /** Rewind the stream to `pos`, discarding buffered lookahead. Used when
+   *  the parser consumed a region character-wise (test commands). */
+  reposition(pos: number): void {
+    this.pos = pos;
+    this.lookahead = [];
   }
 
   text(token: Token): string {
@@ -287,6 +447,9 @@ export class Lexer {
       return this.scanOp(REDIRECT_OPERATORS);
     }
     if (ch === '&' || ch === '|' || ch === ';' || ch === '(' || ch === ')') {
+      // `((` at token start opens arithmetic (an arithmetic command or a
+      // c-style for header), which is word material, not two parens.
+      if (ch === '(' && this.source[this.pos + 1] === '(') return this.scanWord();
       return this.scanOp(CONTROL_OPERATORS);
     }
     if (ch === '{' || ch === '}' || ch === '[' || ch === ']') {
@@ -352,6 +515,12 @@ export class Lexer {
 
   private scanWord(): Token {
     const start = this.pos;
+    // `((...))` at token start: one word token ending right after the
+    // balanced close (the parser re-scans the range as arithmetic).
+    if (this.source[start] === '(' && this.source[start + 1] === '(') {
+      this.pos = scanBalanced(this.source, this.budget, start, this.end, '(', ')').end;
+      return { type: 'word', start, end: this.pos, heredocBodies: [] };
+    }
     let i = this.pos;
     let sinceTick = 0;
     while (i < this.end) {
@@ -365,7 +534,7 @@ export class Lexer {
       if (ch === '{' || ch === '}' || ch === '[' || ch === ']') break;
       if (ch === '<' || ch === '>') {
         if (this.source[i + 1] === '(') {
-          i = scanBalanced(this.source, this.budget, i + 1, this.end, '(', ')').end;
+          i = scanBalancedStatements(this.source, this.budget, i + 1, this.end).end;
           continue;
         }
         break;
