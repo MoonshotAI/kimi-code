@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
+import type { KimiConfig, SDKSessionRPC } from '../../src/rpc';
 import type { ResolvedAgentProfile } from '../../src/profile';
-import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
 import {
@@ -1573,10 +1573,450 @@ describe('Session.createAgent', () => {
   });
 });
 
+describe('SessionSubagentHost thinking-effort separation (dual-model-routing)', () => {
+  it('passes the session thinking-effort override to child config when the flag is on', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.setPermission({ mode: 'yolo' });
+    parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Read',
+    });
+
+    const child = testAgent({
+      type: 'sub',
+      permission: { parent: parent.agent.permission },
+    });
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Investigated the request and completed the child task end to end. The relevant module was located, its behavior traced through every call site, and the requested change applied and verified against the existing test suite.',
+    });
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    const session = fakeSession(parent.agent, child.agent);
+    // Enable the flag and provide a live thinking-effort override.
+    const sessionMock = session as unknown as {
+      experimentalFlags: { enabled: (id: string) => boolean };
+      getSubagentThinkingEffort: ReturnType<typeof vi.fn>;
+    };
+    sessionMock.experimentalFlags = { enabled: (id: string) => id === 'dual-model-routing' };
+    sessionMock.getSubagentThinkingEffort.mockReturnValue('high');
+
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.spawn({
+      profileName: 'explore',
+      parentToolCallId: 'call_agent',
+      prompt: 'Find the cause',
+      description: 'Find cause',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    // configureChild's update call must carry the resolved override effort.
+    // (The mock model normalizes the stored value, so we assert the argument
+    // passed to update(), not the post-normalization getter.)
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ thinkingEffort: 'high' }),
+    );
+  });
+
+  it('passes the parent thinking effort to child config when the flag is off', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.setPermission({ mode: 'yolo' });
+    parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Read',
+    });
+
+    const child = testAgent({
+      type: 'sub',
+      permission: { parent: parent.agent.permission },
+    });
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Investigated the request and completed the child task end to end. The relevant module was located, its behavior traced through every call site, and the requested change applied and verified against the existing test suite.',
+    });
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    // fakeSession defaults to flag OFF.
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.spawn({
+      profileName: 'explore',
+      parentToolCallId: 'call_agent',
+      prompt: 'Find the cause',
+      description: 'Find cause',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ thinkingEffort: parent.agent.config.thinkingEffort }),
+    );
+  });
+
+  it('reapplies the resolved thinking effort when resuming a subagent', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.agent.permission.setMode('yolo');
+
+    const child = testAgent();
+    child.configure({ tools: ['Read'] });
+    child.agent.config.update({ modelAlias: 'stale-model-from-initial-spawn' });
+    child.agent.useProfile(
+      profile({ name: 'explore', tools: ['Read'], systemPrompt: 'explore prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
+    });
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': { homedir: '/tmp/kimi-session/agents/agent-0', type: 'sub', parentAgentId: 'main' },
+    });
+    const sessionMock = session as unknown as {
+      experimentalFlags: { enabled: (id: string) => boolean };
+      getSubagentThinkingEffort: ReturnType<typeof vi.fn>;
+    };
+    sessionMock.experimentalFlags = { enabled: (id: string) => id === 'dual-model-routing' };
+    sessionMock.getSubagentThinkingEffort.mockReturnValue('high');
+
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.resume('agent-0', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Continue from context',
+      description: 'Continue work',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    // resume's realignment update must carry the resolved override effort.
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ thinkingEffort: 'high' }),
+    );
+  });
+});
+
+describe('SessionSubagentHost dual-model-routing (model + btw exception)', () => {
+  it('passes the session subagent model override to child config on spawn when the flag is on', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.setPermission({ mode: 'yolo' });
+    parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Read',
+    });
+
+    const child = testAgent({
+      type: 'sub',
+      permission: { parent: parent.agent.permission },
+    });
+    registerAlias(child.agent.kimiConfig, 'glm-5.2');
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Investigated the request and completed the child task end to end. The relevant module was located, its behavior traced through every call site, and the requested change applied and verified against the existing test suite.',
+    });
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    const session = fakeSession(parent.agent, child.agent, {}, {
+      dualModelRouting: true,
+      subagentModel: 'glm-5.2',
+    });
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.spawn({
+      profileName: 'explore',
+      parentToolCallId: 'call_agent',
+      prompt: 'Find the cause',
+      description: 'Find cause',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    // configureChild's update call must carry the subagent override model,
+    // not the parent model. (Assert the update() argument — the mock model
+    // normalizes the stored value.)
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'glm-5.2' }),
+    );
+    expect(updateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: parent.agent.config.modelAlias }),
+    );
+  });
+
+  it('passes the session subagent model override to child config on resume when the flag is on', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.agent.permission.setMode('yolo');
+
+    const child = testAgent();
+    registerAlias(child.agent.kimiConfig, 'glm-5.2');
+    child.configure({ tools: ['Read'] });
+    child.agent.config.update({ modelAlias: 'stale-model-from-initial-spawn' });
+    child.agent.useProfile(
+      profile({ name: 'explore', tools: ['Read'], systemPrompt: 'explore prompt' }),
+    );
+    child.agent.context.appendUserMessage([{ type: 'text', text: 'Earlier context' }]);
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
+    });
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': { homedir: '/tmp/kimi-session/agents/agent-0', type: 'sub', parentAgentId: 'main' },
+    }, {
+      dualModelRouting: true,
+      subagentModel: 'glm-5.2',
+    });
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.resume('agent-0', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Continue from context',
+      description: 'Continue work',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    // resume's realignment update must carry the subagent override model.
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'glm-5.2' }),
+    );
+  });
+
+  it('passes the session subagent model override to child config on retry when the flag is on', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const summary =
+      'Recovered from a transient failure by retrying the latest subagent step with the original context intact, then completed the delegated work with a detailed enough summary for the parent to continue confidently. '.repeat(
+        2,
+      );
+    let generateCalls = 0;
+    const generate: GenerateFn = async (
+      _provider,
+      _systemPrompt,
+      _tools,
+      _history,
+      callbacks,
+    ) => {
+      generateCalls += 1;
+      if (generateCalls === 1) throw new APIStatusError(429, 'Rate limited', 'req-429');
+      await callbacks?.onMessagePart?.({ type: 'text', text: summary });
+      return textResult(summary);
+    };
+    const child = testAgent({
+      generate,
+      initialConfig: { providers: {}, loopControl: { maxRetriesPerStep: 1 } },
+    });
+    registerAlias(child.agent.kimiConfig, 'glm-5.2');
+    child.configure();
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    const session = fakeSession(parent.agent, child.agent, {}, {
+      dualModelRouting: true,
+      subagentModel: 'glm-5.2',
+    });
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the retry-safe change',
+      description: 'Fix rate-limit retry',
+      runInBackground: false,
+      signal,
+    });
+    await expect(handle.completion).rejects.toThrow('Rate limited');
+
+    const retryHandle = await host.retry(handle.agentId, {
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the retry-safe change',
+      description: 'Fix rate-limit retry',
+      runInBackground: false,
+      signal,
+    });
+    await retryHandle.completion;
+
+    // retry's realignment update must carry the subagent override model.
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'glm-5.2' }),
+    );
+  });
+
+  it('passes the parent model to child config on spawn when the flag is off', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.setPermission({ mode: 'yolo' });
+    parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Read',
+    });
+
+    const child = testAgent({
+      type: 'sub',
+      permission: { parent: parent.agent.permission },
+    });
+    child.mockNextResponse({
+      type: 'text',
+      text: 'Investigated the request and completed the child task end to end. The relevant module was located, its behavior traced through every call site, and the requested change applied and verified against the existing test suite.',
+    });
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    // flag off (default) — child inherits the parent model.
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.spawn({
+      profileName: 'explore',
+      parentToolCallId: 'call_agent',
+      prompt: 'Find the cause',
+      description: 'Find cause',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: parent.agent.config.modelAlias }),
+    );
+  });
+
+  it('reapplies the resolved thinking effort on retry when the flag is on', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const summary =
+      'Recovered from a transient failure by retrying the latest subagent step with the original context intact, then completed the delegated work with a detailed enough summary for the parent to continue confidently. '.repeat(
+        2,
+      );
+    let generateCalls = 0;
+    const generate: GenerateFn = async (
+      _provider,
+      _systemPrompt,
+      _tools,
+      _history,
+      callbacks,
+    ) => {
+      generateCalls += 1;
+      if (generateCalls === 1) throw new APIStatusError(429, 'Rate limited', 'req-429');
+      await callbacks?.onMessagePart?.({ type: 'text', text: summary });
+      return textResult(summary);
+    };
+    const child = testAgent({
+      generate,
+      initialConfig: { providers: {}, loopControl: { maxRetriesPerStep: 1 } },
+    });
+    child.configure();
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    const session = fakeSession(parent.agent, child.agent, {}, {
+      dualModelRouting: true,
+      subagentThinkingEffort: 'high',
+    });
+    const host = new SessionSubagentHost(session, 'main');
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the retry-safe change',
+      description: 'Fix rate-limit retry',
+      runInBackground: false,
+      signal,
+    });
+    await expect(handle.completion).rejects.toThrow('Rate limited');
+
+    const retryHandle = await host.retry(handle.agentId, {
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the retry-safe change',
+      description: 'Fix rate-limit retry',
+      runInBackground: false,
+      signal,
+    });
+    await retryHandle.completion;
+
+    // retry's realignment update must carry the resolved override effort.
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ thinkingEffort: 'high' }),
+    );
+  });
+
+  it('startBtw always inherits the parent model and effort even when dual-model-routing is on', async () => {
+    const parent = testAgent();
+    parent.configure();
+
+    const child = testAgent({ type: 'sub' });
+    child.configure();
+    const updateSpy = vi.spyOn(child.agent.config, 'update');
+
+    // Flag ON with subagent overrides active — startBtw must STILL use the
+    // parent's model and effort (cache-affinity rationale in subagent-host.ts).
+    const session = fakeSession(parent.agent, child.agent, {}, {
+      dualModelRouting: true,
+      subagentModel: 'glm-5.2',
+      subagentThinkingEffort: 'high',
+    });
+    const host = new SessionSubagentHost(session, 'main');
+    await host.startBtw();
+
+    // The btw child's config.update must carry the PARENT's modelAlias and
+    // thinkingEffort — never the subagent override.
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelAlias: parent.agent.config.modelAlias,
+        thinkingEffort: parent.agent.config.thinkingEffort,
+      }),
+    );
+    expect(updateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'glm-5.2' }),
+    );
+    expect(updateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ thinkingEffort: 'high' }),
+    );
+  });
+});
+
+/** Register an extra model alias in a test agent's config so provider
+ *  resolution succeeds when a subagent is routed to it. */
+function registerAlias(config: KimiConfig | undefined, alias: string): void {
+  if (config === undefined) return;
+  if (config.models === undefined) config.models = {};
+  config.models[alias] = {
+    provider: 'test-provider',
+    model: 'mock-model',
+    maxContextSize: 1_000_000,
+  };
+  if (config.providers === undefined) config.providers = {};
+  if (config.providers['test-provider'] === undefined) {
+    config.providers['test-provider'] = {
+      type: 'kimi',
+      apiKey: 'test-key',
+    };
+  }
+}
+
 function fakeSession(
   parent: Agent,
   child: Agent,
   metadataAgents: Session['metadata']['agents'] = {},
+  overrides: {
+    /** Return value for `session.getSubagentModel()`. */
+    readonly subagentModel?: string;
+    /** Return value for `session.getSubagentThinkingEffort()`. */
+    readonly subagentThinkingEffort?: string;
+    /** Whether `dual-model-routing` is enabled. Defaults to off. */
+    readonly dualModelRouting?: boolean;
+  } = {},
 ) {
   const agents = new Map<string, Agent>([['main', parent]]);
   if (metadataAgents['agent-0'] !== undefined) {
@@ -1597,8 +2037,11 @@ function fakeSession(
     systemContextKaos: vi.fn((cwd: string) => parent.kaos.withCwd(cwd)),
     getReadyAgent: vi.fn((id: string) => agents.get(id)),
     // dual-model-routing defaults to off; subagents inherit the parent model.
-    getSubagentModel: vi.fn(() => undefined),
-    experimentalFlags: { enabled: () => false },
+    getSubagentModel: vi.fn(() => overrides.subagentModel ?? undefined),
+    getSubagentThinkingEffort: vi.fn(() => overrides.subagentThinkingEffort ?? undefined),
+    experimentalFlags: {
+      enabled: (id: string) => id === 'dual-model-routing' && overrides.dualModelRouting === true,
+    },
     ensureAgentResumed: vi.fn(async (id: string) => {
       const agent = agents.get(id);
       if (agent === undefined) {

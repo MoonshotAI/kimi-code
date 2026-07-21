@@ -244,6 +244,23 @@ export interface GetSubagentModelResult {
   /** The effective subagent model alias, or `undefined` when none is configured. */
   readonly subagentModel?: string | undefined;
 }
+/**
+ * Set the session-level subagent thinking-effort override (`dual-model-routing`
+ * experimental feature). When `effort` is an empty string the live override is
+ * cleared (subagents fall back to the config default, then the parent's effort).
+ */
+export interface SetSubagentThinkingPayload {
+  readonly effort: string;
+}
+export interface SetSubagentThinkingResult {
+  /** The effective subagent thinking effort, or `undefined` when none is
+   * configured (subagents will inherit the parent's effort). */
+  readonly subagentThinkingEffort?: string | undefined;
+}
+export interface GetSubagentThinkingResult {
+  /** The effective subagent thinking effort, or `undefined` when none is configured. */
+  readonly subagentThinkingEffort?: string | undefined;
+}
 export interface CancelPlanPayload {
   readonly id?: string;
 }
@@ -510,6 +527,8 @@ export interface SessionAPI extends AgentAPIWithId {
   getSessionMetadata: (payload: EmptyPayload) => SessionMeta;
   setSubagentModel: (payload: SetSubagentModelPayload) => SetSubagentModelResult;
   getSubagentModel: (payload: EmptyPayload) => GetSubagentModelResult;
+  setSubagentThinking: (payload: SetSubagentThinkingPayload) => SetSubagentThinkingResult;
+  getSubagentThinking: (payload: EmptyPayload) => GetSubagentThinkingResult;
   listSkills: (payload: EmptyPayload) => readonly SkillSummary[];
   listPluginCommands: (payload: EmptyPayload) => readonly PluginCommandDef[];
   listMcpServers: (payload: EmptyPayload) => readonly McpServerInfo[];

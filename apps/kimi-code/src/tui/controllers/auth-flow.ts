@@ -111,6 +111,8 @@ export class AuthFlowController {
       sessionId: '',
       model: '',
       sessionTitle: null,
+      subagentModel: undefined,
+      subagentThinkingEffort: undefined,
     });
     await this.host.refreshSkillCommands();
     await this.host.refreshPluginCommands();
@@ -138,6 +140,9 @@ export class AuthFlowController {
       subagentModel: isExperimentalFlagEnabled('dual-model-routing')
         ? (config.defaultSubagentModel ?? undefined)
         : undefined,
+      subagentThinkingEffort: isExperimentalFlagEnabled('dual-model-routing')
+        ? (config.defaultSubagentThinkingEffort ?? undefined)
+        : undefined,
     };
     host.setAppState(appStatePatch);
   }
@@ -152,6 +157,8 @@ export class AuthFlowController {
       maxContextTokens: 0,
       contextUsage: 0,
       contextTokens: 0,
+      subagentModel: undefined,
+      subagentThinkingEffort: undefined,
     });
   }
 

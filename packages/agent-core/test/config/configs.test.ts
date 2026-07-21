@@ -952,6 +952,20 @@ support_efforts = ["low", "high"]
     const data = configToTomlData(config);
     expect(data['default_subagent_model']).toBeUndefined();
   });
+
+  it('round-trips default_subagent_thinking_effort through parse and serialization', () => {
+    const config = parseConfigString('default_subagent_thinking_effort = "high"\n');
+    expect(config.defaultSubagentThinkingEffort).toBe('high');
+
+    const data = configToTomlData(config);
+    expect(data['default_subagent_thinking_effort']).toBe('high');
+  });
+
+  it('omits default_subagent_thinking_effort from serialization when unset', () => {
+    const config = parseConfigString('default_model = "kimi-k3"\n');
+    const data = configToTomlData(config);
+    expect(data['default_subagent_thinking_effort']).toBeUndefined();
+  });
 });
 
 describe('applyPrintModeConfigDefaults', () => {

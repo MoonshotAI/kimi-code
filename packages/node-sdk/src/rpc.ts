@@ -91,6 +91,10 @@ export interface SetSessionModelRpcResult {
 }
 
 export interface SetSessionSubagentModelRpcInput extends SessionIdRpcInput {
+  /**
+   * The subagent model override. Pass an empty string to clear the override so
+   * subagents fall back to the config default / parent model.
+   */
   readonly model: string;
 }
 
@@ -100,6 +104,22 @@ export interface SetSessionSubagentModelRpcResult {
 
 export interface GetSessionSubagentModelRpcResult {
   readonly subagentModel?: string | undefined;
+}
+
+export interface SetSessionSubagentThinkingRpcInput extends SessionIdRpcInput {
+  /**
+   * The subagent thinking-effort override. Pass an empty string to clear the
+   * override so subagents fall back to the config default / parent effort.
+   */
+  readonly effort: string;
+}
+
+export interface SetSessionSubagentThinkingRpcResult {
+  readonly subagentThinkingEffort?: string | undefined;
+}
+
+export interface GetSessionSubagentThinkingRpcResult {
+  readonly subagentThinkingEffort?: string | undefined;
 }
 
 export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
@@ -446,6 +466,25 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async setSubagentThinking(
+    input: SetSessionSubagentThinkingRpcInput,
+  ): Promise<SetSessionSubagentThinkingRpcResult> {
+    const rpc = await this.getRpc();
+    return rpc.setSubagentThinking({
+      sessionId: input.sessionId,
+      effort: input.effort,
+    });
+  }
+
+  async getSubagentThinking(
+    input: SessionIdRpcInput,
+  ): Promise<GetSessionSubagentThinkingRpcResult> {
+    const rpc = await this.getRpc();
+    return rpc.getSubagentThinking({
+      sessionId: input.sessionId,
+    });
+  }
+
   async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.setThinking({
@@ -602,9 +641,18 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
-    const subagentModel = await rpc.getSubagentModel({
-      sessionId: input.sessionId,
-    });
+    // These RPCs are part of the `dual-model-routing` experimental feature.
+    // Against an older core that has not registered them, the local RPC proxy
+    // has no such key, so guard with a typeof check to avoid throwing.
+    const subagentModel =
+      typeof rpc.getSubagentModel === 'function'
+        ? (await rpc.getSubagentModel({ sessionId: input.sessionId })).subagentModel
+        : undefined;
+    const subagentThinking =
+      typeof rpc.getSubagentThinking === 'function'
+        ? (await rpc.getSubagentThinking({ sessionId: input.sessionId }))
+            .subagentThinkingEffort
+        : undefined;
     const maxContextTokens = config.modelCapabilities?.max_context_tokens ?? 0;
     const contextTokens = context.tokenCount;
     const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
@@ -612,7 +660,8 @@ export abstract class SDKRpcClientBase {
       usage.byModel !== undefined || usage.total !== undefined || usage.currentTurn !== undefined;
     return {
       model: config.modelAlias ?? config.provider?.model,
-      subagentModel: subagentModel.subagentModel,
+      subagentModel,
+      subagentThinkingEffort: subagentThinking,
       thinkingEffort: config.thinkingEffort,
       permission: permission.mode,
       planMode: plan !== null,

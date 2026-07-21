@@ -22,6 +22,8 @@ export interface ModelScopeSelectorOptions {
   readonly currentModel: string;
   /** Current subagent model alias, or undefined when unset. */
   readonly currentSubagentModel: string | undefined;
+  /** Current subagent thinking effort, or undefined when unset. */
+  readonly currentSubagentThinkingEffort: string | undefined;
   /** Catalog of available models (alias → definition) for display names. */
   readonly availableModels: Record<string, ModelAlias>;
   readonly onSelect: (scope: ModelScope) => void;
@@ -35,13 +37,20 @@ function isModelScope(value: string): value is ModelScope {
 export class ModelScopeSelectorComponent extends ChoicePickerComponent {
   constructor(opts: ModelScopeSelectorOptions) {
     const mainName = modelDisplayName(opts.currentModel, opts.availableModels[opts.currentModel]);
-    const subagentName =
-      opts.currentSubagentModel !== undefined && opts.currentSubagentModel.length > 0
-        ? modelDisplayName(
-            opts.currentSubagentModel,
-            opts.availableModels[opts.currentSubagentModel],
-          )
-        : '(inherits main model)';
+    let subagentName: string;
+    if (opts.currentSubagentModel !== undefined && opts.currentSubagentModel.length > 0) {
+      const model = modelDisplayName(
+        opts.currentSubagentModel,
+        opts.availableModels[opts.currentSubagentModel],
+      );
+      const effortSuffix =
+        opts.currentSubagentThinkingEffort !== undefined && opts.currentSubagentThinkingEffort.length > 0
+          ? ` (effort: ${opts.currentSubagentThinkingEffort})`
+          : '';
+      subagentName = `${model}${effortSuffix}`;
+    } else {
+      subagentName = '(inherits main model)';
+    }
 
     const options: readonly ChoiceOption[] = [
       {

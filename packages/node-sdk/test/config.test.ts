@@ -345,6 +345,17 @@ describe('KimiHarness config API', () => {
         enabled: false,
         source: 'default',
       },
+      {
+        id: 'dual-model-routing',
+        title: 'Dual model routing (separate subagent model)',
+        description:
+          'Route the main agent and its subagents to different models. Subagents use a dedicated subagent model (configurable via /model) instead of inheriting the main agent model. When disabled, subagents inherit the main model as before.',
+        surface: 'both',
+        env: 'KIMI_CODE_EXPERIMENTAL_DUAL_MODEL_ROUTING',
+        defaultEnabled: false,
+        enabled: false,
+        source: 'default',
+      },
     ]);
   });
 

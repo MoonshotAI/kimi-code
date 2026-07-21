@@ -17,6 +17,7 @@ import type {
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   GetSubagentModelResult,
+  GetSubagentThinkingResult,
   ImportContextPayload,
   McpServerInfo,
   McpStartupMetrics,
@@ -31,6 +32,8 @@ import type {
   SetPermissionPayload,
   SetSubagentModelPayload,
   SetSubagentModelResult,
+  SetSubagentThinkingPayload,
+  SetSubagentThinkingResult,
   SetThinkingPayload,
   SkillSummary,
   PluginCommandDef,
@@ -167,13 +170,52 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   setSubagentModel(payload: SetSubagentModelPayload): SetSubagentModelResult {
+    if (!this.session.experimentalFlags.enabled('dual-model-routing')) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        'Subagent model routing requires the "dual-model-routing" experimental flag to be enabled.',
+      );
+    }
     const alias = payload.model.trim();
+    if (alias.length > 0) {
+      // Validate the alias resolves before storing it so the next subagent
+      // spawn fails fast with a clear message instead of deep inside provider
+      // resolution. Mirrors `Agent.setModel` (src/agent/index.ts).
+      const providerManager = this.session.options.providerManager;
+      if (providerManager !== undefined) {
+        providerManager.resolveProviderConfig(alias);
+      } else {
+        const models = this.session.options.config?.models;
+        if (models === undefined || models[alias] === undefined) {
+          throw new KimiError(
+            ErrorCodes.CONFIG_INVALID,
+            `Model "${alias}" is not configured in config.toml. Add a [models."${alias}"] entry with max_context_size.`,
+          );
+        }
+      }
+    }
     this.session.setSubagentModelAlias(alias.length > 0 ? alias : undefined);
     return { subagentModel: this.session.getSubagentModel() };
   }
 
   getSubagentModel(_payload: EmptyPayload): GetSubagentModelResult {
     return { subagentModel: this.session.getSubagentModel() };
+  }
+
+  setSubagentThinking(payload: SetSubagentThinkingPayload): SetSubagentThinkingResult {
+    if (!this.session.experimentalFlags.enabled('dual-model-routing')) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        'Subagent thinking-effort routing requires the "dual-model-routing" experimental flag to be enabled.',
+      );
+    }
+    const effort = payload.effort.trim();
+    this.session.setSubagentThinkingEffort(effort.length > 0 ? effort : undefined);
+    return { subagentThinkingEffort: this.session.getSubagentThinkingEffort() };
+  }
+
+  getSubagentThinking(_payload: EmptyPayload): GetSubagentThinkingResult {
+    return { subagentThinkingEffort: this.session.getSubagentThinkingEffort() };
   }
 
   async enterPlan({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

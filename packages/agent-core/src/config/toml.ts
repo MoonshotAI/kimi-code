@@ -478,6 +478,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'defaultProvider',
     'defaultModel',
     'defaultSubagentModel',
+    'defaultSubagentThinkingEffort',
     'planMode',
     'yolo',
     'defaultPermissionMode',

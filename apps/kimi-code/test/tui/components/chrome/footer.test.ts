@@ -246,4 +246,81 @@ describe('FooterComponent subagent model badge', () => {
     expect(rendered).toContain('subagents:');
     expect(rendered).toContain('GLM-5.2');
   });
+
+  it('hides the subagent badge when subagentModel equals the main model', () => {
+    setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k3',
+      subagentModel: 'kimi-k3',
+      availableModels: {
+        'kimi-k3': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k3',
+          maxContextSize: 262144,
+          displayName: 'Kimi K3',
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(140).join('\n');
+
+    // Even with the flag on and a subagentModel set, the badge is hidden
+    // when the alias is identical to the main model (nothing distinct to show).
+    expect(rendered).not.toContain('subagents:');
+  });
+
+  it('appends the thinking-effort suffix to the subagent badge when set', () => {
+    setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k3',
+      subagentModel: 'glm-5.2',
+      subagentThinkingEffort: 'high',
+      availableModels: {
+        'kimi-k3': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k3',
+          maxContextSize: 262144,
+        },
+        'glm-5.2': {
+          provider: 'zai',
+          model: 'glm-5.2',
+          maxContextSize: 131072,
+          displayName: 'GLM-5.2',
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(140).join('\n');
+
+    expect(rendered).toContain('GLM-5.2 · high');
+  });
+
+  it('shows no effort suffix when subagentThinkingEffort is unset', () => {
+    setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k3',
+      subagentModel: 'glm-5.2',
+      availableModels: {
+        'kimi-k3': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k3',
+          maxContextSize: 262144,
+        },
+        'glm-5.2': {
+          provider: 'zai',
+          model: 'glm-5.2',
+          maxContextSize: 131072,
+          displayName: 'GLM-5.2',
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(140).join('\n');
+
+    expect(rendered).toContain('GLM-5.2');
+    expect(rendered).not.toContain('GLM-5.2 ·');
+  });
 });

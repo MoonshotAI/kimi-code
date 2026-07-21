@@ -98,7 +98,8 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
-| `default_subagent_model` | `string` | — | Default model alias for subagents (experimental `dual-model-routing` feature). When set and the feature is enabled, delegated subagents run on this model instead of inheriting `default_model` |
+| `default_subagent_model` | `string` | — | Default model alias for subagents (experimental `dual-model-routing` feature). Must be defined in `models`. When set and the feature is enabled, delegated subagents run on this model instead of inheriting `default_model` |
+| `default_subagent_thinking_effort` | `string` | — | Default thinking effort for subagents (experimental `dual-model-routing` feature). When set and the feature is enabled, delegated subagents use this thinking effort instead of inheriting the main agent's effort |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `yolo` (auto-approve tool actions, but the agent may still ask questions), or `auto` (fully autonomous — the agent decides everything without asking) |
 | `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
@@ -113,6 +114,10 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
+
+::: tip Subagent model and thinking-effort defaults
+`default_subagent_model` and `default_subagent_thinking_effort` take effect only while the experimental `dual-model-routing` feature is enabled. Delegated subagents (`task` / `explore` / `AgentSwarm`) use the dedicated model and effort; the side-question (`/btw`) agent always inherits the main agent's model and effort regardless — it replays the main agent's prompt prefix and shares its prefix cache, so routing it elsewhere would re-process the whole conversation on a cold cache. These defaults are read when a session is created or resumed; editing them mid-session does not affect a live session until it is reloaded or resumed. Use the `/model` scope picker for a mid-session override.
+:::
 
 The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `image`, `services`, and `permission`.
 

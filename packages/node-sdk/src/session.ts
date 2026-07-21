@@ -217,6 +217,16 @@ export class Session {
     await this.rpc.setSubagentModel({ sessionId: this.id, model });
   }
 
+  /**
+   * Set the session-level subagent thinking-effort override (the
+   * `dual-model-routing` experimental feature). Pass an empty string to clear
+   * the override so subagents fall back to the config default / parent effort.
+   */
+  async setSubagentThinkingEffort(effort: string): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setSubagentThinking({ sessionId: this.id, effort });
+  }
+
   async setPermission(mode: PermissionMode): Promise<void> {
     this.ensureOpen();
     if (!isPermissionMode(mode)) {

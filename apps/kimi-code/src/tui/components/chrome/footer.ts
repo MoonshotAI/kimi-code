@@ -152,7 +152,12 @@ function subagentModelDisplayName(state: AppState): string {
   if (alias === undefined || alias.length === 0) return '';
   const model = state.availableModels[alias];
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
-  return effective?.displayName ?? effective?.model ?? alias;
+  const base = effective?.displayName ?? effective?.model ?? alias;
+  // Append the thinking-effort suffix when a separate effort is set for
+  // subagents (e.g. "GLM-5.2 · high").
+  const effort = state.subagentThinkingEffort;
+  if (effort !== undefined && effort.length > 0) return `${base} · ${effort}`;
+  return base;
 }
 
 function shortenCwd(path: string): string {
@@ -299,12 +304,20 @@ export class FooterComponent implements Component {
     }
 
     // Subagent model badge — only shown when the `dual-model-routing`
-    // experimental feature is active and a distinct subagent model is set.
+    // experimental feature is active and a DISTINCT subagent model is set
+    // (different alias from the main model). When the subagent alias equals
+    // the main model — e.g. auth-flow hydration sets it from config even when
+    // defaultSubagentModel === defaultModel — there is nothing to surface.
     // The flag check is defense-in-depth: getSubagentModel() / getStatus also
     // gate on the flag, so appState.subagentModel should already be undefined
     // when the feature is off.
+    const subagentAlias = state.subagentModel;
     const subagentLabel =
-      isExperimentalFlagEnabled('dual-model-routing') ? subagentModelDisplayName(state) : '';
+      isExperimentalFlagEnabled('dual-model-routing') &&
+      subagentAlias !== undefined &&
+      subagentAlias !== state.model
+        ? subagentModelDisplayName(state)
+        : '';
     if (subagentLabel.length > 0) {
       left.push(chalk.hex(colors.textDim)('subagents:') + ' ' + chalk.hex(colors.text)(subagentLabel));
     }

@@ -182,7 +182,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       this.emitSubagentSpawned(parent, agentId, profileName, runOptions);
       try {
-        child.config.update({ modelAlias: this.resolveSubagentModelAlias(parent) });
+        child.config.update({ modelAlias: this.resolveSubagentModelAlias(parent), thinkingEffort: this.resolveSubagentThinkingEffort(parent) });
         return await this.runPromptTurn(parent, agentId, child, profileName, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, agentId, runOptions, error);
@@ -198,7 +198,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       try {
         runOptions.signal.throwIfAborted();
-        child.config.update({ modelAlias: this.resolveSubagentModelAlias(parent) });
+        child.config.update({ modelAlias: this.resolveSubagentModelAlias(parent), thinkingEffort: this.resolveSubagentThinkingEffort(parent) });
         this.emitSubagentStarted(parent, agentId);
         const turnId = child.turn.retry('agent-host');
         if (turnId === null) {
@@ -259,8 +259,15 @@ export class SessionSubagentHost {
       { parentAgentId: this.ownerAgentId, persistMetadata: false },
     );
 
+    // The btw side-question agent replays the main agent's projected history
+    // (see `useProjectedHistoryFrom` just below): it shares the main agent's
+    // warm prompt prefix plus a small system reminder. Routing it to a
+    // different provider/model would cold-start the prefix cache and re-process
+    // the entire conversation — more usage for a lightweight text-only side
+    // channel that gains nothing from a dedicated model. So it ALWAYS inherits
+    // the main agent's model and effort, even when `dual-model-routing` is on.
     child.config.update({
-      modelAlias: this.resolveSubagentModelAlias(parent),
+      modelAlias: parent.config.modelAlias,
       thinkingEffort: parent.config.thinkingEffort,
       systemPrompt: parent.config.systemPrompt,
     });
@@ -318,20 +325,49 @@ export class SessionSubagentHost {
   }
 
   /**
-   * Resolve the model alias a subagent should run on. When the
-   * `dual-model-routing` experimental flag is enabled, subagents use the
-   * session's live subagent-model override (set via `/model`) or fall back to
-   * `config.defaultSubagentModel`. When the flag is off, or no subagent model
-   * is configured, subagents inherit the parent agent's live model.
+   * Resolve the model alias a delegated subagent (spawn/resume/retry) should
+   * run on. When the `dual-model-routing` experimental flag is enabled,
+   * subagents use the session's live subagent-model override (set via
+   * `/model`) or fall back to `config.defaultSubagentModel`. When the flag is
+   * off, or no subagent model is configured, subagents inherit the parent
+   * agent's live model.
    *
    * `Session.getSubagentModel()` is the single flag-aware source of truth — it
    * returns `undefined` when the flag is off, so this resolver falls through to
    * the parent model automatically.
+   *
+   * The btw (`startBtw`) side-question agent is the deliberate exception: it
+   * always inherits the parent agent's model regardless of the flag, because it
+   * shares the main agent's warm prompt-cache prefix. `startBtw` bypasses this
+   * resolver and reads `parent.config.modelAlias` directly.
    */
   private resolveSubagentModelAlias(parent: Agent): string | undefined {
     const subagentModel = this.session.getSubagentModel();
     if (subagentModel !== undefined && subagentModel.length > 0) return subagentModel;
     return parent.config.modelAlias;
+  }
+
+  /**
+   * Resolve the thinking effort a delegated subagent (spawn/resume/retry)
+   * should run with. When the `dual-model-routing` experimental flag is
+   * enabled, subagents use the session's live subagent-thinking-effort override
+   * (set via `/model`) or fall back to `config.defaultSubagentThinkingEffort`.
+   * When the flag is off, or no subagent thinking effort is configured,
+   * subagents inherit the parent agent's live thinking effort.
+   *
+   * `Session.getSubagentThinkingEffort()` is the single flag-aware source of
+   * truth — it returns `undefined` when the flag is off, so this resolver
+   * falls through to the parent effort automatically.
+   *
+   * The btw (`startBtw`) side-question agent is the deliberate exception: it
+   * always inherits the parent agent's effort regardless of the flag.
+   * `startBtw` bypasses this resolver and reads `parent.config.thinkingEffort`
+   * directly.
+   */
+  private resolveSubagentThinkingEffort(parent: Agent): string {
+    const subagentEffort = this.session.getSubagentThinkingEffort();
+    if (subagentEffort !== undefined && subagentEffort.length > 0) return subagentEffort;
+    return parent.config.thinkingEffort;
   }
 
   private runWithActiveChild(
@@ -419,12 +455,13 @@ export class SessionSubagentHost {
     profile: ResolvedAgentProfile,
   ): Promise<void> {
     // When the `dual-model-routing` experimental flag is enabled, subagents use
-    // a dedicated model (the live session override or config default). When the
-    // flag is off, subagents inherit the parent agent's model as before.
+    // a dedicated model and thinking effort (the live session override or
+    // config default). When the flag is off, subagents inherit the parent
+    // agent's model and thinking effort as before.
     child.config.update({
       cwd: parent.config.cwd,
       modelAlias: this.resolveSubagentModelAlias(parent),
-      thinkingEffort: parent.config.thinkingEffort,
+      thinkingEffort: this.resolveSubagentThinkingEffort(parent),
     });
 
     const context = await prepareSystemPromptContext(

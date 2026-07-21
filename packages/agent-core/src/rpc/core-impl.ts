@@ -107,6 +107,7 @@ import type {
   GetKimiConfigPayload,
   GetPluginInfoPayload,
   GetSubagentModelResult,
+  GetSubagentThinkingResult,
   InstallPluginPayload,
   ImportContextPayload,
   ListSessionsPayload,
@@ -136,6 +137,8 @@ import type {
   SetPluginMcpServerEnabledPayload,
   SetSubagentModelPayload,
   SetSubagentModelResult,
+  SetSubagentThinkingPayload,
+  SetSubagentThinkingResult,
   SetThinkingPayload,
   SkillSummary,
   PluginCommandDef,
@@ -843,6 +846,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionScopedPayload<EmptyPayload>): GetSubagentModelResult {
     return this.sessionApi(sessionId).getSubagentModel(payload);
+  }
+
+  setSubagentThinking({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<SetSubagentThinkingPayload>): SetSubagentThinkingResult {
+    return this.sessionApi(sessionId).setSubagentThinking(payload);
+  }
+
+  getSubagentThinking({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): GetSubagentThinkingResult {
+    return this.sessionApi(sessionId).getSubagentThinking(payload);
   }
 
   enterPlan({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {

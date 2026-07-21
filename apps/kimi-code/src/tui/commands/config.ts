@@ -331,6 +331,7 @@ function showModelScopePicker(host: SlashCommandHost): void {
     new ModelScopeSelectorComponent({
       currentModel: host.state.appState.model,
       currentSubagentModel: host.state.appState.subagentModel,
+      currentSubagentThinkingEffort: host.state.appState.subagentThinkingEffort,
       availableModels: host.state.appState.availableModels,
       onSelect: (scope: ModelScope) => {
         host.restoreEditor();
@@ -350,9 +351,7 @@ function showModelScopePicker(host: SlashCommandHost): void {
 /**
  * Show the model picker for the subagent scope (`dual-model-routing`
  * experimental feature). Reuses the tabbed model selector; the selected
- * alias is applied via `performSubagentModelSwitch`. Thinking effort is
- * carried through for parity with the main picker but is not separately
- * persisted for subagents.
+ * alias and thinking effort are applied via `performSubagentModelSwitch`.
  */
 function showSubagentModelPicker(host: SlashCommandHost): void {
   const models = Object.fromEntries(
@@ -373,15 +372,18 @@ function showSubagentModelPicker(host: SlashCommandHost): void {
     new TabbedModelSelectorComponent({
       models,
       currentValue: host.state.appState.subagentModel ?? host.state.appState.model,
-      currentThinkingEffort: host.state.appState.thinkingEffort,
-      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
-      onSelect: ({ alias }) => {
+      currentThinkingEffort: host.state.appState.subagentThinkingEffort ?? host.state.appState.thinkingEffort,
+      // A subagent-model switch does not invalidate the MAIN conversation's
+      // prompt cache (only caches of subagents spawned after the change), so
+      // the standard cache warning does not apply here.
+      warning: undefined,
+      onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performSubagentModelSwitch(host, alias, true);
+        void performSubagentModelSwitch(host, alias, thinking, true);
       },
-      onSessionOnlySelect: ({ alias }) => {
+      onSessionOnlySelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performSubagentModelSwitch(host, alias, false);
+        void performSubagentModelSwitch(host, alias, thinking, false);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -391,16 +393,30 @@ function showSubagentModelPicker(host: SlashCommandHost): void {
 }
 
 /**
- * Apply a subagent model selection. Pushes the live session override and,
- * when persisting, writes `defaultSubagentModel` to config.toml.
+ * Apply a subagent model selection. Pushes the live session override (both
+ * model and thinking effort) and, when persisting, writes `defaultSubagentModel`
+ * and `defaultSubagentThinkingEffort` to config.toml.
  */
 async function performSubagentModelSwitch(
   host: SlashCommandHost,
   alias: string,
+  effort: string,
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
     host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    return;
+  }
+
+  // No-op guard: skip the RPC round-trips and status flash when neither the
+  // alias nor the effort actually changed.
+  if (
+    alias === host.state.appState.subagentModel &&
+    effort === host.state.appState.subagentThinkingEffort
+  ) {
+    const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+    const effortSuffix = effort.length > 0 ? ` (effort: ${effort})` : '';
+    host.showStatus(`Already using ${displayName}${effortSuffix} for subagents.`, 'success');
     return;
   }
 
@@ -409,40 +425,48 @@ async function performSubagentModelSwitch(
   try {
     if (session !== undefined) {
       await session.setSubagentModel(alias);
+      await session.setSubagentThinkingEffort(effort);
     }
   } catch (error) {
     host.showError(`Failed to switch subagent model: ${formatErrorMessage(error)}`);
     return;
   }
 
-  host.setAppState({ subagentModel: alias });
+  host.setAppState({ subagentModel: alias, subagentThinkingEffort: effort });
 
   let persisted = false;
   if (persist) {
     try {
-      persisted = await persistSubagentModelSelection(host, alias);
+      persisted = await persistSubagentModelSelection(host, alias, effort);
     } catch (error) {
       host.showError(`Switched subagents to ${displayName}, but failed to save default: ${formatErrorMessage(error)}`);
       return;
     }
   }
 
+  const effortSuffix = effort.length > 0 ? ` (effort: ${effort})` : '';
   const status = persist
     ? persisted
-      ? `Saved ${displayName} as the default subagent model.`
-      : `Subagent model set to ${displayName}.`
-    : `Subagent model set to ${displayName} for this session only.`;
+      ? `Saved ${displayName}${effortSuffix} as the default subagent model.`
+      : `Subagent model set to ${displayName}${effortSuffix}.`
+    : `Subagent model set to ${displayName}${effortSuffix} for this session only.`;
   host.showStatus(status, 'success');
-  host.track('subagent_model_switch', { model: alias, persist });
+  host.track('subagent_model_switch', { model: alias, effort, persist });
 }
 
 async function persistSubagentModelSelection(
   host: SlashCommandHost,
   alias: string,
+  effort: string,
 ): Promise<boolean> {
   const config = await host.harness.getConfig({ reload: true });
-  if (config.defaultSubagentModel === alias) return false;
-  await host.harness.setConfig({ defaultSubagentModel: alias });
+  const modelChanged = config.defaultSubagentModel !== alias;
+  const effortChanged = config.defaultSubagentThinkingEffort !== effort;
+  if (!modelChanged && !effortChanged) return false;
+  await host.harness.setConfig({
+    ...(modelChanged ? { defaultSubagentModel: alias } : {}),
+    ...(effortChanged ? { defaultSubagentThinkingEffort: effort } : {}),
+  });
   return true;
 }
 
@@ -805,22 +829,26 @@ export async function applyExperimentalFeatureChanges(
     setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
-    // Sync the subagent-model app state with the flag: load it from config
-    // when dual-model routing is on, clear it when off so the footer and
-    // /model scope picker reflect the feature's actual state.
-    const config = await host.harness.getConfig({ reload: true });
-    host.setAppState({
-      subagentModel: isExperimentalFlagEnabled('dual-model-routing')
-        ? (config.defaultSubagentModel ?? undefined)
-        : undefined,
-    });
     if (host.session !== undefined) {
+      // A live session re-syncs appState (including subagent model/effort)
+      // via reloadSession + reloadCurrentSessionView, so no manual sync here.
       await host.session.reloadSession();
       await host.reloadCurrentSessionView(
         host.session,
         'Experimental features updated. Session reloaded.',
       );
     } else {
+      // No session to reload — manually sync the subagent-model app state
+      // from config so the footer and /model scope picker reflect the flag.
+      const config = await host.harness.getConfig({ reload: true });
+      host.setAppState({
+        subagentModel: isExperimentalFlagEnabled('dual-model-routing')
+          ? (config.defaultSubagentModel ?? undefined)
+          : undefined,
+        subagentThinkingEffort: isExperimentalFlagEnabled('dual-model-routing')
+          ? (config.defaultSubagentThinkingEffort ?? undefined)
+          : undefined,
+      });
       host.showStatus('Experimental features updated.', 'success');
     }
     host.track('experimental_features_apply', { changed: changes.length });

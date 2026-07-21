@@ -205,6 +205,14 @@ export class Session {
    * falls back to `config.defaultSubagentModel`, then the parent's model.
    */
   private subagentModelAlias: string | undefined;
+  /**
+   * Live session override for the subagent thinking effort (the
+   * `dual-model-routing` experimental feature). When set and the flag is
+   * enabled, subagents use this effort instead of the parent's. When unset,
+   * falls back to `config.defaultSubagentThinkingEffort`, then the parent's
+   * thinking effort.
+   */
+  private subagentThinkingEffort: string | undefined;
 
   constructor(public readonly options: SessionOptions) {
     // Attach the per-session log sink up front so the constructor's
@@ -355,6 +363,7 @@ export class Session {
     await this.skillsReady;
     this.log.info('session resume', { app_version: this.options.appVersion });
     const { agents, additionalDirs = [] } = await this.readMetadata();
+    this.rehydrateSubagentOverrides();
     const cwd = this.toolKaos.getcwd();
     this.sessionAdditionalDirs = await resolveWorkspaceAdditionalDirs(
       this.systemContextKaos(cwd),
@@ -603,9 +612,84 @@ export class Session {
     return this.subagentModelAlias ?? this.options.config?.defaultSubagentModel;
   }
 
-  /** Set or clear the live session subagent model override. */
+  /**
+   * Set or clear the live session subagent model override. Persisted into
+   * session metadata (`custom.subagentModelAlias`) so it survives /reload,
+   * resume, and fork; rehydrated in `resume()`.
+   */
   setSubagentModelAlias(alias: string | undefined): void {
     this.subagentModelAlias = alias;
+    this.persistSubagentOverrides();
+  }
+
+  /**
+   * The live subagent thinking-effort override for this session
+   * (`dual-model-routing` experimental feature). Set via the
+   * `setSubagentThinking` RPC; takes precedence over
+   * `config.defaultSubagentThinkingEffort`.
+   *
+   * Returns `undefined` when the flag is OFF, so the status surface and any
+   * consumer that does not independently gate on the flag never observes a
+   * subagent thinking effort. The runtime resolver
+   * (`resolveSubagentThinkingEffort`) also checks the flag, but gating here is
+   * the single source of truth that keeps `getStatus`, the TUI footer, and the
+   * sync paths correct regardless of who calls this accessor.
+   */
+  getSubagentThinkingEffort(): string | undefined {
+    if (!this.experimentalFlags.enabled('dual-model-routing')) return undefined;
+    return this.subagentThinkingEffort ?? this.options.config?.defaultSubagentThinkingEffort;
+  }
+
+  /**
+   * Set or clear the live session subagent thinking-effort override. Persisted
+   * into session metadata (`custom.subagentThinkingEffort`) so it survives
+   * /reload, resume, and fork; rehydrated in `resume()`.
+   */
+  setSubagentThinkingEffort(effort: string | undefined): void {
+    this.subagentThinkingEffort = effort;
+    this.persistSubagentOverrides();
+  }
+
+  /**
+   * Fire-and-forget persistence of the live subagent overrides into
+   * `metadata.custom`, matching the pattern used elsewhere in Session (e.g.
+   * `createAgent`). Failures are non-fatal: a failed write only means the
+   * override will not survive a resume/reload, not a runtime failure.
+   */
+  private persistSubagentOverrides(): void {
+    const custom: Record<string, unknown> = { ...this.metadata.custom };
+    if (this.subagentModelAlias !== undefined) {
+      custom['subagentModelAlias'] = this.subagentModelAlias;
+    } else {
+      delete custom['subagentModelAlias'];
+    }
+    if (this.subagentThinkingEffort !== undefined) {
+      custom['subagentThinkingEffort'] = this.subagentThinkingEffort;
+    } else {
+      delete custom['subagentThinkingEffort'];
+    }
+    this.metadata = { ...this.metadata, custom };
+    void this.writeMetadata().catch((error: unknown) => {
+      this.log.warn('failed to persist subagent overrides', { error });
+    });
+  }
+
+  /**
+   * Rehydrate the live subagent overrides from persisted session metadata.
+   * Called from `resume()` once metadata has been read. The accessors gate on
+   * the flag, so unconditional rehydration is safe.
+   */
+  private rehydrateSubagentOverrides(): void {
+    const custom = this.metadata.custom;
+    if (custom === undefined || custom === null) return;
+    const modelAlias = custom['subagentModelAlias'];
+    if (typeof modelAlias === 'string' && modelAlias.length > 0) {
+      this.subagentModelAlias = modelAlias;
+    }
+    const effort = custom['subagentThinkingEffort'];
+    if (typeof effort === 'string' && effort.length > 0) {
+      this.subagentThinkingEffort = effort;
+    }
   }
 
   /**
