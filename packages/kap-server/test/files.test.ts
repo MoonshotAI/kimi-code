@@ -320,3 +320,15 @@ describe('POST /api/v1/files (server-v2)', () => {
     expect((res.json() as Envelope).code).toBe(40001);
   });
 });
+
+describe('GET /api/v1/files/llm/{llm_id} (server-v2)', () => {
+  it('unknown provider file id → 40407 file not found', async () => {
+    const r = await boot();
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/files/llm/no-such-provider-file',
+    });
+    expect(res.statusCode).toBe(404);
+    expect((res.json() as Envelope).code).toBe(40407);
+  });
+});

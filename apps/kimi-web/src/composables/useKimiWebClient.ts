@@ -1973,6 +1973,7 @@ const turns = computed<ChatTurn[]>(() => {
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     turnActive.value,
     rawState.planReviewByToolCallId,
+    (llmFileId) => getKimiWebApi().getLlmFileUrl(llmFileId),
   );
 });
 

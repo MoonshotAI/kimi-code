@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { KIMI_CODE_HOME_ENV, KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
@@ -148,6 +148,10 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     model: 'k2',
     summary: { title: null },
     prompt: vi.fn(async () => {}),
+    uploadVideo: vi.fn(async () => ({
+      type: 'video_url',
+      videoUrl: { url: 'ms://stub-video', id: 'stub-video' },
+    })),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
     startBtw: vi.fn(async () => 'agent-btw'),
@@ -1542,6 +1546,65 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('hello');
     expect(transcript).not.toContain('review');
+  });
+
+  it('uploads pasted videos and sends the issued video_url part', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+
+      await vi.waitFor(() => {
+        expect(session.prompt).toHaveBeenCalledWith([
+          { type: 'text', text: 'watch ' },
+          { type: 'video_url', videoUrl: { url: 'ms://stub-video', id: 'stub-video' } },
+        ]);
+      });
+      expect(session.uploadVideo).toHaveBeenCalledWith(srcVideo);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to a cache-path video tag when the upload fails', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    const home = await mkdtemp(join(tmpdir(), 'tui-video-home-'));
+    const prevHome = process.env[KIMI_CODE_HOME_ENV];
+    process.env[KIMI_CODE_HOME_ENV] = home;
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+      vi.mocked(session.uploadVideo).mockRejectedValueOnce(new Error('upload failed'));
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+
+      await vi.waitFor(() => {
+        expect(session.prompt).toHaveBeenCalled();
+      });
+      const promptCalls = vi.mocked(session.prompt).mock.calls as unknown as ReadonlyArray<
+        [Array<{ type: string; text?: string }>]
+      >;
+      const parts = promptCalls[0]?.[0] ?? [];
+      const text = parts
+        .filter((p) => p.type === 'text')
+        .map((p) => p.text)
+        .join('');
+      expect(text).toContain('watch ');
+      expect(text).toMatch(/<video path="[^"]+clip\.mp4"><\/video>/);
+    } finally {
+      if (prevHome === undefined) delete process.env[KIMI_CODE_HOME_ENV];
+      else process.env[KIMI_CODE_HOME_ENV] = prevHome;
+      await rm(dir, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('sends pasted image placeholders as image content parts', async () => {

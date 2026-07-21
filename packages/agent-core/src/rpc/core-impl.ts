@@ -142,6 +142,7 @@ import type {
   UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
+  UploadVideoPayload,
 } from './core-api';
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
@@ -786,6 +787,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
     return this.sessionApi(sessionId).prompt(payload);
+  }
+
+  uploadVideo({ sessionId, ...payload }: SessionAgentPayload<UploadVideoPayload>) {
+    return this.sessionApi(sessionId).uploadVideo(payload);
   }
 
   runShellCommand({ sessionId, ...payload }: SessionAgentPayload<RunShellCommandPayload>) {

@@ -18,9 +18,12 @@ import {
   IAgentProfileService,
   IAgentPromptService,
   IAuthSummaryService,
+  IBlobStore,
   IEventService,
   IFileService,
+  IModelCatalog,
   ISessionMetadata,
+  createVideoUploader,
   promptMetadataTextFromContentParts,
   type ContentPart,
   type PromptHandle,
@@ -46,6 +49,8 @@ import {
   type ImageCompressionTelemetry,
   type ISessionScopeHandle,
   type Scope,
+  type VideoUploadInput,
+  type VideoURLPart,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -60,6 +65,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { recordLlmVideoRef } from '../lib/llmVideoRefs';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -136,6 +142,32 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   };
 }
 
+/**
+ * Build the prompt-time video uploader from the session's effective model.
+ * `undefined` when the model cannot ingest video (no `video_in` capability
+ * or no provider upload channel) — prompt videos then fall back to the
+ * file-tag form and the model opens them with ReadMediaFile.
+ */
+function promptVideoUploader(
+  profile: IAgentProfileService,
+  modelCatalog: IModelCatalog,
+  telemetry: ITelemetryService,
+): ((input: VideoUploadInput) => Promise<VideoURLPart>) | undefined {
+  if (!profile.getModelCapabilities().video_in) return undefined;
+  const modelAlias = profile.getModel();
+  if (modelAlias === '') return undefined;
+  const requester = modelCatalog.getRequester(modelAlias);
+  const model = requester.model;
+  return createVideoUploader(requester, {
+    client: telemetry,
+    props: {
+      model: modelAlias,
+      provider_type: model?.providerType ?? model?.protocol,
+      protocol: model?.protocol,
+    },
+  });
+}
+
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
     {
@@ -184,12 +216,32 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
+        // Resolve the agent and apply profile overrides first: prompt media
+        // resolution (video upload) keys off the effective model.
+        const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
+        await resolved.auth.ensureReady();
+        if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
+        if (req.body.thinking !== undefined) resolved.profile.setThinking(req.body.thinking);
+        if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+        const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         const resolvedBody = await resolvePromptMediaFiles(
           req.body,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
           {
-            telemetry: core.accessor.get(ITelemetryService).withContext({ sessionId: session_id }),
+            telemetry,
+            videoUploader: promptVideoUploader(
+              resolved.profile,
+              core.accessor.get(IModelCatalog),
+              telemetry,
+            ),
+            onVideoInlined: async (localFileId, llmFileId) => {
+              // Best effort — a lost mapping only means the web UI cannot
+              // play this prompt video back from daemon storage.
+              await recordLlmVideoRef(core.accessor.get(IBlobStore), llmFileId, localFileId).catch(
+                () => undefined,
+              );
+            },
             resolveOriginalsDir: async () => {
               const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
               if (session === undefined) return undefined;
@@ -202,11 +254,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             },
           },
         );
-        const resolved = await resolvePrompt(core, session_id, resolvedBody.agent_id);
-        await resolved.auth.ensureReady();
-        if (resolvedBody.model !== undefined) await resolved.profile.setModel(resolvedBody.model);
-        if (resolvedBody.thinking !== undefined) resolved.profile.setThinking(resolvedBody.thinking);
-        if (resolvedBody.permission_mode !== undefined) resolved.permissionMode.setMode(resolvedBody.permission_mode);
         const parts = contentToCoreParts(resolvedBody.content);
         const session = await resolveSession(core, session_id);
         await applyPromptMetadataUpdate({
@@ -338,7 +385,7 @@ function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission[
     } else if (part.type === 'video_url') {
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
       parts.push(match === null
-        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url } }
+        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
         : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
     }
   }
@@ -351,7 +398,7 @@ function contentToCoreParts(content: PromptSubmission['content']): ContentPart[]
     if (part.type === 'text') parts.push({ type: 'text', text: part.text });
     else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url } });
     else if (part.type === 'image' && part.source.kind === 'base64') parts.push({ type: 'image_url', imageUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
-    else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url } });
+    else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url, id: part.source.id } });
     else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
   }
   return parts;
@@ -374,6 +421,18 @@ interface ResolvePromptMediaOptions {
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
   /** Report an `image_compress` event per compressed prompt image. */
   readonly telemetry?: ITelemetryService;
+  /**
+   * When set, uploaded video files are inlined into the prompt as the
+   * provider-issued reference. Undefined disables inlining — every video
+   * falls back to the file-tag form.
+   */
+  readonly videoUploader?: (input: VideoUploadInput) => Promise<VideoURLPart>;
+  /**
+   * Called after a video is inlined, with the local `/files` id and the
+   * provider-issued file id, so the daemon can map the reference back to
+   * local bytes for playback. Errors are swallowed by the caller.
+   */
+  readonly onVideoInlined?: (localFileId: string, llmFileId: string) => Promise<void>;
 }
 
 async function resolvePromptMediaFiles(
@@ -581,6 +640,32 @@ async function resolvePromptMediaFiles(
       });
       changed = true;
       continue;
+    }
+
+    // Uploaded video: inline the provider-issued reference into the prompt
+    // so the model receives the video with the user message instead of having
+    // to open it with a tool call. Falls back to the file-tag form when the
+    // model has no upload channel or the upload fails.
+    if (part.type === 'video' && options.videoUploader !== undefined) {
+      try {
+        const data = await readFileOrStream(file);
+        const uploaded = await options.videoUploader({
+          data,
+          mimeType: file.meta.media_type,
+          filename: file.meta.name,
+        });
+        content.push({
+          type: 'video',
+          source: { kind: 'url', url: uploaded.videoUrl.url, id: uploaded.videoUrl.id },
+        });
+        changed = true;
+        if (uploaded.videoUrl.id !== undefined) {
+          await options.onVideoInlined?.(file.meta.id, uploaded.videoUrl.id);
+        }
+        continue;
+      } catch {
+        // Fall through to the file-tag form below.
+      }
     }
 
     const cachePath = await materializeVideoToCache(file, cacheDir);

@@ -158,4 +158,21 @@ describe('Session.prompt input normalization', () => {
       ]),
     );
   });
+
+  it('uploads a video through the session RPC and returns the issued reference', async () => {
+    const uploadVideo = vi.fn(async () => ({
+      type: 'video_url' as const,
+      videoUrl: { url: 'ms://file-123', id: 'file-123' },
+    }));
+    const session = new Session({
+      id: 'ses_upload_video',
+      workDir: '/tmp/work',
+      rpc: { uploadVideo } as unknown as SDKRpcClientBase,
+    });
+
+    const part = await session.uploadVideo('/tmp/clip.mp4');
+
+    expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'ms://file-123', id: 'file-123' } });
+    expect(uploadVideo).toHaveBeenCalledWith({ sessionId: 'ses_upload_video', path: '/tmp/clip.mp4' });
+  });
 });

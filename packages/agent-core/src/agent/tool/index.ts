@@ -776,6 +776,16 @@ export class ToolManager {
     this.initializeBuiltinTools();
   }
 
+  /**
+   * Uploader bound to the agent's current provider, for media that arrives
+   * outside a tool call (e.g. a video attached to a prompt). `undefined`
+   * when no model is bound or the provider has no video upload channel.
+   */
+  videoUploader(): b.VideoUploader | undefined {
+    if (!this.agent.config.hasProvider) return undefined;
+    return this.createVideoUploader(this.agent.config.provider);
+  }
+
   private createVideoUploader(provider: ChatProvider): b.VideoUploader | undefined {
     const uploadVideo = provider.uploadVideo?.bind(provider);
     if (uploadVideo === undefined) return undefined;

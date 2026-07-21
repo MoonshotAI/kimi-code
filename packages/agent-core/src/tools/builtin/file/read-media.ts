@@ -62,7 +62,7 @@ import readMediaDescriptionHead from './read-media.md?raw';
 // ── Constants ────────────────────────────────────────────────────────
 
 const MAX_MEDIA_MEGABYTES = 100;
-const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
+export const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
 
 function buildImageDeliveryLimitError(input: {
   readonly finalBytes: number;

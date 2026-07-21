@@ -1,5 +1,10 @@
 import type { ToolCall } from '@moonshot-ai/kosong';
-import { expect, it } from 'vitest';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { mkdtempSync, truncateSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { createCommandKaos, testAgent } from './harness/agent';
@@ -150,4 +155,117 @@ it('runs an agent turn through builtin tool approval and execution', async () =>
       tool[call_bash]: text "lookup-result"
   `);
   await ctx.expectResumeMatches();
+});
+
+describe('uploadVideo', () => {
+  // Minimal ISO-BMFF header: a 24-byte ftyp box with the `isom` brand, which
+  // is all the media sniffer needs to classify the file as video/mp4.
+  const FTYP_MP4 = Buffer.from([
+    0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02,
+    0x00, 0x69, 0x73, 0x6f, 0x6d, 0x69, 0x73, 0x6f, 0x32,
+  ]);
+
+  function tempVideo(name = 'clip.mp4', bytes: Buffer = FTYP_MP4): string {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-upload-video-'));
+    const path = join(dir, name);
+    writeFileSync(path, bytes);
+    return path;
+  }
+
+  interface StubFilesRequest {
+    readonly authorization?: string | undefined;
+    readonly bytes: number;
+  }
+
+  async function stubFilesServer(): Promise<{
+    url: string;
+    requests: StubFilesRequest[];
+    close: () => Promise<void>;
+  }> {
+    const requests: StubFilesRequest[] = [];
+    const server = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/files') {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', () => {
+          requests.push({
+            authorization: req.headers.authorization,
+            bytes: Buffer.concat(chunks).length,
+          });
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              id: 'stub-video-file',
+              object: 'file',
+              bytes: FTYP_MP4.length,
+              created_at: 0,
+              filename: 'clip.mp4',
+              purpose: 'video',
+            }),
+          );
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${String(port)}`,
+      requests,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it('uploads a local video through the bound provider and returns the issued reference', async () => {
+    const stub = await stubFilesServer();
+    try {
+      const ctx = testAgent();
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+      });
+
+      const part = await ctx.rpc.uploadVideo({ path: tempVideo() });
+
+      expect(part).toEqual({
+        type: 'video_url',
+        videoUrl: { url: 'ms://stub-video-file', id: 'stub-video-file' },
+      });
+      expect(stub.requests).toHaveLength(1);
+      expect(stub.requests[0]?.authorization).toBe('Bearer test-key');
+      // The multipart body carries the video bytes, so it must be larger.
+      expect(stub.requests[0]?.bytes).toBeGreaterThan(FTYP_MP4.length);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it('rejects when the provider has no video upload channel', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: { type: 'openai', apiKey: 'test-key', model: 'mock-model' } });
+
+    await expect(ctx.rpc.uploadVideo({ path: tempVideo() })).rejects.toThrow(
+      /does not support video upload/,
+    );
+  });
+
+  it('rejects a non-video file', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+
+    await expect(
+      ctx.rpc.uploadVideo({ path: tempVideo('notes.txt', Buffer.from('plain text')) }),
+    ).rejects.toThrow(/not a video file/);
+  });
+
+  it('rejects a video over the 100MB cap', async () => {
+    const ctx = testAgent();
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+    const path = tempVideo();
+    // Sparse extend: the ftyp header stays, the size crosses the cap.
+    truncateSync(path, 101 * 1024 * 1024);
+
+    await expect(ctx.rpc.uploadVideo({ path })).rejects.toThrow(/100MB/);
+  });
 });

@@ -36,7 +36,13 @@ export const toolResultContentSchema = z.object({
 export type ToolResultContent = z.infer<typeof toolResultContentSchema>;
 
 export const imageSourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('url'), url: z.string().min(1) }),
+  z.object({
+    kind: z.literal('url'),
+    url: z.string().min(1),
+    // Provider-issued file id paired with `url` (e.g. a `ms://` reference),
+    // forwarded on the wire when the provider keys media by id.
+    id: z.string().min(1).optional(),
+  }),
   z.object({
     kind: z.literal('base64'),
     media_type: z.string().min(1),

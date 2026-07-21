@@ -59,6 +59,7 @@ import type {
   SkillSummary,
   PluginCommandDef,
   Unsubscribe,
+  VideoURLPart,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
@@ -317,6 +318,15 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
       input: input.input,
+    });
+  }
+
+  async uploadVideo(input: SessionIdRpcInput & { path: string }): Promise<VideoURLPart> {
+    const rpc = await this.getRpc();
+    return rpc.uploadVideo({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      path: input.path,
     });
   }
 

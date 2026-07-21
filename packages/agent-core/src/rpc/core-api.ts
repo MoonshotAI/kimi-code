@@ -20,7 +20,7 @@ import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type { GlobalMcpServerConfig } from '#/mcp/global-config';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart, VideoURLPart } from '@moonshot-ai/kosong';
 import type { SessionWarning } from '@moonshot-ai/protocol';
 
 import type { PluginCommandDef, PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
@@ -440,8 +440,19 @@ export interface GetCronTasksResult {
   readonly tasks: readonly CronTaskSnapshot[];
 }
 
+export interface UploadVideoPayload {
+  /** Absolute path to a local video file readable by the core process. */
+  readonly path: string;
+}
+
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
+  /**
+   * Upload a local video file through the agent's bound model provider and
+   * return the provider-issued `video_url` part, ready to be embedded in a
+   * user prompt. Rejects when the provider has no video upload channel.
+   */
+  uploadVideo: (payload: UploadVideoPayload) => Promise<VideoURLPart>;
   runShellCommand: (payload: RunShellCommandPayload) => Promise<ShellCommandResult>;
   cancelShellCommand: (payload: CancelShellCommandPayload) => void;
   steer: (payload: SteerPayload) => void;

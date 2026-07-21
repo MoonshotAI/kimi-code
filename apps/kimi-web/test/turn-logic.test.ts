@@ -217,6 +217,87 @@ describe('messagesToTurns', () => {
     ]);
   });
 
+  it('renders a `[video:ms://…]` text part as a video attachment via the llm-file redirect', () => {
+    // A video the server inlined as a provider file reference is persisted as a
+    // video_url part and comes back from the message projection as this
+    // self-contained text part. It must render like the upload did — not as raw
+    // text — with the bytes served by the daemon's /files/llm redirect.
+    const llmFileId = 'file-abc123';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'look at this' },
+          { type: 'text', text: `[video:ms://${llmFileId}]` },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+      undefined,
+      (id) => `/api/v1/files/llm/${id}`,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
+    expect(turns[0]?.attachments).toEqual([
+      { url: `/api/v1/files/llm/${llmFileId}`, kind: 'video' },
+    ]);
+  });
+
+  it('maps an ms:// url-source video part to the llm-file redirect', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'video', source: { kind: 'url', url: 'ms://file-abc123' } },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+      undefined,
+      (id) => `/api/v1/files/llm/${id}`,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { url: '/api/v1/files/llm/file-abc123', kind: 'video' },
+    ]);
+  });
+
+  it('leaves non-ms video urls untouched', () => {
+    const dataUrl = 'data:video/mp4;base64,AAAA';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'video', source: { kind: 'url', url: 'https://example.com/clip.mp4' } },
+          { type: 'video', source: { kind: 'url', url: dataUrl } },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+      undefined,
+      (id) => `/api/v1/files/llm/${id}`,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { url: 'https://example.com/clip.mp4', kind: 'video' },
+      { url: dataUrl, kind: 'video' },
+    ]);
+  });
+
+  it('keeps the `[video:ms://…]` text when no llm-file resolver is provided', () => {
+    const text = '[video:ms://file-abc123]';
+    const turns = messagesToTurns(
+      [message('u1', 'user', [{ type: 'text', text }])],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]).toMatchObject({ role: 'user', text });
+    expect(turns[0]?.attachments).toBeUndefined();
+  });
+
   it('renders a non-media file part as a file attachment with name and size', () => {
     const turns = messagesToTurns(
       [

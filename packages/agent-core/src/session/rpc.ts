@@ -36,6 +36,7 @@ import type {
   UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
+  UploadVideoPayload,
 } from '#/rpc';
 import type { PromisableMethods } from '#/utils/types';
 
@@ -125,6 +126,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
       await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     }
     return (await this.getAgent(agentId)).prompt(payload);
+  }
+
+  async uploadVideo({ agentId, ...payload }: AgentScopedPayload<UploadVideoPayload>) {
+    return (await this.getAgent(agentId)).uploadVideo(payload);
   }
 
   async steer({ agentId, ...payload }: AgentScopedPayload<SteerPayload>) {

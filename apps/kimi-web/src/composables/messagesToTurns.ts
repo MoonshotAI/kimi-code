@@ -22,6 +22,26 @@ const MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">$/;
 // matching; the closing tag is optional because ReadMediaFile emits the bare
 // opening tag as a standalone part.
 const USER_MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">(?:<\/\1>)?$/;
+// A user-uploaded video the server inlined as a provider file reference is
+// persisted as a `video_url` part, which the daemon's message projection
+// flattens into a self-contained `[video:ms://<llmFileId>]` text part. Like
+// the media path tag above, it is its own content part, so anchoring keeps
+// ordinary prose from matching.
+const LLM_VIDEO_REF_TAG_RE = /^\[video:ms:\/\/([^\]]+)\]$/;
+const MS_URL_PREFIX = 'ms://';
+
+/** The provider-issued file id behind a `ms://` url, undefined for any other scheme. */
+function llmFileIdFromMsUrl(url: string): string | undefined {
+  if (!url.startsWith(MS_URL_PREFIX)) return undefined;
+  const id = url.slice(MS_URL_PREFIX.length);
+  return id.length > 0 ? id : undefined;
+}
+
+/** Parse a `[video:ms://<llmFileId>]` text part (see LLM_VIDEO_REF_TAG_RE). */
+function llmVideoRefTag(text: string): string | null {
+  return LLM_VIDEO_REF_TAG_RE.exec(text.trim())?.[1] ?? null;
+}
+
 const SYSTEM_MIME_RE = /Mime type:\s*([^.\s]+)/i;
 const SYSTEM_SIZE_RE = /Size:\s*(\d+)\s*bytes/i;
 const SYSTEM_DIMENSIONS_RE = /Original dimensions:\s*(\d+)x(\d+)\s*pixels/i;
@@ -587,6 +607,10 @@ export function messagesToTurns(
   /** Preserved `plan_review` displays keyed by toolCallId — used to link the
    *  ExitPlanMode tool card back to the plan file after the approval resolves. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
+  /** Maps a provider-issued video file id (`ms://<llmFileId>`) to the daemon
+   *  redirect that serves the local bytes (`/files/llm/<id>`). Without it an
+   *  ms:// reference can't produce a playable URL and stays as raw text. */
+  getLlmFileUrl?: (llmFileId: string) => string,
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
   let no = 1;
@@ -729,7 +753,15 @@ export function messagesToTurns(
     if (c.type === 'image' || c.type === 'video') {
       const kind = c.type;
       const src = c.source;
-      if (src.kind === 'url') return { url: src.url, kind };
+      if (src.kind === 'url') {
+        // A `ms://<llmFileId>` source is the provider-issued reference of an
+        // uploaded video; the daemon serves the local bytes at /files/llm/<id>.
+        const llmFileId = llmFileIdFromMsUrl(src.url);
+        if (llmFileId !== undefined && getLlmFileUrl) {
+          return { url: getLlmFileUrl(llmFileId), kind };
+        }
+        return { url: src.url, kind };
+      }
       if (src.kind === 'base64') return { url: `data:${src.mediaType};base64,${src.data}`, kind };
       if (src.kind === 'file' && getFileUrl) return { url: getFileUrl(src.fileId), kind, fileId: src.fileId };
     }
@@ -824,6 +856,15 @@ export function messagesToTurns(
                 attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
                 continue;
               }
+            }
+            // A video the server inlined as a provider file reference comes
+            // back (after a reload) as a `[video:ms://…]` text part — recover
+            // the same video attachment via the daemon's llm-file redirect
+            // instead of dumping the raw reference into the bubble.
+            const llmFileId = llmVideoRefTag(c.text);
+            if (llmFileId !== null && getLlmFileUrl) {
+              attachments.push({ url: getLlmFileUrl(llmFileId), kind: 'video' });
+              continue;
             }
             // A generic file upload comes back as an "Attached file …" notice;
             // recover the chip the same way (see attachedFileNotice).

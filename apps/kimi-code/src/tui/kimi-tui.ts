@@ -133,7 +133,7 @@ import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
-import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
+import { extractMediaSegments, materializeMediaSegments, rewriteMediaPlaceholders, segmentsToPromptParts } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -1121,30 +1121,70 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
+  // Submits chained behind an in-flight video upload (see sendNormalUserInput).
+  private pendingSubmits = 0;
+  private inputSubmitChain: Promise<void> = Promise.resolve();
+
   sendNormalUserInput(text: string): void {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    const extraction = extractMediaAttachments(text, this.imageStore);
+    const extraction = extractMediaSegments(text, this.imageStore);
     if (!this.validateMediaCapabilities(extraction)) return;
     const session = this.session;
     if (session === undefined) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    if (extraction.hasMedia) {
-      this.sendMessage(session, text, {
-        hasMedia: true,
-        parts: extraction.parts,
-        imageAttachmentIds: extraction.imageAttachmentIds,
-      });
-    } else {
-      this.sendMessage(session, text);
+    const hasVideo = extraction.videoAttachmentIds.length > 0;
+    if (!hasVideo && this.pendingSubmits === 0) {
+      // Fully synchronous path: nothing to upload, nothing queued behind an
+      // upload, so ordering is trivially safe.
+      if (extraction.hasMedia) {
+        this.sendMessage(session, text, {
+          hasMedia: true,
+          parts: segmentsToPromptParts(extraction.segments),
+          imageAttachmentIds: extraction.imageAttachmentIds,
+        });
+      } else {
+        this.sendMessage(session, text);
+      }
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
     }
-    this.updateQueueDisplay();
-    this.state.ui.requestRender();
+    // Video attachments upload asynchronously before the prompt goes out.
+    // Chain this submit (and any submitted while an upload is in flight) so
+    // a slow upload cannot be overtaken by a later message.
+    this.pendingSubmits += 1;
+    this.inputSubmitChain = this.inputSubmitChain.then(async () => {
+      try {
+        if (extraction.hasMedia) {
+          const parts = hasVideo
+            ? await materializeMediaSegments(extraction.segments, (attachment) =>
+                session.uploadVideo(attachment.sourcePath),
+              )
+            : segmentsToPromptParts(extraction.segments);
+          this.sendMessage(session, text, {
+            hasMedia: true,
+            parts,
+            imageAttachmentIds: extraction.imageAttachmentIds,
+          });
+        } else {
+          this.sendMessage(session, text);
+        }
+      } catch (error) {
+        // The tag fallback itself could not be prepared (unwritable cache
+        // dir, vanished video source…); nothing was dispatched.
+        this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      } finally {
+        this.pendingSubmits -= 1;
+      }
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+    });
   }
 
   validateMediaCapabilities(extraction: {

@@ -1,4 +1,6 @@
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -211,7 +213,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
-  it('materializes uploaded video prompts into cache path tags', async () => {
+  it('falls back to cache path tags for uploaded videos when the model has no upload channel', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const videoBytes = Buffer.from('tiny fake mp4 bytes');
@@ -649,5 +651,163 @@ describe('server-v2 /api/v1 prompts', () => {
       agent_id: 'agent_does_not_exist',
     });
     expect(body.code).toBe(40401);
+  });
+});
+
+describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+  let stubClose: (() => Promise<void>) | undefined;
+  let stubBodies: Buffer[];
+
+  function kimiToml(stubUrl: string): string {
+    return [
+      'default_model = "stub"',
+      '',
+      '[providers.stub]',
+      'type = "kimi"',
+      `base_url = "${stubUrl}"`,
+      'api_key = "stub"',
+      '',
+      '[models.stub]',
+      'provider = "stub"',
+      'model = "stub"',
+      'max_context_size = 1000',
+      'capabilities = [ "video_in", "image_in" ]',
+      '',
+    ].join('\n');
+  }
+
+  beforeEach(async () => {
+    stubBodies = [];
+    const stub = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/files') {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', () => {
+          stubBodies.push(Buffer.concat(chunks));
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              id: 'stub-llm-video',
+              object: 'file',
+              bytes: 17,
+              created_at: 0,
+              filename: 'clip.mp4',
+              purpose: 'video',
+            }),
+          );
+        });
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/chat/completions') {
+        // The turn is aborted by the test; this answer is never needed.
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
+    const { port } = stub.address() as AddressInfo;
+    stubClose = () => new Promise<void>((resolve) => stub.close(() => resolve()));
+
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-prompts-kimi-'));
+    await writeFile(join(home, 'config.toml'), kimiToml(`http://127.0.0.1:${String(port)}`), 'utf-8');
+    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (stubClose !== undefined) {
+      await stubClose();
+      stubClose = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 } as never);
+      home = undefined;
+    }
+  });
+
+  it('inlines an uploaded video prompt as the provider-issued reference', async () => {
+    const sessionRes = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    } as never);
+    const sessionBody = (await sessionRes.json()) as Envelope<{ id: string }>;
+    const id = sessionBody.data.id;
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    const videoBytes = Buffer.from('tiny fake mp4 bytes');
+    const form = new FormData();
+    form.set('file', new Blob([videoBytes], { type: 'video/mp4' }), 'clip.mp4');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
+    expect(uploaded.code).toBe(0);
+
+    const submitRes = await fetch(`${base}/api/v1/sessions/${id}/prompts`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        // The prompt-time model override is applied before media resolution,
+        // so the video uploader is built from this model.
+        model: 'stub',
+        content: [
+          { type: 'text', text: 'what happens in this video?' },
+          { type: 'video', source: { kind: 'file', file_id: uploaded.data.id } },
+        ],
+      }),
+    } as never);
+    const submitted = (await submitRes.json()) as Envelope<PromptItemWire>;
+    expect(submitted.code).toBe(0);
+
+    // The prompt carries the provider-issued reference, not a path tag.
+    const content = submitted.data.content as Array<Record<string, unknown>>;
+    expect(content[0]).toEqual({ type: 'text', text: 'what happens in this video?' });
+    expect(content[1]).toEqual({
+      type: 'video',
+      source: { kind: 'url', url: 'ms://stub-llm-video', id: 'stub-llm-video' },
+    });
+
+    // The upload happened synchronously, before the prompt was accepted, and
+    // carried the video bytes.
+    expect(stubBodies).toHaveLength(1);
+    expect(stubBodies[0]!.includes(videoBytes)).toBe(true);
+
+    // The provider id maps back to the local upload for playback.
+    const redirectRes = await fetch(`${base}/api/v1/files/llm/stub-llm-video`, {
+      headers: authHeaders(server as RunningServer),
+      redirect: 'manual',
+    } as never);
+    expect(redirectRes.status).toBe(302);
+    const location = redirectRes.headers.get('location');
+    expect(location).toBe(`/api/v1/files/${uploaded.data.id}`);
+
+    const downloadRes = await fetch(`${base}${location}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(downloadRes.status).toBe(200);
+    expect(Buffer.from(await downloadRes.arrayBuffer())).toEqual(videoBytes);
+
+    // The stub serves no generation, so the turn keeps retrying in the
+    // background; abort it deterministically to let the server close.
+    const abortRes = await fetch(
+      `${base}/api/v1/sessions/${id}/prompts/${submitted.data.prompt_id}:abort`,
+      { method: 'POST', headers: authHeaders(server as RunningServer) } as never,
+    );
+    expect(abortRes.status).toBe(200);
   });
 });

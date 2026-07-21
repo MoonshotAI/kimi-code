@@ -36,6 +36,7 @@ import type {
   PluginCommandDef,
   ThinkingEffort,
   Unsubscribe,
+  VideoURLPart,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
@@ -109,6 +110,18 @@ export class Session {
       sessionId: this.id,
       input: normalizePromptInput(input),
     });
+  }
+
+  /**
+   * Upload a local video file through the session's current model and return
+   * the provider-issued `video_url` part, ready to embed in a prompt.
+   * Rejects when the model has no video upload channel — the caller decides
+   * how to degrade (e.g. fall back to a path reference the model can open
+   * with ReadMediaFile).
+   */
+  async uploadVideo(path: string): Promise<VideoURLPart> {
+    this.ensureOpen();
+    return this.rpc.uploadVideo({ sessionId: this.id, path });
   }
 
   /** Execute a user-initiated `!` shell command (silent — does not prompt the

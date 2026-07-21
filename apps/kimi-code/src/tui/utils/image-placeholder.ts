@@ -1,17 +1,30 @@
 /**
- * Scan submitted text for media placeholders and produce
- * the `PromptPart[]` we'll send to the SDK prompt endpoint.
+ * Scan submitted text for media placeholders and produce the prompt content
+ * we'll send to the SDK prompt endpoint.
  *
- * Rules:
+ * Two extraction paths share the same placeholder scan:
+ *
+ *   - `extractMediaAttachments` (sync): image placeholders expand to image
+ *     content parts; video placeholders are copied into the shared cache
+ *     (`getCacheDir()`) and expand to `<video path="…">` file tags, so the
+ *     model opens them with `ReadMediaFile`. Used by channels that cannot
+ *     upload first (steer splice, `/skill` args via rewriteMediaPlaceholders,
+ *     plugin commands) and as the fallback when a prompt-time video upload
+ *     fails.
+ *   - `extractMediaSegments` + `materializeMediaSegments` (async): video
+ *     placeholders stay unresolved references until `materializeMediaSegments`
+ *     uploads each one through the session's video upload channel and embeds
+ *     the provider-issued `video_url` part directly in the prompt — the model
+ *     receives the video with the user message, no tool call needed. An
+ *     upload that fails falls back to the file-tag form above.
+ *
+ * Rules for both:
  *   - Only placeholders that resolve against `store` get extracted.
  *     A literal `[image #999 ...]` the user typed themselves stays in
  *     the text (we can't hallucinate files for it).
  *   - Order is preserved for text/image/video segments. Image placeholders
  *     expand to image content parts so the prompt reaches the provider
- *     without relying on a model tool call. Video placeholders are copied
- *     into the shared cache (`getCacheDir()`) and expand to file-path tags,
- *     so `ReadMediaFile` — and the provider's `VideoUploader` — own video
- *     upload behavior instead of base64-inlining here.
+ *     without relying on a model tool call.
  *   - Adjacent text segments are flattened — empty / whitespace-only
  *     segments drop out so we never emit `{type:'text', text:' '}`
  *     noise between two media parts.
@@ -101,6 +114,118 @@ export function extractMediaAttachments(
   };
 }
 
+export interface MediaSegmentPart {
+  readonly kind: 'part';
+  readonly part: PromptPart;
+}
+
+export interface MediaSegmentVideo {
+  readonly kind: 'video';
+  readonly attachment: VideoAttachment;
+}
+
+export type MediaSegment = MediaSegmentPart | MediaSegmentVideo;
+
+export interface SegmentExtractionResult {
+  /** Ordered segments: text/image parts inline, videos as unresolved refs. */
+  readonly segments: MediaSegment[];
+  readonly hasMedia: boolean;
+  readonly imageAttachmentIds: number[];
+  readonly videoAttachmentIds: number[];
+}
+
+/**
+ * Variant of `extractMediaAttachments` that leaves video placeholders
+ * unresolved: the returned segments keep the `VideoAttachment` so the caller
+ * can upload it (async) before deciding the final part shape. No cache copy
+ * happens here, so unlike `extractMediaAttachments` this never throws for a
+ * vanished video source — that surfaces only if the tag fallback runs.
+ */
+export function extractMediaSegments(
+  text: string,
+  store: ImageAttachmentStore,
+): SegmentExtractionResult {
+  const segments: MediaSegment[] = [];
+  const imageAttachmentIds: number[] = [];
+  const videoAttachmentIds: number[] = [];
+  let cursor = 0;
+  let hasMedia = false;
+
+  PLACEHOLDER_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PLACEHOLDER_REGEX.exec(text)) !== null) {
+    const [literal, kind, idStr] = match;
+    if (kind !== 'image' && kind !== 'video') continue;
+    if (idStr === undefined) continue;
+    const id = Number.parseInt(idStr, 10);
+    const attachment = store.get(id);
+    if (attachment === undefined) continue; // stale / user-typed — leave as text
+    if (attachment.kind !== kind) continue;
+    const before = text.slice(cursor, match.index);
+    pushTextPart(segments, before);
+    if (attachment.kind === 'video') {
+      segments.push({ kind: 'video', attachment });
+      videoAttachmentIds.push(id);
+    } else {
+      if (attachment.original !== undefined) {
+        pushTextPart(segments, captionForCompressedImage(attachment));
+      }
+      segments.push({ kind: 'part', part: imagePartForAttachment(attachment) });
+      imageAttachmentIds.push(id);
+    }
+    hasMedia = true;
+    cursor = match.index + literal.length;
+  }
+  pushTextPart(segments, text.slice(cursor));
+
+  return {
+    segments: hasMedia ? segments : [],
+    hasMedia,
+    imageAttachmentIds,
+    videoAttachmentIds,
+  };
+}
+
+/**
+ * Resolve extracted segments into final prompt parts. Text and image
+ * segments pass through; each video attachment is uploaded through `upload`
+ * (the session's video upload channel) so the prompt embeds the
+ * provider-issued `video_url` part directly. When an upload fails the video
+ * degrades to a `<video path="…">` tag pointing at a cache copy, which the
+ * model can open with `ReadMediaFile` — uploads run concurrently, order is
+ * preserved. Throws only when a fallback cache copy itself fails.
+ */
+export async function materializeMediaSegments(
+  segments: readonly MediaSegment[],
+  upload: (attachment: VideoAttachment) => Promise<PromptPart>,
+): Promise<PromptPart[]> {
+  const resolved = await Promise.all(
+    segments.map(async (segment): Promise<PromptPart[]> => {
+      if (segment.kind === 'part') return [segment.part];
+      try {
+        return [await upload(segment.attachment)];
+      } catch {
+        // Fall back to the file-tag form: the model reads the video itself.
+        const cachePath = materializeVideoToCache(segment.attachment);
+        return [{ type: 'text', text: formatMediaTag('video', cachePath) }];
+      }
+    }),
+  );
+  return resolved.flat();
+}
+
+/**
+ * Resolve already-extracted segments that contain no video placeholders into
+ * prompt parts synchronously (all segments are inline parts by then).
+ */
+export function segmentsToPromptParts(segments: readonly MediaSegment[]): PromptPart[] {
+  const parts: PromptPart[] = [];
+  for (const segment of segments) {
+    if (segment.kind === 'part') parts.push(segment.part);
+  }
+  return parts;
+}
+
 export interface MediaTagRewriteResult {
   /** Input text with resolved placeholders replaced by media references. */
   text: string;
@@ -185,6 +310,20 @@ function pushText(parts: PromptPart[], segment: string): void {
     return;
   }
   parts.push({ type: 'text', text: segment });
+}
+
+function pushTextPart(segments: MediaSegment[], segment: string): void {
+  if (segment.length === 0) return;
+  if (segment.trim().length === 0) return;
+  const last = segments.at(-1);
+  if (last?.kind === 'part' && last.part.type === 'text') {
+    segments[segments.length - 1] = {
+      kind: 'part',
+      part: { type: 'text', text: last.part.text + segment },
+    };
+    return;
+  }
+  segments.push({ kind: 'part', part: { type: 'text', text: segment } });
 }
 
 function imagePartForAttachment(att: ImageAttachment): PromptPart {
