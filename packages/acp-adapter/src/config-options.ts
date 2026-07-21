@@ -16,14 +16,13 @@
  *     — appears ONLY when the currently-selected model's catalog row has
  *     `thinkingSupported === true`; otherwise omitted from the snapshot
  *     so the client doesn't render a non-actionable toggle. Phase 16
- *     converted this from `SessionConfigBoolean` to a 2-entry select
- *     (`off` / `on`) so Zed renders it — Zed's chip strip currently
- *     only knows how to draw `type: 'select'` options, and the spec's
- *     `boolean` arm shows up as "Unknown". Effort granularity
- *     (`'low' | 'medium' | …`) is still hidden behind the adapter —
- *     kimi-code uses a single non-`'off'` level under the hood (the
- *     model's default effort, resolved by agent-core's
- *     `resolveThinkingEffort`).
+ *     converted this from `SessionConfigBoolean` to a `type: 'select'`
+ *     control so Zed renders it — Zed's chip strip currently only knows
+ *     how to draw `select` options, and the spec's `boolean` arm shows
+ *     up as "Unknown". Models that advertise `supportEfforts` render an
+ *     effort dropdown (`off`, `low`, `medium`, …) matching the VS Code
+ *     `ThinkingButton`; models without effort lists keep the legacy
+ *     binary `off`/`on` select.
  *   - `id: 'mode'`      (`type: 'select'`, `category: 'mode'`) — the
  *     locked 4-mode taxonomy from PLAN D9 ({@link ACP_MODES}).
  *
@@ -79,55 +78,88 @@ export function buildModelOption(
 }
 
 /**
- * Build the `thinking` toggle.
+ * Human-readable label for a thinking effort value, matching the VS Code
+ * `ThinkingButton` component: capitalise the first letter (`off` → `Off`).
+ */
+function label(effort: string): string {
+  return effort.length === 0 ? effort : effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+/**
+ * Build the `thinking` config option.
  *
  * Spec category `'thought_level'` (`schema/types.gen.d.ts:4492`) is the
  * reserved bucket for reasoning / thinking knobs; using it lets a client
  * like Zed render the toggle with the right icon / placement without the
  * adapter advertising a custom category.
  *
- * Phase 16 made this a 2-entry `type: 'select'` (`off` / `on`) instead
- * of `type: 'boolean'` — Zed's chip strip currently only renders
- * `select` options; boolean shows as "Unknown" because the UI hasn't
- * been wired up to the spec's boolean arm yet. The adapter still tracks
- * the toggle internally as a boolean (`AcpSession.currentThinkingEnabled`);
- * only the wire encoding is `'on'` / `'off'` strings.
+ * The control shape now mirrors the VS Code `ThinkingButton` component:
+ *   - `alwaysThinking` models collapse to a single locked-on entry.
+ *   - Models that advertise `supportEfforts` render an effort dropdown
+ *     (`off`, `low`, `medium`, …) with the current effort selected.
+ *   - All other thinking-capable models keep the legacy binary
+ *     `off`/`on` select for backwards compatibility.
  *
  * The caller decides whether to include this option at all — when the
  * currently-selected model has `thinkingSupported === false`, the
  * snapshot omits it entirely (dynamic visibility), so the client never
  * shows a toggle that wouldn't do anything.
- *
- * `alwaysThinking` models (declared `always_thinking` capability — the
- * runtime cannot disable thinking) collapse the select to a single
- * locked `on` entry: the state stays visible to the client, but there
- * is no off option to pick. ACP has no "disabled entry" concept, so
- * omitting `off` is the wire-level equivalent of the TUI's greyed-out
- * `Off (Unsupported)` segment.
  */
 export function buildThinkingOption(
-  enabled: boolean,
+  currentEffort: string,
+  supportEfforts: readonly string[] | undefined,
   alwaysThinking = false,
 ): SessionConfigOption {
+  const efforts = supportEfforts ?? [];
+
+  // Always-thinking models cannot be turned off. If they advertise effort
+  // levels we still show the effort selector (omitting `off`), matching the
+  // VS Code `ThinkingButton` when `alwaysOn` is set.
   if (alwaysThinking) {
+    if (efforts.length > 0) {
+      const normalizedEffort =
+        currentEffort !== 'off' && efforts.includes(currentEffort) ? currentEffort : efforts[0]!;
+      return {
+        type: 'select',
+        id: 'thinking',
+        name: 'Thinking',
+        category: 'thought_level',
+        currentValue: normalizedEffort,
+        options: efforts.map((effort) => ({ value: effort, name: label(effort) })),
+      };
+    }
     return {
       type: 'select',
       id: 'thinking',
       name: 'Thinking',
       category: 'thought_level',
       currentValue: 'on',
-      options: [{ value: 'on', name: 'Thinking On' }],
+      options: [{ value: 'on', name: 'On' }],
     };
   }
+
+  if (efforts.length > 0) {
+    const normalizedEffort =
+      currentEffort !== 'off' && efforts.includes(currentEffort) ? currentEffort : 'off';
+    return {
+      type: 'select',
+      id: 'thinking',
+      name: 'Thinking',
+      category: 'thought_level',
+      currentValue: normalizedEffort,
+      options: [{ value: 'off', name: 'Off' }, ...efforts.map((effort) => ({ value: effort, name: label(effort) }))],
+    };
+  }
+
   return {
     type: 'select',
     id: 'thinking',
     name: 'Thinking',
     category: 'thought_level',
-    currentValue: enabled ? 'on' : 'off',
+    currentValue: currentEffort === 'off' ? 'off' : 'on',
     options: [
-      { value: 'off', name: 'Thinking Off' },
-      { value: 'on', name: 'Thinking On' },
+      { value: 'off', name: 'Off' },
+      { value: 'on', name: 'On' },
     ],
   };
 }
@@ -186,7 +218,7 @@ export function buildModeOption(currentModeId: AcpModeId): SessionConfigOption {
 export async function buildSessionConfigOptions(
   harness: KimiHarness,
   currentBaseModelId: string,
-  currentThinkingEnabled: boolean,
+  currentThinkingEffort: string,
   currentModeId: AcpModeId,
 ): Promise<SessionConfigOption[]> {
   const models = await listModelsFromHarness(harness);
@@ -196,8 +228,33 @@ export async function buildSessionConfigOptions(
   const out: SessionConfigOption[] = [buildModelOption(models, currentBaseModelId)];
   if (showThinking) {
     // Always-thinking models render locked-on regardless of the session's
-    // recorded toggle state — agent-core clamps the runtime the same way.
-    out.push(buildThinkingOption(alwaysThinking || currentThinkingEnabled, alwaysThinking));
+    // recorded effort — agent-core clamps the runtime the same way.
+    // The legacy `'on'` sentinel, or any effort not declared by the current
+    // model, maps to the model's default effort so the snapshot matches the
+    // effective runtime state after agent-core normalizes unsupported values.
+    const efforts = currentModelEntry?.supportEfforts;
+    let normalizedEffort = currentThinkingEffort;
+    if (
+      normalizedEffort === 'off' ||
+      (efforts !== undefined &&
+        efforts.length > 0 &&
+        !efforts.includes(normalizedEffort))
+    ) {
+      normalizedEffort =
+        normalizedEffort === 'off'
+          ? 'off'
+          : (currentModelEntry?.defaultThinkingEffort ?? 'on');
+    }
+    if (alwaysThinking && normalizedEffort === 'off') {
+      normalizedEffort = currentModelEntry?.defaultThinkingEffort ?? 'on';
+    }
+    out.push(
+      buildThinkingOption(
+        normalizedEffort,
+        currentModelEntry?.supportEfforts,
+        alwaysThinking,
+      ),
+    );
   }
   out.push(buildModeOption(currentModeId));
   return out;

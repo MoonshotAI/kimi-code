@@ -101,8 +101,8 @@ describe('buildModelOption', () => {
 });
 
 describe('buildThinkingOption', () => {
-  it('produces a `type:"select"` `category:"thought_level"` option with `off`/`on` entries carrying the toggle value', () => {
-    const on = buildThinkingOption(true);
+  it('produces a `type:"select"` `category:"thought_level"` option with `off`/`on` entries for binary models', () => {
+    const on = buildThinkingOption('on', undefined);
     expect(on.type).toBe('select');
     expect(on.id).toBe('thinking');
     expect(on.category).toBe('thought_level');
@@ -110,19 +110,65 @@ describe('buildThinkingOption', () => {
     if (on.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(on.currentValue).toBe('on');
     expect(on.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['off', 'on']);
-    expect(on.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Thinking Off', 'Thinking On']);
+    expect(on.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Off', 'On']);
 
-    const off = buildThinkingOption(false);
+    const off = buildThinkingOption('off', undefined);
     if (off.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(off.currentValue).toBe('off');
   });
 
-  it('collapses to a single locked "on" entry for always-thinking models', () => {
-    const locked = buildThinkingOption(true, true);
+  it('exposes effort levels when the model advertises supportEfforts', () => {
+    const option = buildThinkingOption('medium', ['low', 'medium', 'high']);
+    if (option.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(option.currentValue).toBe('medium');
+    expect(option.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'off',
+      'low',
+      'medium',
+      'high',
+    ]);
+    expect(option.options.map((o) => ('name' in o ? o.name : ''))).toEqual([
+      'Off',
+      'Low',
+      'Medium',
+      'High',
+    ]);
+  });
+
+  it('falls back to `off` when the current effort is not in supportEfforts', () => {
+    const option = buildThinkingOption('xhigh', ['low', 'medium', 'high']);
+    if (option.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(option.currentValue).toBe('off');
+  });
+
+  it('collapses to a single locked "on" entry for always-thinking models without effort lists', () => {
+    const locked = buildThinkingOption('on', undefined, true);
     if (locked.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(locked.currentValue).toBe('on');
     expect(locked.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['on']);
-    expect(locked.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Thinking On']);
+    expect(locked.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['On']);
+  });
+
+  it('shows effort choices without an off entry for always-thinking models with supportEfforts', () => {
+    const locked = buildThinkingOption('high', ['low', 'medium', 'high'], true);
+    if (locked.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(locked.currentValue).toBe('high');
+    expect(locked.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'low',
+      'medium',
+      'high',
+    ]);
+    expect(locked.options.map((o) => ('name' in o ? o.name : ''))).toEqual([
+      'Low',
+      'Medium',
+      'High',
+    ]);
+  });
+
+  it('falls back to the first effort for always-thinking models when the current effort is unsupported', () => {
+    const locked = buildThinkingOption('xhigh', ['low', 'medium', 'high'], true);
+    if (locked.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(locked.currentValue).toBe('low');
   });
 });
 
@@ -159,7 +205,7 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-coder', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-coder', 'off', 'default');
 
     expect(getConfig).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(3);
@@ -189,7 +235,7 @@ describe('buildSessionConfigOptions', () => {
       },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'custom', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'custom', 'off', 'default');
 
     expect(result.map((option) => option.id)).toEqual(['model', 'thinking', 'mode']);
   });
@@ -204,7 +250,7 @@ describe('buildSessionConfigOptions', () => {
       },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'custom', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'custom', 'off', 'default');
 
     expect(result.map((option) => option.id)).toEqual(['model', 'mode']);
   });
@@ -215,7 +261,7 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-plain', model: 'qwen-2.5-coder', displayName: 'Kimi Plain' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-plain', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-plain', 'off', 'default');
 
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });
@@ -225,10 +271,56 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-coder', true, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-coder', 'on', 'default');
     const toggle = result.find((o) => o.id === 'thinking');
     if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
     expect(toggle.currentValue).toBe('on');
+  });
+
+  it('renders an effort dropdown for models that advertise supportEfforts', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'claude',
+        model: 'claude-sonnet-4-20250514',
+        displayName: 'Claude Sonnet 4',
+        protocol: 'anthropic',
+        providerType: 'anthropic',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'claude', 'low', 'default');
+    const toggle = result.find((o) => o.id === 'thinking');
+    if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
+    expect(toggle.currentValue).toBe('low');
+    expect(toggle.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'off',
+      'low',
+      'medium',
+      'high',
+    ]);
+  });
+
+  it('maps a carried unsupported effort to the target model default effort', async () => {
+    // Switching from a model with `max` to a model whose catalog only
+    // declares `['low', 'high']` should show `high` (the default), not `off`.
+    const harness = {
+      getConfig: async () => ({
+        providers: {},
+        models: {
+          'custom-reasoner': {
+            model: 'custom-reasoner',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high'],
+            defaultEffort: 'high',
+          },
+        },
+      }),
+    } as unknown as KimiHarness;
+
+    const result = await buildSessionConfigOptions(harness, 'custom-reasoner', 'max', 'default');
+    const toggle = result.find((o) => o.id === 'thinking');
+    if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
+    expect(toggle.currentValue).toBe('high');
   });
 
   it('locks the thinking toggle to on for always-thinking models even when the session state says off', async () => {
@@ -241,7 +333,7 @@ describe('buildSessionConfigOptions', () => {
       },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-deep', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-deep', 'off', 'default');
 
     const toggle = result.find((o) => o.id === 'thinking');
     if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
@@ -254,14 +346,14 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'unknown-model', true, 'default');
+    const result = await buildSessionConfigOptions(harness, 'unknown-model', 'on', 'default');
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });
 
   it('handles missing getConfig (partial-stub harness) by suppressing the toggle and shipping an empty model picker', async () => {
     const harness = {} as unknown as KimiHarness;
 
-    const result = await buildSessionConfigOptions(harness, '', false, 'default');
+    const result = await buildSessionConfigOptions(harness, '', 'off', 'default');
 
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
     const modelOpt = result.find((o) => o.id === 'model');

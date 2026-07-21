@@ -200,12 +200,6 @@ function nonEmptyString(value: string | undefined): string | undefined {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
-function thinkingEnabledFromEffort(effort: unknown): boolean | undefined {
-  if (typeof effort !== 'string') return undefined;
-  const normalized = effort.trim().toLowerCase();
-  return normalized.length > 0 && normalized !== 'off';
-}
-
 /**
  * Agent-side ACP handler. Routes `initialize` + `session/new` + `session/cancel`
  * into {@link KimiHarness}; refuses methods that are not yet wired with a
@@ -386,7 +380,7 @@ export class AcpServer implements Agent {
       mcpServers,
     });
     const currentModelId = await this.resolveCurrentModelId();
-    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled(session);
+    const currentThinkingEffort = await this.resolveCurrentThinkingEffort(session);
     const acpSession = new AcpSession(
       this.conn,
       session,
@@ -394,7 +388,7 @@ export class AcpServer implements Agent {
       this.makeTelemetryTrack(),
       currentModelId,
       this.harness,
-      currentThinkingEnabled,
+      currentThinkingEffort,
     );
     this.sessions.set(session.id, acpSession);
     // Phase 14 (PLAN D11) advertises both the model and mode pickers as
@@ -412,7 +406,7 @@ export class AcpServer implements Agent {
     const configOptions = await buildSessionConfigOptions(
       this.harness,
       currentModelId,
-      currentThinkingEnabled,
+      currentThinkingEffort,
       DEFAULT_MODE_ID,
     );
     this.scheduleAvailableCommandsUpdate(session.id);
@@ -586,7 +580,7 @@ export class AcpServer implements Agent {
     // exposes the boolean axis. Falls back to the live session status, then
     // the harness-level default, when the resume state lacks the field.
     const resumedThinkingEffort = resumeState?.agents?.['main']?.config?.thinkingEffort;
-    const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled(
+    const currentThinkingEffort = await this.resolveCurrentThinkingEffort(
       session,
       resumedThinkingEffort,
     );
@@ -597,13 +591,13 @@ export class AcpServer implements Agent {
       this.makeTelemetryTrack(),
       currentModelId,
       this.harness,
-      currentThinkingEnabled,
+      currentThinkingEffort,
     );
     this.sessions.set(session.id, acpSession);
     const configOptions = await buildSessionConfigOptions(
       this.harness,
       currentModelId,
-      currentThinkingEnabled,
+      currentThinkingEffort,
       DEFAULT_MODE_ID,
     );
     return { session, acpSession, configOptions };
@@ -773,13 +767,12 @@ export class AcpServer implements Agent {
         await acpSession.setMode(String(value));
         break;
       case 'thinking': {
-        // Phase 16 changed the wire shape from boolean to a 2-entry
-        // `select` (`'on'` / `'off'`) for Zed UI compatibility. Strict
-        // equality with `'on'` keeps the parse deterministic — any
-        // other string (including a stale `true` / `false` boolean
-        // sent by a pre-Phase-16 client) reads as "off" rather than
-        // silently flipping based on truthiness.
-        await acpSession.setThinking(value === 'on');
+        // The thinking option now carries effort strings (`'off'`,
+        // `'low'`, `'medium'`, …) for models that advertise
+        // `supportEfforts`, while legacy/binary clients still send `'on'`
+        // / `'off'`. Pass the value through as a string; `AcpSession`
+        // normalises `'on'` to the current model's default effort.
+        await acpSession.setThinking(String(value));
         break;
       }
       default:
@@ -792,7 +785,7 @@ export class AcpServer implements Agent {
       configOptions: await buildSessionConfigOptions(
         this.harness,
         acpSession.currentModelId,
-        acpSession.currentThinkingEnabled,
+        acpSession.currentThinkingEffort,
         acpSession.currentModeId,
       ),
     };
@@ -914,48 +907,58 @@ export class AcpServer implements Agent {
   }
 
   /**
-   * Compute the initial value for the `thinking` toggle from the session's
-   * effective effort. A persisted resume-state effort wins; otherwise the
-   * live session status is authoritative. The harness config remains a
-   * best-effort fallback for partial SDK stubs and status-read failures.
+   * Compute the initial thinking effort for the `thinking` config option
+   * from the session's effective effort. A persisted resume-state effort
+   * wins; otherwise the live session status is authoritative. The harness
+   * config remains a best-effort fallback for partial SDK stubs and
+   * status-read failures.
+   *
+   * Returns the raw effort string (`'off'`, `'low'`, `'medium'`, …) or
+   * the legacy `'on'` sentinel when only a boolean enabled flag is
+   * available. `'on'` is normalised to the current model's default effort
+   * by {@link buildSessionConfigOptions} before it reaches the wire.
    *
    * Tolerant to partial SDK/session stubs for the same reason
    * {@link resolveCurrentModelId} is — adapter-level unit tests routinely
    * omit `getStatus` or `getConfig`. The swallow-and-fallback path keeps the
    * test ergonomics symmetric.
    */
-  private async resolveCurrentThinkingEnabled(
+  private async resolveCurrentThinkingEffort(
     session: Session,
     resumedThinkingEffort?: unknown,
-  ): Promise<boolean> {
-    const resumed = thinkingEnabledFromEffort(resumedThinkingEffort);
-    if (resumed !== undefined) return resumed;
+  ): Promise<string> {
+    if (typeof resumedThinkingEffort === 'string' && resumedThinkingEffort.length > 0) {
+      return resumedThinkingEffort;
+    }
 
     if (typeof session.getStatus === 'function') {
       try {
-        const current = thinkingEnabledFromEffort((await session.getStatus()).thinkingEffort);
-        if (current !== undefined) return current;
+        const status = await session.getStatus();
+        if (typeof status.thinkingEffort === 'string' && status.thinkingEffort.length > 0) {
+          return status.thinkingEffort;
+        }
       } catch (error) {
-        log.warn('acp: session.getStatus threw during thinking toggle resolution; falling back', {
+        log.warn('acp: session.getStatus threw during thinking effort resolution; falling back', {
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
-    if (typeof this.harness.getConfig !== 'function') return false;
+    if (typeof this.harness.getConfig !== 'function') return 'off';
     try {
       const config = await this.harness.getConfig();
       const thinking = (config as { thinking?: { enabled?: unknown; effort?: unknown } })
         .thinking;
-      if (thinking?.enabled === false) return false;
-      const configured = thinkingEnabledFromEffort(thinking?.effort);
-      if (configured !== undefined) return configured;
-      return thinking?.enabled === true;
+      if (thinking?.enabled === false) return 'off';
+      if (typeof thinking?.effort === 'string' && thinking.effort.length > 0) {
+        return thinking.effort;
+      }
+      return thinking?.enabled === true ? 'on' : 'off';
     } catch (err) {
-      log.warn('acp: harness.getConfig threw during thinking toggle resolution; defaulting to off', {
+      log.warn('acp: harness.getConfig threw during thinking effort resolution; defaulting to off', {
         error: err instanceof Error ? err.message : String(err),
       });
-      return false;
+      return 'off';
     }
   }
 
