@@ -28,7 +28,6 @@ export default {
   account: 'Account',
   accountHint: 'View the signed-in account and its model access',
   colorSchemeHint: 'Choose the app’s light or dark appearance',
-  accentHint: 'Choose the interface accent colour',
   uiFontSize: 'Font size',
   uiFontSizeHint: 'Adjust interface and message text size',
   decreaseUiFontSize: 'Decrease font size',

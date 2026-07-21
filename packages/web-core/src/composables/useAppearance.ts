@@ -1,4 +1,4 @@
-// web-core — appearance preferences (color scheme / accent / UI font size)
+// web-core — appearance preferences (color scheme / UI font size)
 // and the streaming "fast moon" spinner state. Pure local UI state: only
 // touches localStorage + the DOM, never the session state or the API. The
 // values are module-level singletons so the whole app shares one instance.
@@ -7,7 +7,7 @@
 // on the FIRST explicit `useAppearance()` call (gated by `started`), never at
 // module top level — so importing this module has no side effects.
 //
-// localStorage is accessed through a tiny inline try/catch wrapper (the three
+// localStorage is accessed through a tiny inline try/catch wrapper (the two
 // keys below are owned solely by this module), so web-core does not import a
 // consumer's storage module.
 
@@ -16,10 +16,6 @@ import { ref, watch } from 'vue';
 /** Color scheme: 'light', 'dark', or follow the OS preference ('system'). */
 export type ColorScheme = 'light' | 'dark' | 'system';
 
-/** Accent: 'blue' (Kimi blue, default) or 'mono' (black/white). */
-export type Accent = 'blue' | 'mono';
-
-const ACCENT_VALUES: readonly string[] = ['blue', 'mono'];
 const COLOR_SCHEME_VALUES: readonly string[] = ['light', 'dark', 'system'];
 const UI_FONT_SIZE_DEFAULT = 14;
 const UI_FONT_SIZE_MIN = 12;
@@ -28,7 +24,6 @@ const UI_FONT_SIZE_MAX = 20;
 // Persisted keys owned by this module (mirror the host's `kimi-web.*`
 // namespace so a host that previously stored these under the same names keeps
 // its users' preferences across the move).
-const KEY_ACCENT = 'kimi-web.accent';
 const KEY_COLOR_SCHEME = 'kimi-web.color-scheme';
 const KEY_UI_FONT_SIZE = 'kimi-web.ui-font-size';
 
@@ -46,17 +41,6 @@ function storageSet(key: string, value: string): void {
   } catch {
     // storage unavailable (private mode, quota, etc.) — ignore
   }
-}
-
-function loadAccent(): Accent {
-  const v = storageGet(KEY_ACCENT);
-  if (v && ACCENT_VALUES.includes(v)) return v as Accent;
-  return 'blue';
-}
-
-function applyAccent(a: Accent): void {
-  if (typeof document === 'undefined' || !document.documentElement) return;
-  document.documentElement.dataset['accent'] = a;
 }
 
 function loadColorScheme(): ColorScheme {
@@ -96,7 +80,6 @@ function applyUiFontSize(value: number): void {
 }
 
 const colorScheme = ref<ColorScheme>(loadColorScheme());
-const accent = ref<Accent>(loadAccent());
 const uiFontSize = ref<number>(loadUiFontSize());
 
 let started = false;
@@ -106,7 +89,6 @@ function startDomSync(): void {
   // `immediate` applies the loaded values to the DOM on this first explicit
   // call (not at module import); later changes propagate via the same watches.
   watch(colorScheme, applyColorScheme, { immediate: true });
-  watch(accent, applyAccent, { immediate: true });
   watch(uiFontSize, applyUiFontSize, { immediate: true });
 }
 
@@ -114,12 +96,6 @@ function setColorScheme(c: ColorScheme): void {
   if (!COLOR_SCHEME_VALUES.includes(c)) return;
   colorScheme.value = c;
   storageSet(KEY_COLOR_SCHEME, c);
-}
-
-function setAccent(a: Accent): void {
-  if (!ACCENT_VALUES.includes(a)) return;
-  accent.value = a;
-  storageSet(KEY_ACCENT, a);
 }
 
 function setUiFontSize(value: number): void {
@@ -185,11 +161,9 @@ export function useAppearance() {
   startDomSync();
   return {
     colorScheme,
-    accent,
     uiFontSize,
     fastMoon,
     setColorScheme,
-    setAccent,
     setUiFontSize,
     resetFastMoon,
     recordMoonDelta,

@@ -1022,7 +1022,6 @@ function openPr(url: string): void {
     <SettingsDialog
       v-if="showSettings"
       :color-scheme="client.colorScheme.value"
-      :accent="client.accent.value"
       :ui-font-size="client.uiFontSize.value"
       :auth-ready="client.authReady.value"
       :account-model="client.defaultModel.value"
@@ -1038,7 +1037,6 @@ function openPr(url: string): void {
       :server-version="client.serverVersion.value"
       :backend="client.backend.value"
       @set-color-scheme="client.setColorScheme($event)"
-      @set-accent="client.setAccent($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-notify="client.setNotifyOnComplete($event)"
       @set-notify-question="client.setNotifyOnQuestion($event)"

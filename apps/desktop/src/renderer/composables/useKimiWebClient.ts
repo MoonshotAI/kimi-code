@@ -122,13 +122,16 @@ const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 
 // Appearance types + logic live in @moonshot-ai/web-core; re-exported here so
-// existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
-// callers keep working.
-export type { Accent, ColorScheme } from '@moonshot-ai/web-core';
+// existing `import type { ColorScheme } from './useKimiWebClient'` callers
+// keep working.
+export type { ColorScheme } from '@moonshot-ai/web-core';
 
 // The code-font setting was removed with its UI (b8a9e83). Clear the old
 // persisted key so users who once picked a font aren't frozen on it forever.
 safeRemove(STORAGE_KEYS.codeFont);
+// The accent (blue / black) setting was removed with its UI — Kimi blue is now
+// the single accent. Clear the old persisted key so it can't linger.
+safeRemove(STORAGE_KEYS.accent);
 // The UI theme (terminal / modern / kimi) was retired in favor of a single
 // look. Clear the old persisted key so users who once picked one aren't frozen
 // on a value the UI no longer reads.
@@ -2873,8 +2876,6 @@ export function useKimiWebClient() {
     colorScheme: appearance.colorScheme,
     setColorScheme: appearance.setColorScheme,
 
-    accent: appearance.accent,
-    setAccent: appearance.setAccent,
     notifyOnComplete: notification.notifyOnComplete,
     notifyOnQuestion: notification.notifyOnQuestion,
     notifyOnApproval: notification.notifyOnApproval,

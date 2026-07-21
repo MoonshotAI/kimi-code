@@ -145,61 +145,6 @@ html[data-color-scheme="dark"] {
   }
 }
 
-/* Accent: black/white (Vercel-style) — remaps the blue tokens to grayscale.
-   Orthogonal to the color scheme (only recolours the accent). */
-html[data-accent="mono"] {
-  --accent-primary: #171717;
-  --color-accent: #171717;
-  --color-accent-hover: #383838;
-  --color-accent-soft: #f1f1f2;
-  --color-accent-bd: #d4d4d8;
-  --blue: #171717;
-  --blue2: #383838;
-  --soft: #f1f1f2;
-  --bd: #d4d4d8;
-  --bluebg: #f4f4f5;
-  --blueln: #e4e4e7;
-  --logo: #171717;
-}
-
-/* mono accent × dark: the light grayscale above would win over the dark
-   variables (same specificity, later in source) — remap to dark grays.
-   The accent itself goes near-white here, so text/icons sitting ON it must
-   flip to dark — otherwise buttons render white-on-white. */
-html[data-color-scheme="dark"][data-accent="mono"] {
-  --accent-primary: #e8eaed;
-  --color-accent: #e8eaed;
-  --color-accent-hover: #c9cdd4;
-  --color-accent-soft: #21262d;
-  --color-accent-bd: #444c56;
-  --color-text-on-accent: #171717;
-  --blue: #e8eaed;
-  --blue2: #c9cdd4;
-  --soft: #21262d;
-  --bd: #444c56;
-  --bluebg: #21262d;
-  --blueln: #30363d;
-  --logo: #e8eaed;
-}
-@media (prefers-color-scheme: dark) {
-  html[data-color-scheme="system"][data-accent="mono"] {
-    --accent-primary: #e8eaed;
-    --color-accent: #e8eaed;
-    --color-accent-hover: #c9cdd4;
-    --color-accent-soft: #21262d;
-    --color-accent-bd: #444c56;
-    --color-text-on-accent: #171717;
-    --blue: #e8eaed;
-    --blue2: #c9cdd4;
-    --soft: #21262d;
-    --bd: #444c56;
-    --bluebg: #21262d;
-    --blueln: #30363d;
-    --logo: #e8eaed;
-  }
-}
-
-
 /* ===========================================================================
    DESIGN TOKENS v2 (redesign.html §03)
    Additive, scheme-aware token scales that sit alongside the legacy short
@@ -209,18 +154,9 @@ html[data-color-scheme="dark"][data-accent="mono"] {
    layer plus the spacing / radius / elevation / motion / type scales below.
 
    Light values live in `:root`; dark values are overridden in the two
-   `data-color-scheme` blocks that follow. Only 4 colour "seeds" are meant to
-   be customised — everything else is derived from / paired to them.
+   `data-color-scheme` blocks that follow.
    =========================================================================== */
 :root {
-  /* -- 4 colour seeds (the only knobs a theme customiser should need) ------ */
-  --accent-primary: #1783ff;
-  --accent-secondary: #6b7280;
-  --color-theme-blue: #1783ff;
-  --color-theme-black: #171717;
-  --surface-light: #ffffff;
-  --surface-dark: #0d1117;
-
   /* -- semantic colour layer (light) --------------------------------------- */
   --color-bg: #ffffff;
   --color-surface: #fafbfc;
@@ -253,7 +189,8 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   /* Sidebar surface — one step off --color-bg (warm off-white / dark blue-gray)
      so the session column reads as its own plane. */
   --color-sidebar-bg: #fbfaf9;
-  --color-accent: var(--accent-primary);
+  /* Brand accent = Kimi KMBlue (#1783ff), the single accent for the app. */
+  --color-accent: #1783ff;
   --color-accent-hover: #0f6fe0;
   --color-accent-soft: #e8f3ff;
   --color-accent-bd: #cfe6ff;
@@ -275,7 +212,7 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-done: #8250df;
   --color-done-soft: #f3e8ff;
   --color-done-bd: #e0ccff;
-  --color-info: var(--accent-primary);
+  --color-info: #1783ff;
 
   /* -- spacing (4px grid) -------------------------------------------------- */
   --space-1: 4px;
@@ -385,7 +322,6 @@ html[data-color-scheme="dark"][data-accent="mono"] {
 
 /* Design tokens v2 — dark values (explicit choice). */
 html[data-color-scheme="dark"] {
-  --accent-primary: #58a6ff;
   --color-bg: #0d1117;
   --color-surface: #161b22;
   --color-surface-raised: #1c2128;
@@ -433,7 +369,6 @@ html[data-color-scheme="dark"] {
 /* Design tokens v2 — dark values (follow OS preference). */
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"] {
-    --accent-primary: #58a6ff;
     --color-bg: #0d1117;
     --color-surface: #161b22;
     --color-surface-raised: #1c2128;

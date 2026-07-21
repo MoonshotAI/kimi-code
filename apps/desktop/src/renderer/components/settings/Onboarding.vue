@@ -1,18 +1,18 @@
 <!-- apps/web/src/components/settings/Onboarding.vue -->
-<!-- First-run onboarding overlay: a short welcome + the language, color scheme
-     and accent preferences, all of which apply live. Re-openable from the
+<!-- First-run onboarding overlay: a short welcome + the language and color
+     scheme preferences, all of which apply live. Re-openable from the
      settings popover. Each preference can be changed any time later, so there's
      nothing to "lose". -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import { availableLocales, setLocale, type LocaleCode } from '../../i18n';
-import { useAppearance, type Accent, type ColorScheme } from '@moonshot-ai/web-core';
+import { useAppearance, type ColorScheme } from '@moonshot-ai/web-core';
 import { Button, Dialog, SegmentedControl } from '@moonshot-ai/web-ui';
 
 const emit = defineEmits<{ complete: []; skip: [] }>();
 
 const { t, locale } = useI18n();
-const { colorScheme, accent, setColorScheme, setAccent } = useAppearance();
+const { colorScheme, setColorScheme } = useAppearance();
 
 function chooseLocale(code: LocaleCode): void {
   if (locale.value !== code) setLocale(code);
@@ -71,18 +71,6 @@ function finish(): void {
           { value: 'system', label: t('theme.system') },
         ]"
         @update:model-value="setColorScheme($event as ColorScheme)"
-      />
-    </section>
-
-    <section class="ob-sec">
-      <div class="ob-label">{{ t('theme.accentLabel') }}</div>
-      <SegmentedControl
-        :model-value="accent"
-        :options="[
-          { value: 'blue', label: t('theme.accentBlue') },
-          { value: 'mono', label: t('theme.accentBlack') },
-        ]"
-        @update:model-value="setAccent($event as Accent)"
       />
     </section>
 

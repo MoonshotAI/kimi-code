@@ -16,7 +16,7 @@ let kapWin: Window | null = null;
 let kapApp: App | null = null;
 let themeObserver: MutationObserver | null = null;
 
-const THEME_ATTRS = ['data-color-scheme', 'data-accent'] as const;
+const THEME_ATTRS = ['data-color-scheme'] as const;
 
 function syncThemeAttrs(doc: Document): void {
   const src = document.documentElement;

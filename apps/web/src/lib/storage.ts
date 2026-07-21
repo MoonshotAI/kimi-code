@@ -17,7 +17,6 @@ export const STORAGE_KEYS = {
   starredModels: 'kimi-web.starred-models',
   unread: 'kimi-web.unread',
   onboarded: 'kimi-web.onboarded',
-  accent: 'kimi-web.accent',
   colorScheme: 'kimi-web.color-scheme',
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
@@ -48,6 +47,7 @@ export const STORAGE_KEYS = {
   contentAlign: 'kimi-web.content-align',
   theme: 'kimi-web.theme',
   thinking: 'kimi-web.thinking',
+  accent: 'kimi-web.accent',
 } as const;
 
 /** Per-session composer draft key. */

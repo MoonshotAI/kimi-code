@@ -172,7 +172,7 @@ onUnmounted(() => {
 
             <h3 class="sub">Color</h3>
             <p>Semantic-first, in three layers: <b>background / text / border</b> + <b>accent</b> + <b>status colors</b>. All colors are defined in light / dark pairs, with contrast ≥ 4.5:1.</p>
-            <div class="callout info"><span class="ico">i</span><div>The table below shows the <b>derived semantic tokens</b>. The <b>neutrals and the accent</b> are derived from the 4 color seeds in §05 — for example <code>--color-accent</code> comes from <code>--accent-primary</code>, and <code>--color-bg</code> comes from the current light / dark surface. The <b>semantic status colors</b> (success / warning / danger / info) are independent palettes paired with the seeds, one set each for light / dark; they are not auto-derived from the seeds. Day-to-day reskinning usually only needs the 4 seeds, with the status colors fine-tuned as needed.</div></div>
+            <div class="callout info"><span class="ico">i</span><div>The table below shows the <b>semantic tokens</b>. Each ships a light value in <code>:root</code> and a dark override in the <code>data-color-scheme</code> blocks — for example <code>--color-bg</code> is <code>#ffffff</code> in light and <code>#0d1117</code> in dark; <code>--color-accent</code> is the brand blue (<code>#1783ff</code> light / <code>#58a6ff</code> dark). The <b>semantic status colors</b> (success / warning / danger / info) are independent palettes, one set each for light / dark.</div></div>
             <div class="palette">
               <div class="color-card"><div class="color-chip" style="background:#ffffff"></div><div class="color-meta"><div class="cn">bg</div><div class="cv">#ffffff / #0d1117</div></div></div>
               <div class="color-card"><div class="color-chip" style="background:#fafbfc"></div><div class="color-meta"><div class="cn">surface</div><div class="cv">#fafbfc / #161b22</div></div></div>
@@ -846,8 +846,8 @@ onUnmounted(() => {
               <div class="stage-bar"><span class="st">SegmentedControl</span></div>
               <div class="stage p col">
                 <div class="p-seg">
-                  <span class="p-seg-item on"><i class="p-color-dot blue"></i>Blue</span>
-                  <span class="p-seg-item"><i class="p-color-dot black"></i>Black</span>
+                  <span class="p-seg-item on">Light</span>
+                  <span class="p-seg-item">Dark</span>
                   <span class="p-seg-item">Follow system</span>
                 </div>
               </div>
@@ -1292,72 +1292,19 @@ onUnmounted(() => {
               <h2 class="sec-title">Theming</h2>
             </div>
             <p class="sec-desc">
-              Kimi Web uses <b>one unified theme</b>: the same components, fonts, radii, shadows, and surfaces — "reskinning" only changes colors.
-              Colors are collapsed into <b>4 seed tokens</b> — two theme colors + one light surface + one dark surface; the neutrals and accent are derived from them,
-              and the semantic status colors (success / warning / danger) ship as independent palettes paired with the seeds, one set each for light / dark.
+              Kimi Web uses <b>one unified theme</b>: the same components, fonts, radii, shadows, and surfaces — theming only swaps color values.
+              Every semantic color token ships a light value in <code>:root</code> and a dark override in the <code>data-color-scheme</code> blocks;
+              the semantic status colors (success / warning / danger) are independent palettes, one set each for light / dark.
             </p>
 
-            <h3 class="sub">Color seeds</h3>
-            <p>Day-to-day customization only needs these 4 seeds; the whole site's neutrals and accent change with them:</p>
-            <div class="panel panel-pad" style="margin:16px 0">
-              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
-                <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#1783ff;margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">Theme color · primary</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--accent-primary</div></div>
-                <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#6b7280;margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">Theme color · secondary</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--accent-secondary</div></div>
-                <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#ffffff;border:1px solid var(--d-line);margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">Light surface</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--surface-light</div></div>
-                <div style="text-align:center"><div style="width:48px;height:48px;border-radius:12px;background:#0d1117;margin:0 auto 8px;box-shadow:var(--d-shadow-sm)"></div><div style="font-size:13px;font-weight:700">Dark surface</div><div class="mono" style="font-size:11.5px;color:var(--d-fg-muted)">--surface-dark</div></div>
-              </div>
-            </div>
-
-            <h3 class="sub">Accent families</h3>
-            <p>Within one theme, <b>the theme color (accent) can switch among several color families</b>. Two parallel families are provided today: <b>blue</b> (default, brand blue, carrying semantic emphasis) and <b>black</b> (neutral black, carrying the most restrained strong action). Both share the same components, fonts, radii, and surfaces — switching families only swaps the accent token set, with zero structural change; more families (green / purple, etc.) can be added later. The two cards below show the same <code>primary</code> button under the two families.</p>
-            <div class="stage-wrap">
-              <div class="stage-bar"><span class="st">Family switch · same primary, different theme color</span></div>
-              <div class="stage p col">
-                <div class="demo-row" style="align-items:stretch">
-                  <div class="demo-col" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:12px">
-                    <span class="stage-label">Blue family · default</span>
-                    <div class="demo-row"><button class="p-btn primary sm">Primary action</button><span class="p-badge info sm"><span class="bd"></span>accent</span></div>
-                    <span class="mono" style="font-size:11px;color:var(--p-text-muted)">--accent #1783ff · soft #e8f3ff</span>
-                  </div>
-                  <div class="demo-col demo-family-black" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:12px">
-                    <span class="stage-label">Black family · neutral</span>
-                    <div class="demo-row"><button class="p-btn primary sm">Primary action</button><span class="p-badge info sm"><span class="bd"></span>accent</span></div>
-                    <span class="mono" style="font-size:11px;color:var(--p-text-muted)">--accent #14171c · soft #f1f2f4</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <h3 class="sub">Theme console · change 4 colors, light &amp; dark change together</h3>
-            <div class="stage-wrap">
-              <div class="stage-bar"><span class="st">Theme Console</span></div>
-              <div class="stage p col" style="gap:18px">
-                <div class="demo-row" style="justify-content:center;gap:10px;flex-wrap:wrap">
-                  <span class="p-badge info"><span style="width:10px;height:10px;border-radius:3px;background:#1783ff"></span>Primary #1783ff</span>
-                  <span class="p-badge neutral"><span style="width:10px;height:10px;border-radius:3px;background:#6b7280"></span>Secondary #6b7280</span>
-                  <span class="p-badge neutral"><span style="width:10px;height:10px;border-radius:3px;background:#ffffff;border:1px solid var(--p-line)"></span>Light surface #ffffff</span>
-                  <span class="p-badge neutral"><span style="width:10px;height:10px;border-radius:3px;background:#0d1117"></span>Dark surface #0d1117</span>
-                </div>
-                <div class="demo-row" style="align-items:stretch">
-                  <div class="demo-col" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:10px">
-                    <span class="stage-label">Light surface preview</span>
-                    <button class="p-btn primary sm" style="align-self:flex-start">Primary action</button>
-                    <span style="font-size:12px;color:var(--p-text-muted)">White background + accent button + neutral text</span>
-                  </div>
-                  <div class="demo-col" data-p="dark" style="flex:1;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface-raised);padding:16px;gap:10px">
-                    <span class="stage-label" style="color:#9aa0a8">Dark surface preview</span>
-                    <button class="p-btn primary sm" style="align-self:flex-start">Primary action</button>
-                    <span style="font-size:12px;color:var(--p-text-muted)">Dark background + same accent + derived text</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <h3 class="sub">Accent</h3>
+            <p>The app has <b>one accent</b>: the brand blue (<code>--color-accent</code>, <code>#1783ff</code> light / <code>#58a6ff</code> dark). Use it sparingly — the accent is reserved for the primary action, focus rings, links, and active marks (current tab, toggles); large fills always come from the neutral surface tokens. Selection that means "where I am" (sidebar rows, list pickers) is deliberately NOT accent-tinted — it uses <code>--color-selected</code> so it reads as location, not as an action.</p>
 
             <h3 class="sub">Light / dark mode</h3>
-            <p>Driven by the two surfaces <code>--surface-light</code> / <code>--surface-dark</code>: whichever surface is current derives the corresponding foreground, border, shadow, and status colors. Switching light / dark simply swaps between these two sets of derived tokens, with zero structural change.</p>
+            <p>Each semantic token ships a light value in <code>:root</code> and a dark override in the two <code>data-color-scheme</code> blocks (explicit choice, or following the OS preference via <code>prefers-color-scheme</code>). Switching light / dark simply swaps between these two sets of derived tokens, with zero structural change.</p>
 
             <div class="callout good"><span class="ico">✓</span><div>
-              <b>Benefits of one theme</b>: components, fonts, radii, and surfaces are consistent site-wide; reskinning only changes 4 color seeds; light / dark mode works out of the box; semantic status colors are independently tunable.
+              <b>Benefits of one theme</b>: components, fonts, radii, and surfaces are consistent site-wide; a single accent keeps the brand identity unambiguous; light / dark mode works out of the box; semantic status colors are independently tunable.
             </div></div>
           </section>
 
@@ -2349,9 +2296,6 @@ onUnmounted(() => {
   }
   .p-seg-item:hover { color: var(--p-text); }
   .p-seg-item.on { background: var(--p-surface-raised); color: var(--p-text); box-shadow: var(--p-sh-xs); }
-  .p-color-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-  .p-color-dot.blue { background: var(--color-theme-blue); }
-  .p-color-dot.black { background: var(--color-theme-black); }
 
   /* ===== Tabs ===== */
   .p-tabs {
@@ -2477,11 +2421,6 @@ onUnmounted(() => {
   .p-topbar .tb-actions { display: flex; align-items: center; gap: 4px; }
   .p-topbar.frost { background: rgba(255,255,255,.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-color: rgba(255,255,255,.6); }
   [data-p="dark"] .p-topbar.frost { background: rgba(22,27,34,.72); border-color: rgba(255,255,255,.08); }
-
-  /* Color-family demo: override the accent token set to neutral black to demo the
-     "black" family. Real switching is handled uniformly by the theme layer; components
-     do not need to be aware of it. */
-  .demo-family-black { --p-accent: #14171c; --p-accent-hover: #2f3540; --p-accent-soft: #f1f2f4; --p-accent-bd: #d8dbe0; --p-text-on-accent: #ffffff; }
 
   /* Utility: demo rows */
   .demo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }

@@ -13,7 +13,7 @@ import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenIn
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
-import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
+import type { ColorScheme } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel } from '../../api/types';
 import type { IconName } from '../../lib/icons';
 import { Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch, Tooltip } from '@moonshot-ai/web-ui';
@@ -22,7 +22,6 @@ const { t } = useI18n();
 
 const props = defineProps<{
   colorScheme: ColorScheme;
-  accent: Accent;
   uiFontSize: number;
   authReady: boolean;
   accountModel?: string | null;
@@ -50,7 +49,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
-  setAccent: [accent: Accent];
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
   setNotifyQuestion: [on: boolean];
@@ -477,20 +475,6 @@ function archiveTime(iso: string): string {
                   { value: 'system', label: t('theme.system') },
                 ]"
                 @update:model-value="emit('setColorScheme', $event as ColorScheme)"
-              />
-            </div>
-            <div class="row">
-              <span class="rlabel">
-                {{ t('theme.accentLabel') }}
-                <span class="hint">{{ t('settings.accentHint') }}</span>
-              </span>
-              <SegmentedControl
-                :model-value="accent"
-                :options="[
-                  { value: 'blue', label: t('theme.accentBlue'), swatch: 'var(--color-theme-blue)' },
-                  { value: 'mono', label: t('theme.accentBlack'), swatch: 'var(--color-theme-black)' },
-                ]"
-                @update:model-value="emit('setAccent', $event as Accent)"
               />
             </div>
             <div class="row font-size-row">

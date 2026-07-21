@@ -28,7 +28,6 @@ export default {
   account: '账户',
   accountHint: '查看当前登录账户和模型权益',
   colorSchemeHint: '选择应用的明暗外观',
-  accentHint: '选择界面的强调色',
   uiFontSize: '字体大小',
   uiFontSizeHint: '调整界面和消息文字大小',
   decreaseUiFontSize: '减小字体大小',
