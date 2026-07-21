@@ -8,7 +8,7 @@
  * memory and the route falls back to the wire-records rebuild.
  */
 
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -482,7 +482,15 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
     const meta = await session.accessor.get(ISessionMetadata).read();
     const wirePath = join(meta.agents!['btw-1']!.homedir!, 'wire.jsonl');
-    const time = Date.now() + 1;
+    const inheritedRecords = (await readFile(wirePath, 'utf-8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { type?: string; time?: number });
+    const time = inheritedRecords.findLast(
+      (record) => record.type === 'context.append_message' && typeof record.time === 'number',
+    )!.time!;
+    // Deliberately reuse the final inherited message's millisecond. Fork
+    // ownership is record-ordered, so a timestamp tie must not leak it.
     await appendFile(
       wirePath,
       [

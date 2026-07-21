@@ -197,9 +197,6 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async onClientHello(frame: InboundFrame): Promise<void> {
     if (!(await this.authorize(frame))) return;
     this.gotClientHello = true;
-    // Global fan-out rides the handshake, not any subscription: from here on
-    // this connection receives global events even with zero subscriptions.
-    this.broadcaster.registerGlobalTarget(this);
 
     const payload = frame.payload ?? {};
     const subscriptions = asStringArray(payload['subscriptions']);
@@ -222,6 +219,12 @@ export class WsConnectionV1 implements BroadcastTarget {
         serverCursors,
       );
     }
+
+    // Global fan-out rides the handshake, not any subscription. Register only
+    // after every requested cursor replay so registerGlobalTarget's volatile
+    // work-fact catchup cannot precede and then be overwritten by older
+    // durable backlog for the same session.
+    this.broadcaster.registerGlobalTarget(this);
 
     this.sendFrame(
       buildAck(frame.id ?? '', 0, 'success', {

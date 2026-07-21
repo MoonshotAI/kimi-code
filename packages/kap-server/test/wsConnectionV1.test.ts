@@ -424,6 +424,58 @@ describe('WsConnectionV1 global target registration', () => {
     expect(unregistered).toEqual([conn]);
   });
 
+  it('registers global catchup after client_hello cursor replay', async () => {
+    const socket = new FakeSocket();
+    const replayed = durable('turn.started', 's1', 3);
+    const catchup = {
+      ...durable('event.session.work_changed', 's1', 4),
+      volatile: true,
+      payload: { sessionId: 's1', busy: true },
+    };
+    const broadcaster = {
+      subscribe: async () => true,
+      unsubscribe: () => {},
+      registerGlobalTarget: (target: { send: (event: unknown) => void }) => {
+        target.send(catchup);
+      },
+      unregisterGlobalTarget: () => {},
+      getCursor: async () => ({ seq: 4, epoch: 'e1' }),
+      getBufferedSince: async () => ({
+        events: [{ seq: replayed.seq, envelope: replayed }],
+        resyncRequired: false,
+        currentSeq: 4,
+        epoch: 'e1',
+      }),
+      flushTranscriptSeed: async () => {},
+    } as unknown as SessionEventBroadcaster;
+    const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h1',
+        payload: {
+          client_id: 'c1',
+          subscriptions: ['s1'],
+          cursors: { s1: { seq: 2, epoch: 'e1' } },
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(socket.frames().some((frame) => (frame as { volatile?: boolean }).volatile)).toBe(true);
+    });
+
+    const sessionFrames = socket.frames().filter(
+      (frame) => (frame as { session_id?: string }).session_id === 's1',
+    ) as Array<{ type: string }>;
+    expect(sessionFrames.map((frame) => frame.type)).toEqual([
+      'turn.started',
+      'event.session.work_changed',
+    ]);
+    conn.close();
+  });
+
   it('does not register without a client_hello', () => {
     const socket = new FakeSocket();
     const { broadcaster, registered, unregistered } = makeRegisteringBroadcaster();

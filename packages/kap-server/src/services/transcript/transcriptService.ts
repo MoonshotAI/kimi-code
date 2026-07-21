@@ -493,19 +493,19 @@ export class TranscriptService {
         // Old/corrupt metadata still gets the legacy best-effort rebuild.
       }
     }
-    const reduced = reduceContextTranscript(records);
-    const firstPromptTime = records.find((record) => record.type === 'turn.prompt')?.['time'];
+    const firstPromptIndex = records.findIndex((record) => record.type === 'turn.prompt');
     // Forked agents (currently BTW) persist the copied parent context before
     // their first own `turn.prompt`. That context is useful to the model but
-    // is not part of the child agent's visible transcript. Reduce the whole
-    // journal first so rollback/compaction still see the inherited baseline,
-    // then keep only messages written from the first owned turn onward.
-    let messages = [...reduced.entries];
-    if (forkedAgent && typeof firstPromptTime === 'number') {
-      messages = reduced.entries.filter((_, index) => (reduced.times[index] ?? 0) >= firstPromptTime);
-    } else if (forkedAgent) {
-      messages = [];
-    }
+    // is not part of the child agent's visible transcript. The record index is
+    // the stable ownership boundary; timestamps can collide within one
+    // millisecond. Reducing only the owned suffix also preserves undo and
+    // compaction semantics for the child-visible history.
+    const visibleRecords = forkedAgent
+      ? firstPromptIndex >= 0
+        ? records.slice(firstPromptIndex)
+        : []
+      : records;
+    const messages = reduceContextTranscript(visibleRecords).entries;
     return groupMessagesIntoSnapshot(messages);
   }
 
