@@ -54,6 +54,13 @@ export interface AcpModelEntry {
    * `defaultThinkingEffortFor` so the ACP on-state matches the TUI.
    */
   readonly defaultThinkingEffort: string;
+  /**
+   * The effort levels the model advertises. When absent or empty the ACP
+   * thinking control falls back to a binary `off`/`on` select; otherwise
+   * it renders an effort dropdown (`off`, `low`, `medium`, …) like the
+   * VS Code `ThinkingButton` component.
+   */
+  readonly supportEfforts?: readonly string[] | undefined;
 }
 
 /**
@@ -134,6 +141,7 @@ export async function listModelsFromHarness(
       thinkingSupported: deriveThinkingSupported(alias, providerType),
       alwaysThinking: deriveAlwaysThinking(alias, providerType),
       defaultThinkingEffort: deriveDefaultThinkingEffort(alias, providerType),
+      supportEfforts: effective.supportEfforts,
     });
   }
   return out;

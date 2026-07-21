@@ -79,6 +79,7 @@ describe('listModelsFromHarness', () => {
         thinkingSupported: true,
         alwaysThinking: false,
         defaultThinkingEffort: 'high',
+        supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
     ]);
   });
@@ -103,6 +104,7 @@ describe('listModelsFromHarness', () => {
         thinkingSupported: true,
         alwaysThinking: false,
         defaultThinkingEffort: 'high',
+        supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
     ]);
   });
@@ -163,6 +165,7 @@ describe('listModelsFromHarness', () => {
         thinkingSupported: true,
         alwaysThinking: false,
         defaultThinkingEffort: 'high',
+        supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
     ]);
   });

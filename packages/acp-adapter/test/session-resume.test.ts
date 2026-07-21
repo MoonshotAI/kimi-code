@@ -62,7 +62,7 @@ function makeInMemoryStreamPair(): {
 /**
  * Build a fake {@link Session} whose `getResumeState` reports the given
  * main-agent config so the server's resume-state projection (modelAlias
- * → currentModelId, thinkingEffort → currentThinkingEnabled) gets a
+ * → currentModelId, thinkingEffort → currentThinkingEffort) gets a
  * deterministic input. History is empty because `resumeSession` does
  * not replay anyway — the field is kept for API parity with the
  * matching session-load helper.

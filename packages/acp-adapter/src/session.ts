@@ -101,30 +101,28 @@ export class AcpSession {
    * `,thinking` suffix) for the `configOptions` model picker (PLAN D11).
    * Updated by {@link setModel} after the SDK call lands. Phase 15
    * decoupled thinking from the model id — see
-   * {@link currentThinkingEnabledInternal} — so this field never carries
+   * {@link currentThinkingEffortInternal} — so this field never carries
    * a `,thinking` suffix even when the client originally sent one
    * through `unstable_setSessionModel`.
    */
   private currentModelIdInternal: string;
 
   /**
-   * The adapter-side authoritative current thinking-toggle state.
+   * The adapter-side authoritative current thinking effort.
    * Phase 15 split this out of the model id so the client renders a
-   * separate boolean `SessionConfigOption` (the spec's
-   * `'thought_level'` category) instead of an inlined `,thinking`
-   * variant row in the model dropdown. Updated by {@link setThinking}
-   * and by {@link setModel} when the caller passed a merged
-   * `${id},thinking` form (legacy `unstable_setSessionModel`
-   * compatibility).
+   * separate `SessionConfigOption` (the spec's `'thought_level'`
+   * category) instead of an inlined `,thinking` variant row in the model
+   * dropdown. Updated by {@link setThinking} and by {@link setModel} when
+   * the caller passed a merged `${id},thinking` form (legacy
+   * `unstable_setSessionModel` compatibility).
    *
-   * Maps to the SDK's effort string at the boundary:
-   * `true` → `'high'` (the typical default for kimi-code), `false`
-   * → `'off'`. The granularity of `'low' | 'medium' | 'xhigh' | 'max'`
-   * is intentionally not surfaced — the ACP `thinking` axis is binary
-   * (Phase 16 wire form: 2-entry `select` `off` / `on`; pre-Phase-16
-   * was `SessionConfigBoolean`).
+   * Holds the raw effort string (`'off'`, `'low'`, `'medium'`, …) that
+   * is forwarded to `Session.setThinking`. The `configOptions` snapshot
+   * builds the visible option set from the current model's
+   * `supportEfforts`: models with effort lists render a dropdown; models
+   * without them keep the legacy binary `off`/`on` select.
    */
-  private currentThinkingEnabledInternal = false;
+  private currentThinkingEffortInternal = 'off';
 
   /**
    * The adapter-side authoritative current mode id. Updated by
@@ -190,7 +188,7 @@ export class AcpSession {
      * `configOptions.model.currentValue`. Defaults to empty string when
      * absent (adapter-level unit tests). Phase 15: must be the bare model
      * key (no `,thinking` suffix); thinking is carried separately by
-     * {@link initialThinkingEnabled}.
+     * {@link initialThinkingEffort}.
      */
     initialModelId?: string,
     /**
@@ -204,16 +202,16 @@ export class AcpSession {
      */
     private readonly harness?: KimiHarness,
     /**
-     * Initial value of the adapter-side thinking-toggle state, supplied
-     * by the server when creating / loading the session. Phase 15
-     * introduces this so resumed sessions whose persisted
-     * `thinkingEffort` was non-`'off'` start with the toggle on.
-     * Defaults to `false` when absent.
+     * Initial value of the adapter-side thinking effort, supplied by the
+     * server when creating / loading the session. Phase 15 introduces
+     * this so resumed sessions whose persisted `thinkingEffort` was
+     * non-`'off'` start with the toggle on. Defaults to `'off'` when
+     * absent.
      */
-    initialThinkingEnabled?: boolean,
+    initialThinkingEffort?: string,
   ) {
     this.currentModelIdInternal = initialModelId ?? '';
-    this.currentThinkingEnabledInternal = initialThinkingEnabled ?? false;
+    this.currentThinkingEffortInternal = initialThinkingEffort ?? 'off';
     // Register the approval bridge once, at session-construction time —
     // NOT per-prompt — because `setApprovalHandler` is scoped to the
     // SDK session, not the individual turn. The handler captures `this`
@@ -252,12 +250,12 @@ export class AcpSession {
   }
 
   /**
-   * Adapter-side authoritative thinking-toggle state, used by
+   * Adapter-side authoritative thinking effort, used by
    * {@link AcpServer.setSessionConfigOption} to build the response's
    * `configOptions` snapshot.
    */
-  get currentThinkingEnabled(): boolean {
-    return this.currentThinkingEnabledInternal;
+  get currentThinkingEffort(): string {
+    return this.currentThinkingEffortInternal;
   }
 
   /**
@@ -317,11 +315,10 @@ export class AcpSession {
    * Python ref's `_ModelIDConv.from_acp_model_id` at
    * `kimi-cli/src/kimi_cli/acp/server.py:425-433`). Phase 15 decoupled
    * thinking from the model id at the ACP surface — it's now its own
-   * `thought_level` config option (Phase 16 wire form: 2-entry `select`
-   * `off` / `on`) — but this legacy compat path is
-   * kept: when the caller sends a merged form, we split it into the
-   * bare model key (forwarded to `Session.setModel`) plus a thinking
-   * flag (forwarded to `Session.setThinking`).
+   * `thought_level` config option — but this legacy compat path is kept:
+   * when the caller sends a merged form, we split it into the bare model
+   * key (forwarded to `Session.setModel`) plus a thinking effort
+   * (forwarded to `Session.setThinking`).
    *
    * Wire semantics:
    *  - `'kimi-v2'`           → setModel('kimi-v2'); thinking state unchanged.
@@ -330,16 +327,14 @@ export class AcpSession {
    *
    * Note the asymmetry: a bare model id does NOT turn thinking OFF.
    * That keeps the model / thinking axes orthogonal — model changes
-   * preserve thinking state. To explicitly disable thinking, the
-   * client must call `setSessionConfigOption({ configId: 'thinking',
-   * value: false })` (or send `setThinking('off')` directly through
-   * the SDK channel, but the ACP surface only exposes the boolean).
+   * preserve thinking state. To explicitly disable thinking, the client
+   * must call `setSessionConfigOption({ configId: 'thinking', value: 'off' })`.
    *
    * `currentModelIdInternal` is updated to the bare key — the snapshot
    * therefore never carries a `,thinking` suffix in the model option's
-   * `currentValue`. Thinking visibility in the snapshot is governed
-   * by `currentThinkingEnabledInternal` and
-   * {@link buildSessionConfigOptions}'s `thinkingSupported` gate.
+   * `currentValue`. Thinking visibility in the snapshot is governed by
+   * `currentThinkingEffortInternal` and {@link buildSessionConfigOptions}'s
+   * `thinkingSupported` gate.
    *
    * Unknown model errors bubble up from the SDK as-is; the caller in
    * `AcpServer.unstable_setSessionModel` decides how to translate them.
@@ -350,39 +345,39 @@ export class AcpSession {
     const baseKey = hasSuffix ? modelId.slice(0, -suffix.length) : modelId;
     await this.session.setModel(baseKey);
     if (hasSuffix && typeof this.session.setThinking === 'function') {
-      await this.session.setThinking(await this.thinkingOnEffort());
-      this.currentThinkingEnabledInternal = true;
+      const effort = await this.thinkingOnEffort();
+      await this.session.setThinking(effort);
+      this.currentThinkingEffortInternal = effort;
     }
     this.currentModelIdInternal = baseKey;
     await this.emitConfigOptionUpdate();
   }
 
   /**
-   * Forward an ACP thinking-toggle change to the underlying SDK.
+   * Forward an ACP thinking-effort change to the underlying SDK.
    *
-   * Phase 15 introduces this as the new canonical channel for the
-   * thinking axis. Boolean → thinking-effort mapping:
-   *  - `true`  → `Session.setThinking(effort)` where `effort` is the
-   *    current model's default effort (see {@link thinkingOnEffort}).
-   *  - `false` → `Session.setThinking('off')`.
+   * The value is the effort string (`'off'`, `'low'`, `'medium'`, …)
+   * selected by the client. `'on'` is accepted as a legacy alias for
+   * the current model's default effort (see {@link thinkingOnEffort});
+   * any other value is passed through to `Session.setThinking` as-is.
    *
    * Tolerant to partial-stub `Session` instances (adapter-level unit
    * tests construct minimal fakes that may omit `setThinking`): when
-   * the method is missing we still update the adapter-side toggle
-   * state and emit the snapshot, so the ACP wire stays consistent —
-   * the test simply doesn't observe an SDK call.
+   * the method is missing we still update the adapter-side effort state
+   * and emit the snapshot, so the ACP wire stays consistent — the test
+   * simply doesn't observe an SDK call.
    *
    * Always emits a `config_option_update` notification afterwards so
-   * the client sees the toggle reflect the new value, even if it
-   * came in through the funnel and the response itself already
-   * carries a fresh snapshot.
+   * the client sees the toggle reflect the new value, even if it came
+   * in through the funnel and the response itself already carries a
+   * fresh snapshot.
    */
-  async setThinking(enabled: boolean): Promise<void> {
+  async setThinking(effort: string): Promise<void> {
+    const resolvedEffort = effort === 'on' ? await this.thinkingOnEffort() : effort;
     if (typeof this.session.setThinking === 'function') {
-      const effort = enabled ? await this.thinkingOnEffort() : THINKING_OFF_EFFORT;
-      await this.session.setThinking(effort);
+      await this.session.setThinking(resolvedEffort);
     }
-    this.currentThinkingEnabledInternal = enabled;
+    this.currentThinkingEffortInternal = resolvedEffort;
     await this.emitConfigOptionUpdate();
   }
 
@@ -471,7 +466,7 @@ export class AcpSession {
       const snapshot = await buildSessionConfigOptions(
         this.harness,
         this.currentModelIdInternal,
-        this.currentThinkingEnabledInternal,
+        this.currentThinkingEffortInternal,
         this.currentModeIdInternal,
       );
       await this.conn.sessionUpdate(configOptionUpdateNotification(this.id, snapshot));
