@@ -1004,7 +1004,17 @@ export class KimiTUI {
       // command cannot record shell context before the earlier prompt is
       // dispatched (which would reorder user actions).
       if (this.pendingSubmits > 0) {
+        // Shell commands are session-scoped: capture the originating session
+        // and re-verify at dispatch, or a mid-upload switch would run the
+        // command in another session's workspace and record it there.
+        const sessionAtSubmit = this.session;
         this.inputSubmitChain = this.inputSubmitChain.then(() => {
+          if (sessionAtSubmit === undefined || this.session !== sessionAtSubmit) {
+            this.showError(
+              'The session changed while the video was uploading — please resend the command.',
+            );
+            return;
+          }
           if (this.state.appState.streamingPhase !== 'idle') {
             this.enqueueMessage(text, undefined, 'bash');
           } else {
