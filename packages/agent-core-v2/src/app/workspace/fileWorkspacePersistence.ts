@@ -1,5 +1,5 @@
 /**
- * `workspaceRegistry` domain (L1) — `FileWorkspacePersistence` implementation.
+ * `workspace` domain (L2) — `FileWorkspacePersistence` implementation.
  *
  * File backend of `IWorkspacePersistence`. Persists the catalog as a single
  * v1-compatible `workspaces.json` document at the storage root
@@ -14,7 +14,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
-import type { Workspace } from './workspaceRegistry';
+import type { Workspace } from './workspace';
 import {
   IWorkspacePersistence,
   type PersistedWorkspaceEntry,
@@ -22,9 +22,9 @@ import {
   type WorkspaceCatalog,
 } from './workspacePersistence';
 
-const WORKSPACE_REGISTRY_VERSION = 1;
-const WORKSPACE_REGISTRY_SCOPE = '';
-const WORKSPACE_REGISTRY_KEY = 'workspaces.json';
+const WORKSPACE_CATALOG_VERSION = 1;
+const WORKSPACE_CATALOG_SCOPE = '';
+const WORKSPACE_CATALOG_KEY = 'workspaces.json';
 
 export class FileWorkspacePersistence implements IWorkspacePersistence {
   declare readonly _serviceBrand: undefined;
@@ -33,8 +33,8 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
 
   async load(): Promise<WorkspaceCatalog | undefined> {
     const file = await this.docs.get<PersistedWorkspaceFile>(
-      WORKSPACE_REGISTRY_SCOPE,
-      WORKSPACE_REGISTRY_KEY,
+      WORKSPACE_CATALOG_SCOPE,
+      WORKSPACE_CATALOG_KEY,
     );
     if (file === undefined) return undefined;
     if (
@@ -76,11 +76,11 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
       };
     }
     const file: PersistedWorkspaceFile = {
-      version: WORKSPACE_REGISTRY_VERSION,
+      version: WORKSPACE_CATALOG_VERSION,
       workspaces: record,
       deleted_workspace_ids: [...catalog.deletedIds],
     };
-    await this.docs.set(WORKSPACE_REGISTRY_SCOPE, WORKSPACE_REGISTRY_KEY, file);
+    await this.docs.set(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY, file);
   }
 }
 
@@ -113,5 +113,5 @@ registerScopedService(
   IWorkspacePersistence,
   FileWorkspacePersistence,
   InstantiationType.Eager,
-  'workspaceRegistry',
+  'workspace',
 );

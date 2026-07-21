@@ -1,10 +1,12 @@
 /**
- * `FileWorkspaceLocalConfigService` — node-fs backend for `IWorkspaceLocalConfigService`.
+ * `FileProjectLocalConfigService` — node-fs backend for `IProjectLocalConfigService`.
  *
  * Discovers project roots, parses and writes project-local
  * `.kimi-code/local.toml`, resolves additional directories with
  * v1-compatible OS-home expansion through `bootstrap`, and accesses the local
- * filesystem through `hostFs`. Bound at App scope.
+ * filesystem through `hostFs`. Works purely by path (project-root discovery
+ * via the nearest `.git` ancestor); it never touches the workspace catalog or
+ * a `workspaceId`. Bound at App scope.
  */
 
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
@@ -15,14 +17,14 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
-  IWorkspaceLocalConfigService,
-  type WorkspaceAdditionalDirsLoadResult,
-} from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+  IProjectLocalConfigService,
+  type ProjectAdditionalDirsLoadResult,
+} from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
 
-const WorkspaceLocalTomlSchema = z.object({
+const ProjectLocalTomlSchema = z.object({
   workspace: z
     .object({
       additional_dir: z.array(z.string()),
@@ -30,14 +32,14 @@ const WorkspaceLocalTomlSchema = z.object({
     .optional(),
 });
 
-type WorkspaceLocalToml = z.infer<typeof WorkspaceLocalTomlSchema>;
+type ProjectLocalToml = z.infer<typeof ProjectLocalTomlSchema>;
 
-interface WorkspaceLocalTomlFile {
+interface ProjectLocalTomlFile {
   readonly raw: Record<string, unknown>;
-  readonly parsed: WorkspaceLocalToml;
+  readonly parsed: ProjectLocalToml;
 }
 
-export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigService {
+export class FileProjectLocalConfigService implements IProjectLocalConfigService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
@@ -45,10 +47,10 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
-  async readAdditionalDirs(workDir: string): Promise<WorkspaceAdditionalDirsLoadResult> {
+  async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
     const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getWorkspaceLocalConfigPath(projectRoot);
-    const file = await this.readWorkspaceLocalToml(configPath);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const file = await this.readProjectLocalToml(configPath);
 
     const additionalDirs = file?.parsed.workspace?.additional_dir;
     if (additionalDirs === undefined) {
@@ -69,11 +71,11 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
   async appendAdditionalDir(
     workDir: string,
     inputPath: string,
-  ): Promise<WorkspaceAdditionalDirsLoadResult> {
+  ): Promise<ProjectAdditionalDirsLoadResult> {
     const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getWorkspaceLocalConfigPath(projectRoot);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
     const additionalDir = await this.resolveAdditionalDir(workDir, inputPath);
-    const file = (await this.readWorkspaceLocalToml(configPath)) ?? { raw: {}, parsed: {} };
+    const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
     const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
     const fileExistingDirs = this.resolveExistingAdditionalDirs(projectRoot, fileAdditionalDirs);
 
@@ -95,7 +97,7 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
     return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
   }
 
-  private getWorkspaceLocalConfigPath(projectRoot: string): string {
+  private getProjectLocalConfigPath(projectRoot: string): string {
     return join(projectRoot, '.kimi-code', 'local.toml');
   }
 
@@ -111,9 +113,9 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
     }
   }
 
-  private async readWorkspaceLocalToml(
+  private async readProjectLocalToml(
     configPath: string,
-  ): Promise<WorkspaceLocalTomlFile | undefined> {
+  ): Promise<ProjectLocalTomlFile | undefined> {
     let text: string;
     try {
       text = await this.fs.readText(configPath);
@@ -141,11 +143,11 @@ export class FileWorkspaceLocalConfigService implements IWorkspaceLocalConfigSer
     if (!isPlainObject(raw)) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Invalid workspace local config in ${configPath}`,
+        `Invalid project local config in ${configPath}`,
       );
     }
 
-    return { raw: cloneRecord(raw), parsed: parseWorkspaceLocalToml(raw) };
+    return { raw: cloneRecord(raw), parsed: parseProjectLocalToml(raw) };
   }
 
   private async resolveAdditionalDirsInternal(
@@ -267,12 +269,12 @@ function normalizeAdditionalDirInput(additionalDir: string): string {
   return normalize(trimmed);
 }
 
-function parseWorkspaceLocalToml(raw: Record<string, unknown>): WorkspaceLocalToml {
+function parseProjectLocalToml(raw: Record<string, unknown>): ProjectLocalToml {
   try {
-    return WorkspaceLocalTomlSchema.parse(raw);
+    return ProjectLocalTomlSchema.parse(raw);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
-      throw new Error2(ErrorCodes.CONFIG_INVALID, describeWorkspaceLocalValidationError(error), {
+      throw new Error2(ErrorCodes.CONFIG_INVALID, describeProjectLocalValidationError(error), {
         cause: error,
       });
     }
@@ -280,13 +282,13 @@ function parseWorkspaceLocalToml(raw: Record<string, unknown>): WorkspaceLocalTo
   }
 }
 
-function describeWorkspaceLocalValidationError(error: z.ZodError): string {
+function describeProjectLocalValidationError(error: z.ZodError): string {
   const issue = error.issues[0];
   if (issue?.path[0] === 'workspace' && issue.path[1] === 'additional_dir') {
     return 'workspace.additional_dir must be an array of strings';
   }
   if (issue?.path[0] === 'workspace') return 'workspace must be a table';
-  return `Invalid workspace local config: ${error.message}`;
+  return `Invalid project local config: ${error.message}`;
 }
 
 function cloneRecord(value: unknown): Record<string, unknown> {
@@ -310,8 +312,8 @@ function getErrorCode(error: unknown): unknown {
 
 registerScopedService(
   LifecycleScope.App,
-  IWorkspaceLocalConfigService,
-  FileWorkspaceLocalConfigService,
+  IProjectLocalConfigService,
+  FileProjectLocalConfigService,
   InstantiationType.Eager,
-  'workspaceLocalConfig',
+  'projectLocalConfig',
 );

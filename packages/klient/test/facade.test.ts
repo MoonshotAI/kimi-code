@@ -65,7 +65,7 @@ describe('facade routing', () => {
     channel.result = { id: 'w1', root: '/x', name: 'n', createdAt: 1, lastOpenedAt: 2 };
     await klient.global.workspaces.createOrTouch({ root: '/x', name: 'n' });
     expect(channel.calls[0]).toMatchObject({
-      service: 'workspaceRegistry',
+      service: 'workspaceService',
       method: 'createOrTouch',
       args: ['/x', 'n'],
     });

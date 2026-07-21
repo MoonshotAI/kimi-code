@@ -19,10 +19,10 @@ import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
-import { WorkspaceRegistryService } from '#/app/workspaceRegistry/workspaceRegistryService';
-import { FileWorkspacePersistence } from '#/app/workspaceRegistry/fileWorkspacePersistence';
-import { IWorkspacePersistence, type PersistedWorkspaceEntry } from '#/app/workspaceRegistry/workspacePersistence';
+import { IWorkspaceService } from '#/app/workspace/workspace';
+import { WorkspaceService } from '#/app/workspace/workspaceService';
+import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
+import { IWorkspacePersistence, type PersistedWorkspaceEntry } from '#/app/workspace/workspacePersistence';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -30,7 +30,7 @@ interface SessionIndexLine {
   readonly workDir: string;
 }
 
-describe('WorkspaceRegistryService (file-backed)', () => {
+describe('WorkspaceService (file-backed)', () => {
   let homeDir: string;
   let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
 
@@ -41,14 +41,14 @@ describe('WorkspaceRegistryService (file-backed)', () => {
       IWorkspacePersistence,
       FileWorkspacePersistence,
       InstantiationType.Delayed,
-      'workspaceRegistry',
+      'workspace',
     );
     registerScopedService(
       LifecycleScope.App,
-      IWorkspaceRegistry,
-      WorkspaceRegistryService,
+      IWorkspaceService,
+      WorkspaceService,
       InstantiationType.Delayed,
-      'workspaceRegistry',
+      'workspace',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-registry-'));
   });
@@ -59,7 +59,7 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceRegistry {
+  function build(hostFs: IHostFileSystem = new HostFileSystem()): IWorkspaceService {
     const fileStorage = new FileStorageService(homeDir);
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
@@ -67,10 +67,10 @@ describe('WorkspaceRegistryService (file-backed)', () => {
       stubPair(IHostFileSystem, hostFs),
     ]);
     currentHost = host;
-    return host.app.accessor.get(IWorkspaceRegistry);
+    return host.app.accessor.get(IWorkspaceService);
   }
 
-  function restart(): IWorkspaceRegistry {
+  function restart(): IWorkspaceService {
     currentHost?.dispose();
     currentHost = undefined;
     return build();
@@ -505,81 +505,8 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     expect((await registry.list()).map((w) => w.root).toSorted()).toEqual(['/tmp/Foo', '/tmp/foo']);
   });
 
-  it('resolveAliasIds returns every registered id for one physical directory', async () => {
-    // A legacy catalog holds two entries whose roots differ only by casing —
-    // one physical folder, two bucket ids (this is what `dedupeByRoot` merges
-    // for listing; the alias set exposes both for multi-bucket reads).
-    const lowerRoot = 'c:\\users\\foo\\proj';
-    const typedRoot = 'C:\\Users\\Foo\\Proj';
-    const legacyId = 'wd_proj_deadbeef0002';
-    const canonicalId = encodeWorkDirKey(lowerRoot);
-    const entry = (root: string): PersistedWorkspaceEntry => ({
-      root,
-      name: 'proj',
-      created_at: '2026-01-01T00:00:00.000Z',
-      last_opened_at: '2026-01-01T00:00:00.000Z',
-    });
-    await writeWorkspacesJson({
-      [legacyId]: entry(typedRoot),
-      [canonicalId]: entry(lowerRoot),
-    });
 
-    const registry = build();
-    for (const id of [legacyId, canonicalId]) {
-      expect((await registry.resolveAliasIds(id)).toSorted()).toEqual(
-        [legacyId, canonicalId].toSorted(),
-      );
-    }
-  });
 
-  it('resolveAliasIds folds in session-index-only spellings of the same root', async () => {
-    // The sibling bucket's spelling was never registered: only the legacy
-    // session index remembers it. Malformed index lines are skipped, never
-    // thrown.
-    const typedRoot = 'C:\\Users\\Foo\\Proj';
-    const typedId = encodeWorkDirKey(typedRoot);
-    const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
-    await writeWorkspacesJson({
-      [typedId]: {
-        root: typedRoot,
-        name: 'proj',
-        created_at: '2026-01-01T00:00:00.000Z',
-        last_opened_at: '2026-01-01T00:00:00.000Z',
-      },
-    });
-    await seedSessionIndex([
-      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
-      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: 'c:\\Users\\Foo\\Proj' },
-      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
-    ]);
-    await fsp.appendFile(join(homeDir, 'session_index.jsonl'), 'not-json\n{}\n', 'utf8');
-
-    const registry = build();
-    expect((await registry.resolveAliasIds(typedId)).toSorted()).toEqual(
-      [typedId, indexOnlyId].toSorted(),
-    );
-  });
-
-  it('resolveAliasIds keeps unknown ids and POSIX roots singleton', async () => {
-    const root = join(homeDir, 'posix');
-    const id = encodeWorkDirKey(root);
-    await writeWorkspacesJson({
-      [id]: {
-        root,
-        name: 'posix',
-        created_at: '2026-01-01T00:00:00.000Z',
-        last_opened_at: '2026-01-01T00:00:00.000Z',
-      },
-    });
-
-    const registry = build();
-    // Unknown id: callers keep their existing not-found semantics.
-    expect(await registry.resolveAliasIds('wd_missing_000000000000')).toEqual([
-      'wd_missing_000000000000',
-    ]);
-    // POSIX roots never fold, so the alias set is just the id itself.
-    expect(await registry.resolveAliasIds(id)).toEqual([id]);
-  });
 
   it('delete tombstones every folded alias so a legacy split cannot resurface', async () => {
     // Split legacy state: two registered spellings of one Windows root, plus a

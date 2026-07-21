@@ -87,7 +87,7 @@ export type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/quer
 export type {
   Workspace,
   WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
+} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 export type {
   ConfigDiagnostic,
   ConfigInspectValue,

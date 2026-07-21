@@ -37,7 +37,7 @@ import { sessionQuestionContract } from './session/question.js';
 export const globalContract: KlientContract = {
   // core (app scope)
   sessionIndex: sessionsContract,
-  workspaceRegistry: workspacesContract,
+  workspaceService: workspacesContract,
   configService: configContract,
   providerService: providersContract,
   modelService: modelsContract,

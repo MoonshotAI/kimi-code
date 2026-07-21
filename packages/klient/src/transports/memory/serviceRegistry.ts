@@ -7,7 +7,7 @@
 
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { IWorkspaceRegistry } from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceService } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
@@ -38,7 +38,7 @@ import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage
 /** Wire service name (decorator id string) → token. */
 export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>> = {
   sessionIndex: ISessionIndex,
-  workspaceRegistry: IWorkspaceRegistry,
+  workspaceService: IWorkspaceService,
   configService: IConfigService,
   modelService: IModelService,
   modelResolver: IModelCatalog,

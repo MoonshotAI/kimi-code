@@ -119,10 +119,12 @@ const DOMAIN_LAYER = new Map([
   ['blob', 2],
   ['file', 2],
   ['config', 2],
-  ['workspaceLocalConfig', 2],
+  ['projectLocalConfig', 2],
   ['sessionFs', 2],
   ['process', 2],
-  ['workspaceRegistry', 2],
+  ['workspace', 2],
+  ['workspaceAliases', 2],
+  ['workspaceSessions', 2],
   ['hostFolderBrowser', 2],
   ['auth', 2],
   ['provider', 2],
@@ -221,7 +223,7 @@ const DOMAIN_LAYER = new Map([
   // `workspaceCommand` orchestrates session-level workspace mutations
   // (`addAdditionalDir`): it reaches through `agentLifecycle` (L6) to the
   // `main` agent's `contextMemory` (L4) to mirror the action's stdout, and
-  // delegates project-local config persistence to `workspaceLocalConfig` (L2).
+  // delegates project-local config persistence to `projectLocalConfig` (L2).
   // Its highest real dependency is `agentLifecycle`, so it sits in L6 beside
   // the other coordination domains.
   ['workspaceCommand', 6],

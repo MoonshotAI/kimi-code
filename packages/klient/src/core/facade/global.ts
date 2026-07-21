@@ -15,7 +15,7 @@ import type { Page } from '@moonshot-ai/agent-core-v2/persistence/interface/quer
 import type {
   Workspace,
   WorkspaceUpdate,
-} from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
+} from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 import type {
   ConfigDiagnostic,
   ConfigInspectValue,
@@ -270,13 +270,13 @@ export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
     },
 
     workspaces: {
-      list: () => call('workspaceRegistry', 'list', []) as Promise<readonly Workspace[]>,
-      get: (id) => call('workspaceRegistry', 'get', [id]) as Promise<Workspace | undefined>,
+      list: () => call('workspaceService', 'list', []) as Promise<readonly Workspace[]>,
+      get: (id) => call('workspaceService', 'get', [id]) as Promise<Workspace | undefined>,
       createOrTouch: ({ root, name }) =>
-        call('workspaceRegistry', 'createOrTouch', [root, name]) as Promise<Workspace>,
+        call('workspaceService', 'createOrTouch', [root, name]) as Promise<Workspace>,
       update: ({ id, patch }) =>
-        call('workspaceRegistry', 'update', [id, patch]) as Promise<Workspace | undefined>,
-      delete: (id) => call('workspaceRegistry', 'delete', [id]) as Promise<void>,
+        call('workspaceService', 'update', [id, patch]) as Promise<Workspace | undefined>,
+      delete: (id) => call('workspaceService', 'delete', [id]) as Promise<void>,
     },
 
     config: {

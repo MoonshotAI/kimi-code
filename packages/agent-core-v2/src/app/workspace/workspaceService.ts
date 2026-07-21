@@ -1,5 +1,5 @@
 /**
- * `workspaceRegistry` domain (L1) — `IWorkspaceRegistry` implementation.
+ * `workspace` domain (L2) — `IWorkspaceService` implementation.
  *
  * Process-wide catalog of known workspaces, durable in
  * `<homeDir>/workspaces.json` (the v1-compatible file shared with
@@ -50,11 +50,12 @@
  *
  * Legacy data may still be split: two registry entries (or a registry entry
  * plus session-index-only spellings) for one physical folder, with sessions
- * bucketed per id. `resolveAliasIds` is the read-only counterpart to the
- * write-path folding: it enumerates every id spelling that identifies one
- * directory (registered entries by `workspaceRootKey`, plus `workDir`
- * spellings recorded only in `session_index.jsonl`) so readers can query all
- * sibling buckets at once without rewriting any stored id.
+ * bucketed per id. The read-side counterpart to the write-path folding —
+ * enumerating every id spelling of one directory so readers can query all
+ * sibling buckets at once — lives in `IWorkspaceAliases` (`workspaceAliases`
+ * domain), built on the shared `workspaceAlias` helpers. `delete` folds the
+ * same alias set inside the op mutex so a sibling spelling cannot resurface
+ * as this directory's representative on the next `list()`.
  */
 
 import { basename, isAbsolute } from 'pathe';
@@ -66,24 +67,16 @@ import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import { IWorkspaceRegistry, type Workspace, type WorkspaceUpdate } from './workspaceRegistry';
+import { IWorkspaceService, type Workspace, type WorkspaceUpdate } from './workspace';
+import {
+  collectAliasIds,
+  dedupeByRoot,
+  readSessionIndexEntries,
+  readSessionIndexWorkDirs,
+} from './workspaceAlias';
 import { IWorkspacePersistence, type WorkspaceCatalog } from './workspacePersistence';
 
-// Legacy v1 session index, read for the one-shot rebuild and for
-// `resolveAliasIds` (session-index-only id spellings). Empty scope resolves to
-// `<homeDir>/<key>` (join skips empty segments).
-const SESSION_INDEX_SCOPE = '';
-const SESSION_INDEX_KEY = 'session_index.jsonl';
-
-const textDecoder = new TextDecoder();
-
-interface SessionIndexLine {
-  readonly sessionId: string;
-  readonly sessionDir: string;
-  readonly workDir: string;
-}
-
-export class WorkspaceRegistryService implements IWorkspaceRegistry {
+export class WorkspaceService implements IWorkspaceService {
   declare readonly _serviceBrand: undefined;
 
   /** Whether the once-per-process session-index sync already ran. */
@@ -111,43 +104,6 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
       const catalog = await this.loadCatalog();
       return catalog.workspaces.find((ws) => ws.id === id);
     });
-  }
-
-  resolveAliasIds(id: string): Promise<readonly string[]> {
-    return this.runExclusive(async () => {
-      await this.ensureMerged();
-      const catalog = await this.loadCatalog();
-      const entry = catalog.workspaces.find((ws) => ws.id === id);
-      // Unknown ids stay singletons so callers keep their not-found semantics.
-      if (entry === undefined) return [id];
-      return this.collectAliasIds(catalog, entry.root);
-    });
-  }
-
-  /** Every id identifying `root`'s directory: all registered spellings plus
-   *  `workDir` spellings recorded only in `session_index.jsonl` (legacy split
-   *  buckets that were never registered). Callers must already hold the op
-   *  mutex — this is the unfolded core of `resolveAliasIds`, shared with
-   *  `delete`. */
-  private async collectAliasIds(catalog: WorkspaceCatalog, root: string): Promise<string[]> {
-    const rootKey = workspaceRootKey(root);
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    const add = (alias: string): void => {
-      if (seen.has(alias)) return;
-      seen.add(alias);
-      ids.push(alias);
-    };
-    for (const ws of catalog.workspaces) {
-      if (workspaceRootKey(ws.root) === rootKey) add(ws.id);
-    }
-    // Legacy split buckets may exist under spellings never registered: fold
-    // in every session-index `workDir` that identifies the same directory.
-    // Best-effort — a missing/corrupt index simply contributes nothing.
-    for (const line of await this.readSessionIndexEntries()) {
-      if (workspaceRootKey(line.workDir) === rootKey) add(encodeWorkDirKey(line.workDir));
-    }
-    return ids;
   }
 
   createOrTouch(root: string, name?: string): Promise<Workspace> {
@@ -242,7 +198,7 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
       if (root === undefined) {
         // Derived/unknown id: recover its spelling from the session index so
         // the whole alias set can still be tombstoned.
-        root = (await this.readSessionIndexEntries()).find(
+        root = (await readSessionIndexEntries(this.storage)).find(
           (line) => encodeWorkDirKey(line.workDir) === id,
         )?.workDir;
       }
@@ -254,7 +210,11 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
         return;
       }
       const rootKey = workspaceRootKey(root);
-      const aliasIds = await this.collectAliasIds(catalog, root);
+      const aliasIds = collectAliasIds(
+        catalog.workspaces,
+        await readSessionIndexEntries(this.storage),
+        root,
+      );
       await this.store.save({
         workspaces: catalog.workspaces.filter((ws) => workspaceRootKey(ws.root) !== rootKey),
         deletedIds: [...new Set([...catalog.deletedIds, ...aliasIds])],
@@ -297,7 +257,7 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   ): Promise<boolean> {
     let changed = false;
     const now = Date.now();
-    for (const workDir of await this.readSessionIndexWorkDirs()) {
+    for (const workDir of await readSessionIndexWorkDirs(this.storage)) {
       const id = encodeWorkDirKey(workDir);
       if (byId.has(id) || deletedIds.has(id)) continue;
       byId.set(id, {
@@ -319,7 +279,7 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
     // directory (Windows) collapse here too. First seen wins — the id stays
     // `encodeWorkDirKey` of that first-seen workDir string.
     const seenRootKeys = new Set<string>();
-    for (const entry of await this.readSessionIndexEntries()) {
+    for (const entry of await readSessionIndexEntries(this.storage)) {
       if (!isAbsolute(entry.workDir)) continue;
       const rootKey = workspaceRootKey(entry.workDir);
       if (seenRootKeys.has(rootKey)) continue;
@@ -336,40 +296,6 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
     return result;
   }
 
-  private async readSessionIndexWorkDirs(): Promise<readonly string[]> {
-    const bytes = await this.storage.read(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
-    if (bytes === undefined) return [];
-    const workDirs: string[] = [];
-    for (const line of textDecoder.decode(bytes).split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (trimmed === '') continue;
-      const entry = parseSessionIndexLine(trimmed);
-      if (entry === undefined) continue;
-      if (!isAbsolute(entry.workDir)) continue;
-      workDirs.push(entry.workDir);
-    }
-    return workDirs;
-  }
-
-  /**
-   * Parse the legacy v1 session index. Blank and malformed lines are skipped
-   * individually so one bad record never fails the whole file (matches the
-   * rebuild's tolerance).
-   */
-  private async readSessionIndexEntries(): Promise<SessionIndexLine[]> {
-    const bytes = await this.storage.read(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
-    if (bytes === undefined) return [];
-    const entries: SessionIndexLine[] = [];
-    for (const line of textDecoder.decode(bytes).split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (trimmed === '') continue;
-      const entry = parseSessionIndexLine(trimmed);
-      if (entry === undefined) continue;
-      entries.push(entry);
-    }
-    return entries;
-  }
-
   private runExclusive<T>(op: () => Promise<T>): Promise<T> {
     const next = this.opQueue.then(op, op);
     this.opQueue = next.then(
@@ -380,60 +306,10 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   }
 }
 
-function parseSessionIndexLine(line: string): SessionIndexLine | undefined {
-  try {
-    const parsed = JSON.parse(line) as unknown;
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const entry = parsed as Partial<SessionIndexLine>;
-    if (
-      typeof entry.sessionId !== 'string' ||
-      typeof entry.sessionDir !== 'string' ||
-      typeof entry.workDir !== 'string'
-    ) {
-      return undefined;
-    }
-    return {
-      sessionId: entry.sessionId,
-      sessionDir: entry.sessionDir,
-      workDir: entry.workDir,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Collapse registered workspaces that identify the same directory. The
- * persisted catalog (v1-compatible `workspaces.json`) can hold legacy entries
- * whose id was computed by an older `encodeWorkDirKey` (e.g. realpath-based on
- * Windows) for the same folder, and Windows roots additionally differ by
- * casing or slash spelling, so one directory may map to multiple ids. Entries
- * merge on the `workspaceRootKey` identity key; prefer the entry whose id
- * matches the canonical key computed on its own root string so current
- * sessions' `workspace_id` still resolves and the same folder is not listed
- * twice.
- */
-function dedupeByRoot(byId: ReadonlyMap<string, Workspace>): Workspace[] {
-  const byRoot = new Map<string, Workspace>();
-  for (const ws of byId.values()) {
-    const rootKey = workspaceRootKey(ws.root);
-    const existing = byRoot.get(rootKey);
-    if (existing === undefined) {
-      byRoot.set(rootKey, ws);
-      continue;
-    }
-    const canonicalId = encodeWorkDirKey(ws.root);
-    if (existing.id !== canonicalId && ws.id === canonicalId) {
-      byRoot.set(rootKey, ws);
-    }
-  }
-  return [...byRoot.values()];
-}
-
 registerScopedService(
   LifecycleScope.App,
-  IWorkspaceRegistry,
-  WorkspaceRegistryService,
+  IWorkspaceService,
+  WorkspaceService,
   InstantiationType.Eager,
-  'workspaceRegistry',
+  'workspace',
 );
