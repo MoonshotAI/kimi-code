@@ -1155,24 +1155,27 @@ export class SessionEventBroadcaster {
     state: SessionState,
     targets: readonly BroadcastTarget[],
   ): void {
-    if (
-      !state.emittedBusy &&
-      !state.emittedMainTurnActive &&
-      state.emittedPendingInteraction === 'none'
-    ) {
-      return;
-    }
-    const event = {
-      type: 'event.session.work_changed',
-      busy: state.emittedBusy,
-      main_turn_active: state.emittedMainTurnActive,
-      pending_interaction: state.emittedPendingInteraction,
-      last_turn_reason: state.emittedTurnOutcome,
-      agentId: 'main',
-      sessionId: state.sessionId,
-    } as Event;
     state.queue = state.queue
       .then(() => {
+        // Read the fact only after earlier transitions on this session queue
+        // have drained. Capturing it before enqueueing can restate stale busy
+        // state immediately after the queued transition sent the correct one.
+        if (
+          !state.emittedBusy &&
+          !state.emittedMainTurnActive &&
+          state.emittedPendingInteraction === 'none'
+        ) {
+          return;
+        }
+        const event = {
+          type: 'event.session.work_changed',
+          busy: state.emittedBusy,
+          main_turn_active: state.emittedMainTurnActive,
+          pending_interaction: state.emittedPendingInteraction,
+          last_turn_reason: state.emittedTurnOutcome,
+          agentId: 'main',
+          sessionId: state.sessionId,
+        } as Event;
         const envelope = this.buildEnvelope(state.journal.seq, state.sessionId, event, {
           epoch: state.journal.epoch,
           volatile: true,

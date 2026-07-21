@@ -1359,6 +1359,31 @@ describe('SessionEventBroadcaster', () => {
     expect(envelopes).toHaveLength(1);
   });
 
+  it('recomputes a registering target catchup after queued work transitions', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    const { target, envelopes } = collectingTarget();
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    // Register before the queued busy:false transition drains. The target gets
+    // that durable transition, but must not then receive a stale busy catchup.
+    bc.registerGlobalTarget(target);
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      payload: { busy: false, main_turn_active: false, last_turn_reason: 'completed' },
+    });
+    expect(envelopes[0]!.volatile).toBeUndefined();
+  });
+
   it('fans interaction notifications out to every global target while legacy events stay per-session', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
