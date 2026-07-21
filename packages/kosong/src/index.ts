@@ -39,15 +39,19 @@ export type { ModelCapability } from './capability';
 
 // Model catalog (models.dev-style) metadata
 export {
-  adaptBaseUrlForWire,
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,
-  catalogProviderNeedsBaseUrl,
-  inferWireType,
-  isGuessedWireType,
+  resolveCatalogImport,
 } from './catalog';
-export type { Catalog, CatalogModel, CatalogModelEntry, CatalogProviderEntry } from './catalog';
+export type {
+  Catalog,
+  CatalogModel,
+  CatalogModelEntry,
+  CatalogProviderEntry,
+  CatalogImportInvalidReason,
+  CatalogImportResolution,
+} from './catalog';
 
 // Core functions
 export { generate } from './generate';

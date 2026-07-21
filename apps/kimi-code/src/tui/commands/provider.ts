@@ -6,15 +6,11 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
-  catalogBaseUrl,
   catalogProviderModels,
-  catalogProviderNeedsBaseUrl,
-  adaptBaseUrlForWire,
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
-  inferWireType,
-  isGuessedWireType,
+  resolveCatalogImport,
   type Catalog,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -196,26 +192,31 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     return;
   }
 
-  const wire = inferWireType(entry);
-  if (wire === undefined) {
-    host.showError(
-      `Provider "${providerId}" uses a proprietary SDK this client cannot speak (e.g. Amazon Bedrock); it cannot be imported from the catalog.`,
-    );
-    return;
-  }
-
-  let baseUrl = catalogBaseUrl(entry, wire);
-  if (baseUrl === undefined && catalogProviderNeedsBaseUrl(entry, wire)) {
+  let resolution = resolveCatalogImport(entry);
+  if (resolution.kind === 'needs-base-url') {
     const entered = await promptBaseUrl(host, entry.name ?? providerId);
     if (entered === undefined) return;
-    if (entered.includes('${')) {
-      host.showError(
-        `Base URL "${entered}" contains an env placeholder. Enter the resolved URL instead.`,
-      );
-      return;
-    }
-    baseUrl = adaptBaseUrlForWire(entered, wire);
+    resolution = resolveCatalogImport(entry, entered);
   }
+  if (resolution.kind !== 'ok') {
+    if (resolution.kind === 'invalid') {
+      if (resolution.reason === 'unknown-explicit-type') {
+        host.showError(
+          `Provider "${providerId}" declares protocol "${entry.type}" in the catalog, which this client version does not support.`,
+        );
+      } else if (resolution.reason === 'proprietary-sdk') {
+        host.showError(
+          `Provider "${providerId}" uses a proprietary SDK this client cannot speak (e.g. Amazon Bedrock or Cohere); it cannot be imported from the catalog.`,
+        );
+      } else {
+        host.showError(
+          `Base URL contains an env placeholder or is empty. Enter the resolved URL instead.`,
+        );
+      }
+    }
+    return;
+  }
+  const { wire, baseUrl } = resolution;
 
   const apiKey = await promptApiKey(host, entry.name ?? providerId);
   if (apiKey === undefined) return;
@@ -247,7 +248,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   await host.authFlow.refreshConfigAfterLogin();
   host.track('connect', { provider: providerId, method: 'catalog' });
   host.showStatus(`Provider added: ${entry.name ?? providerId}`);
-  if (isGuessedWireType(entry)) {
+  if (resolution.guessed) {
     host.showStatus(
       `Protocol guessed as "openai" for ${providerId} — edit "type" in config.toml if requests fail.`,
     );

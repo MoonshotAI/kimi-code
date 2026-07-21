@@ -21,16 +21,12 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
-  catalogBaseUrl,
   catalogProviderModels,
-  catalogProviderNeedsBaseUrl,
-  adaptBaseUrlForWire,
   CatalogFetchError,
   createKimiHarness,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
-  inferWireType,
-  isGuessedWireType,
+  resolveCatalogImport,
   type Catalog,
   type CatalogProviderEntry,
   type KimiConfig,
@@ -280,9 +276,13 @@ export async function handleCatalogList(
 
   for (const [id, entry] of entries) {
     const modelCount = entry.models === undefined ? 0 : Object.keys(entry.models).length;
-    const wire = inferWireType(entry);
+    const resolution = resolveCatalogImport(entry);
     const wireLabel =
-      wire === undefined ? '?' : isGuessedWireType(entry) ? `${wire} (guessed)` : wire;
+      resolution.kind === 'invalid'
+        ? '?'
+        : resolution.guessed
+          ? `${resolution.wire} (guessed)`
+          : resolution.wire;
     deps.stdout.write(
       `${id}  wire=${wireLabel}  models=${String(modelCount)}  ${entry.name ?? ''}\n`,
     );
@@ -316,13 +316,37 @@ export async function handleCatalogAdd(
     deps.exit(1);
   }
 
-  const wire = inferWireType(entry);
-  if (wire === undefined) {
+  const resolution = resolveCatalogImport(entry, opts.baseUrl);
+  if (resolution.kind === 'invalid') {
+    switch (resolution.reason) {
+      case 'unknown-explicit-type':
+        deps.stderr.write(
+          `Provider "${providerId}" declares protocol "${entry.type}" in the catalog, which this client version does not support.\n`,
+        );
+        break;
+      case 'proprietary-sdk':
+        deps.stderr.write(
+          `Provider "${providerId}" uses a proprietary SDK this client cannot speak (e.g. Amazon Bedrock or Cohere); it cannot be imported from the catalog.\n`,
+        );
+        break;
+      case 'empty-base-url':
+        deps.stderr.write('--base-url cannot be empty.\n');
+        break;
+      case 'placeholder-base-url':
+        deps.stderr.write(
+          `Base URL "${opts.baseUrl}" contains an env placeholder. Pass --base-url with the resolved value.\n`,
+        );
+        break;
+    }
+    deps.exit(1);
+  }
+  if (resolution.kind === 'needs-base-url') {
     deps.stderr.write(
-      `Provider "${providerId}" uses a proprietary SDK this client cannot speak (e.g. Amazon Bedrock); it cannot be imported from the catalog.\n`,
+      `The catalog does not declare an endpoint for "${providerId}". Pass --base-url <url> (e.g. the vendor's OpenAI-compatible base URL).\n`,
     );
     deps.exit(1);
   }
+  const { wire, baseUrl } = resolution;
 
   const models = catalogProviderModels(entry);
   if (models.length === 0) {
@@ -333,28 +357,6 @@ export async function handleCatalogAdd(
   if (opts.defaultModel !== undefined && !models.some((m) => m.id === opts.defaultModel)) {
     deps.stderr.write(
       `Model "${opts.defaultModel}" is not in provider "${providerId}". Run "kimi provider catalog list ${providerId}" to see available ids.\n`,
-    );
-    deps.exit(1);
-  }
-
-  const trimmedBaseUrl = opts.baseUrl?.trim();
-  if (trimmedBaseUrl !== undefined && trimmedBaseUrl.length === 0) {
-    deps.stderr.write('--base-url cannot be empty.\n');
-    deps.exit(1);
-  }
-  let baseUrl =
-    trimmedBaseUrl !== undefined && trimmedBaseUrl.length > 0
-      ? adaptBaseUrlForWire(trimmedBaseUrl, wire)
-      : catalogBaseUrl(entry, wire);
-  if (baseUrl === undefined && catalogProviderNeedsBaseUrl(entry, wire)) {
-    deps.stderr.write(
-      `The catalog does not declare an endpoint for "${providerId}". Pass --base-url <url> (e.g. the vendor's OpenAI-compatible base URL).\n`,
-    );
-    deps.exit(1);
-  }
-  if (baseUrl !== undefined && baseUrl.includes('${')) {
-    deps.stderr.write(
-      `Base URL "${baseUrl}" contains an env placeholder. Pass --base-url with the resolved value.\n`,
     );
     deps.exit(1);
   }
@@ -420,7 +422,7 @@ export async function handleCatalogAdd(
   deps.stdout.write(
     `Imported ${displayName} (${providerId}) with ${String(models.length)} model${models.length === 1 ? '' : 's'} from ${url}.\n`,
   );
-  if (isGuessedWireType(entry)) {
+  if (resolution.guessed) {
     deps.stdout.write(
       `Note: the catalog does not declare a protocol for "${providerId}"; guessed "openai". Edit "type" in config.toml if requests fail.\n`,
     );

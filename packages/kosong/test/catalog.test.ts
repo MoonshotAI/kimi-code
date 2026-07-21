@@ -5,111 +5,192 @@ import {
   catalogBaseUrl,
   catalogModelToCapability,
   catalogProviderModels,
-  catalogProviderNeedsBaseUrl,
-  inferWireType,
-  isGuessedWireType,
+  resolveCatalogImport,
   type CatalogModelEntry,
 } from '../src/catalog';
 
-describe('inferWireType', () => {
+describe('resolveCatalogImport — wire resolution', () => {
   it('honors an explicit valid type', () => {
-    expect(inferWireType({ id: 'x', type: 'openai_responses' })).toBe('openai_responses');
+    // Explicit type with no npm/api: the wire is honored, but the endpoint
+    // cannot default to the vendor host — it must be asked for.
+    expect(resolveCatalogImport({ id: 'x', type: 'openai_responses' })).toEqual({
+      kind: 'needs-base-url',
+      wire: 'openai_responses',
+      guessed: false,
+    });
   });
 
   it('infers anthropic from npm or id', () => {
-    expect(inferWireType({ id: 'anthropic', npm: '@ai-sdk/anthropic' })).toBe('anthropic');
-    expect(inferWireType({ id: 'my-claude' })).toBe('anthropic');
+    expect(resolveCatalogImport({ id: 'anthropic', npm: '@ai-sdk/anthropic' })).toMatchObject({
+      kind: 'ok',
+      wire: 'anthropic',
+      guessed: false,
+    });
+    expect(resolveCatalogImport({ id: 'my-claude' })).toMatchObject({
+      kind: 'needs-base-url',
+      wire: 'anthropic',
+      guessed: false,
+    });
   });
 
   it('infers google-genai and vertexai', () => {
-    expect(inferWireType({ id: 'gemini', npm: '@ai-sdk/google' })).toBe('google-genai');
-    expect(inferWireType({ id: 'google-vertex' })).toBe('vertexai');
+    expect(resolveCatalogImport({ id: 'gemini', npm: '@ai-sdk/google' })).toMatchObject({
+      kind: 'ok',
+      wire: 'google-genai',
+    });
+    expect(resolveCatalogImport({ id: 'google-vertex' })).toMatchObject({
+      kind: 'ok',
+      wire: 'vertexai',
+    });
   });
 
   it('refuses an explicit but unrecognized type instead of guessing', () => {
-    expect(inferWireType({ id: 'x', type: 'not-a-wire' })).toBeUndefined();
-    expect(isGuessedWireType({ id: 'x', type: 'not-a-wire' })).toBe(false);
+    expect(resolveCatalogImport({ id: 'x', type: 'not-a-wire' })).toEqual({
+      kind: 'invalid',
+      reason: 'unknown-explicit-type',
+    });
     // … even when npm/id would have been inferable: the explicit declaration
     // is authoritative, so a future catalog protocol is never miswired.
-    expect(inferWireType({ id: 'x', type: 'kokub', npm: '@ai-sdk/openai-compatible' })).toBeUndefined();
+    expect(
+      resolveCatalogImport({ id: 'x', type: 'kokub', npm: '@ai-sdk/openai-compatible' }),
+    ).toEqual({ kind: 'invalid', reason: 'unknown-explicit-type' });
   });
 
   it('falls back to openai for vendor-specific SDKs models.dev does not type', () => {
-    // xai shape: vendor npm, no explicit type, no api.
-    expect(inferWireType({ id: 'xai', npm: '@ai-sdk/xai' })).toBe('openai');
-    expect(isGuessedWireType({ id: 'xai', npm: '@ai-sdk/xai' })).toBe(true);
-    // openrouter shape: vendor npm with its own api — still a guess, but a usable one.
-    expect(inferWireType({ id: 'openrouter', npm: '@openrouter/ai-sdk-provider' })).toBe('openai');
-    expect(isGuessedWireType({ id: 'openrouter', npm: '@openrouter/ai-sdk-provider' })).toBe(true);
+    // xai shape: vendor npm, no explicit type, no api → guessed, needs a URL.
+    expect(resolveCatalogImport({ id: 'xai', npm: '@ai-sdk/xai' })).toEqual({
+      kind: 'needs-base-url',
+      wire: 'openai',
+      guessed: true,
+    });
+    // openrouter shape: vendor npm with its own api — guessed but usable.
+    expect(
+      resolveCatalogImport({
+        id: 'openrouter',
+        npm: '@openrouter/ai-sdk-provider',
+        api: 'https://openrouter.ai/api/v1',
+      }),
+    ).toEqual({
+      kind: 'ok',
+      wire: 'openai',
+      guessed: true,
+      baseUrl: 'https://openrouter.ai/api/v1',
+    });
     // Recognized SDKs are never guesses.
-    expect(isGuessedWireType({ id: 'zenmux', npm: '@ai-sdk/openai-compatible' })).toBe(false);
-    expect(isGuessedWireType({ id: 'x', type: 'openai_responses' })).toBe(false);
+    expect(
+      resolveCatalogImport({
+        id: 'zenmux',
+        npm: '@ai-sdk/openai-compatible',
+        api: 'https://zenmux.example.test/api/v1',
+      }),
+    ).toMatchObject({ kind: 'ok', wire: 'openai', guessed: false });
+    expect(resolveCatalogImport({ id: 'x', type: 'openai_responses' })).toMatchObject({
+      guessed: false,
+    });
   });
 
   it('refuses SDKs known to be proprietary instead of guessing', () => {
-    expect(inferWireType({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toBeUndefined();
-    expect(isGuessedWireType({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toBe(false);
-    expect(inferWireType({ id: 'cohere', npm: '@ai-sdk/cohere' })).toBeUndefined();
-    expect(isGuessedWireType({ id: 'cohere', npm: '@ai-sdk/cohere' })).toBe(false);
+    expect(resolveCatalogImport({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toEqual({
+      kind: 'invalid',
+      reason: 'proprietary-sdk',
+    });
+    expect(resolveCatalogImport({ id: 'cohere', npm: '@ai-sdk/cohere' })).toEqual({
+      kind: 'invalid',
+      reason: 'proprietary-sdk',
+    });
   });
 });
 
-describe('catalogProviderNeedsBaseUrl', () => {
-  it('requires a URL for guessed vendors without one (xai shape)', () => {
+describe('resolveCatalogImport — endpoint resolution', () => {
+  it('resolves without asking for official SDKs and env-resolved wires', () => {
+    expect(resolveCatalogImport({ id: 'openai', npm: '@ai-sdk/openai' })).toEqual({
+      kind: 'ok',
+      wire: 'openai',
+      guessed: false,
+    });
+    expect(resolveCatalogImport({ id: 'anthropic', npm: '@ai-sdk/anthropic' })).toMatchObject({
+      kind: 'ok',
+      wire: 'anthropic',
+    });
     expect(
-      catalogProviderNeedsBaseUrl({ id: 'xai', npm: '@ai-sdk/xai' }, 'openai'),
-    ).toBe(true);
+      resolveCatalogImport({ id: 'google-vertex', npm: '@ai-sdk/google-vertex' }),
+    ).toMatchObject({ kind: 'ok', wire: 'vertexai' });
   });
 
-  it('does not require a URL for the official OpenAI SDK or a declared api', () => {
-    expect(catalogProviderNeedsBaseUrl({ id: 'openai', npm: '@ai-sdk/openai' }, 'openai')).toBe(
-      false,
-    );
-    expect(
-      catalogProviderNeedsBaseUrl(
-        { id: 'openrouter', npm: '@openrouter/ai-sdk-provider', api: 'https://openrouter.ai/api/v1' },
-        'openai',
-      ),
-    ).toBe(false);
-  });
-
-  it('requires a URL when the catalog api is an env placeholder', () => {
-    expect(
-      catalogProviderNeedsBaseUrl(
-        { id: 'neon', npm: '@ai-sdk/openai-compatible', api: '${NEON_BASE_URL}/v1' },
-        'openai',
-      ),
-    ).toBe(true);
-  });
-
-  it('never requires a URL for non-OpenAI wires with an official SDK or env-resolved endpoint', () => {
-    expect(catalogProviderNeedsBaseUrl({ id: 'anthropic', npm: '@ai-sdk/anthropic' }, 'anthropic')).toBe(false);
-    expect(catalogProviderNeedsBaseUrl({ id: 'google-vertex', npm: '@ai-sdk/google-vertex' }, 'vertexai')).toBe(false);
-  });
-
-  it('requires a URL for non-official Anthropic-compatible vendors without one', () => {
+  it('needs a URL for non-official vendors without one', () => {
     // google-vertex-anthropic shape: Anthropic wire, vendor npm, no api —
     // without a prompt the key would be sent to api.anthropic.com.
     expect(
-      catalogProviderNeedsBaseUrl(
+      resolveCatalogImport({ id: 'google-vertex-anthropic', npm: '@ai-sdk/google-vertex/anthropic' }),
+    ).toEqual({ kind: 'needs-base-url', wire: 'anthropic', guessed: false });
+    // kimi-for-coding declares a concrete api — no prompt needed.
+    expect(
+      resolveCatalogImport({
+        id: 'kimi-for-coding',
+        npm: '@ai-sdk/anthropic',
+        api: 'https://api.kimi.com/coding/v1',
+      }),
+    ).toEqual({
+      kind: 'ok',
+      wire: 'anthropic',
+      guessed: false,
+      baseUrl: 'https://api.kimi.com/coding',
+    });
+  });
+
+  it('needs a URL when the catalog api is an env placeholder', () => {
+    expect(
+      resolveCatalogImport({ id: 'neon', npm: '@ai-sdk/openai-compatible', api: '${NEON_BASE_URL}/v1' }),
+    ).toEqual({ kind: 'needs-base-url', wire: 'openai', guessed: false });
+    expect(
+      resolveCatalogImport({
+        id: 'azure-claude',
+        npm: '@ai-sdk/azure/anthropic',
+        api: 'https://${AZURE_RESOURCE_NAME}.example.test/anthropic/v1',
+      }),
+    ).toEqual({ kind: 'needs-base-url', wire: 'anthropic', guessed: false });
+  });
+
+  it('adapts a user-supplied URL to the wire (Anthropic strips a trailing /v1)', () => {
+    expect(
+      resolveCatalogImport({ id: 'xai', npm: '@ai-sdk/xai' }, 'https://api.x.ai/v1'),
+    ).toEqual({ kind: 'ok', wire: 'openai', guessed: true, baseUrl: 'https://api.x.ai/v1' });
+    expect(
+      resolveCatalogImport(
         { id: 'google-vertex-anthropic', npm: '@ai-sdk/google-vertex/anthropic' },
-        'anthropic',
+        'https://gateway.example.test/v1',
       ),
-    ).toBe(true);
-    // A declared concrete api still satisfies the requirement.
+    ).toEqual({
+      kind: 'ok',
+      wire: 'anthropic',
+      guessed: false,
+      baseUrl: 'https://gateway.example.test',
+    });
+  });
+
+  it('lets a user-supplied URL override the catalog endpoint', () => {
     expect(
-      catalogProviderNeedsBaseUrl(
-        { id: 'kimi-for-coding', npm: '@ai-sdk/anthropic', api: 'https://api.kimi.com/coding/v1' },
-        'anthropic',
+      resolveCatalogImport(
+        { id: 'openai', npm: '@ai-sdk/openai', api: 'https://api.openai.com/v1' },
+        'https://proxy.example.test/v1',
       ),
-    ).toBe(false);
-    // An env-placeholder api does not.
-    expect(
-      catalogProviderNeedsBaseUrl(
-        { id: 'azure-claude', npm: '@ai-sdk/azure/anthropic', api: 'https://${AZURE_RESOURCE_NAME}.example.test/anthropic/v1' },
-        'anthropic',
-      ),
-    ).toBe(true);
+    ).toEqual({
+      kind: 'ok',
+      wire: 'openai',
+      guessed: false,
+      baseUrl: 'https://proxy.example.test/v1',
+    });
+  });
+
+  it('rejects blank and placeholder user URLs', () => {
+    expect(resolveCatalogImport({ id: 'xai', npm: '@ai-sdk/xai' }, '   ')).toEqual({
+      kind: 'invalid',
+      reason: 'empty-base-url',
+    });
+    expect(resolveCatalogImport({ id: 'xai', npm: '@ai-sdk/xai' }, '${XAI_BASE_URL}/v1')).toEqual({
+      kind: 'invalid',
+      reason: 'placeholder-base-url',
+    });
   });
 });
 

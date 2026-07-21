@@ -128,39 +128,106 @@ function isUsableChatModel(model: CatalogModelEntry): boolean {
   );
 }
 
+/** Why a catalog import cannot proceed at all. */
+export type CatalogImportInvalidReason =
+  /** `type` is present but names a protocol this client version does not know. */
+  | 'unknown-explicit-type'
+  /** SDK known to be non-OpenAI proprietary (Amazon Bedrock, Cohere). */
+  | 'proprietary-sdk'
+  /** A base URL was supplied but is blank. */
+  | 'empty-base-url'
+  /** The endpoint contains an env placeholder (`${VAR}`) the config cannot express. */
+  | 'placeholder-base-url';
+
 /**
- * Resolves a catalog provider entry to a supported wire type. Honors an
- * explicit `type`, otherwise infers from `npm`/`id`. models.dev omits `type`
- * for vendor-specific SDKs; most of those speak OpenAI-compatible chat
- * completions, so unknown providers fall back to `'openai'` (reported via
- * {@link isGuessedWireType} so callers can surface the guess). The only
- * `undefined` results are SDKs known to be non-OpenAI proprietary (e.g.
- * Amazon Bedrock), where the fallback would write a config that can never
- * work — callers keep refusing those instead.
+ * The outcome of resolving a catalog provider for import — the single
+ * decision point for "which wire, which endpoint, or exactly why not".
+ * Pattern-match on {@link CatalogImportResolution.kind}:
+ *  - `ok`: persist `wire` (and `baseUrl` when present — absent means the
+ *    wire's official-SDK default endpoint applies); surface `guessed` so the
+ *    user knows the protocol came from the OpenAI-compatible fallback.
+ *  - `needs-base-url`: the catalog supplies no usable endpoint and the
+ *    wire's default would point at the wrong host — ask the user for one
+ *    (`--base-url` on the CLI, a prompt in the TUI), then re-resolve with it.
+ *  - `invalid`: refuse with the reason.
  */
-export function inferWireType(entry: CatalogProviderEntry): ProviderType | undefined {
-  // An explicit `type` is authoritative: honored when known, refused when
-  // not — a future catalog protocol must never be silently rewired through
-  // npm/id inference or the fallback below.
+export type CatalogImportResolution =
+  | {
+      readonly kind: 'ok';
+      readonly wire: ProviderType;
+      readonly guessed: boolean;
+      readonly baseUrl?: string;
+    }
+  | {
+      readonly kind: 'needs-base-url';
+      readonly wire: ProviderType;
+      readonly guessed: boolean;
+    }
+  | {
+      readonly kind: 'invalid';
+      readonly reason: CatalogImportInvalidReason;
+    };
+
+/**
+ * Resolves a catalog provider entry into an import decision.
+ *
+ * Wire: an explicit `type` is authoritative (honored when known, refused
+ * when not); otherwise `npm`/`id` heuristics; otherwise the
+ * OpenAI-compatible fallback (`guessed: true`) — except SDKs known to be
+ * non-OpenAI proprietary, which are refused outright.
+ *
+ * Endpoint: a user-supplied URL wins over the catalog's `api` (after trim;
+ * blank and `${VAR}` placeholders are rejected). Without one, the catalog
+ * `api` applies; with neither, only wires whose default endpoint belongs to
+ * the vendor's official SDK (`@ai-sdk/openai`, `@ai-sdk/anthropic`, or
+ * env-resolved vertex/google) resolve without asking — everything else is
+ * `needs-base-url`, because persisting no endpoint would silently send the
+ * key to the wrong host. URLs are adapted to the wire's SDK convention
+ * (trailing `/v1` stripped for Anthropic).
+ */
+export function resolveCatalogImport(
+  entry: CatalogProviderEntry,
+  userBaseUrl?: string,
+): CatalogImportResolution {
+  const wire = resolveCatalogWire(entry);
+  if (wire === undefined) {
+    return {
+      kind: 'invalid',
+      reason:
+        typeof entry.type === 'string' && entry.type.length > 0
+          ? 'unknown-explicit-type'
+          : 'proprietary-sdk',
+    };
+  }
+  const guessed = inferDeclaredWireType(entry) === undefined;
+
+  if (userBaseUrl !== undefined) {
+    const trimmed = userBaseUrl.trim();
+    if (trimmed.length === 0) return { kind: 'invalid', reason: 'empty-base-url' };
+    if (trimmed.includes('${')) return { kind: 'invalid', reason: 'placeholder-base-url' };
+    return { kind: 'ok', wire, guessed, baseUrl: adaptBaseUrlForWire(trimmed, wire) };
+  }
+
+  const catalogUrl = catalogBaseUrl(entry, wire);
+  if (catalogUrl !== undefined) return { kind: 'ok', wire, guessed, baseUrl: catalogUrl };
+  if (catalogEndpointRequired(entry, wire)) return { kind: 'needs-base-url', wire, guessed };
+  return { kind: 'ok', wire, guessed };
+}
+
+/**
+ * The wire part of {@link resolveCatalogImport}, also used when listing
+ * models (where import eligibility is not the question). `undefined` means
+ * the entry is not importable: an explicit type this client does not know,
+ * or a proprietary non-OpenAI SDK (Bedrock, Cohere).
+ */
+function resolveCatalogWire(entry: CatalogProviderEntry): ProviderType | undefined {
   if (isWireType(entry.type)) return entry.type;
   if (typeof entry.type === 'string' && entry.type.length > 0) return undefined;
   const declared = inferDeclaredWireType(entry);
   if (declared !== undefined) return declared;
-  // SDKs known to be non-OpenAI proprietary — the fallback below would write
-  // a config that can never work (Bedrock Converse API, Cohere's native chat
-  // API), so callers keep refusing those instead.
   const npm = (entry.npm ?? '').toLowerCase();
   if (npm.includes('amazon-bedrock') || npm.includes('cohere')) return undefined;
   return 'openai';
-}
-
-/**
- * True when the wire comes from the blanket `'openai'` fallback rather than
- * an explicit `type` or a recognized `npm`/`id` — callers should tell the
- * user the protocol was guessed (and may need a manual `base_url`).
- */
-export function isGuessedWireType(entry: CatalogProviderEntry): boolean {
-  return inferDeclaredWireType(entry) === undefined && inferWireType(entry) !== undefined;
 }
 
 function inferDeclaredWireType(entry: CatalogProviderEntry): ProviderType | undefined {
@@ -211,19 +278,15 @@ export function adaptBaseUrlForWire(baseUrl: string, wire: ProviderType): string
 }
 
 /**
- * True when importing this provider needs a base URL from the user: the
- * catalog supplies none (or only an env placeholder), and the wire's built-in
- * default endpoint only applies to the vendor's official SDK package — for
- * every other npm it would silently point at the wrong host (e.g. an xai key
- * sent to api.openai.com, or a gateway's Anthropic-compatible key sent to
- * api.anthropic.com). Vertex/google wires resolve their endpoint from env
- * coordinates and official SDKs, so they never need the prompt.
+ * True when a missing catalog endpoint cannot fall back to a built-in
+ * default: the wire's default endpoint only belongs to the vendor's official
+ * SDK package — for every other npm it would silently point at the wrong
+ * host (e.g. an xai key sent to api.openai.com, or a gateway's
+ * Anthropic-compatible key sent to api.anthropic.com). Vertex/google wires
+ * resolve their endpoint from env coordinates and official SDKs, so they
+ * never need the prompt.
  */
-export function catalogProviderNeedsBaseUrl(
-  entry: CatalogProviderEntry,
-  wire: ProviderType,
-): boolean {
-  if (catalogBaseUrl(entry, wire) !== undefined) return false;
+function catalogEndpointRequired(entry: CatalogProviderEntry, wire: ProviderType): boolean {
   const npm = (entry.npm ?? '').toLowerCase();
   if (wire === 'openai' || wire === 'openai_responses') return npm !== '@ai-sdk/openai';
   if (wire === 'anthropic') return npm !== '@ai-sdk/anthropic';
@@ -329,7 +392,7 @@ function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): str
 
 /** Extracts the valid, normalized models from a catalog provider entry. */
 export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel[] {
-  const providerWire = inferWireType(entry);
+  const providerWire = resolveCatalogWire(entry);
   return Object.values(entry.models ?? {})
     .map((raw) => applyModelProviderOverride(catalogModelToCapability(raw), raw, entry, providerWire))
     .filter((model): model is CatalogModel => model !== undefined);

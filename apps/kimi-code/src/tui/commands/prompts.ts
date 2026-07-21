@@ -1,6 +1,6 @@
 import {
   catalogModelToAlias,
-  inferWireType,
+  resolveCatalogImport,
   type Catalog,
   type CatalogModel,
   type ModelAlias,
@@ -156,7 +156,7 @@ export function promptBaseUrl(host: SlashCommandHost, platformName: string): Pro
 export function promptCatalogProviderSelection(host: SlashCommandHost, catalog: Catalog): Promise<string | undefined> {
   return new Promise((resolve) => {
     const options: ChoiceOption[] = Object.entries(catalog)
-      .filter(([, entry]) => inferWireType(entry) !== undefined)
+      .filter(([, entry]) => resolveCatalogImport(entry).kind !== 'invalid')
       .map(([id, entry]) => ({
         value: id,
         label: entry.name ?? id,

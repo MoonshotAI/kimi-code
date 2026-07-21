@@ -2,18 +2,18 @@ import type { KimiConfig, ModelAlias } from '@moonshot-ai/agent-core';
 import {
   catalogBaseUrl,
   catalogProviderModels,
-  catalogProviderNeedsBaseUrl,
-  adaptBaseUrlForWire,
-  inferWireType,
-  isGuessedWireType,
+  resolveCatalogImport,
   type Catalog,
+  type CatalogImportInvalidReason,
+  type CatalogImportResolution,
   type CatalogModel,
   type CatalogProviderEntry,
   type ModelCapability,
   type ProviderType,
 } from '@moonshot-ai/kosong';
 
-export { catalogBaseUrl, catalogProviderModels, catalogProviderNeedsBaseUrl, adaptBaseUrlForWire, inferWireType, isGuessedWireType };
+export { catalogBaseUrl, catalogProviderModels, resolveCatalogImport };
+export type { CatalogImportInvalidReason, CatalogImportResolution };
 export type { Catalog, CatalogModel, CatalogProviderEntry };
 
 export const DEFAULT_CATALOG_URL = 'https://models.dev/api.json';
