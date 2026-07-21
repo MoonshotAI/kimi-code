@@ -1,10 +1,12 @@
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { Error2, ErrorCodes } from '#/errors';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
 
 const isWin = process.platform === 'win32';
 const encoder = new TextEncoder();
@@ -85,5 +87,59 @@ describe('FileStorageService — error translation', () => {
       code: 'storage.io_failed',
       details: { op: 'write', errno: expect.any(String) },
     });
+  });
+});
+
+describe('FileStorageService — session write fencing', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'fss-fence-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('revalidates the session authority for write, append, and delete', async () => {
+    const registry = new WriteAuthorityRegistryService();
+    let writable = true;
+    const registration = registry.register({
+      sessionId: 'session',
+      assertWritable: () => {
+        if (!writable) {
+          throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session lease lost');
+        }
+      },
+    });
+    const svc = new FileStorageService(dir, undefined, undefined, undefined, registry);
+    const scope = 'sessions/workspace/session/agents/main/tool-results';
+
+    await svc.write(scope, 'result.txt', encoder.encode('a'));
+    await svc.append(scope, 'result.txt', encoder.encode('b'));
+    expect(await readFile(join(dir, scope, 'result.txt'), 'utf8')).toBe('ab');
+
+    writable = false;
+    await expect(svc.write(scope, 'result.txt', encoder.encode('c'))).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
+    await expect(svc.append(scope, 'result.txt', encoder.encode('c'))).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
+    await expect(svc.delete(scope, 'result.txt')).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
+    expect(await readFile(join(dir, scope, 'result.txt'), 'utf8')).toBe('ab');
+    registration.dispose();
+  });
+
+  it('fails closed without a session authority and leaves non-session scopes untouched', async () => {
+    const registry = new WriteAuthorityRegistryService();
+    const svc = new FileStorageService(dir, undefined, undefined, undefined, registry);
+
+    await expect(
+      svc.write('sessions/workspace/session/agents/main/blobs', 'blob', encoder.encode('x')),
+    ).rejects.toMatchObject({ code: ErrorCodes.SESSION_LEASE_LOST });
+    await expect(svc.write('cron/workspace', 'task.json', encoder.encode('{}'))).resolves.toBeUndefined();
   });
 });

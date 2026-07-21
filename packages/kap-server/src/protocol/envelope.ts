@@ -6,6 +6,8 @@
 
 import { z } from 'zod';
 
+import { ErrorCode } from './error-codes';
+
 export const envelopeSchema = <T extends z.ZodTypeAny>(data: T) =>
   z.object({
     code: z.number().int(),
@@ -47,4 +49,24 @@ export function errEnvelope(
   details?: unknown,
 ): Envelope<null> {
   return { code, msg, data: null, request_id: requestId, stack, details };
+}
+
+/**
+ * Build the `40921 session.held_by_peer` ownership-redirect envelope. The
+ * structured `details` payload (`held-by-peer` phase / redirect address) is
+ * the actionable part, so it rides the envelope while the stack stays
+ * server-side. Accepts the `Error2` shape structurally so this module stays
+ * free of the engine dependency.
+ */
+export function ownershipRedirectEnvelope(
+  err: { readonly message: string; readonly details?: unknown },
+  requestId: string,
+): Envelope<null> {
+  return errEnvelope(
+    ErrorCode.SESSION_HELD_BY_PEER,
+    err.message,
+    requestId,
+    undefined,
+    err.details,
+  );
 }

@@ -1608,13 +1608,6 @@ export class MiniDb<V = unknown> {
 
   // ---- maintenance --------------------------------------------------------
 
-  /** Verify that this process still holds the database's kernel lock. */
-  async renewLock(): Promise<void> {
-    if (this.lock === null) return;
-    await this.lock.renew();
-    this.ensureWritable();
-  }
-
   /** Advanced/internal (read-replica owners such as the cluster shard pool):
    *  incrementally apply WAL frames appended to db.wal after `offset` — the
    *  same frames open-time recovery would replay, interpreted identically

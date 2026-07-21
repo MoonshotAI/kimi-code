@@ -20,7 +20,9 @@
  * control over append offsets, fsync, atomic rename and streaming, which the
  * agent-execution-environment abstraction does not expose. Higher-level code
  * (wire journal, blob store) goes through the Store / Storage interfaces above
- * this backend, never `node:fs` directly.
+ * this backend, never `node:fs` directly. Session-rooted mutations are fenced
+ * through the App-scoped write-authority registry immediately before storage
+ * I/O, so every file-backed Store shares the same fail-closed boundary.
  */
 
 import { createReadStream, mkdirSync, statSync } from 'node:fs';
@@ -33,6 +35,7 @@ import { optional } from '#/_base/di/instantiation';
 import { Emitter, type Event } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { atomicWrite, syncDir } from '#/_base/utils/fs';
+import { Error2, ErrorCodes } from '#/errors';
 import {
   CrossProcessLockError,
   CrossProcessLockErrorCode,
@@ -46,6 +49,10 @@ import type {
   StorageWriteOptions,
 } from '#/persistence/interface/storage';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
+import {
+  sessionIdFromScope,
+  IWriteAuthorityRegistry,
+} from '#/persistence/interface/writeAuthority';
 
 const WATCH_DEBOUNCE_MS = 150;
 const STORAGE_LOCK_WAIT_TIMEOUT_MS = 10_000;
@@ -83,6 +90,8 @@ export class FileStorageService implements IFileSystemStorageService {
     private readonly dirMode?: number,
     private readonly fileMode?: number,
     @optional(ICrossProcessLockService) private readonly locks?: ICrossProcessLockService,
+    @optional(IWriteAuthorityRegistry)
+    private readonly authorityRegistry?: IWriteAuthorityRegistry,
   ) {}
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
@@ -122,8 +131,14 @@ export class FileStorageService implements IFileSystemStorageService {
     _options: StorageWriteOptions = {},
   ): Promise<void> {
     const filePath = this.path(scope, key);
+    this.assertScopeWritable(scope);
     try {
       await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
+    } catch (error) {
+      throw toStorageIoError(error, { path: filePath, op: 'write' });
+    }
+    this.assertScopeWritable(scope);
+    try {
       await atomicWrite(filePath, data, undefined, this.fileMode);
       await this.syncDirOnce(dirname(filePath));
     } catch (error) {
@@ -139,9 +154,14 @@ export class FileStorageService implements IFileSystemStorageService {
   ): Promise<void> {
     const filePath = this.path(scope, key);
     const dir = dirname(filePath);
+    this.assertScopeWritable(scope);
     try {
       await mkdir(dir, { recursive: true, mode: this.dirMode });
-
+    } catch (error) {
+      throw toStorageIoError(error, { path: filePath, op: 'append' });
+    }
+    this.assertScopeWritable(scope);
+    try {
       const fh = await open(filePath, 'a', this.fileMode);
       try {
         if (data.byteLength > 0) {
@@ -172,6 +192,7 @@ export class FileStorageService implements IFileSystemStorageService {
 
   async delete(scope: string, key: string): Promise<void> {
     const filePath = this.path(scope, key);
+    this.assertScopeWritable(scope);
     try {
       await unlink(filePath);
     } catch (error) {
@@ -256,6 +277,7 @@ export class FileStorageService implements IFileSystemStorageService {
   async runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
     const filePath = this.path(scope, key);
     const lockPath = `${filePath}.lock`;
+    this.assertScopeWritable(scope);
     if (this.locks === undefined) {
       throw new StorageError(
         StorageErrors.codes.STORAGE_IO_FAILED,
@@ -267,7 +289,10 @@ export class FileStorageService implements IFileSystemStorageService {
       return await this.locks.withLock(
         lockPath,
         { wait: { timeoutMs: STORAGE_LOCK_WAIT_TIMEOUT_MS } },
-        op,
+        async () => {
+          this.assertScopeWritable(scope);
+          return op();
+        },
       );
     } catch (error) {
       if (!(error instanceof CrossProcessLockError)) throw error;
@@ -295,6 +320,18 @@ export class FileStorageService implements IFileSystemStorageService {
 
   private scopePath(scope: string): string {
     return join(this.baseDir, scope);
+  }
+
+  private assertScopeWritable(scope: string): void {
+    const sessionId = sessionIdFromScope(scope);
+    if (sessionId === undefined || this.authorityRegistry === undefined) return;
+    const authority = this.authorityRegistry.resolve(sessionId);
+    if (authority === undefined) {
+      throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session has no registered write authority', {
+        details: { sessionId },
+      });
+    }
+    authority.assertWritable();
   }
 
   private async syncDirOnce(dir: string): Promise<void> {

@@ -6,13 +6,9 @@
  * `spawnServerProcess` instead only when the case is signal-sensitive
  * (SIGSTOP / SIGKILL need real, distinct pids).
  *
- * Two hard requirements this helper encapsulates:
- *   - `KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1` must be set when each instance
- *     boots (read by `startServer` at call time only), or the second boot on
- *     the same home fails with `ServerLockedError`. The previous env value is
- *     saved and restored after boot / on `dispose()`.
- *   - Both instances must bind `port: 0` (OS-assigned) — a fixed busy port
- *     silently walks to `port + 1`, which breaks assertions on the registry.
+ * One hard requirement this helper encapsulates: both instances must bind
+ * `port: 0` (OS-assigned) — a fixed busy port silently walks to `port + 1`,
+ * which breaks assertions on the registry.
  *
  * `@moonshot-ai/kap-server` is imported lazily *inside* the function: its
  * module graph contains `*.md?raw` imports that plain `tsx` (running without
@@ -27,13 +23,6 @@ import { join } from 'node:path';
 import type { RunningServer } from '@moonshot-ai/kap-server';
 
 import { HttpClient } from '../http.js';
-
-/**
- * Literal copy of agent-core-v2's `MULTI_SERVER_FLAG_ENV`. Duplicated on
- * purpose: importing the constant would pull the kap-server / agent-core-v2
- * module graph into every consumer of this barrel (see file header).
- */
-export const MULTI_SERVER_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_MULTI_SERVER' as const;
 
 // `recursive` rm can hit ENOTEMPTY on macOS while the closing server is still
 // flushing/unlinking its own files — retry briefly (same trick as the v2
@@ -86,9 +75,7 @@ export async function startServerPair(options: ServerPairOptions = {}): Promise<
   const home = options.home ?? (await mkdtemp(join(tmpdir(), 'kimi-e2e-pair-')));
   const ownsHome = options.home === undefined;
   const disableAuth = options.disableAuth ?? true;
-  // The multi-server gate wins over `options.env`: without it the second boot
-  // below cannot succeed on a shared home.
-  const envPatch: Record<string, string> = { ...options.env, [MULTI_SERVER_FLAG_ENV]: '1' };
+  const envPatch: Record<string, string> = { ...options.env };
   const savedEnv = saveEnv(envPatch);
   let envRestored = false;
   const restoreEnv = (): void => {
@@ -116,13 +103,6 @@ export async function startServerPair(options: ServerPairOptions = {}): Promise<
       await a.close();
       throw error;
     }
-    // The flag is also read at request time — `heldByPeerDetails` phase
-    // classification and the unregistered-writer check consult it on every
-    // ownership rejection — not just inside `startServer`. Keep the env
-    // patched for the pair's whole lifetime; dispose() restores it.
-    // (Restoring it here made request-time reads fall back to the registry
-    // default `false`, turning routable 40921s into held-by-local-instance
-    // on any environment without the master flag.)
 
     const baseUrl = (server: RunningServer): string => `http://${server.host}:${server.port}`;
     let disposed = false;

@@ -159,7 +159,7 @@ describe('DaemonEventSocket frame dispatch (multi-instance surface)', () => {
     vi.useRealTimers();
   });
 
-  it('consumes session.list_changed (bare and event.-prefixed) via onSessionListChanged only', () => {
+  it('consumes bare session.list_changed via onSessionListChanged; the event.-prefixed form is not special-cased', () => {
     let wireEvents = 0;
     let listChanged = 0;
     const handlers: DaemonEventSocketHandlers = {
@@ -179,13 +179,15 @@ describe('DaemonEventSocket frame dispatch (multi-instance surface)', () => {
     ws.emitMessage(SERVER_HELLO);
 
     ws.emitMessage({ type: 'session.list_changed', payload: {} });
+    // The server never emits the prefixed form; it must NOT reach
+    // onSessionListChanged (it falls through to the generic protocol path).
     ws.emitMessage({ type: 'event.session.list_changed', payload: {} });
 
-    expect(listChanged).toBe(2);
-    expect(wireEvents).toBe(0);
+    expect(listChanged).toBe(1);
+    expect(wireEvents).toBe(1);
   });
 
-  it('consumes skill_catalog.changed (bare and event.-prefixed) via onSkillCatalogChanged only', () => {
+  it('consumes bare skill_catalog.changed via onSkillCatalogChanged; the event.-prefixed form is not special-cased', () => {
     let wireEvents = 0;
     let rawAgentEvents = 0;
     const changed: string[] = [];
@@ -216,6 +218,8 @@ describe('DaemonEventSocket frame dispatch (multi-instance surface)', () => {
       volatile: true,
       payload: { type: 'skill_catalog.changed', sourceId: 'workspace-file' },
     });
+    // The server never emits the prefixed form; it must NOT reach
+    // onSkillCatalogChanged (it falls through to the generic protocol path).
     ws.emitMessage({
       type: 'event.skill_catalog.changed',
       seq: 2,
@@ -225,8 +229,8 @@ describe('DaemonEventSocket frame dispatch (multi-instance surface)', () => {
       payload: { type: 'skill_catalog.changed', sourceId: 'plugin' },
     });
 
-    expect(changed).toEqual(['sess_1', 'sess_2']);
-    expect(wireEvents).toBe(0);
+    expect(changed).toEqual(['sess_1']);
+    expect(wireEvents).toBe(1);
     expect(rawAgentEvents).toBe(0);
   });
 

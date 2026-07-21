@@ -48,10 +48,6 @@ export class LockFile {
     if (!this.checkHeld()) throw new LockError(`database write lock was lost: ${this.path}`);
   }
 
-  async renew(): Promise<void> {
-    this.assertHeld();
-  }
-
   async release(): Promise<void> {
     this.releaseSync();
   }

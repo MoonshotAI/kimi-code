@@ -15,7 +15,7 @@
  * re-registers its agents as they materialize — never bumps `updatedAt` and
  * never reorders session listings. Every durable write passes the
  * `sessionLease` hard gate first (`ISessionLeaseService.assertWritable`,
- * synchronously re-reading the lease payload), so an instance that lost the
+ * checking the held kernel-lock handle), so an instance that lost the
  * session lease fails closed instead of overwriting a live peer's state.
  * Bound at Session scope.
  *

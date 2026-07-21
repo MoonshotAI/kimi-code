@@ -105,7 +105,7 @@ test('rewriting sentinel contents cannot transfer a live lock', async () => {
   assert.equal(await first.acquire(), true);
 
   await fs.writeFile(lockPath, 'operator note');
-  await assert.doesNotReject(() => first.renew());
+  assert.doesNotThrow(() => first.assertHeld());
   assert.equal(await second.acquire(), false);
 
   await first.release();

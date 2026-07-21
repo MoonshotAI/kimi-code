@@ -269,7 +269,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         transcriptSince: transcriptSince?.[sid],
       });
       if (!ok) {
-        const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+        const ownership = await this.broadcaster.getSubscriptionFailure(sid);
         if (ownership !== undefined) ownershipDetails[sid] = ownership;
         else notFound.push(sid);
         continue;
@@ -363,7 +363,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       transcriptSince,
     });
     if (!ok) {
-      const ownership = await this.broadcaster.getSubscriptionFailure?.(sid);
+      const ownership = await this.broadcaster.getSubscriptionFailure(sid);
       if (ownership !== undefined) ownershipDetails[sid] = ownership;
       else notFound.push(sid);
       return;

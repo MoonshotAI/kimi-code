@@ -583,7 +583,8 @@ export interface WireInFlightTurn {
 /** `GET /sessions/{sid}/snapshot` — atomic rebuild state at a watermark. */
 export interface WireSessionSnapshot {
   as_of_seq: number;
-  epoch: string;
+  /** Absent until the journal's first durable event: "no baseline" ≠ "baseline changed". */
+  epoch?: string;
   session: WireSession;
   messages: { items: WireMessage[]; has_more: boolean };
   in_flight_turn: WireInFlightTurn | null;

@@ -91,7 +91,6 @@ test('editing the sentinel payload cannot create a successor generation', async 
     await oldWriter.set('generation', 'old');
 
     await fs.writeFile(path.join(dir, 'db.lock'), 'successor-generation');
-    await assert.doesNotReject(() => oldWriter.renewLock());
     await assert.rejects(
       () => MiniDb.open({ dir, valueCodec: 'string', autoCompact: false }),
       /locked/,

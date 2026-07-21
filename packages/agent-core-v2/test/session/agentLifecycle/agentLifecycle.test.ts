@@ -347,6 +347,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
       stopAllOnExit,
+      flushPersistence: async () => {},
     } as unknown as IAgentTaskService);
     ix.stub(IAgentFullCompactionService, {
       _serviceBrand: undefined,

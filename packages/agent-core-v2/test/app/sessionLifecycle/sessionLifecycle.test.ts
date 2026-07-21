@@ -1493,39 +1493,7 @@ describe('SessionLifecycleService', () => {
       }
     });
 
-    it('reports the routable phase with the holder address when multi_server is on', async () => {
-      const root = await makeTmpRoot();
-      const first = build(
-        realInstanceSeeds(root, [
-          stubPair(IFlagService, stubFlag(true)),
-          stubPair(
-            ISessionLeaseContactProvider,
-            new SessionLeaseContactProvider(() => ({
-              type: 'address',
-              address: 'http://127.0.0.1:5555',
-            })),
-          ),
-        ]),
-      );
-      const firstHost = host!;
-      await first.create({ sessionId: 's1', workDir: '/tmp/proj' });
-      try {
-        const second = build(
-          realInstanceSeeds(root, [stubPair(IFlagService, stubFlag(true))]),
-        );
-        const error = await createError(second, 's1');
-        expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
-        expect(error.details).toEqual({
-          kind: 'held-by-peer',
-          phase: 'routable',
-          address: 'http://127.0.0.1:5555',
-        });
-      } finally {
-        firstHost.dispose();
-      }
-    });
-
-    it('never emits the holder address when multi_server is off', async () => {
+    it('reports the routable phase with the holder address', async () => {
       const root = await makeTmpRoot();
       const first = build(
         realInstanceSeeds(root, [
@@ -1544,7 +1512,11 @@ describe('SessionLifecycleService', () => {
         const second = build(realInstanceSeeds(root));
         const error = await createError(second, 's1');
         expect(error.code).toBe(ErrorCodes.SESSION_HELD_BY_PEER);
-        expect(error.details).toEqual({ kind: 'held-by-peer', phase: 'held-by-local-instance' });
+        expect(error.details).toEqual({
+          kind: 'held-by-peer',
+          phase: 'routable',
+          address: 'http://127.0.0.1:5555',
+        });
       } finally {
         firstHost.dispose();
       }

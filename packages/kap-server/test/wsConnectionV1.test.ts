@@ -62,6 +62,7 @@ function makeBroadcaster(): SessionEventBroadcaster {
   return {
     subscribe: async () => true,
     unsubscribe: () => {},
+    getSubscriptionFailure: async () => undefined,
     getCursor: async () => ({ seq: 0, epoch: '' }),
     getBufferedSince: async () => ({
       events: [],

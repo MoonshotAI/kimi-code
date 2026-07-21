@@ -316,7 +316,6 @@ export type KimiErrorCode =
   | 'os.process.kill_failed'
   | 'os.lock.held'
   | 'os.lock.wait_timeout'
-  | 'os.lock.lost'
   | 'os.lock.io'
   | 'storage.not_found'
   | 'storage.decode_failed'

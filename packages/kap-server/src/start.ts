@@ -146,22 +146,6 @@ export interface RunningServer {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 58627;
 
-/**
- * Env gate for the multi-server session-list sync below
- * (`KIMI_CODE_EXPERIMENTAL_MULTI_SERVER`). Resolved directly from the
- * environment *before* bootstrap, and deliberately NOT via the flag service /
- * master `KIMI_CODE_EXPERIMENTAL_FLAG`: that switch already enables the v2
- * engine itself, and coupling multi-instance behavior to it would change the
- * watch surface of every v2 server before the feature is ready. Keeping the
- * gate specific makes multi-server strictly opt-in.
- */
-const MULTI_SERVER_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_MULTI_SERVER';
-
-function isMultiServerEnabled(env: NodeJS.ProcessEnv): boolean {
-  const raw = (env[MULTI_SERVER_FLAG_ENV] ?? '').trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
-}
-
 export async function startServer(opts: ServerStartOptions = {}): Promise<RunningServer> {
   const host = opts.host ?? DEFAULT_HOST;
   const port = opts.port ?? DEFAULT_PORT;
@@ -333,7 +317,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     const lifecycleDrain = lifecycle.beginClose();
     // Stop the sessions-tree watcher first: a debounced hint firing mid-close
     // would publish into an event bus whose subscribers are already unwinding.
-    sessionListWatch?.dispose();
+    sessionListWatch.dispose();
     // Release-order contract: sessions close FIRST (each runs the
     // onWillCloseSession hooks and drains agents while the transport is still
     // alive, so teardown events still fan out and land in the journal), the
@@ -370,17 +354,13 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // Multi-instance session-list sync, event plane (design §3.8): watches the
   // shared sessions tree for peer-created/removed workspace & session dirs
   // and hints `session.list_changed` so this instance's clients re-pull.
-  // Gated by the dedicated `multi_server` env flag (see isMultiServerEnabled)
-  // — flag off is the single-instance shape where peers cannot exist.
-  const sessionListWatch = isMultiServerEnabled(process.env)
-    ? new SessionListWatchService({
-        sessionsDir: join(homeDir, 'sessions'),
-        fsWatch: core.accessor.get(IHostFsWatchService),
-        events: core.accessor.get(IEventService),
-        logger,
-      })
-    : undefined;
-  sessionListWatch?.start().catch((error: unknown) =>
+  const sessionListWatch = new SessionListWatchService({
+    sessionsDir: join(homeDir, 'sessions'),
+    fsWatch: core.accessor.get(IHostFsWatchService),
+    events: core.accessor.get(IEventService),
+    logger,
+  });
+  sessionListWatch.start().catch((error: unknown) =>
     logger.error({ err: error }, 'session list watch failed to start'),
   );
 

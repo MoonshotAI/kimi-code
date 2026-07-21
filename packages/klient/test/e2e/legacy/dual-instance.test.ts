@@ -11,19 +11,15 @@
  *      + `listLiveServerInstances` agree).
  *   2. Closing instance `a` leaves instance `b` serving (healthz 200, registry
  *      down to one live entry) while `a`'s port refuses connections.
- *   3. `dispose()` restores `KIMI_CODE_EXPERIMENTAL_MULTI_SERVER` to its
- *      pre-boot value and removes the helper-created home directory.
- *      (Upstream removed the single-instance server lock — multi-server is
- *      the always-on model now, so the former "no flag → ServerLockedError"
- *      case no longer exists.)
+ *   3. `dispose()` removes the helper-created home directory.
  *
  * Subprocess (`spawnServerProcess`):
  *   4. A child boots on a real distinct pid, answers healthz, and serves
  *      token-gated routes WITHOUT a token (`disableAuth`); `stop()` (SIGTERM)
  *      exits the child and removes the helper-created home.
- *   5. A spawned pair shares one home (flag reaches the children's env); a
- *      SIGKILLed child's pid actually dies and its registry entry is swept as
- *      stale on the next `listLiveServerInstances` read.
+ *   5. A spawned pair shares one home; a SIGKILLed child's pid actually dies
+ *      and its registry entry is swept as stale on the next
+ *      `listLiveServerInstances` read.
  *
  * KNOWN BRANCH GAP (refactor-fs-watch WIP): kap-server's `close()` currently
  * throws `appendLogStore depends on writeAuthorityRegistry which is NOT
@@ -44,7 +40,6 @@ import { describe, expect, it } from 'vitest';
 
 import { HttpClient } from '../harness/http.js';
 import {
-  MULTI_SERVER_FLAG_ENV,
   spawnServerProcess,
   spawnServerProcessPair,
   startServerPair,
@@ -135,25 +130,15 @@ describe('dual-instance helpers', () => {
     );
 
     it(
-      'dispose() restores the multi-server env flag and removes the created home',
+      'dispose() removes the created home',
       { timeout: 30_000 },
       async () => {
         const log = createCaseLogger('dual-instance/dispose-cleanup');
-        const ambientFlag = process.env[MULTI_SERVER_FLAG_ENV];
         const pair = await startServerPair();
-        // The flag stays patched for the pair's whole lifetime: request-time
-        // readers (40921 phase classification, unregistered-writer checks)
-        // consult it on every ownership rejection, not just at boot.
-        expect(process.env[MULTI_SERVER_FLAG_ENV]).toBe('1');
         expect(existsSync(pair.home)).toBe(true);
 
         await pair.dispose();
-        log('after dispose()', {
-          restoredFlag: process.env[MULTI_SERVER_FLAG_ENV] ?? null,
-          ambientFlag: ambientFlag ?? null,
-          homeExists: existsSync(pair.home),
-        });
-        expect(process.env[MULTI_SERVER_FLAG_ENV]).toBe(ambientFlag);
+        log('after dispose()', { homeExists: existsSync(pair.home) });
         expect(existsSync(pair.home)).toBe(false);
       },
     );

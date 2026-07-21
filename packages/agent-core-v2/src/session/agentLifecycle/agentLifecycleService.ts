@@ -346,7 +346,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     this.handles.delete(agentId);
     const tasks = handle.accessor.get(IAgentTaskService);
     await tasks.stopAllOnExit('Session closed');
-    await tasks.flushPersistence?.();
+    await tasks.flushPersistence();
     const loop = handle.accessor.get(IAgentLoopService);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();

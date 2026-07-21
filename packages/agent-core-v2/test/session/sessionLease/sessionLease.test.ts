@@ -6,7 +6,7 @@
  * notification, idempotent release, and contact-provider seed semantics.
  */
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -68,7 +68,6 @@ function hostWith(seeds: Parameters<typeof createScopedTestHost>[0] = []): Scope
 describe('SessionLease', () => {
   it('reports its identity through info and passes the hard gate while held', async () => {
     const lease = await acquire();
-    expect(lease.checkHeld()).toBe(true);
     expect(lease.info).toEqual({ sessionId: 's1', lockId: lease.lockId });
     expect(() => lease.assertWritable()).not.toThrow();
     lease.release();
@@ -77,12 +76,13 @@ describe('SessionLease', () => {
   it('fires the loss notification once and then fails closed', async () => {
     const onLost = vi.fn();
     const lease = await acquire('s1', onLost);
-    lease.markLost();
+    // Replacing the sentinel fails the kernel handle's dev/ino identity
+    // check, driving the loss path through the real gate.
+    rmSync(sessionLeasePath(tmpDir, 's1'));
+    writeFileSync(sessionLeasePath(tmpDir, 's1'), '');
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
     expect(onLost).toHaveBeenCalledTimes(1);
     expect(onLost).toHaveBeenCalledWith('s1');
-    lease.markLost();
-    expect(onLost).toHaveBeenCalledTimes(1);
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
     expect(onLost).toHaveBeenCalledTimes(1);
   });
@@ -92,7 +92,6 @@ describe('SessionLease', () => {
     lease.release();
     lease.release();
 
-    expect(lease.released).toBe(true);
     expect(lease.info).toBeUndefined();
     expect(existsSync(sessionLeasePath(tmpDir, 's1'))).toBe(true);
     expect(existsSync(`${sessionLeasePath(tmpDir, 's1')}.owner.json`)).toBe(false);

@@ -8,11 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  acquireKernelFileLock,
-  KernelFileLockTimeoutError,
   setKernelFileLockBindingLoader,
   tryAcquireKernelFileLock,
-  type KernelFileLockBinding,
   type KernelFileLockHandle,
 } from '../src/index.js';
 
@@ -56,75 +53,6 @@ describe('kernel-file-lock', () => {
     const second = tryAcquireKernelFileLock(lockPath);
     expect(second).toBeDefined();
     handles.push(second!);
-  });
-
-  it('waits and times out without taking ownership', async () => {
-    const first = tryAcquireKernelFileLock(lockPath)!;
-    handles.push(first);
-
-    await expect(
-      acquireKernelFileLock(lockPath, { timeoutMs: 15, retryIntervalMs: 5 }),
-    ).rejects.toBeInstanceOf(KernelFileLockTimeoutError);
-  });
-
-  it('does not acquire a lock released after the deadline', async () => {
-    const first = tryAcquireKernelFileLock(lockPath)!;
-    handles.push(first);
-    const releaseTimer = setTimeout(() => first.release(), 20);
-
-    const result = await acquireKernelFileLock(lockPath, {
-      timeoutMs: 10,
-      retryIntervalMs: 100,
-    }).then(
-      (handle) => ({ status: 'acquired' as const, handle }),
-      (error: unknown) => ({ status: 'rejected' as const, error }),
-    );
-    clearTimeout(releaseTimer);
-
-    if (result.status === 'acquired') handles.push(result.handle);
-    expect(result.status).toBe('rejected');
-    if (result.status === 'rejected') {
-      expect(result.error).toBeInstanceOf(KernelFileLockTimeoutError);
-    }
-  });
-
-  it('releases a lock acquired as a retry crosses the deadline', async () => {
-    let lockCalls = 0;
-    let unlockCalls = 0;
-    const times = [0, 0, 9, 10];
-    const nativeBinding: KernelFileLockBinding = {
-      tryLock: () => {
-        lockCalls++;
-        return lockCalls > 1;
-      },
-      unlock: () => {
-        unlockCalls++;
-      },
-    };
-    setKernelFileLockBindingLoader(() => nativeBinding);
-    vi.spyOn(Date, 'now').mockImplementation(() => times.shift() ?? 10);
-
-    const result = await acquireKernelFileLock(lockPath, {
-      timeoutMs: 10,
-      retryIntervalMs: 0,
-    }).then(
-      (handle) => ({ status: 'acquired' as const, handle }),
-      (error: unknown) => ({ status: 'rejected' as const, error }),
-    );
-
-    if (result.status === 'acquired') handles.push(result.handle);
-    expect(result.status).toBe('rejected');
-    if (result.status === 'rejected') {
-      expect(result.error).toBeInstanceOf(KernelFileLockTimeoutError);
-    }
-    expect(unlockCalls).toBe(1);
-  });
-
-  it('allows the immediate first attempt with a zero timeout', async () => {
-    const handle = await acquireKernelFileLock(lockPath, { timeoutMs: 0 });
-    handles.push(handle);
-
-    expect(handle.checkHeld()).toBe(true);
   });
 
   it('coordinates with a separate process', async () => {

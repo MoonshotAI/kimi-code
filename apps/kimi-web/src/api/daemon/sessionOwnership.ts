@@ -9,7 +9,7 @@
 // Wire semantics (from the protocol schema):
 //   - creating                lease file observed mid-creation; retry shortly
 //   - routable                holder is live and registered an address; redirect
-//   - holder-unresponsive     holder pid alive but heartbeat stale; retry later
+//   - holder-unresponsive     legacy heartbeat-based server response; retry later
 //   - held-by-local-instance  holder has no address (local/embedded); terminal
 //   - unregistered-writer     session dir written by an unregistered process
 

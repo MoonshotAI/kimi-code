@@ -25,7 +25,10 @@ import { join } from 'pathe';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
 import { Error2, ErrorCodes } from '#/errors';
-import type { ICrossProcessLockHandle } from '#/os/interface/crossProcessLock';
+import type {
+  CrossProcessLockInspection,
+  ICrossProcessLockHandle,
+} from '#/os/interface/crossProcessLock';
 import type { ISessionWriteAuthority } from '#/persistence/interface/writeAuthority';
 
 export const LEASE_CREATING_RETRY_AFTER_MS = 1000;
@@ -48,6 +51,33 @@ export type HeldByPeerDetails = {
 };
 
 export type SessionOwnershipDetails = HeldByPeerDetails | { readonly kind: 'unregistered-writer' };
+
+/**
+ * Classify a lease inspection into `held-by-peer` details. Shared by every
+ * surface that reports session ownership — the lifecycle's
+ * post-acquire-failure probe and kap-server's read-only probes — so all of
+ * them classify the same lease the same way. Returns `undefined` when the
+ * lease is free; a caller on a failed-acquire path should map that to
+ * `'creating'`, since a holder that vanished mid-race converges by retrying.
+ */
+export function heldByPeerDetailsFromInspection(
+  inspection: CrossProcessLockInspection,
+): HeldByPeerDetails | undefined {
+  if (inspection.state === 'held' && inspection.payload !== undefined) {
+    const { address } = inspection.payload;
+    return address !== undefined
+      ? { kind: 'held-by-peer', phase: 'routable', address }
+      : { kind: 'held-by-peer', phase: 'held-by-local-instance' };
+  }
+  if (inspection.state === 'creating') {
+    return {
+      kind: 'held-by-peer',
+      phase: 'creating',
+      retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS,
+    };
+  }
+  return undefined;
+}
 
 export interface ISessionLeaseInfo {
   readonly sessionId: string;
@@ -83,15 +113,11 @@ export class SessionLease implements ISessionWriteAuthority, ISessionLeaseServic
     this.lockId = handle.lockId;
   }
 
-  get released(): boolean {
-    return this._released;
-  }
-
   get info(): ISessionLeaseInfo | undefined {
     return this._released ? undefined : { sessionId: this.sessionId, lockId: this.lockId };
   }
 
-  checkHeld(): boolean {
+  private checkHeld(): boolean {
     return !this._released && this.handle.checkHeld();
   }
 
@@ -103,7 +129,7 @@ export class SessionLease implements ISessionWriteAuthority, ISessionLeaseServic
         { details: { sessionId: this.sessionId } },
       );
     }
-    if (this._lost || !this.handle.checkHeld()) {
+    if (this._lost || !this.checkHeld()) {
       this.markLost();
       throw new Error2(
         ErrorCodes.SESSION_LEASE_LOST,
@@ -113,7 +139,7 @@ export class SessionLease implements ISessionWriteAuthority, ISessionLeaseServic
     }
   }
 
-  markLost(): void {
+  private markLost(): void {
     this._lost = true;
     if (this._lossFired) return;
     this._lossFired = true;

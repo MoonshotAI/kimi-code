@@ -91,7 +91,7 @@ test('read-only instance coexists with a live writer and sees its commits', asyn
   }
 });
 
-test('a cached writer keeps a stable sentinel without renewal writes', async () => {
+test('a cached writer keeps a stable sentinel', async () => {
   const dir = await tmpDir('minidb-cluster-');
   try {
     const db = await ClusterDb.open({ dir, shardCount: 4, valueCodec: 'json', lockHoldMs: 0 });

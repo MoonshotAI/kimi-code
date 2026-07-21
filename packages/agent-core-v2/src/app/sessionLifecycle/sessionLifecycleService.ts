@@ -69,8 +69,6 @@ import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
-import { IFlagService } from '#/app/flag/flag';
-import { MULTI_SERVER_FLAG_ID } from '#/app/multiServer/flag';
 import {
   CHILD_SESSION_KIND,
   CHILD_SESSION_KIND_KEY,
@@ -102,6 +100,7 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import {
   type HeldByPeerDetails,
+  heldByPeerDetailsFromInspection,
   LEASE_CREATING_RETRY_AFTER_MS,
   SessionLease,
   sessionLeasePath,
@@ -189,7 +188,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IEventService private readonly event: IEventService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
-    @IFlagService private readonly flags: IFlagService,
     @ICrossProcessLockService private readonly locks: ICrossProcessLockService,
     @IWriteAuthorityRegistry private readonly authorityRegistry: IWriteAuthorityRegistry,
     @ISessionLeaseContactProvider
@@ -925,16 +923,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private heldByPeerDetails(inspection: CrossProcessLockInspection): HeldByPeerDetails {
-    if (inspection.state === 'held' && inspection.payload !== undefined) {
-      const payload = inspection.payload;
-      if (payload.address !== undefined && this.flags.enabled(MULTI_SERVER_FLAG_ID)) {
-        return { kind: 'held-by-peer', phase: 'routable', address: payload.address };
+    // A free lease here means the holder vanished between the failed acquire
+    // and this probe; that race converges by retrying, same as 'creating'.
+    return (
+      heldByPeerDetailsFromInspection(inspection) ?? {
+        kind: 'held-by-peer',
+        phase: 'creating',
+        retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS,
       }
-      return { kind: 'held-by-peer', phase: 'held-by-local-instance' };
-    }
-    // 'creating' mid-creation, and races where the holder vanished between the
-    // failed acquire and this probe, both converge by retrying shortly.
-    return { kind: 'held-by-peer', phase: 'creating', retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS };
+    );
   }
 
   private async flushSessionTail(sessionId: string, scope: string): Promise<void> {

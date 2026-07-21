@@ -79,10 +79,6 @@ Pick the helper by what the case needs:
 
 Hard rules:
 
-- Same-home dual boot requires `KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1` at
-  boot time or the second boot fails with `ServerLockedError`. The helpers
-  set/restore it themselves (child env for spawned pairs) — do not export it
-  globally.
 - Always `port: 0`. A fixed busy port silently walks to `port + 1`, which
   breaks registry/port assertions and cross-test isolation.
 - One pair per test file/worker; never share a `RunningServer` or

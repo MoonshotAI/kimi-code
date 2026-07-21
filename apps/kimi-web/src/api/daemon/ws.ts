@@ -390,19 +390,18 @@ export class DaemonEventSocket {
       // Multi-instance hint (volatile, no payload): some instance sharing this
       // home created/archived/deleted a session. Consumed by name here because
       // classifyFrame would route the unknown unprefixed type to the agent
-      // projector, which no-ops on it. Emitted with or without the "event."
-      // prefix — accept both.
+      // projector, which no-ops on it. The server (sessionEventBroadcaster)
+      // only ever emits the bare form.
       case 'session.list_changed':
-      case 'event.session.list_changed':
         this.handlers.onSessionListChanged?.();
         break;
 
       // Volatile per-session hint: the daemon's skill catalog for this session
       // changed (e.g. a skill file edited on disk). Consumed by name here for
       // the same reason as session.list_changed above; the frame carries its
-      // own per-connection seq, never the durable watermark.
+      // own per-connection seq, never the durable watermark. The server
+      // (skillCatalogBridge) only ever emits the bare form.
       case 'skill_catalog.changed':
-      case 'event.skill_catalog.changed':
         this.handlers.onSkillCatalogChanged?.(frame.session_id as string);
         break;
 

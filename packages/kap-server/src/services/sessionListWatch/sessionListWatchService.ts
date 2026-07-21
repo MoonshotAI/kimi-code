@@ -2,18 +2,18 @@
  * `SessionListWatchService` — the event plane of multi-instance session-list
  * sync.
  *
- * Several kap-server instances can share one home directory (the
- * `multi_server` experimental flag). The session list itself needs no
- * synchronization: `ISessionIndex.list()` re-enumerates the shared
- * `<home>/sessions` tree on every request, so a peer's sessions are visible on
- * the next pull. What a peer can never produce is the *event* — core events
- * are process-local. This service closes that gap locally: it watches the
- * shared sessions tree and, on any workspace/session directory appearing or
- * disappearing, publishes ONE debounced `session.list_changed` hint on this
- * instance's core `IEventService`, which the `SessionEventBroadcaster` fans
- * out live (volatile, never journaled) to every connected WS client. Clients
- * then re-pull the list — the directory scan stays the single authority, the
- * hint is pure "go refetch" advice and deliberately carries no payload.
+ * Several kap-server instances can share one home directory. The session list
+ * itself needs no synchronization: `ISessionIndex.list()` re-enumerates the
+ * shared `<home>/sessions` tree on every request, so a peer's sessions are
+ * visible on the next pull. What a peer can never produce is the *event* —
+ * core events are process-local. This service closes that gap locally: it
+ * watches the shared sessions tree and, on any workspace/session directory
+ * appearing or disappearing, publishes ONE debounced `session.list_changed`
+ * hint on this instance's core `IEventService`, which the
+ * `SessionEventBroadcaster` fans out live (volatile, never journaled) to
+ * every connected WS client. Clients then re-pull the list — the directory
+ * scan stays the single authority, the hint is pure "go refetch" advice and
+ * deliberately carries no payload.
  *
  * Two-layer topology (a root recursive watch was rejected as an event flood):
  *   - root `<home>/sessions` at depth 0: workspace directories appearing /
@@ -24,8 +24,8 @@
  * `ignoreInitial` so boot produces no hint flood.
  *
  * This is transport state (like `FsWatchBridge` / `SessionEventBroadcaster`):
- * constructed in `start.ts` when `multi_server` is on — never DI-registered —
- * and disposed during server close before the core scope goes down.
+ * constructed in `start.ts` on every boot — never DI-registered — and
+ * disposed during server close before the core scope goes down.
  */
 
 import { mkdirSync } from 'node:fs';

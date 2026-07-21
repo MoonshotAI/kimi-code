@@ -39,8 +39,6 @@
  * connections without a transcript spec are unaffected.
  */
 
-import { dirname } from 'node:path';
-
 import type {
   AgentActivityState,
   ApprovalResponse,
@@ -64,7 +62,7 @@ import {
   ISessionIndex,
   ISessionLifecycleService,
   MAIN_AGENT_ID,
-  LEASE_CREATING_RETRY_AFTER_MS,
+  heldByPeerDetailsFromInspection,
   sessionLeasePath,
 } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -245,7 +243,7 @@ export class SessionEventBroadcaster {
   constructor(
     private readonly opts: {
       readonly eventsDir: string;
-      readonly homeDir?: string;
+      readonly homeDir: string;
       readonly core: Scope;
       readonly logger?: JournalLogger;
       readonly maxBufferSize?: number;
@@ -370,23 +368,10 @@ export class SessionEventBroadcaster {
     const summary = await this.opts.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
 
-    const homeDir = this.opts.homeDir ?? dirname(dirname(this.opts.eventsDir));
     const inspection = this.opts.core
       .accessor.get(ICrossProcessLockService)
-      .inspect(sessionLeasePath(homeDir, sessionId));
-    if (inspection.state === 'creating') {
-      return {
-        kind: 'held-by-peer',
-        phase: 'creating',
-        retry_after_ms: LEASE_CREATING_RETRY_AFTER_MS,
-      };
-    }
-    if (inspection.state !== 'held' || inspection.payload === undefined) return undefined;
-
-    if (inspection.payload.address !== undefined) {
-      return { kind: 'held-by-peer', phase: 'routable', address: inspection.payload.address };
-    }
-    return { kind: 'held-by-peer', phase: 'held-by-local-instance' };
+      .inspect(sessionLeasePath(this.opts.homeDir, sessionId));
+    return heldByPeerDetailsFromInspection(inspection);
   }
 
   unsubscribe(sessionId: string, target: BroadcastTarget): void {
@@ -681,8 +666,10 @@ export class SessionEventBroadcaster {
     // While the journal has unrecovered write failures, never serve from the
     // tail: those events are not durable, and replaying them as if they were
     // would resurrect the "fake durable" hole after a restart. `readSince`
-    // retries the pending flush and throws the sticky JournalStorageError
-    // instead — the replay edge maps that to a client-visible resync.
+    // flushes first (which retries a transient write failure); once the
+    // journal is sticky the flush is a no-op and `readSince` throws the
+    // sticky JournalStorageError instead — the replay edge maps that to a
+    // client-visible resync.
     if (!journal.writeFailure) {
       const tailStart = tail[0]?.seq;
       if (tailStart !== undefined && tailStart <= cursor.seq + 1) {
@@ -841,49 +828,6 @@ export class SessionEventBroadcaster {
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') return undefined;
       throw error;
     }
-    return state;
-  }
-
-  private ensureGlobalState(): Promise<SessionState> {
-    const existing = this.sessions.get(GLOBAL_SESSION_ID);
-    if (existing !== undefined) return Promise.resolve(existing);
-    let pending = this.pendingStates.get(GLOBAL_SESSION_ID);
-    if (pending === undefined) {
-      pending = this.createGlobalState().finally(() => {
-        if (this.pendingStates.get(GLOBAL_SESSION_ID) === pending) {
-          this.pendingStates.delete(GLOBAL_SESSION_ID);
-        }
-      });
-      this.pendingStates.set(GLOBAL_SESSION_ID, pending);
-    }
-    return pending as Promise<SessionState>;
-  }
-
-  private async createGlobalState(): Promise<SessionState> {
-    const journal = await SessionEventJournal.open(
-      sessionJournalPath(this.opts.eventsDir, GLOBAL_SESSION_ID),
-      this.opts.logger,
-    );
-    const state: SessionState = {
-      sessionId: GLOBAL_SESSION_ID,
-      journal,
-      tracker: new InFlightTurnTracker(),
-      roster: new SubagentRosterTracker(),
-      activityByAgent: new Map(),
-      emittedBusy: false,
-      emittedMainTurnActive: false,
-      emittedPendingInteraction: 'none',
-      pendingInteraction: 'none',
-      tail: [],
-      targets: new Map(),
-      queue: Promise.resolve(),
-      agentDisposables: new Map(),
-      lifecycleDisposables: [],
-      knownInteractions: new Map(),
-      transcriptSeeded: new Set(),
-      deferredTranscriptSeeds: new Map(),
-    };
-    this.sessions.set(GLOBAL_SESSION_ID, state);
     return state;
   }
 

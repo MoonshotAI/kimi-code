@@ -27,12 +27,15 @@
  * for fan-out); bytes are flushed on a microtask-scheduled async batch. Each
  * batch uses a single `open(path, 'a')` → write → fsync → close cycle. Pending
  * lines are dequeued only AFTER the batch is durable; a failed round keeps the
- * whole batch (and the pending header) for the retry. After
+ * whole batch (and the pending header) for a retry driven by the next
+ * append-scheduled or read-triggered flush. After
  * {@link STICKY_FAILURE_THRESHOLD} consecutive failures the journal goes
- * sticky: `nextSeq()`/`append()` fail fast (pending can never grow unbounded)
- * and `readSince()` throws a {@link JournalStorageError} instead of silently
- * serving fewer events — "not served" must stay distinguishable from "nothing
- * to serve". `readSince()` flushes first so replay never misses queued lines.
+ * sticky: `flush()` turns into a no-op (the kept pending lines are never
+ * retried), `nextSeq()`/`append()` fail fast (pending can never grow
+ * unbounded), and `readSince()` throws a {@link JournalStorageError} instead
+ * of silently serving fewer events — "not served" must stay distinguishable
+ * from "nothing to serve". `readSince()` flushes first so replay never misses
+ * queued lines.
  * A torn trailing line from a crash is tolerated and ignored on open, and a
  * pure cold-read open → close writes zero bytes.
  */
@@ -320,8 +323,8 @@ export class SessionEventJournal {
       }
       await this.flushPromise;
       // Give up once sticky instead of hot-spinning on a persistently failing
-      // disk; the kept pending lines are retried by the next append-scheduled
-      // or read-triggered round.
+      // disk: appends now fail fast and `readSince` throws, so the kept
+      // pending lines are never retried.
       if (this.stickyError !== undefined) return;
     }
   }
@@ -379,7 +382,7 @@ export class SessionEventJournal {
     } catch (error) {
       const committed = await countCommittedPrefix(this.filePath, lines);
       if (committed > 0) {
-        if (headerLine !== undefined && committed > 0) this.headerPending = false;
+        if (headerLine !== undefined) this.headerPending = false;
         this.pendingLines.splice(0, Math.max(0, committed - (headerLine === undefined ? 0 : 1)));
         this.stickyError ??= new JournalStorageError(this.filePath, error);
         return true;

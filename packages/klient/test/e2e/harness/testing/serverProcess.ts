@@ -22,8 +22,6 @@
  *   - `build/register-raw-text-loader.mjs` makes `*.md?raw` prompt-template
  *     imports (kap-server → agent-core-v2) resolvable outside a bundler;
  *     plain `node` fails on those imports without it.
- *   - registers/lock state: same-home coexistence still requires
- *     `KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1`, passed through the child env.
  *
  * Readiness is the child's `{type:'ready'}` stdout line (printed after
  * `startServer` resolved, i.e. the port is already listening). When driving
@@ -38,7 +36,6 @@ import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { MULTI_SERVER_FLAG_ENV } from './serverPair.js';
 import {
   SPAWN_SERVER_HOME_ENV,
   type SpawnServerMessage,
@@ -189,9 +186,9 @@ export async function spawnServerProcess(
 }
 
 /**
- * Pair of spawned children sharing one home; the multi-server flag is pushed
- * into both child envs — process-level patching like `startServerPair` does
- * would not reach them.
+ * Pair of spawned children sharing one home; `options.env` is pushed into both
+ * child envs — process-level patching like `startServerPair` does would not
+ * reach them.
  */
 export async function spawnServerProcessPair(
   options: SpawnServerProcessOptions = {},
@@ -201,7 +198,6 @@ export async function spawnServerProcessPair(
   const childOptions: SpawnServerProcessOptions = {
     ...options,
     home,
-    env: { ...options.env, [MULTI_SERVER_FLAG_ENV]: '1' },
   };
   try {
     const a = await spawnServerProcess(childOptions);

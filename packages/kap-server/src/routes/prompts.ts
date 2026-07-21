@@ -64,7 +64,7 @@ import {
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
-import { errEnvelope, okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope, ownershipRedirectEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -819,19 +819,8 @@ function sendMappedError(
       case 'session.busy':
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
         return;
-      case 'session.held_by_peer':
-        // Ownership redirect: the details payload (`held-by-peer` phase /
-        // address) is the actionable part, so it rides the envelope and the
-        // stack stays server-side.
-        reply.send(
-          errEnvelope(
-            ErrorCode.SESSION_HELD_BY_PEER,
-            err.message,
-            requestId,
-            undefined,
-            err.details,
-          ),
-        );
+      case ErrorCodes.SESSION_HELD_BY_PEER:
+        reply.send(ownershipRedirectEnvelope(err, requestId));
         return;
       case 'prompt.already_completed':
         reply.send({

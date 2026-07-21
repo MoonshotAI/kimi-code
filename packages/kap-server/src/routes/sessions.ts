@@ -138,7 +138,7 @@ import {
 import { workspaceIdSchema } from '../protocol/workspace';
 import { z } from 'zod';
 
-import { errEnvelope, okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope, ownershipRedirectEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -1147,12 +1147,13 @@ function resolvePendingInteraction(
  *
  *   - 'self': this instance materialized the session and still holds its write
  *     lease (`ISessionLeaseService.info` survives only while held).
- *   - 'peer': a lease is on disk and held (or mid-creation) by someone else;
- *     `address` rides along when the holder advertised one — the redirect
- *     target. An unresponsive holder still counts as 'peer' (it is never
- *     auto-taken over).
- *   - 'none': no lease on disk, or a stale husk a dead holder left behind —
- *     the session is materialized nowhere and any instance may acquire it.
+ *   - 'peer': the lease file is held (or mid-creation) under a live kernel
+ *     lock by someone else; `address` rides along when the holder advertised
+ *     one — the redirect target.
+ *   - 'none': no live kernel lock on the lease file — the session is
+ *     materialized nowhere and any instance may acquire it. A dead holder's
+ *     lock is released by the kernel, so leftover owner metadata alone does
+ *     not count as held.
  *
  * Advisory only: the sync `inspect` read can observe a holder that died the
  * next millisecond; the lease's own acquisition protocol stays the authority.
@@ -1296,18 +1297,7 @@ function sendMappedError(
         });
         return;
       case ErrorCodes.SESSION_HELD_BY_PEER:
-        // Ownership redirect: the details payload (`held-by-peer` phase /
-        // address) is the actionable part, so it rides the envelope and the
-        // stack stays server-side.
-        reply.send(
-          errEnvelope(
-            ErrorCode.SESSION_HELD_BY_PEER,
-            err.message,
-            requestId,
-            undefined,
-            err.details,
-          ),
-        );
+        reply.send(ownershipRedirectEnvelope(err, requestId));
         return;
       case ErrorCodes.GOAL_ALREADY_EXISTS:
         reply.send(errEnvelope(ErrorCode.GOAL_ALREADY_EXISTS, err.message, requestId, err.stack));

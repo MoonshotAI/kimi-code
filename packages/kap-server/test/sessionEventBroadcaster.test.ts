@@ -279,6 +279,7 @@ describe('SessionEventBroadcaster', () => {
     eventBus = new FakeEventBus();
     bc = new SessionEventBroadcaster({
       eventsDir: dir,
+      homeDir: dir,
       core: makeCore(sessions, eventBus),
       maxBufferSize: 3,
     });
@@ -1468,6 +1469,7 @@ describe('SessionEventBroadcaster', () => {
     const dir2 = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-test-'));
     const bc2 = new SessionEventBroadcaster({
       eventsDir: dir2,
+      homeDir: dir2,
       core: makeCore(sessions, eventBus),
       maxBufferSize: 20,
     });

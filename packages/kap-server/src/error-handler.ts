@@ -23,7 +23,7 @@
  */
 
 import { ErrorCodes, isError2 } from '@moonshot-ai/agent-core-v2';
-import { errEnvelope } from './envelope';
+import { errEnvelope, ownershipRedirectEnvelope } from './envelope';
 import { ErrorCode } from './protocol/error-codes';
 import type { FastifyError } from 'fastify';
 
@@ -50,15 +50,7 @@ export function installErrorHandler(app: ErrorHandlerHost): void {
     // server failure: surface 40921 with the structured details (phase /
     // redirect address) and keep the stack in the log only.
     if (isError2(err) && err.code === ErrorCodes.SESSION_HELD_BY_PEER) {
-      reply.status(200).send(
-        errEnvelope(
-          ErrorCode.SESSION_HELD_BY_PEER,
-          err.message,
-          requestId,
-          undefined,
-          err.details,
-        ),
-      );
+      reply.status(200).send(ownershipRedirectEnvelope(err, requestId));
       return;
     }
     req.log.error({ err, request_id: requestId }, 'unhandled error');

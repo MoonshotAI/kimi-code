@@ -9,19 +9,12 @@ export interface KernelFileLockBinding {
 
 export type KernelFileLockBindingLoader = () => KernelFileLockBinding | undefined;
 
-export interface KernelFileLockAcquireOptions {
-  readonly timeoutMs: number;
-  readonly retryIntervalMs?: number;
-}
-
 export interface KernelFileLockHandle {
   readonly path: string;
-  readonly held: boolean;
   checkHeld(): boolean;
   release(): void;
 }
 
-const DEFAULT_RETRY_INTERVAL_MS = 50;
 const bindingLoaderKey = Symbol.for('@moonshot-ai/kernel-file-lock/binding-loader');
 const nodeRequire = createRequire(import.meta.url);
 
@@ -42,10 +35,6 @@ function getBinding(): KernelFileLockBinding {
   return binding;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 class KernelFileLockHandleImpl implements KernelFileLockHandle {
   private released = false;
 
@@ -54,10 +43,6 @@ class KernelFileLockHandleImpl implements KernelFileLockHandle {
     private readonly fd: number,
     private readonly binding: KernelFileLockBinding,
   ) {}
-
-  get held(): boolean {
-    return this.checkHeld();
-  }
 
   checkHeld(): boolean {
     if (this.released) return false;
@@ -106,46 +91,5 @@ export function tryAcquireKernelFileLock(path: string): KernelFileLockHandle | u
   } catch (error) {
     closeSync(fd);
     throw error;
-  }
-}
-
-export async function acquireKernelFileLock(
-  path: string,
-  options: KernelFileLockAcquireOptions,
-): Promise<KernelFileLockHandle> {
-  const deadline = Date.now() + options.timeoutMs;
-  const retryIntervalMs = options.retryIntervalMs ?? DEFAULT_RETRY_INTERVAL_MS;
-  let firstAttempt = true;
-  for (;;) {
-    const isFirstAttempt = firstAttempt;
-    if (!isFirstAttempt && Date.now() >= deadline) {
-      throw new KernelFileLockTimeoutError(path, options.timeoutMs);
-    }
-    firstAttempt = false;
-    const handle = tryAcquireKernelFileLock(path);
-    if (handle !== undefined) {
-      if (!isFirstAttempt && Date.now() >= deadline) {
-        handle.release();
-        throw new KernelFileLockTimeoutError(path, options.timeoutMs);
-      }
-      return handle;
-    }
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      throw new KernelFileLockTimeoutError(path, options.timeoutMs);
-    }
-    await sleep(Math.min(retryIntervalMs, remainingMs));
-  }
-}
-
-export class KernelFileLockTimeoutError extends Error {
-  readonly code = 'ELOCKTIMEOUT';
-
-  constructor(
-    readonly path: string,
-    readonly timeoutMs: number,
-  ) {
-    super(`timed out waiting ${timeoutMs}ms for kernel file lock: ${path}`);
-    this.name = 'KernelFileLockTimeoutError';
   }
 }

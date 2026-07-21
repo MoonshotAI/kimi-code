@@ -78,7 +78,6 @@ export const OsLockErrors = {
   codes: {
     OS_LOCK_HELD: 'os.lock.held',
     OS_LOCK_WAIT_TIMEOUT: 'os.lock.wait_timeout',
-    OS_LOCK_LOST: 'os.lock.lost',
     OS_LOCK_IO: 'os.lock.io',
   },
   info: {
@@ -90,11 +89,6 @@ export const OsLockErrors = {
     'os.lock.wait_timeout': {
       title: 'Timed out waiting for a cross-process lock',
       retryable: true,
-      public: true,
-    },
-    'os.lock.lost': {
-      title: 'Lock ownership was lost',
-      retryable: false,
       public: true,
     },
     'os.lock.io': {
@@ -110,7 +104,6 @@ registerErrorDomain(OsLockErrors);
 export const CrossProcessLockErrorCode = {
   Held: OsLockErrors.codes.OS_LOCK_HELD,
   WaitTimeout: OsLockErrors.codes.OS_LOCK_WAIT_TIMEOUT,
-  Lost: OsLockErrors.codes.OS_LOCK_LOST,
   Io: OsLockErrors.codes.OS_LOCK_IO,
 } as const;
 

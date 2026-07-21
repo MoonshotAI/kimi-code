@@ -1,10 +1,10 @@
 /**
- * Multi-server session ownership — two kap-servers on ONE kimi home (the
- * `multi_server` experimental flag on). Instance A creates the session and
- * holds its write lease; instance B's materializing routes for the same
- * session are answered with `40921 session.held_by_peer` carrying the
- * structured ownership details (phase `routable` + A's address), so clients
- * can redirect to the holder. Closing A releases the lease and B takes over.
+ * Multi-server session ownership — two kap-servers on ONE kimi home. Instance
+ * A creates the session and holds its write lease; instance B's materializing
+ * routes for the same session are answered with
+ * `40921 session.held_by_peer` carrying the structured ownership details
+ * (phase `routable` + A's address), so clients can redirect to the holder.
+ * Closing A releases the lease and B takes over.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/session-ownership.e2e.test.ts`.
  */
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -13,12 +13,9 @@ import { join } from 'node:path';
 
 import { sessionLeasePath } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../src/protocol/error-codes';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
-
-/** Same env gate start.ts checks locally (`KIMI_CODE_EXPERIMENTAL_MULTI_SERVER`). */
-const MULTI_SERVER_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_MULTI_SERVER';
 
 interface Envelope<T> {
   code: number;
@@ -37,16 +34,8 @@ describe('multi-server session ownership (session.held_by_peer → 40921)', () =
   let home: string | undefined;
   let serverA: RunningServer | undefined;
   let serverB: RunningServer | undefined;
-  let previousFlag: string | undefined;
-
-  beforeEach(() => {
-    previousFlag = process.env[MULTI_SERVER_FLAG_ENV];
-    process.env[MULTI_SERVER_FLAG_ENV] = '1';
-  });
 
   afterEach(async () => {
-    if (previousFlag === undefined) delete process.env[MULTI_SERVER_FLAG_ENV];
-    else process.env[MULTI_SERVER_FLAG_ENV] = previousFlag;
     if (serverB !== undefined) {
       await serverB.close();
       serverB = undefined;
