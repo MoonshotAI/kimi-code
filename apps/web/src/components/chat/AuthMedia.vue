@@ -114,9 +114,18 @@ onBeforeUnmount(() => {
   <img
     v-else
     ref="mediaEl"
-    :class="mediaClass"
+    :class="[mediaClass, { 'is-resolving': !resolvedUrl }]"
     :src="resolvedUrl || undefined"
     :alt="alt || ''"
     loading="lazy"
   />
 </template>
+
+<style scoped>
+/* No usable src yet (authed fetch in flight): Chromium paints a broken-image
+ * icon for an src-less <img> with non-empty alt — stay invisible instead.
+ * Kept mounted (not v-if) because mediaEl is the IntersectionObserver target. */
+.is-resolving {
+  visibility: hidden;
+}
+</style>
