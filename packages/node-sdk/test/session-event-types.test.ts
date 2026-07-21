@@ -63,6 +63,15 @@ describe('Event public types', () => {
     expectTypeOf<ApprovalResponse['scope']>().toEqualTypeOf<'session' | undefined>();
   });
 
+  it('narrows global session interaction notifications by type', () => {
+    expectTypeOf<
+      EventByType<'event.session.interaction_requested'>['interactionId']
+    >().toEqualTypeOf<string>();
+    expectTypeOf<
+      EventByType<'event.session.interaction_resolved'>['state']
+    >().toEqualTypeOf<'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed'>();
+  });
+
   it('covers every event in exhaustive switches', () => {
     function handle(event: Event): void {
       switch (event.type) {
@@ -71,6 +80,8 @@ describe('Event public types', () => {
         case 'event.session.created':
         case 'event.session.status_changed':
         case 'event.session.work_changed':
+        case 'event.session.interaction_requested':
+        case 'event.session.interaction_resolved':
         case 'event.workspace.created':
         case 'event.workspace.updated':
         case 'event.workspace.deleted':
