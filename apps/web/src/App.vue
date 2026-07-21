@@ -310,6 +310,30 @@ const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 const showSettings = ref(false);
 
+// Desktop-only: native menu commands forward here over the preload bridge
+// (main/menu.ts → kimi:menu-action): App menu "设置… / Settings…" →
+// 'open-settings', File menu "新建会话 / New Chat" → 'new-chat'. The bridge
+// exists only in Electron, so on web this is a no-op and the Sidebar's own
+// Cmd/Ctrl+N keydown stays the only path (the no-bridge fallback, per
+// native-todos.md).
+let offMenuAction: (() => void) | undefined;
+onMounted(() => {
+  offMenuAction = (
+    window as {
+      kimiDesktop?: { onMenuAction?: (cb: (id: string) => void) => () => void };
+    }
+  ).kimiDesktop?.onMenuAction?.((id) => {
+    if (id === 'open-settings') {
+      showSettings.value = true;
+    } else if (id === 'new-chat') {
+      handleCreateSession();
+    }
+  });
+});
+onUnmounted(() => {
+  offMenuAction?.();
+});
+
 type SubmitPayload = {
   text: string;
   attachments: PromptAttachment[];

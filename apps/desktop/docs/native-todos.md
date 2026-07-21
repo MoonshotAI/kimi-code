@@ -52,6 +52,7 @@
 - [ ] **应用级快捷键进原生菜单**
   - 现状：大量 web `keydown` 监听（Esc 关侧栏/中断运行、Cmd+K 搜索、Enter 发送等，散在 `App.vue` / `ConversationPane.vue` / `Sidebar.vue` / `Composer.vue`）；编辑类快捷键靠 `editMenu` role 白送，应用级命令没有原生 accelerator。
   - 做法：高频命令（新建会话、设置、搜索等）注册到 `src/main/menu.ts`，经 `kimi:menu-action` 转发 renderer（channel 已存在，renderer 未监听）。
+  - 进展（2026-07）：「设置…」（`CmdOrCtrl+,`）已按此路径落地，renderer `App.vue` 开始监听 `onMenuAction`（见下方「App 菜单」条）；新建会话 / 搜索等仍待做。
 
 - [ ] **最近工作区接入 OS**
   - 现状：全靠 localStorage + server `recentRoots`。
@@ -121,6 +122,22 @@
   - CDN：布局对齐 CLI——版本目录 `desktop/<version>/`（immutable）+ 根目录 latest*.yml 指针（no-cache，`path`/`url` 改写 `<version>/` 前缀）+ `desktop/download/` 固定下载入口（官网链接，TOS 服务端复制当版本产物为恒定文件名）；发布走仓根目录的 `./publish-desktop-cdn.sh`（2026-07 从 kimi-cli-cdn-sync 仓迁入；本地手动，TOS 凭证限内网）；回滚 = 旧版本号重跑该脚本。
   - 测试：`tests/main/updater.test.ts`（7 用例：dev no-op、autoDownload 配置与定时检查、状态流、下载失败 error + 重试、后台失败静默、回滚清态、动作状态守卫）；`tests/renderer/useUpdateStatus.test.ts`（10 用例：含 skip/visibility/快照竞态）；`tests/main/preload.test.ts` 白名单 + 通道断言同步。
   - 手动检查更新（设置 → 高级，2026-07 补）：主进程 `UpdateController.check()` 用一次性监听器竞速 update-available / update-not-available / error + promise rejection + 30s 超时，resolve `UpdateCheckResult`（available+version / latest / error+message；dev 无 controller 时 `requestUpdateCheck()` 返回 unsupported）；新 IPC `kimi:update-check` + preload `checkForUpdates()`（`asUpdateCheckResult` 结构校验）。renderer `useUpdateStatus` 加 `canCheck`（桥有 `checkForUpdates` 方法才 true，旧版 desktop 桥降级 false）与 `check()`（无桥 resolve unsupported）；SettingsDialog 高级页「检查更新」行 `v-if canCheck`（web 恒隐藏，非分叉块，两端文件仍一致），结果行内 hint 显示（检查中…/已是最新/发现新版本→侧栏 pill 入口/不支持/失败）。测试同步：updater +4 用例（available/latest/error+rejection/超时+监听器清理）、useUpdateStatus +4、preload +1（响应校验兜底）。
+
+- [x] **App 菜单：设置… / 检查更新…**（已完成，desktop 专属）
+  - 实现：`src/main/menu.ts` App 菜单在 About 之后新增两项（双语，走 `MENU_STRINGS` 字符串表，同 tray.ts 模式；`{version}` / `{message}` 占位符 `.replace()` 填充，措辞与计数无关规避复数规则）。「设置…」（`CmdOrCtrl+,`）：`showMainWindow()` + `kimi:menu-action` 发 `'open-settings'`，renderer `App.vue` 订阅 preload 早已暴露的 `onMenuAction` 打开 SettingsDialog（此通道此前 renderer 从未监听；无桥 web 端整段 no-op）。「检查更新…」：主进程 `runMenuUpdateCheck()`——先 `showMainWindow()` 保证弹窗有可见父窗（macOS 关窗=隐藏，挂在隐藏窗上的 dialog 永不出现），`requestUpdateCheck()` 后四种结果都弹原生 `dialog.showMessageBox`：available 给「立即下载/稍后」（点了走 `requestUpdateDownload()`，进度/完成仍经 `kimi:update-status` 侧栏黄 pill；本次跳过只隐藏 available 态，下载/完成态照常显示，跳过版本不影响），latest / unsupported（dev）/ error 各一条文案。与后台定时检查的失败静默策略相反——菜单点击是显式用户意图，必须有反馈。
+  - 顺带修复：dev 与打包产物的 role 菜单项文案（About / Quit `<name>`）都显示包名 `kimi-code-app`——role 默认文案取 `app.getName()`，它读 asar 里的 package.json `name`（包名按硬约束不能改）；菜单栏粗体标题取 Info.plist `CFBundleName`（productName）一直是对的。修法是 `menuTemplate` 给 about / quit role 显式配双语 label（`关于 Kimi Code` / `About Kimi Code`、`退出 Kimi Code` / `Quit Kimi Code`），**不用** `app.setName()`——那会改变由 app 名派生的默认 userData 目录，老用户升级后 localStorage（设置/草稿/onboarding/本次跳过版本）与 window/pet state 全部"被重置"（2026-07 review 实锤后改为此方案）。
+  - **web 分叉块**：`App.vue` 的 menuAction 订阅块两端已同步（web 无桥恒 no-op），整目录 re-copy 时需保留 desktop 侧。
+  - 测试：`tests/main/menu.test.ts` +2 用例（两项的双语 label + accelerator、非 mac 平台保留）。
+
+- [x] **File 菜单（展示先行）**（结构已完成，desktop 专属）
+  - 实现：`menu.ts` 新增 File 菜单（`文件`/`File`，位于 App 与 Edit 之间）：新建窗口 `Shift+CmdOrCtrl+N`、打开文件夹… `CmdOrCtrl+O`（**仅展示**——label + accelerator，无 click handler，激活为 no-op，用户明确先要菜单结构；「新建窗口」依赖多窗口架构，单独立项评估）；**新建会话 `CmdOrCtrl+N` 已接线**——`showMainWindow()` + `menuAction 'new-chat'` → renderer `App.vue` 调 `handleCreateSession()`（review 发现展示态 accelerator 会在原生层吞掉按键，把 `Sidebar.vue` 已有的 ⌘N 新建会话 keydown 屏蔽成 no-op——**展示项绝不能带 accelerator**，要么接线要么摘掉；desktop 菜单优先拦截，web 端无菜单，Sidebar 监听仍是 web 唯一路径，保留不删）。关闭窗口走原生 `close` role（声明即生效，role 默认 ⌘W）。Close 移到 File 后，macOS Window 菜单删掉原来的显式关闭项（`windowMenu` role 展开不含 Close，当初才补在 Window 菜单；两处并存会把 ⌘W 绑两次），Window 菜单剩 minimize / zoom / front。
+  - 待接线：打开文件夹 → `createAddWorkspaceEntry` 全链路（desktop 原生目录选择器，web 回退对话框）。
+  - 测试：`tests/main/menu.test.ts` 改写 +4 用例（Close 在 File 不在 Window、File 菜单双语 label + accelerator、New Chat 已接线 / New Window 与 Open Folder 展示态无 handler）。
+
+- [x] **Help 菜单（文档 / 控制台）**（已完成，desktop 专属）
+  - 实现：`menu.ts` 新增 Help 菜单（`帮助`/`Help`，位于 Window 之后，菜单序列 App / File / Edit / View / Window / Help）：「文档」`https://www.kimi.com/code/docs/`、「控制台」`https://www.kimi.com/code/console?from=kimi_code_desktop`（带 desktop 归因参数），`shell.openExternal` 走系统浏览器（链接由用户提供，未核验跳转）。macOS 会给 Help 菜单自动加系统搜索框，非我们控制。
+  - TODO（代码内 `TODO(help-menu)` 注释同步）：What's New（changelog）、Send Feedback、Start Performance Trace（性能录制）三项后续再加。
+  - 测试：`tests/main/menu.test.ts` +1 用例（Help 为最末菜单、两项双语 label、已接线 vs File 展示项）。
 
 ## 已原生化的（不用动）
 
