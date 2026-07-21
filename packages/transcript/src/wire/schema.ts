@@ -370,6 +370,7 @@ export const agentDescriptorSchema = z.object({
   parentAgentId: agentIdSchema.optional(),
   label: z.string().optional(),
   createdAt: z.string().optional(),
+  disposedAt: z.string().optional(),
 });
 
 export const transcriptResponseSchema = z.object({

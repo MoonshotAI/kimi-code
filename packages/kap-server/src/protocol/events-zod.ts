@@ -540,6 +540,14 @@ export const sessionMetaUpdatedEventSchema = z.object({
   patch: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const agentCreatedEventSchema = z.object({
+  type: z.literal('agent.created'),
+});
+
+export const agentDisposedEventSchema = z.object({
+  type: z.literal('agent.disposed'),
+});
+
 export const sessionCreatedEventSchema = z.object({
   type: z.literal('event.session.created'),
   session: sessionSchema,
@@ -904,6 +912,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   errorEventSchema,
   warningEventSchema,
   agentStatusUpdatedEventSchema,
+  agentCreatedEventSchema,
+  agentDisposedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
   workspaceCreatedEventSchema,

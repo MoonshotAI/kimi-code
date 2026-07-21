@@ -1120,16 +1120,22 @@ describe('bindSessionTranscript', () => {
     );
 
     const sub = agents.add('sub-1');
+    agents.add('main');
     sub.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'scan' }));
     sub.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
     expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
 
     // Disposal kills the projector but must not drop already-served history:
     // the service's backfill cache dedupes per agent, so removing the
-    // transcript would rebuild an empty shell on the next read.
+    // transcript would rebuild an empty shell on the next read. The roster
+    // entry stays and carries its end timestamp so REST / fresh-reset
+    // consumers can tell the dead agent from a live one.
     agents.remove('sub-1');
     expect(store.getAgent('sub-1')?.getItems()).toHaveLength(1);
-    expect(store.agents().map((a) => a.agentId)).toContain('sub-1');
+    const descriptor = store.agents().find((a) => a.agentId === 'sub-1');
+    expect(descriptor).toBeDefined();
+    expect(typeof descriptor?.disposedAt).toBe('string');
+    expect(store.agents().find((a) => a.agentId === 'main')?.disposedAt).toBeUndefined();
     binding.dispose();
   });
 
