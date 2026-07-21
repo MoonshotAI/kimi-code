@@ -217,7 +217,7 @@ describe('kimi-datasource MCP server', () => {
     }
   });
 
-  it('registers yuandian_law in the get_data_source_desc enum', async () => {
+  it('registers every documented data source in the get_data_source_desc enum', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
     const kimiHome = join(tempDir, 'kimi-home');
     let child: ChildProcessWithoutNullStreams | undefined;
@@ -245,7 +245,20 @@ describe('kimi-datasource MCP server', () => {
         }
       ).tools;
       const desc = tools.find((tool) => tool.name === 'get_data_source_desc');
-      expect(desc?.inputSchema.properties.name.enum).toContain('yuandian_law');
+      expect(desc?.inputSchema.properties.name.enum).toEqual([
+        'stock_finance_data',
+        'yahoo_finance',
+        'world_bank_open_data',
+        'tianyancha',
+        'arxiv',
+        'scholar',
+        'yuandian_law',
+        'wind',
+        'imf',
+        'gildata',
+        'sec_edgar',
+        'sp_data',
+      ]);
     } finally {
       child?.stdin.end();
       child?.kill();

@@ -1,7 +1,7 @@
 ---
 name: kimi-datasource
 description: |
-  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, Google Scholar results, or Chinese laws/regulations and judicial cases.
+  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, Google Scholar results, Chinese laws/regulations and judicial cases, Wind financial data, IMF macro datasets, Gildata smart screening, US SEC filings, or S&P Capital IQ fundamentals.
   This plugin exposes tools via MCP server `plugin-kimi-datasource_data`; call them in the flow `mcp__plugin-kimi-datasource_data__get_data_source_desc` → `mcp__plugin-kimi-datasource_data__call_data_source_tool`.
 ---
 
@@ -20,7 +20,7 @@ description: |
 
 ## 1. 这个 skill 提供什么能力
 
-本 plugin 后面挂了 7 个外部数据源。每一行的"数据源名"就是传给 `get_data_source_desc` 的 `name`。
+本 plugin 后面挂了 12 个外部数据源。每一行的"数据源名"就是传给 `get_data_source_desc` 的 `name`。
 
 | 能力域 | 数据源名 | 典型问题 |
 |---|---|---|
@@ -31,6 +31,11 @@ description: |
 | **arXiv 论文预印本** | `arxiv` | "找 RAG 综述"、"下载 2406.xxxxx" |
 | **Google Scholar 学术搜索** | `scholar` | "Hinton 最新论文"、"transformer 综述高引文献" |
 | **中国法律法规 / 司法案例** | `yuandian_law` | "民法典关于居住权的规定"、"帮我查劳动合同解除的相关法条"、"找几个不当得利的判例" |
+| **Wind 万得（A股/基金/债券/宏观）** | `wind` | "十年期国债收益率走势"、"基金净值查询"、"上市公司公告研报"、"行业财务指标对比" |
+| **IMF 国际宏观经济** | `imf` | "美元兑人民币汇率"、"各国 GDP 增速预测"、"全球通胀率对比"、"国际收支平衡表" |
+| **恒生聚源智能筛选** | `gildata` | "筛选净利润增速超 30% 且 ROE 大于 15% 的股票"、"基金经理筛选"、"行业研报和公告" |
+| **美股 SEC 披露文件** | `sec_edgar` | "特斯拉 10-K 年报"、"苹果 10-Q 季报"、"Form 4 内部人交易"、"13F 机构持仓" |
+| **S&P Capital IQ 美股基本面（付费）** | `sp_data` | "美股前 50 大股东"、"标准化财务报表"、"分析师一致预期"、"竞争对手关系" |
 
 **不支持的能力**：通用 Web 搜索 / 实时新闻。问到这类问题，告诉用户当前数据源不覆盖。
 

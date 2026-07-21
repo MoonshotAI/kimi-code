@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.3.0 - 2026-07-22
+
+- Add five data sources: `wind` (万得), `imf` (IMF macro datasets), `gildata` (恒生聚源 smart screening), `sec_edgar` (US SEC filings), and `sp_data` (S&P Capital IQ, paid scope).
+
 ## 3.2.0 - 2026-06-10
 
 - Add the `yuandian_law` data source (元典法律数据库) for Chinese laws/regulations and judicial case search.

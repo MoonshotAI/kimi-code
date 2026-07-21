@@ -18,7 +18,7 @@ import { arch, homedir, hostname, release, type } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const VERSION = '3.2.0';
+const VERSION = '3.3.0';
 const DEFAULT_KIMI_CODE_OAUTH_HOST = 'https://auth.kimi.com';
 const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
 const API_URL = datasourceApiUrl();
@@ -66,6 +66,11 @@ const TOOLS = [
             'arxiv',
             'scholar',
             'yuandian_law',
+            'wind',
+            'imf',
+            'gildata',
+            'sec_edgar',
+            'sp_data',
           ],
           description: 'Data source name.',
         },
