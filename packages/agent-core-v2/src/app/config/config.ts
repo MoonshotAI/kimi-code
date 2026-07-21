@@ -16,10 +16,11 @@
  * resolves to a value, `set`/`replace` restores the field's value from the
  * env-free raw base (already `fromToml`-normalized, so legacy key renames are
  * honored) — or drops it when absent there — instead of persisting an echoed
- * env value; otherwise writes pass through untouched. A section emptied this
- * way keeps its raw table while the base still holds other (e.g. unknown
- * forward-compatible) fields, and is cleared only when nothing remains, so
- * registered defaults keep applying.
+ * env value; otherwise writes pass through untouched. When nothing
+ * persistable remains, the write is a no-op for the section — the env-free
+ * raw base is kept as-is (unknown forward-compatible fields survive repeated
+ * stripped writes) — and the section is cleared only when the base is empty,
+ * so registered defaults keep applying.
  */
 
 import type { Event } from '#/_base/event';
@@ -80,7 +81,7 @@ export function stripEnvBoundFields<T>(bindings: EnvBindings<T>): ConfigStripEnv
     }
     if (out === undefined) return value;
     if (Object.keys(out).length > 0) return out as T;
-    return (Object.keys(base).length > 0 ? {} : undefined) as T | undefined;
+    return (Object.keys(base).length > 0 ? base : undefined) as T | undefined;
   };
 }
 

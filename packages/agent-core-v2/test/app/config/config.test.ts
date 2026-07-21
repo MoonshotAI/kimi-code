@@ -785,7 +785,7 @@ describe('loopControl config section', () => {
     disposables.dispose();
   });
 
-  it('preserves unknown on-disk fields when the stripped result is otherwise empty', async () => {
+  it('preserves unknown on-disk fields across repeated stripped writes', async () => {
     const env: Record<string, string> = { [LOOP_MAX_STEPS_PER_TURN_ENV]: '7' };
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
@@ -805,10 +805,14 @@ describe('loopControl config section', () => {
     await config.ready;
 
     await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
+    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
 
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
     expect(onDisk).toContain('future_field = 1');
     expect(onDisk).not.toContain('max_steps_per_turn');
+    expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
+      futureField: 1,
+    });
 
     disposables.dispose();
   });
