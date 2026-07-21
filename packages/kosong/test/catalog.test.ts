@@ -187,7 +187,9 @@ describe('catalogModelToCapability', () => {
 
   it.each<[CatalogModelEntry['interleaved'], string | undefined]>([
     [undefined, undefined],
-    [true, 'reasoning_content'],
+    // `true` carries no field name; the provider's default multi-field scan
+    // is the correct (and wider) behavior, so no key is pinned.
+    [true, undefined],
     [false, undefined],
     [{}, undefined],
     [{ field: '' }, undefined],
@@ -233,6 +235,19 @@ describe('catalogModelToCapability', () => {
     });
     expect(upper?.supportEfforts).toEqual(['high']);
     expect(upper?.offEffort).toBe('None');
+  });
+
+  it('treats a JSON null tier as the none off encoding (sarvam shape)', () => {
+    const model = catalogModelToCapability({
+      id: 'sarvam-105b',
+      reasoning: true,
+      reasoning_options: [{ type: 'effort', values: [null, 'low', 'medium', 'high'] }],
+      limit: { context: 1000 },
+    });
+    expect(model?.supportEfforts).toEqual(['low', 'medium', 'high']);
+    expect(model?.offEffort).toBe('none');
+    expect(model?.alwaysThinking).toBeUndefined();
+    expect(model?.capability.thinking).toBe(true);
   });
 
   it('marks effort models with no toggle and no none value as always-thinking', () => {
@@ -309,16 +324,16 @@ describe('catalogModelToCapability', () => {
     ).toBe(1000);
   });
 
-  it('skips deprecated models but keeps beta and alpha ones', () => {
+  it('skips deprecated and alpha models but keeps beta ones', () => {
     expect(
       catalogModelToCapability({ id: 'old', status: 'deprecated', limit: { context: 1000 } }),
     ).toBeUndefined();
     expect(
+      catalogModelToCapability({ id: 'pre', status: 'alpha', limit: { context: 1000 } }),
+    ).toBeUndefined();
+    expect(
       catalogModelToCapability({ id: 'new', status: 'beta', limit: { context: 1000 } })?.id,
     ).toBe('new');
-    expect(
-      catalogModelToCapability({ id: 'newer', status: 'alpha', limit: { context: 1000 } })?.id,
-    ).toBe('newer');
   });
 });
 
@@ -378,9 +393,9 @@ describe('catalogProviderModels', () => {
     });
   });
 
-  it('skips the override when the provider already speaks Anthropic, the npm is not Anthropic, or the URL is unusable', () => {
+  it('skips models whose override targets a different wire it cannot express', () => {
     // freemodel shape: provider is Anthropic, model override targets OpenAI —
-    // not expressible per-model, left to provider-level resolution.
+    // importing under the provider wire would be the wrong protocol.
     const reverse = catalogProviderModels({
       id: 'freemodel',
       npm: '@ai-sdk/anthropic',
@@ -393,9 +408,10 @@ describe('catalogProviderModels', () => {
         },
       },
     });
-    expect(reverse[0]?.protocol).toBeUndefined();
+    expect(reverse).toHaveLength(0);
 
-    // google-vertex shape: no api anywhere — the vertex wire keeps applying.
+    // google-vertex shape: Claude models need Anthropic-over-Vertex, which the
+    // vertexai (Gemini-mode) wire is not — skipped, not mis-wired.
     const noEndpoint = catalogProviderModels({
       id: 'google-vertex',
       npm: '@ai-sdk/google-vertex',
@@ -407,7 +423,7 @@ describe('catalogProviderModels', () => {
         },
       },
     });
-    expect(noEndpoint[0]?.protocol).toBeUndefined();
+    expect(noEndpoint).toHaveLength(0);
 
     // Env-placeholder URLs are SDK-side interpolations the config cannot express.
     const placeholder = catalogProviderModels({
@@ -422,6 +438,24 @@ describe('catalogProviderModels', () => {
         },
       },
     });
-    expect(placeholder[0]?.protocol).toBeUndefined();
+    expect(placeholder).toHaveLength(0);
+  });
+
+  it('keeps models whose override matches the provider wire', () => {
+    // vivgrid shape: provider and model override are both OpenAI-family.
+    const models = catalogProviderModels({
+      id: 'vivgrid',
+      npm: '@ai-sdk/openai',
+      api: 'https://api.vivgrid.com/v1',
+      models: {
+        'gpt-5.4': {
+          id: 'gpt-5.4',
+          limit: { context: 400000 },
+          provider: { npm: '@ai-sdk/openai-compatible' },
+        },
+      },
+    });
+    expect(models).toHaveLength(1);
+    expect(models[0]?.protocol).toBeUndefined();
   });
 });

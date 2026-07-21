@@ -116,10 +116,11 @@ function hasEmbeddingMarker(value: string | undefined): boolean {
 function isUsableChatModel(model: CatalogModelEntry): boolean {
   const outputModalities = model.modalities?.output;
   if (outputModalities !== undefined && !outputModalities.includes('text')) return false;
-  // Deprecated models are shut down or scheduled for removal upstream; do not
-  // offer them for new imports (existing configs are cleaned up on refresh
-  // because the alias is no longer listed upstream).
-  if (model.status === 'deprecated') return false;
+  // Deprecated models are shut down or scheduled for removal upstream, and
+  // alpha models are pre-release (the reference consumer hides both by
+  // default); do not offer them for new imports. Existing configs are
+  // cleaned up on refresh because the alias is no longer listed upstream.
+  if (model.status === 'deprecated' || model.status === 'alpha') return false;
   return (
     !hasEmbeddingMarker(model.family) &&
     !hasEmbeddingMarker(model.id) &&
@@ -280,11 +281,16 @@ function catalogThinkingOptions(options: CatalogModelEntry['reasoning_options'])
       continue;
     }
     if (option?.type !== 'effort' || !Array.isArray(option.values)) continue;
+    // models.dev writes the disable tier either as the string 'none' or as
+    // JSON null (the TOML source spells it "null"); both encode the same
+    // wire value (`reasoning_effort: 'none'`).
+    const hasNullTier = (option.values as unknown[]).some((value) => value === null);
     const levels = (option.values as unknown[]).filter(
       (value: unknown): value is string => typeof value === 'string' && value.length > 0,
     );
     const off = levels.find((value) => value.toLowerCase() === 'none');
     if (off !== undefined) offEffort = off;
+    else if (hasNullTier) offEffort = 'none';
     const selectable = levels.filter((value) => value.toLowerCase() !== 'none');
     if (selectable.length > 0) efforts = selectable;
   }
@@ -294,10 +300,12 @@ function catalogThinkingOptions(options: CatalogModelEntry['reasoning_options'])
 }
 
 function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): string | undefined {
-  // models.dev allows `interleaved: true` as "general support" — read it as
-  // the default `reasoning_content` field so providers without an explicit
-  // field name (e.g. some openai-compatible gateways) still round-trip.
-  if (interleaved === true) return 'reasoning_content';
+  // Only the object form carries a field name. `interleaved: true` is just
+  // "general support": the provider already defaults to scanning
+  // `reasoning_content` / `reasoning_details` / `reasoning` inbound and to
+  // `reasoning_content` outbound, so pinning a key here would only narrow the
+  // inbound scan to one field — strictly worse for gateways that answer with
+  // one of the other names.
   if (typeof interleaved !== 'object' || interleaved === null) return undefined;
   const field = interleaved.field?.trim();
   return field !== undefined && field.length > 0 ? field : undefined;
@@ -314,12 +322,12 @@ export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel
 /**
  * Gateway providers (zenmux, opencode, azure, …) may declare a per-model
  * `provider` override when a model is served over a different protocol than
- * the provider default. Only overrides whose `npm` explicitly targets an
- * Anthropic SDK are materialized — the model-alias schema cannot express
- * other per-model protocols yet, and a partial override is worse than none.
- * Overrides without a usable endpoint (env-placeholder URLs like `${VAR}`,
- * or no URL on either level) are skipped so provider-level resolution keeps
- * applying.
+ * the provider default. Overrides targeting Anthropic with a usable endpoint
+ * are materialized into a per-model protocol + base URL; overrides pointing
+ * at a different wire that cannot be materialized cause the model to be
+ * skipped — importing it under the provider's wire would be the silently
+ * wrong protocol. Overrides matching the provider's wire (or that we cannot
+ * identify) leave the model untouched.
  */
 function applyModelProviderOverride(
   model: CatalogModel | undefined,
@@ -330,10 +338,27 @@ function applyModelProviderOverride(
   if (model === undefined) return undefined;
   const override = raw.provider;
   if (override === undefined || typeof override.npm !== 'string') return model;
-  if (!override.npm.toLowerCase().includes('anthropic') || providerWire === 'anthropic') {
-    return model;
+  const npm = override.npm.toLowerCase();
+  const overrideWire = npm.includes('anthropic')
+    ? 'anthropic'
+    : npm.includes('openai')
+      ? 'openai'
+      : undefined;
+  // Nothing to express when the override targets the wire the provider
+  // already resolves to (or one we cannot identify).
+  if (overrideWire === undefined || overrideWire === providerWire) return model;
+  // Only Anthropic-direction overrides are materializable (the alias schema
+  // cannot express other per-model protocols), and only with a usable
+  // endpoint. Anything else would be imported under the provider's wire —
+  // the silently wrong protocol — so the model is skipped instead. Examples:
+  // freemodel's gpt entries on an Anthropic provider, or Claude models on
+  // google-vertex (whose wire here is Gemini-mode Vertex, not
+  // Anthropic-over-Vertex).
+  if (overrideWire === 'anthropic') {
+    const api = override.api ?? entry.api;
+    if (typeof api === 'string' && api.length > 0 && !api.includes('${')) {
+      return { ...model, protocol: 'anthropic', baseUrl: catalogBaseUrl({ api }, 'anthropic') };
+    }
   }
-  const api = override.api ?? entry.api;
-  if (typeof api !== 'string' || api.length === 0 || api.includes('${')) return model;
-  return { ...model, protocol: 'anthropic', baseUrl: catalogBaseUrl({ api }, 'anthropic') };
+  return undefined;
 }
