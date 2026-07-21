@@ -1,13 +1,15 @@
 <!-- apps/web/src/components/chat/CronNotice.vue -->
 <!-- In-transcript notice for a turn triggered by a scheduled reminder rather
-     than a real user. It is styled to read like a user message — a right-
-     aligned, max-width-capped bubble in the user-bubble colour — because a cron
-     fire is semantically a message the user scheduled earlier. The bubble shows
-     the title + the fired prompt in full, wrapping across lines (no truncation,
-     no tooltip). Schedule / status / job id / fire time sit in a small meta row
-     beneath the bubble, mirroring the meta row under a real user message; the
-     fire time reuses the same <MessageTime> component as a user message so the
-     two stay identical.
+     than a real user. It reads like a user message with a provenance label:
+     one small faint line ABOVE the bubble (clock icon + title + schedule +
+     fire-state flags, " · "-joined, right-aligned like the bubble),
+     then the fired prompt in a right-aligned, max-width-capped bubble in the
+     user-bubble colour (shown in full, wrapping across lines — no truncation).
+     The label shows the raw cron expression verbatim (humanized renderings
+     read mechanically); the job id stays out of sight in the label's hover
+     tooltip. The only thing under the bubble is the fire time, rendered with
+     the same <MessageTime> component as a real user message so the two stay
+     identical.
 
      Renders either as a standalone turn (pass turnId for the scroll anchor) or
      embedded inside an assistant turn's blocks — in both cases it takes the
@@ -17,7 +19,6 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/web-ui';
 import MessageTime from './MessageTime.vue';
-import { humanizeCron } from '../../lib/cronHumanize';
 import type { CronTurnData } from '../../types';
 
 const props = defineProps<{
@@ -40,17 +41,21 @@ const title = computed(() =>
   missed.value ? t('conversation.cron.missed') : t('conversation.cron.fired'),
 );
 
+// The schedule label is the raw cron expression, shown verbatim. Skipped for
+// one-shots: the pinned fire date is redundant next to the notice's own fire
+// time, and the one-shot flag already says what kind of job it was.
 const schedule = computed(() => {
-  const expr = cron.value?.cron;
-  return expr ? humanizeCron(expr, t) : '';
+  const c = cron.value;
+  if (!c?.cron || c.recurring === false) return '';
+  return c.cron;
 });
 
-// A clean fire reads as "ok" (green ✓); a missed fire (skipped runs) as
-// "error" (red ✗). Surfaced in the meta row below the bubble.
+// A missed fire (skipped runs) tints the label icon red; a clean fire stays
+// the same faint grey as the rest of the transcript's meta text.
 const statusKind = computed<'ok' | 'error'>(() => (missed.value ? 'error' : 'ok'));
 
-// Fire-state flags (one-shot / coalesced / missed / final delivery); shown in
-// the meta row when any apply.
+// Fire-state flags (one-shot / coalesced / missed / final delivery), appended
+// to the label when any apply.
 const statusDetail = computed(() => {
   const c = cron.value;
   if (!c) return '';
@@ -66,6 +71,21 @@ const statusDetail = computed(() => {
   return parts.join(' · ');
 });
 
+// The single visible line above the bubble: title · schedule · flags.
+const headLabel = computed(() => {
+  const parts = [title.value];
+  if (schedule.value) parts.push(schedule.value);
+  if (statusDetail.value) parts.push(statusDetail.value);
+  return parts.join(' · ');
+});
+
+// Hover tooltip on the label carries the job id, keeping machine detail
+// reachable without cluttering the transcript.
+const headTooltip = computed(() => {
+  const id = cron.value?.jobId;
+  return id ? t('conversation.cron.job', { id }) : undefined;
+});
+
 const text = computed(() => props.text ?? '');
 </script>
 
@@ -76,29 +96,22 @@ const text = computed(() => props.text ?? '');
     :data-turn-id="turnId"
     role="status"
   >
-    <div class="cn-bubble">
-      <span class="cn-title">{{ title }}</span>
-      <template v-if="text"> <span class="cn-prompt">{{ text }}</span></template>
+    <div class="cn-head" :class="statusKind" :title="headTooltip">
+      <Icon name="clock" size="sm" class="cn-head-ico" aria-hidden="true" />
+      <span class="cn-head-text">{{ headLabel }}</span>
     </div>
-    <div class="cn-meta">
-      <Icon name="clock" size="sm" class="cn-meta-ico" aria-hidden="true" />
-      <span v-if="schedule" class="cn-meta-item">{{ schedule }}</span>
-      <span v-if="statusDetail" class="cn-meta-item">{{ statusDetail }}</span>
-      <span class="cn-status" :class="statusKind" :aria-label="statusKind">
-        <Icon v-if="statusKind === 'ok'" name="check" size="sm" />
-        <Icon v-else name="close" size="sm" />
-      </span>
-      <span
-        v-if="cron?.jobId"
-        class="cn-meta-item cn-id"
-        :title="t('conversation.cron.job', { id: cron.jobId })"
-      >{{ cron.jobId }}</span>
-      <MessageTime v-if="createdAt" :time="createdAt" />
+    <div v-if="text" class="cn-bubble">
+      <span class="cn-prompt">{{ text }}</span>
+    </div>
+    <div v-if="createdAt" class="cn-meta">
+      <MessageTime :time="createdAt" />
     </div>
   </div>
 </template>
 
 <style scoped>
+/* Right-aligned column capped like the user bubble: the label, the bubble and
+   the fire time all snap to its right edge. */
 .cn {
   margin: 0;
   align-self: flex-end;
@@ -106,6 +119,27 @@ const text = computed(() => props.text ?? '');
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+}
+
+/* Provenance label above the bubble: small and faint so it reads as context
+   for the bubble, not as message content. */
+.cn-head {
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  padding: 0 var(--space-1);
+  color: var(--color-text-faint);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+.cn-head-ico {
+  flex: none;
+}
+.cn-head.error .cn-head-ico {
+  color: var(--color-danger);
 }
 
 /* Mirrors the user bubble (.u-bub): accent fill + border, rounded with one
@@ -125,36 +159,13 @@ const text = computed(() => props.text ?? '');
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.cn-title {
-  font-weight: var(--weight-medium);
-}
 
-/* Meta row under the bubble, sized to match the user message's meta row. */
+/* Fire time under the bubble — same spot as a real user message's meta row. */
 .cn-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 0 4px;
+  margin-top: var(--space-1);
+  padding: 0 var(--space-1);
   color: var(--color-text-faint);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
-}
-.cn-meta-ico {
-  flex: none;
-  color: var(--color-text-faint);
-}
-.cn-meta-item {
-  white-space: nowrap;
-}
-.cn-status {
-  display: inline-flex;
-  align-items: center;
-}
-.cn-status.ok {
-  color: var(--color-success);
-}
-.cn-status.error {
-  color: var(--color-danger);
 }
 </style>
