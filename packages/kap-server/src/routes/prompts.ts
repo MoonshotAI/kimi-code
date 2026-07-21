@@ -227,6 +227,12 @@ async function assertPromptFileRefs(body: PromptSubmission, store: IFileService)
   }
 }
 
+/**
+ * Serializes prompt submissions per session: a slow media upload must not
+ * let a later request reach the queue ahead of an earlier one.
+ */
+const submitChains = new Map<string, Promise<void>>();
+
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
     {
@@ -273,8 +279,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       operationId: 'submitPrompt',
     },
     async (req, reply) => {
-      try {
-        const { session_id } = req.params;
+      const { session_id } = req.params;
+      const invoke = async (): Promise<void> => {
+        try {
         // Resolve the agent and apply profile/model overrides first: prompt
         // media resolution (video upload) keys off the effective model.
         const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
@@ -351,8 +358,19 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           origin: { kind: 'user' },
         } });
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
+        } catch (error) {
+          sendMappedError(reply, req, error);
+        }
+      };
+      const previous = submitChains.get(session_id) ?? Promise.resolve();
+      const run = previous.then(invoke);
+      // The chain must never reject, or later submissions would be skipped.
+      const stored = run.catch(() => undefined);
+      submitChains.set(session_id, stored);
+      try {
+        await run;
+      } finally {
+        if (submitChains.get(session_id) === stored) submitChains.delete(session_id);
       }
     },
   );

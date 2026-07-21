@@ -878,6 +878,7 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
   let base: string;
   let stubClose: (() => Promise<void>) | undefined;
   let stubBodies: Buffer[];
+  let uploadGate: Promise<void> | null;
 
   function kimiToml(stubUrl: string): string {
     return [
@@ -899,6 +900,7 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
 
   beforeEach(async () => {
     stubBodies = [];
+    uploadGate = null;
     let uploadCounter = 0;
     const pendingGenerations: ServerResponse[] = [];
     const stub = createServer((req, res) => {
@@ -906,19 +908,26 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
         const chunks: Buffer[] = [];
         req.on('data', (chunk: Buffer) => chunks.push(chunk));
         req.on('end', () => {
-          uploadCounter += 1;
-          stubBodies.push(Buffer.concat(chunks));
-          res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              id: `stub-llm-video-${String(uploadCounter)}`,
-              object: 'file',
-              bytes: 17,
-              created_at: 0,
-              filename: 'clip.mp4',
-              purpose: 'video',
-            }),
-          );
+          void (async () => {
+            if (uploadGate !== null) {
+              const gate = uploadGate;
+              uploadGate = null;
+              await gate;
+            }
+            uploadCounter += 1;
+            stubBodies.push(Buffer.concat(chunks));
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                id: `stub-llm-video-${String(uploadCounter)}`,
+                object: 'file',
+                bytes: 17,
+                created_at: 0,
+                filename: 'clip.mp4',
+                purpose: 'video',
+              }),
+            );
+          })();
         });
         return;
       }
@@ -1120,6 +1129,45 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
     expect(String(content[1]?.['text'])).toMatch(/<video path="[^"]+"><\/video>/);
 
     await abortPrompt(id, submitted.data.prompt_id);
+  });
+
+  it('serializes concurrent submissions so a media upload cannot be overtaken', async () => {
+    const id = await createSessionWithAgent();
+    const fileId = await uploadVideoFile('clip.mp4', Buffer.from('0123456789'));
+
+    // Gate the provider upload: the video submit parks inside media
+    // resolution while a later text submit races it.
+    let releaseUpload!: () => void;
+    uploadGate = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    const first = submitVideoPrompt(id, [fileId]);
+    const second = fetch(`${base}/api/v1/sessions/${id}/prompts`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ content: [{ type: 'text', text: 'follow-up' }] }),
+    } as never);
+    await new Promise((r) => setTimeout(r, 100));
+    releaseUpload();
+
+    const [firstSubmitted, secondRes] = await Promise.all([first, second]);
+    const secondSubmitted = (await secondRes.json()) as Envelope<PromptItemWire>;
+    expect(firstSubmitted.code).toBe(0);
+    expect(secondSubmitted.code).toBe(0);
+
+    // The video prompt holds the active slot; the follow-up waits behind it
+    // in the queue instead of overtaking.
+    const listRes = await fetch(`${base}/api/v1/sessions/${id}/prompts`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const list = ((await listRes.json()) as Envelope<{
+      active: { prompt_id: string } | null;
+      queued: Array<{ prompt_id: string }>;
+    }>).data;
+    expect(list.active?.prompt_id).toBe(firstSubmitted.data.prompt_id);
+    expect(list.queued.map((p) => p.prompt_id)).toEqual([secondSubmitted.data.prompt_id]);
+
+    await abortPrompt(id, firstSubmitted.data.prompt_id);
   });
 
   it('keeps the llm video mapping across a server restart', async () => {    const id = await createSessionWithAgent();
