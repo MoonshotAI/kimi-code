@@ -133,8 +133,9 @@ function checkFile(abs) {
       const isTokenDef = /^\s*--[\w-]+\s*:/.test(raw);
       if (/^@font-face\b/i.test(trimmed)) inFontFace = true;
 
-      // no-gradient-text
-      if (!gradientExempt && /\b(?:linear|radial|conic)-gradient\s*\(/i.test(raw)) {
+      // no-gradient-text (a custom-property definition is never rendered text
+      // itself, so gradient tokens like --media-alpha-canvas don't count)
+      if (!gradientExempt && !isTokenDef && /\b(?:linear|radial|conic)-gradient\s*\(/i.test(raw)) {
         add('no-gradient-text', file, line, trimmed.slice(0, 80));
       }
 

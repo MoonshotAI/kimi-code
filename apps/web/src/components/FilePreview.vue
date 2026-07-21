@@ -917,6 +917,7 @@ function truncatePath(path: string, maxLen = 55): string {
   object-fit: contain;
   border: 1px solid var(--line);
   border-radius: 4px;
+  background: var(--media-alpha-canvas);
 }
 .fp-image.actual {
   max-width: none;

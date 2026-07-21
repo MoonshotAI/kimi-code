@@ -101,6 +101,7 @@ function openMediaPreview(): void {
   display: block;
   max-width: 100%;
   border-radius: var(--radius-md);
+  background: var(--media-alpha-canvas);
 }
 .media-video,
 .media-audio {
