@@ -771,8 +771,12 @@ async function resolvePromptMediaFiles(
             source: { kind: 'url', url: uploaded.videoUrl.url, id: uploaded.videoUrl.id },
           });
           changed = true;
-          if (uploaded.videoUrl.id !== undefined) {
-            await options.onVideoInlined?.(file.meta.id, uploaded.videoUrl.id);
+          // Key the playback mapping by the id embedded in the reference URL
+          // — that's what projections and clients read back — falling back
+          // to the explicit id only for non-`ms://` shapes.
+          const refId = msFileIdFromUrl(uploaded.videoUrl.url) ?? uploaded.videoUrl.id;
+          if (refId !== undefined) {
+            await options.onVideoInlined?.(file.meta.id, refId);
           }
           continue;
         } catch {
@@ -786,6 +790,13 @@ async function resolvePromptMediaFiles(
     changed = true;
   }
   return changed ? { ...body, content } : body;
+}
+
+/** The provider file id behind an `ms://<id>` reference, when present. */
+function msFileIdFromUrl(url: string): string | undefined {
+  if (!url.startsWith('ms://')) return undefined;
+  const id = url.slice('ms://'.length);
+  return id.length > 0 ? id : undefined;
 }
 
 async function materializeVideoToCache(file: GetResult, cacheDir: string): Promise<string> {
