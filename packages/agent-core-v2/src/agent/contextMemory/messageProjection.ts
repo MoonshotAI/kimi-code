@@ -41,7 +41,7 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
     case 'image_url':
       return {
         type: 'image',
-        source: { kind: 'url', url: part.imageUrl.url },
+        source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id },
       };
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };

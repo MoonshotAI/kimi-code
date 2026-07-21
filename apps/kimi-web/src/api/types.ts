@@ -156,7 +156,7 @@ export type AppMessageContent =
   | { type: 'unknown'; raw: unknown };
 
 export type ImageSource =
-  | { kind: 'url'; url: string }
+  | { kind: 'url'; url: string; id?: string }
   | { kind: 'base64'; mediaType: string; data: string }
   | { kind: 'file'; fileId: string };
 
