@@ -9,14 +9,14 @@ import {
   estimateTokensForMessage,
   estimateTokensForMessages,
   estimateTokensForTools,
-} from "#/_base/utils/tokens";
+} from "#/kosong/contract/tokens";
 import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
-import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { isAbortError } from '#/_base/utils/abort';
@@ -31,10 +31,10 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   isRetryableGenerateError,
-} from '#/app/llmProtocol/errors';
-import { createUserMessage, type Message } from '#/app/llmProtocol/message';
-import type { Tool } from '#/app/llmProtocol/tool';
-import { inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
+} from '#/kosong/contract/errors';
+import { createUserMessage, type Message } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import { inputTotal, type TokenUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -701,7 +701,7 @@ function findAPIStatusError(error: unknown): APIStatusError | undefined {
   return undefined;
 }
 
-function collectSummary(finish: LLMRequestFinish): CompactionAttemptResult {
+function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult {
   if (finish.providerFinishReason === 'truncated') {
     throw new CompactionTruncatedError();
   }

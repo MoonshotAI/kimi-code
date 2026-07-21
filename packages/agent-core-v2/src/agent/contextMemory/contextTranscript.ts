@@ -30,7 +30,7 @@
  *                                   folded view
  */
 
-import { type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
+import { type ContentPart, type ToolCall } from '#/kosong/contract/message';
 import type { WireRecord } from '#/wire/record';
 
 import {

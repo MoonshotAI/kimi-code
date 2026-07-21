@@ -4,8 +4,8 @@ import {
   APIConnectionError,
   APIProviderRateLimitError,
   APIStatusError,
-} from '#/app/llmProtocol/errors';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+} from '#/kosong/contract/errors';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
 import { IAgentLoopService } from '#/agent/loop/loop';

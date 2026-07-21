@@ -140,6 +140,49 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+/**
+ * The single standard abort shape for the wire layer: a DOMException named
+ * `'AbortError'`, matching the platform's own `AbortSignal.reason`
+ * convention. Every user-cancellation path — the `generate()` driver,
+ * provider error converters, stream wrappers — throws exactly this shape so
+ * upstream code can recognize cancellation without SDK knowledge.
+ */
+export function createAbortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError');
+}
+
+/**
+ * Whether `error` is any abort shape that can surface from a provider call:
+ *
+ *  - the standard abort DOMException (`createAbortError`, `signal.reason`),
+ *  - a bare `Error` named `'AbortError'` (generic abort helpers), or
+ *  - an SDK user-abort (`APIUserAbortError` in both the OpenAI and Anthropic
+ *    SDKs) — recognized structurally by constructor name so this module
+ *    stays SDK-free.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true;
+  if (error instanceof Error && error.name === 'AbortError') return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    error.constructor?.name === 'APIUserAbortError'
+  );
+}
+
+/**
+ * The abort guard for provider error converters. Must run at the very front
+ * of every error classification chain: when `error` is abort-shaped this
+ * THROWS the standard abort DOMException — it never returns a converted
+ * error — so a user cancellation can never be misclassified as a retryable
+ * provider failure. Does nothing for non-abort errors.
+ */
+export function throwIfAbortError(error: unknown): void {
+  if (isAbortError(error)) {
+    throw createAbortError();
+  }
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;

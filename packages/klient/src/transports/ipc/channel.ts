@@ -16,6 +16,7 @@ import type {
   ScopeRef,
 } from '../../core/channel.js';
 import { RPCError } from '../../core/errors.js';
+import { trimTrailingUndefined } from '../args.js';
 import { encodeFrame, NdjsonDecoder, type IpcFrame } from './codec.js';
 
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
@@ -106,7 +107,9 @@ export class IpcChannel implements KlientChannel {
       scope: scopeKindOf(scope),
       service,
       method,
-      arg: args,
+      // NDJSON is JSON: trailing optional args would cross as `null` and
+      // defeat the host's default parameters — trim them.
+      arg: trimTrailingUndefined(args),
       sessionId: scope.sessionId,
       agentId: scope.agentId,
     });

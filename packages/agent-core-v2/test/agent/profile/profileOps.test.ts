@@ -9,10 +9,8 @@ import { ProfileModel } from '#/agent/profile/profileOps';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import type { GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
-import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { type LLMEvent, type Model } from '#/app/model/modelInstance';
-import { IModelResolver } from '#/app/model/modelResolver';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IProtocolAdapterRegistry, type Protocol } from '#/kosong/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
@@ -27,6 +25,10 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+// Side-effect registration: `drivesThinkingThroughTraits('kimi')` (used by
+// the forced-effort override) answers through the provider-definition registry.
+import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
@@ -48,13 +50,111 @@ function createConfigStub(): IConfigService {
   } as unknown as IConfigService;
 }
 
-function createModelResolverStub(): IModelResolver {
+/**
+ * The pure-data Model the kosong catalog hands out. No morphs: per-turn
+ * intent (cache key / sampling / thinking effort+keep) now surfaces through
+ * `IAgentProfileService.resolveRequestParams()` instead of `with*` call
+ * records on a recording Model stub.
+ */
+function createTestModel(
+  options: {
+    readonly id?: string;
+    readonly protocol?: Model['protocol'];
+    readonly providerType?: string;
+  } = {},
+): Model {
+  const providerType = options.providerType;
+  return {
+    id: options.id ?? 'kimi-code',
+    name: 'kimi-for-coding',
+    aliases: [],
+    protocol: options.protocol ?? 'openai',
+    baseUrl: 'https://example.test/v1',
+    headers: {},
+    capabilities: {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: true,
+      tool_use: false,
+      max_context_tokens: 1000,
+    },
+    maxContextSize: 1000,
+    supportEfforts: providerType === 'kimi' ? ['low', 'medium', 'high', 'max'] : undefined,
+    defaultEffort: providerType === 'kimi' ? 'high' : undefined,
+    alwaysThinking: false,
+    providerType,
+    providerName: 'kimi',
+    authProvider: { getAuth: async () => undefined },
+  };
+}
+
+function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): IModelCatalog {
   return {
     _serviceBrand: undefined,
-    resolve: () => {
+    get: (id) => {
+      const model = models[id];
+      if (model === undefined) throw new Error(`Unknown model: ${id}`);
+      return model;
+    },
+    getRequester: () => {
       throw new Error('not exercised');
     },
-  } as unknown as IModelResolver;
+    inspect: () => {
+      throw new Error('not exercised');
+    },
+    ping: () => {
+      throw new Error('not exercised');
+    },
+    findByName: () => [],
+    listModels: () => {
+      throw new Error('not exercised');
+    },
+    listProviders: () => {
+      throw new Error('not exercised');
+    },
+    getProvider: () => {
+      throw new Error('not exercised');
+    },
+    setDefaultModel: () => {
+      throw new Error('not exercised');
+    },
+  };
+}
+
+/**
+ * The one registry answer the profile reads: whether the (protocol,
+ * providerType) pair drives thinking through traits, and whether that driver
+ * demands strict effort validation (`strictThinkingValidation`). Mirrored
+ * here from the real Kimi definitions: strict on the native openai
+ * transport, lenient over anthropic, nothing on other protocols.
+ */
+function createProtocolRegistryStub(): IProtocolAdapterRegistry {
+  return {
+    _serviceBrand: undefined,
+    supportedProtocols: () => ['anthropic', 'openai', 'openai_responses', 'google-genai'],
+    resolveAdapterIdentity: (protocol: Protocol, providerType?: string) => ({
+      baseId: protocol,
+      traits:
+        providerType === 'kimi' && protocol === 'openai'
+          ? [
+              {
+                trait: { withThinking: () => undefined, strictThinkingValidation: true },
+                context: {},
+              },
+            ]
+          : providerType === 'kimi' && protocol === 'anthropic'
+            ? [{ trait: { withThinking: () => undefined }, context: {} }]
+            : [],
+    }),
+    resolveProviderBaseId: (protocol: Protocol) => protocol,
+    resolveCapability: () => {
+      throw new Error('not exercised');
+    },
+    createChatProvider: () => {
+      throw new Error('not exercised');
+    },
+  } as unknown as IProtocolAdapterRegistry;
 }
 
 function stubUnused<T>(): T {
@@ -82,7 +182,7 @@ let log: IAppendLogStore;
 let wire: IWireService;
 let svc: IAgentProfileService;
 let configValues: Record<string, unknown>;
-let modelResolver: IModelResolver;
+let modelCatalog: IModelCatalog;
 
 function buildHost(key: string): {
   ix: TestInstantiationService;
@@ -96,7 +196,8 @@ function buildHost(key: string): {
   host.stub(ITelemetryService, createTelemetryStub());
   host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
   host.stub(IConfigService, createConfigStub());
-  host.stub(IModelResolver, modelResolver);
+  host.stub(IModelCatalog, modelCatalog);
+  host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
   host.stub(IHostEnvironment, stubUnused());
   host.stub(IHostFileSystem, stubUnused());
   host.stub(IBootstrapService, stubUnused());
@@ -119,7 +220,7 @@ function buildHost(key: string): {
 beforeEach(() => {
   disposables = new DisposableStore();
   configValues = {};
-  modelResolver = createModelResolverStub();
+  modelCatalog = createModelCatalogStub();
   const host = buildHost(KEY);
   ix = host.ix;
   wire = host.wire;
@@ -140,63 +241,6 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
 
 function modelOf(target: IWireService) {
   return target.getModel(ProfileModel);
-}
-
-function createRecordingModel(
-  generationKwargs: GenerationKwargs[],
-  thinkingEfforts: ThinkingEffort[],
-  providerOptions: unknown[] = [],
-  protocol: Model['protocol'] = 'kimi',
-  thinkingKeeps: string[] = [],
-  providerType: string | undefined = protocol === 'kimi' ? 'kimi' : undefined,
-): Model {
-  const build = (thinkingEffort: ThinkingEffort | null): Model => ({
-    id: 'kimi-code',
-    name: 'kimi-for-coding',
-    aliases: [],
-    protocol,
-    baseUrl: 'https://example.test/v1',
-    headers: {},
-    capabilities: {
-      image_in: false,
-      video_in: false,
-      audio_in: false,
-      thinking: true,
-      tool_use: false,
-      max_context_tokens: 1000,
-    },
-    maxContextSize: 1000,
-    supportEfforts:
-      providerType === 'kimi' ? ['low', 'medium', 'high', 'max'] : undefined,
-    defaultEffort: providerType === 'kimi' ? 'high' : undefined,
-    thinkingEffort,
-    alwaysThinking: false,
-    providerType,
-    providerName: 'kimi',
-    authProvider: { getAuth: async () => undefined },
-    withThinking: (effort) => {
-      thinkingEfforts.push(effort);
-      return build(effort);
-    },
-    withMaxCompletionTokens: () => build(thinkingEffort),
-    withGenerationKwargs: (kwargs) => {
-      generationKwargs.push(kwargs);
-      return build(thinkingEffort);
-    },
-    withProviderOptions: (options) => {
-      providerOptions.push(options);
-      return build(thinkingEffort);
-    },
-    withThinkingKeep: (keep) => {
-      thinkingKeeps.push(keep);
-      return build(thinkingEffort);
-    },
-    request: async function* () {
-      const events: LLMEvent[] = [];
-      for (const event of events) yield event;
-    },
-  });
-  return build(null);
 }
 
 describe('AgentProfileService (wire-backed config.update)', () => {
@@ -343,64 +387,47 @@ describe('AgentProfileService (wire-backed config.update)', () => {
   });
 
   it('applies thinking.keep model override when thinking is enabled', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+    });
     const host = buildHost('profile-thinking-keep');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['modelOverrides'] = { temperature: 0.3, thinkingKeep: 'all' };
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    const model = host.svc.resolveModel();
 
-    expect(model?.thinkingEffort).toBe('high');
-    expect(thinkingEfforts).toEqual(['high']);
-    expect(generationKwargs).toEqual([
-      {
-        prompt_cache_key: 'session-test',
-        temperature: 0.3,
-        extra_body: { thinking: { keep: 'all' } },
-      },
-    ]);
+    // The morph chain's replacement: the profile's dialect-free per-turn
+    // intent. Wire encoding (`extra_body.thinking.keep`) is the Kimi dialect's
+    // own hook now.
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      sampling: { temperature: 0.3 },
+      thinkingEffort: 'high',
+      thinkingKeep: 'all',
+    });
   });
 
   it('uses the resolved Kimi effort instead of the configured default', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+    });
     const host = buildHost('profile-thinking-effort-resolved');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['thinking'] = { effort: ' max ' };
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    const model = host.svc.resolveModel();
 
-    expect(model?.thinkingEffort).toBe('high');
-    expect(thinkingEfforts).toEqual(['high']);
-    expect(generationKwargs).toEqual([
-      {
-        prompt_cache_key: 'session-test',
-        extra_body: { thinking: { keep: 'all' } },
-      },
-    ]);
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      thinkingEffort: 'high',
+      thinkingKeep: 'all',
+    });
   });
 
   it('forces the environment Kimi effort instead of the resolved effort', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+    });
     const host = buildHost('profile-thinking-effort-force');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['thinking'] = { effort: 'low', forcedEffort: ' max ' };
@@ -410,27 +437,18 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(modelOf(host.wire).thinkingLevel).toBe('high');
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
 
-    const model = host.svc.resolveModel();
-
-    expect(model?.thinkingEffort).toBe('max');
-    expect(thinkingEfforts).toEqual(['max']);
-    expect(generationKwargs).toEqual([
-      { prompt_cache_key: 'session-test' },
-      { extra_body: { thinking: { type: 'enabled', effort: 'max', keep: 'all' } } },
-    ]);
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      thinkingEffort: 'max',
+      thinkingKeep: 'all',
+    });
   });
 
   it('does not leak a forced Kimi effort when switching to a non-Kimi model', () => {
-    const kimiThinkingEfforts: ThinkingEffort[] = [];
-    const otherThinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: (alias) =>
-        alias === 'kimi-code'
-          ? createRecordingModel([], kimiThinkingEfforts)
-          : createRecordingModel([], otherThinkingEfforts, [], 'anthropic'),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'other-code': createTestModel({ id: 'other-code', protocol: 'anthropic' }),
+    });
     const host = buildHost('profile-thinking-effort-force-switch');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['thinking'] = { forcedEffort: 'max' };
@@ -438,153 +456,109 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
     expect(host.svc.data().thinkingLevel).toBe('high');
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
-    expect(host.svc.resolveModel()?.thinkingEffort).toBe('max');
+    expect(host.svc.resolveRequestParams().thinkingEffort).toBe('max');
 
     host.svc.update({ modelAlias: 'other-code' });
     expect(host.svc.data().thinkingLevel).toBe('high');
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('high');
-    expect(host.svc.resolveModel()?.thinkingEffort).toBe('high');
-    expect(kimiThinkingEfforts).toEqual(['max']);
-    expect(otherThinkingEfforts).toEqual(['high']);
+    expect(host.svc.resolveRequestParams().thinkingEffort).toBe('high');
   });
 
   it('applies thinking.keep model override on the Anthropic path', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    const providerOptions: unknown[] = [];
-    const thinkingKeeps: string[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () =>
-        createRecordingModel(
-          generationKwargs,
-          thinkingEfforts,
-          providerOptions,
-          'anthropic',
-          thinkingKeeps,
-        ),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
     const host = buildHost('profile-thinking-keep-anthropic');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['modelOverrides'] = { temperature: 0.3, thinkingKeep: 'all' };
 
     host.svc.update({ modelAlias: 'claude-code', thinkingLevel: 'high' });
-    const model = host.svc.resolveModel();
 
-    expect(model?.thinkingEffort).toBe('high');
-    expect(thinkingEfforts).toEqual(['high']);
-    expect(thinkingKeeps).toEqual(['all']);
-    expect(providerOptions).toEqual([{ metadata: { user_id: 'session-test' } }]);
-    expect(generationKwargs).toEqual([{ temperature: 0.3 }]);
+    // The intent is dialect-free now; how a cache key reaches the Anthropic
+    // wire (`metadata.user_id`) is the dialect's own hook.
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      sampling: { temperature: 0.3 },
+      thinkingEffort: 'high',
+      thinkingKeep: 'all',
+    });
   });
 
   it('forces Kimi effort through Anthropic without Kimi generation kwargs', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    const providerOptions: unknown[] = [];
-    const thinkingKeeps: string[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () =>
-        createRecordingModel(
-          generationKwargs,
-          thinkingEfforts,
-          providerOptions,
-          'anthropic',
-          thinkingKeeps,
-          'kimi',
-        ),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ protocol: 'anthropic', providerType: 'kimi' }),
+    });
     const host = buildHost('profile-thinking-effort-force-anthropic');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['thinking'] = { forcedEffort: 'max' };
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    const model = host.svc.resolveModel();
 
-    expect(model?.thinkingEffort).toBe('max');
-    expect(thinkingEfforts).toEqual(['max']);
-    expect(thinkingKeeps).toEqual(['all']);
-    expect(providerOptions).toEqual([{ metadata: { user_id: 'session-test' } }]);
-    expect(generationKwargs).toEqual([]);
+    // "Without Kimi generation kwargs" is no longer decidable at the profile:
+    // the durable record in `llmRequester.recordRequest` carries the
+    // thinking/sampling knobs unconditionally, and the Anthropic dialect
+    // encodes the thinking intent itself.
+    expect(host.svc.resolveModelContext().thinkingLevel).toBe('max');
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      thinkingEffort: 'max',
+      thinkingKeep: 'all',
+    });
   });
 
   it('defaults thinking.keep to "all" when thinking is enabled on Kimi', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+    });
     const host = buildHost('profile-thinking-keep-default');
     host.svc.configure({ emitStatusUpdated: () => undefined });
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    host.svc.resolveModel();
 
-    expect(generationKwargs).toEqual([
-      { prompt_cache_key: 'session-test', extra_body: { thinking: { keep: 'all' } } },
-    ]);
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      thinkingEffort: 'high',
+      thinkingKeep: 'all',
+    });
   });
 
   it('treats an off env thinking.keep override as disabled on Kimi', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+    });
     const host = buildHost('profile-thinking-keep-env-off');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['modelOverrides'] = { thinkingKeep: 'off' };
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    host.svc.resolveModel();
 
-    expect(generationKwargs).toEqual([{ prompt_cache_key: 'session-test' }]);
+    const params = host.svc.resolveRequestParams();
+    expect(params.cacheKey).toBe('session-test');
+    expect(params.thinkingEffort).toBe('high');
+    expect(params.thinkingKeep).toBeUndefined();
   });
 
   it('applies config thinking.keep on the Anthropic path', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    const providerOptions: unknown[] = [];
-    const thinkingKeeps: string[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () =>
-        createRecordingModel(
-          generationKwargs,
-          thinkingEfforts,
-          providerOptions,
-          'anthropic',
-          thinkingKeeps,
-        ),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
     const host = buildHost('profile-thinking-keep-anthropic-config');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['thinking'] = { keep: 'config-keep' };
 
     host.svc.update({ modelAlias: 'claude-code', thinkingLevel: 'high' });
-    const model = host.svc.resolveModel();
 
-    expect(model?.thinkingEffort).toBe('high');
-    expect(thinkingKeeps).toEqual(['config-keep']);
-    expect(generationKwargs).toEqual([]);
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      thinkingEffort: 'high',
+      thinkingKeep: 'config-keep',
+    });
   });
 
   it('does not apply thinking.keep model override when thinking is off', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+    });
     const host = buildHost('profile-thinking-keep-off');
     host.svc.configure({ emitStatusUpdated: () => undefined });
     configValues['thinking'] = { forcedEffort: 'max' };
@@ -592,50 +566,44 @@ describe('AgentProfileService (wire-backed config.update)', () => {
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
     expect(host.svc.resolveModelContext().thinkingLevel).toBe('off');
-    host.svc.resolveModel();
 
-    expect(thinkingEfforts).toEqual(['off']);
-    expect(generationKwargs).toEqual([{ prompt_cache_key: 'session-test', temperature: 0.3 }]);
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      sampling: { temperature: 0.3 },
+      thinkingEffort: 'off',
+      thinkingKeep: undefined,
+    });
   });
 
   it('uses the session id as a Kimi prompt cache hint', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () => createRecordingModel(generationKwargs, thinkingEfforts),
-      findByName: () => [],
-    };
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+    });
     const host = buildHost('profile-prompt-cache-key');
     host.svc.configure({ emitStatusUpdated: () => undefined });
 
     host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
-    host.svc.resolveModel();
 
-    expect(thinkingEfforts).toEqual(['high']);
-    expect(generationKwargs).toEqual([
-      { prompt_cache_key: 'session-test', extra_body: { thinking: { keep: 'all' } } },
-    ]);
+    expect(host.svc.resolveRequestParams()).toEqual({
+      cacheKey: 'session-test',
+      thinkingEffort: 'high',
+      thinkingKeep: 'all',
+    });
   });
 
-  it('does not apply the Kimi prompt cache hint to other protocols', () => {
-    const generationKwargs: GenerationKwargs[] = [];
-    const thinkingEfforts: ThinkingEffort[] = [];
-    const providerOptions: unknown[] = [];
-    modelResolver = {
-      _serviceBrand: undefined,
-      resolve: () =>
-        createRecordingModel(generationKwargs, thinkingEfforts, providerOptions, 'anthropic'),
-      findByName: () => [],
-    };
+  it('resolves the session cache-key intent for non-Kimi protocols too', () => {
+    modelCatalog = createModelCatalogStub({
+      'claude-sonnet': createTestModel({ id: 'claude-sonnet', protocol: 'anthropic' }),
+    });
     const host = buildHost('profile-prompt-cache-key-anthropic');
     host.svc.configure({ emitStatusUpdated: () => undefined });
 
     host.svc.update({ modelAlias: 'claude-sonnet', thinkingLevel: 'high' });
-    host.svc.resolveModel();
 
-    expect(thinkingEfforts).toEqual(['high']);
-    expect(generationKwargs).toEqual([]);
-    expect(providerOptions).toEqual([{ metadata: { user_id: 'session-test' } }]);
+    // The cache-key intent is dialect-free now: the profile resolves it for
+    // every protocol. How each dialect encodes it (Kimi `prompt_cache_key`
+    // vs Anthropic `metadata.user_id` vs silently dropped) is the dialect
+    // hook's own decision, asserted at the kosong/provider composition layer.
+    expect(host.svc.resolveRequestParams().cacheKey).toBe('session-test');
   });
 });

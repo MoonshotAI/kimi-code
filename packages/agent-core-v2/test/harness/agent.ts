@@ -41,16 +41,16 @@ import type {
 import { AGENT_WIRE_RECORD_KEY, wireRecordToPayload, type WireRecord } from '#/wire/record';
 import { OP_REGISTRY } from '#/wire/op';
 import { IOAuthService } from '#/app/auth/auth';
-import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/app/protocol/protocol';
+import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
+import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
+import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
 import type { SkillCatalog } from '#/app/skillCatalog/types';
-import { type ModelCapability } from '#/app/llmProtocol/capability';
-import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/app/llmProtocol/message';
-import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { type Tool as KosongTool } from '#/app/llmProtocol/tool';
-import type { generate as kosongGenerate } from '#/app/llmProtocol/generate';
-import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/app/llmProtocol/provider';
-import type { ProviderConfig } from '#/app/llmProtocol/providers/providers';
-import { KimiChatProvider } from '#/app/llmProtocol/providers/kimi';
+import { type ModelCapability } from '#/kosong/contract/capability';
+import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/kosong/contract/message';
+import { type ThinkingEffort } from '#/kosong/contract/provider';
+import { type Tool as KosongTool } from '#/kosong/contract/tool';
+import type { generate as kosongGenerate } from '#/kosong/contract/generate';
+import type { ChatProvider, GenerateOptions, StreamedMessage } from '#/kosong/contract/provider';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
 import { ILogOptions } from '#/_base/log/logConfig';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
@@ -119,13 +119,12 @@ import {
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
-import { IModelService } from '#/app/model/model';
-import { type Model } from '#/app/model/modelInstance';
-import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { IModelResolver } from '#/app/model/modelResolver';
-import { ModelResolverService } from '#/app/model/modelResolverService';
-import { IPlatformService } from '#/app/platform/platform';
-import { IProviderService } from '#/app/provider/provider';
+import { IModelService } from '#/kosong/model/model';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { ModelCatalog } from '#/kosong/model/catalogService';
+import type { ModelRequestParams, ModelRequester } from '#/kosong/model/modelRequester';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import {
   ISessionInteractionService,
@@ -191,6 +190,18 @@ interface ProviderConfigForConfig {
     readonly key: string;
     readonly oauthHost?: string;
   };
+}
+
+/**
+ * Harness-local provider descriptor for `configureRuntimeModel`: the vendor
+ * the scripted provider poses as (`type` = providerType), the wire-facing
+ * model name, and the endpoint to seed into the test config.
+ */
+interface TestProviderConfig {
+  readonly type: string;
+  readonly model: string;
+  readonly apiKey?: string;
+  readonly baseUrl?: string;
 }
 
 interface Logger {
@@ -277,7 +288,7 @@ interface ResumeStateSnapshot {
 
 interface ConfigureOptions {
   readonly tools?: readonly string[] | undefined;
-  readonly provider?: ProviderConfig | undefined;
+  readonly provider?: TestProviderConfig | undefined;
   readonly modelCapabilities?: ModelCapability | undefined;
 }
 
@@ -486,17 +497,17 @@ export function additionalDirServices(additionalDirs: readonly string[]): TestAg
 }
 
 export function modelProviderServices(
-  modelResolver: IModelResolver,
+  modelResolver: IModelCatalog,
 ): TestAgentServiceOverride {
-  return appService(IModelResolver, modelResolver);
+  return appService(IModelCatalog, modelResolver);
 }
 
 export function modelProviderOptionServices(
   options: TestModelProviderOptions,
 ): TestAgentServiceOverride {
   return appService(
-    IModelResolver,
-    new SyncDescriptor(ConfigBackedModelResolver, [options]),
+    IModelCatalog,
+    new SyncDescriptor(ConfigBackedModelCatalog, [options]),
   );
 }
 
@@ -815,24 +826,31 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   }
 }
 
-class ConfigBackedModelResolver extends ModelResolverService {
+class ConfigBackedModelCatalog extends ModelCatalog {
   constructor(
     private readonly options: TestModelProviderOptions = {},
     @IConfigService config: IConfigService,
     @IProviderService providers: IProviderService,
-    @IPlatformService platforms: IPlatformService,
     @IModelService models: IModelService,
     @IOAuthService oauth: IOAuthService,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
   ) {
-    super(config, providers, platforms, models, oauth, protocolRegistry, hostRequestHeaders);
+    super(config, providers, models, oauth, protocolRegistry, hostRequestHeaders);
   }
 
-  override resolve(id: string): Model {
-    const model = super.resolve(id);
-    if (this.options.promptCacheKey === undefined) return model;
-    return model.withGenerationKwargs({ prompt_cache_key: this.options.promptCacheKey });
+  override getRequester(id: string): ModelRequester {
+    const requester = super.getRequester(id);
+    const cacheKey = this.options.promptCacheKey;
+    if (cacheKey === undefined) return requester;
+    return {
+      ...requester,
+      request: (
+        input: Parameters<ModelRequester['request']>[0],
+        signal?: AbortSignal,
+        params?: ModelRequestParams,
+      ) => requester.request(input, signal, { cacheKey, ...params }),
+    };
   }
 }
 
@@ -941,8 +959,8 @@ export class AgentTestContext {
             ),
           );
           reg.defineDescriptor(
-            IModelResolver,
-            new SyncDescriptor(ConfigBackedModelResolver, [{}]),
+            IModelCatalog,
+            new SyncDescriptor(ConfigBackedModelCatalog, [{}]),
           );
           if (options.telemetry !== undefined) {
             reg.defineInstance(ITelemetryService, options.telemetry);
@@ -1118,8 +1136,8 @@ export class AgentTestContext {
     return this.agent.accessor.get(id);
   }
 
-  get modelResolver(): IModelResolver {
-    return this.session.accessor.get(IModelResolver);
+  get modelResolver(): IModelCatalog {
+    return this.session.accessor.get(IModelCatalog);
   }
 
   get context(): IAgentContextMemoryService {
@@ -1238,12 +1256,26 @@ export class AgentTestContext {
   }
 
   configureRuntimeModel(
-    provider: ProviderConfig,
+    provider: TestProviderConfig,
     modelCapabilities?: ModelCapability | undefined,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
+    // The harness swaps config BEHIND the config services' backs, so no
+    // change events fire — drop the assembled-Model cache by hand (the
+    // load-bearing ModelCatalog contract), or the next `get` keeps serving
+    // the entry assembled from the previous config.
+    (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
     const profile = this.get(IAgentProfileService);
     profile.update({ modelAlias: provider.model });
+  }
+
+  /**
+   * The manual cache-drop for tests that mutate `kimiConfig` behind the
+   * config services' backs (no change events fire): the ModelCatalog keeps
+   * serving the previously assembled Model until this is called.
+   */
+  notifyModelConfigChanged(): void {
+    (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
   }
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
@@ -2045,9 +2077,9 @@ function taskNotificationKey(taskId: string, status: string): string {
 function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config'] {
   const profile = ctx.get(IAgentProfileService);
   const data = profile.data();
-  let model: ReturnType<IAgentProfileService['resolveModel']>;
+  let model: Model | undefined;
   try {
-    model = profile.resolveModel();
+    model = data.modelAlias === undefined ? undefined : ctx.get(IModelCatalog).get(data.modelAlias);
   } catch {
     model = undefined;
   }
@@ -2212,7 +2244,7 @@ function asMutableRecord(value: unknown): Record<string, unknown> {
 
 function configWithProvider(
   config: KimiConfig,
-  provider: ProviderConfig,
+  provider: TestProviderConfig,
   modelCapabilities: ModelCapability | undefined,
 ): KimiConfig {
   const providerName = 'test-provider';
@@ -2238,11 +2270,11 @@ function configWithProvider(
   };
 }
 
-function providerConfigForAlias(provider: ProviderConfig): KimiConfig['providers'][string] {
+function providerConfigForAlias(provider: TestProviderConfig): KimiConfig['providers'][string] {
   return {
     type: provider.type,
-    apiKey: 'apiKey' in provider ? provider.apiKey : undefined,
-    baseUrl: 'baseUrl' in provider ? provider.baseUrl : undefined,
+    apiKey: provider.apiKey,
+    baseUrl: provider.baseUrl,
   };
 }
 
@@ -2303,65 +2335,88 @@ function createLogService(logger: Logger | undefined, bindings: LogContext = {})
   };
 }
 
+/**
+ * The harness protocol registry: identity/capability resolution delegates to
+ * the real `ProtocolAdapterRegistry` (so vendor verdicts like Kimi thinking
+ * semantics stay truthful), while `createChatProvider` returns a provider
+ * driven by the scripted `GenerateFn`.
+ *
+ * For a registered vendor (`providerType` with a provider definition — today
+ * only `kimi`) `createChatProvider` composes the REAL provider through the
+ * registry and replaces only its `generate` (appendix B item 10), so the
+ * test-visible provider has the production shape: the base's `name`
+ * (`'openai'`, never `'kimi'`), trait-bound capabilities (`uploadVideo`),
+ * and no vendor subclass. Unregistered provider types keep the generic
+ * generate-backed provider.
+ *
+ * Either way the per-turn `GenerateOptions` intent fields (cacheKey /
+ * sampling / thinking / budget) are forwarded into the `GenerateFn` so tests
+ * assert them as request parameters instead of morph-era provider state.
+ */
 function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAdapterRegistry {
+  const real = new ProtocolAdapterRegistry();
   return {
     _serviceBrand: undefined,
-    supportedProtocols: () =>
-      ['kimi', 'anthropic', 'openai', 'openai_responses', 'google-genai', 'vertexai'] as const,
+    supportedProtocols: () => real.supportedProtocols(),
+    resolveAdapterIdentity: (protocol, providerType) =>
+      real.resolveAdapterIdentity(protocol, providerType),
+    resolveProviderBaseId: (protocol, providerType) =>
+      real.resolveProviderBaseId(protocol, providerType),
+    resolveCapability: (protocol, modelName, providerType) =>
+      real.resolveCapability(protocol, modelName, providerType),
+    explainCapability: (protocol, modelName, providerType) =>
+      real.explainCapability(protocol, modelName, providerType),
     createChatProvider: (input: ProtocolAdapterConfig) => {
-      const config = {
-        type: input.protocol,
-        model: input.modelName,
-        baseUrl: input.baseUrl,
-        apiKey: input.apiKey,
-        defaultHeaders: input.defaultHeaders as Record<string, string> | undefined,
-        ...input.providerOptions,
-      } as ProviderConfig;
-      return input.protocol === 'kimi'
-        ? new GenerateBackedKimiChatProvider(
-            config as Extract<ProviderConfig, { type: 'kimi' }>,
-            generate,
-          )
-        : new GenerateBackedChatProvider(config, generate);
+      if (input.providerType !== undefined && hasProviderDefinition(input.providerType)) {
+        return replaceProviderGenerate(real.createChatProvider(input), generate);
+      }
+      return new GenerateBackedChatProvider(input, generate);
     },
   } as IProtocolAdapterRegistry;
 }
 
-class GenerateBackedKimiChatProvider extends KimiChatProvider {
-  constructor(
-    config: Extract<ProviderConfig, { type: 'kimi' }>,
-    private readonly generateFn: GenerateFn,
-  ) {
-    super(config);
+/**
+ * The real composed provider with only `generate` swapped for the scripted
+ * driver. Everything else — `name`, `thinkingEffort`, `maxCompletionTokens`,
+ * the trait-bound `uploadVideo` — delegates to the composed provider, and the
+ * scripted `GenerateFn` receives the composed provider as its `chat` argument.
+ */
+function replaceProviderGenerate(provider: ChatProvider, generate: GenerateFn): ChatProvider {
+  const replaced: ChatProvider = {
+    get name() {
+      return provider.name;
+    },
+    get modelName() {
+      return provider.modelName;
+    },
+    get thinkingEffort() {
+      return provider.thinkingEffort;
+    },
+    get maxCompletionTokens() {
+      return provider.maxCompletionTokens;
+    },
+    generate: (systemPrompt, tools, history, options) =>
+      generateBackedResponse(provider, generate, systemPrompt, tools, history, options),
+  };
+  if (provider.uploadVideo !== undefined) {
+    replaced.uploadVideo = (input, options) => provider.uploadVideo!(input, options);
   }
-
-  override async generate(
-    systemPrompt: string,
-    tools: KosongTool[],
-    history: KosongMessage[],
-    options?: GenerateOptions,
-  ): Promise<StreamedMessage> {
-    return generateBackedResponse(this, this.generateFn, systemPrompt, tools, history, options);
-  }
+  return replaced;
 }
 
 class GenerateBackedChatProvider implements ChatProvider {
   readonly name: string;
   readonly modelName: string;
+  readonly thinkingEffort: ThinkingEffort | null = null;
+  readonly maxCompletionTokens: number | undefined;
 
   constructor(
-    private readonly config: ProviderConfig,
+    config: ProtocolAdapterConfig,
     private readonly generateFn: GenerateFn,
-    readonly thinkingEffort: ThinkingEffort | null = null,
-    readonly modelParameters: Record<string, unknown> = modelParametersFromConfig(config),
   ) {
-    this.name = config.type;
-    this.modelName = modelNameFromConfig(config);
-  }
-
-  get maxCompletionTokens(): number | undefined {
-    const value = this.modelParameters[completionBudgetParamName(this.config.type)];
-    return typeof value === 'number' ? value : undefined;
+    this.name = config.providerType ?? config.protocol;
+    this.modelName = config.modelName;
+    this.maxCompletionTokens = config.providerOptions?.defaultMaxTokens;
   }
 
   async generate(
@@ -2371,22 +2426,6 @@ class GenerateBackedChatProvider implements ChatProvider {
     options?: GenerateOptions,
   ): Promise<StreamedMessage> {
     return generateBackedResponse(this, this.generateFn, systemPrompt, tools, history, options);
-  }
-
-  withThinking(effort: ThinkingEffort): ChatProvider {
-    return new GenerateBackedChatProvider(
-      this.config,
-      this.generateFn,
-      effort,
-      this.modelParameters,
-    );
-  }
-
-  withMaxCompletionTokens(maxCompletionTokens: number): ChatProvider {
-    return new GenerateBackedChatProvider(this.config, this.generateFn, this.thinkingEffort, {
-      ...this.modelParameters,
-      [completionBudgetParamName(this.config.type)]: maxCompletionTokens,
-    });
   }
 }
 
@@ -2412,6 +2451,16 @@ async function generateBackedResponse(
     {
       signal: options?.signal,
       auth: options?.auth,
+      // Forward the per-turn intent fields so tests assert them as request
+      // parameters — the replacement for morph-era provider state
+      // (`_generationKwargs` / `modelParameters` / baked `thinkingEffort`).
+      cacheKey: options?.cacheKey,
+      sampling: options?.sampling,
+      thinking: options?.thinking,
+      maxCompletionTokens: options?.maxCompletionTokens,
+      usedContextTokens: options?.usedContextTokens,
+      maxContextTokens: options?.maxContextTokens,
+      responseFormat: options?.responseFormat,
       // Forward the early-capture hook so a GenerateFn can fire the trace id
       // as soon as its (simulated) response headers arrive — e.g. before a
       // mid-stream failure — mirroring real kosong generate() behavior.
@@ -2430,24 +2479,6 @@ async function generateBackedResponse(
       traceId: result.traceId,
     },
   );
-}
-
-function modelParametersFromConfig(config: ProviderConfig): Record<string, unknown> {
-  return {
-    model: modelNameFromConfig(config),
-    baseUrl: 'baseUrl' in config ? config.baseUrl : undefined,
-    ...('generationKwargs' in config ? config.generationKwargs : undefined),
-  };
-}
-
-function modelNameFromConfig(config: ProviderConfig): string {
-  return 'model' in config ? config.model : 'test-model';
-}
-
-function completionBudgetParamName(type: ProviderConfig['type']): string {
-  if (type === 'kimi') return 'max_completion_tokens';
-  if (type === 'openai_responses') return 'max_output_tokens';
-  return 'max_tokens';
 }
 
 function partsFromGeneratedMessage(

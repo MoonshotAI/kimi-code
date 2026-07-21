@@ -32,10 +32,13 @@ import { IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
-import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { MODELS_SECTION, type ModelAlias } from '#/app/model/model';
-import { IPlatformService, type PlatformConfig } from '#/app/platform/platform';
-import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/app/provider/provider';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { MODELS_SECTION, type ModelRecord } from '#/kosong/model/model';
+import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
+
+// Side-effect registration: the OAuth-catalog verdict
+// (`isOAuthCatalogProvider`) answers through the provider-definition registry.
+import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import { registerBootstrapServices } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
@@ -80,7 +83,7 @@ describe('OAuthService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
-  let models: Record<string, ModelAlias>;
+  let models: Record<string, ModelRecord>;
   let services: Record<string, unknown> | undefined;
   let defaultModel: string | undefined;
   let thinking: { enabled?: boolean; effort?: string } | undefined;
@@ -126,7 +129,7 @@ describe('OAuthService', () => {
         return;
       }
       if (domain === 'models') {
-        models = value as Record<string, ModelAlias>;
+        models = value as Record<string, ModelRecord>;
         return;
       }
       if (domain === 'services') {
@@ -1077,8 +1080,7 @@ describe('AuthSummaryService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
-  let platforms: Record<string, PlatformConfig>;
-  let models: Record<string, ModelAlias>;
+  let models: Record<string, ModelRecord>;
   let defaultModel: string | undefined;
   let oauthStatus: ReturnType<typeof vi.fn>;
   let getCachedAccessToken: ReturnType<typeof vi.fn>;
@@ -1093,12 +1095,11 @@ describe('AuthSummaryService', () => {
       },
       [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
     };
-    platforms = {};
     models = {
       kimi: {
         provider: OAUTH_PROVIDER,
         model: 'kimi-k2',
-        protocol: 'kimi',
+        protocol: 'openai',
         maxContextSize: 128000,
       },
       openai: {
@@ -1117,10 +1118,6 @@ describe('AuthSummaryService', () => {
         reg.definePartialInstance(IProviderService, {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
-        });
-        reg.definePartialInstance(IPlatformService, {
-          get: ((name: string) => platforms[name]) as IPlatformService['get'],
-          list: (() => platforms) as IPlatformService['list'],
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) => {
@@ -1238,36 +1235,6 @@ describe('AuthSummaryService', () => {
     expect(getCachedAccessToken).toHaveBeenCalledWith(OAUTH_PROVIDER, {
       storage: 'file',
       key: 'oauth/kimi-code',
-    });
-  });
-
-  it('ensureReady accepts structured platform credentials', async () => {
-    providers = {
-      moonshot: {
-        type: 'kimi',
-        platformId: 'shared-kimi',
-        baseUrl: 'https://api.example.test/v1',
-      },
-    };
-    platforms = {
-      'shared-kimi': {
-        auth: { oauth: { storage: 'file', key: 'oauth/shared-kimi' } },
-      },
-    };
-    models = {
-      kimi: {
-        providerId: 'moonshot',
-        name: 'kimi-k2',
-        protocol: 'kimi',
-        maxContextSize: 128000,
-      },
-    };
-    getCachedAccessToken.mockResolvedValue('access-token');
-
-    await expect(createSummary().ensureReady()).resolves.toBeUndefined();
-    expect(getCachedAccessToken).toHaveBeenCalledWith('shared-kimi', {
-      storage: 'file',
-      key: 'oauth/shared-kimi',
     });
   });
 });

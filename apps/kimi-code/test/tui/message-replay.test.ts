@@ -501,6 +501,38 @@ describe('KimiTUI resume message replay', () => {
     expect(content).not.toContain('Write a concise final message for the user');
   });
 
+  it('does not replay system-trigger prompts such as goal continuation as user messages', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: 'Continue working toward the active goal. Keep the self-audit brief.',
+          },
+        ],
+        { origin: { kind: 'system_trigger', name: 'goal_continuation' } },
+      ),
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: '<system-reminder>\nThe goal was cancelled.\n</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'system_trigger', name: 'goal_cancelled' } },
+      ),
+      message('assistant', [{ type: 'text', text: 'Working on it.' }]),
+    ]);
+
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toEqual([]);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('Continue working toward the active goal');
+    expect(transcript).not.toContain('The goal was cancelled');
+    expect(transcript).toContain('Working on it.');
+  });
+
   it('does not replay the model-blocked lifecycle marker when the follow-up is replayed', async () => {
     const driver = await replayIntoDriver([
       goalReplay(

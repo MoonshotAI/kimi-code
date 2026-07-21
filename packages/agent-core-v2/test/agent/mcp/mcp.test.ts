@@ -1,5 +1,5 @@
-import type { ContentPart } from '#/app/llmProtocol/message';
-import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
+import type { ContentPart } from '#/kosong/contract/message';
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import { Jimp } from 'jimp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 

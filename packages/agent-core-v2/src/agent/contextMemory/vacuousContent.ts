@@ -9,7 +9,7 @@
  * carry content.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 export function isVacuousContentPart(part: ContentPart): boolean {
   if (part.type === 'text') return part.text.trim().length === 0;

@@ -1,7 +1,8 @@
 /**
- * `modelCatalogService` — read-only catalog over configured providers and
- * model aliases, plus the global default-model selection. Mirrors
- * `agent-core-v2/app/modelCatalog/modelCatalog.ts`; wire shapes mirror
+ * `modelResolver` — the engine's `IModelCatalog`: materialized model lookup
+ * plus the read-only catalog enumeration over configured providers and model
+ * aliases, and the global default-model selection. Mirrors
+ * `agent-core-v2/kosong/model/catalog.ts`; wire shapes mirror
  * `protocol/src/modelCatalog.ts` and `protocol/src/rest/modelCatalog.ts`
  * (snake_case fields).
  */
@@ -37,32 +38,9 @@ export const setDefaultModelResponseSchema = z.object({
   model: modelCatalogItemSchema,
 });
 
-export const refreshProviderModelsOptionsSchema = z.object({
-  scope: z.enum(['all', 'oauth']).optional(),
-  providerId: z.string().optional(),
-});
-
-/** Same shape as `refreshOAuthProviderModelsResponseSchema` in `./auth.js` — keep in sync. */
-export const refreshProviderModelsResponseSchema = z.object({
-  changed: z.array(
-    z.object({
-      provider_id: z.string(),
-      provider_name: z.string(),
-      added: z.number(),
-      removed: z.number(),
-    }),
-  ),
-  unchanged: z.array(z.string()),
-  failed: z.array(z.object({ provider: z.string(), reason: z.string() })),
-});
-
 export const catalogContract = {
   listModels: { input: z.tuple([]), output: z.array(modelCatalogItemSchema) },
   listProviders: { input: z.tuple([]), output: z.array(providerCatalogItemSchema) },
   getProvider: { input: z.tuple([z.string()]), output: providerCatalogItemSchema },
   setDefaultModel: { input: z.tuple([z.string()]), output: setDefaultModelResponseSchema },
-  refreshProviderModels: {
-    input: z.tuple([refreshProviderModelsOptionsSchema.optional()]),
-    output: refreshProviderModelsResponseSchema,
-  },
 } satisfies ServiceContract;
