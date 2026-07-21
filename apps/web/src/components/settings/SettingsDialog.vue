@@ -15,7 +15,7 @@ import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUp
 import type { ColorScheme } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel } from '../../api/types';
 import type { IconName } from '../../lib/icons';
-import { Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch, Tooltip } from '@moonshot-ai/web-ui';
+import { Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -30,8 +30,6 @@ const props = defineProps<{
   notifyPermission?: string;
   /** Whether notifications play the system sound. */
   notifySound: boolean;
-  /** Conversation outline (proportional bubbles, viewport indicator, hover tooltip). */
-  conversationToc?: boolean;
   /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
   config?: AppConfig | null;
   /** Models from the daemon catalog, used to label default-model choices. */
@@ -47,16 +45,21 @@ const emit = defineEmits<{
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
   setNotifySound: [on: boolean];
-  setConversationToc: [on: boolean];
   login: [];
   logout: [];
-  openOnboarding: [];
   openProviders: [];
   updateConfig: [patch: Partial<AppConfig>];
   close: [];
 }>();
 
 const uiFontSizeDraft = ref(String(props.uiFontSize));
+
+const accountSubtitle = computed(() => {
+  if (!props.authReady) return t('settings.signedOutHint');
+  return props.accountModel
+    ? `${props.accountModel} · ${t('settings.signedIn')}`
+    : t('settings.signedIn');
+});
 
 watch(
   () => props.uiFontSize,
@@ -254,7 +257,7 @@ function setDefaultPermissionMode(mode: 'manual' | 'auto' | 'yolo'): void {
   emit('updateConfig', { defaultPermissionMode: mode });
 }
 
-function toggleConfigBoolean(key: 'defaultPlanMode' | 'mergeAllAvailableSkills'): void {
+function toggleConfigBoolean(key: 'defaultPlanMode'): void {
   const current = props.config?.[key];
   emit('updateConfig', { [key]: !configBool(current) } as Partial<AppConfig>);
 }
@@ -399,29 +402,32 @@ function archiveTime(iso: string): string {
   <Dialog :open="true" :close-on-esc="false" :aria-label="t('settings.title')" size="xl" height="fixed" :padded="false" @close="emit('close')">
     <div ref="dialogRef" class="sd">
       <nav class="settings-tabs" role="tablist" :aria-label="t('settings.title')">
-        <button
-          v-for="tb in tabs"
-          :key="tb.id"
-          type="button"
-          class="tab"
-          role="tab"
-          :aria-selected="activeTab === tb.id"
-          :class="{ on: activeTab === tb.id }"
-          @click="setTab(tb.id)"
-        >
-          <Icon :name="tb.icon" size="md" />
-          <span>{{ t(tb.labelKey) }}</span>
-        </button>
+        <header class="settings-tabs-header">
+          <h2 class="settings-dialog-title">{{ t('settings.title') }}</h2>
+        </header>
+        <div class="settings-tab-list">
+          <button
+            v-for="tb in tabs"
+            :key="tb.id"
+            type="button"
+            class="tab"
+            role="tab"
+            :aria-selected="activeTab === tb.id"
+            :class="{ on: activeTab === tb.id }"
+            @click="setTab(tb.id)"
+          >
+            <Icon :name="tb.icon" size="md" />
+            <span>{{ t(tb.labelKey) }}</span>
+          </button>
+        </div>
       </nav>
 
       <section class="settings-region">
         <header class="settings-region-header">
-          <h2 class="settings-dialog-title">{{ t('settings.title') }}</h2>
           <IconButton size="sm" :label="t('settings.close')" @click="emit('close')">
             <Icon name="close" size="md" />
           </IconButton>
         </header>
-
         <div class="body">
         <!-- General: Appearance + Notifications -->
         <section v-show="activeTab === 'general'" class="panel">
@@ -487,17 +493,6 @@ function archiveTime(iso: string): string {
               </span>
               <LanguageSwitcher />
             </div>
-            <div class="row">
-              <span class="rlabel">
-                {{ t('settings.conversationToc') }}
-                <span class="hint">{{ t('settings.conversationTocHint') }}</span>
-              </span>
-              <Switch
-                :model-value="conversationToc ?? true"
-                :label="t('settings.conversationToc')"
-                @update:model-value="emit('setConversationToc', $event)"
-              />
-            </div>
             </div>
           </section>
 
@@ -537,17 +532,14 @@ function archiveTime(iso: string): string {
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.account') }}</h3>
             <div class="settings-group">
-            <div class="row">
-              <span class="rlabel">
-                {{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}
-                <span class="hint">{{ t('settings.accountHint') }}</span>
+            <div class="account-row">
+              <span class="account-avatar" aria-hidden="true">
+                <Icon name="user" size="md" />
               </span>
-              <Tooltip :text="accountModel">
-                <span v-if="authReady && accountModel" class="rvalue">{{ accountModel }}</span>
-              </Tooltip>
-            </div>
-            <div class="actions">
-              <Button variant="secondary" size="sm" @click="emit('openOnboarding'); emit('close')">{{ t('onboarding.reopen') }}</Button>
+              <span class="account-meta">
+                <span class="account-name">{{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
+                <span class="account-sub">{{ accountSubtitle }}</span>
+              </span>
               <Button v-if="authReady" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
               <Button v-else variant="primary" size="sm" @click="emit('login')">{{ t('sidebar.signIn') }}</Button>
             </div>
@@ -613,18 +605,6 @@ function archiveTime(iso: string): string {
                   :model-value="configBool(config.defaultPlanMode)"
                   :label="t('settings.defaultPlanMode')"
                   @update:model-value="toggleConfigBoolean('defaultPlanMode')"
-                />
-              </div>
-
-              <div class="row">
-                <span class="rlabel">
-                  {{ t('settings.mergeSkills') }}
-                  <span class="hint">{{ t('settings.mergeSkillsHint') }}</span>
-                </span>
-                <Switch
-                  :model-value="configBool(config.mergeAllAvailableSkills)"
-                  :label="t('settings.mergeSkills')"
-                  @update:model-value="toggleConfigBoolean('mergeAllAvailableSkills')"
                 />
               </div>
             </template>
@@ -780,8 +760,9 @@ function archiveTime(iso: string): string {
 
 <style scoped>
 .sd {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: 148px 1fr;
+  grid-template-areas: "tabs region";
   min-height: 0;
   height: 100%;
   user-select: none;
@@ -789,14 +770,18 @@ function archiveTime(iso: string): string {
 .sd :is(input, textarea, [contenteditable='true']) {
   user-select: text;
 }
-.settings-region { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
-.settings-region-header {
+.settings-region { display: flex; min-width: 0; min-height: 0; flex-direction: column; grid-area: region; }
+/* Sidebar title row and the region's close-button row share one fixed height so
+   the first tab and the first section title land on the same line. */
+.settings-region-header,
+.settings-tabs-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 20px 22px 14px;
+  height: calc(var(--space-4) + var(--icon-button-sm) + var(--space-2));
+  box-sizing: border-box;
 }
+.settings-region-header { justify-content: flex-end; padding-right: var(--space-5); }
+.settings-tabs-header { padding-inline: var(--space-3); }
 .settings-dialog-title {
   margin: 0;
   font-family: var(--font-ui);
@@ -809,12 +794,17 @@ function archiveTime(iso: string): string {
 .settings-tabs {
   display: flex;
   flex-direction: column;
-  flex: none;
   width: 148px;
-  padding: var(--space-2) var(--space-2) var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
   gap: 2px;
   overflow-y: auto;
   background: var(--color-sidebar-bg);
+  grid-area: tabs;
+}
+.settings-tab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .tab {
   display: flex;
@@ -839,6 +829,9 @@ function archiveTime(iso: string): string {
 .body { display: flex; flex-direction: column; overflow-y: auto; padding: var(--space-2) 32px var(--space-5); flex: 1; min-width: 0; }
 .panel { display: block; }
 .sec { padding: var(--space-4) 0; }
+/* The first section's top spacing comes from .body so its title lines up with
+   the first sidebar tab. */
+.panel > .sec:first-child { padding-top: 0; }
 .sec-head {
   display: flex;
   align-items: center;
@@ -866,7 +859,6 @@ function archiveTime(iso: string): string {
 }
 .settings-group {
   overflow: hidden;
-  margin-inline: calc(-1 * var(--space-4));
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-xl);
   background: var(--color-bg);
@@ -882,12 +874,49 @@ function archiveTime(iso: string): string {
   border-top: 0.5px solid var(--color-line);
 }
 .settings-group > .row:first-child { border-top: none; }
-.settings-group > .actions {
-  margin: 0;
-  padding: var(--space-3);
-  border-top: 0.5px solid var(--color-line);
-}
 .settings-group > .empty-config { padding: var(--space-3); }
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.account-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+}
+.account-meta {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.account-name {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-sub {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  color: var(--color-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .rlabel {
   font-family: var(--font-ui);
   font-size: var(--text-base);
@@ -983,18 +1012,29 @@ function archiveTime(iso: string): string {
   padding: var(--space-1) 0;
 }
 
-.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
-
 @media (max-width: 640px) {
-  .sd { flex-direction: column; }
-  .settings-region-header { padding: var(--space-3); }
+  .sd {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "tabs"
+      "region";
+  }
   .settings-tabs {
-    flex-direction: row;
     width: auto;
-    padding: var(--space-2) var(--space-3);
+    padding: 0;
+    overflow-x: visible;
+  }
+  .settings-tabs-header {
+    padding: var(--space-3);
+  }
+  .settings-tab-list {
+    flex-direction: row;
     gap: var(--space-1);
     overflow-x: auto;
+    padding: 0 var(--space-3) var(--space-2);
   }
+  .settings-region-header { padding: var(--space-3); }
   .body { padding-inline: var(--space-3); }
   .tab { white-space: nowrap; flex: none; }
   .row {
@@ -1011,7 +1051,7 @@ function archiveTime(iso: string): string {
 /* Archived-sessions tab */
 .setting-card { border: 1px solid var(--color-line); border-radius: var(--radius-xl); overflow: hidden; background: var(--color-bg); }
 .panel-head { margin-bottom: var(--space-4); }
-.panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.01em; color: var(--color-text); }
+.panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-lg); font-weight: var(--weight-medium); letter-spacing: 0; color: var(--color-text); }
 .panel-desc { margin: 0; font-family: var(--font-ui); font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--color-text-muted); max-width: 560px; }
 .archive-toolbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
 .archive-search { flex: 1; min-width: 200px; height: 36px; display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-radius: var(--radius-md); border: 1px solid var(--color-line); color: var(--color-text-faint); font-size: var(--text-sm); background: var(--color-surface-raised); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }

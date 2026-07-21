@@ -4,5 +4,4 @@ export default {
   languageLabel: 'Language',
   start: 'Get started',
   skip: 'Skip',
-  reopen: 'Preferences / onboarding',
 } as const;

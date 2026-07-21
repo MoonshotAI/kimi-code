@@ -4,5 +4,4 @@ export default {
   languageLabel: '语言',
   start: '开始使用',
   skip: '跳过',
-  reopen: '偏好 / 引导',
 };

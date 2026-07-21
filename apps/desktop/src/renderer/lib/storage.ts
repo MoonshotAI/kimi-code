@@ -25,10 +25,6 @@ export const STORAGE_KEYS = {
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   workspaceSort: 'kimi-web.workspace-sort',
   workspaceAddedAt: 'kimi-web.workspace-added-at',
-  // Conversation outline (TOC). The value keeps the legacy `beta-toc` name so
-  // users who explicitly turned it off while it was experimental keep their
-  // preference after it became on-by-default.
-  conversationToc: 'kimi-web.beta-toc',
   notifyEnabled: 'kimi-web.notify-enabled',
   notifySound: 'kimi-web.notify-sound',
   inputHistory: 'kimi-web.input-history',

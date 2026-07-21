@@ -787,33 +787,6 @@ function persistSessionProfile(patch: {
 }
 
 // ---------------------------------------------------------------------------
-// Conversation outline (TOC): proportional bubbles with a viewport indicator
-// and hover tooltip. On by default; users can turn it off in Settings.
-// Persisted per browser.
-// ---------------------------------------------------------------------------
-const CONVERSATION_TOC_STORAGE_KEY = STORAGE_KEYS.conversationToc;
-function loadConversationTocFromStorage(): boolean {
-  try {
-    const raw = safeGetString(CONVERSATION_TOC_STORAGE_KEY);
-    return raw === null ? true : raw === 'true';
-  } catch {
-    return true;
-  }
-}
-function saveConversationTocToStorage(v: boolean): void {
-  try {
-    safeSetString(CONVERSATION_TOC_STORAGE_KEY, v ? 'true' : 'false');
-  } catch {
-    // ignore
-  }
-}
-const conversationToc = ref<boolean>(loadConversationTocFromStorage());
-function setConversationToc(v: boolean): void {
-  conversationToc.value = v;
-  saveConversationTocToStorage(v);
-}
-
-// ---------------------------------------------------------------------------
 // Onboarding: a "has the user been onboarded" flag that gates the first-run
 // onboarding screen (preference: language). Persisted; can be reset to re-open
 // the screen from the settings popover.
@@ -3059,10 +3032,6 @@ export function useKimiWebClient() {
 
     uiFontSize: appearance.uiFontSize,
     setUiFontSize: appearance.setUiFontSize,
-
-    // Conversation outline (TOC)
-    conversationToc,
-    setConversationToc,
 
     // Color scheme
     colorScheme: appearance.colorScheme,

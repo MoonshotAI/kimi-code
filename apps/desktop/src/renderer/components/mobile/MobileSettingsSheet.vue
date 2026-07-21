@@ -36,7 +36,6 @@ const props = withDefaults(
     colorScheme?: ColorScheme;
     uiFontSize?: number;
     authReady?: boolean;
-    conversationToc?: boolean;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
     /** Available models — used to derive the current model's thinking segments. */
@@ -60,7 +59,6 @@ const emit = defineEmits<{
   setPermission: [mode: PermissionMode];
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
-  setConversationToc: [on: boolean];
   login: [];
   logout: [];
 }>();
@@ -365,14 +363,6 @@ watch(
         <span class="num-unit">px</span>
       </label>
     </div>
-
-    <button type="button" class="srow" @click="emit('setConversationToc', !conversationToc)">
-      <span class="srow-main">
-        <span class="srow-label">{{ t('settings.conversationToc') }}</span>
-        <span class="srow-sub">{{ t('settings.conversationTocHint') }}</span>
-      </span>
-      <span class="toggle" :class="{ on: conversationToc }" role="switch" :aria-checked="conversationToc" />
-    </button>
 
     <!-- Account: sign in / out -->
     <button v-if="authReady" type="button" class="srow acct out" @click="onLogout">

@@ -150,14 +150,11 @@ const statusPanelThinking = computed<ThinkingLevel>(() => {
 });
 
 // First-run onboarding (language + welcome greeting). Shown until the user
-// finishes it once; re-openable from the settings popover.
+// finishes it once.
 const showOnboarding = ref(!client.onboarded.value);
 function completeOnboarding(): void {
   client.setOnboarded(true);
   showOnboarding.value = false;
-}
-function openOnboarding(): void {
-  showOnboarding.value = true;
 }
 
 // iOS Safari does not shrink `dvh` for the on-screen keyboard. Instead it pans
@@ -908,7 +905,6 @@ function openPr(url: string): void {
       :active-workspace-id="client.activeWorkspaceId.value"
       :session-title="activeSessionTitle"
       :pr="client.activePullRequest.value"
-      :conversation-toc="client.conversationToc.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="requestAddWorkspace()"
@@ -1076,7 +1072,6 @@ function openPr(url: string): void {
       :notify="client.notifyEnabled.value"
       :notify-permission="client.notifyPermission.value"
       :notify-sound="client.notifySound.value"
-      :conversation-toc="client.conversationToc.value"
       :config="client.config.value"
       :models="client.models.value"
       :config-saving="configSaving"
@@ -1086,11 +1081,9 @@ function openPr(url: string): void {
       @set-ui-font-size="client.setUiFontSize($event)"
       @set-notify="client.setNotifyEnabled($event)"
       @set-notify-sound="client.setNotifySound($event)"
-      @set-conversation-toc="client.setConversationToc($event)"
       @update-config="handleUpdateConfig($event)"
       @login="() => { showSettings = false; openLogin(); }"
       @logout="client.logout"
-      @open-onboarding="() => { showSettings = false; openOnboarding(); }"
       @open-providers="() => { showSettings = false; openProviders(); }"
       @close="showSettings = false"
     />
@@ -1185,7 +1178,6 @@ function openPr(url: string): void {
       :color-scheme="client.colorScheme.value"
       :ui-font-size="client.uiFontSize.value"
       :auth-ready="client.authReady.value"
-      :conversation-toc="client.conversationToc.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
@@ -1194,7 +1186,6 @@ function openPr(url: string): void {
       @set-permission="client.setPermission($event)"
       @set-color-scheme="client.setColorScheme($event)"
       @set-ui-font-size="client.setUiFontSize($event)"
-      @set-conversation-toc="client.setConversationToc($event)"
       @login="() => { showMobileSettings = false; openLogin(); }"
       @logout="client.logout"
     />

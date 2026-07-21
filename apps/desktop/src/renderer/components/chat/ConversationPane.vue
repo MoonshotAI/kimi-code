@@ -97,8 +97,6 @@ const props = defineProps<{
   sessionTitle?: string;
   /** GitHub PR for the current branch, when known (shown in the chat header). */
   pr?: { number: number; state: string; url: string } | null;
-  /** Conversation outline: proportional bubbles, viewport indicator, hover tooltip. */
-  conversationToc?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -353,7 +351,7 @@ function scheduleTocTableHitTest(): void {
 function updateTocTableOcclusion(): void {
   const pane = panesRef.value;
   const toc =
-    !props.mobile && props.conversationToc && pane
+    !props.mobile && pane
       ? pane.closest('.con')?.querySelector<HTMLElement>('.conversation-toc')
       : null;
   // The hit x is the centre of the fixed rail bar: `.toc-bar` keeps a stable x
@@ -1356,7 +1354,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
     <!-- Conversation outline: right edge rail of vertical bars (one per user
          query); hover to expand a labeled panel. -->
     <ConversationToc
-      v-if="conversationToc"
       :items="conversationTocItems"
       :active-turn-id="activeTurnId"
       :mobile="mobile"
