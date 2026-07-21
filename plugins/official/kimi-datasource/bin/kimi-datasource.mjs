@@ -72,7 +72,13 @@ const TOOLS = [
             'sec_edgar',
             'sp_data',
           ],
-          description: 'Data source name.',
+          description:
+            'Data source name. Routing: wind = A-share intraday/minute quotes, funds, bonds; ' +
+            'imf = FX rates, CPI, GDP forecasts, balance of payments; ' +
+            'gildata = natural-language stock/fund screening; ' +
+            'sec_edgar = US filings (10-K/10-Q, S-1, Form 4, 13F, 8-K); ' +
+            'sp_data = US fundamentals (top holders, consensus estimates, valuation ratios); ' +
+            'stock_finance_data / yahoo_finance = general quotes and financials fallback.',
         },
       },
       required: ['name'],
