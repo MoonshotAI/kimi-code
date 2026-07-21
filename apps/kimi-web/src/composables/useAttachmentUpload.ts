@@ -71,6 +71,15 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     try { URL.revokeObjectURL(att.previewUrl); } catch { /* ignore */ }
   }
 
+  /** Remove an attachment and release its preview blob URL first — an object
+   *  URL pins the (possibly large) blob in the browser store until revoked. */
+  function dropAttachment(sid: string, localId: string): void {
+    const current = attachmentsBySession.value[sid] ?? [];
+    const entry = current.find((a) => a.localId === localId);
+    if (entry !== undefined) revokeAttachment(entry);
+    setForSession(sid, current.filter((a) => a.localId !== localId));
+  }
+
   function attachmentKind(mime: string): 'image' | 'video' | 'file' {
     if (mime.startsWith('image/')) return 'image';
     if (mime.startsWith('video/')) return 'video';
@@ -368,15 +377,13 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           })
           .then((result) => {
             if (result === null) {
-              const current = attachmentsBySession.value[sid] ?? [];
-              setForSession(sid, current.filter((a) => a.localId !== localId));
+              dropAttachment(sid, localId);
               return;
             }
             patchAttachment(sid, localId, { uploading: false, fileId: result.fileId });
           })
           .catch(() => {
-            const current = attachmentsBySession.value[sid] ?? [];
-            setForSession(sid, current.filter((a) => a.localId !== localId));
+            dropAttachment(sid, localId);
           });
       } else {
         // No fileId (e.g. a server-base64-inlined image, or a URL-backed source
