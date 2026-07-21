@@ -423,7 +423,7 @@ export interface WireConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Auth wire DTOs — REAL endpoints (GET /api/v1/auth, POST/GET/DELETE /api/v1/oauth/login, POST /api/v1/oauth/logout)
+// Auth wire DTOs — REAL endpoints (GET /api/v1/auth, POST/GET/DELETE /api/v1/oauth/login, POST /api/v1/oauth/logout, GET /api/v1/oauth/usage)
 // ---------------------------------------------------------------------------
 
 export interface WireManagedProvider {
@@ -481,6 +481,35 @@ export interface WireOAuthCancelResult {
 export interface WireLogoutResult {
   logged_out: boolean;
 }
+
+// GET /oauth/usage — managed-platform quotas (weekly summary, rolling 5h
+// limits, booster wallet). Discriminated by `kind`.
+export interface WireUsageRow {
+  label: string;
+  used: number;
+  limit: number;
+  reset_hint?: string;
+  reset_at?: string;
+  window_seconds?: number;
+}
+
+export interface WireBoosterWallet {
+  balance_cents: number;
+  total_cents: number;
+  monthly_charge_limit_enabled: boolean;
+  monthly_charge_limit_cents: number;
+  monthly_used_cents: number;
+  currency: string;
+}
+
+export type WireManagedUsage =
+  | {
+      kind: 'ok';
+      summary: WireUsageRow | null;
+      limits: WireUsageRow[];
+      extra_usage: WireBoosterWallet | null;
+    }
+  | { kind: 'error'; code: 'unauthenticated' | 'unavailable'; message: string };
 
 // ---------------------------------------------------------------------------
 // File upload wire DTOs

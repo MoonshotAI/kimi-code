@@ -297,6 +297,7 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     } catch (error) {
       return {
         kind: 'error',
+        status: error instanceof OAuthUnauthorizedError ? 401 : undefined,
         message: error instanceof Error ? error.message : String(error),
       };
     }

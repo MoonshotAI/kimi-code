@@ -9,7 +9,7 @@
      line; long text wraps within `maxWidth` and is clamped to `maxLines` lines with
      an ellipsis so the bubble never grows too tall. -->
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 type Placement = 'top' | 'bottom' | 'left' | 'right';
 
@@ -20,11 +20,13 @@ const props = withDefaults(
     maxWidth?: number;
     /** Clamp the bubble to at most this many lines (with an ellipsis). */
     maxLines?: number;
+    disabled?: boolean;
   }>(),
   {
     placement: 'top',
     maxWidth: 280,
     maxLines: 6,
+    disabled: false,
   },
 );
 
@@ -84,7 +86,7 @@ function position(): void {
 }
 
 function show(): void {
-  if (!props.text) return;
+  if (props.disabled || !props.text) return;
   window.clearTimeout(showTimer);
   showTimer = window.setTimeout(() => {
     open.value = true;
@@ -101,6 +103,13 @@ function hide(): void {
   open.value = false;
   positioned.value = false;
 }
+
+watch(
+  () => [props.disabled, props.text] as const,
+  ([disabled, text]) => {
+    if (disabled || !text) hide();
+  },
+);
 
 function onScrollOrResize(): void {
   if (open.value) hide();

@@ -27,6 +27,7 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
   type ManagedKimiConfigShape,
@@ -258,6 +259,21 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined> {
     return this.toolkit.getCachedAccessToken(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
+  }
+
+  getManagedUsage(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUsageResult> {
+    const config = this.providerService.get(provider);
+    if (provider !== KIMI_CODE_PROVIDER_NAME) {
+      return this.toolkit.getManagedUsage(provider, {
+        oauthRef: config?.oauth,
+        baseUrl: config?.baseUrl,
+      });
+    }
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: config?.baseUrl,
+      configuredOAuthRef: config?.oauth,
+    });
+    return this.toolkit.getManagedUsage(provider, { oauthRef: auth.oauthRef, baseUrl: auth.baseUrl });
   }
 
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
