@@ -157,6 +157,15 @@ it('runs an agent turn through builtin tool approval and execution', async () =>
   await ctx.expectResumeMatches();
 });
 
+const VIDEO_CAPS = {
+  image_in: true,
+  video_in: true,
+  audio_in: false,
+  thinking: false,
+  tool_use: true,
+  max_context_tokens: 1000000,
+} as const;
+
 describe('uploadVideo', () => {
   // Minimal ISO-BMFF header: a 24-byte ftyp box with the `isom` brand, which
   // is all the media sniffer needs to classify the file as video/mp4.
@@ -224,6 +233,7 @@ describe('uploadVideo', () => {
       const ctx = testAgent();
       ctx.configure({
         provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+        modelCapabilities: VIDEO_CAPS,
       });
 
       const part = await ctx.rpc.uploadVideo({ path: tempVideo() });
@@ -243,16 +253,34 @@ describe('uploadVideo', () => {
 
   it('rejects when the provider has no video upload channel', async () => {
     const ctx = testAgent();
-    ctx.configure({ provider: { type: 'openai', apiKey: 'test-key', model: 'mock-model' } });
+    ctx.configure({ provider: { type: 'openai', apiKey: 'test-key', model: 'mock-model' }, modelCapabilities: VIDEO_CAPS });
 
     await expect(ctx.rpc.uploadVideo({ path: tempVideo() })).rejects.toThrow(
       /does not support video upload/,
     );
   });
 
+  it('rejects when the model lacks the video_in capability', async () => {
+    const stub = await stubFilesServer();
+    try {
+      const ctx = testAgent();
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+        modelCapabilities: { ...VIDEO_CAPS, video_in: false },
+      });
+
+      await expect(ctx.rpc.uploadVideo({ path: tempVideo() })).rejects.toThrow(
+        /does not support video input/,
+      );
+      expect(stub.requests).toHaveLength(0);
+    } finally {
+      await stub.close();
+    }
+  });
+
   it('rejects a non-video file', async () => {
     const ctx = testAgent();
-    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' }, modelCapabilities: VIDEO_CAPS });
 
     await expect(
       ctx.rpc.uploadVideo({ path: tempVideo('notes.txt', Buffer.from('plain text')) }),
@@ -261,7 +289,7 @@ describe('uploadVideo', () => {
 
   it('rejects a video over the 100MB cap', async () => {
     const ctx = testAgent();
-    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' }, modelCapabilities: VIDEO_CAPS });
     const path = tempVideo();
     // Sparse extend: the ftyp header stays, the size crosses the cap.
     truncateSync(path, 101 * 1024 * 1024);
@@ -314,6 +342,7 @@ describe('uploadVideo input validation', () => {
       const ctx = testAgent();
       ctx.configure({
         provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+        modelCapabilities: VIDEO_CAPS,
       });
       const part = await ctx.rpc.uploadVideo({
         path: tempFile('fake.mp4', Buffer.from('definitely not a video')),
@@ -330,6 +359,7 @@ describe('uploadVideo input validation', () => {
       const ctx = testAgent();
       ctx.configure({
         provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+        modelCapabilities: VIDEO_CAPS,
       });
       const part = await ctx.rpc.uploadVideo({ path: tempFile('video.txt', FTYP_MP4) });
       expect(part.videoUrl.url).toBe('ms://stub-video-file');
@@ -344,6 +374,7 @@ describe('uploadVideo input validation', () => {
       const ctx = testAgent();
       ctx.configure({
         provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model', baseUrl: stub.url },
+        modelCapabilities: VIDEO_CAPS,
       });
 
       const over = tempFile('over.mp4', FTYP_MP4);
@@ -361,14 +392,14 @@ describe('uploadVideo input validation', () => {
 
   it('rejects a directory path', async () => {
     const ctx = testAgent();
-    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' }, modelCapabilities: VIDEO_CAPS });
     const dir = mkdtempSync(join(tmpdir(), 'agent-upload-video-'));
     await expect(ctx.rpc.uploadVideo({ path: dir })).rejects.toThrow();
   });
 
   it('rejects a nonexistent path', async () => {
     const ctx = testAgent();
-    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } });
+    ctx.configure({ provider: { type: 'kimi', apiKey: 'test-key', model: 'mock-model' }, modelCapabilities: VIDEO_CAPS });
     await expect(ctx.rpc.uploadVideo({ path: '/no/such/file.mp4' })).rejects.toThrow();
   });
 });

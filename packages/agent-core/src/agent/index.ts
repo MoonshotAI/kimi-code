@@ -505,6 +505,12 @@ export class Agent {
    * reads itself keep flowing through ReadMediaFile.
    */
   async uploadVideo(path: string): Promise<VideoURLPart> {
+    if (!this.config.modelCapabilities.video_in) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'The current model does not support video input.',
+      );
+    }
     const uploader = this.tools.videoUploader();
     if (uploader === undefined) {
       throw new KimiError(
