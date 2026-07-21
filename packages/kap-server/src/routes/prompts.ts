@@ -144,6 +144,10 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
+    // Agent-scoped view: agent identity is ambient for agent-level events
+    // (e.g. video_upload), unlike the Core-scoped view used for session-level
+    // events (e.g. image_compress).
+    telemetry: agent.accessor.get(ITelemetryService),
   };
 }
 
@@ -329,7 +333,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             videoUploader: promptVideoUploader(
               resolved.profile,
               core.accessor.get(IModelCatalog),
-              telemetry,
+              // Agent-level events (video_upload) need the target agent's
+              // ambient identity, not the Core-scoped session view above.
+              resolved.telemetry.withContext({ sessionId: session_id }),
             ),
             onVideoInlined: async (localFileId, llmFileId) => {
               // Best effort — a lost mapping only means the web UI cannot
