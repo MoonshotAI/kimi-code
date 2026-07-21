@@ -2268,9 +2268,6 @@ describe('FullCompaction', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use observed window' }] });
     const events = await ctx.untilTurnEnd();
 
-    // Without the observed cap being written into max_input_tokens, the
-    // strategy would keep sizing against the raw 150k input cap and never
-    // preemptively compact the 120k context the provider already rejected.
     expect(callCount).toBe(5);
     expect(eventIndex(events, 'compaction.started')).toBeLessThan(
       eventIndex(events, 'turn.step.started'),

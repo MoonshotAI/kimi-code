@@ -335,6 +335,7 @@ export function assembleModelInspection(args: {
   // Mirror the effective-field sources onto their resolved counterparts.
   for (const field of [
     'maxContextSize',
+    'maxInputSize',
     'maxOutputSize',
     'displayName',
     'reasoningKey',

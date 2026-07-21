@@ -635,8 +635,6 @@ describe('ModelCatalog inspect', () => {
         kind: 'synthesized',
       });
 
-      // An override value itself above the window is attributed to the clamp,
-      // not to models.*.overrides.
       const clampedOverrideView = catalog.inspect('clampedOverride');
       expect(clampedOverrideView.resolved.maxInputSize).toBe(128000);
       expect(clampedOverrideView.sources['model.effective.maxInputSize']).toMatchObject({
@@ -645,6 +643,9 @@ describe('ModelCatalog inspect', () => {
       });
       expect(clampedOverrideView.sources['model.effective.maxInputSize']).not.toMatchObject({
         kind: 'override',
+      });
+      expect(clampedOverrideView.sources['resolved.maxInputSize']).toMatchObject({
+        kind: 'synthesized',
       });
 
       const plainView = catalog.inspect('plain');
