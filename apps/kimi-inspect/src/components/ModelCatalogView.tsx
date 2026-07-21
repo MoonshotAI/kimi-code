@@ -13,9 +13,8 @@
  *
  * All data goes through the channel layer — `IModelCatalog` +
  * `IModelService` for the list, `IModelCatalog.inspect` per model for the god
- * objects — over the probed RPC surface (`/api/v1/debug` on dev servers,
- * `/api/v2` otherwise). No bespoke REST calls. Refreshes on core domain
- * events (debounced) plus a slow poll.
+ * objects — over the `/api/v1/debug` RPC surface. No bespoke REST calls.
+ * There is no live event push; the queries refresh on a slow poll.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -34,7 +33,6 @@ import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/session
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 
 import { useConnection } from '../connection';
-import { useLiveEvent } from '../live';
 import { ActionButton, Badge, ErrorLine, JsonTree, JsonView, errorMessage } from '../ui';
 
 const SOURCE_TONES: Record<
@@ -98,16 +96,6 @@ export function ModelCatalogView({
     queryKey: ['modelCatalog', 'records'],
     queryFn: () => klient.core(IModelService).list(),
     refetchInterval: 15_000,
-  });
-
-  // Core domain events (config reload, catalog refresh, …) → debounced refetch.
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useLiveEvent((event) => {
-    if (event.source !== 'core') return;
-    if (refreshTimer.current !== undefined) clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(() => {
-      void queryClient.invalidateQueries({ queryKey: ['modelCatalog'] });
-    }, 500);
   });
 
   const providerList = providers.data ?? [];

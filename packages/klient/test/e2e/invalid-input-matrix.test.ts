@@ -38,9 +38,45 @@ import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/mes
 
 import type { Klient } from '../../src/index.js';
 import type { AgentHandle } from '../../src/core/klient.js';
+import type { KlientEvents } from '../../src/core/events/hub.js';
 import { KlientValidationError } from '../../src/core/validation.js';
 import { createKlient as createMemoryKlient } from '../../src/transports/memory/index.js';
-import { onceEvent, waitFor } from '../helpers/dual.js';
+
+// The dual/http e2e suites (and their `helpers/dual.ts`) were dropped with the
+// http transport; the two wait primitives they exported are re-declared here.
+async function waitFor(
+  predicate: () => Promise<boolean> | boolean,
+  timeoutMs: number,
+  intervalMs = 100,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await predicate()) return;
+    await new Promise((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
+  }
+  throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+}
+
+/** Resolve with the first payload of `name` (or reject on timeout). */
+function onceEvent<TPayloadMap extends object, E extends keyof TPayloadMap & string>(
+  events: KlientEvents<TPayloadMap>,
+  name: E,
+  timeoutMs = 60_000,
+): Promise<TPayloadMap[E]> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      sub.dispose();
+      reject(new Error(`timed out waiting for event ${name}`));
+    }, timeoutMs);
+    const sub = events.on(name, (payload) => {
+      clearTimeout(timer);
+      sub.dispose();
+      resolve(payload);
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Model ids registered in the engine for this suite.
