@@ -4,8 +4,9 @@
  * Discovers user skills from the bootstrap home directories through
  * `ISkillDiscovery`, contributing them at priority 20 (above extra / plugin /
  * builtin, below workspace). Reads home paths from `bootstrap` and hot-reloads
- * on both its config section and filesystem changes in the user skill roots
- * (watched through `hostFsWatch` via `SkillRootWatcher`). Bound at App scope.
+ * on both its config section and filesystem changes in the user skill roots,
+ * probing them through `hostFs` and watching them through `hostFsWatch` via
+ * `SkillRootWatcher`. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -15,6 +16,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 
 import {
@@ -47,6 +49,7 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IHostFsWatchService hostFsWatch: IHostFsWatchService,
   ) {
     super();
@@ -58,6 +61,7 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
     if ((this.runtimeOptions.explicitDirs?.length ?? 0) === 0) {
       this._register(
         new SkillRootWatcher(
+          this.hostFs,
           hostFsWatch,
           async () => userRootCandidates(this.bootstrap.homeDir, this.bootstrap.osHomeDir),
           () => this.onDidChangeEmitter.fire(),
@@ -74,7 +78,9 @@ export class UserFileSkillSource extends Disposable implements IUserFileSkillSou
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     return this.discovery.discover(
-      await userRoots(this.bootstrap.homeDir, this.bootstrap.osHomeDir, { mergeAllAvailableSkills }),
+      await userRoots(this.hostFs, this.bootstrap.homeDir, this.bootstrap.osHomeDir, {
+        mergeAllAvailableSkills,
+      }),
     );
   }
 }

@@ -9,11 +9,13 @@
  * `*Candidates` helpers return the same locations WITHOUT the existence filter
  * or realpath resolution, for file watchers that must observe roots appearing
  * later. These helpers are exported so the edge can compose a workspace's
- * skills without a Session. Pure path/fs probes; no scoped state.
+ * skills without a Session. Pure path probes through `IHostFileSystem`; no
+ * scoped state.
  */
 
-import { promises as fs } from 'node:fs';
 import path from 'pathe';
+
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SkillRoot, SkillSource } from './types';
 
@@ -27,39 +29,49 @@ export interface SkillRootsOptions {
 }
 
 export async function userRoots(
+  fs: IHostFileSystem,
   homeDir: string,
   osHomeDir: string,
   options: SkillRootsOptions = {},
 ): Promise<readonly SkillRoot[]> {
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
-  await pushBrandGroup(roots, USER_BRAND_DIRS, homeDir, 'user', mergeAllAvailableSkills);
-  await pushFirstExisting(roots, USER_GENERIC_DIRS, osHomeDir, 'user');
+  await pushBrandGroup(fs, roots, USER_BRAND_DIRS, homeDir, 'user', mergeAllAvailableSkills);
+  await pushFirstExisting(fs, roots, USER_GENERIC_DIRS, osHomeDir, 'user');
   return roots;
 }
 
 export async function projectRoots(
+  fs: IHostFileSystem,
   workDir: string,
   options: SkillRootsOptions = {},
 ): Promise<readonly SkillRoot[]> {
-  const projectRoot = await findProjectRoot(workDir);
+  const projectRoot = await findProjectRoot(fs, workDir);
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
-  await pushBrandGroup(roots, PROJECT_BRAND_DIRS, projectRoot, 'project', mergeAllAvailableSkills);
-  await pushFirstExisting(roots, PROJECT_GENERIC_DIRS, projectRoot, 'project');
+  await pushBrandGroup(
+    fs,
+    roots,
+    PROJECT_BRAND_DIRS,
+    projectRoot,
+    'project',
+    mergeAllAvailableSkills,
+  );
+  await pushFirstExisting(fs, roots, PROJECT_GENERIC_DIRS, projectRoot, 'project');
   return roots;
 }
 
 export async function configuredRoots(
+  fs: IHostFileSystem,
   dirs: readonly string[],
   workDir: string,
   osHomeDir: string,
   source: SkillSource,
 ): Promise<readonly SkillRoot[]> {
-  const projectRoot = await findProjectRoot(workDir);
+  const projectRoot = await findProjectRoot(fs, workDir);
   const roots: SkillRoot[] = [];
   for (const dir of dirs) {
-    await pushExistingRoot(roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
+    await pushExistingRoot(fs, roots, resolveConfiguredDir(dir, projectRoot, osHomeDir), source);
   }
   return roots;
 }
@@ -71,8 +83,11 @@ export function userRootCandidates(homeDir: string, osHomeDir: string): readonly
   ];
 }
 
-export async function projectRootCandidates(workDir: string): Promise<readonly string[]> {
-  const projectRoot = await findProjectRoot(workDir);
+export async function projectRootCandidates(
+  fs: IHostFileSystem,
+  workDir: string,
+): Promise<readonly string[]> {
+  const projectRoot = await findProjectRoot(fs, workDir);
   return [
     ...PROJECT_BRAND_DIRS.map((dir) => path.join(projectRoot, dir)),
     ...PROJECT_GENERIC_DIRS.map((dir) => path.join(projectRoot, dir)),
@@ -80,19 +95,20 @@ export async function projectRootCandidates(workDir: string): Promise<readonly s
 }
 
 export async function configuredRootCandidates(
+  fs: IHostFileSystem,
   dirs: readonly string[],
   workDir: string,
   osHomeDir: string,
 ): Promise<readonly string[]> {
-  const projectRoot = await findProjectRoot(workDir);
+  const projectRoot = await findProjectRoot(fs, workDir);
   return dirs.map((dir) => resolveConfiguredDir(dir, projectRoot, osHomeDir));
 }
 
-async function findProjectRoot(workDir: string): Promise<string> {
+async function findProjectRoot(fs: IHostFileSystem, workDir: string): Promise<string> {
   const start = path.resolve(workDir);
   let current = start;
   while (true) {
-    if (await exists(path.join(current, '.git'))) return current;
+    if (await exists(fs, path.join(current, '.git'))) return current;
     const parent = path.dirname(current);
     if (parent === current) return start;
     current = parent;
@@ -100,17 +116,19 @@ async function findProjectRoot(workDir: string): Promise<string> {
 }
 
 async function pushFirstExisting(
+  fs: IHostFileSystem,
   out: SkillRoot[],
   dirs: readonly string[],
   base: string,
   source: SkillSource,
 ): Promise<void> {
   for (const dir of dirs) {
-    if (await pushExistingRoot(out, path.join(base, dir), source)) return;
+    if (await pushExistingRoot(fs, out, path.join(base, dir), source)) return;
   }
 }
 
 async function pushBrandGroup(
+  fs: IHostFileSystem,
   out: SkillRoot[],
   dirs: readonly string[],
   base: string,
@@ -118,21 +136,22 @@ async function pushBrandGroup(
   mergeAllAvailableSkills: boolean,
 ): Promise<void> {
   if (!mergeAllAvailableSkills) {
-    await pushFirstExisting(out, dirs, base, source);
+    await pushFirstExisting(fs, out, dirs, base, source);
     return;
   }
   for (const dir of dirs) {
-    await pushExistingRoot(out, path.join(base, dir), source);
+    await pushExistingRoot(fs, out, path.join(base, dir), source);
   }
 }
 
 async function pushExistingRoot(
+  fs: IHostFileSystem,
   out: SkillRoot[],
   dir: string,
   source: SkillSource,
 ): Promise<boolean> {
-  if (!(await isDir(dir))) return false;
-  const resolved = await realpath(dir);
+  if (!(await isDir(fs, dir))) return false;
+  const resolved = await realpath(fs, dir);
   if (!out.some((root) => root.path === resolved)) out.push({ path: resolved, source });
   return true;
 }
@@ -144,19 +163,19 @@ function resolveConfiguredDir(dir: string, projectRoot: string, osHomeDir: strin
   return path.resolve(projectRoot, dir);
 }
 
-export async function isDir(p: string): Promise<boolean> {
+export async function isDir(fs: IHostFileSystem, p: string): Promise<boolean> {
   try {
-    return (await fs.stat(p)).isDirectory();
+    return (await fs.stat(p)).isDirectory;
   } catch {
     return false;
   }
 }
 
-async function realpath(p: string): Promise<string> {
+async function realpath(fs: IHostFileSystem, p: string): Promise<string> {
   return (await fs.realpath(p)).replaceAll('\\', '/');
 }
 
-async function exists(p: string): Promise<boolean> {
+async function exists(fs: IHostFileSystem, p: string): Promise<boolean> {
   try {
     await fs.stat(p);
     return true;

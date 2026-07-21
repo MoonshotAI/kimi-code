@@ -5,8 +5,10 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { configuredRoots, projectRoots, userRoots } from '#/app/skillCatalog/skillRoots';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 describe('skillRoots', () => {
+  const fs = new HostFileSystem();
   let root: string;
 
   beforeEach(async () => {
@@ -26,7 +28,7 @@ describe('skillRoots', () => {
       await markGitRoot();
       await mkdir(join(root, '.kimi-code/skills/commit'), { recursive: true });
 
-      const roots = await projectRoots(root);
+      const roots = await projectRoots(fs, root);
 
       expect(roots.some((r) => r.path.endsWith('.kimi-code/skills') && r.source === 'project')).toBe(
         true,
@@ -37,7 +39,7 @@ describe('skillRoots', () => {
       await markGitRoot();
       await mkdir(join(root, '.agents/skills/review'), { recursive: true });
 
-      const roots = await projectRoots(root);
+      const roots = await projectRoots(fs, root);
 
       expect(roots.some((r) => r.path.endsWith('.agents/skills') && r.source === 'project')).toBe(
         true,
@@ -51,7 +53,7 @@ describe('skillRoots', () => {
       const child = join(root, 'src/pkg');
       await mkdir(child, { recursive: true });
 
-      const roots = await projectRoots(child);
+      const roots = await projectRoots(fs, child);
 
       expect(roots.some((r) => r.path.endsWith('.kimi-code/skills'))).toBe(true);
     });
@@ -61,7 +63,7 @@ describe('skillRoots', () => {
       await mkdir(join(root, '.kimi-code/skills'), { recursive: true });
       await mkdir(join(root, '.agents/skills'), { recursive: true });
 
-      const roots = await projectRoots(root);
+      const roots = await projectRoots(fs, root);
       const brandIdx = roots.findIndex((r) => r.path.endsWith('.kimi-code/skills'));
       const genericIdx = roots.findIndex((r) => r.path.endsWith('.agents/skills'));
 
@@ -74,7 +76,7 @@ describe('skillRoots', () => {
     it('resolves the brand skills directory under homeDir', async () => {
       await mkdir(join(root, 'skills/notes'), { recursive: true });
 
-      const roots = await userRoots(root, root);
+      const roots = await userRoots(fs, root, root);
 
       expect(roots.some((r) => r.path.endsWith('/skills') && r.source === 'user')).toBe(true);
     });
@@ -85,7 +87,7 @@ describe('skillRoots', () => {
       await mkdir(homeDir, { recursive: true });
       await mkdir(join(osHomeDir, '.agents/skills/notes'), { recursive: true });
 
-      const roots = await userRoots(homeDir, osHomeDir);
+      const roots = await userRoots(fs, homeDir, osHomeDir);
 
       expect(roots.some((r) => r.path.endsWith('.agents/skills') && r.source === 'user')).toBe(
         true,
@@ -103,7 +105,13 @@ describe('skillRoots', () => {
       await mkdir(absDir, { recursive: true });
       await mkdir(join(root, 'relative'), { recursive: true });
 
-      const roots = await configuredRoots(['~', '~/notes', absDir, 'relative'], root, homeDir, 'extra');
+      const roots = await configuredRoots(
+        fs,
+        ['~', '~/notes', absDir, 'relative'],
+        root,
+        homeDir,
+        'extra',
+      );
       const paths = roots.map((root) => root.path);
 
       expect(roots.every((root) => root.source === 'extra')).toBe(true);

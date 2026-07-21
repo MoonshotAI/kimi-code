@@ -7,8 +7,8 @@
  * root; `~` and `~/...` resolve against the bootstrap home dir. Hot-reloads on
  * both its config section (re-resolving the watched directories) and
  * filesystem changes in the configured roots (watched through `hostFsWatch`
- * via `SkillRootWatcher`). Bound at Session scope so each session reads its
- * own workspace root.
+ * via `SkillRootWatcher` and probed through `hostFs`). Bound at Session scope
+ * so each session reads its own workspace root.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -26,6 +26,7 @@ import { configuredRootCandidates, configuredRoots } from '#/app/skillCatalog/sk
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { SkillRootWatcher } from '#/app/skillCatalog/skillRootWatcher';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -50,6 +51,7 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
     @IConfigService private readonly config: IConfigService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IHostFsWatchService hostFsWatch: IHostFsWatchService,
   ) {
     super();
@@ -63,6 +65,7 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
     );
     this.watcher = this._register(
       new SkillRootWatcher(
+        this.hostFs,
         hostFsWatch,
         () => this.watchCandidates(),
         () => this.onDidChangeEmitter.fire(),
@@ -74,14 +77,25 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
     await this.config.ready;
     const extraSkillDirs = this.config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
     return this.discovery.discover(
-      await configuredRoots(extraSkillDirs, this.workspace.workDir, this.bootstrap.osHomeDir, 'extra'),
+      await configuredRoots(
+        this.hostFs,
+        extraSkillDirs,
+        this.workspace.workDir,
+        this.bootstrap.osHomeDir,
+        'extra',
+      ),
     );
   }
 
   private async watchCandidates(): Promise<readonly string[]> {
     await this.config.ready;
     const extraSkillDirs = this.config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
-    return configuredRootCandidates(extraSkillDirs, this.workspace.workDir, this.bootstrap.osHomeDir);
+    return configuredRootCandidates(
+      this.hostFs,
+      extraSkillDirs,
+      this.workspace.workDir,
+      this.bootstrap.osHomeDir,
+    );
   }
 }
 

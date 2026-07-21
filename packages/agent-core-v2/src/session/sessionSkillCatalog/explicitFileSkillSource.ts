@@ -4,10 +4,10 @@
  * Mirrors v1 SDK `skillDirs`: when runtime options provide `explicitDirs`, this
  * source contributes those directories as the user source, resolving relative
  * paths against the session project root, and hot-reloads on filesystem
- * changes in them (watched through `hostFsWatch` via `SkillRootWatcher`). When
- * no explicit dirs are configured, it yields nothing so default user / project
- * discovery remains active. Bound at Session scope so each session resolves
- * paths against its own workDir.
+ * changes in them (probed through `hostFs` and watched through `hostFsWatch`
+ * via `SkillRootWatcher`). When no explicit dirs are configured, it yields
+ * nothing so default user / project discovery remains active. Bound at Session
+ * scope so each session resolves paths against its own workDir.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -21,6 +21,7 @@ import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRunt
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { SkillRootWatcher } from '#/app/skillCatalog/skillRootWatcher';
 import { SKILL_SOURCE_PRIORITY, type ISkillSource, type SkillContribution } from '#/app/skillCatalog/skillSource';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
@@ -44,6 +45,7 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
     @ISkillCatalogRuntimeOptions private readonly runtimeOptions: ISkillCatalogRuntimeOptions,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IHostFsWatchService hostFsWatch: IHostFsWatchService,
   ) {
     super();
@@ -51,9 +53,15 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
     if (explicitDirs.length > 0) {
       this._register(
         new SkillRootWatcher(
+          this.hostFs,
           hostFsWatch,
           async () =>
-            configuredRootCandidates(explicitDirs, this.workspace.workDir, this.bootstrap.osHomeDir),
+            configuredRootCandidates(
+              this.hostFs,
+              explicitDirs,
+              this.workspace.workDir,
+              this.bootstrap.osHomeDir,
+            ),
           () => this.onDidChangeEmitter.fire(),
         ),
       );
@@ -66,7 +74,13 @@ export class ExplicitFileSkillSource extends Disposable implements IExplicitFile
       return { skills: [] };
     }
     return this.discovery.discover(
-      await configuredRoots(explicitDirs, this.workspace.workDir, this.bootstrap.osHomeDir, 'user'),
+      await configuredRoots(
+        this.hostFs,
+        explicitDirs,
+        this.workspace.workDir,
+        this.bootstrap.osHomeDir,
+        'user',
+      ),
     );
   }
 }
