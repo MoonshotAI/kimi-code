@@ -1074,8 +1074,26 @@ describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
     await abortPrompt(id, submitted.data.prompt_id);
   });
 
-  it('keeps the llm video mapping across a server restart', async () => {
+  it('falls back to the tag form when an uploaded "video" sniffs as another kind', async () => {
     const id = await createSessionWithAgent();
+    // Declared video/mp4 at upload time, but the bytes are a PNG (magic
+    // bytes are authoritative; a text lookalike would be indistinguishable
+    // from MPEG-PS and is the provider's call, same as ReadMediaFile).
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
+    const fileId = await uploadVideoFile('clip.mp4', pngBytes);
+
+    const submitted = await submitVideoPrompt(id, [fileId]);
+
+    // No provider upload is attempted for bytes sniffed as a non-video kind.
+    expect(stubBodies).toHaveLength(0);
+    const content = submitted.data.content as Array<Record<string, unknown>>;
+    expect(content[1]?.['type']).toBe('text');
+    expect(String(content[1]?.['text'])).toMatch(/<video path="[^"]+"><\/video>/);
+
+    await abortPrompt(id, submitted.data.prompt_id);
+  });
+
+  it('keeps the llm video mapping across a server restart', async () => {    const id = await createSessionWithAgent();
     const fileId = await uploadVideoFile('clip.mp4', Buffer.from('persisted'));
 
     const submitted = await submitVideoPrompt(id, [fileId]);

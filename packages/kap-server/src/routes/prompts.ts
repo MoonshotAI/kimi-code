@@ -69,6 +69,7 @@ import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { recordLlmVideoRef } from '../lib/llmVideoRefs';
+import { detectFileType, MEDIA_SNIFF_BYTES } from '@moonshot-ai/agent-core-v2/agent/media/file-type';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -710,27 +711,36 @@ async function resolvePromptMediaFiles(
 
     // Uploaded video: inline the provider-issued reference into the prompt
     // so the model receives the video with the user message instead of having
-    // to open it with a tool call. Falls back to the file-tag form when the
-    // model has no upload channel or the upload fails.
+    // to open it with a tool call. Like the image gate above, the bytes are
+    // authoritative: a mislabeled upload (declared video/* but not actually
+    // one) never reaches the provider and falls back to the file-tag form,
+    // as does a model with no upload channel or a failed upload.
     if (part.type === 'video' && options.videoUploader !== undefined) {
-      try {
-        const data = await readFileOrStream(file);
-        const uploaded = await options.videoUploader({
-          data,
-          mimeType: file.meta.media_type,
-          filename: file.meta.name,
-        });
-        content.push({
-          type: 'video',
-          source: { kind: 'url', url: uploaded.videoUrl.url, id: uploaded.videoUrl.id },
-        });
-        changed = true;
-        if (uploaded.videoUrl.id !== undefined) {
-          await options.onVideoInlined?.(file.meta.id, uploaded.videoUrl.id);
+      const data = await readFileOrStream(file);
+      const sniffed = detectFileType(
+        file.meta.name,
+        data.subarray(0, MEDIA_SNIFF_BYTES),
+        'media',
+      );
+      if (sniffed.kind === 'video') {
+        try {
+          const uploaded = await options.videoUploader({
+            data,
+            mimeType: sniffed.mimeType,
+            filename: file.meta.name,
+          });
+          content.push({
+            type: 'video',
+            source: { kind: 'url', url: uploaded.videoUrl.url, id: uploaded.videoUrl.id },
+          });
+          changed = true;
+          if (uploaded.videoUrl.id !== undefined) {
+            await options.onVideoInlined?.(file.meta.id, uploaded.videoUrl.id);
+          }
+          continue;
+        } catch {
+          // Fall through to the file-tag form below.
         }
-        continue;
-      } catch {
-        // Fall through to the file-tag form below.
       }
     }
 
