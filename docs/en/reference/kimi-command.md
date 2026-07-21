@@ -23,6 +23,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--yolo` | `-y` | Auto-approve regular tool calls, skipping approval requests |
 | `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
+| `--worktree [name]` | `-w` | Create a new git worktree for this session. When no name is given, a three-word slug is generated from the bundled name database (e.g. `amber-drifting-cloud`). The worktree is created in detached HEAD at the current commit |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
@@ -39,6 +40,7 @@ The following combinations are rejected at startup:
 - `--continue` and `--session` are mutually exclusive — both mean "resume a previous session"
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
+- `--worktree` cannot be used with `--session` or `--continue` — a worktree is only created for a new session
 - `--output-format` can only be used together with `--prompt`
 
 When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to auto permission mode.
@@ -81,6 +83,24 @@ Read the code and produce an implementation plan before making any file changes:
 ```sh
 kimi --plan
 ```
+
+### Isolated Worktree Sessions
+
+Start a session in a fresh git worktree to avoid interfering with the main working tree or other active sessions:
+
+```sh
+# Auto-generate a three-word slug like amber-drifting-cloud
+kimi -w
+
+# Specify a custom worktree name (use = to avoid the next token being consumed)
+kimi --worktree=refactor-auth
+```
+
+The worktree is created under `<repo-root>/.kimi/worktrees/<name>` in a detached HEAD checkout at the current commit. Empty worktree sessions are cleaned up automatically on exit; sessions with content are left in place so work is preserved.
+
+Worktree names are validated slugs: at most 64 characters, no `/`, and each part may contain only letters, digits, `.`, `_`, and `-`. The names `.` and `..` are rejected. A leading `#123` is normalized to `pr-123`.
+
+Because `--worktree` accepts an optional name, a trailing positional argument can be misread as the worktree name. Prefer `--worktree=<name>` or `--worktree <name>` with the name immediately after the flag.
 
 ### Custom Skills Directories
 

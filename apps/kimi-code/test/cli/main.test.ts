@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => {
     handleUpgrade: vi.fn(),
     flushDiagnosticLogs: vi.fn(),
     finalizeHeadlessRun: vi.fn(),
+    prepareWorktreeRuntime: vi.fn(),
+    cleanupEmptyWorktree: vi.fn(),
+    metadataFromWorktree: vi.fn(() => undefined),
     log: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -134,6 +137,12 @@ vi.mock('../../src/cli/headless-exit', () => ({
   finalizeHeadlessRun: mocks.finalizeHeadlessRun,
 }));
 
+vi.mock('../../src/cli/worktree-runtime', () => ({
+  prepareWorktreeRuntime: mocks.prepareWorktreeRuntime,
+  cleanupEmptyWorktree: mocks.cleanupEmptyWorktree,
+  metadataFromWorktree: mocks.metadataFromWorktree,
+}));
+
 class ExitCalled extends Error {
   constructor(readonly code: number) {
     super(`exit(${code})`);
@@ -151,6 +160,7 @@ function defaultOpts(): CLIOptions {
     outputFormat: undefined,
     prompt: undefined,
     skillsDirs: [],
+    worktree: undefined,
   };
 }
 
@@ -234,7 +244,7 @@ describe('main entry command handling', () => {
     expect(mocks.runUpdatePreflight.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runShell.mock.invocationCallOrder[0]!,
     );
-    expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
+    expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2', { worktree: undefined });
   });
 
   it('runs prompt mode without interactive update preflight', async () => {
@@ -253,7 +263,10 @@ describe('main entry command handling', () => {
       track: expect.any(Function),
       isTTY: false,
     });
-    expect(runPrompt).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
+    expect(runPrompt).toHaveBeenCalledWith(opts, '0.0.1-alpha.2', {
+      worktree: undefined,
+      onSessionCreated: expect.any(Function),
+    });
     expect(runShell).not.toHaveBeenCalled();
   });
 
@@ -344,7 +357,7 @@ describe('main entry command handling', () => {
     expect(runUpdatePreflight).toHaveBeenCalledWith('0.0.1-alpha.2', {
       track: expect.any(Function),
     });
-    expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
+    expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2', { worktree: undefined });
   });
 
   it('installs crash handlers before parsing CLI arguments', () => {
@@ -379,6 +392,63 @@ describe('main entry command handling', () => {
 
     expect(exitCode).toBe(0);
     expect(runShell).not.toHaveBeenCalled();
+  });
+
+  it('cleans up the worktree when the shell runner fails at startup', async () => {
+    const opts: CLIOptions = { ...defaultOpts(), worktree: 'wt' };
+    const worktree = { worktreePath: '/repo/.kimi/worktrees/wt', parentRepoPath: '/repo', effectiveCwd: '/repo/.kimi/worktrees/wt' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.prepareWorktreeRuntime.mockReturnValue(worktree);
+    mocks.runShell.mockRejectedValue(new Error('startup boom'));
+
+    await expect(runHandleMainCommand(opts)).rejects.toThrow('startup boom');
+
+    expect(mocks.cleanupEmptyWorktree).toHaveBeenCalledWith(worktree);
+  });
+
+  it('cleans up the worktree when prompt mode fails before a session is created', async () => {
+    const opts: CLIOptions = { ...defaultOpts(), prompt: 'hi', worktree: 'wt' };
+    const worktree = { worktreePath: '/repo/.kimi/worktrees/wt', parentRepoPath: '/repo', effectiveCwd: '/repo/.kimi/worktrees/wt' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.prepareWorktreeRuntime.mockReturnValue(worktree);
+    // Fail without ever invoking onSessionCreated -> pre-session failure.
+    mocks.runPrompt.mockRejectedValue(new Error('no model configured'));
+
+    await expect(runHandleMainCommand(opts)).rejects.toThrow('no model configured');
+
+    expect(mocks.cleanupEmptyWorktree).toHaveBeenCalledWith(worktree);
+  });
+
+  it('preserves the worktree when prompt mode fails after a session is created', async () => {
+    const opts: CLIOptions = { ...defaultOpts(), prompt: 'hi', worktree: 'wt' };
+    const worktree = { worktreePath: '/repo/.kimi/worktrees/wt', parentRepoPath: '/repo', effectiveCwd: '/repo/.kimi/worktrees/wt' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.prepareWorktreeRuntime.mockReturnValue(worktree);
+    // Report a session was created, then fail the turn -> must not clean up.
+    mocks.runPrompt.mockImplementation(async (_opts, _version, io) => {
+      io?.onSessionCreated?.();
+      throw new Error('turn failed');
+    });
+
+    await expect(runHandleMainCommand(opts)).rejects.toThrow('turn failed');
+
+    expect(mocks.cleanupEmptyWorktree).not.toHaveBeenCalled();
+  });
+
+  it('does not clean up when no worktree was requested', async () => {
+    const opts: CLIOptions = { ...defaultOpts(), prompt: 'hi' };
+    mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'print' });
+    mocks.runUpdatePreflight.mockResolvedValue('continue');
+    mocks.runPrompt.mockRejectedValue(new Error('no model configured'));
+
+    await expect(runHandleMainCommand(opts)).rejects.toThrow('no model configured');
+
+    // cleanupEmptyWorktree is a no-op for undefined, but assert main passed nothing.
+    expect(mocks.cleanupEmptyWorktree).toHaveBeenCalledWith(undefined);
+    expect(mocks.prepareWorktreeRuntime).not.toHaveBeenCalled();
   });
 
   it('initializes and flushes telemetry around the upgrade command', async () => {

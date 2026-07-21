@@ -10,6 +10,7 @@
  */
 
 import type { PromptOutputFormat } from './options';
+import { formatResumeCommand } from './resume-hint';
 
 /**
  * Structural hook-result shape the renderer reads. Both the v1 SDK
@@ -391,8 +392,9 @@ export function writeResumeHint(
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
+  workDir?: string,
 ): void {
-  const command = `kimi -r ${sessionId}`;
+  const command = formatResumeCommand(sessionId, { cwd: workDir });
   const content = `To resume this session: ${command}`;
   if (outputFormat === 'stream-json') {
     const message: PromptJsonResumeMetaMessage = {

@@ -7,6 +7,7 @@ import type {
   ApprovalResponse,
   BackgroundTaskInfo,
   CreateSessionOptions,
+  JsonObject,
   KimiHarness,
   PermissionMode,
   PromptPart,
@@ -32,6 +33,7 @@ import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
 
+import { resolveSessionMetadata } from './session-worktree';
 import { BannerProvider } from './banner/banner-provider';
 import { readBannerDisplayState, writeBannerDisplayState } from './banner/state';
 import {
@@ -176,6 +178,11 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
+  /**
+   * Session metadata to persist for new sessions; set when launched with
+   * `--worktree` so the worktree paths are carried on the session.
+   */
+  readonly sessionMetadata?: JsonObject;
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
@@ -326,6 +333,7 @@ export class KimiTUI {
     string,
     { entry: TranscriptEntry; component: ShellRunComponent; taskId?: string }
   >();
+  private everHadSessionContent = false;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
   readonly btwPanelController: BtwPanelController;
@@ -379,6 +387,7 @@ export class KimiTUI {
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
         startupNotice: startupInput.startupNotice,
+        metadata: startupInput.sessionMetadata,
       },
     };
     this.options = tuiOptions;
@@ -737,6 +746,7 @@ export class KimiTUI {
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
+      metadata: startup.metadata,
     };
     if (this.state.appState.additionalDirs.length > 0) {
       createSessionOptions.additionalDirs = [...this.state.appState.additionalDirs];
@@ -1411,6 +1421,7 @@ export class KimiTUI {
 
   pushTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
+    this.recordSessionContent();
   }
 
   setExternalEditorRunning(running: boolean): void {
@@ -1434,7 +1445,27 @@ export class KimiTUI {
   }
 
   hasSessionContent(): boolean {
-    return this.state.transcriptEntries.length > 0;
+    const hasContent = this.state.transcriptEntries.length > 0;
+    if (hasContent) {
+      this.recordSessionContent();
+    }
+    return hasContent;
+  }
+
+  private recordSessionContent(): void {
+    this.everHadSessionContent = true;
+  }
+
+  /**
+   * Whether any session in this TUI lifetime has had transcript content.
+   *
+   * Used for worktree cleanup: after `/new` the current session may be empty,
+   * but we must not delete a worktree that held an earlier session.
+   */
+  hasEverHadSessionContent(): boolean {
+    // Refresh the flag in case content was added since the last call.
+    this.hasSessionContent();
+    return this.everHadSessionContent;
   }
 
   setExitOpenUrl(url: string): void {
@@ -1515,6 +1546,7 @@ export class KimiTUI {
       thinking: this.session === undefined ? undefined : this.state.appState.thinkingEffort,
       permission: this.state.appState.permissionMode,
       planMode: this.state.appState.planMode ? true : undefined,
+      metadata: resolveSessionMetadata(this.options.startup.metadata, this.session),
     };
     if (this.state.appState.additionalDirs.length > 0) {
       options.additionalDirs = [...this.state.appState.additionalDirs];
@@ -1914,6 +1946,7 @@ export class KimiTUI {
 
   appendTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
+    this.recordSessionContent();
     const component = this.createTranscriptComponent(entry);
     if (component) {
       markTranscriptComponent(component, entry);
@@ -1987,6 +2020,7 @@ export class KimiTUI {
   }
 
   private clearTranscriptAndRedraw(): void {
+    this.recordSessionContent();
     this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
     this.streamingUI.disposeActiveCompactionBlock();

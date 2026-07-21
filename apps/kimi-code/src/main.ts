@@ -28,6 +28,12 @@ import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
 import { runShell } from './cli/run-shell';
+import {
+  cleanupEmptyWorktree,
+  prepareWorktreeRuntime,
+  type WorktreeRuntime,
+} from './cli/worktree-runtime';
+import { WorktreeError } from './utils/git/worktree';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
 import { handleUpgrade } from './cli/sub/upgrade';
@@ -74,13 +80,45 @@ export async function handleMainCommand(
     process.exit(0);
   }
 
-  if (validated.uiMode === 'print') {
-    await runPrompt(validated.options, version);
-    return { headlessCompleted: true };
+  let worktree: WorktreeRuntime | undefined;
+  if (opts.worktree !== undefined) {
+    try {
+      worktree = prepareWorktreeRuntime(opts.worktree);
+    } catch (error) {
+      if (error instanceof WorktreeError) {
+        process.stderr.write(`error: ${error.message}\n`);
+        process.exit(1);
+      }
+      throw error;
+    }
   }
 
-  await runShell(validated.options, version);
-  return { headlessCompleted: false };
+  let promptSessionCreated = false;
+  try {
+    if (validated.uiMode === 'print') {
+      await runPrompt(validated.options, version, {
+        worktree,
+        onSessionCreated: () => {
+          promptSessionCreated = true;
+        },
+      });
+      return { headlessCompleted: true };
+    }
+
+    await runShell(validated.options, version, { worktree });
+    return { headlessCompleted: false };
+  } catch (error) {
+    // Clean up a worktree that never carried a session so failed startups do
+    // not leak empty worktrees. The shell runner only fails before a session
+    // has content, so any failure there is safe to clean up. Print mode is
+    // different: once a prompt session exists it is documented to leave the
+    // worktree inspectable, so only clean up when the failure happened before
+    // session creation.
+    if (validated.uiMode !== 'print' || !promptSessionCreated) {
+      cleanupEmptyWorktree(worktree);
+    }
+    throw error;
+  }
 }
 
 /** `kimi migrate`: launch the migration screen only, then exit. */

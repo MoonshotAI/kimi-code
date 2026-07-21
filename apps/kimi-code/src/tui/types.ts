@@ -1,6 +1,7 @@
 import type {
   GoalChange,
   GoalSnapshot,
+  JsonObject,
   ModelAlias,
   PermissionMode,
   ProviderConfig,
@@ -243,6 +244,7 @@ export interface TUIStartupOptions {
   readonly plan: boolean;
   readonly model?: string;
   readonly startupNotice?: string;
+  readonly metadata?: JsonObject;
 }
 
 export type TUIStartupState = 'pending' | 'ready' | 'picker';

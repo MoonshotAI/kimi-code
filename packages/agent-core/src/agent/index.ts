@@ -475,6 +475,7 @@ export class Agent {
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
       additionalDirsInfo: context?.additionalDirsInfo,
+      worktreeInfo: context?.worktreeInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
   }

@@ -26,6 +26,18 @@ export const RawAgentProfileSchema = z.object({
 export type RawAgentProfile = z.infer<typeof RawAgentProfileSchema>;
 
 /**
+ * Information about a git worktree the agent is running in.
+ *
+ * Populated when the session was launched with `--worktree`. The agent sees
+ * this in its system prompt so it knows it is in an isolated checkout and
+ * where the parent repository lives.
+ */
+export interface WorktreeInfo {
+  readonly worktreePath: string;
+  readonly parentRepoPath: string;
+}
+
+/**
  * Runtime context supplied to a system prompt renderer.
  *
  * Captures everything determined at render time rather than at profile-load
@@ -42,6 +54,7 @@ export interface SystemPromptContext {
   readonly skills?: SkillRegistry | string;
   readonly additionalDirsInfo?: string;
   readonly roleAdditional?: string;
+  readonly worktreeInfo?: WorktreeInfo;
 }
 
 export type SystemPromptRenderer = (context: SystemPromptContext) => string;
