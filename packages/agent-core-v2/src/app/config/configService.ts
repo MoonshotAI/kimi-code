@@ -4,10 +4,13 @@
  * Owns the section registry and the layered global config state: resolves a
  * value by precedence across defaults, the user config file, and per-run memory
  * overrides (highest, never persisted), and persists writes only for the `User`
- * target. Maintains four layered views of a domain — `rawSnake` (snake_case
+ * target. Maintains five layered views of a domain — `rawSnake` (snake_case
  * write base keyed by the on-disk section key, kept for lossless round-trip),
- * `raw` (camelCase, env-free),
- * `effective` (validated, env overlay applied), and `memory` (per-run overrides)
+ * `raw` (camelCase, env-free), `validated` (validated `raw`, env-free — the
+ * base every live env re-application starts from, so a degraded or removed env
+ * value falls back to the file instead of a stale overlay), `effective`
+ * (`validated` plus the env overlay, recomputed on load/set), and `memory`
+ * (per-run overrides)
  * — plus a `delivered` snapshot per domain used as the diff base for
  * `onDidSectionChange`. Reads config paths and the environment overlay through
  * `bootstrap`, persists the TOML document through the `storage` TOML
@@ -228,6 +231,7 @@ export class ConfigService extends Disposable implements IConfigService {
 
   private rawSnake: ResolvedConfig = {};
   private raw: ResolvedConfig = {};
+  private validated: ResolvedConfig = {};
   private effective: ResolvedConfig = {};
   private memory: ResolvedConfig = {};
   private delivered: ResolvedConfig = {};
@@ -265,12 +269,7 @@ export class ConfigService extends Disposable implements IConfigService {
     }
     const section = this.registry.getSection(domain);
     if (section?.env !== undefined) {
-      const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
-      try {
-        const next = applySectionEnv(this.effective[domain], section.env, getEnv);
-        this.effective[domain] = this.registry.validate(domain, next);
-      } catch {
-      }
+      return this.freshEffective()[domain] as T;
     }
     return this.effective[domain] as T;
   }
@@ -286,19 +285,14 @@ export class ConfigService extends Disposable implements IConfigService {
   }
 
   getAll(): ResolvedConfig {
-    const effective: ResolvedConfig = { ...this.effective };
-    const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
-    for (const section of this.registry.listSections()) {
-      if (section.env === undefined || effective[section.domain] === undefined) continue;
-      try {
-        effective[section.domain] = this.registry.validate(
-          section.domain,
-          applySectionEnv(effective[section.domain], section.env, getEnv),
-        );
-      } catch {
-      }
-    }
-    return { ...effective, ...this.memory };
+    return { ...this.freshEffective(), ...this.memory };
+  }
+
+  private freshEffective(): ResolvedConfig {
+    const effective: ResolvedConfig = { ...this.validated };
+    this.applySectionEnvBindings(effective, false);
+    this.applyEnvOverlay(effective, false);
+    return effective;
   }
 
   diagnostics(): readonly ConfigDiagnostic[] {
@@ -369,7 +363,7 @@ export class ConfigService extends Disposable implements IConfigService {
     const section = this.registry.getSection(domain);
     if (section?.stripEnv !== undefined) {
       const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
-      result = section.stripEnv(result, this.rawSnake[camelToSnake(domain)], getEnv);
+      result = section.stripEnv(result, this.raw[domain], getEnv);
     }
     if (result === undefined) return result;
     for (const overlay of this.registry.listEffectiveOverlays()) {
@@ -422,7 +416,9 @@ export class ConfigService extends Disposable implements IConfigService {
     domains?: readonly string[],
   ): void {
     const previous = this.effective;
-    const next = this.buildEffective(this.raw);
+    this.validated = this.buildValidated(this.raw);
+    const next = { ...this.validated };
+    this.applySectionEnvBindings(next, true);
     this.applyEnvOverlay(next);
     this.effective = next;
 
@@ -450,11 +446,11 @@ export class ConfigService extends Disposable implements IConfigService {
     }
   }
 
-  private buildEffective(raw: ResolvedConfig): ResolvedConfig {
-    const effective: ResolvedConfig = {};
+  private buildValidated(raw: ResolvedConfig): ResolvedConfig {
+    const validated: ResolvedConfig = {};
     for (const [domain, value] of Object.entries(raw)) {
       try {
-        effective[domain] = this.registry.validate(domain, value);
+        validated[domain] = this.registry.validate(domain, value);
       } catch (error) {
         this.diagnosticsList.push({
           domain,
@@ -464,10 +460,14 @@ export class ConfigService extends Disposable implements IConfigService {
       }
     }
     for (const section of this.registry.listSections()) {
-      if (effective[section.domain] === undefined && section.defaultValue !== undefined) {
-        effective[section.domain] = section.defaultValue;
+      if (validated[section.domain] === undefined && section.defaultValue !== undefined) {
+        validated[section.domain] = section.defaultValue;
       }
     }
+    return validated;
+  }
+
+  private applySectionEnvBindings(effective: ResolvedConfig, reportErrors: boolean): void {
     const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
     for (const section of this.registry.listSections()) {
       if (section.env === undefined) continue;
@@ -476,17 +476,18 @@ export class ConfigService extends Disposable implements IConfigService {
         const next = applySectionEnv(base, section.env, getEnv);
         effective[section.domain] = this.registry.validate(section.domain, next);
       } catch (error) {
-        this.diagnosticsList.push({
-          domain: section.domain,
-          severity: 'warning',
-          message: `Ignoring env overlay for '${section.domain}': ${describeUnknownError(error)}`,
-        });
+        if (reportErrors) {
+          this.diagnosticsList.push({
+            domain: section.domain,
+            severity: 'warning',
+            message: `Ignoring env overlay for '${section.domain}': ${describeUnknownError(error)}`,
+          });
+        }
       }
     }
-    return effective;
   }
 
-  private applyEnvOverlay(effective: ResolvedConfig): void {
+  private applyEnvOverlay(effective: ResolvedConfig, reportErrors = true): void {
     const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
     const validate = (domain: string, value: unknown): unknown =>
       this.registry.validate(domain, value);
@@ -494,17 +495,21 @@ export class ConfigService extends Disposable implements IConfigService {
       try {
         overlay.apply(effective, getEnv, validate);
       } catch (error) {
-        this.diagnosticsList.push({
-          severity: 'warning',
-          message: `Ignoring config environment overlay: ${describeUnknownError(error)}`,
-        });
+        if (reportErrors) {
+          this.diagnosticsList.push({
+            severity: 'warning',
+            message: `Ignoring config environment overlay: ${describeUnknownError(error)}`,
+          });
+        }
       }
     }
   }
 
   private reapplyOverlays(): void {
     const before = this.effective;
-    const next = this.buildEffective(this.raw);
+    this.validated = this.buildValidated(this.raw);
+    const next = { ...this.validated };
+    this.applySectionEnvBindings(next, true);
     this.applyEnvOverlay(next);
     this.effective = next;
     this.commit('reload', [...new Set([...Object.keys(before), ...Object.keys(next)])]);
@@ -523,11 +528,14 @@ export class ConfigService extends Disposable implements IConfigService {
 
     if (this.raw[domain] !== undefined) {
       try {
-        this.effective[domain] = this.registry.validate(domain, this.raw[domain]);
+        const validatedValue = this.registry.validate(domain, this.raw[domain]);
+        this.validated[domain] = validatedValue;
+        this.effective[domain] = validatedValue;
       } catch {
         return;
       }
     } else if (section.defaultValue !== undefined && this.effective[domain] === undefined) {
+      this.validated[domain] = section.defaultValue;
       this.effective[domain] = section.defaultValue;
     } else {
       return;

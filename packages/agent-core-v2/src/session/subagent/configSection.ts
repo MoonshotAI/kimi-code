@@ -5,7 +5,7 @@
  * Owns the `[subagent]` configuration section (`timeout_ms` on disk) together
  * with the `KIMI_SUBAGENT_TIMEOUT_MS` env override, mirroring v1's
  * `resolveSubagentTimeoutMs` precedence (env > config.toml > 2h default). While
- * the env var is set, `stripEnvBoundFields` restores the raw on-disk value
+ * the env var is set, `stripEnvBoundFields` restores the env-free raw value
  * before persistence, so the override never leaks into `config.toml`. Both
  * collaboration tools — `Agent` in this domain and `AgentSwarm` in the `swarm`
  * domain — resolve their per-run timeout through `resolveSubagentTimeoutMs`,

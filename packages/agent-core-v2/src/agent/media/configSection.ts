@@ -9,8 +9,8 @@
  * `KIMI_IMAGE_READ_BYTE_BUDGET`); `config` resolves each field as
  * `env > config.toml > default` and re-applies the env binding on every read.
  *
- * While a field's env var is set, `stripEnvBoundFields` restores its raw
- * on-disk value before `set`/`replace` persists, so an env override echoed
+ * While a field's env var is set, `stripEnvBoundFields` restores its env-free
+ * raw value before `set`/`replace` persists, so an env override echoed
  * back through a config write can never leak into `config.toml`.
  *
  * The compression support module (`#/agent/media/image-compress`) stays

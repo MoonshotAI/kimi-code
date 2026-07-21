@@ -11,8 +11,8 @@
  * `env > config.toml > default` and re-applies the env binding on every read.
  * Self-registered at module load via `registerConfigSection`.
  *
- * While a field's env var is set, `stripEnvBoundFields` restores its raw
- * on-disk value before `set`/`replace` persists, so an env override echoed
+ * While a field's env var is set, `stripEnvBoundFields` restores its env-free
+ * raw value before `set`/`replace` persists, so an env override echoed
  * back through a config write can never leak into `config.toml`.
  */
 

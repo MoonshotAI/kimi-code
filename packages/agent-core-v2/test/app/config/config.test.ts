@@ -713,6 +713,77 @@ describe('loopControl config section', () => {
 
     disposables.dispose();
   });
+
+  it('recomputes env bindings from the env-free base when the env value degrades or is unset', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_steps_per_turn = 100\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    env[LOOP_MAX_STEPS_PER_TURN_ENV] = '7';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
+
+    // A degraded env value falls back to the file, not to the previous override.
+    env[LOOP_MAX_STEPS_PER_TURN_ENV] = 'abc';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(100);
+
+    env[LOOP_MAX_STEPS_PER_TURN_ENV] = '9';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(9);
+
+    // Unsetting falls back to the file as well, on both get() and getAll().
+    delete env[LOOP_MAX_STEPS_PER_TURN_ENV];
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(100);
+
+    env[LOOP_MAX_STEPS_PER_TURN_ENV] = '7';
+    expect(config.getAll()[LOOP_CONTROL_SECTION]).toEqual({ maxStepsPerTurn: 7 });
+    delete env[LOOP_MAX_STEPS_PER_TURN_ENV];
+    expect(config.getAll()[LOOP_CONTROL_SECTION]).toEqual({ maxStepsPerTurn: 100 });
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned field from the normalized raw base when the config uses the legacy key', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_STEPS_PER_TURN_ENV]: '7' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nmax_steps_per_run = 100\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(7);
+    // The legacy `max_steps_per_run` value is honored as the field's raw value.
+    expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
+      maxStepsPerTurn: 100,
+    });
+
+    disposables.dispose();
+  });
 });
 
 describe('task config section', () => {

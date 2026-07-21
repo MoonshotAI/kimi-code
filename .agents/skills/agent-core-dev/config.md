@@ -150,15 +150,15 @@ Each field is an `EnvBinding` — a string (env var name) or
 section. Empty nested entries (no field resolved) are omitted, so a synthetic
 entry like `__kimi_env__` only appears when at least one of its env vars is set.
 
-`stripEnv(value, rawSnake?, getEnv?)` removes env-derived fields before `set`/`replace`
-persists, so env overrides never leak into `config.toml`. `rawSnake` is the
-section's on-disk sub-object (looked up by the snake_case key, so camelCase
-domains like `loopControl` resolve correctly), and `getEnv` reads the live env
-bag. For fields that are **both user-persistable and env-overridable**, register
+`stripEnv(value, raw?, getEnv?)` removes env-derived fields before `set`/`replace`
+persists, so env overrides never leak into `config.toml`. `raw` is the section's
+env-free camelCase base (already `fromToml`-normalized, so legacy key renames
+are honored), and `getEnv` reads the live env bag. For fields that are **both
+user-persistable and env-overridable**, register
 `stripEnv: stripEnvBoundFields(sectionEnvBindings)` (from `#/app/config/config`)
 — it derives the guard from the same bindings the read path uses: while a
-field's env var resolves to a value, writes restore the field's raw on-disk
-value (or drop it) instead of persisting an echoed env value; an env value that
+field's env var resolves to a value, writes restore the field's raw-base value
+(or drop it) instead of persisting an echoed env value; an env value that
 fails the binding's `parse` owns nothing, so writes pass through. Env-only
 fields/sections need no env check — strip them unconditionally (e.g. thinking's
 `forcedEffort`, cron's whole-section `() => undefined`).
@@ -227,11 +227,12 @@ This means registration order is never a correctness concern — you do not need
 - **Read**: `transformTomlData(fileData, registry)` maps each top-level key to a domain and applies that domain's `fromToml` hook (or a plain key-casing pass when none is registered). Owner domains register their own normalization — e.g. provider `oauth`/`env`/`customHeaders`, permission `deny/allow/ask` → `rules`, `loop_control.max_steps_per_run` → `maxStepsPerTurn`, `experimental` keys preserved verbatim. When a section registers after the initial load, `ConfigService` re-applies its `fromToml` against the preserved snake_case raw value (see "Late registration"), so registration order is never a correctness concern.
 - **Write**: `applySectionToToml(rawSnake, domain, value, registry)` applies the domain's `toToml` hook (or a plain camelCase→snake_case mapping) into a raw clone of the file, preserving unknown top-level keys and unknown sub-fields (lossless round-trip).
 
-`ConfigService` keeps three views:
+`ConfigService` keeps four views:
 
 - `rawSnake` — snake_case clone of the file; the write base, never carries the env overlay.
 - `raw` — camelCase, env-free; the read/set/replace base.
-- `effective` — validated `raw` plus the env overlay; what `get()` returns.
+- `validated` — validated `raw`, env-free; the base every live env re-application starts from, so a degraded or removed env value falls back to the file instead of a stale overlay.
+- `effective` — `validated` plus the env overlay, recomputed on load/set; `get()`/`getAll()` re-apply the overlay on a fresh `validated` copy per read rather than caching it.
 
 ### `KIMI_MODEL_*` env overlay
 

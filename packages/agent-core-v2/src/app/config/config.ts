@@ -13,9 +13,10 @@
  * env > user config > default on every read; an env value that fails its
  * binding's `parse` is ignored. `stripEnvBoundFields` builds the matching
  * write guard for persistable env-bound fields: while a field's env var
- * resolves to a value, `set`/`replace` restores the field's raw on-disk value
- * (or drops it) instead of persisting an echoed env value; otherwise writes
- * pass through untouched.
+ * resolves to a value, `set`/`replace` restores the field's value from the
+ * env-free raw base (already `fromToml`-normalized, so legacy key renames are
+ * honored) — or drops it when absent there — instead of persisting an echoed
+ * env value; otherwise writes pass through untouched.
  */
 
 import type { Event } from '#/_base/event';
@@ -47,7 +48,7 @@ export function envBindings<T>(_schema: ConfigSchema<T>, bindings: EnvBindings<T
 
 export type ConfigStripEnv<T> = (
   value: T,
-  rawSnake?: unknown,
+  raw?: unknown,
   getEnv?: (name: string) => string | undefined,
 ) => T | undefined;
 
@@ -55,15 +56,11 @@ function isEnvBinding(value: unknown): value is EnvBinding {
   return typeof value === 'string' || (isPlainObject(value) && 'env' in value);
 }
 
-function camelToSnake(str: string): string {
-  return str.replaceAll(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
-}
-
 export function stripEnvBoundFields<T>(bindings: EnvBindings<T>): ConfigStripEnv<T> {
-  return (value, rawSnake, getEnv) => {
+  return (value, raw, getEnv) => {
     if (getEnv === undefined || value === null || typeof value !== 'object') return value;
     if (!isPlainObject(bindings) || isEnvBinding(bindings)) return value;
-    const raw = isPlainObject(rawSnake) ? rawSnake : {};
+    const base = isPlainObject(raw) ? raw : {};
     let out: Record<string, unknown> | undefined;
     for (const [field, binding] of Object.entries(bindings)) {
       if (binding === undefined || !isEnvBinding(binding)) continue;
@@ -72,9 +69,8 @@ export function stripEnvBoundFields<T>(bindings: EnvBindings<T>): ConfigStripEnv
       const parse = typeof binding === 'string' ? undefined : binding.parse;
       if (parse !== undefined && parse(rawEnv) === undefined) continue;
       out ??= { ...(value as Record<string, unknown>) };
-      const snake = camelToSnake(field);
-      if (raw[snake] !== undefined) {
-        out[field] = raw[snake];
+      if (base[field] !== undefined) {
+        out[field] = base[field];
       } else {
         delete out[field];
       }
