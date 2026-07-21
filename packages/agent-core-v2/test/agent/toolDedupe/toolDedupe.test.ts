@@ -729,6 +729,7 @@ describe('AgentToolDedupeService', () => {
       const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2, 3]);
       expect(repeats.every((e) => e.properties?.['tool_name'] === 'Read')).toBe(true);
+      expect(repeats.every((e) => e.properties?.['turn_id'] === 1)).toBe(true);
     });
 
     it('does not emit telemetry on the first call', async () => {

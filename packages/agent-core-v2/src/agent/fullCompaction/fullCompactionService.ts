@@ -80,6 +80,7 @@ type CompactionTelemetryProperties = Pick<
 >;
 
 interface ActiveCompaction extends FullCompactionTask {
+  readonly originTurnId?: number;
   trace?: LLMRequestTrace;
   blockedByTurn: boolean;
 }
@@ -111,6 +112,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private readonly observedMaxContextTokensByModel = new Map<string, number>();
   private lastCompactedTokenCount: number | null = null;
   private consecutiveOverflowCompactions = 0;
+  private activeTurnId: number | undefined;
   private contextInjectorService: IAgentContextInjectorService | undefined;
 
   constructor(
@@ -138,6 +140,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     );
     this._register(
       this.eventBus.subscribe('turn.started', () => this.resetForTurn()),
+    );
+    this._register(
+      this.eventBus.subscribe('turn.ended', () => {
+        this.activeTurnId = undefined;
+      }),
     );
     this._register(
       this.loopService.hooks.onWillBeginStep.register('full-compaction', async (ctx, next) => {
@@ -244,7 +251,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     const tokenCount = this.validateCompactionStart(data.source);
     this.wire.dispatch(fullCompactionBegin(data));
 
-    const active = this.createActiveCompaction(data.source, tokenCount);
+    const active = this.createActiveCompaction(
+      data.source,
+      tokenCount,
+      data.source === 'auto' ? this.activeTurnId : undefined,
+    );
     this._compacting = active.task;
     active.task.abortController.signal.addEventListener(
       'abort',
@@ -282,6 +293,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private createActiveCompaction(
     trigger: CompactionBeginData['source'],
     tokenCount: number,
+    originTurnId: number | undefined,
   ): {
     readonly task: ActiveCompaction;
     readonly resolve: (result: CompactionResult) => void;
@@ -300,6 +312,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         promise,
         trigger,
         tokenCount,
+        originTurnId,
         get traceId() {
           return this.trace?.traceId;
         },
@@ -379,6 +392,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   }
 
   private async beforeStep(signal: AbortSignal, turnId?: number): Promise<void> {
+    this.activeTurnId = turnId;
     this.checkAutoCompaction();
     if (this.strategy.shouldBlock(this.tokenCountWithPending())) {
       await this.block(signal, turnId);
@@ -546,6 +560,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
               maxOutputSize: compactionMaxOutputSize,
               source: {
                 type: 'operation',
+                turnId: active.originTurnId,
                 requestKind: 'full_compaction',
                 logFields: { droppedCount },
               },
@@ -628,6 +643,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       });
 
       const properties: CompactionFinishedEvent = {
+        turn_id: active.originTurnId,
         source: data.source,
         tokens_before: result.tokensBefore,
         tokens_after: result.tokensAfter,
@@ -645,6 +661,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     } catch (error) {
       if (isAbortError(error)) throw error;
       const properties: CompactionFailedEvent = {
+        turn_id: active.originTurnId,
         source: data.source,
         tokens_before: tokensBefore,
         duration_ms: Date.now() - startedAt,

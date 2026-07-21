@@ -5,7 +5,8 @@
  * serializing same-id bootstrap and dropping incomplete handles after startup
  * failure. Seeds each agent's identity through `agent` scopeContext, wires
  * per-agent wire records and the wire state machine, the blob store, and MCP,
- * and registers the agent in the session registry. New logs receive a metadata
+ * and registers the agent in the session registry. Binds the agent id into the
+ * Agent-scoped telemetry view. New logs receive a metadata
  * envelope while non-empty unversioned logs are rejected. Removal awaits the
  * agent task manager's graceful exit policy before draining turns and full
  * compaction, then disposing the child scope. Fans session-level
@@ -65,6 +66,7 @@ import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks'
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IWireService } from '#/wire/wire';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   type AgentListFilter,
   type CreateAgentOptions,
@@ -100,6 +102,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IConfigService private readonly config: IConfigService,
     @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
@@ -138,7 +141,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       const existing = this.handles.get(opts.agentId);
       if (existing !== undefined) return existing;
     }
-    const agentId = opts.agentId ?? `agent-${nextAgentId++}`;
+    const agentId = opts.agentId ?? (await this.nextAvailableAgentId());
     const promise = this.doCreate(agentId, opts);
     this.creating.set(agentId, promise);
     try {
@@ -146,6 +149,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     } finally {
       this.creating.delete(agentId);
     }
+  }
+
+  private async nextAvailableAgentId(): Promise<string> {
+    let maxSuffix = -1;
+    const consider = (id: string): void => {
+      const match = /^agent-(\d+)$/.exec(id);
+      if (match !== null) maxSuffix = Math.max(maxSuffix, Number(match[1]));
+    };
+    for (const id of this.handles.keys()) consider(id);
+    const persisted = (await this.sessionMetadata.read()).agents ?? {};
+    for (const id of Object.keys(persisted)) consider(id);
+    const candidate = Math.max(maxSuffix + 1, nextAgentId);
+    nextAgentId = candidate + 1;
+    return `agent-${String(candidate)}`;
   }
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
@@ -164,11 +181,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.instantiation,
       LifecycleScope.Agent,
       agentId,
-      // The only per-agent seed: identity facts. Every other agent-scope
+      // Seed identity facts and the telemetry view. Every other agent-scope
       // service either derives its configuration from `IAgentScopeContext`
       // (wire, blob) or resolves it through the scope tree (the
       // session's shared MCP manager via `ISessionMcpService`).
-      { extra: [[IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })]] },
+      {
+        extra: [
+          [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
+          [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
+        ],
+      },
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
     try {

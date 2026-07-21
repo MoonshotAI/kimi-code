@@ -115,7 +115,7 @@ describe('ConfigState model capabilities', () => {
 
     expect(records).toContainEqual({
       event: 'thinking_toggle',
-      properties: { enabled: true, effort: 'low', from: 'off' },
+      properties: { agent_id: 'main', enabled: true, effort: 'low', from: 'off' },
     });
   });
 

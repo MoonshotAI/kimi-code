@@ -61,6 +61,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -285,6 +286,10 @@ describe('AgentLifecycleService', () => {
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
+      withContext: () => ({
+        _serviceBrand: undefined,
+        track2: () => {},
+      }) as unknown as ITelemetryService,
     } as unknown as ITelemetryService);
     ix.stub(IAgentTelemetryContextService, {
       _serviceBrand: undefined,
@@ -420,6 +425,56 @@ describe('AgentLifecycleService', () => {
     await svc.create({ agentId: 'main' });
     expect(beforeExecuteHookIds).toContain('toolDedupe');
     expect(didExecuteHookIds).toContain('toolDedupe');
+  });
+
+  it('create skips auto ids that collide with agents persisted by a previous run', async () => {
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChangeMetadata: () => ({ dispose: () => {} }),
+      read: () =>
+        Promise.resolve({
+          id: 'sess_test',
+          createdAt: 0,
+          updatedAt: 0,
+          archived: false,
+          agents: {
+            'agent-0': { homedir: '/tmp/kimi-agentLifecycle-test/agents/agent-0', type: 'sub' },
+            'agent-1': { homedir: '/tmp/kimi-agentLifecycle-test/agents/agent-1', type: 'sub' },
+          },
+        }),
+      update: () => Promise.resolve(),
+      setTitle: () => Promise.resolve(),
+      setArchived: () => Promise.resolve(),
+      registerAgent,
+    });
+    const svc = ix.get(IAgentLifecycleService);
+
+    const first = await svc.create({});
+    expect(first.id).toBe('agent-2');
+
+    const second = await svc.create({});
+    expect(second.id).toBe('agent-3');
+  });
+
+  it('seeds each agent scope with a telemetry view bound to its own agent id', async () => {
+    const records: TelemetryRecord[] = [];
+    ix.stub(ITelemetryService, recordingTelemetry(records));
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const sub = await svc.create({});
+
+    main.accessor.get(ITelemetryService).track2('yolo_toggle', { enabled: true });
+    sub.accessor.get(ITelemetryService).track2('yolo_toggle', { enabled: false });
+
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: 'main', enabled: true },
+    });
+    expect(records).toContainEqual({
+      event: 'yolo_toggle',
+      properties: { agent_id: sub.id, enabled: false },
+    });
   });
 
   it('create assigns sequential ids when unspecified', async () => {

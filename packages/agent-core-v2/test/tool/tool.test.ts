@@ -845,6 +845,7 @@ describe('Agent tool execution contract', () => {
         ],
       ]),
     );
+    const telemetryRecords: Array<{ event: string; properties: unknown }> = [];
     const requester = {
       id: 'main',
       kind: LifecycleScope.Agent,
@@ -852,7 +853,14 @@ describe('Agent tool execution contract', () => {
         get: ((serviceId: unknown) => {
           if (serviceId === IEventBus) return eventBus;
           if (serviceId === IAgentLifecycleService) return lifecycle;
-          if (serviceId === ITelemetryService) return noopTelemetryService;
+          if (serviceId === ITelemetryService) {
+            return {
+              ...noopTelemetryService,
+              track2: (event: string, properties: unknown) => {
+                telemetryRecords.push({ event, properties });
+              },
+            };
+          }
           return undefined;
         }) as IAgentScopeHandle['accessor']['get'],
       },
@@ -881,6 +889,16 @@ describe('Agent tool execution contract', () => {
     expect(events.find((event) => event.type === 'subagent.spawned')).toMatchObject({
       parentAgentId: 'main',
       callerAgentId: 'main',
+    });
+    expect(telemetryRecords).toContainEqual({
+      event: 'subagent_created',
+      properties: {
+        subagent_name: 'explore',
+        run_in_background: false,
+        agent_id: 'agent-child',
+        parent_agent_id: 'main',
+        parent_tool_call_id: 'call_agent',
+      },
     });
     expect(events.find((event) => event.type === 'subagent.completed')).toMatchObject({
       subagentId: 'agent-child',

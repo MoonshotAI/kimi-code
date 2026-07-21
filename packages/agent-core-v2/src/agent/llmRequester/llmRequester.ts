@@ -18,6 +18,7 @@ export type AgentLLMRequestSource =
     }
   | {
       readonly type: 'operation';
+      readonly turnId?: number;
       readonly requestKind?: string;
       readonly logFields?: AgentLLMRequestLogFields;
     };

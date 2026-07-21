@@ -404,6 +404,7 @@ describe('LLMRequester service migration coverage', () => {
         event: 'api_error',
         properties: expect.objectContaining({
           error_type: 'rate_limit',
+          agent_id: 'main',
           model: 'mock-model',
           alias: 'mock-model',
           // vendor and wire protocol are separate fields now: the mock
@@ -413,6 +414,43 @@ describe('LLMRequester service migration coverage', () => {
           retryable: expect.any(Boolean),
           duration_ms: expect.any(Number),
           status_code: 429,
+        }),
+      });
+    });
+
+    it('tags api_error with turn_id and request_kind from the request source', async () => {
+      const records: TelemetryRecord[] = [];
+      ctx = createTestAgent(
+        llmGenerateServices(async () => {
+          throw new APIConnectionError('terminated');
+        }),
+        telemetryServices(recordingTelemetry(records)),
+      );
+      const llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      await expect(
+        llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
+      await expect(
+        llmRequester.request({
+          source: { type: 'operation', turnId: 7, requestKind: 'full_compaction' },
+        }),
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
+
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'network',
+          turn_id: 3,
+          request_kind: 'turn',
+        }),
+      });
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'network',
+          turn_id: 7,
+          request_kind: 'full_compaction',
         }),
       });
     });
