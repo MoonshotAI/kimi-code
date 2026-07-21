@@ -41,7 +41,6 @@ import {
 } from './client/eventBatcher';
 import { useAppearance } from '@moonshot-ai/web-core';
 import { useNotification, shouldNotifyCompletion } from './client/useNotification';
-import { useSoundNotification } from './client/useSoundNotification';
 import { useTaskPoller } from './client/useTaskPoller';
 import { useModelProviderState } from './client/useModelProviderState';
 import { useSideChat } from './client/useSideChat';
@@ -53,7 +52,6 @@ import {
 
 const appearance = useAppearance();
 const notification = useNotification();
-const sound = useSoundNotification();
 import type {
   AppEvent,
   AppApprovalRequest,
@@ -141,6 +139,13 @@ safeRemove(STORAGE_KEYS.theme);
 // The per-model thinking pick store was dropped in favor of the daemon's
 // per-session thinking state — clear the old key so stale picks can't linger.
 safeRemove(STORAGE_KEYS.thinking);
+// The three per-kind notification preferences were merged into a single
+// notifyEnabled master switch, and the WebAudio completion sound was dropped
+// in favor of the system notification sound — clear the old keys.
+safeRemove(STORAGE_KEYS.notifyOnComplete);
+safeRemove(STORAGE_KEYS.notifyOnQuestion);
+safeRemove(STORAGE_KEYS.notifyOnApproval);
+safeRemove(STORAGE_KEYS.soundOnComplete);
 
 function loadPermissionFromStorage(): PermissionMode {
   try {
@@ -2749,7 +2754,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
   // notification's dedup tag so each finished turn alerts once.
   const finishedPromptId = rawState.promptIdBySession[sid];
   // Shared finish cleanup: clears in-flight/prompt-id and drains one
-  // queued message. The notification/sound/unread side effects below stay
+  // queued message. The notification/unread side effects below stay
   // WS-event-only — the snapshot path (handleSessionSnapshot) must not cry
   // wolf when opening a historical session.
   workspaceState.finishPromptLocal(sid, { turnWasActive });
@@ -2783,12 +2788,6 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: b
       },
     });
   }
-
-  // Completion sound — only for real completions (aborted/cancelled turns stay
-  // silent). Plays regardless of visibility so it also reaches a backgrounded tab.
-  if (status === 'idle') {
-    sound.maybePlayCompletionSound();
-  }
 }
 
 function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
@@ -2811,10 +2810,6 @@ function onQuestionRequested(sid: string, question: AppQuestionRequest): void {
       void workspaceState.selectSession(sid);
     },
   });
-
-  // Attention sound — plays regardless of visibility so it also reaches a
-  // backgrounded tab (same as the completion sound).
-  sound.maybePlayQuestionSound();
 }
 
 function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
@@ -2828,10 +2823,6 @@ function onApprovalRequested(sid: string, approval: AppApprovalRequest): void {
       void workspaceState.selectSession(sid);
     },
   });
-
-  // Attention sound — plays regardless of visibility so it also reaches a
-  // backgrounded tab (same as the completion sound).
-  sound.maybePlayApprovalSound();
 }
 
 // ---------------------------------------------------------------------------
@@ -2928,15 +2919,11 @@ export function useKimiWebClient() {
     colorScheme: appearance.colorScheme,
     setColorScheme: appearance.setColorScheme,
 
-    notifyOnComplete: notification.notifyOnComplete,
-    notifyOnQuestion: notification.notifyOnQuestion,
-    notifyOnApproval: notification.notifyOnApproval,
+    notifyEnabled: notification.notifyEnabled,
+    notifySound: notification.notifySound,
     notifyPermission: notification.notifyPermission,
-    setNotifyOnComplete: notification.setNotifyOnComplete,
-    setNotifyOnQuestion: notification.setNotifyOnQuestion,
-    setNotifyOnApproval: notification.setNotifyOnApproval,
-    soundOnComplete: sound.soundOnComplete,
-    setSoundOnComplete: sound.setSoundOnComplete,
+    setNotifyEnabled: notification.setNotifyEnabled,
+    setNotifySound: notification.setNotifySound,
     onboarded,
     setOnboarded,
 

@@ -24,16 +24,12 @@ const props = defineProps<{
   uiFontSize: number;
   authReady: boolean;
   accountModel?: string | null;
-  /** Browser-notification-on-completion preference. */
+  /** Master system-notification preference (all kinds). */
   notify: boolean;
-  /** Browser-notification-on-question (needs answer) preference. */
-  notifyQuestion: boolean;
-  /** Browser-notification-on-approval preference. */
-  notifyApproval: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
   notifyPermission?: string;
-  /** Play-a-sound-on-completion preference. */
-  sound: boolean;
+  /** Whether notifications play the system sound. */
+  notifySound: boolean;
   /** Conversation outline (proportional bubbles, viewport indicator, hover tooltip). */
   conversationToc?: boolean;
   /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
@@ -50,9 +46,7 @@ const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
-  setNotifyQuestion: [on: boolean];
-  setNotifyApproval: [on: boolean];
-  setSound: [on: boolean];
+  setNotifySound: [on: boolean];
   setConversationToc: [on: boolean];
   login: [];
   logout: [];
@@ -512,52 +506,26 @@ function archiveTime(iso: string): string {
             <div class="settings-group">
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.notifyOnComplete') }}
-                <span class="hint">{{ t('settings.notifyOnCompleteHint') }}</span>
+                {{ t('settings.notifyEnabled') }}
+                <span class="hint">{{ t('settings.notifyEnabledHint') }}</span>
                 <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
               </span>
               <Switch
                 :model-value="notify"
                 :disabled="notifyPermission === 'denied'"
-                :label="t('settings.notifyOnComplete')"
+                :label="t('settings.notifyEnabled')"
                 @update:model-value="emit('setNotify', $event)"
               />
             </div>
             <div class="row">
               <span class="rlabel">
-                {{ t('settings.notifyOnQuestion') }}
-                <span class="hint">{{ t('settings.notifyOnQuestionHint') }}</span>
-                <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
+                {{ t('settings.notifySound') }}
+                <span class="hint">{{ t('settings.notifySoundHint') }}</span>
               </span>
               <Switch
-                :model-value="notifyQuestion"
-                :disabled="notifyPermission === 'denied'"
-                :label="t('settings.notifyOnQuestion')"
-                @update:model-value="emit('setNotifyQuestion', $event)"
-              />
-            </div>
-            <div class="row">
-              <span class="rlabel">
-                {{ t('settings.notifyOnApproval') }}
-                <span class="hint">{{ t('settings.notifyOnApprovalHint') }}</span>
-                <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
-              </span>
-              <Switch
-                :model-value="notifyApproval"
-                :disabled="notifyPermission === 'denied'"
-                :label="t('settings.notifyOnApproval')"
-                @update:model-value="emit('setNotifyApproval', $event)"
-              />
-            </div>
-            <div class="row">
-              <span class="rlabel">
-                {{ t('settings.soundOnComplete') }}
-                <span class="hint">{{ t('settings.soundOnCompleteHint') }}</span>
-              </span>
-              <Switch
-                :model-value="sound"
-                :label="t('settings.soundOnComplete')"
-                @update:model-value="emit('setSound', $event)"
+                :model-value="notifySound"
+                :label="t('settings.notifySound')"
+                @update:model-value="emit('setNotifySound', $event)"
               />
             </div>
             </div>

@@ -137,9 +137,8 @@ describe('STORAGE_KEYS', () => {
   it('keeps the legacy key strings unchanged', () => {
     expect(STORAGE_KEYS.theme).toBe('kimi-web.theme');
     expect(STORAGE_KEYS.activeWorkspace).toBe('kimi-active-workspace');
-    expect(STORAGE_KEYS.notifyOnComplete).toBe('kimi-web.notify-on-complete');
-    expect(STORAGE_KEYS.notifyOnQuestion).toBe('kimi-web.notify-on-question');
-    expect(STORAGE_KEYS.soundOnComplete).toBe('kimi-web.sound-on-complete');
+    expect(STORAGE_KEYS.notifyEnabled).toBe('kimi-web.notify-enabled');
+    expect(STORAGE_KEYS.notifySound).toBe('kimi-web.notify-sound');
     expect(STORAGE_KEYS.locale).toBe('kimi-locale');
   });
 });

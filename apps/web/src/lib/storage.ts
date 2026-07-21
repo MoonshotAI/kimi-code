@@ -28,10 +28,8 @@ export const STORAGE_KEYS = {
   // users who explicitly turned it off while it was experimental keep their
   // preference after it became on-by-default.
   conversationToc: 'kimi-web.beta-toc',
-  notifyOnComplete: 'kimi-web.notify-on-complete',
-  notifyOnQuestion: 'kimi-web.notify-on-question',
-  notifyOnApproval: 'kimi-web.notify-on-approval',
-  soundOnComplete: 'kimi-web.sound-on-complete',
+  notifyEnabled: 'kimi-web.notify-enabled',
+  notifySound: 'kimi-web.notify-sound',
   inputHistory: 'kimi-web.input-history',
   // cross-file
   locale: 'kimi-locale',
@@ -48,6 +46,10 @@ export const STORAGE_KEYS = {
   theme: 'kimi-web.theme',
   thinking: 'kimi-web.thinking',
   accent: 'kimi-web.accent',
+  notifyOnComplete: 'kimi-web.notify-on-complete',
+  notifyOnQuestion: 'kimi-web.notify-on-question',
+  notifyOnApproval: 'kimi-web.notify-on-approval',
+  soundOnComplete: 'kimi-web.sound-on-complete',
 } as const;
 
 /** Per-session composer draft key. */

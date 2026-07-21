@@ -43,17 +43,9 @@ function installStorage(storage: Storage): void {
 // Singleton — module-level refs + setters. The OS Notification API is absent in
 // the test env, so the *enable* path is a no-op; the disable path and the
 // load-from-storage defaults are what we exercise here.
-const {
-  notifyOnComplete,
-  notifyOnQuestion,
-  notifyOnApproval,
-  setNotifyOnComplete,
-  setNotifyOnQuestion,
-  setNotifyOnApproval,
-} = useNotification();
-const importedCompleteDefault = notifyOnComplete.value;
-const importedQuestionDefault = notifyOnQuestion.value;
-const importedApprovalDefault = notifyOnApproval.value;
+const { notifyEnabled, notifySound, setNotifyEnabled, setNotifySound } = useNotification();
+const importedEnabledDefault = notifyEnabled.value;
+const importedSoundDefault = notifySound.value;
 
 describe('useNotification preferences', () => {
   beforeEach(() => {
@@ -64,34 +56,24 @@ describe('useNotification preferences', () => {
     installStorage(createMemoryStorage());
   });
 
-  it('completion notifications default to on', () => {
-    expect(importedCompleteDefault).toBe(true);
+  it('notifications default to on', () => {
+    expect(importedEnabledDefault).toBe(true);
   });
 
-  it('question notifications default to off so question text stays behind an explicit opt-in', () => {
-    expect(importedQuestionDefault).toBe(false);
+  it('the notification sound defaults to on', () => {
+    expect(importedSoundDefault).toBe(true);
   });
 
-  it('approval notifications default to off', () => {
-    expect(importedApprovalDefault).toBe(false);
+  it('disabling notifications persists "0" and updates the ref', () => {
+    void setNotifyEnabled(false);
+    expect(notifyEnabled.value).toBe(false);
+    expect(safeGetString(STORAGE_KEYS.notifyEnabled)).toBe('0');
   });
 
-  it('disabling question notifications persists "0" and updates the ref', () => {
-    void setNotifyOnQuestion(false);
-    expect(notifyOnQuestion.value).toBe(false);
-    expect(safeGetString(STORAGE_KEYS.notifyOnQuestion)).toBe('0');
-  });
-
-  it('disabling completion notifications persists "0" and updates the ref', () => {
-    void setNotifyOnComplete(false);
-    expect(notifyOnComplete.value).toBe(false);
-    expect(safeGetString(STORAGE_KEYS.notifyOnComplete)).toBe('0');
-  });
-
-  it('disabling approval notifications persists "0" and updates the ref', () => {
-    void setNotifyOnApproval(false);
-    expect(notifyOnApproval.value).toBe(false);
-    expect(safeGetString(STORAGE_KEYS.notifyOnApproval)).toBe('0');
+  it('disabling the notification sound persists "0" and updates the ref', () => {
+    setNotifySound(false);
+    expect(notifySound.value).toBe(false);
+    expect(safeGetString(STORAGE_KEYS.notifySound)).toBe('0');
   });
 });
 
@@ -191,10 +173,10 @@ describe('shouldNotifyCompletion', () => {
 describe('notification tags', () => {
   class FakeNotification {
     static permission = 'granted';
-    static fired: Array<{ title: string; tag?: string }> = [];
+    static fired: Array<{ title: string; tag?: string; silent?: boolean }> = [];
     onclick: (() => void) | null = null;
-    constructor(title: string, options?: { body?: string; tag?: string; icon?: string }) {
-      FakeNotification.fired.push({ title, tag: options?.tag });
+    constructor(title: string, options?: { body?: string; tag?: string; icon?: string; silent?: boolean }) {
+      FakeNotification.fired.push({ title, tag: options?.tag, silent: options?.silent });
     }
     close(): void {}
   }
@@ -205,16 +187,14 @@ describe('notification tags', () => {
   beforeEach(() => {
     FakeNotification.fired = [];
     (globalThis as Record<string, unknown>).Notification = FakeNotification;
-    notifyOnComplete.value = true;
-    notifyOnQuestion.value = true;
-    notifyOnApproval.value = true;
+    notifyEnabled.value = true;
+    notifySound.value = true;
   });
 
   afterEach(() => {
     delete (globalThis as Record<string, unknown>).Notification;
-    notifyOnComplete.value = true;
-    notifyOnQuestion.value = false;
-    notifyOnApproval.value = false;
+    notifyEnabled.value = true;
+    notifySound.value = true;
   });
 
   it('completion tags carry the prompt id so each turn in a session alerts', () => {
@@ -245,5 +225,24 @@ describe('notification tags', () => {
   it('suppresses the notification while the user is watching the session', () => {
     maybeNotifyCompletion('s1', { ...base, isUserWatching: true, promptId: 'p1' });
     expect(FakeNotification.fired).toHaveLength(0);
+  });
+
+  it('fires nothing while the master toggle is off', () => {
+    notifyEnabled.value = false;
+    maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
+    maybeNotifyQuestion({ ...base, questionPreview: 'q', questionId: 'q1' });
+    maybeNotifyApproval({ ...base, toolName: 'bash', approvalId: 'a1' });
+    expect(FakeNotification.fired).toHaveLength(0);
+  });
+
+  it('fires silent notifications while the sound toggle is off', () => {
+    notifySound.value = false;
+    maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
+    expect(FakeNotification.fired[0]?.silent).toBe(true);
+  });
+
+  it('lets the system play the sound while the sound toggle is on', () => {
+    maybeNotifyCompletion('s1', { ...base, promptId: 'p1' });
+    expect(FakeNotification.fired[0]?.silent).toBe(false);
   });
 });
