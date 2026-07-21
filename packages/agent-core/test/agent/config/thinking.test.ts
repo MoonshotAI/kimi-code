@@ -149,6 +149,11 @@ describe('resolveThinkingEffort', () => {
     ).toBe('high');
   });
 
+  it('reads a whitespace-only configured effort as absent, not as an empty effort', () => {
+    expect(resolveThinkingEffort(undefined, { effort: '   ' }, effortModel, false)).toBe('medium');
+    expect(resolveThinkingEffort(undefined, { effort: '   ' }, alwaysThinkingModel, false)).toBe('on');
+  });
+
   it('treats a configured off as absent when clamping always-thinking models', () => {
     expect(resolveThinkingEffort(undefined, { effort: 'off' }, alwaysThinkingEffortModel, false)).toBe(
       'high',

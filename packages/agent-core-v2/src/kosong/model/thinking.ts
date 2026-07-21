@@ -155,7 +155,7 @@ export function resolveForcedThinkingEffort(
   traitDriven: boolean,
 ): ThinkingEffort | undefined {
   if (!traitDriven || effective === 'off') return undefined;
-  return nonEmpty(forced) as ThinkingEffort | undefined;
+  return nonEmpty(forced)?.toLowerCase() as ThinkingEffort | undefined;
 }
 
 function hasCapability(

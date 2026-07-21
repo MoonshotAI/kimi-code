@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   defaultThinkingEffortForModel,
   modelSupportsThinkingEffort,
+  resolveForcedThinkingEffort,
   resolveThinkingEffortForModel,
 } from '#/kosong/model/thinking';
 
@@ -164,6 +165,11 @@ describe('resolveThinkingEffortForModel', () => {
     expect(
       resolveThinkingEffortForModel(undefined, { enabled: false, effort: ' OFF ' }, alwaysThinkingEffortModel),
     ).toBe('high');
+  });
+
+  it('normalizes the env-forced effort (case/whitespace)', () => {
+    expect(resolveForcedThinkingEffort(' MAX ', 'high', true)).toBe('max');
+    expect(resolveForcedThinkingEffort('   ', 'high', true)).toBeUndefined();
   });
 
   it('treats a configured off as absent when clamping always-thinking models', () => {

@@ -105,8 +105,10 @@ export function resolveThinkingEffort(
 ): ThinkingEffort {
   const effectiveModel = model === undefined ? undefined : effectiveModelAlias(model);
   // Normalize the configured value once: 'OFF' / ' off ' must be read as off
-  // on every path, not passed upstream as a concrete effort.
-  const configured = config?.effort === undefined ? undefined : config.effort.trim().toLowerCase();
+  // on every path, not passed upstream as a concrete effort; whitespace-only
+  // reads as absent.
+  const configuredRaw = config?.effort?.trim().toLowerCase();
+  const configured = configuredRaw === undefined || configuredRaw === '' ? undefined : configuredRaw;
   let effort: ThinkingEffort;
   if (requested !== undefined) {
     effort = requested;
