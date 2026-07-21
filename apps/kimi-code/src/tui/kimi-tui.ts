@@ -1000,6 +1000,21 @@ export class KimiTUI {
     const historyText = wasBashMode ? `!${text}` : text;
     void this.persistInputHistory(historyText);
     if (wasBashMode) {
+      // A pending video upload is busy time too: chain behind it so the
+      // command cannot record shell context before the earlier prompt is
+      // dispatched (which would reorder user actions).
+      if (this.pendingSubmits > 0) {
+        this.inputSubmitChain = this.inputSubmitChain.then(() => {
+          if (this.state.appState.streamingPhase !== 'idle') {
+            this.enqueueMessage(text, undefined, 'bash');
+          } else {
+            this.runShellCommandFromInput(text);
+          }
+          this.updateQueueDisplay();
+          this.state.ui.requestRender();
+        });
+        return;
+      }
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
       if (this.state.appState.streamingPhase !== 'idle') {

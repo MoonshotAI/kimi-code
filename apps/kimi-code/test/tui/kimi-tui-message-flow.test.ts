@@ -1730,6 +1730,53 @@ command = "vim"
     }
   });
 
+  it('queues a bash submit behind a pending video upload', async () => {
+    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
+    const session = makeSession({ runShellCommand });
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(session.uploadVideo).toHaveBeenCalled();
+      });
+
+      driver.state.appState.inputMode = 'bash';
+      driver.handleUserInput('ls');
+      driver.state.appState.inputMode = 'prompt';
+
+      // The command must not run (or even queue) before the earlier prompt
+      // is dispatched.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(runShellCommand).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toHaveLength(0);
+
+      releaseUpload();
+      await vi.waitFor(() => {
+        expect(driver.state.queuedMessages).toEqual([{ text: 'ls', agentId: 'main', mode: 'bash' }]);
+      });
+      // The video prompt owns the active turn, so the command holds in the
+      // queue instead of racing it.
+      expect(runShellCommand).not.toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('queues a pasted-video message with uploaded parts while streaming', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
