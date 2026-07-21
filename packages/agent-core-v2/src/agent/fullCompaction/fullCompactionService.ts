@@ -172,7 +172,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   }
 
   private getEffectiveMaxContextTokens(): number {
-    const configured = this.profile.data().modelCapabilities.max_context_tokens;
+    const capability = this.profile.data().modelCapabilities;
+    const configured = capability.max_input_tokens ?? capability.max_context_tokens;
     const modelAlias = this.profile.data().modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);

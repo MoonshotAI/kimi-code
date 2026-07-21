@@ -289,14 +289,18 @@ export function adaptBaseUrlForWire(baseUrl: string, wire: ProviderType): string
 
 /**
  * True when a missing catalog endpoint cannot fall back to a built-in
- * default: the wire's default endpoint only belongs to the vendor's official
- * SDK package — for every other npm it would silently point at the wrong
- * host (e.g. an xai key sent to api.openai.com, or a gateway's
- * Anthropic-compatible key sent to api.anthropic.com). Vertex/google wires
- * resolve their endpoint from env coordinates and official SDKs, so they
- * never need the prompt.
+ * default: an explicitly declared endpoint the config cannot express (an
+ * env placeholder) always requires asking — silently defaulting would send
+ * the credential to the public vendor host instead of the declared one.
+ * Without any declaration, the wire's default endpoint only belongs to the
+ * vendor's official SDK package — for every other npm it would silently
+ * point at the wrong host (e.g. an xai key sent to api.openai.com, or a
+ * gateway's Anthropic-compatible key sent to api.anthropic.com).
+ * Vertex/google wires resolve their endpoint from env coordinates and
+ * official SDKs, so they never need the prompt.
  */
 function catalogEndpointRequired(entry: CatalogProviderEntry, wire: ProviderType): boolean {
+  if (typeof entry.api === 'string' && entry.api.length > 0) return true;
   const npm = (entry.npm ?? '').toLowerCase();
   if (wire === 'openai' || wire === 'openai_responses') return npm !== '@ai-sdk/openai';
   if (wire === 'anthropic') return npm !== '@ai-sdk/anthropic';
@@ -313,13 +317,14 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
   const output = model.limit?.output;
   const thinking = catalogThinkingOptions(model.reasoning_options);
   // `limit.input` is the true prompt cap when declared (e.g. gpt-5: 400k
-  // context window but a 272k input limit); sizing the context budget to the
-  // total window would let the prompt overflow before compaction kicks in.
+  // context window but a 272k input limit); it is tracked separately from the
+  // total window so prompt-budget checks (compaction) use the cap while
+  // completion budgeting keeps the full window.
   const input = model.limit?.input;
-  const maxContextTokens =
+  const maxInputTokens =
     typeof input === 'number' && Number.isInteger(input) && input > 0
       ? Math.min(input, context)
-      : context;
+      : undefined;
   return {
     id: model.id,
     name: typeof model.name === 'string' && model.name.length > 0 ? model.name : undefined,
@@ -338,7 +343,8 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
       thinking:
         Boolean(model.reasoning) || thinking.efforts !== undefined || thinking.hasToggle,
       tool_use: model.tool_call ?? true,
-      max_context_tokens: maxContextTokens,
+      max_context_tokens: context,
+      max_input_tokens: maxInputTokens,
       dynamically_loaded_tools: model.dynamically_loaded_tools === true,
     },
   };
@@ -427,34 +433,47 @@ function applyModelProviderOverride(
 ): CatalogModel | undefined {
   if (model === undefined) return undefined;
   const override = raw.provider;
-  if (override === undefined || typeof override.npm !== 'string') return model;
-  const npm = override.npm.toLowerCase();
-  const overrideWire = npm.includes('anthropic')
-    ? 'anthropic'
-    : npm.includes('openai')
-      ? 'openai'
-      : undefined;
+  if (override === undefined) return model;
+  // An api-only override keeps the provider's wire; an npm override points at
+  // a (possibly different) one. Unidentified npm keeps the benefit of doubt.
+  const overrideWire =
+    typeof override.npm === 'string' ? inferOverrideWire(override.npm) : providerWire;
   if (overrideWire === undefined) return model;
-  const api = override.api ?? entry.api;
+  const rawApi = override.api;
+  const api = rawApi ?? entry.api;
   const usableApi =
     typeof api === 'string' && api.length > 0 && !api.includes('${') ? api : undefined;
-  // Same wire as the provider: no protocol to re-route, but a distinct usable
-  // endpoint still applies to this model specifically.
+
   if (overrideWire === providerWire) {
+    // An explicitly declared endpoint the config cannot express (env
+    // placeholder): the model belongs elsewhere we cannot persist or prompt
+    // for — skip it rather than silently reroute to the provider endpoint.
+    if (typeof rawApi === 'string' && rawApi.includes('${')) return undefined;
+    // A distinct usable endpoint applies to this model specifically.
     if (usableApi !== undefined && usableApi !== entry.api) {
       return { ...model, baseUrl: adaptBaseUrlForWire(usableApi, overrideWire) };
     }
     return model;
   }
+
   // Only Anthropic-direction overrides are materializable (the alias schema
   // cannot express other per-model protocols), and only with a usable
   // endpoint. Anything else would be imported under the provider's wire —
   // the silently wrong protocol — so the model is skipped instead. Examples:
-  // freemodel's gpt entries on an Anthropic provider, or Claude models on
-  // google-vertex (whose wire here is Gemini-mode Vertex, not
-  // Anthropic-over-Vertex).
+  // freemodel's gpt entries on an Anthropic provider, Claude models on
+  // google-vertex (whose wire here is Gemini-mode Vertex), or a google-genai
+  // override on an OpenAI gateway.
   if (overrideWire === 'anthropic' && usableApi !== undefined) {
     return { ...model, protocol: 'anthropic', baseUrl: adaptBaseUrlForWire(usableApi, 'anthropic') };
   }
+  return undefined;
+}
+
+function inferOverrideWire(npm: string): ProviderType | undefined {
+  const normalized = npm.toLowerCase();
+  if (normalized.includes('anthropic')) return 'anthropic';
+  if (normalized.includes('vertex')) return 'vertexai';
+  if (normalized.includes('google')) return 'google-genai';
+  if (normalized.includes('openai')) return 'openai';
   return undefined;
 }

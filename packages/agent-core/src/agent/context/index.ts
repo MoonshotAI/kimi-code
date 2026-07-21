@@ -219,7 +219,8 @@ export class ContextMemory {
     const currentTokenCount = this.tokenCountWithPending;
     const importTokenCount = estimateTokensForMessages([message]);
     const totalTokenCount = currentTokenCount + importTokenCount;
-    const maxContextTokens = this.agent.config.modelCapabilities.max_context_tokens;
+    const capability = this.agent.config.modelCapabilities;
+    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     if (maxContextTokens > 0 && totalTokenCount > maxContextTokens) {
       throw new KimiError(
         ErrorCodes.CONTEXT_OVERFLOW,

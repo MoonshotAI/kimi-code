@@ -41,6 +41,10 @@ const ModelAliasBaseSchema = z.object({
   provider: z.string(),
   model: z.string(),
   maxContextSize: z.number().int().min(1),
+  // Declared prompt/input cap when below the total window (e.g. gpt-5: 400k
+  // window, 272k input). Compaction and other prompt-budget checks prefer it
+  // over max_context_size; completion budgeting keeps the total window.
+  maxInputSize: z.number().int().min(1).optional(),
   maxOutputSize: z.number().int().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),

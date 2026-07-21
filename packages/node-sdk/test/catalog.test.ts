@@ -232,7 +232,7 @@ describe('applyCatalogProvider', () => {
       baseUrl: 'https://gateway.example.test/api/anthropic',
     });
     const plain = config.models?.['gateway/vendor/gpt-model'];
-    expect(plain).toMatchObject({ maxContextSize: 272000 });
+    expect(plain).toMatchObject({ maxContextSize: 400000, maxInputSize: 272000 });
     expect(plain?.protocol).toBeUndefined();
     expect(plain?.baseUrl).toBeUndefined();
   });

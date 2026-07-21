@@ -74,6 +74,7 @@ export function catalogModelToAlias(providerId: string, model: CatalogModel): Mo
     provider: providerId,
     model: model.id,
     maxContextSize: model.capability.max_context_tokens,
+    maxInputSize: model.capability.max_input_tokens,
     maxOutputSize: model.maxOutputSize,
     // A model that always reasons advertises `always_thinking` instead of
     // `thinking`, so the UI locks thinking on and offers no off option.

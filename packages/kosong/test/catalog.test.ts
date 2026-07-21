@@ -162,6 +162,19 @@ describe('resolveCatalogImport — endpoint resolution', () => {
     ).toEqual({ kind: 'needs-base-url', wire: 'anthropic', guessed: false });
   });
 
+  it('needs a URL whenever the declared endpoint is a placeholder, official SDK or not', () => {
+    expect(
+      resolveCatalogImport({ id: 'openai', npm: '@ai-sdk/openai', api: '${OPENAI_BASE_URL}/v1' }),
+    ).toEqual({ kind: 'needs-base-url', wire: 'openai', guessed: false });
+    expect(
+      resolveCatalogImport({ id: 'anthropic', npm: '@ai-sdk/anthropic', api: '${ANTHROPIC_BASE_URL}' }),
+    ).toEqual({ kind: 'needs-base-url', wire: 'anthropic', guessed: false });
+    // A concrete endpoint on the official SDK still resolves without asking.
+    expect(
+      resolveCatalogImport({ id: 'openai', npm: '@ai-sdk/openai', api: 'https://api.openai.com/v1' }),
+    ).toMatchObject({ kind: 'ok', wire: 'openai' });
+  });
+
   it('adapts a user-supplied URL to the wire (Anthropic strips a trailing /v1)', () => {
     expect(
       resolveCatalogImport({ id: 'xai', npm: '@ai-sdk/xai' }, 'https://api.x.ai/v1'),
@@ -439,25 +452,23 @@ describe('catalogModelToCapability', () => {
     expect(model?.capability.thinking).toBe(true);
   });
 
-  it('prefers limit.input over limit.context for the context budget', () => {
-    // The gpt-5 shape on models.dev: 400k window but a 272k input cap.
-    expect(
-      catalogModelToCapability({ id: 'm', limit: { context: 400000, input: 272000 } })?.capability
-        .max_context_tokens,
-    ).toBe(272000);
+  it('tracks limit.input separately from the total context window', () => {
+    // The gpt-5 shape on models.dev: 400k total window, 272k input cap. The
+    // total window stays the context budget (completion clamping needs it);
+    // the input cap is tracked for prompt-budget checks (compaction).
+    const model = catalogModelToCapability({ id: 'gpt-5', limit: { context: 400000, input: 272000 } });
+    expect(model?.capability.max_context_tokens).toBe(400000);
+    expect(model?.capability.max_input_tokens).toBe(272000);
     // A bogus or inconsistent input limit never exceeds the total window.
-    expect(
-      catalogModelToCapability({ id: 'm', limit: { context: 1000, input: 5000 } })?.capability
-        .max_context_tokens,
-    ).toBe(1000);
-    expect(
-      catalogModelToCapability({ id: 'm', limit: { context: 1000, input: 0 } })?.capability
-        .max_context_tokens,
-    ).toBe(1000);
-    expect(
-      catalogModelToCapability({ id: 'm', limit: { context: 1000 } })?.capability
-        .max_context_tokens,
-    ).toBe(1000);
+    const weird = catalogModelToCapability({ id: 'm', limit: { context: 1000, input: 5000 } });
+    expect(weird?.capability.max_context_tokens).toBe(1000);
+    expect(weird?.capability.max_input_tokens).toBe(1000);
+    // No declared input limit: the total window is the only ceiling.
+    const plain = catalogModelToCapability({ id: 'm', limit: { context: 1000 } });
+    expect(plain?.capability.max_context_tokens).toBe(1000);
+    expect(plain?.capability.max_input_tokens).toBeUndefined();
+    const zero = catalogModelToCapability({ id: 'm', limit: { context: 1000, input: 0 } });
+    expect(zero?.capability.max_input_tokens).toBeUndefined();
   });
 
   it('skips deprecated and alpha models but keeps beta ones', () => {
@@ -634,5 +645,58 @@ describe('catalogProviderModels', () => {
     });
     expect(models[0]).toMatchObject({ baseUrl: 'https://tenant.example.test' });
     expect(models[0]?.protocol).toBeUndefined();
+  });
+
+  it('honors api-only overrides as same-wire endpoint changes', () => {
+    const models = catalogProviderModels({
+      id: 'gateway',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://gateway.example.test/v1',
+      models: {
+        'tenant-model': {
+          id: 'tenant-model',
+          limit: { context: 1000 },
+          provider: { api: 'https://tenant.example.test/v1' },
+        },
+        'plain-model': { id: 'plain-model', limit: { context: 1000 } },
+      },
+    });
+    expect(models[0]).toMatchObject({ baseUrl: 'https://tenant.example.test/v1' });
+    expect(models[0]?.protocol).toBeUndefined();
+    expect(models[1]?.baseUrl).toBeUndefined();
+  });
+
+  it('skips overrides targeting another known wire the alias cannot express', () => {
+    // A google-genai model on an OpenAI gateway: the override explicitly
+    // requires a different protocol — imported under OpenAI it would just fail.
+    const models = catalogProviderModels({
+      id: 'gateway',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://gateway.example.test/v1',
+      models: {
+        'google/gemini-x': {
+          id: 'google/gemini-x',
+          limit: { context: 1000 },
+          provider: { npm: '@ai-sdk/google' },
+        },
+      },
+    });
+    expect(models).toHaveLength(0);
+  });
+
+  it('skips same-wire models whose declared endpoint is an env placeholder', () => {
+    const models = catalogProviderModels({
+      id: 'gateway',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://gateway.example.test/v1',
+      models: {
+        'tenant-model': {
+          id: 'tenant-model',
+          limit: { context: 1000 },
+          provider: { api: '${TENANT_BASE_URL}/v1' },
+        },
+      },
+    });
+    expect(models).toHaveLength(0);
   });
 });

@@ -398,6 +398,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       model.capabilities,
       explainedCapability.capability,
       model.maxContextSize,
+      model.maxInputSize,
     );
     const providerOptions = buildProtocolProviderOptions(
       model,
@@ -424,6 +425,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       ),
       capabilities,
       maxContextSize: model.maxContextSize,
+      maxInputSize: model.maxInputSize,
       maxOutputSize: model.maxOutputSize,
       displayName: model.displayName,
       reasoningKey: model.reasoningKey,
@@ -617,6 +619,7 @@ function resolveModelCapabilities(
   declaredCapabilities: readonly string[] | undefined,
   detected: ModelCapability,
   maxContextSize: number,
+  maxInputSize: number | undefined,
 ): ModelCapability {
   const declared = new Set((declaredCapabilities ?? []).map((c) => c.trim().toLowerCase()));
   return {
@@ -626,6 +629,7 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: maxContextSize,
+    max_input_tokens: maxInputSize,
     dynamically_loaded_tools:
       declared.has('dynamically_loaded_tools') ||
       detected.dynamically_loaded_tools === true,

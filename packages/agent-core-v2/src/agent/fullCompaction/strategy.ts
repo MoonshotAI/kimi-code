@@ -71,14 +71,14 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
   private delegate(): DefaultCompactionStrategy {
     const model = this.context();
     return new DefaultCompactionStrategy(
-      () => model.modelCapabilities.max_context_tokens,
+      () => model.modelCapabilities.max_input_tokens ?? model.modelCapabilities.max_context_tokens,
       this.config(model),
     );
   }
 
   private windowDelegate(): DefaultCompactionStrategy {
     return new DefaultCompactionStrategy(
-      () => this.context().modelCapabilities.max_context_tokens,
+      () => this.context().modelCapabilities.max_input_tokens ?? this.context().modelCapabilities.max_context_tokens,
       DEFAULT_COMPACTION_CONFIG,
     );
   }

@@ -319,6 +319,33 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('maps alias.maxInputSize onto the resolved capability while keeping the total window', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          gateway: { type: 'openai', apiKey: 'sk-gateway' } as const,
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'gateway/gpt5': {
+            provider: 'gateway',
+            model: 'gpt-5',
+            maxContextSize: 400000,
+            maxInputSize: 272000,
+          },
+        },
+      },
+      model: 'gateway/gpt5',
+    });
+
+    expect(resolved.modelCapabilities).toMatchObject({
+      max_context_tokens: 400000,
+      max_input_tokens: 272000,
+    });
+  });
+
   it('prefers alias.baseUrl over the provider base URL for the openai wire', () => {
     // Catalog gateway shape: a model whose same-wire override endpoint
     // differs from the provider's default.

@@ -241,6 +241,7 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: alias.maxContextSize,
+    max_input_tokens: alias.maxInputSize,
     // Message-level tool declarations ("dynamically loaded tools"). Every
     // field here must be merged explicitly — a capability registered in
     // kosong that is not forwarded here never reaches the agent.
