@@ -772,28 +772,31 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
   private async *_convertStreamResponse(
     response: AsyncIterable<RawObject>,
   ): AsyncGenerator<StreamedMessagePart> {
-    const functionCallArgumentsByIndex = new Map<number | string, string>();
-    let unindexedFunctionCallArguments: string | undefined;
+    type FunctionCallState = {
+      toolCall: ToolCall;
+      accumulatedArguments: string;
+      functionDoneArguments?: string;
+      committed: boolean;
+    };
 
-    const hasFunctionCallArguments = (streamIndex: number | string | undefined): boolean =>
-      streamIndex === undefined
-        ? unindexedFunctionCallArguments !== undefined
-        : functionCallArgumentsByIndex.has(streamIndex);
+    const functionCallsByIndex = new Map<number | string, FunctionCallState>();
+    let unindexedFunctionCall: FunctionCallState | undefined;
 
-    const getFunctionCallArguments = (streamIndex: number | string | undefined): string =>
-      streamIndex === undefined
-        ? (unindexedFunctionCallArguments as string)
-        : functionCallArgumentsByIndex.get(streamIndex)!;
-
-    const setFunctionCallArguments = (
+    const getFunctionCall = (
       streamIndex: number | string | undefined,
-      argumentsValue: string,
-    ): void => {
-      if (streamIndex === undefined) {
-        unindexedFunctionCallArguments = argumentsValue;
-      } else {
-        functionCallArgumentsByIndex.set(streamIndex, argumentsValue);
+      context: string,
+    ): FunctionCallState => {
+      const state =
+        streamIndex === undefined
+          ? unindexedFunctionCall
+          : functionCallsByIndex.get(streamIndex);
+      if (state === undefined) {
+        failResponsesDecode(
+          context,
+          `received function-call arguments for unknown stream index ${formatResponseStreamIndex(streamIndex)}.`,
+        );
       }
+      return state;
     };
 
     const appendFunctionCallArguments = (
@@ -801,57 +804,32 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
       argumentsPart: string,
       context: string,
     ): void => {
-      if (!hasFunctionCallArguments(streamIndex)) {
-        failResponsesDecode(
-          context,
-          `received function-call arguments for unknown stream index ${formatResponseStreamIndex(streamIndex)}.`,
-        );
-      }
-      setFunctionCallArguments(
-        streamIndex,
-        getFunctionCallArguments(streamIndex) + argumentsPart,
-      );
+      const state = getFunctionCall(streamIndex, context);
+      state.accumulatedArguments += argumentsPart;
     };
 
-    const yieldFinalArgumentsSuffix = function* (
+    const commitFunctionCall = function* (
       streamIndex: number | string | undefined,
       finalArguments: string,
       context: string,
     ): Generator<StreamedMessagePart> {
-      if (!hasFunctionCallArguments(streamIndex)) {
-        failResponsesDecode(
-          context,
-          `received final function-call arguments for unknown stream index ${formatResponseStreamIndex(streamIndex)}.`,
-        );
+      const state = getFunctionCall(streamIndex, context);
+      if (state.committed) {
+        return;
       }
+      state.committed = true;
 
-      const accumulatedArguments = getFunctionCallArguments(streamIndex);
-      if (finalArguments === accumulatedArguments) {
+      if (streamIndex === undefined) {
+        unindexedFunctionCall = undefined;
+        yield { ...state.toolCall, arguments: finalArguments };
         return;
       }
 
-      if (!finalArguments.startsWith(accumulatedArguments)) {
-        throw new ChatProviderError(
-          `OpenAI Responses final function-call arguments for stream index ${formatResponseStreamIndex(
-            streamIndex,
-          )} do not match the streamed argument deltas.`,
-        );
-      }
-
-      const suffix = finalArguments.slice(accumulatedArguments.length);
-      setFunctionCallArguments(streamIndex, finalArguments);
-      if (suffix.length === 0) {
-        return;
-      }
-
-      const part: StreamedMessagePart = {
+      yield {
         type: 'tool_call_part',
-        argumentsPart: suffix,
+        argumentsPart: finalArguments,
+        index: streamIndex,
       };
-      if (streamIndex !== undefined) {
-        (part as { index: number | string }).index = streamIndex;
-      }
-      yield part;
     };
 
     try {
@@ -892,22 +870,31 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
             // would clobber the real response id (or leave it undefined for
             // tool-call items that have no `item.id`).
             if (item.type === 'function_call') {
-              // The Responses API routes streaming argument deltas via
-              // `item_id`, which matches `item.id` on output_item.added.
-              // Preserve it so the generate loop can dispatch interleaved
-              // deltas across parallel function calls correctly.
+              if (unindexedFunctionCall !== undefined) {
+                failResponsesDecode(
+                  `${type}.item`,
+                  'cannot start a function call while an unindexed function call is unresolved.',
+                );
+              }
               const streamIndex = responseStreamIndex(item.itemId, outputIndex);
-              setFunctionCallArguments(streamIndex, item.arguments ?? '');
               const tc: ToolCall = {
                 type: 'function',
                 id: functionCallId(item.callId),
                 name: requireFunctionCallName(item),
-                arguments: item.arguments ?? null,
+                arguments: null,
+              };
+              const state: FunctionCallState = {
+                toolCall: tc,
+                accumulatedArguments: item.arguments ?? '',
+                committed: false,
               };
               if (streamIndex !== undefined) {
                 tc._streamIndex = streamIndex;
+                functionCallsByIndex.set(streamIndex, state);
+                yield tc;
+              } else {
+                unindexedFunctionCall = state;
               }
-              yield tc;
             }
             break;
           }
@@ -923,7 +910,7 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
               yield thinkPart;
             } else if (item.type === 'function_call' && typeof item.arguments === 'string') {
               const streamIndex = responseStreamIndex(item.itemId, outputIndex);
-              yield* yieldFinalArgumentsSuffix(streamIndex, item.arguments, type);
+              yield* commitFunctionCall(streamIndex, item.arguments, type);
             }
             break;
           }
@@ -935,15 +922,7 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
               readNumberField(chunk, 'output_index'),
             );
             const argumentsPart = requireStringField(chunk, 'delta', type);
-            const part: StreamedMessagePart = {
-              type: 'tool_call_part',
-              argumentsPart,
-            };
             appendFunctionCallArguments(streamIndex, argumentsPart, type);
-            if (streamIndex !== undefined) {
-              (part as { index: number | string }).index = streamIndex;
-            }
-            yield part;
             break;
           }
           case 'response.function_call_arguments.done': {
@@ -952,7 +931,8 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
               readStringField(chunk, 'item_id'),
               readNumberField(chunk, 'output_index'),
             );
-            yield* yieldFinalArgumentsSuffix(streamIndex, functionArguments, type);
+            const state = getFunctionCall(streamIndex, type);
+            state.functionDoneArguments ??= functionArguments;
             break;
           }
           case 'response.reasoning_summary_part.added':
@@ -1008,6 +988,24 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
       }
     } catch (error: unknown) {
       throw convertOpenAIError(error);
+    }
+
+    for (const [streamIndex, state] of functionCallsByIndex) {
+      if (!state.committed) {
+        yield* commitFunctionCall(
+          streamIndex,
+          state.functionDoneArguments ?? state.accumulatedArguments,
+          'OpenAI Responses stream completion',
+        );
+      }
+    }
+    if (unindexedFunctionCall !== undefined) {
+      const state = unindexedFunctionCall;
+      yield* commitFunctionCall(
+        undefined,
+        state.functionDoneArguments ?? state.accumulatedArguments,
+        'OpenAI Responses stream completion',
+      );
     }
   }
 }
