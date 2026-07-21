@@ -105,6 +105,32 @@ describe('FetchURLTool', () => {
     expect(out).toContain('# Raw markdown');
   });
 
+  it('returns image data as multimodal ContentPart[] when fetcher returns an image', async () => {
+    const fetcher: UrlFetcher = {
+      fetch: vi.fn().mockResolvedValue({
+        content: 'Image fetched (image/png, 8 bytes)',
+        kind: 'image',
+        imageData: { mimeType: 'image/png', base64: 'dGVzdA==' },
+      }),
+    };
+    const tool = new FetchURLTool(fetcher);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-img',
+      args: { url: 'https://example.com/image.png' },
+      signal,
+    });
+    expect(result.isError).toBe(false);
+    expect(Array.isArray(result.output)).toBe(true);
+    const parts = result.output as Array<{ type: string }>;
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toMatchObject({ type: 'text' });
+    expect(parts[1]).toMatchObject({
+      type: 'image_url',
+      imageUrl: { url: 'data:image/png;base64,dGVzdA==' },
+    });
+  });
+
   it('returns empty message when fetcher returns empty string', async () => {
     const tool = new FetchURLTool(fakeFetcher(''));
     const result = await executeTool(tool, {

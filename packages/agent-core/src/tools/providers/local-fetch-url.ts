@@ -237,6 +237,26 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
+    // Image responses: read binary body and return as base64 for direct
+    // model consumption.
+    if (contentType.startsWith('image/')) {
+      const arrayBuffer = await response.arrayBuffer();
+      const bytes = Buffer.from(arrayBuffer);
+      if (bytes.length > this.maxBytes) {
+        throw new Error(
+          `Response body too large: ${String(bytes.length)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
+        );
+      }
+      const base64 = bytes.toString('base64');
+      return {
+        content: `Image fetched (${contentType}, ${String(bytes.length)} bytes)`,
+        kind: 'image',
+        imageData: { mimeType: contentType.split(';')[0]!.trim(), base64 },
+      };
+    }
+
     // Reject oversized responses before buffering the full body.
     const contentLengthRaw = response.headers.get('content-length');
     if (contentLengthRaw !== null) {
@@ -263,7 +283,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
       );
     }
 
-    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.startsWith('text/plain') || contentType.startsWith('text/markdown')) {
       return { content: body, kind: 'passthrough' };
     }
