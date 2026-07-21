@@ -39,6 +39,7 @@ import {
 } from '#/tool/path-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
+import { t } from '@moonshot-ai/kimi-i18n';
 import WRITE_DESCRIPTION from './write.md?raw';
 
 export const WriteInputSchema = z.object({
@@ -98,7 +99,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
     });
     return {
       accesses: ToolAccesses.writeFile(path),
-      description: `Writing ${args.path}`,
+      description: t('toolsV2.writing', { path: args.path }),
       display: { kind: 'file_io', operation: 'write', path, content: args.content },
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
@@ -126,14 +127,16 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       }
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
-        output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+        output: mode === 'append'
+          ? t('toolsV2.writeAppended', { bytes: String(bytesWritten), path: args.path })
+          : t('toolsV2.writeWrote', { bytes: String(bytesWritten), path: args.path }),
       };
     } catch (error) {
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'ENOENT') {
         return {
           isError: true,
-          output: `Failed to write ${args.path}: parent directory does not exist.`,
+          output: t('toolsV2.writeFailedParentNotFound', { path: args.path }),
         };
       }
       return {
@@ -160,7 +163,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       return undefined;
     }
     if (!stat.isDirectory) {
-      return `Parent path is not a directory: ${parent}.`;
+      return t('toolsV2.parentNotDirectory', { parent: parent });
     }
     return undefined;
   }

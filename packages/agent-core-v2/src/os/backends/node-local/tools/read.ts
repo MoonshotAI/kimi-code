@@ -47,6 +47,7 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, type LineEndingStyle } from '#/_base/text/line-endings';
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { t } from '@moonshot-ai/kimi-i18n';
 import readDescriptionTemplate from './read.md?raw';
 
 export const MAX_LINES: number = 1000;
@@ -263,7 +264,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     });
     return {
       accesses: ToolAccesses.readFile(path),
-      description: `Reading ${args.path}`,
+      description: t('toolsV2.reading', { path: args.path }),
       display: { kind: 'file_io', operation: 'read', path },
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>

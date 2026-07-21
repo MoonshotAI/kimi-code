@@ -118,7 +118,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     const agentCount = (args.items?.length ?? 0) + Object.keys(args.resume_agent_ids ?? {}).length;
     return {
       accesses: ToolAccesses.all(),
-      description: `Launching agent swarm: ${args.description}`,
+      description: t('toolsV2.swarm.launching', { description: args.description }),
       display: {
         kind: 'agent_call',
         agent_name: `swarm (${agentCount} subagents)`,
@@ -213,6 +213,9 @@ async function createAgentSwarmSpecs(
   if (totalCount > MAX_AGENT_SWARM_SUBAGENTS) {
     throw new Error(t('v2Errors.swarmMaxSubagents', { count: MAX_AGENT_SWARM_SUBAGENTS }));
   }
+  if (itemCount === 0 && resumeCount === 0) {
+    throw new Error(t('v2Errors.swarmMinInputs'));
+  }
   const promptTemplate = normalizeOptionalString(args.prompt_template);
   if (items.length > 0 && promptTemplate === undefined) {
     throw new Error(t('v2Errors.swarmPromptRequired'));
@@ -257,7 +260,11 @@ function hasMinimumAgentSwarmInputs(itemCount: number, resumeCount: number): boo
 }
 
 function childDescription(swarmDescription: string, index: number, profileName: string): string {
-  return `${swarmDescription} #${String(index)} (${profileName})`;
+  return t('toolsV2.swarm.childDescription', {
+    description: swarmDescription,
+    index: String(index),
+    profileName,
+  });
 }
 
 function renderSwarmResults(results: readonly SwarmRunResult[]): string {

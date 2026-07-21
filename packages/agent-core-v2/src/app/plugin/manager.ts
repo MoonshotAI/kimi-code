@@ -21,6 +21,7 @@ import { loadPluginCommand } from './commands';
 import { resolveGithubCommitSha, resolveGithubSource } from './github-resolver';
 import { resolveInstallSource } from './source';
 import { parseManifest, type ParsedManifestResult } from './manifest';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import {
   normalizePluginId,
@@ -125,8 +126,8 @@ export class PluginManager {
         const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
         throw new Error(
           sourceType === 'local-path'
-            ? `Cannot install plugin at ${sourceRoot}: ${msg}`
-            : `Cannot install plugin from ${originalSource}: ${msg}`,
+            ? t('toolsV2.plugin.cannotInstallLocal', { path: sourceRoot, message: msg })
+            : t('toolsV2.plugin.cannotInstallRemote', { source: originalSource, message: msg }),
         );
       }
 
@@ -194,7 +195,7 @@ export class PluginManager {
     const current = this.records.get(key);
     if (current === undefined) throw pluginNotFound(id);
     if (current.manifest?.mcpServers?.[server] === undefined) {
-      throw new Error(`Plugin "${id}" does not declare MCP server "${server}"`);
+      throw new Error(t('toolsV2.plugin.noMcpServer', { id, server }));
     }
     const currentMcpServers = current.capabilities?.mcpServers ?? {};
     const nextCapabilities: PluginCapabilityState = {
@@ -456,7 +457,7 @@ function explicitGithubRef(record: PluginRecord): PluginGithubMetadata['ref'] | 
 }
 
 function pluginNotFound(id: string): Error2 {
-  return new Error2(PluginErrors.codes.PLUGIN_NOT_FOUND, `Plugin "${id}" is not installed`, {
+  return new Error2(PluginErrors.codes.PLUGIN_NOT_FOUND, t('toolsV2.plugin.notFound', { id }), {
     details: { id },
   });
 }
@@ -464,7 +465,7 @@ function pluginNotFound(id: string): Error2 {
 async function normalizeInstallRoot(rootPath: string): Promise<string> {
   const trimmed = rootPath.trim();
   if (!path.isAbsolute(trimmed)) {
-    throw new Error(`Plugin root must be an absolute path (got "${rootPath}")`);
+    throw new Error(t('toolsV2.plugin.rootNotAbsolute', { path: rootPath }));
   }
   let resolved: string;
   try {

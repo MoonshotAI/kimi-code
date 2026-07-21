@@ -50,6 +50,7 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
@@ -216,8 +217,8 @@ export class BashTool implements BuiltinTool<BashInput> {
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     return {
       description: args.run_in_background
-        ? `Starting background: ${preview}`
-        : `Running: ${preview}`,
+        ? t('toolsV2.bash.startingBackground', { preview })
+        : t('toolsV2.bash.running', { preview }),
       display: {
         kind: 'command',
         command: args.command,
@@ -323,8 +324,8 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     if (startsInBackground) {
       return this.backgroundStartedResult(taskId, proc, description, {
-        title: 'Background task started',
-        brief: `Started ${taskId}`,
+        title: t('shell.backgroundStarted'),
+        brief: t('shell.backgroundStartedBrief', { taskId }),
       });
     }
 
@@ -335,12 +336,12 @@ export class BashTool implements BuiltinTool<BashInput> {
         const labels =
           release === 'timeout_detached'
             ? {
-                title: 'Command timed out and moved to background',
-                brief: `Backgrounded ${taskId} after timeout`,
+                title: t('shell.commandTimedOutToBackground'),
+                brief: t('shell.backgroundedAfterTimeout', { taskId }),
               }
             : {
-                title: 'Task moved to background',
-                brief: `Backgrounded ${taskId}`,
+                title: t('shell.taskMovedToBackground'),
+                brief: t('shell.backgroundedBrief', { taskId }),
               };
         return this.backgroundStartedResult(
           taskId,
@@ -362,20 +363,19 @@ export class BashTool implements BuiltinTool<BashInput> {
     args: BashInput,
     signal: AbortSignal,
   ): ExecutableToolResult | undefined {
-    if (signal.aborted) return { isError: true, output: 'Aborted before command started' };
-    if (args.command.length === 0) return { isError: true, output: 'Command cannot be empty.' };
+    if (signal.aborted) return { isError: true, output: t('shell.abortedBeforeStart') };
+    if (args.command.length === 0) return { isError: true, output: t('shell.commandCannotBeEmpty') };
     if (args.run_in_background !== true) return undefined;
     if (!this.allowBackground()) {
       return {
         isError: true,
-        output:
-          'Background execution is not available for this agent because TaskOutput and TaskStop are not enabled.',
+        output: t('shell.backgroundNotAvailable'),
       };
     }
     if (!args.description?.trim()) {
       return {
         isError: true,
-        output: 'description is required when run_in_background is true.',
+        output: t('shell.descriptionRequired'),
       };
     }
     return undefined;
@@ -392,25 +392,25 @@ export class BashTool implements BuiltinTool<BashInput> {
     let result: ExecutableToolResultBuilderResult;
     if (current?.status === 'timed_out') {
       const timeoutLabel = formatTimeoutLabel(foregroundTimeoutMs);
-      result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
-        brief: `Killed by timeout (${timeoutLabel})`,
+      result = builder.error(t('shell.killedByTimeout', { label: timeoutLabel }), {
+        brief: t('shell.killedByTimeoutBrief', { label: timeoutLabel }),
       });
     } else if (
       current?.status === 'killed' &&
       current.stopReason === userCancellationReason().message
     ) {
-      result = builder.error('Interrupted by user', { brief: 'Interrupted by user' });
+      result = builder.error(t('shell.userInterrupt'), { brief: t('shell.userInterrupt') });
     } else if (
       (current?.status === 'failed' || current?.status === 'killed') &&
       current.stopReason !== undefined
     ) {
       result = builder.error(current.stopReason, { brief: current.stopReason });
     } else if (exitCode === 0) {
-      result = builder.ok('Command executed successfully.');
+      result = builder.ok(t('shell.executedSuccessfully'));
     } else {
-      if (builder.nChars === 0) builder.write(`Process exited with code ${String(exitCode)}`);
-      result = builder.error(`Command failed with exit code: ${String(exitCode)}.`, {
-        brief: `Failed with exit code: ${String(exitCode)}`,
+      if (builder.nChars === 0) builder.write(t('shell.exitedWithCode', { exitCode: String(exitCode) }));
+      result = builder.error(t('shell.failedWithExitCode', { exitCode: String(exitCode) }), {
+        brief: t('shell.failedWithExitCodeBrief', { exitCode: String(exitCode) }),
       });
     }
     return this.addForegroundOutputReference(taskId, result);
@@ -425,14 +425,14 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (!output.fullOutputAvailable || output.outputPath === undefined) return result;
 
     const taskOutputHint = this.allowBackground()
-      ? `, or TaskOutput(task_id="${taskId}", block=false)`
+      ? t('shell.taskOutputHint', { taskId })
       : '';
     const reference =
-      `\n\n[Full output saved]\n` +
-      `task_id: ${taskId}\n` +
-      `output_path: ${output.outputPath}\n` +
-      `output_size_bytes: ${String(output.outputSizeBytes)}\n` +
-      `next_step: Use Read with output_path to page through the full log${taskOutputHint}.`;
+      '\n\n' + t('background.fullOutputSaved') + '\n' +
+      t('shell.taskIdLabel', { taskId }) + '\n' +
+      t('shell.outputPathLabel', { path: output.outputPath }) + '\n' +
+      t('shell.outputSizeLabel', { bytes: String(output.outputSizeBytes) }) + '\n' +
+      t('shell.nextStepReadOutput', { hint: taskOutputHint });
     return { ...result, output: `${result.output}${reference}` };
   }
 
@@ -446,13 +446,13 @@ export class BashTool implements BuiltinTool<BashInput> {
   ): ExecutableToolResult {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
     const metadata =
-      `task_id: ${taskId}\n` +
-      `pid: ${String(proc.pid)}\n` +
-      `description: ${description}\n` +
-      `status: ${status}\n` +
-      `automatic_notification: true\n` +
+      t('shell.taskIdLabel', { taskId }) + '\n' +
+      t('shell.pidLabel', { pid: String(proc.pid) }) + '\n' +
+      t('shell.descriptionLabel', { description }) + '\n' +
+      t('shell.statusLabel', { status }) + '\n' +
+      t('shell.automaticNotification') + '\n' +
       this.nextStepLines(scenario) +
-      'human_shell_hint: Tell the human to run /tasks to open the interactive background-task panel.';
+      t('shell.humanShellHint');
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
@@ -476,21 +476,18 @@ export class BashTool implements BuiltinTool<BashInput> {
   ): string {
     if (scenario === 'foreground_detached') {
       const avoid = this.allowBackground()
-        ? 'do NOT wait, poll, or call TaskOutput on it'
-        : 'do NOT wait or poll';
+        ? t('shell.nextStepWithTaskOutput')
+        : t('shell.nextStepAwaitNoTaskOutput');
       return (
         'next_step: The task now runs in the background. You will be automatically notified ' +
         `when it completes — ${avoid}; continue with your current work.\n`
       );
     }
     if (!this.allowBackground()) {
-      return 'next_step: You will be automatically notified when it completes.\n';
+      return t('shell.nextStepBackgroundStartedNoBg');
     }
-    return (
-      'next_step: The completion arrives automatically in a later turn — do NOT wait, poll, ' +
-      'or call TaskOutput on it; continue with your current work.\n' +
-      'next_step: Use TaskStop only if the task must be cancelled.\n'
-    );
+    return t('shell.nextStepBackgroundStarted');
+
   }
 }
 

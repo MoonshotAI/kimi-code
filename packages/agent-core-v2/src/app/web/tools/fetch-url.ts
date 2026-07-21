@@ -24,6 +24,7 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebFetchService } from '../web';
 import { HttpFetchError, type UrlFetcher } from './fetch-url-types';
+import { t } from '@moonshot-ai/kimi-i18n';
 import DESCRIPTION from './fetch-url.md?raw';
 
 
@@ -45,7 +46,7 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
     const preview = args.url.length > 50 ? `${args.url.slice(0, 50)}…` : args.url;
     return {
       accesses: ToolAccesses.none(),
-      description: `Fetching: ${preview}`,
+      description: t('toolsV2.fetchUrl.fetching', { preview: preview }),
       display: { kind: 'url_fetch', url: args.url },
       approvalRule: literalRulePattern(this.name, args.url),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.url),
@@ -62,7 +63,7 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
 
       if (!content) {
         return {
-          output: 'The response body is empty.',
+          output: t('toolsV2.fetchUrl.emptyBody'),
           isError: false,
         };
       }
@@ -70,10 +71,9 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       const builder = new ToolResultBuilder({ maxLineLength: null });
       const note =
         kind === 'passthrough'
-          ? 'The returned content is the full response body, returned verbatim.'
-          : 'The returned content is the main text extracted from the page.';
-      const citeReminder =
-        'If you use it in your answer, cite this page as a markdown link, e.g. [title](url).';
+          ? t('toolsV2.fetchUrl.passthroughNote')
+          : t('toolsV2.fetchUrl.extractedNote');
+      const citeReminder = t('toolsV2.fetchUrl.citeReminder');
       builder.write(`${note} ${citeReminder}\n\n${content}`);
       return builder.ok();
     } catch (error) {
@@ -82,12 +82,12 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       if (error instanceof HttpFetchError) {
         return {
           isError: true,
-          output: `Failed to fetch URL. Status: ${String(error.status)}. ${msg}`,
+          output: t('toolsV2.fetchUrl.failedHttp', { status: String(error.status), message: msg }),
         };
       }
       return {
         isError: true,
-        output: `Failed to fetch URL due to network error: ${args.url}. ${msg}`,
+        output: t('toolsV2.fetchUrl.networkError', { url: args.url, message: msg }),
       };
     }
   }

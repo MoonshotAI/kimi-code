@@ -26,6 +26,7 @@ import { ToolResultBuilder } from '#/tool/result-builder';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebSearchProviderService } from '../webSearch';
+import { t } from '@moonshot-ai/kimi-i18n';
 import DESCRIPTION from './web-search.md?raw';
 
 
@@ -66,7 +67,7 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
     const preview = args.query.length > 40 ? `${args.query.slice(0, 40)}…` : args.query;
     return {
       accesses: ToolAccesses.none(),
-      description: `Searching: ${preview}`,
+      description: t('toolsV2.webSearch.searching', { preview: preview }),
       display: { kind: 'search', query: args.query },
       approvalRule: literalRulePattern(this.name, args.query),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.query),
@@ -83,7 +84,7 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
       const builder = new ToolResultBuilder({ maxLineLength: null });
 
       if (results.length === 0) {
-        builder.write('No search results found.');
+        builder.write(t('toolsV2.webSearch.noResults'));
         return builder.ok();
       }
 
@@ -100,7 +101,7 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
       }
 
       builder.write(
-        'When you rely on a result in your answer, cite it inline as a markdown link, e.g. [title](url).',
+        t('toolsV2.webSearch.citeReminder'),
       );
 
       return builder.ok();
@@ -121,13 +122,13 @@ function classifySearchError(error: unknown): string {
   const lower = message.toLowerCase();
 
   if (name === 'AbortError' || lower.includes('abort')) {
-    return `Search cancelled: ${message}`;
+    return t('toolsV2.webSearch.cancelled', { message });
   }
   if (name === 'TimeoutError' || lower.includes('timed out') || lower.includes('timeout')) {
-    return `Search timed out: ${message}`;
+    return t('toolsV2.webSearch.timedOut', { message });
   }
   if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
-    return `Search failed (authentication): ${message}`;
+    return t('toolsV2.webSearch.authFailed', { message });
   }
   if (
     lower.includes('http ') ||
@@ -135,9 +136,9 @@ function classifySearchError(error: unknown): string {
     lower.includes('fetch') ||
     name === 'TypeError'
   ) {
-    return `Search failed (network): ${message}`;
+    return t('toolsV2.webSearch.networkFailed', { message });
   }
-  return `Search failed: ${message}`;
+  return t('toolsV2.webSearch.failed', { message });
 }
 
 registerTool(WebSearchTool, {

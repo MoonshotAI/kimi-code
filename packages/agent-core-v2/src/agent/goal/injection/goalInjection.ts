@@ -54,7 +54,7 @@ function buildGoalReminder(goal: GoalSnapshot): string {
     objective: escapeUntrustedText(goal.objective),
     completionCriterion: escapedCompletionCriterion(goal),
     status: goal.status,
-    progress: `${goal.turnsUsed} continuation turns, ${goal.tokensUsed} tokens, ${formatElapsed(goal.wallClockMs)} elapsed`,
+    progress: `${goal.turnsUsed} continuation turns, ${goal.outputTokensUsed} out + ${goal.inputTokensUsed} in tokens, ${formatElapsed(goal.wallClockMs)} elapsed`,
     budgets: formatBudgets(goal),
     nearingBudget: isNearingBudget(goal),
   });
@@ -74,7 +74,7 @@ function formatBudgets(goal: GoalSnapshot): string {
   }
   if (goal.budget.tokenBudget !== null) {
     budgetLines.push(
-      `tokens ${goal.tokensUsed}/${goal.budget.tokenBudget} (remaining ${goal.budget.remainingTokens})`,
+      `tokens ${goal.outputTokensUsed} out + ${goal.inputTokensUsed} in / ${goal.budget.tokenBudget} (remaining ${goal.budget.remainingTokens})`,
     );
   }
   if (goal.budget.wallClockBudgetMs !== null) {
@@ -86,7 +86,13 @@ function formatBudgets(goal: GoalSnapshot): string {
 }
 
 function isNearingBudget(goal: GoalSnapshot): boolean {
-  return maxBudgetFraction(goal) >= 0.75;
+  if (goal.budget.tokenBudget !== null && goal.budget.tokenBudget > 0) {
+    return goal.tokensUsed / goal.budget.tokenBudget >= 0.75;
+  }
+  if (goal.budget.turnBudget !== null && goal.budget.turnBudget > 0) {
+    return goal.turnsUsed / goal.budget.turnBudget >= 0.75;
+  }
+  return false;
 }
 
 function maxBudgetFraction(goal: GoalSnapshot): number {

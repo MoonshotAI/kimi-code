@@ -77,6 +77,7 @@ import {
   SENSITIVE_DOT_VARIANT_SUFFIXES,
   type WorkspaceConfig,
 } from '#/tool/path-access';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import globDescription from './glob.md?raw';
@@ -178,7 +179,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
 
     return {
       accesses: ToolAccesses.searchTree(searchRoots[0]!),
-      description: `Searching ${args.pattern}`,
+      description: t('toolsV2.searching', { pattern: args.pattern }),
       display: {
         kind: 'file_io',
         operation: 'glob',
@@ -211,7 +212,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     }
 
     if (signal.aborted) {
-      return { isError: true, output: 'Glob aborted' };
+      return { isError: true, output: t('toolsV2.globAborted') };
     }
 
     let rgPath: string;
@@ -229,7 +230,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       }
     } catch (error) {
       if (signal.aborted) {
-        return { isError: true, output: 'Glob aborted' };
+        return { isError: true, output: t('toolsV2.globAborted') };
       }
       this.telemetry.track2('glob_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
@@ -242,7 +243,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { isError: true, output: formatSpawnError(error) };
     }
     if (run.kind === 'aborted') {
-      return { isError: true, output: 'Glob aborted' };
+      return { isError: true, output: t('toolsV2.globAborted') };
     }
 
     if (shouldRetryRipgrepEagain(run)) {
@@ -252,7 +253,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
         return { isError: true, output: formatSpawnError(error) };
       }
       if (run.kind === 'aborted') {
-        return { isError: true, output: 'Glob aborted' };
+        return { isError: true, output: t('toolsV2.globAborted') };
       }
     }
 
@@ -267,7 +268,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       traversalWarning = formatGlobWarning(stderrText);
     }
     if (signal.aborted) {
-      return { isError: true, output: 'Glob aborted' };
+      return { isError: true, output: t('toolsV2.globAborted') };
     }
 
     const rawPaths = splitCompletePaths(stdoutText, bufferTruncated || timedOut).map((p) =>
@@ -290,10 +291,10 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     if (limited.length === 0 && !timedOut) {
       if (filteredSensitive > 0) {
         return {
-          output: `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
+          output: t('toolsV2.globNoSensitiveMatches', { count: String(filteredSensitive) }),
         };
       }
-      return { output: 'No matches found' };
+      return { output: t('toolsV2.noMatches') };
     }
 
     const pathClass = this.env.pathClass;
@@ -305,12 +306,12 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     const lines: string[] = [];
     if (timedOut) {
       lines.push(
-        `Glob timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned.`,
+        t('toolsV2.globTimedOut', { seconds: String(DEFAULT_TIMEOUT_MS / 1000) }),
       );
     }
     if (bufferTruncated) {
       lines.push(
-        `[stdout truncated at ${String(MAX_OUTPUT_BYTES)} bytes; results may be incomplete — use a more specific pattern]`,
+        t('toolsV2.bufferTruncated', { bytes: String(MAX_OUTPUT_BYTES) }),
       );
     }
     if (traversalWarning !== undefined) {
@@ -318,14 +319,14 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     }
     if (truncated) {
       lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
-      lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
+      lines.push(t('toolsV2.globTruncated', { count: String(MAX_MATCHES) }));
     }
     lines.push(...displayLines);
     if (filteredSensitive > 0) {
-      lines.push(`Filtered ${String(filteredSensitive)} sensitive file(s).`);
+      lines.push(t('toolsV2.sensitiveFilesFiltered', { count: String(filteredSensitive) }));
     }
     if (!truncated && limited.length === MAX_MATCHES) {
-      lines.push(`Found ${String(limited.length)} matches`);
+      lines.push(t('toolsV2.foundMatches', { count: String(limited.length) }));
     }
     return { output: lines.join('\n') };
   }

@@ -38,6 +38,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import editDescriptionTemplate from './edit.md?raw';
 
@@ -97,7 +98,7 @@ export class EditTool implements BuiltinTool<EditInput> {
     });
     return {
       accesses: ToolAccesses.readWriteFile(path),
-      description: `Editing ${args.path}`,
+      description: t('toolsV2.editing', { path: args.path }),
       display: {
         kind: 'file_io',
         operation: 'edit',
@@ -120,7 +121,7 @@ export class EditTool implements BuiltinTool<EditInput> {
     if (args.old_string === args.new_string) {
       return {
         isError: true,
-        output: 'No changes to make: old_string and new_string are exactly the same.',
+        output: t('toolsV2.editNoChanges'),
       };
     }
 
@@ -134,8 +135,8 @@ export class EditTool implements BuiltinTool<EditInput> {
     if (!result.ok) {
       return { isError: true, output: result.error };
     }
-    const word = result.count === 1 ? 'occurrence' : 'occurrences';
-    return { output: `Replaced ${String(result.count)} ${word} in ${args.path}` };
+    const word = result.count === 1 ? t('toolsV2.occurrence') : t('toolsV2.occurrences');
+    return { output: t('toolsV2.editReplaced', { count: String(result.count), occurrences: word, path: args.path }) };
   }
 }
 

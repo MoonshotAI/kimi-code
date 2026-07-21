@@ -46,6 +46,7 @@ import {
   type ToolExecutorExecuteOptions,
   type UnavailableToolDescriber,
 } from './toolExecutor';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { ToolScheduler } from './toolScheduler';
 // Loads the `DomainEventMap` augmentation for the `tool.call.*` / `tool.result`
 // events this service publishes (the augmentation lives with the event
@@ -53,8 +54,8 @@ import { ToolScheduler } from './toolScheduler';
 import './toolExecutorEvents';
 
 const ABORT_GRACE_MS = 2_000;
-const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
-const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
+const TOOL_OUTPUT_EMPTY = t('toolsV2.execution.emptyOutput');
+const TOOL_OUTPUT_NON_TEXT = t('toolsV2.execution.nonTextOutput');
 
 const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
 
@@ -327,7 +328,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       const output =
         error instanceof PathSecurityError
           ? error.message
-          : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
+          : t('toolsV2.execution.resolveFailed', { toolName: call.toolName, error: errorMessage(error) });
       return settleError(call.args, output);
     }
 
@@ -352,7 +353,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     if (decision?.block === true) {
       return settleError(
         call.args,
-        decision.reason ?? `Tool call "${call.toolName}" was blocked`,
+        decision.reason ?? t('toolsV2.execution.blocked', { toolName: call.toolName }),
         displayFields,
       );
     }
@@ -382,7 +383,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     call: PreflightedToolCall,
     options: ToolExecutorExecuteOptions,
   ): ToolExecutionTask {
-    const output = 'Tool skipped because a previous tool call stopped the turn.';
+    const output = t('toolsV2.execution.skipped');
     this.dispatchToolCall(call, call.args, options);
     return makeResolvedTask(makeErrorToolResult(call, call.args, output));
   }
@@ -465,8 +466,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     } catch (error) {
       const aborted = isAbortError(error) || signal.aborted;
       const output = aborted
-        ? abortedToolOutput(call.toolName, signal)
-        : `Tool "${call.toolName}" failed: ${errorMessage(error)}`;
+        ? t('toolsV2.execution.aborted', { toolName: call.toolName })
+        : t('toolsV2.execution.failed', { toolName: call.toolName, error: errorMessage(error) });
       return makeErrorToolResult(call, call.args, output).result;
     }
 
@@ -564,8 +565,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     } catch (error) {
       const aborted = isAbortError(error) || options.signal.aborted;
       const output = aborted
-        ? `Tool "${call.toolName}" aborted during onDidExecuteTool hook.`
-        : `onDidExecuteTool hook failed for "${call.toolName}": ${errorMessage(error)}`;
+        ? t('toolsV2.execution.abortedHook', { toolName: call.toolName })
+        : t('toolsV2.execution.hookFailed', { toolName: call.toolName, error: errorMessage(error) });
       return {
         output,
         isError: true,
@@ -677,7 +678,7 @@ function preflightToolCall(
       toolCall,
       toolName,
       args: parsedArgs.data,
-      output: describeMissingTool?.(toolName) ?? `Tool "${toolName}" not found`,
+      output: describeMissingTool?.(toolName) ?? t('toolsV2.execution.notFound', { toolName }),
     };
   }
   const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
@@ -687,7 +688,7 @@ function preflightToolCall(
       toolCall,
       toolName,
       args: parsedArgs.data,
-      output: `Invalid args for tool "${toolName}": ${validationError}`,
+      output: t('toolsV2.execution.invalidArgs', { toolName, error: validationError }),
     };
   }
   return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
@@ -758,18 +759,18 @@ function makeErrorToolResult(
 
 function coerceToolResult(value: unknown, toolName: string): ExecutableToolResult {
   if (value === null || value === undefined) {
-    return { output: `Tool "${toolName}" returned no result.`, isError: true };
+    return { output: t('toolsV2.execution.noResult', { toolName }), isError: true };
   }
   if (typeof value !== 'object') {
-    return {
-      output: `Tool "${toolName}" returned a ${typeof value} instead of a tool result.`,
+     return {
+      output: t('toolsV2.execution.wrongType', { toolName, type: typeof value }),
       isError: true,
     };
   }
   const candidate = value as { output?: unknown };
   if (typeof candidate.output !== 'string' && !Array.isArray(candidate.output)) {
     return {
-      output: `Tool "${toolName}" returned a result with a missing or malformed "output" field.`,
+      output: t('toolsV2.execution.malformedOutput', { toolName }),
       isError: true,
     };
   }
@@ -845,9 +846,9 @@ function isMediaContentPart(part: ContentPart): boolean {
 
 function abortedToolOutput(toolName: string, signal: AbortSignal): string {
   if (isUserCancellation(signal.reason)) {
-    return `The user manually interrupted "${toolName}" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.`;
+    return t('toolsV2.execution.userInterrupted', { toolName });
   }
-  return `Tool "${toolName}" was aborted`;
+  return t('toolsV2.execution.aborted', { toolName });
 }
 
 async function raceWithAbortGrace(

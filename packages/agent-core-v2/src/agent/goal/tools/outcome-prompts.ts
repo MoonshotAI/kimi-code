@@ -19,13 +19,13 @@ export function buildGoalBlockedReasonPrompt(goal: GoalSnapshot): string {
 function buildGoalCompletionPromptMessage(goal: GoalSnapshot): string {
   const head = `Goal completed successfully${goal.terminalReason ? `: ${goal.terminalReason}` : ''}.`;
   const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;
-  const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.tokensUsed)} tokens.`;
+  const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.inputTokensUsed)} input + ${formatTokens(goal.outputTokensUsed)} output tokens.`;
   return `${head}\n${stats}`;
 }
 
 function buildGoalBlockedMessage(goal: GoalSnapshot): string {
   const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;
-  const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.tokensUsed)} tokens.`;
+  const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.inputTokensUsed)} input + ${formatTokens(goal.outputTokensUsed)} output tokens.`;
   return `Goal blocked.\n${stats}`;
 }
 

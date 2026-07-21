@@ -17,6 +17,8 @@
  *      that — the validator at `CronCreate` reuses this signal.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 /** A parsed cron expression. Opaque to callers — pass it back into {@link computeNextCronRun}. */
 export interface ParsedCronExpression {
   readonly raw: string;
@@ -96,7 +98,7 @@ function parseField(field: string, min: number, max: number, name: string): Set<
     addTerm(out, term, min, max, name);
   }
   if (out.size === 0) {
-    throw new Error(`cron ${name} field matches no values`);
+    throw new Error(t('toolsV2.cron.matchesNone', { name }));
   }
   return out;
 }

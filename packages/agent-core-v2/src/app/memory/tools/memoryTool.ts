@@ -25,6 +25,7 @@ import {
   type MemoryScope,
 } from '#/app/memory/memoryPaths';
 import DESCRIPTION from './memory.md?raw';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 const MemoryActionSchema = z.enum(['search', 'read', 'write', 'list', 'delete']);
 
@@ -72,7 +73,7 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
     const action = args.action;
 
     return {
-      description: `Memory: ${action}`,
+      description: t('toolsV2.memory.memoryAction', { action: action }),
       approvalRule: this.name,
       execute: async () => {
         switch (action) {
@@ -87,7 +88,7 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
           case 'delete':
             return this.handleDelete(args);
           default:
-            return { output: `Unknown memory action: ${action}`, isError: true };
+            return { output: t('toolsV2.memory.unknownAction', { action }), isError: true };
         }
       },
     };
@@ -95,13 +96,14 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
 
   private async handleSearch(args: MemoryToolInput) {
     if (!args.query) {
-      return { output: 'Search requires a `query` parameter.', isError: true };
+      return { output: t('toolsV2.memory.searchQueryRequired'), isError: true };
     }
     const results = await this.store.search(args.query, 10);
     if (results.length === 0) {
-      return { output: `No memory entries found for query: "${args.query}"` };
+      return { output: t('toolsV2.memory.noEntriesFound', { query: args.query }) };
     }
-    const lines = [`Found ${results.length} memory entr${results.length === 1 ? 'y' : 'ies'}:\n`];
+    const plural = results.length === 1 ? 'y' : 'ies';
+    const lines = [t('toolsV2.memory.foundEntries', { count: String(results.length), plural }) + '\n'];
     for (const r of results) {
       lines.push(`## ${r.title}`);
       lines.push(`  path: ${r.path}`);
@@ -116,12 +118,12 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
 
   private async handleRead(args: MemoryToolInput) {
     if (!args.path) {
-      return { output: 'Read requires a `path` parameter.', isError: true };
+      return { output: t('toolsV2.memory.readPathRequired'), isError: true };
     }
     const path = normalizePath(args.path);
     const entry = await this.store.get(path);
     if (entry === undefined) {
-      return { output: `Memory file not found: ${path}` };
+      return { output: t('toolsV2.memory.notFound', { path }) };
     }
     const lines = [
       `# ${entry.title}`,
@@ -137,10 +139,10 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
 
   private async handleWrite(args: MemoryToolInput) {
     if (!args.path) {
-      return { output: 'Write requires a `path` parameter (filename).', isError: true };
+      return { output: t('toolsV2.memory.writePathRequired'), isError: true };
     }
     if (!args.content) {
-      return { output: 'Write requires `content` parameter.', isError: true };
+      return { output: t('toolsV2.memory.writeContentRequired'), isError: true };
     }
 
     const scope = args.scope ?? 'project';
@@ -148,7 +150,7 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
     const fileName = sanitizeFileName(args.path);
     if (fileName === undefined) {
       return {
-        output: `Invalid memory filename: "${args.path}". Use a plain filename without path separators or "..".`,
+        output: t('toolsV2.memory.invalidFilename', { path: args.path }),
         isError: true,
       };
     }
@@ -178,7 +180,7 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
     await this.store.put(entry);
 
     return {
-      output: `Memory written to ${relPath}\ntitle: ${entry.title}\ntype: ${entry.type}`,
+      output: t('toolsV2.memory.written', { path: relPath, title: entry.title, type: entry.type }),
     };
   }
 
@@ -191,10 +193,10 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
       : allPaths;
 
     if (filtered.length === 0) {
-      return { output: 'No memory files found.' };
+      return { output: t('toolsV2.memory.noFilesFound') };
     }
 
-    const lines = [`Memory files (${filtered.length}):\n`];
+    const lines = [t('toolsV2.memory.listHeader', { count: String(filtered.length) }) + '\n'];
     const sorted = [...filtered].sort();
     for (const p of sorted) {
       const entry = await this.store.get(p);
@@ -209,12 +211,12 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
 
   private async handleDelete(args: MemoryToolInput) {
     if (!args.path) {
-      return { output: 'Delete requires a `path` parameter.', isError: true };
+      return { output: t('toolsV2.memory.deletePathRequired'), isError: true };
     }
     const path = normalizePath(args.path);
     const entry = await this.store.get(path);
     if (entry === undefined) {
-      return { output: `Memory file not found: ${path}` };
+      return { output: t('toolsV2.memory.notFound', { path }) };
     }
 
     // Delete from disk.
@@ -230,7 +232,7 @@ export class MemoryTool implements BuiltinTool<MemoryToolInput> {
     }
 
     await this.store.delete(path);
-    return { output: `Deleted: ${path}` };
+    return { output: t('toolsV2.memory.deleted', { path }) };
   }
 
   private resolveScopeId(scope: MemoryScope): string {

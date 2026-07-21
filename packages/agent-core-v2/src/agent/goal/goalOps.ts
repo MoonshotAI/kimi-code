@@ -45,6 +45,8 @@ export interface GoalState {
   readonly status: GoalStatus;
   readonly turnsUsed: number;
   readonly tokensUsed: number;
+  readonly inputTokensUsed: number;
+  readonly outputTokensUsed: number;
   readonly wallClockMs: number;
   readonly wallClockResumedAt?: number;
   readonly budgetLimits: GoalBudgetLimits;
@@ -109,6 +111,8 @@ export const createGoal = GoalModel.defineOp('goal.create', {
       status: 'active',
       turnsUsed: 0,
       tokensUsed: 0,
+      inputTokensUsed: 0,
+      outputTokensUsed: 0,
       wallClockMs: 0,
       wallClockResumedAt: p.wallClockResumedAt,
       budgetLimits: {},
@@ -126,6 +130,8 @@ export const updateGoal = GoalModel.defineOp('goal.update', {
       reason: z.string().optional(),
       turnsUsed: z.number().finite().nonnegative().optional(),
       tokensUsed: z.number().finite().nonnegative().optional(),
+      inputTokensUsed: z.number().finite().nonnegative().optional(),
+      outputTokensUsed: z.number().finite().nonnegative().optional(),
       wallClockMs: z.number().finite().nonnegative().optional(),
       wallClockResumedAt: z.number().finite().nonnegative().optional(),
       budgetLimits: GoalBudgetLimitsSchema.optional(),
@@ -150,6 +156,12 @@ export const updateGoal = GoalModel.defineOp('goal.update', {
     }
     if (p.tokensUsed !== undefined && p.tokensUsed !== s.tokensUsed) {
       next = { ...(next ?? s), tokensUsed: p.tokensUsed };
+    }
+    if (p.inputTokensUsed !== undefined && p.inputTokensUsed !== s.inputTokensUsed) {
+      next = { ...(next ?? s), inputTokensUsed: p.inputTokensUsed };
+    }
+    if (p.outputTokensUsed !== undefined && p.outputTokensUsed !== s.outputTokensUsed) {
+      next = { ...(next ?? s), outputTokensUsed: p.outputTokensUsed };
     }
     if (p.wallClockMs !== undefined && p.wallClockMs !== s.wallClockMs) {
       next = { ...(next ?? s), wallClockMs: p.wallClockMs };

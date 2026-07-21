@@ -53,6 +53,7 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
+import { inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
@@ -592,11 +593,20 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     };
   }
 
-  private accountTokenUsage(tokenDelta: number, goalId?: string): GoalSnapshot | null {
+  private accountTokenUsage(usage: TokenUsage, goalId?: string): GoalSnapshot | null {
     const state = this.goalState;
     if (!this.isAccountingActive(state) || !matchesGoal(state, goalId)) return null;
-    const tokensUsed = state.tokensUsed + Math.max(0, tokenDelta);
-    this.wire.dispatch(updateGoal({ tokensUsed }));
+    const inputDelta = Math.max(0, inputTotal(usage));
+    const outputDelta = Math.max(0, usage.output);
+    const totalDelta = inputDelta + outputDelta;
+    if (totalDelta === 0) return this.toSnapshot(this.requireState());
+    this.wire.dispatch(
+      updateGoal({
+        tokensUsed: state.tokensUsed + totalDelta,
+        inputTokensUsed: state.inputTokensUsed + inputDelta,
+        outputTokensUsed: state.outputTokensUsed + outputDelta,
+      }),
+    );
     const next = this.requireState();
     return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
   }
@@ -685,7 +695,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (source?.type !== 'turn') return;
     const goalId = this.goalDrivenTurns.get(source.turnId);
     if (goalId === undefined) return;
-    this.accountTokenUsage(ctx.usage.output, goalId);
+    this.accountTokenUsage(ctx.usage, goalId);
   }
 
   private handleAfterStep(ctx: AfterStepContext): void {
@@ -1107,6 +1117,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       status: state.status,
       turnsUsed: state.turnsUsed,
       tokensUsed: state.tokensUsed,
+      inputTokensUsed: state.inputTokensUsed,
+      outputTokensUsed: state.outputTokensUsed,
       wallClockMs,
       budget: computeBudgetReport(state, wallClockMs),
       terminalReason: state.terminalReason,
@@ -1188,6 +1200,8 @@ function computeBudgetReport(state: GoalState, wallClockMs: number): GoalBudgetR
     turnBudgetReached,
     wallClockBudgetReached,
     overBudget: tokenBudgetReached || turnBudgetReached || wallClockBudgetReached,
+    inputTokensUsed: state.inputTokensUsed,
+    outputTokensUsed: state.outputTokensUsed,
   };
 }
 

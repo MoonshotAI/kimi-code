@@ -58,6 +58,7 @@ import {
   shouldRetryRipgrepEagain,
   type RunRgResult,
 } from '#/os/backends/node-local/tools/runRg';
+import { t } from '@moonshot-ai/kimi-i18n';
 import GREP_DESCRIPTION from './grep.md?raw';
 
 export const GrepInputSchema = z.object({
@@ -220,7 +221,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     const searchPath = args.path ?? this.workspace.workspaceDir;
     return {
       accesses: ToolAccesses.searchTree(searchPaths[0]!),
-      description: `Searching for '${args.pattern}' in ${searchPath}`,
+      description: t('toolsV2.searchingFor', { pattern: args.pattern, path: searchPath }),
       display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
@@ -253,7 +254,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       }
     } catch (error) {
       if (signal.aborted) {
-        return { isError: true, output: 'Grep aborted' };
+        return { isError: true, output: t('toolsV2.grepAborted') };
       }
       this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
@@ -267,7 +268,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
         signal,
       );
       if (firstRun.kind === 'aborted') {
-        return { isError: true, output: 'Grep aborted' };
+        return { isError: true, output: t('toolsV2.grepAborted') };
       }
       runResult = firstRun;
 
@@ -278,7 +279,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
           signal,
         );
         if (retryRun.kind === 'aborted') {
-          return { isError: true, output: 'Grep aborted' };
+          return { isError: true, output: t('toolsV2.grepAborted') };
         }
         runResult = retryRun;
       }
@@ -303,11 +304,11 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     if (timedOut && stdoutText.trim() === '') {
       return {
         isError: true,
-        output: `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s. Try a more specific path or pattern.`,
+        output: t('toolsV2.grepTimedOut', { seconds: String(DEFAULT_TIMEOUT_MS / 1000) }),
       };
     }
     if (signal.aborted) {
-      return { isError: true, output: 'Grep aborted' };
+      return { isError: true, output: t('toolsV2.grepAborted') };
     }
 
     const rawLines = parseRipgrepOutput(stdoutText, mode);
@@ -322,7 +323,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
           : keptLines;
     } catch (error) {
       if (error instanceof GrepAbortedError) {
-        return { isError: true, output: 'Grep aborted' };
+        return { isError: true, output: t('toolsV2.grepAborted') };
       }
       throw error;
     }
@@ -364,7 +365,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     }
     if (timedOut) {
       messages.push(
-        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned`,
+        t('toolsV2.grepTimedOutPartial', { seconds: String(DEFAULT_TIMEOUT_MS / 1000) }),
       );
     }
 
@@ -381,10 +382,10 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     const contentBody = displayedLines.join('\n');
     const visibleBody =
       orderedLines.length === 0 && filteredSensitive.size > 0
-        ? 'No non-sensitive matches found'
+        ? t('toolsV2.noNonSensitiveMatches')
         : contentBody;
     const emptyResultMessage =
-      SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? 'No non-sensitive matches found' : 'No matches found';
+      SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? t('toolsV2.noNonSensitiveMatches') : t('toolsV2.noMatches');
     const body =
       visibleBody === '' && headerLines.length === 0 && messages.length === 0
         ? emptyResultMessage

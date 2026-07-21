@@ -31,6 +31,8 @@ export interface GoalBudgetReport {
   readonly turnBudgetReached: boolean;
   readonly wallClockBudgetReached: boolean;
   readonly overBudget: boolean;
+  readonly inputTokensUsed: number;
+  readonly outputTokensUsed: number;
 }
 
 export interface GoalSnapshot {
@@ -39,7 +41,12 @@ export interface GoalSnapshot {
   readonly completionCriterion?: string;
   readonly status: GoalStatus;
   readonly turnsUsed: number;
+  /** Total tokens used (input + output). */
   readonly tokensUsed: number;
+  /** Input tokens used (inputOther + inputCacheRead + inputCacheCreation). */
+  readonly inputTokensUsed: number;
+  /** Output tokens used. */
+  readonly outputTokensUsed: number;
   readonly wallClockMs: number;
   readonly budget: GoalBudgetReport;
   readonly terminalReason?: string;
