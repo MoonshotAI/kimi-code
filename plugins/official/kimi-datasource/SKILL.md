@@ -2,7 +2,7 @@
 name: kimi-datasource
 description: |
   Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, Google Scholar results, or Chinese laws/regulations and judicial cases.
-  This plugin exposes tools via MCP server `plugin-kimi-datasource_data`; call them in the flow `mcp__plugin-kimi-datasource_data__get_data_source_desc` → `mcp__plugin-kimi-datasource_data__call_data_source_tool`.
+  This plugin exposes tools via MCP server `kimi-datasource`; call them in the flow `mcp__kimi-datasource__get_data_source_desc` → `mcp__kimi-datasource__call_data_source_tool`.
 ---
 
 # kimi-datasource — 通用数据源助手
@@ -11,8 +11,8 @@ description: |
 
 本 skill 使用 datasource MCP server 注册的两个工具，不要通过 Bash 手动执行脚本：
 
-- `mcp__plugin-kimi-datasource_data__get_data_source_desc`
-- `mcp__plugin-kimi-datasource_data__call_data_source_tool`
+- `mcp__kimi-datasource__get_data_source_desc`
+- `mcp__kimi-datasource__call_data_source_tool`
 
 这两个工具由 Kimi Code 托管执行，参数直接按 tool schema 传 JSON。
 
@@ -52,16 +52,16 @@ description: |
 ### 例 1：用户问"茅台最近一年走势"
 
 1. 股票走势 → `stock_finance_data`
-2. 调用 `mcp__plugin-kimi-datasource_data__get_data_source_desc`，参数 `{"name":"stock_finance_data"}`
+2. 调用 `mcp__kimi-datasource__get_data_source_desc`，参数 `{"name":"stock_finance_data"}`
 
 3. 从文档里找到"获取历史价格"那个 API，看它要 `ticker / start_date / end_date / file_path` 等
 4. 用 web_search 核对 → 茅台 = `600519.SH`
-5. 调用 `mcp__plugin-kimi-datasource_data__call_data_source_tool`，参数形如 `{"data_source_name":"stock_finance_data","api_name":"<文档里写的 api>","params":{"ticker":"600519.SH","start_date":"...","end_date":"...","file_path":"/tmp/mao_1y.csv"}}`
+5. 调用 `mcp__kimi-datasource__call_data_source_tool`，参数形如 `{"data_source_name":"stock_finance_data","api_name":"<文档里写的 api>","params":{"ticker":"600519.SH","start_date":"...","end_date":"...","file_path":"/tmp/mao_1y.csv"}}`
 
 ### 例 2：用户问"找几篇 retrieval augmented generation 的综述"
 
 1. 论文搜索 → `arxiv`（或 `scholar`，arxiv 更适合预印本，scholar 引用更全）
-2. 调用 `mcp__plugin-kimi-datasource_data__get_data_source_desc`，参数 `{"name":"arxiv"}`
+2. 调用 `mcp__kimi-datasource__get_data_source_desc`，参数 `{"name":"arxiv"}`
 
 3. 从文档里找到搜索类 API，看它要 `query / file_path / max_results` 等
 4. 执行 `call_data_source_tool`
@@ -69,7 +69,7 @@ description: |
 ### 例 3：用户问"字节跳动有哪些股东"
 
 1. 企业工商 → `tianyancha`
-2. 调用 `mcp__plugin-kimi-datasource_data__get_data_source_desc`，参数 `{"name":"tianyancha"}`
+2. 调用 `mcp__kimi-datasource__get_data_source_desc`，参数 `{"name":"tianyancha"}`
 
 3. 注意：tianyancha 的 API 是动态注册的，文档会指引你**先用搜索类接口找到合适的 API 名，再调用**
 4. **必须使用企业全称**（"北京字节跳动科技有限公司"），不要用简称。不知道全称就先用 tianyancha 文档里的"公司搜索"接口查

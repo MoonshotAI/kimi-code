@@ -230,9 +230,10 @@ export class PluginManager {
     const out: Record<string, McpServerConfig> = {};
     for (const record of this.records.values()) {
       if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
-      for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
+      const entries = Object.entries(record.manifest.mcpServers ?? {});
+      for (const [name, config] of entries) {
         if (!isMcpServerEnabled(record, name, config)) continue;
-        out[pluginMcpRuntimeName(record.id, name)] = withPluginMcpRuntime(
+        out[pluginMcpRuntimeName(record.id, name, entries.length)] = withPluginMcpRuntime(
           withMcpServerEnabled(config, true),
           record.root,
           this.kimiHomeDir,
@@ -443,8 +444,9 @@ function isMcpServerEnabled(
 }
 
 function pluginMcpServersInfo(record: PluginRecord): readonly PluginMcpServerInfo[] {
-  return Object.entries(record.manifest?.mcpServers ?? {})
-    .map(([name, config]) => pluginMcpServerInfo(record, name, config))
+  const entries = Object.entries(record.manifest?.mcpServers ?? {});
+  return entries
+    .map(([name, config]) => pluginMcpServerInfo(record, name, config, entries.length))
     .toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -452,11 +454,12 @@ function pluginMcpServerInfo(
   record: PluginRecord,
   name: string,
   config: McpServerConfig,
+  serverCount: number,
 ): PluginMcpServerInfo {
   if (config.transport === 'http' || config.transport === 'sse') {
     return {
       name,
-      runtimeName: pluginMcpRuntimeName(record.id, name),
+      runtimeName: pluginMcpRuntimeName(record.id, name, serverCount),
       enabled: isMcpServerEnabled(record, name, config),
       transport: config.transport,
       url: config.url,
@@ -465,7 +468,7 @@ function pluginMcpServerInfo(
   }
   return {
     name,
-    runtimeName: pluginMcpRuntimeName(record.id, name),
+    runtimeName: pluginMcpRuntimeName(record.id, name, serverCount),
     enabled: isMcpServerEnabled(record, name, config),
     transport: 'stdio',
     command: config.command,
@@ -479,10 +482,13 @@ function withMcpServerEnabled(config: McpServerConfig, enabled: boolean): McpSer
   return { ...config, enabled };
 }
 
-function pluginMcpRuntimeName(pluginId: string, serverName: string): string {
-  // Plugin ids cannot contain ":", so this keeps plugin/server pairs unambiguous
-  // even when either side contains "-".
-  return `plugin-${pluginId}:${serverName}`;
+function pluginMcpRuntimeName(pluginId: string, serverName: string, serverCount: number): string {
+  // Plugin ids are unique and cannot contain ":", so a bare pluginId is
+  // already unambiguous when there is nothing to disambiguate (the common
+  // single-server case). Only append ":serverName" when a plugin declares
+  // more than one MCP server — that keeps cross-plugin pairs unambiguous
+  // even when either half contains "-" (e.g. "a-b"+"c" vs "a"+"b-c").
+  return serverCount > 1 ? `${pluginId}:${serverName}` : pluginId;
 }
 
 function withPluginMcpRuntime(

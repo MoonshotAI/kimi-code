@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.1 - 2026-07-11
+
+- Update the tool-name examples in this skill to match the shorter `mcp__kimi-datasource__*` naming (previously `mcp__plugin-kimi-datasource_data__*`).
+
 ## 3.2.0 - 2026-06-10
 
 - Add the `yuandian_law` data source (元典法律数据库) for Chinese laws/regulations and judicial case search.
