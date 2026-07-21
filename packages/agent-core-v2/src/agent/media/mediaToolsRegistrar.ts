@@ -103,6 +103,10 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
           protocol: model?.protocol,
         },
       }),
+      // The OpenAI family drops inline video on the wire; every other
+      // protocol that converts video_url (kimi, anthropic, google-genai,
+      // vertex) takes the inline fallback when no upload hook exists.
+      inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       telemetry: this.telemetry,
     });
   }

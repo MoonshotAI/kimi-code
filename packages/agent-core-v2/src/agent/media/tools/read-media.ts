@@ -32,11 +32,14 @@
  * Videos are delivered through the provider's upload channel when one is
  * bound, falling back to an inline base64 part when the channel exists but
  * fails at runtime (no files endpoint, network/server failure) — a failed
- * upload must not turn the whole read into an error. Two cases surface as
- * tool errors instead: a provider with no upload hook by design
- * (`VideoUploadUnsupportedError`, whose wire would drop the inline payload
- * anyway), and auth rejections (`provider.auth_error` / 401 / 403), which
- * drive credential refresh rather than mask a bad token.
+ * upload must not turn the whole read into an error. The same fallback
+ * covers providers with no upload hook at all, as long as their protocol
+ * converts `video_url` (`inlineVideoSupported`, computed from the model's
+ * protocol at registration); when the wire would drop the inline payload
+ * anyway (the OpenAI family), the by-design no-hook error
+ * (`VideoUploadUnsupportedError`) surfaces instead. Auth rejections
+ * (`provider.auth_error` / 401 / 403) always surface, because they drive
+ * credential refresh rather than mask a bad token.
  *
  * Registration is capability-gated by `registerMediaTools`: this tool is
  * only registered when the active model supports image or video input.
@@ -248,8 +251,12 @@ function buildFullResolutionLimitError(path: string, finalBytes: number): string
   );
 }
 
-function shouldSurfaceVideoUploadError(error: unknown): boolean {
-  if (error instanceof VideoUploadUnsupportedError) return true;
+function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boolean): boolean {
+  // No upload hook by design: surfacing the honest error only pays when the
+  // wire would drop an inline payload anyway (the OpenAI family). Protocols
+  // that convert video_url (kimi, anthropic, google-genai, …) take the
+  // inline fallback instead.
+  if (error instanceof VideoUploadUnsupportedError) return !inlineVideoSupported;
   if (typeof error !== 'object' || error === null) return false;
   if ((error as { code?: unknown }).code === ProtocolErrors.codes.PROVIDER_AUTH_ERROR) return true;
   const statusCode = (error as { statusCode?: unknown }).statusCode;
@@ -261,6 +268,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
+  private readonly inlineVideoSupported: boolean;
   constructor(
     private readonly fs: IHostFileSystem,
     private readonly env: IHostEnvironment,
@@ -268,10 +276,12 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader,
     telemetry?: ITelemetryService,
+    inlineVideoSupported?: boolean,
   ) {
     this.description = buildDescription(capabilities);
     this.compressTelemetry =
       telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
+    this.inlineVideoSupported = inlineVideoSupported ?? false;
   }
 
   private async videoContentPart(
@@ -287,7 +297,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           filename: safePath.split(/[\\/]/).at(-1),
         });
       } catch (error) {
-        if (shouldSurfaceVideoUploadError(error)) throw error;
+        if (shouldSurfaceVideoUploadError(error, this.inlineVideoSupported)) throw error;
         // Fall through to the inline form.
       }
     }

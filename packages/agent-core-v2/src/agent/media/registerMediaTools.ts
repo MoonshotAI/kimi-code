@@ -32,6 +32,7 @@ export interface RegisterMediaToolsDeps {
   readonly capabilities: ModelCapability;
   readonly videoUploader?: VideoUploader;
   readonly telemetry?: ITelemetryService;
+  readonly inlineVideoSupported?: boolean;
 }
 
 export function registerMediaTools(
@@ -49,6 +50,7 @@ export function registerMediaTools(
       deps.capabilities,
       deps.videoUploader,
       deps.telemetry,
+      deps.inlineVideoSupported,
     ),
   );
 }

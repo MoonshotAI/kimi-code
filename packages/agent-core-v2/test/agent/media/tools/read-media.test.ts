@@ -173,6 +173,7 @@ function makeTool(
   caps: ModelCapability = capabilities(),
   videoUploader?: VideoUploader,
   telemetry?: ITelemetryService,
+  inlineVideoSupported?: boolean,
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
     createTestFs(files),
@@ -181,6 +182,7 @@ function makeTool(
     caps,
     videoUploader,
     telemetry,
+    inlineVideoSupported,
   );
 }
 
@@ -726,6 +728,32 @@ describe('ReadMediaFileTool', () => {
     );
     expect(result.isError).toBe(true);
     expect(result.output).toContain('does not support video upload');
+  });
+
+  it('falls back to inline for a no-hook provider whose wire carries video', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(
+        new VideoUploadUnsupportedError(
+          'Model "gemini-stub" (protocol=google-genai) does not support video upload',
+        ),
+      );
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        true,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${mp4Buffer().toString('base64')}` },
+    });
   });
 
   it('rejects empty files', async () => {
