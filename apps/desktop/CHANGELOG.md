@@ -1,5 +1,53 @@
 # kimi-code-app
 
+## 0.0.7
+
+### Patch Changes
+
+- [#62](https://github.com/MoonshotAI/kimi-code-app/pull/62) [`946c196`](https://github.com/MoonshotAI/kimi-code-app/commit/946c1968c9d9c8d4a1eb33ea0d3ee233025819dd) Thanks [@liruifengv](https://github.com/liruifengv)! - 应用菜单新增「设置…」（快捷键 Cmd/Ctrl+,）和「检查更新…」:检查到有新版本时可直接下载,结果通过原生弹窗反馈。
+
+- [#44](https://github.com/MoonshotAI/kimi-code-app/pull/44) [`e6c96c7`](https://github.com/MoonshotAI/kimi-code-app/commit/e6c96c74d727eb9c7206fbf8533cbb9e582fe8d0) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复 macOS 上会话菜单打开后，点击窗口顶部拖拽区域（聊天标题栏、侧栏标题栏等）无法关闭菜单的问题。
+
+- [#51](https://github.com/MoonshotAI/kimi-code-app/pull/51) [`2cb8bc2`](https://github.com/MoonshotAI/kimi-code-app/commit/2cb8bc2486d6c80f0d5b4ca316510d277693ac53) Thanks [@liruifengv](https://github.com/liruifengv)! - macOS 上支持 Cmd+W 关闭窗口：关窗后应用隐藏在后台驻留，从 Dock 或托盘重新打开即时响应。
+
+- [#57](https://github.com/MoonshotAI/kimi-code-app/pull/57) [`6fdf4bc`](https://github.com/MoonshotAI/kimi-code-app/commit/6fdf4bc68490ee963d4284596c3fb24440fa523f) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 定时提醒消息重新排版：标题、原始 cron 表达式、触发状态收进气泡右上方的一行浅灰标签（任务 ID 移到悬停提示），气泡下方只保留触发时间。
+
+- [#54](https://github.com/MoonshotAI/kimi-code-app/pull/54) [`10dc455`](https://github.com/MoonshotAI/kimi-code-app/commit/10dc455ea1588bbddf9d48399bba552b72768c7f) Thanks [@liruifengv](https://github.com/liruifengv)! - 新增桌面宠物「小蓝」（仅 macOS）：官方动态形象常驻桌面，平时会眨眼、左顾右盼，点一下会随机做动作，可以拖到任意位置，View 菜单可开关。
+
+- [#63](https://github.com/MoonshotAI/kimi-code-app/pull/63) [`aeebb44`](https://github.com/MoonshotAI/kimi-code-app/commit/aeebb44c913f8684238a6696ca9f8aff3e329dc3) Thanks [@liruifengv](https://github.com/liruifengv)! - 支持把文件夹直接拖到侧边栏创建工作区，可一次拖入多个。
+
+- [#62](https://github.com/MoonshotAI/kimi-code-app/pull/62) [`946c196`](https://github.com/MoonshotAI/kimi-code-app/commit/946c1968c9d9c8d4a1eb33ea0d3ee233025819dd) Thanks [@liruifengv](https://github.com/liruifengv)! - 系统菜单新增「文件」菜单:新建会话(⌘N)可直接使用,新建窗口(⇧⌘N)、打开文件夹…(⌘O)先行展示(功能后续接入),「关闭窗口」(⌘W)移至该菜单。
+
+- [#62](https://github.com/MoonshotAI/kimi-code-app/pull/62) [`946c196`](https://github.com/MoonshotAI/kimi-code-app/commit/946c1968c9d9c8d4a1eb33ea0d3ee233025819dd) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复系统菜单中「关于」「退出」等菜单项显示为内部包名 kimi-code-app 的问题,现在正确显示 Kimi Code。
+
+- [#58](https://github.com/MoonshotAI/kimi-code-app/pull/58) [`a3c0f09`](https://github.com/MoonshotAI/kimi-code-app/commit/a3c0f097dbeca0ad8c075e84357d412949e24621) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复多个输入框在中文输入法下按回车确认候选词会直接提交的问题，涉及会话与工作空间重命名、会话搜索、提问与审批回复、模型选择和添加工作空间。
+
+- [#62](https://github.com/MoonshotAI/kimi-code-app/pull/62) [`946c196`](https://github.com/MoonshotAI/kimi-code-app/commit/946c1968c9d9c8d4a1eb33ea0d3ee233025819dd) Thanks [@liruifengv](https://github.com/liruifengv)! - 系统菜单新增「帮助」菜单,可直接打开 Kimi Code 文档和控制台(网页)。
+
+- [#63](https://github.com/MoonshotAI/kimi-code-app/pull/63) [`aeebb44`](https://github.com/MoonshotAI/kimi-code-app/commit/aeebb44c913f8684238a6696ca9f8aff3e329dc3) Thanks [@liruifengv](https://github.com/liruifengv)! - 新建工作区后，侧边栏会以选中底色标出该工作区行；切换会话或发出第一条消息后恢复。
+
+- [#45](https://github.com/MoonshotAI/kimi-code-app/pull/45) [`48f01c4`](https://github.com/MoonshotAI/kimi-code-app/commit/48f01c46be88a9967937aecf49433a996969efe2) Thanks [@chengluyu](https://github.com/chengluyu)! - 会话标题右侧菜单、工作区菜单和对话菜单打开时，加入与模型切换器一致的弹出动画。
+
+- [#49](https://github.com/MoonshotAI/kimi-code-app/pull/49) [`96d9890`](https://github.com/MoonshotAI/kimi-code-app/commit/96d9890d22999d1a1c64c899cc46dc171d1349ac) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复新增工作区在侧栏被排到最后的问题，新增后会显示在最上面。
+
+- [#61](https://github.com/MoonshotAI/kimi-code-app/pull/61) [`4e114e9`](https://github.com/MoonshotAI/kimi-code-app/commit/4e114e993cc95aa69ba71b665b4f63dd959814e7) Thanks [@liruifengv](https://github.com/liruifengv)! - 移除设置中的黑色主题色选项，界面主题色统一为蓝色。
+
+- [#45](https://github.com/MoonshotAI/kimi-code-app/pull/45) [`48f01c4`](https://github.com/MoonshotAI/kimi-code-app/commit/48f01c46be88a9967937aecf49433a996969efe2) Thanks [@chengluyu](https://github.com/chengluyu)! - 右键点击侧栏中的对话项时，可打开与 ⋯ 按钮相同的会话菜单。
+
+- [#56](https://github.com/MoonshotAI/kimi-code-app/pull/56) [`4086a24`](https://github.com/MoonshotAI/kimi-code-app/commit/4086a24a0ab64a0ef6f2f75d5829a381ab78289f) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复会话运行中界面卡顿、操作响应缓慢的问题，会话和历史较多时改善尤其明显。
+
+- [#50](https://github.com/MoonshotAI/kimi-code-app/pull/50) [`a142fae`](https://github.com/MoonshotAI/kimi-code-app/commit/a142faeec1bc283dbf9ce9f560f66c62836d655e) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复等待审批或回答问题期间思考计时仍在走、且最终时长计入等待时间的问题。
+
+- [#52](https://github.com/MoonshotAI/kimi-code-app/pull/52) [`4496406`](https://github.com/MoonshotAI/kimi-code-app/commit/4496406cfe43172b8d91e8b58a3e65334ce1f47a) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 每轮回复结束后，思考过程、工具调用等中间内容自动折叠成一行「已工作 Ns」，消息流只保留最终正文，点击该行可展开查看完整过程。
+
+- [#43](https://github.com/MoonshotAI/kimi-code-app/pull/43) [`f9f6a4c`](https://github.com/MoonshotAI/kimi-code-app/commit/f9f6a4c9268be2ce3f9fbc0641e402043bc4de53) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复工具调用行里小写字母降部（如 j、p、g、y）被截断显示不全的问题。
+
+- [#51](https://github.com/MoonshotAI/kimi-code-app/pull/51) [`2cb8bc2`](https://github.com/MoonshotAI/kimi-code-app/commit/2cb8bc2486d6c80f0d5b4ca316510d277693ac53) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复点击托盘菜单或系统通知中的会话无法跳转打开的问题。
+
+- [#53](https://github.com/MoonshotAI/kimi-code-app/pull/53) [`57b0b4c`](https://github.com/MoonshotAI/kimi-code-app/commit/57b0b4c0bdf5afa952be65024fdbcf3d22631130) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 发送的图片和视频在消息气泡里显示为圆角缩略图，不再显示文件名；点击弹出浮窗预览，视频可直接播放。
+
+- [#49](https://github.com/MoonshotAI/kimi-code-app/pull/49) [`96d9890`](https://github.com/MoonshotAI/kimi-code-app/commit/96d9890d22999d1a1c64c899cc46dc171d1349ac) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复点击正在运行的会话后，其所在工作区在侧栏突然跳到最上面的问题。
+
 ## 0.0.6
 
 ### Patch Changes
