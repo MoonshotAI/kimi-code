@@ -169,6 +169,11 @@ export const agentTaskInfoSchema = z.discriminatedUnion('kind', [
     toolCallId: z.string().optional(),
     ...taskInfoBaseFields,
   }),
+  z.object({
+    kind: z.literal('monitor'),
+    command: z.string(),
+    ...taskInfoBaseFields,
+  }),
 ]);
 
 export const stopTaskPayloadSchema = z.object({
