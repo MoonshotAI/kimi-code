@@ -128,6 +128,18 @@ export type LoopControl = z.infer<typeof LoopControlSchema>;
 export const BackgroundConfigSchema = z.object({
   maxRunningTasks: z.number().int().min(1).optional(),
   keepAliveOnExit: z.boolean().optional(),
+  /**
+   * When a foreground Bash command times out, move it to the background
+   * instead of killing it. Defaults to true when unset.
+   */
+  bashAutoBackgroundOnTimeout: z.boolean().optional(),
+  /**
+   * Default timeout (seconds) for background Bash tasks when the call omits
+   * `timeout`, also used to re-arm foreground commands moved to the
+   * background. `0` means no timeout. Explicit per-call `timeout` values are
+   * unaffected. Defaults to the Bash tool's built-in 600s when unset.
+   */
+  bashTaskTimeoutS: z.number().int().min(0).optional(),
   killGracePeriodMs: z.number().int().min(0).optional(),
   printWaitCeilingS: z.number().int().min(1).optional(),
   printBackgroundMode: z.enum(['exit', 'drain', 'steer']).optional(),
@@ -137,7 +149,11 @@ export const BackgroundConfigSchema = z.object({
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
 export const SubagentConfigSchema = z.object({
-  timeoutMs: z.number().int().min(1).optional(),
+  /**
+   * Per-subagent (`Agent` / `AgentSwarm`, foreground and background) timeout
+   * in milliseconds. `0` means no timeout. Defaults to 2 hours when unset.
+   */
+  timeoutMs: z.number().int().min(0).optional(),
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
@@ -227,6 +243,10 @@ export const McpServerHttpConfigSchema = z.object({
   transport: z.literal('http'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  // Backward-compatible UI marker. OAuth is still discovered from a remote
+  // server's 401 response; this flag only records that the user explicitly
+  // chose OAuth and lets hosts expose login/reset controls before connecting.
+  auth: z.literal('oauth').optional(),
   // Indirect secret reference: the bearer token is looked up from
   // `process.env[bearerTokenEnvVar]` at connection time, never committed.
   bearerTokenEnvVar: z.string().min(1).optional(),
@@ -239,6 +259,7 @@ export const McpServerSseConfigSchema = z.object({
   transport: z.literal('sse'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
+  auth: z.literal('oauth').optional(),
   // Indirect secret reference: the bearer token is looked up from
   // `process.env[bearerTokenEnvVar]` at connection time, never committed.
   bearerTokenEnvVar: z.string().min(1).optional(),

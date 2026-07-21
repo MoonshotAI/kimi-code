@@ -6,7 +6,7 @@ import {
   IAgentLifecycleService,
   IAgentTaskService,
   ISessionLifecycleService,
-  IModelResolver,
+  IModelCatalog,
   type AgentTask,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -47,21 +47,38 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-tasks-'));
-    // Seed a stub ISessionModelResolver so the agent scope can instantiate if a
+    // Seed a stub IModelCatalog so the agent scope can instantiate if a
     // transitive service needs it; IAgentTaskService itself does not.
-    const modelResolver: IModelResolver = {
+    const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('modelResolver.resolve not exercised in this test');
+      get: () => {
+        throw new Error('modelCatalog.get not exercised in this test');
+      },
+      getRequester: () => {
+        throw new Error('modelCatalog.getRequester not exercised in this test');
+      },
+      inspect: () => {
+        throw new Error('modelCatalog.inspect not exercised in this test');
+      },
+      ping: () => {
+        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('modelCatalog.getProvider not exercised in this test');
+      },
+      setDefaultModel: async () => {
+        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
+      },
     };
     server = await startServer({
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelResolver, modelResolver]],
+      seeds: [[IModelCatalog, modelCatalog]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -110,7 +127,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     const agent =
-      session.accessor.get(IAgentLifecycleService).getHandle('main') ??
+      session.accessor.get(IAgentLifecycleService).get('main') ??
       (await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' }));
     return agent.accessor.get(IAgentTaskService);
   }
@@ -258,6 +275,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     );
     expect(cancelled.body.code).toBe(0);
     expect(cancelled.body.data).toEqual({ cancelled: true });
+    expect(tasks.getTask(taskId)?.stopReason).toBe('Aborted by the user');
 
     // The task is now terminal (killed → cancelled); a second cancel is a
     // conflict with the idempotent envelope shape.

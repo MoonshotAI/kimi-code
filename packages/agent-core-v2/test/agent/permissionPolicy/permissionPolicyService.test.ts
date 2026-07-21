@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ToolCall } from '#/app/llmProtocol/message';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolCall } from '#/kosong/contract/message';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -28,6 +28,7 @@ import {
   type PermissionRule,
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
@@ -59,6 +60,10 @@ describe('AgentPermissionPolicyService chain', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+        );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub({
           rules: () => rules,
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
@@ -101,8 +106,6 @@ describe('AgentPermissionPolicyService chain', () => {
     });
 
     registration.dispose();
-    // After disposal the built-in chain no longer sees the deny-all policy, so
-    // a benign builtin tool is no longer rejected by it.
     await expect(evaluate({ toolName: 'Read', args: { path: 'src/a.ts' } })).resolves.not.toMatchObject({
       policyName: 'deny-all',
     });
@@ -230,6 +233,10 @@ describe('AgentPermissionPolicyService plan-mode policies', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+        );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub({
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
         }));
@@ -424,6 +431,10 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+        );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub());
         reg.defineInstance(ISessionWorkspaceContext, workspace);
         reg.defineInstance(IHostEnvironment, kaosStub());

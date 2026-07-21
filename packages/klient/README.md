@@ -1,54 +1,108 @@
 # @moonshot-ai/klient
 
-Client SDK that reuses `agent-core-v2` service interfaces and fulfills them over
-the `/api/v2` HTTP channel. It follows the VS Code model: a channel is bound to
-**one Service** (the URL carries the scope + the Service's decorator id) and
-method calls are forwarded **verbatim** to the server's reflection dispatcher —
-no per-method allowlist, no `resource:action`, no renaming. The shared interface
-is the whole contract.
+Contract-driven client SDK for the agent-core-v2 engine. One facade, two
+transports — you pick the transport **once** at creation; everything after
+that is byte-identical:
 
 ```ts
-import { Klient, SessionIndexClient, HttpChannel } from '@moonshot-ai/klient';
-import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
+import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
+import { createKlient } from '@moonshot-ai/klient/memory';   // or '/ipc'
 
-const client = new Klient({ url: 'http://127.0.0.1:58627' });
+const { app } = bootstrap({ homeDir }, [
+  ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
+]);
+const klient = createKlient({ scope: app });
 
-// Generic typed proxy: the v2 service token carries both the type and the
-// channel name (`String(ISessionIndex)` === 'sessionIndex').
-const sessions = await client.core(ISessionIndex).list({});
-const meta = await client.session('s1').service(ISessionMetadata).read();
+const env = await klient.global.env();
+const sessions = await klient.global.sessions.list({ limit: 20 });
 
-// Explicit, fully-typed implementation of a single interface. The channel is
-// bound to the Service's scope URL.
-const index: ISessionIndex = new SessionIndexClient(
-  new HttpChannel({ baseUrl: 'http://127.0.0.1:58627/api/v2/sessionIndex' }),
-);
-const page = await index.list({ workspaceId: 'w1' });
+const session = await klient.global.sessions.create({ workDir: process.cwd() });
+const agent = klient.session(session.id).agent('main');
+agent.events.on('assistant.delta', (e) => process.stdout.write(e.delta));
+agent.events.on('prompt.completed', () => console.log('\ndone'));
+await agent.prompt({ input: [{ type: 'text', text: 'Say OK.' }] });
+
+await klient.close();
 ```
 
-Service interfaces and tokens are imported directly from `agent-core-v2` leaf
-subpaths; the channel and proxy live in this package.
+## Architecture
 
-## WebSocket transport (calls + events)
-
-`Klient#ws()` returns a lazily-created `WsKlient` over the persistent
-`/api/v2/ws` socket: the same scope entries and typed proxies (one socket
-multiplexes every `call`), plus `listen(event, handler)` on each scope for the
-server's event streams — core `events`, session `interactions` /
-`interactions:resolved`, agent `events`:
-
-```ts
-const ws = client.ws();
-const sub = ws.session('s1').agent('main').listen('events', (event) => {
-  console.log('agent event', event);
-});
-const pending = await ws.session('s1').service(ISessionApprovalService).listPending();
-sub.dispose();
-ws.close();
+```
+facade (klient.global.*, klient.session(id).*, session.agent(id).*, *.events.*)
+   ↓ single-object params, zod-validated
+contract (procedure schemas, shared by all transports)
+   ↓
+KlientChannel { call, listen }   ← the only transport SPI
+   ↓
+ipc │ memory
 ```
 
-The socket answers heartbeats, applies per-call timeouts, and reconnects
-automatically after an unexpected close (active `listen`s are re-subscribed;
-in-flight calls reject). The bearer token rides the
-`kimi-code.bearer.<token>` subprotocol, so the transport works unchanged in
-browsers.
+- **Facade** — aggregated methods, no engine service tokens, no
+  `onDid*`/`onWill*` event names. There is no escape hatch to raw services:
+  the facade is the public contract.
+  - `klient.global.*` — `sessions.*` (incl. `create`), `workspaces.*`,
+    `config.*`, `providers.*`, `models.*`, `catalog.*`, `auth.*`, `flags.*`,
+    `plugins.*`, `hostFs.*`, `env()`.
+  - `klient.session(id).*` — `get/setTitle/update/status/close/archive/
+    restore/fork/createChild`, `approvals.*`, `questions.*`,
+    `interactions.*`, `agents()`.
+  - `session.agent(id).*` — `prompt/steer/cancel/runShellCommand/
+    cancelShellCommand/getModel/setModel/setPermission/getUsage/getContext/
+    getPlan*/getTasks*/stopTask/getTaskOutput`.
+- **Contract** — every method has a zod input tuple + output schema, validated
+  on the client before send / after receive (default on; `validate: false` to
+  disable). Validation is sub-µs for typical payloads — cheaper than the JSON
+  serialization the wire already pays.
+- **Events** — `klient.events.on(...)` for the global bus
+  (`config.changed`, `models.changed`, `session.archived`, …),
+  `session(id).events.on('metadata.changed' | 'interactions.changed' |
+  'interactions.resolved')`, and `agent(id).events.on('turn.started' |
+  'assistant.delta' | 'tool.call.started' | 'prompt.completed' | …)`.
+  Underlying subscriptions are shared and ref-counted; payloads are
+  validated; bad payloads drop to `events.onError`.
+
+## Transports
+
+| entry | options | events |
+|---|---|---|
+| `@moonshot-ai/klient/ipc` | `{ socketPath, token? }` | same socket |
+| `@moonshot-ai/klient/memory` | `{ scope }` (a bootstrapped engine app scope) | direct emitter/bus subscription |
+
+`ipc` and `memory` share one in-process dispatcher, so they behave identically
+by construction; `memory` additionally JSON round-trips every value so results
+cross the same JSON boundary a socket transport would impose. The IPC host
+ships with the transport: `serveKlientIpc({ scope, socketPath })`.
+
+The same conformance suite runs against both transports in this
+package's tests (`test/helpers/conformance.ts` — one test file per transport).
+
+This package also hosts the e2e suites (the retired `server-e2e` package was
+folded in here):
+
+- `test/e2e/legacy/` + `test/e2e/harness/` — the legacy `/api/v1` live suites
+  and their client harness (skip unless `KIMI_SERVER_URL` is set; the v1
+  surface has no in-memory equivalent, so these stay live-server-only).
+
+The docker e2e runner (`pnpm docker:e2e`) runs this whole vitest suite inside
+a container against a container-local server. See `AGENTS.md` for the testing
+rules.
+
+## Scope
+
+The facade covers the global (app), session, and agent surfaces shown above.
+What it deliberately leaves out (for now): onWill/hook-style interception
+(engine hooks are in-process `OrderedHookSlot`s and not wire-exposable), file
+upload (v1 multipart REST only), and the terminal surface (v1 REST + WS
+only).
+
+## Smoke check
+
+```sh
+pnpm -C packages/klient smoke
+```
+
+`examples/smoke.ts` boots an in-process engine (memory transport) and asserts
+the `global` facade end-to-end — no server needed. `examples/basic.ts` is a
+shorter narrated tour; `examples/context-usage.ts` traces context-size
+readings through a real prompt (requires `KIMI_EXAMPLE_MODEL` +
+`KIMI_EXAMPLE_API_KEY`).

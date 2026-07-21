@@ -133,6 +133,26 @@ describe('GoogleGenAIChatProvider', () => {
       expect(config['systemInstruction']).toBe('You are helpful.');
     });
 
+    it('serializes an explicitly empty ThinkPart as a Google thought part', async () => {
+      const provider = createProvider({ stream: false });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '', encrypted: 'thought-signature' }],
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['contents']).toEqual([
+        {
+          role: 'model',
+          parts: [{ text: '', thought: true, thoughtSignature: 'thought-signature' }],
+        },
+      ]);
+    });
+
     it('maps json_schema response format to response config', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -733,10 +753,10 @@ describe('GoogleGenAIChatProvider', () => {
     // When a tool message arrives without a preceding assistant message
     // carrying the tool_call (e.g. after history compaction), the provider
     // falls back to parsing the name out of the tool_call_id. Google IDs
-    // produced by this provider have the shape "{tool_name}_{id_suffix}"
-    // where the suffix is a single non-underscored token, so stripping the
-    // first underscore truncates multi-word tool names such as
-    // `fetch_image_<id>` down to `fetch`.
+    // produced by this provider have the shape "{tool_name}_{upstream_id}_{entropy}"
+    // where `entropy` is a fixed 8-hex-char suffix and the upstream id is a
+    // non-underscored token, so stripping the first underscore would truncate
+    // multi-word tool names such as `fetch_image_<id>` down to `fetch`.
     function firstFunctionResponseName(history: Message[]): string | undefined {
       const contents = messagesToGoogleGenAIContents(history);
       for (const content of contents) {
@@ -793,6 +813,30 @@ describe('GoogleGenAIChatProvider', () => {
         },
       ];
       expect(firstFunctionResponseName(history)).toBe('bareid');
+    });
+
+    it('strips both the entropy suffix and the upstream id', () => {
+      const history: Message[] = [
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCallId: 'AgentSwarm_0_ab12cd34',
+          toolCalls: [],
+        },
+      ];
+      expect(firstFunctionResponseName(history)).toBe('AgentSwarm');
+    });
+
+    it('strips entropy and upstream id from multi-word tool names', () => {
+      const history: Message[] = [
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCallId: 'fetch_image_abc123_a1b2c3d4',
+          toolCalls: [],
+        },
+      ];
+      expect(firstFunctionResponseName(history)).toBe('fetch_image');
     });
   });
 
@@ -1040,6 +1084,38 @@ describe('GoogleGenAIChatProvider', () => {
         inputCacheCreation: 0,
       });
     });
+
+    it('yields an empty ThinkPart from an explicitly empty thought part', async () => {
+      const provider = createProvider({ stream: false });
+      ((provider as any)._client.models as Record<string, unknown>)['generateContent'] = vi
+        .fn()
+        .mockResolvedValue({
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [
+                  { text: '', thought: true, thoughtSignature: 'thought-signature' },
+                  { functionCall: { name: 'lookup', args: {} } },
+                ],
+              },
+            },
+          ],
+        });
+
+      const stream = await provider.generate('', [], []);
+      const parts = await collectParts(stream);
+
+      expect(parts).toEqual([
+        { type: 'think', think: '', encrypted: 'thought-signature' },
+        {
+          type: 'function',
+          id: expect.stringMatching(/^lookup_/),
+          name: 'lookup',
+          arguments: '{}',
+        },
+      ]);
+    });
   });
 
   describe('streaming', () => {
@@ -1133,6 +1209,18 @@ describe('GoogleGenAIChatProvider', () => {
       ]);
     });
 
+    it('yields an empty ThinkPart from an explicitly empty thought part', async () => {
+      async function* mockStream() {
+        yield {
+          candidates: [{ content: { parts: [{ text: '', thought: true }] } }],
+        };
+      }
+
+      const msg = new GoogleGenAIStreamedMessage(mockStream(), true);
+
+      expect(await collectParts(msg)).toEqual([{ type: 'think', think: '' }]);
+    });
+
     it('yields function call from stream', async () => {
       async function* mockStream() {
         yield {
@@ -1160,7 +1248,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'add_call_1',
+          id: expect.stringMatching(/^add_call_1_[0-9a-f]{8}$/),
           name: 'add', arguments: '{"a":2,"b":3}',
         },
       ]);
@@ -1190,7 +1278,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'search_fc_1',
+          id: expect.stringMatching(/^search_fc_1_[0-9a-f]{8}$/),
           name: 'search', arguments: '{"q":"test"}',
           extras: { thought_signature_b64: 'sig_abc123' },
         },

@@ -14,10 +14,11 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import type { Tool } from '#/app/llmProtocol/tool';
+import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { ToolInfo } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -44,6 +45,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
@@ -64,12 +66,6 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     this._register(
       eventBus.subscribe('context.spliced', (splice) => {
         if (splice.deleteCount === 0 || this.pendingLoaded.size === 0) return;
-        // The pending set is only a defer-window lead over the history-backed
-        // ledger, so any deletion splice can falsify it: v2's undo slices the
-        // tail wholesale (v1 keeps `injection`-origin schema messages in place),
-        // which makes full-prefix detection insufficient. Re-fold the pending
-        // set against the surviving history — the event is published after the
-        // memory service has rewritten it.
         const landed = collectLoadedDynamicToolNames(this.context.get());
         for (const name of this.pendingLoaded) {
           if (!landed.has(name)) this.pendingLoaded.delete(name);
@@ -81,7 +77,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   enabled(): boolean {
     const capabilities = this.profile.getModelCapabilities();
     return (
-      capabilities.select_tools === true &&
+      capabilities.dynamically_loaded_tools === true &&
       capabilities.tool_use &&
       this.flags.enabled(TOOL_SELECT_FLAG_ID)
     );
@@ -185,7 +181,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   private loadableToolNames(): string[] {
     return this.toolRegistry
       .list()
-      .filter((info) => info.source === 'mcp' && this.profile.isToolActive(info.name, info.source))
+      .filter((info) => info.source === 'mcp' && this.toolPolicy.isToolActive(info.name, info.source))
       .map((info) => info.name)
       .toSorted((a, b) => a.localeCompare(b));
   }
@@ -210,7 +206,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   }
 
   private isLoadedToolActive(name: string): boolean {
-    return this.profile.isToolActive(name, 'mcp');
+    return this.toolPolicy.isToolActive(name, 'mcp');
   }
 
   private shapeActiveHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
@@ -265,8 +261,10 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i]!;
       const active =
-        this.profile.isToolActive(entry.name, entry.source) ||
-        (disclosure && entry.name === SELECT_TOOLS_TOOL_NAME);
+        this.toolPolicy.isToolActive(entry.name, entry.source) ||
+        (disclosure &&
+          entry.name === SELECT_TOOLS_TOOL_NAME &&
+          this.toolPolicy.isToolActiveForDisclosure(entry.name, entry.source));
       const keep = active && (disclosure || entry.name !== SELECT_TOOLS_TOOL_NAME);
       if (keep) {
         if (filtered !== undefined) filtered.push(entry);

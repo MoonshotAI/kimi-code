@@ -16,25 +16,12 @@ export interface IAgentScopeContext {
   readonly _serviceBrand: undefined;
 
   readonly agentId: string;
-  /**
-   * Persistence scope rooted at this agent. `scope()` returns the agent
-   * scope itself; `scope(subKey)` returns `${agentScope}/${subKey}` (e.g.
-   * `scope('cron')` → `sessions/<wsId>/<sId>/agents/<aId>/cron`). Business
-   * code passes the returned string straight to `IFileSystemStorageService` /
-   * `IAtomicDocumentStore` / `IAppendLogStore`.
-   */
   scope(subKey?: string): string;
 }
 
 export const IAgentScopeContext: ServiceIdentifier<IAgentScopeContext> =
   createDecorator<IAgentScopeContext>('agentScopeContext');
 
-/**
- * Build an `IAgentScopeContext` from an agent's persistence root, wiring the
- * `scope(subKey?)` helper automatically. `agentScope` is typically
- * `sessions/<workspaceId>/<sessionId>/agents/<agentId>`; a call like
- * `scope('cron')` returns `${agentScope}/cron`.
- */
 export function makeAgentScopeContext(input: {
   readonly agentId: string;
   readonly agentScope: string;

@@ -754,4 +754,60 @@ describe('PluginManager consumption plane', () => {
     await rm(cdnSource, { recursive: true, force: true });
     await rm(ghSource, { recursive: true, force: true });
   });
+
+  it('enabledMcpServers() runs stdio node plugins via the bundled Electron Node under an Electron host', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      mcpServers: { data: { command: 'node', args: ['./bin/data.mjs'] } },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    const managedRoot = await managedPluginRoot(manager, 'demo');
+
+    const originalElectron = process.versions['electron'];
+    process.versions['electron'] = '33.4.11';
+    try {
+      const server = manager.enabledMcpServers()['plugin-demo:data'];
+      expect(server).toEqual(
+        expect.objectContaining({
+          command: process.execPath,
+          args: ['./bin/data.mjs'],
+          cwd: managedRoot,
+          env: expect.objectContaining({
+            KIMI_CODE_HOME: home,
+            KIMI_PLUGIN_ROOT: managedRoot,
+            ELECTRON_RUN_AS_NODE: '1',
+          }),
+        }),
+      );
+      // An Electron host must not be routed through the CLI's `__plugin_run_node`
+      // subcommand (which only the CLI binary implements).
+      expect(JSON.stringify(server)).not.toContain('__plugin_run_node');
+    } finally {
+      if (originalElectron === undefined) delete process.versions['electron'];
+      else process.versions['electron'] = originalElectron;
+    }
+  });
+
+  it('enabledMcpServers() leaves stdio node plugins on system node outside Electron / CLI binary', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      mcpServers: { data: { command: 'node', args: ['./bin/data.mjs'] } },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+
+    // Plain node host (tests run under node): not Electron, not the CLI native
+    // binary, so the config passes through unchanged (command stays `node`).
+    const server = manager.enabledMcpServers()['plugin-demo:data'];
+    expect(server).toEqual(
+      expect.objectContaining({
+        command: 'node',
+        args: ['./bin/data.mjs'],
+      }),
+    );
+    expect(JSON.stringify(server)).not.toContain('ELECTRON_RUN_AS_NODE');
+  });
 });

@@ -23,12 +23,11 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes, Error2 } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 
 import {
   IAgentPromptService,
@@ -73,7 +72,7 @@ export class AgentPromptService implements IAgentPromptService {
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
   ) {
     toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
@@ -187,6 +186,11 @@ export class AgentPromptService implements IAgentPromptService {
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));
+    } catch {
+      item.state = 'failed';
+      item.launchedDeferred.resolve(undefined);
+      item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'failed' });
+      this.publishCompleted(item.id, 'failed');
     } finally {
       this.launching = false;
       if (this.active === undefined) void this.startNext();
@@ -240,4 +244,4 @@ export class AgentPromptService implements IAgentPromptService {
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }
 function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 
-registerScopedService(LifecycleScope.Agent, IAgentPromptService, AgentPromptService, InstantiationType.Delayed, 'prompt');
+registerScopedService(LifecycleScope.Agent, IAgentPromptService, AgentPromptService, InstantiationType.Eager, 'prompt');

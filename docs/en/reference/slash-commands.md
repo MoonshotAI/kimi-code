@@ -38,7 +38,9 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/init` | — | Analyze the current codebase and generate `AGENTS.md` | No |
 | `/export-md [<path>]` | `/export` | Export the current session as a Markdown file | No |
 | `/export-debug-zip` | — | Export the current session as a debug ZIP archive (same behavior as [`kimi export`](./kimi-command.md#kimi-export)) | No |
+| `/copy` | — | Copy the last assistant message to the clipboard | No |
 | `/add-dir [<path>]` | — | Add an extra workspace directory to the current session. Run without a path (or with `list`) to list configured directories. When adding, choose whether to remember the directory for the project in `.kimi-code/local.toml` | No |
+| `/web` | — | Open the current session in the web UI: pick a running server to connect to, or start a new foreground server after the TUI exits. See [`kimi web`](./kimi-command.md#kimi-web) | Yes |
 
 ## Modes & Run Control
 
@@ -122,6 +124,7 @@ Kimi Code CLI ships with a set of built-in Skills that appear directly as `/<nam
 | `/mcp-config` | Configure MCP servers and handle MCP OAuth login. See [MCP](../customization/mcp.md) |
 | `/custom-theme [<text>]` | Create or edit a custom TUI color theme. See [Themes](../customization/themes.md) |
 | `/update-config` | Inspect or edit `config.toml` (model, provider, permission, hooks) and `tui.toml` (theme, editor, notifications, auto-update) |
+| `/check-kimi-code-docs` | Answer Kimi Code product questions (CLI usage, configuration, membership, error codes) against the official docs |
 | `/import-from-cc-codex` | Import Claude Code and Codex instructions, skills, and MCP settings into Kimi Code |
 | `/sub-skill` | Discover and reorganize the local skill inventory into hierarchical sub-skill bundles. Includes `/sub-skill.review` (read-only proposal) and `/sub-skill.consolidate` (apply the reorganization) |
 

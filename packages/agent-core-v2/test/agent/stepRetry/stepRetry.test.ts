@@ -4,8 +4,8 @@ import {
   APIConnectionError,
   APIProviderRateLimitError,
   APIStatusError,
-} from '#/app/llmProtocol/errors';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+} from '#/kosong/contract/errors';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import { retryBackoffDelays } from '#/_base/utils/retry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -13,13 +13,6 @@ import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
 
-/**
- * The `stepRetry` plugin drives loop-level retries of retryable provider
- * failures: it claims the error from the loop's handler registry, backs off,
- * and re-runs the failed driver as the same step. Backoff sleeps use
- * `setTimeout`, so the suite runs on fake timers and flushes them between the
- * loop's `run()` promise and its resolution.
- */
 describe('stepRetry plugin', () => {
   let ctx: TestAgentContext;
 
@@ -77,7 +70,7 @@ describe('stepRetry plugin', () => {
           step: 1,
           failedAttempt: 1,
           nextAttempt: 2,
-          maxAttempts: 3,
+          maxAttempts: 10,
           delayMs: expect.any(Number),
           errorName: 'APIConnectionError',
           errorMessage: 'terminated',
@@ -87,7 +80,6 @@ describe('stepRetry plugin', () => {
     expect(
       rpcEvents('turn.step.started').map((event) => (event.args as { step: number }).step),
     ).toEqual([1, 2]);
-    // A recovered error never surfaces as an interruption.
     expect(rpcEvents('turn.step.interrupted')).toEqual([]);
     expect(ctx.contextData().history).toEqual([
       expect.objectContaining({
@@ -110,11 +102,11 @@ describe('stepRetry plugin', () => {
     const result = await runTurn(1);
 
     expect(result.type).toBe('failed');
-    expect(calls).toBe(3);
-    expect(rpcEvents('turn.step.retrying')).toHaveLength(2);
+    expect(calls).toBe(10);
+    expect(rpcEvents('turn.step.retrying')).toHaveLength(9);
     expect(rpcEvents('turn.step.interrupted')).toEqual([
       expect.objectContaining({
-        args: expect.objectContaining({ reason: 'error', step: 3 }),
+        args: expect.objectContaining({ reason: 'error', step: 10 }),
       }),
     ]);
   });
@@ -229,7 +221,7 @@ describe('stepRetry plugin', () => {
 
     const first = await runTurn(1);
     expect(first.type).toBe('failed');
-    expect(calls).toBe(3);
+    expect(calls).toBe(10);
 
     failing = false;
     const second = await runTurn(2);

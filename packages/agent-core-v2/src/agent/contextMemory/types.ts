@@ -1,7 +1,6 @@
-import type { ContentPart, Message } from '#/app/llmProtocol/message';
+import type { ContentPart, Message } from '#/kosong/contract/message';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
-import type { CronJobOrigin, CronMissedOrigin, ShellCommandOrigin } from '@moonshot-ai/protocol';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
@@ -36,6 +35,14 @@ export interface InjectionOrigin {
   readonly variant: string;
 }
 
+export interface ShellCommandOrigin {
+  readonly kind: 'shell_command';
+  readonly phase: 'input' | 'output';
+  /** Only present on `phase: 'output'` — whether the command failed, so replay
+   *  can colour stderr red only for actual failures (not warnings). */
+  readonly isError?: boolean;
+}
+
 export interface CompactionSummaryOrigin {
   readonly kind: 'compaction_summary';
 }
@@ -50,6 +57,20 @@ export interface TaskOrigin {
   readonly taskId: string;
   readonly status: AgentTaskStatus;
   readonly notificationId: string;
+}
+
+export interface CronJobOrigin {
+  readonly kind: 'cron_job';
+  readonly jobId: string;
+  readonly cron: string;
+  readonly recurring: boolean;
+  readonly coalescedCount: number;
+  readonly stale: boolean;
+}
+
+export interface CronMissedOrigin {
+  readonly kind: 'cron_missed';
+  readonly count: number;
 }
 
 export interface HookResultOrigin {
@@ -78,9 +99,7 @@ export type PromptOrigin =
   | RetryOrigin;
 
 export type ContextMessage = Message & {
-  /** Stable local message id (`msg_<ulid>`), assigned when the message enters context. */
   readonly id?: string;
-  /** Provider-assigned response/message id (e.g. Anthropic `msg_…`, `chatcmpl-…`, `resp_…`). */
   readonly providerMessageId?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;

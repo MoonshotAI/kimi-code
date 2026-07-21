@@ -6,6 +6,7 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentSkillService } from '#/agent/skill/skill';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -19,10 +20,9 @@ import {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { Turn } from '#/agent/loop/loop';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { stubSkill } from '../../app/skillCatalog/stubs';
+import { registerTestAgentWireServices } from '../../wire/stubs';
 
 const COMMIT_SKILL = stubSkill('commit', {
   description: 'commit changes',
@@ -72,15 +72,13 @@ describe('AgentSkillService', () => {
           undo: () => 0,
           clear: () => {},
         });
-        reg.defineInstance(
-          IAgentWireService,
-          new WireService({ logScope: 'wire', logKey: 'skill-test' }),
-        );
+        registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(ISessionContext, stubSessionContext());
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
@@ -167,15 +165,13 @@ describe('SkillTool', () => {
           undo: () => 0,
           clear: () => {},
         });
-        reg.defineInstance(
-          IAgentWireService,
-          new WireService({ logScope: 'wire', logKey: 'skill-test' }),
-        );
+        registerTestAgentWireServices(reg, 'wire/skill-test');
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(ISessionContext, stubSessionContext());
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
@@ -295,7 +291,6 @@ describe('SkillTool', () => {
       output: 'Skill "commit" loaded inline. Follow its instructions.',
     });
     expect(result.output).not.toContain('# Commit');
-    // The tool only declares a `delivery`; the agent (L4) layer performs the steer.
     expect(prompted).toHaveLength(0);
     expect(result.delivery?.kind).toBe('steer');
     expect(result.delivery?.message.origin).toMatchObject({

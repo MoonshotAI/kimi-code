@@ -6,7 +6,7 @@
  * be unit-tested directly. Ported from v1 `services/fs/fsSearchService.ts`.
  */
 
-import type { FsGrepRequest } from '@moonshot-ai/protocol';
+import type { FsGrepRequest } from './fs';
 
 export function computeFuzzyScore(name: string, queryLower: string): number {
   if (queryLower.length === 0) return 0;

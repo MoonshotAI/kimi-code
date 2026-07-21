@@ -15,8 +15,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionProvider,
@@ -25,7 +24,6 @@ import {
 interface ContextInjectionEntry {
   readonly provider: ContextInjectionProvider;
   readonly name: string;
-  /** Live positions of this variant's injection messages, ascending. */
   readonly positions: number[];
 }
 
@@ -39,7 +37,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentLoopService loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentWireService wire: IWireService,
+    @IWireService wire: IWireService,
   ) {
     super();
     this._register(
@@ -53,12 +51,17 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         this.isNewTurn = true;
       }),
     );
-    this._register(this.eventBus.subscribe('context.spliced', (e) => {
-      this.handleSplice(e);
-    }));
-    this._register(wire.onRestored(() => {
-      this.resyncPositions();
-    }));
+    this._register(
+      this.eventBus.subscribe('context.spliced', (e) => {
+        this.handleSplice(e);
+      }),
+    );
+    this._register(
+      wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
+        this.resyncPositions();
+        await next();
+      }),
+    );
   }
 
   register(
@@ -139,9 +142,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
       const adopted = insertedInjections?.get(entry.name) ?? [];
       const positions = entry.positions;
       if (adopted.length === 0 && positions.length === 0) continue;
-      // Mirror the context splice onto the ascending positions array: shift
-      // survivors past the deleted range, then replace the deleted segment
-      // with the adopted insertions (which land in [start, start + inserted)).
       let lo = 0;
       while (lo < positions.length && positions[lo]! < splice.start) lo++;
       let hi = lo;
@@ -177,6 +177,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextInjectorService,
   AgentContextInjectorService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextInjector',
 );

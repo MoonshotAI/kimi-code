@@ -5,7 +5,7 @@ import { basename as posixBasename } from 'pathe';
 import type { Stats } from 'node:fs';
 
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import { encodeWorkDirKey, normalizeWorkDir } from '../../session/store';
+import { encodeWorkDirKey, normalizeWorkDir, workspaceRootKey } from '../../session/store';
 import { readSessionIndex } from '../../session/store/session-index';
 import { IEnvironmentService } from '../environment/environment';
 import { IEventService } from '../event/event';
@@ -19,37 +19,46 @@ import {
   WorkspaceRootNotFoundError,
   type WorkspacePatch,
 } from './workspaceRegistry';
-
-const WORKSPACE_REGISTRY_FILE = 'workspaces.json';
-const WORKSPACE_REGISTRY_VERSION = 1;
-
-interface WorkspaceRegistryEntry {
-  root: string;
-  name: string;
-  created_at: string;
-  last_opened_at: string;
-}
-
-interface WorkspaceRegistryFile {
-  version: number;
-  workspaces: Record<string, WorkspaceRegistryEntry>;
-  /** Workspace ids the user explicitly removed. Their session buckets stay on
-   *  disk, so derived workspaces (computed from the session index) must skip
-   *  them to keep deletion durable. */
-  deleted_workspace_ids: string[];
-}
+import {
+  readWorkspaceRegistryFile,
+  writeWorkspaceRegistryFile,
+  type WorkspaceRegistryEntry,
+  type WorkspaceRegistryFile,
+} from '../../session/store/workspace-registry-file';
 
 type WorkspaceRegistryEvent =
   | { type: 'event.workspace.created'; workspace: Workspace }
   | { type: 'event.workspace.updated'; workspace: Workspace }
   | { type: 'event.workspace.deleted'; workspace_id: string; root: string };
 
+/**
+ * Pure scan over registry entries: the id whose root identity-matches
+ * `rootKey` (see `workspaceRootKey`), or undefined. When several entries
+ * identity-match (e.g. a legacy-alias id plus a canonical one for the same
+ * folder), `preferredId` wins when present — callers pass the id the current
+ * code would mint for the query root, so post-scan behavior stays consistent
+ * with a fresh `encodeWorkDirKey`. Otherwise the first entry in file order
+ * wins. Extracted so the identity-reuse rule is unit-testable without fs.
+ */
+export function findRegisteredIdByRootKey(
+  workspaces: Record<string, WorkspaceRegistryEntry>,
+  rootKey: string,
+  preferredId?: string,
+): string | undefined {
+  let first: string | undefined;
+  for (const [id, entry] of Object.entries(workspaces)) {
+    if (workspaceRootKey(entry.root) !== rootKey) continue;
+    if (id === preferredId) return id;
+    first ??= id;
+  }
+  return first;
+}
+
 export class WorkspaceRegistryService extends Disposable implements IWorkspaceRegistry {
   readonly _serviceBrand: undefined;
 
   private readonly homeDir: string;
   private readonly sessionsDir: string;
-  private readonly registryPath: string;
   private opQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -60,7 +69,6 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     super();
     this.homeDir = env.homeDir;
     this.sessionsDir = join(env.homeDir, 'sessions');
-    this.registryPath = join(env.homeDir, WORKSPACE_REGISTRY_FILE);
   }
 
   async list(): Promise<Workspace[]> {
@@ -68,27 +76,31 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     const deleted = new Set(file.deleted_workspace_ids);
 
     const result: Workspace[] = [];
-    // Registered workspaces (explicitly added by the user). Dedup by root: the
-    // registry can hold legacy entries whose id was computed by an older
-    // encodeWorkDirKey (e.g. realpath-based on Windows) for the same folder, so
-    // a single root may map to multiple ids. Prefer the entry whose id matches
-    // the current canonical key so sessions' workspace_id still resolves and
-    // the sidebar doesn't render the same workspace twice.
+    // Registered workspaces (explicitly added by the user). Dedup by root
+    // identity (`workspaceRootKey` — slashes unified and case folded for
+    // Windows-shaped roots): the registry can hold multiple entries for the
+    // same folder — legacy ids computed by an older encodeWorkDirKey (e.g.
+    // realpath-based on Windows), or ids minted from case variants of one
+    // directory — so a single physical root may map to multiple ids. Prefer
+    // the entry whose id matches the current canonical key so sessions'
+    // workspace_id still resolves and the sidebar doesn't render the same
+    // workspace twice.
     //
-    // The session count is intentionally scoped to the representative's own
-    // bucket (via hydrate) rather than aggregated across every id for the root:
-    // GET /sessions?workspace_id=<representative> only pages the canonical
-    // bucket, so the count must reflect what the list can actually retrieve.
+    // The session count spans every alias bucket for the root (via hydrate):
+    // GET /sessions?workspace_id=<representative> pages the UNION of the
+    // root's alias buckets, so the count aggregates the same set the list
+    // can actually retrieve.
     const byRoot = new Map<string, { id: string; entry: WorkspaceRegistryEntry }>();
     for (const [id, entry] of Object.entries(file.workspaces)) {
-      const existing = byRoot.get(entry.root);
+      const rootKey = workspaceRootKey(entry.root);
+      const existing = byRoot.get(rootKey);
       if (existing === undefined) {
-        byRoot.set(entry.root, { id, entry });
+        byRoot.set(rootKey, { id, entry });
         continue;
       }
       const canonicalId = encodeWorkDirKey(normalizeWorkDir(entry.root));
       if (existing.id !== canonicalId && id === canonicalId) {
-        byRoot.set(entry.root, { id, entry });
+        byRoot.set(rootKey, { id, entry });
       }
     }
     for (const { id, entry } of byRoot.values()) {
@@ -100,15 +112,32 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     // session index and never persisted, so the registry cannot drift from the
     // session store.
     const index = await readSessionIndex(this.homeDir, this.sessionsDir);
-    const derived = new Map<string, string>(); // workspace id -> workDir
+    // Identity keys of every registered root: a session whose workDir only
+    // differs from a registered root by case/slash spelling (Windows) belongs
+    // to that registered workspace and must not resurface as a derived
+    // duplicate. Derived candidates themselves are likewise deduped by
+    // identity key (first wins).
+    const registeredKeys = new Set(
+      Object.values(file.workspaces).map((entry) => workspaceRootKey(entry.root)),
+    );
+    const derived = new Map<string, { id: string; workDir: string }>(); // identity key -> workspace id + workDir
     for (const entry of index.values()) {
       const id = encodeWorkDirKey(entry.workDir);
-      if (file.workspaces[id] !== undefined || deleted.has(id)) continue;
-      derived.set(id, entry.workDir);
+      // Deletion tombstones store exact ids, so this match stays exact-string:
+      // a deleted legacy-alias id whose minted string differs from the current
+      // session workDir's id can still resurface here as derived (known
+      // residual edge — the workspaces.json schema is shared with
+      // agent-core-v2 and must not change).
+      if (deleted.has(id)) continue;
+      const rootKey = workspaceRootKey(entry.workDir);
+      if (registeredKeys.has(rootKey) || derived.has(rootKey)) continue;
+      derived.set(rootKey, { id, workDir: entry.workDir });
     }
-    for (const [id, workDir] of derived) {
-      // Skip archived-only buckets so they don't surface as empty groups.
-      const sessionCount = await countActiveSessions(join(this.sessionsDir, id));
+    for (const { id, workDir } of derived.values()) {
+      // Skip archived-only buckets so they don't surface as empty groups. The
+      // count spans every alias bucket for the root, matching the registered
+      // entries (a derived root can also have split legacy spellings).
+      const sessionCount = await this.countAliasSessions(id);
       if (sessionCount === 0) continue;
       result.push(
         await this.hydrate(
@@ -152,12 +181,19 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     // never resolves symlinks or 8.3 short names. Using `fsp.realpath` here
     // diverged from the session store on Windows and orphaned legacy sessions.
     const normalizedRoot = normalizeWorkDir(root);
-    const workspaceId = encodeWorkDirKey(normalizedRoot);
-    await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
-
     const now = new Date().toISOString();
-    const { entry, created } = await this.runExclusive(async () => {
+    const { workspaceId, entry, created } = await this.runExclusive(async () => {
       const file = await this.readRegistry();
+      // Reuse an already-registered entry whose root names the same physical
+      // directory (identity-key match) instead of minting a second id: on
+      // Windows a case/slash variant of a registered root would otherwise
+      // create a duplicate registry entry — and with it a second session
+      // bucket — for one folder. The stored root/name stay as first
+      // registered; stored paths are never rewritten.
+      const mintedId = encodeWorkDirKey(normalizedRoot);
+      const workspaceId =
+        findRegisteredIdByRootKey(file.workspaces, workspaceRootKey(normalizedRoot), mintedId) ??
+        mintedId;
       const existing = file.workspaces[workspaceId];
       const next: WorkspaceRegistryEntry =
         existing !== undefined
@@ -169,11 +205,12 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
               last_opened_at: now,
             };
       file.workspaces[workspaceId] = next;
-      // An explicit add clears any prior deletion tombstone.
+      // An explicit add clears any prior deletion tombstone for that id.
       file.deleted_workspace_ids = file.deleted_workspace_ids.filter((id) => id !== workspaceId);
       await this.writeRegistry(file);
-      return { entry: next, created: existing === undefined };
+      return { workspaceId, entry: next, created: existing === undefined };
     });
+    await fsp.mkdir(join(this.sessionsDir, workspaceId), { recursive: true, mode: 0o700 });
     const workspace = await this.hydrate(workspaceId, entry);
     if (created) {
       this.publishWorkspace({ type: 'event.workspace.created', workspace });
@@ -207,7 +244,6 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       const existing = file.workspaces[workspaceId];
       let root: string;
       if (existing !== undefined) {
-        delete file.workspaces[workspaceId];
         root = existing.root;
       } else {
         // Derived workspace: not in the file but a valid list result.
@@ -216,9 +252,34 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         if (derived === undefined) throw new WorkspaceNotFoundError(workspaceId);
         root = derived;
       }
-      if (!file.deleted_workspace_ids.includes(workspaceId)) {
-        file.deleted_workspace_ids.push(workspaceId);
+      // Folded aliases must die together: a sibling spelling left registered
+      // (or resurrectable from the session index) would resurface as this
+      // directory's representative on the next list(). Remove every registered
+      // spelling and tombstone every id that could carry sessions for the
+      // directory — registered alias ids plus each spelling's own minted
+      // bucket (the derived-workspace loop reads tombstones by exact id).
+      const rootKey = workspaceRootKey(root);
+      const tombstones = new Set<string>([workspaceId]);
+      const spellings = new Set<string>([root]);
+      for (const [id, entry] of Object.entries(file.workspaces)) {
+        if (workspaceRootKey(entry.root) !== rootKey) continue;
+        delete file.workspaces[id];
+        tombstones.add(id);
+        spellings.add(entry.root);
       }
+      const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+      for (const entry of index.values()) {
+        if (workspaceRootKey(entry.workDir) === rootKey) spellings.add(entry.workDir);
+      }
+      for (const spelling of spellings) {
+        // Both mint forms: the derived-workspace loop keys itself on the raw
+        // workDir, registered ids and buckets on the normalized one.
+        tombstones.add(encodeWorkDirKey(spelling));
+        tombstones.add(encodeWorkDirKey(normalizeWorkDir(spelling)));
+      }
+      file.deleted_workspace_ids = [
+        ...new Set([...file.deleted_workspace_ids, ...tombstones]),
+      ];
       await this.writeRegistry(file);
       return root;
     });
@@ -243,6 +304,83 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     throw new WorkspaceNotFoundError(workspaceId);
   }
 
+  async findWorkspaceIdByRoot(root: string): Promise<string | undefined> {
+    return this.runExclusive(async () => {
+      const file = await this.readRegistry();
+      // Prefer the id a fresh `encodeWorkDirKey(root)` would mint so callers
+      // (the session store's bucket derivation) stay on the canonical bucket
+      // when both a legacy alias and a canonical entry identity-match.
+      return findRegisteredIdByRootKey(file.workspaces, workspaceRootKey(root), encodeWorkDirKey(root));
+    });
+  }
+
+  async resolveAliasWorkDirs(workspaceId: string): Promise<readonly string[]> {
+    return (await this.aliasLayout(workspaceId))?.aliases ?? [];
+  }
+
+  /**
+   * Alias workDir spellings plus the session buckets that can hold sessions
+   * for the same physical root as `workspaceId` — or undefined when the id is
+   * unknown to both the registry and the session index. The bucket set is the
+   * union of both placement eras: every registered id for the root (sessions
+   * created with a wired bucket resolver land there, including legacy alias
+   * ids that no longer match a fresh `encodeWorkDirKey(root)` mint) and each
+   * spelling's own minted bucket (pre-resolver split, never rewritten).
+   */
+  private async aliasLayout(
+    workspaceId: string,
+  ): Promise<{ aliases: readonly string[]; buckets: readonly string[] } | undefined> {
+    const [file, index] = await Promise.all([
+      this.runExclusive(() => this.readRegistry()),
+      readSessionIndex(this.homeDir, this.sessionsDir),
+    ]);
+    // Resolve the id's root: the registered entry verbatim, else the derived
+    // bucket's recorded workDir (same rule as resolveRoot/findDerivedWorkDir).
+    let root = file.workspaces[workspaceId]?.root;
+    if (root === undefined) {
+      for (const entry of index.values()) {
+        if (encodeWorkDirKey(entry.workDir) === workspaceId) {
+          root = entry.workDir;
+          break;
+        }
+      }
+      if (root === undefined) return undefined;
+    }
+    const rootKey = workspaceRootKey(root);
+    const aliases = new Set<string>([root]);
+    const buckets = new Set<string>();
+    for (const [id, entry] of Object.entries(file.workspaces)) {
+      if (workspaceRootKey(entry.root) !== rootKey) continue;
+      aliases.add(entry.root);
+      buckets.add(id);
+    }
+    for (const entry of index.values()) {
+      if (workspaceRootKey(entry.workDir) === rootKey) aliases.add(entry.workDir);
+    }
+    for (const dir of aliases) {
+      buckets.add(encodeWorkDirKey(normalizeWorkDir(dir)));
+    }
+    return { aliases: [...aliases].toSorted(), buckets: [...buckets] };
+  }
+
+  /**
+   * Active-session count across ALL alias buckets for the workspace's root,
+   * not just the id's own bucket: GET /sessions?workspace_id=<id> pages the
+   * union of alias buckets, so the count aggregates the same set the list can
+   * actually retrieve.
+   */
+  private async countAliasSessions(workspaceId: string): Promise<number> {
+    const layout = await this.aliasLayout(workspaceId);
+    if (layout === undefined) {
+      return countActiveSessions(join(this.sessionsDir, workspaceId));
+    }
+    let count = 0;
+    for (const bucket of layout.buckets) {
+      count += await countActiveSessions(join(this.sessionsDir, bucket));
+    }
+    return count;
+  }
+
   /** Look up a derived workspace's workDir from the session index, or undefined
    *  if the id is not a known derived bucket. */
   private async findDerivedWorkDir(workspaceId: string): Promise<string | undefined> {
@@ -258,16 +396,11 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     entry: WorkspaceRegistryEntry,
     sessionCount?: number,
   ): Promise<Workspace> {
-    const [{ is_git_repo, branch }, session_count] = await Promise.all([
-      detectGit(entry.root),
-      sessionCount ?? countActiveSessions(join(this.sessionsDir, workspaceId)),
-    ]);
+    const session_count = sessionCount ?? (await this.countAliasSessions(workspaceId));
     return {
       id: workspaceId,
       root: entry.root,
       name: entry.name,
-      is_git_repo,
-      branch,
       created_at: entry.created_at,
       last_opened_at: entry.last_opened_at,
       session_count,
@@ -298,81 +431,13 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   }
 
   private async readRegistry(): Promise<WorkspaceRegistryFile> {
-    let raw: string;
-    try {
-      raw = await fsp.readFile(this.registryPath, 'utf8');
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
-        return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
-      }
-      throw err;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      this.logger.warn(
-        { path: this.registryPath, err: String(err) },
-        'workspaces.json malformed; treating as empty',
-      );
-      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
-    }
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      typeof (parsed as { workspaces?: unknown }).workspaces !== 'object' ||
-      (parsed as { workspaces?: unknown }).workspaces === null
-    ) {
-      this.logger.warn(
-        { path: this.registryPath },
-        'workspaces.json missing required keys; treating as empty',
-      );
-      return { version: WORKSPACE_REGISTRY_VERSION, workspaces: {}, deleted_workspace_ids: [] };
-    }
-    const rawWorkspaces = (parsed as { workspaces: Record<string, unknown> }).workspaces;
-    const workspaces: Record<string, WorkspaceRegistryEntry> = {};
-    for (const [id, value] of Object.entries(rawWorkspaces)) {
-      const entry = this.sanitizeEntry(value);
-      if (entry !== null) {
-        workspaces[id] = entry;
-      }
-    }
-    const version =
-      typeof (parsed as { version?: unknown }).version === 'number'
-        ? (parsed as { version: number }).version
-        : WORKSPACE_REGISTRY_VERSION;
-    const rawDeleted = (parsed as { deleted_workspace_ids?: unknown }).deleted_workspace_ids;
-    const deleted_workspace_ids = Array.isArray(rawDeleted)
-      ? rawDeleted.filter((id): id is string => typeof id === 'string')
-      : [];
-    return { version, workspaces, deleted_workspace_ids };
-  }
-
-  private sanitizeEntry(value: unknown): WorkspaceRegistryEntry | null {
-    if (typeof value !== 'object' || value === null) return null;
-    const v = value as Partial<WorkspaceRegistryEntry>;
-    if (
-      typeof v.root !== 'string' ||
-      typeof v.name !== 'string' ||
-      typeof v.created_at !== 'string' ||
-      typeof v.last_opened_at !== 'string'
-    ) {
-      return null;
-    }
-    return {
-      root: v.root,
-      name: v.name,
-      created_at: v.created_at,
-      last_opened_at: v.last_opened_at,
-    };
+    return readWorkspaceRegistryFile(this.homeDir, (context, message) =>
+      this.logger.warn(context, message),
+    );
   }
 
   private async writeRegistry(file: WorkspaceRegistryFile): Promise<void> {
-    await fsp.mkdir(dirname(this.registryPath), { recursive: true, mode: 0o700 });
-    const tmp = `${this.registryPath}.tmp`;
-    await fsp.writeFile(tmp, JSON.stringify(file, null, 2), 'utf8');
-    await fsp.rename(tmp, this.registryPath);
+    await writeWorkspaceRegistryFile(this.homeDir, file);
   }
 
   private runExclusive<T>(op: () => Promise<T>): Promise<T> {
@@ -388,52 +453,6 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     if (this._store.isDisposed) return;
     super.dispose();
   }
-}
-
-export interface GitInfo {
-  is_git_repo: boolean;
-  branch: string | null;
-}
-
-export async function detectGit(root: string): Promise<GitInfo> {
-  let dotGit: Stats;
-  try {
-    dotGit = await fsp.lstat(join(root, '.git'));
-  } catch {
-    return { is_git_repo: false, branch: null };
-  }
-
-  let gitDir: string;
-  if (dotGit.isDirectory()) {
-    gitDir = join(root, '.git');
-  } else if (dotGit.isFile()) {
-    let text: string;
-    try {
-      text = await fsp.readFile(join(root, '.git'), 'utf8');
-    } catch {
-      return { is_git_repo: false, branch: null };
-    }
-    const m = /^gitdir:\s*(.+)$/m.exec(text);
-    if (m === null) return { is_git_repo: false, branch: null };
-    const ref = m[1] ?? '';
-    if (ref === '') return { is_git_repo: false, branch: null };
-    gitDir = ref.trim();
-
-    if (!gitDir.startsWith('/')) {
-      gitDir = join(root, gitDir);
-    }
-  } else {
-    return { is_git_repo: false, branch: null };
-  }
-
-  let head: string;
-  try {
-    head = (await fsp.readFile(join(gitDir, 'HEAD'), 'utf8')).trim();
-  } catch {
-    return { is_git_repo: true, branch: null };
-  }
-  const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(head);
-  return { is_git_repo: true, branch: ref ? (ref[1] ?? null) : null };
 }
 
 async function countActiveSessions(dir: string): Promise<number> {

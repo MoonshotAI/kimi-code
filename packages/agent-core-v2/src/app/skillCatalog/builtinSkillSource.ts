@@ -35,6 +35,6 @@ registerScopedService(
   LifecycleScope.App,
   IBuiltinSkillSource,
   BuiltinSkillSource,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'skillCatalog',
 );

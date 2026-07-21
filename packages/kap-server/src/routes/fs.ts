@@ -5,7 +5,8 @@
  * so existing v1 clients keep working against server-v2. Backed by the v2
  * Session-scoped `ISessionFsService` (`agent-core-v2/src/sessionFs`): the route resolves
  * the session from the URL, then dispatches `fs:<action>` to the matching
- * `ISessionFsService` method. The wire schema is reused from `@moonshot-ai/protocol`.
+ * `ISessionFsService` method. The wire schema comes from the engine's own
+ * `sessionFs` domain contract (`agent-core-v2`).
  */
 
 import { createReadStream } from 'node:fs';
@@ -19,21 +20,17 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  ErrorCode,
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
   fsMkdirRequestSchema,
-  fsOpenInRequestSchema,
-  fsOpenRequestSchema,
   fsReadRequestSchema,
-  fsRevealRequestSchema,
   fsSearchRequestSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -43,7 +40,15 @@ import {
   openInAppCommandFor,
   revealFileCommandFor,
 } from '../lib/fileLaunch';
+import { parseRangeHeader, pickHeader } from '../lib/httpRange';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  fsOpenInRequestSchema,
+  fsOpenRequestSchema,
+  fsRevealRequestSchema,
+} from '../protocol/rest-fs';
 
 interface FsRouteHost {
   post(
@@ -200,7 +205,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             return;
         }
       } catch (err) {
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req, err);
       }
     },
   );
@@ -258,7 +263,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       try {
         resolved = await resolveFs(core, session_id).resolveDownload(relPath);
       } catch (err) {
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req, err);
         return;
       }
 
@@ -289,7 +294,11 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           start: range.start,
           end: range.end,
         });
-        stream.on('error', () => {
+        stream.on('error', (error: unknown) => {
+          requestLog(req)?.warn(
+            { session_id, path: relPath, err: error },
+            'fs download stream error',
+          );
           try {
             stream.destroy();
           } catch {
@@ -301,7 +310,11 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       r.code(200).header('content-length', String(resolved.size));
       const stream = createReadStream(resolved.absolute);
-      stream.on('error', () => {
+      stream.on('error', (error: unknown) => {
+        requestLog(req)?.warn(
+          { session_id, path: relPath, err: error },
+          'fs download stream error',
+        );
         try {
           stream.destroy();
         } catch {
@@ -463,6 +476,10 @@ async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Rep
       }),
     );
   } catch (err) {
+    requestLog(req)?.warn(
+      { session_id: sessionId, app_id: body.app_id, err },
+      'fs open-in launch failed',
+    );
     reply.send(
       errEnvelope(
         ErrorCode.INTERNAL_ERROR,
@@ -479,7 +496,9 @@ async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Rep
 // Error mapping — domain Error2 codes → protocol wire codes.
 // ---------------------------------------------------------------------------
 
-function sendMappedError(reply: Reply, requestId: string, err: unknown): void {
+function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
+  const requestId = req.id;
+  const log = requestLog(req);
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:
@@ -530,6 +549,7 @@ function sendMappedError(reply: Reply, requestId: string, err: unknown): void {
         return;
     }
   }
+  log?.error({ err }, 'fs request failed');
   reply.send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,
@@ -568,51 +588,6 @@ function buildValidationEnvelope(
     request_id: requestId,
     details,
   };
-}
-
-function pickHeader(
-  headers: Record<string, unknown>,
-  name: string,
-): string | undefined {
-  const v = headers[name];
-  if (v === undefined) return undefined;
-  return Array.isArray(v) ? (v[0] as string | undefined) : (v as string);
-}
-
-function parseRangeHeader(
-  raw: string | undefined,
-  size: number,
-): { start: number; end: number; length: number } | null {
-  if (raw === undefined) return null;
-  if (!raw.startsWith('bytes=')) return null;
-  const spec = raw.slice('bytes='.length);
-  if (spec.includes(',')) return null;
-  const dash = spec.indexOf('-');
-  if (dash < 0) return null;
-  const leftRaw = spec.slice(0, dash);
-  const rightRaw = spec.slice(dash + 1);
-  if (leftRaw === '' && rightRaw === '') return null;
-  let start: number;
-  let end: number;
-  if (leftRaw === '') {
-    const suffix = Number.parseInt(rightRaw, 10);
-    if (!Number.isFinite(suffix) || suffix <= 0) return null;
-    start = Math.max(0, size - suffix);
-    end = size - 1;
-  } else {
-    const a = Number.parseInt(leftRaw, 10);
-    if (!Number.isFinite(a) || a < 0) return null;
-    start = a;
-    if (rightRaw === '') {
-      end = size - 1;
-    } else {
-      const b = Number.parseInt(rightRaw, 10);
-      if (!Number.isFinite(b) || b < a) return null;
-      end = Math.min(b, size - 1);
-    }
-  }
-  if (start >= size || start > end) return null;
-  return { start, end, length: end - start + 1 };
 }
 
 function sanitizeFilename(rel: string): string {

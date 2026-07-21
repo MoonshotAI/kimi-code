@@ -14,14 +14,13 @@ import {
   IAgentLifecycleService,
   IAgentPromptService,
   ILogService,
-  ISessionActivity,
   ISessionInteractionService,
   ISessionContext,
   ISessionLifecycleService,
   ISessionMetadata,
   IWorkspaceRegistry,
 } from '@moonshot-ai/agent-core-v2';
-import { sessionSnapshotResponseSchema } from '@moonshot-ai/protocol';
+import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerSnapshotRoutes } from '../src/routes/snapshot';
@@ -71,14 +70,16 @@ describe('server-v2 snapshot route enrichment', () => {
             }),
           },
         ],
-        [IAgentLifecycleService, { getHandle: () => main }],
+        [IAgentLifecycleService, { get: () => main }],
         [ISessionInteractionService, { listPending: () => [] }],
-        [ISessionActivity, { status: () => 'idle' }],
       ]),
     };
     const core = {
       accessor: fakeAccessor([
-        [ISessionLifecycleService, { resume: async () => session }],
+        [
+          ISessionLifecycleService,
+          { resume: async () => session, get: () => undefined },
+        ],
         [IWorkspaceRegistry, { get: async () => ({ root: '/workspace' }) }],
       ]),
     };
@@ -92,6 +93,20 @@ describe('server-v2 snapshot route enrichment', () => {
           thinking_text: '',
           running_tools: [],
         },
+        subagents: [
+          {
+            id: 'agent-1',
+            session_id: sessionId,
+            kind: 'subagent',
+            description: 'task agent-1',
+            status: 'running',
+            subagent_phase: 'working',
+            parent_tool_call_id: 'tc_swarm_1',
+            swarm_index: 0,
+            run_in_background: false,
+            created_at: new Date(now).toISOString(),
+          },
+        ],
       }),
     };
 
@@ -142,6 +157,16 @@ describe('server-v2 snapshot route enrichment', () => {
       assistant_text: 'Hello',
       current_prompt_id: promptId,
     });
+    expect(snap.subagents).toEqual([
+      expect.objectContaining({
+        id: 'agent-1',
+        kind: 'subagent',
+        subagent_phase: 'working',
+        parent_tool_call_id: 'tc_swarm_1',
+        swarm_index: 0,
+        run_in_background: false,
+      }),
+    ]);
   });
 });
 
@@ -258,12 +283,12 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.getHandle('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   function emit(sessionId: string, event: DomainEvent): void {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
-    const main = session!.accessor.get(IAgentLifecycleService).getHandle('main');
+    const main = session!.accessor.get(IAgentLifecycleService).get('main');
     main!.accessor.get(IEventBus).publish(event);
   }
 

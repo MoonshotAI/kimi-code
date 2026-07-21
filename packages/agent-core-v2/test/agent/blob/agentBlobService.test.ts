@@ -18,7 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { type ServiceIdentifier } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/_base/di/scope';
@@ -35,7 +35,6 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-// The default offload threshold is 4096 base64 chars; LARGE straddles it.
 const LARGE = 'A'.repeat(5000);
 const SMALL = 'AQID';
 

@@ -6,10 +6,11 @@
 declare const __KIMI_DEV_PROXY_TARGET__: string;
 
 // Injected by Vite `define` (see vite.config.ts): the named dev-proxy backend
-// presets (v1 = legacy server, v2 = kap-server) for the Sidebar switcher menu.
-// The live target comes from GET /__kimi-dev/backend; this is the synchronous
-// initial value. Unused by the same-origin production build.
-declare const __KIMI_DEV_BACKENDS__: { v1: string; v2: string };
+// presets (default = kap-server on 58627, multi = extra kap-server instance on
+// 58628) for the Sidebar switcher menu. The live target comes from
+// GET /__kimi-dev/backend; this is the synchronous initial value. Unused by
+// the same-origin production build.
+declare const __KIMI_DEV_BACKENDS__: { default: string; multi: string };
 
 // Injected by Vite `define` from apps/kimi-web/package.json.
 declare const __KIMI_WEB_VERSION__: string;

@@ -1,4 +1,12 @@
-import { describe, expect, it, onTestFinished } from 'vitest';
+/**
+ * Scenario: per-agent prompt scheduling and launch-failure settlement.
+ *
+ * Exercises `IAgentPromptService` through DI with controlled context, loop,
+ * wire, compaction, and tool-execution collaborators.
+ * Run: `pnpm exec vitest run packages/agent-core-v2/test/agent/prompt/promptService.test.ts`.
+ */
+
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -14,8 +22,9 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
@@ -36,16 +45,18 @@ function harness() {
     hooks: createHooks(['onWillCompact']),
     onDidFinishCompaction: Event.None,
   } as unknown as IAgentFullCompactionService;
-  const ix = createServices(disposables, { strict: true, additionalServices: (reg) => {
-    reg.defineInstance(IAgentContextMemoryService, context);
-    reg.defineInstance(IAgentLoopService, loop);
-    reg.defineInstance(IAgentWireService, stubWire());
-    reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-    reg.defineInstance(IAgentFullCompactionService, fullCompaction);
-    reg.define(IEventBus, EventBusService);
-    reg.define(IAgentSystemReminderService, AgentSystemReminderService);
-    reg.define(IAgentPromptService, AgentPromptService);
-  }});
+  const ix = createServices(disposables, {
+    strict: true, additionalServices: (reg) => {
+      reg.defineInstance(IAgentContextMemoryService, context);
+      reg.defineInstance(IAgentLoopService, loop);
+      reg.defineInstance(IWireService, stubWire());
+      reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+      reg.defineInstance(IAgentFullCompactionService, fullCompaction);
+      reg.define(IEventBus, EventBusService);
+      reg.define(IAgentSystemReminderService, AgentSystemReminderService);
+      reg.define(IAgentPromptService, AgentPromptService);
+    }
+  });
   return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction };
 }
 
@@ -105,5 +116,65 @@ describe('AgentPromptService', () => {
     prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
     const handle = await prompt.enqueue({ message: message('blocked') });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+  });
+
+  it('settles the prompt as failed when the loop throws on launch', async () => {
+    const { prompt, loop } = harness();
+    vi.spyOn(loop, 'enqueue').mockImplementation(() => {
+      throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'Cannot launch a new turn while another turn is active');
+    });
+    const handle = await prompt.enqueue({ id: 'prompt-x', message: message('hello') });
+    expect(handle.state).toBe('failed');
+    await expect(handle.launched).resolves.toBeUndefined();
+    await expect(handle.completion).resolves.toMatchObject({ state: 'failed', result: undefined });
+    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+  });
+
+  it('replaces an unsupported prompt image with a text notice at the history funnel', async () => {
+    const { prompt, context, loop } = harness();
+    const avifUrl = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
+    const handle = await prompt.enqueue({
+      id: 'prompt-img',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await handle.launched;
+    loop.drainNextBatch(context);
+
+    const appended = context.get();
+    expect(appended).toHaveLength(1);
+    const parts = appended[0]!.content;
+    expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+    expect(parts[0]).toMatchObject({ type: 'text' });
+    expect((parts[0] as { text: string }).text).toContain('image/avif');
+  });
+
+  it('gates steered prompt images too', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const avifUrl = `data:image/avif;base64,${Buffer.from([4, 5, 6]).toString('base64')}`;
+    const queued = await prompt.enqueue({
+      id: 'prompt-steer-img',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await prompt.steer([queued.id]);
+    loop.drainNextBatch(context);
+
+    const appended = context.get();
+    const parts = appended.flatMap((entry) => entry.content);
+    expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+    expect(
+      parts.some((part) => part.type === 'text' && part.text.includes('image/avif')),
+    ).toBe(true);
   });
 });

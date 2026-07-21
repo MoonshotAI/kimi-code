@@ -23,7 +23,7 @@ TOML 字段名一律用下划线（snake_case），如 `default_model`、`max_co
 以下示例覆盖最常用的配置项，可直接复制后按需修改：
 
 ```toml
-default_model = "kimi-code/kimi-for-coding"
+default_model = "kimi-code/k3"
 default_permission_mode = "manual"
 default_plan_mode = false
 merge_all_available_skills = true
@@ -33,6 +33,15 @@ telemetry = true
 type = "kimi"
 base_url = "https://api.kimi.com/coding/v1"
 api_key = ""
+
+[models."kimi-code/k3"]
+provider = "managed:kimi-code"
+model = "k3"
+max_context_size = 1048576
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+display_name = "K3"
+support_efforts = [ "max" ]
+default_effort = "max"
 
 [models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
@@ -52,7 +61,7 @@ effort = "high"
 keep = "all"
 
 [loop_control]
-max_retries_per_step = 3
+max_retries_per_step = 10
 reserved_context_size = 50000
 
 [background]
@@ -89,16 +98,18 @@ timeout = 5
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
-| `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`auto`（自动批准读操作）、`yolo`（全部自动批准） |
+| `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`yolo`（自动批准工具操作，Agent 仍可能提问）、`auto`（完全自主，Agent 自己做决定，不再提问） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
+| `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
 | `providers` | `table` | `{}` | API 供应商表 → [`providers`](#providers) |
 | `models` | `table` | — | 模型别名表 → [`models`](#models) |
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
+| `tools` | `table` | — | 全局工具开关 → [`tools`](#tools) |
 | `image` | `table` | — | 图片压缩参数 → [`image`](#image) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
@@ -140,7 +151,7 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `max_context_size` | `integer` | 是 | 最大上下文长度（token 数），必须 ≥ 1 |
 | `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens`）。目前仅 `anthropic` 供应商读取。为 Claude 模型设置后，这个显式值会覆盖内置的服务端最大值 |
 | `capabilities` | `array<string>` | 否 | 显式追加的能力标签：`thinking`、`always_thinking`、`image_in`、`video_in`、`audio_in`、`tool_use`。与供应商自动识别的能力取并集，只能追加不能移除 |
-| `support_efforts` | `array<string>` | 否 | 模型目录声明的 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
+| `support_efforts` | `array<string>` | 否 | 模型接受的 Thinking 档位。对 `kimi` 而言，在运行时选择列表外的值会报错；模型解析时若配置值或之前的值不受目标模型支持，会回落到目标模型的 `default_effort`，并将该有效值同步给 UI。支持 Thinking 但没有此字段的 Kimi 模型使用布尔 `on` / `off`。其他 provider 在协议提供原生 effort 字段时会原样传递具体值；协议仅提供等级或 token budget 时，只做必要的格式转换。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
 | `default_effort` | `string` | 否 | 模型的默认 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] default_effort` |
 | `display_name` | `string` | 否 | UI 中显示的名称，未设时回退到 `model` |
 | `reasoning_key` | `string` | 否 | 仅 `openai` 供应商。当网关用非标准字段名返回推理内容时才需要设置；默认自动识别 `reasoning_content` / `reasoning_details` / `reasoning` |
@@ -181,7 +192,7 @@ display_name = "Kimi for Coding (custom)"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `enabled` | `boolean` | `true` | 新会话是否默认开启 Thinking，设为 `false` 可强制关闭 |
-| `effort` | `string` | — | Thinking 强度（例如 `low`、`medium`、`high`、`xhigh`、`max`），实际可用等级取决于模型声明的 `support_efforts`，未识别的值会被供应商忽略 |
+| `effort` | `string` | — | Thinking 强度（例如 `low`、`medium`、`high`、`xhigh`、`max`）。非 Kimi provider 在上游协议接受具体 effort 值时不会改写该值；如果上游拒绝，请改成该模型支持的档位。协议仅提供等级或 token budget 时，仍需做格式转换。对于带 `support_efforts` 的 Kimi 模型，若该配置值不在列表中，会回落到模型默认档位；没有该列表的 Kimi 模型会把任意开启值视为布尔 `on` |
 | `keep` | `string` | `"all"` | 保留思考透传。在 `kimi` 上以 `thinking.keep` 发送；在 `anthropic`（Claude 以及 Kimi 的 Anthropic 兼容模式）上以 `context_management` 的 `clear_thinking_20251015` 编辑发送（开启 keep 会让 Anthropic 请求走 beta Messages API；关值可禁用 keep 并回到标准端点）。`"all"` 会保留历史轮次的思考内容（`reasoning_content` / Anthropic thinking blocks）；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用。可被 `KIMI_MODEL_THINKING_KEEP` 覆盖；仅在 Thinking 开启时注入 |
 
 ### 已废弃字段
@@ -198,8 +209,10 @@ display_name = "Kimi for Coding (custom)"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设或设为 `0` 则无上限 |
-| `max_retries_per_step` | `integer` | `3` | 单步失败后的最大重试次数 |
+| `max_retries_per_step` | `integer` | `10` | 单步失败后的最大重试次数 |
 | `reserved_context_size` | `integer` | — | 预留给模型输出的 token 数；上下文窗口剩余量低于此值时触发自动压缩 |
+
+`max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_retries_per_step` 可被 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 覆盖，优先级均高于配置文件。
 
 ## `background`
 
@@ -209,21 +222,44 @@ display_name = "Kimi for Coding (custom)"
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数 |
 | `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务。默认情况下，Kimi Code 会在进程退出前请求停止所有后台任务；只有希望任务在会话结束后继续运行时才设为 `true`。在 print 模式（`kimi -p`）下，本字段仅作为 `print_background_mode` 未设置时的兼容回退：`true` 等价于 `print_background_mode = "drain"` |
-| `print_background_mode` | `"exit" \| "drain" \| "steer"` | `"exit"` | 仅 print 模式（`kimi -p`）生效，决定主 agent 的 turn 结束后如何处理未返回的后台任务：`"exit"` 立即退出；`"drain"` 退出前等待所有后台任务进入终态（结果不回馈给主 agent）；`"steer"` 不退出，让后台任务完成时像后台子代理一样以合成 user 消息 steer 主 agent 进入新 turn，直到某 turn 结束时无未决后台任务或触及上限。设置后优先级高于 `keep_alive_on_exit` 的 print 回退 |
-| `print_wait_ceiling_s` | `integer` | `3600` | print 模式（`kimi -p`）下，`print_background_mode` 为 `"drain"` 或 `"steer"` 时，等待/steer 循环的墙钟上限（秒）。在非 print 模式或 `"exit"` 时无效 |
-| `print_max_turns` | `integer` | `50` | print 模式（`kimi -p`）且 `print_background_mode = "steer"` 时，允许由后台任务完成触发的新 turn 的最大数量，防止 steer 循环失控 |
+| `kill_grace_period_ms` | `integer` | `5000` | 会话关闭、手动停止或任务超时请求正常终止后，等待任务自行结束的宽限时间（毫秒）。超过该时间仍在运行时，Kimi Code 会尝试强制停止该任务 |
+| `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令触及超时时间时，将其转为后台任务而不是直接终止：命令完成时 agent 会收到通知，转入后台的命令受 `bash_task_timeout_s` 默认后台超时约束。设为 `false` 则恢复超时即终止的行为 |
+| `bash_task_timeout_s` | `integer` | `600` | 后台 `Bash` 任务在调用未传 `timeout` 时的默认超时（秒）；前台命令超时转后台后也按此值重新计时。`0` 表示无超时——任务一直运行到自行结束或被模型手动停止。显式传入的 `timeout` 不受影响。在 print 模式（`kimi -p`）下未显式设置时默认为 `0` |
+| `print_background_mode` | `"exit" \| "drain" \| "steer"` | `"steer"` | 仅 print 模式（`kimi -p`）生效，决定主 agent 的 turn 结束后如何处理未返回的后台任务：`"exit"` 立即退出；`"drain"` 退出前等待所有后台任务进入终态（结果不回馈给主 agent）；`"steer"` 不退出，让后台任务完成时像后台子代理一样以合成 user 消息 steer 主 agent 进入新 turn，直到某 turn 结束时无未决后台任务或触及上限。设置后优先级高于 `keep_alive_on_exit` 的 print 回退 |
+| `print_wait_ceiling_s` | `integer` | `315360000` | print 模式（`kimi -p`）下，`print_background_mode` 为 `"drain"` 或 `"steer"` 时，等待/steer 循环的墙钟上限（秒；默认 10 年，近似不设限）。在非 print 模式或 `"exit"` 时无效 |
+| `print_max_turns` | `integer` | `100000` | print 模式（`kimi -p`）且 `print_background_mode = "steer"` 时，允许由后台任务完成触发的新 turn 的最大数量，防止 steer 循环失控（默认值近似不设限） |
 
-`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
+`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`max_running_tasks` 可被 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 覆盖，优先级均高于配置文件。
 
-在 print 模式（`kimi -p "<prompt>"`）下，Kimi Code 默认只跑一个非交互的单轮 turn，主 agent 一结束就退出（`print_background_mode = "exit"`）。如果你启动了后台任务（例如通过 `Agent(run_in_background=true)` 并发子代理，或 `Bash(run_in_background=true)` 的长命令）并希望它们跑完，可将 `print_background_mode` 设为 `"drain"`（等任务结束再退出，结果不回馈）或 `"steer"`（任务结束后把结果 steer 给主 agent，触发新 turn 继续处理）。`"steer"` 适合让主 agent 依据后台长任务（如训练、评测）的结果继续做后续步骤；其总耗时受 `print_wait_ceiling_s` 限制、额外 turn 数受 `print_max_turns` 限制。
+在 print 模式（`kimi -p "<prompt>"`）下，只要还有未决的后台任务，Kimi Code 在主 agent 的 turn 结束后不会退出：每个任务完成都会以合成 user 消息回馈给主 agent，steer 出新的 turn（默认 `print_background_mode = "steer"`），直到某 turn 结束时没有任何未决任务才退出。该循环受 `print_wait_ceiling_s` 与 `print_max_turns` 约束，默认值都近似不设限。print 模式下后台工作也不会被墙钟超时杀掉：后台 `Bash` 任务默认无超时（`bash_task_timeout_s = 0`），子代理默认无超时（`[subagent] timeout_ms = 0`），只有模型自己能停止任务。将 `print_background_mode` 设为 `"drain"` 可等待任务结束但不回馈结果，设为 `"exit"` 则在主 agent 结束后立即退出。
 
 ## `subagent`
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。设为很大的值（例如 `259200000`，即 3 天）可近似取消上限。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。注意：超过 `2147483647`（约 24.8 天）会被运行时钳成 1ms |
+| `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。`0` 表示无超时——子代理一直运行到自行结束或被模型手动停止。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。在 print 模式（`kimi -p`）下未显式设置时默认为 `0`。注意：超过 `2147483647`（约 24.8 天）的值会被运行时钳到约 24.8 天 |
 
 `timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
+
+## `tools`
+
+`tools` 设置全局工具开关，对所有会话中的每个 Agent 生效，并在 Agent 自身的 `tools` / `disallowedTools` 策略之上再取一次交集。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `array<string>` | — | 全局允许列表：非空时仅列出的工具可用；省略或设为空数组均表示不约束 |
+| `disabled` | `array<string>` | — | 全局禁止列表，在 `enabled` 之后应用 |
+
+工具名匹配规则与 Agent 文件中的同名字段一致：内置工具按名称精确匹配（如 `Read`），MCP 工具用 glob 匹配（如 `mcp__github__*`）。有三种写法永远匹配不到任何工具，出现时会给出警告：`mcp__` 模式之外使用通配符（`enabled = ["*"]` 会禁用所有工具，而 `disabled = ["*"]` 什么也禁不掉）；缺少工具段的 `mcp__` 字面量（`mcp__github` —— 匹配整个服务器要用 `mcp__github__*`）；以及任何已注册或内置工具都没有的名字（匹配区分大小写）。
+
+```toml
+[tools]
+disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
+```
+
+::: warning 注意
+与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
+:::
 
 ## `image`
 

@@ -11,8 +11,7 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   IAgentPermissionRulesService,
   type PermissionApprovalResultRecord,
@@ -27,7 +26,7 @@ import {
 export class AgentPermissionRulesService implements IAgentPermissionRulesService {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IAgentWireService private readonly wire: IWireService) {}
+  constructor(@IWireService private readonly wire: IWireService) {}
 
   get rules(): readonly PermissionRule[] {
     return [...this.wire.getModel(PermissionRulesModel).rules];
@@ -51,6 +50,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionRulesService,
   AgentPermissionRulesService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'permissionRules',
 );

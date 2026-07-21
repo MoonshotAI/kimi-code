@@ -338,6 +338,34 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.supportEfforts to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'compatible-alias': {
+            provider: 'anthropic',
+            model: 'compatible-model',
+            maxContextSize: 200000,
+            supportEfforts: ['low', 'high', 'max'],
+          },
+        },
+      },
+      model: 'compatible-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'compatible-model',
+      supportEfforts: ['low', 'high', 'max'],
+    });
+  });
+
   it('forwards alias.betaApi to the anthropic provider config', () => {
     const resolved = resolveRuntimeProvider({
       config: {
@@ -518,7 +546,6 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
       .defaultHeaders;
     expect(headers).toBeDefined();
     expect('X-Msh-Platform' in headers!).toBe(false);
-    expect('generationKwargs' in resolved.provider).toBe(false);
   });
 });
 
@@ -685,33 +712,39 @@ describe('ProviderManager prompt cache key', () => {
     });
   });
 
-  it('does not add generation kwargs to non-Kimi providers', () => {
-    const manager = new ProviderManager({
-      promptCacheKey: 'session-test',
-      config: {
-        defaultModel: 'gpt-alias',
-        providers: {
-          openai: {
-            type: 'openai',
-            apiKey: 'sk-openai',
+  it('applies a prompt cache key to OpenAI providers (chat completions + responses)', () => {
+    for (const type of ['openai', 'openai_responses'] as const) {
+      const manager = new ProviderManager({
+        promptCacheKey: 'session-test',
+        config: {
+          defaultModel: 'gpt-alias',
+          providers: {
+            openai: {
+              type,
+              apiKey: 'sk-openai',
+            },
+          },
+          models: {
+            'gpt-alias': {
+              provider: 'openai',
+              model: 'gpt-runtime',
+              maxContextSize: 200000,
+            },
           },
         },
-        models: {
-          'gpt-alias': {
-            provider: 'openai',
-            model: 'gpt-runtime',
-            maxContextSize: 200000,
-          },
-        },
-      },
-    });
-    const resolved = manager.resolveProviderConfig('gpt-alias');
+      });
+      const resolved = manager.resolveProviderConfig('gpt-alias');
 
-    expect(resolved.provider).toMatchObject({
-      type: 'openai',
-      model: 'gpt-runtime',
-    });
-    expect('generationKwargs' in resolved.provider).toBe(false);
+      // Same session-affinity intent as the Kimi branch above: every request
+      // of the session routes through the same provider-side prompt cache.
+      expect(resolved.provider).toMatchObject({
+        type,
+        model: 'gpt-runtime',
+        generationKwargs: {
+          prompt_cache_key: 'session-test',
+        },
+      });
+    }
   });
 
   it('reads the current config when constructed with a function', () => {
@@ -840,8 +873,10 @@ describe('resolveThinkingEffort', () => {
   });
 
   it('forces always-thinking models back on even when off is requested', () => {
-    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel)).toBe('on');
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel, true)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel, true)).toBe(
+      'on',
+    );
   });
 });
 
@@ -1040,7 +1075,7 @@ describe('per-model protocol routing', () => {
 });
 
 describe('resolveRuntimeProvider model overrides', () => {
-  it('passes overridden supportEfforts to the kimi provider config', () => {
+  it('keeps supportEfforts out of the kimi provider config', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         ...BASE_CONFIG,
@@ -1054,9 +1089,7 @@ describe('resolveRuntimeProvider model overrides', () => {
       },
     });
 
-    expect(resolved.provider).toMatchObject({
-      type: 'kimi',
-      supportEfforts: ['low', 'high'],
-    });
+    expect(resolved.provider).toMatchObject({ type: 'kimi' });
+    expect(resolved.provider).not.toHaveProperty('supportEfforts');
   });
 });

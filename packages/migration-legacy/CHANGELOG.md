@@ -1,5 +1,14 @@
 # @moonshot-ai/migration-legacy
 
+## 0.1.16
+
+### Patch Changes
+
+- [#1769](https://github.com/MoonshotAI/kimi-code/pull/1769) [`d1ca65e`](https://github.com/MoonshotAI/kimi-code/commit/d1ca65e1de189617e9edbc54010e62d472a1de3d) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Keep legacy migrations idempotent across multiple Kimi homes and report damaged or unmapped sessions instead of silently skipping them.
+
+- Updated dependencies [[`d1ca65e`](https://github.com/MoonshotAI/kimi-code/commit/d1ca65e1de189617e9edbc54010e62d472a1de3d)]:
+  - @moonshot-ai/agent-core@0.15.5
+
 ## 0.1.15
 
 ### Patch Changes

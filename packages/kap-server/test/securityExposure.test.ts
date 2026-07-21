@@ -72,7 +72,9 @@ describe('server-v2 exposure hardening hooks', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['referrer-policy']).toBe('no-referrer');
-    expect(res.headers['content-security-policy']).toBe("default-src 'self'");
+    expect(res.headers['content-security-policy']).toBe(
+      "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'",
+    );
     expect(res.headers['strict-transport-security']).toBeUndefined();
   });
 

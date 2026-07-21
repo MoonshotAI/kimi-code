@@ -6,19 +6,41 @@
  * folder. Distinct from the Session-side `sessionFs`, which is sandboxed and may
  * be remote. App-scoped.
  *
- * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are sourced from
- * `@moonshot-ai/protocol` so the `/api/v1` and `/api/v2` transports share one
- * contract. Domain errors (`HostFolder*Error`) carry the failing path and are
- * translated to protocol error codes at the transport boundary.
+ * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are defined here as
+ * zod schemas so the `/api/v1` and `/api/v2` transports share one contract.
+ * Domain errors (`HostFolder*Error`) carry the failing path and are
+ * translated to wire error codes at the transport boundary.
  */
+
+import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { FsBrowseResponse, FsHomeResponse } from '@moonshot-ai/protocol';
+export const fsBrowseQuerySchema = z.object({
+  path: z.string().min(1).optional(),
+});
+export type FsBrowseQuery = z.infer<typeof fsBrowseQuerySchema>;
 
-export type { FsBrowseResponse, FsHomeResponse };
+export const fsBrowseEntrySchema = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1),
+  is_dir: z.literal(true),
+});
+export type FsBrowseEntry = z.infer<typeof fsBrowseEntrySchema>;
 
-/** Thrown by `browse` when the requested path is not absolute. */
+export const fsBrowseResponseSchema = z.object({
+  path: z.string().min(1),
+  parent: z.string().min(1).nullable(),
+  entries: z.array(fsBrowseEntrySchema),
+});
+export type FsBrowseResponse = z.infer<typeof fsBrowseResponseSchema>;
+
+export const fsHomeResponseSchema = z.object({
+  home: z.string().min(1),
+  recent_roots: z.array(z.string().min(1)),
+});
+export type FsHomeResponse = z.infer<typeof fsHomeResponseSchema>;
+
 export class HostFolderNotAbsoluteError extends Error {
   readonly path: string;
   constructor(path: string) {
@@ -28,7 +50,6 @@ export class HostFolderNotAbsoluteError extends Error {
   }
 }
 
-/** Thrown by `browse` when the requested path does not exist or is not a directory. */
 export class HostFolderNotFoundError extends Error {
   readonly path: string;
   constructor(path: string) {
@@ -38,7 +59,6 @@ export class HostFolderNotFoundError extends Error {
   }
 }
 
-/** Thrown by `browse` when the process lacks permission to read the path. */
 export class HostFolderPermissionError extends Error {
   readonly path: string;
   constructor(path: string) {
@@ -51,18 +71,11 @@ export class HostFolderPermissionError extends Error {
 export interface IHostFolderBrowser {
   readonly _serviceBrand: undefined;
 
-  /**
-   * List the immediate sub-directories of `absPath` (defaults to `$HOME`),
-   * annotated with git metadata. The returned `path` is the realpath of the
-   * target.
-   */
   browse(absPath?: string): Promise<FsBrowseResponse>;
-  /** `$HOME` plus the most recently opened workspace roots. */
   home(): Promise<FsHomeResponse>;
 }
 
 export const IHostFolderBrowser: ServiceIdentifier<IHostFolderBrowser> =
   createDecorator<IHostFolderBrowser>('hostFolderBrowser');
 
-/** Maximum number of recent workspace roots returned by `home()`. */
 export const RECENT_ROOTS_LIMIT = 8;

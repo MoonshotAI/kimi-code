@@ -28,12 +28,7 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
         if (end === -1) {
           regex += '\\[';
         } else {
-          // Glob character classes only use `!` for negation. A literal
-          // leading `^` must remain literal even though JS regex char
-          // classes treat it as negation in the first position.
           let charClass = pattern.slice(i + 1, end);
-          // Escape backslashes inside the class so a trailing backslash
-          // does not accidentally escape the closing `]`.
           charClass = charClass.replace(/\\/g, '\\\\');
           if (charClass.startsWith('!')) {
             charClass = '^' + charClass.slice(1);
@@ -49,8 +44,6 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
         if (i + 1 < pattern.length) {
           const next = pattern.charAt(i + 1);
           regex += next.replaceAll(/[{}()+.\\[\]^$|]/g, '\\$&');
-          // Advance past the escaped character so it is not processed
-          // again as a regex metacharacter. match literally.
           i++;
         } else {
           regex += '\\\\';

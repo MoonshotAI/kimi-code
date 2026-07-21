@@ -41,6 +41,24 @@ export interface IWorkspaceRegistry {
   delete(workspaceId: string): Promise<void>;
 
   resolveRoot(workspaceId: string): Promise<string>;
+
+  /**
+   * Identity-aware lookup: the id of the registered workspace whose root names
+   * the same physical directory as `root` (case/slash variants fold for
+   * Windows-shaped paths), or undefined when no registered entry matches.
+   * Comparison only — the stored root is never rewritten.
+   */
+  findWorkspaceIdByRoot(root: string): Promise<string | undefined>;
+
+  /**
+   * Every workDir spelling naming the same physical root as `workspaceId`
+   * (identity-folded via `workspaceRootKey`, so Windows case/slash variants
+   * collapse): the resolved root itself plus each registered root and each
+   * session-index workDir sharing the identity key. Index spellings matter —
+   * split legacy buckets were never registered and exist only as index
+   * workDir strings. Read-only; ids unknown to both sources resolve to [].
+   */
+  resolveAliasWorkDirs(workspaceId: string): Promise<readonly string[]>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
@@ -54,4 +72,6 @@ export abstract class WorkspaceRegistryBase extends Disposable implements IWorks
   abstract update(workspaceId: string, patch: WorkspacePatch): Promise<Workspace>;
   abstract delete(workspaceId: string): Promise<void>;
   abstract resolveRoot(workspaceId: string): Promise<string>;
+  abstract findWorkspaceIdByRoot(root: string): Promise<string | undefined>;
+  abstract resolveAliasWorkDirs(workspaceId: string): Promise<readonly string[]>;
 }

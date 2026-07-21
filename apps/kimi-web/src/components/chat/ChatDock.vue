@@ -3,11 +3,12 @@
 <!-- pending question/approval cards, and the composer. Only rendered inside a -->
 <!-- chat-pane group so it never leaks into files/tasks/preview/btw panes. -->
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
 import GoalStrip from './GoalStrip.vue';
 import QuestionCard from './QuestionCard.vue';
@@ -56,8 +57,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   command: [cmd: string];
   interrupt: [];
   setPermission: [mode: PermissionMode];
@@ -86,11 +87,12 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
-  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
 } | null>(null);
 const workPanelRef = ref<HTMLElement | null>(null);
 const workbarRef = ref<HTMLElement | null>(null);
+const dockRef = ref<HTMLElement | null>(null);
 
 function loadForEdit(value: string): boolean {
   // The nested Composer is only rendered in ChatDock's v-else — when a pending
@@ -101,7 +103,7 @@ function loadForEdit(value: string): boolean {
   return true;
 }
 
-function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   composerRef.value?.loadAttachmentsForEdit(atts);
 }
 
@@ -128,17 +130,36 @@ watch(
   { immediate: true },
 );
 
+let dockResizeObserver: ResizeObserver | null = null;
+
+function publishDockHeight(): void {
+  // Border-box height of the dock, exposed so fixed overlays (e.g. toasts) can
+  // anchor just above the composer. offsetHeight includes the dock's own
+  // safe-area padding, so consumers don't need to add safe-bottom again.
+  const height = dockRef.value?.offsetHeight ?? 0;
+  document.documentElement.style.setProperty('--dock-h', `${height}px`);
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'function' || !dockRef.value) return;
+  dockResizeObserver = new ResizeObserver(publishDockHeight);
+  dockResizeObserver.observe(dockRef.value);
+  publishDockHeight();
+});
+
 onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('mousedown', onDocumentMouseDown, true);
   }
+  dockResizeObserver?.disconnect();
+  dockResizeObserver = null;
 });
 
 defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 </script>
 
 <template>
-  <div class="chat-dock" :class="[mobile ? 'align-mobile' : 'align-center']" @click.stop>
+  <div ref="dockRef" class="chat-dock" :class="[mobile ? 'align-mobile' : 'align-center']" @click.stop>
     <Transition name="dock-panel">
       <div
         ref="workPanelRef"
@@ -363,12 +384,10 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 
 @media (max-width: 640px) {
   .chat-dock {
-    --dock-inline-left: max(12px, env(safe-area-inset-left));
-    --dock-inline-right: max(12px, env(safe-area-inset-right));
-  }
-  .chat-dock.align-mobile {
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    /* Inline (landscape) safe-area lives here only; the inner composer /
+       workbar read --dock-inline-* so the inset is applied exactly once. */
+    --dock-inline-left: max(12px, var(--safe-left));
+    --dock-inline-right: max(12px, var(--safe-right));
   }
   .dock-work-panel {
     left: 10px;

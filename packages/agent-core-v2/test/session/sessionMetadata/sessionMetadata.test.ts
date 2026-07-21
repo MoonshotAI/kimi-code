@@ -51,7 +51,14 @@ describe('SessionMetadata', () => {
 
   it('creates an initial document on first read', async () => {
     const meta = ix.get(ISessionMetadata);
-    expect(await meta.read()).toMatchObject({ id: 's1', archived: false });
+    expect(await meta.read()).toMatchObject({
+      id: 's1',
+      archived: false,
+      // Seeded so released v1 builds can open a v2-created state.json
+      // (v1's Session.resume() indexes `agents` unconditionally).
+      agents: {},
+      custom: {},
+    });
     expect((await meta.read()).createdAt).toBeGreaterThan(0);
   });
 
@@ -81,6 +88,49 @@ describe('SessionMetadata', () => {
     expect(await fresh.read()).toMatchObject({ id: 's1', title: 'persisted' });
   });
 
+  it('backfills and persists missing agents/custom maps on a pre-fix document', async () => {
+    // Written by a v2 build predating the create-path map seeding: no
+    // agents / custom keys at all.
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    expect(await meta.read()).toMatchObject({ agents: {}, custom: {} });
+
+    // The heal is persisted: a fresh instance reads the maps from disk, and
+    // updatedAt is untouched so session listings keep their order.
+    const fresh = ix.createInstance(SessionMetadata);
+    const healed = await fresh.read();
+    expect(healed.agents).toEqual({});
+    expect(healed.custom).toEqual({});
+    expect(healed.updatedAt).toBe(1700000000000);
+  });
+
+  it('leaves existing agents/custom maps untouched', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      agents: { main: { homedir: '/tmp/sessions/wd_test/s1/agents/main', type: 'main' } },
+      custom: { cwd: '/tmp/work' },
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    expect(await meta.read()).toMatchObject({
+      agents: { main: { homedir: '/tmp/sessions/wd_test/s1/agents/main', type: 'main' } },
+      custom: { cwd: '/tmp/work' },
+    });
+  });
+
   it('fires onDidChangeMetadata with the changed keys after update', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.ready;
@@ -101,11 +151,9 @@ describe('SessionMetadata', () => {
 
     await Promise.all([
       meta.registerAgent('agent-0', {
-        homedir: '/tmp/sessions/wd_test/s1/agents/agent-0',
         labels: { swarmItem: 'src/a.ts' },
       }),
       meta.registerAgent('agent-1', {
-        homedir: '/tmp/sessions/wd_test/s1/agents/agent-1',
         labels: { swarmItem: 'src/b.ts' },
       }),
     ]);
@@ -114,5 +162,89 @@ describe('SessionMetadata', () => {
       'agent-0',
       'agent-1',
     ]);
+  });
+
+  it('treats re-registering an unchanged agent as a no-op', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      parentAgentId: undefined,
+      forkedFrom: undefined,
+      labels: undefined,
+    });
+
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+
+    // A resumed session re-registers its materialized agents; with identical
+    // metadata that must not write, bump updatedAt, or fire an event.
+    let fired = 0;
+    const sub = meta.onDidChangeMetadata(() => {
+      fired++;
+    });
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      parentAgentId: undefined,
+      forkedFrom: undefined,
+      labels: undefined,
+    });
+
+    expect(fired).toBe(0);
+    expect((await meta.read()).updatedAt).toBe(before);
+    sub.dispose();
+  });
+
+  it('stays a no-op when re-registering against a persisted document', async () => {
+    // The document as it lands on disk: keys with undefined values are gone,
+    // and a legacy writer stored parentAgentId: null. A server restart then
+    // re-registers `main` with explicit undefineds — still no update.
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      agents: {
+        main: {
+          homedir: '/tmp/sessions/wd_test/s1/agents/main',
+          type: 'main',
+          parentAgentId: null,
+        },
+      },
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      parentAgentId: undefined,
+      forkedFrom: undefined,
+      labels: undefined,
+    });
+
+    expect((await meta.read()).updatedAt).toBe(1700000000000);
+  });
+
+  it('updates when re-registering with changed fields', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+    });
+    const before = (await meta.read()).updatedAt;
+    await new Promise((r) => setTimeout(r, 2));
+
+    await meta.registerAgent('main', {
+      homedir: '/tmp/sessions/wd_test/s1/agents/main',
+      type: 'main',
+      labels: { swarmItem: 'src/a.ts' },
+    });
+
+    const next = await meta.read();
+    expect(next.agents?.['main']?.labels).toEqual({ swarmItem: 'src/a.ts' });
+    expect(next.updatedAt).toBeGreaterThan(before);
   });
 });

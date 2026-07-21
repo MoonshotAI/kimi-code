@@ -30,13 +30,11 @@ export type HookDefConfig = z.infer<typeof HookDefSchema>;
 
 export const HooksConfigSchema = z.array(HookDefSchema);
 
-/** Read transform: camelCase each hook entry's keys. */
 export const hooksFromToml = (rawSnake: unknown): unknown => {
   if (!Array.isArray(rawSnake)) return rawSnake;
   return rawSnake.map((hook) => (isPlainObject(hook) ? transformPlainObject(hook) : hook));
 };
 
-/** Write transform: snake_case each hook entry's keys. */
 export const hooksToToml = (value: unknown, _rawSnake: unknown): unknown => {
   if (!Array.isArray(value)) return value;
   return value.map((hook) => (isPlainObject(hook) ? plainObjectToToml(hook, undefined) : hook));

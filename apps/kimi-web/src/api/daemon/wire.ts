@@ -66,7 +66,10 @@ export interface WireSession {
   title: string;
   created_at: string;
   updated_at: string;
-  status: WireSessionStatus;
+  busy: boolean;
+  main_turn_active?: boolean;
+  pending_interaction?: 'none' | 'approval' | 'question';
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   current_prompt_id?: string;
   /** Text of the most recent user prompt, for search/preview. */
@@ -110,6 +113,31 @@ export interface WireSessionRuntimeStatus {
   context_usage: number;
 }
 
+// GET /sessions/{id}/goal — camelCase, same shape as the `goal.updated` event
+// payload. The endpoint returns null when no goal is active.
+export interface WireGoalSnapshot {
+  goalId: string;
+  objective: string;
+  completionCriterion?: string;
+  status: 'active' | 'paused' | 'blocked' | 'complete';
+  turnsUsed: number;
+  tokensUsed: number;
+  wallClockMs: number;
+  terminalReason?: string;
+  budget: {
+    tokenBudget: number | null;
+    turnBudget: number | null;
+    wallClockBudgetMs: number | null;
+    remainingTokens: number | null;
+    remainingTurns: number | null;
+    remainingWallClockMs: number | null;
+    tokenBudgetReached: boolean;
+    turnBudgetReached: boolean;
+    wallClockBudgetReached: boolean;
+    overBudget: boolean;
+  };
+}
+
 // GET /sessions/{id}/warnings — session-level warnings (e.g. oversized AGENTS.md).
 export interface WireSessionWarning {
   code: string;
@@ -130,8 +158,6 @@ export interface WireWorkspace {
   id: string;
   root: string;
   name: string;
-  is_git_repo: boolean;
-  branch: string | null;
   last_opened_at?: string;
   session_count: number;
 }
@@ -140,8 +166,6 @@ export interface WireFsBrowseEntry {
   name: string;
   path: string;
   is_dir: boolean;
-  is_git_repo: boolean;
-  branch?: string;
 }
 
 export interface WireFsBrowseResult {
@@ -309,6 +333,7 @@ export interface WireTask {
   parent_tool_call_id?: string;
   suspended_reason?: string;
   swarm_index?: number;
+  run_in_background?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +513,8 @@ export interface WireServerHello {
   timestamp: string;
   payload: {
     server_id: string;
-    heartbeat_ms: number;
+    /** Advisory only — kap-server omits this since it sends no heartbeat. */
+    heartbeat_ms?: number;
     max_event_buffer_size: number;
     capabilities: {
       event_batching: boolean;
@@ -561,6 +587,8 @@ export interface WireSessionSnapshot {
   session: WireSession;
   messages: { items: WireMessage[]; has_more: boolean };
   in_flight_turn: WireInFlightTurn | null;
+  /** Live subagent roster at the watermark (absent on older servers). */
+  subagents?: WireTask[];
   pending_approvals: WireApprovalRequest[];
   pending_questions: WireQuestionRequest[];
 }
@@ -648,6 +676,13 @@ interface WireEventBase<T extends string, P> {
 type WireEventSessionCreated = WireEventBase<'event.session.created', { session: WireSession }>;
 type WireEventSessionUpdated = WireEventBase<'event.session.updated', { session: WireSession; changed_fields: string[] }>;
 type WireEventSessionDeleted = WireEventBase<'event.session.deleted', { session_id: string }>;
+type WireEventSessionWorkChanged = WireEventBase<'event.session.work_changed', {
+  busy: boolean;
+  main_turn_active?: boolean;
+  pending_interaction?: 'none' | 'approval' | 'question';
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+}>;
+/** @deprecated Old journals may still carry this; mapped onto busy for replay. */
 type WireEventSessionStatusChanged = WireEventBase<'event.session.status_changed', {
   status: WireSessionStatus;
   previous_status: WireSessionStatus;
@@ -799,6 +834,7 @@ export type WireEvent =
   | WireEventSessionCreated
   | WireEventSessionUpdated
   | WireEventSessionDeleted
+  | WireEventSessionWorkChanged
   | WireEventSessionStatusChanged
   | WireEventSessionUsageUpdated
   | WireEventSessionHistoryCompacted

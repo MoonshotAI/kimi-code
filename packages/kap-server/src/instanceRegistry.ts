@@ -1,17 +1,17 @@
 /**
- * Server instance registry — replaces the single-instance homedir lock when the
- * `multi_server` experimental flag is on.
+ * Server instance registry — the discovery mechanism for kap-server instances
+ * sharing one home directory.
  *
- * Instead of one exclusive `<home>/server/lock`, every server instance writes a
- * self-describing file under `<home>/server/instances/<serverId>.json`. Multiple
- * instances can coexist in the same home directory and discover each other by
- * reading the directory. Each file is single-writer (only its owning process
- * ever rewrites it), so updates are race-free; stale entries left by a crashed
- * peer are swept lazily on `register` / `listLive` via a `kill(pid, 0)` probe.
+ * Every server instance writes a self-describing file under
+ * `<home>/server/instances/<serverId>.json`. Multiple instances can coexist in
+ * the same home directory and discover each other by reading the directory.
+ * Each file is single-writer (only its owning process ever rewrites it), so
+ * updates are race-free; stale entries left by a crashed peer are swept lazily
+ * on `register` / `listLive` via a `kill(pid, 0)` probe.
  *
- * The `heartbeat_at` field is informational this phase (diagnostics + a hook
- * for future cross-machine TTL liveness); same-machine stale detection keys off
- * pid liveness only, matching the legacy lock's `pidAlive` semantics.
+ * The `heartbeat_at` field is informational (diagnostics + a hook for future
+ * cross-machine TTL liveness); same-machine stale detection keys off pid
+ * liveness only.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -246,20 +246,31 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
       // the latest port without re-reading the file.
       const state: { port: number; released: boolean } = { port: info.port, released: false };
 
+      // Count of writes that passed the `released` check but have not finished
+      // their atomic rename yet. `release()` must drain them before unlinking:
+      // a rename that lands after the unlink would recreate the file.
+      let inflightWrites = 0;
+      let onWritesDrained: (() => void) | null = null;
+
       const write = async (): Promise<void> => {
-        // Bail out once released so a heartbeat tick that was already in flight
-        // when `release()` ran cannot recreate the just-unlinked file.
+        // Bail out once released so no new write starts after `release()`.
         if (state.released) return;
-        const full: ServerInstanceInfo = {
-          serverId,
-          pid: info.pid,
-          host: info.host,
-          port: state.port,
-          startedAt: info.startedAt,
-          heartbeatAt: now(),
-          ...(info.hostVersion !== undefined ? { hostVersion: info.hostVersion } : {}),
-        };
-        await writeFileAtomic(filePath, encode(full));
+        inflightWrites += 1;
+        try {
+          const full: ServerInstanceInfo = {
+            serverId,
+            pid: info.pid,
+            host: info.host,
+            port: state.port,
+            startedAt: info.startedAt,
+            heartbeatAt: now(),
+            ...(info.hostVersion !== undefined ? { hostVersion: info.hostVersion } : {}),
+          };
+          await writeFileAtomic(filePath, encode(full));
+        } finally {
+          inflightWrites -= 1;
+          if (inflightWrites === 0) onWritesDrained?.();
+        }
       };
 
       await write();
@@ -282,6 +293,13 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
           if (state.released) return;
           state.released = true;
           clearInterval(timer);
+          // Wait for writes already in flight so their atomic rename cannot
+          // recreate the file after we unlink it.
+          if (inflightWrites > 0) {
+            await new Promise<void>((resolve) => {
+              onWritesDrained = resolve;
+            });
+          }
           try {
             await unlink(filePath);
           } catch (err) {
@@ -313,8 +331,8 @@ export async function listLiveServerInstances(
 
 /**
  * Convenience one-shot read: return the longest-running live instance, or
- * `undefined` when none exist. Mirrors `getLiveLock` for callers that only
- * need a single daemon to talk to.
+ * `undefined` when none exist. For callers that only need a single daemon to
+ * talk to (e.g. the CLI's `server ps/kill` and the `kimi web` spawner).
  */
 export async function getLiveServerInstance(
   homeDir?: string,

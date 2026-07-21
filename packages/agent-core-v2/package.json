@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/agent-core-v2",
-  "version": "0.0.0",
+  "version": "0.1.2",
   "private": true,
   "description": "The unified agent engine for Kimi (v2 — DI Scope architecture)",
   "license": "MIT",
@@ -58,6 +58,7 @@
     "@antfu/utils": "^9.3.0",
     "@anthropic-ai/sdk": "^0.95.2",
     "@google/genai": "^1.49.0",
+    "@jsquash/webp": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/minidb": "workspace:^",
@@ -71,7 +72,6 @@
     "js-yaml": "^4.1.1",
     "linkedom": "^0.18.12",
     "node-pty": "^1.1.0",
-    "nunjucks": "^3.2.4",
     "openai": "^6.34.0",
     "pathe": "^2.0.3",
     "picomatch": "^4.0.4",
@@ -88,7 +88,6 @@
   "devDependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@types/js-yaml": "^4.0.9",
-    "@types/nunjucks": "^3.2.6",
     "@types/picomatch": "^4.0.3",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",

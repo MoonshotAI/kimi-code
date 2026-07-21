@@ -30,6 +30,24 @@ export interface AuthHookOptions {
 }
 
 /**
+ * Decode the request path the same way the router does before matching.
+ *
+ * `req.url` is the raw, still percent-encoded URL, while find-my-way matches
+ * routes against the decoded path — so a raw `/%61pi/…` reaches the `/api/…`
+ * handlers. Checking the decoded path keeps the auth decision aligned with
+ * routing. Returns `null` when the path cannot be decoded, in which case the
+ * caller must fail closed.
+ */
+function decodeRequestPath(rawUrl: string): string | null {
+  const path = rawUrl.split('?', 1)[0] ?? rawUrl;
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Default bypass policy — the security boundary.
  *
  * Bypassed (no token required):
@@ -39,7 +57,7 @@ export interface AuthHookOptions {
  *     AND is not one of the meta documents `/openapi.json` / `/asyncapi.json`.
  *
  * NOT bypassed (token required): every `/api/…` route — including the
- * `/api/v2` RPC surface — plus `/openapi.json` and `/asyncapi.json` (the meta
+ * `/api/v1/debug` RPC surface — plus `/openapi.json` and `/asyncapi.json` (the meta
  * documents leak the API shape, so they stay gated). One persistent bearer
  * token protects them all.
  */
@@ -47,7 +65,11 @@ function defaultIsBypassed(req: FastifyRequest): boolean {
   if (req.method === 'OPTIONS') {
     return true;
   }
-  const path = req.url.split('?', 1)[0] ?? req.url;
+  const path = decodeRequestPath(req.url);
+  if (path === null) {
+    // Fail closed: an undecodable path must never skip authentication.
+    return false;
+  }
   if (req.method === 'GET' && path === '/api/v1/healthz') {
     return true;
   }

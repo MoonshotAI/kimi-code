@@ -1,13 +1,13 @@
-import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
+import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
-import { type StreamedMessagePart } from '#/app/llmProtocol/message';
-import type { Tool } from '#/app/llmProtocol/tool';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+import { type StreamedMessagePart } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   IAgentLLMRequesterService,
-  type LLMRequestFinish,
+  type AgentLLMRequestFinish,
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
@@ -73,7 +73,6 @@ describe('LLMRequester service migration coverage', () => {
     ];
 
     beforeEach(() => {
-      // Stubbed before createTestAgent snapshots the env into bootstrap.
       vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       ctx = createTestAgent();
       llmRequester = ctx.get(IAgentLLMRequesterService);
@@ -89,9 +88,6 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('records one tools snapshot per unique provider-visible tool table and one request per outbound call', async () => {
-      // Gate the scenario on like v1's recorder contract requires: `toolSelect`
-      // in the record is the disclosure gate (flag × capability), not the
-      // presence of deferred entries in this request's tool table.
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -100,7 +96,7 @@ describe('LLMRequester service migration coverage', () => {
           thinking: false,
           tool_use: true,
           max_context_tokens: 128_000,
-          select_tools: true,
+          dynamically_loaded_tools: true,
         },
       });
       ctx.mockNextResponse({ type: 'text', text: 'first response' });
@@ -145,7 +141,9 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests).toHaveLength(2);
       expect(requests[0]?.args).toMatchObject({
         kind: 'loop',
-        provider: 'kimi',
+        // The durable record's `provider` field carries the wire protocol:
+        // Kimi is a vendor over the openai base, not a protocol.
+        provider: 'openai',
         model: 'mock-model',
         modelAlias: 'mock-model',
         thinkingEffort: 'off',
@@ -165,6 +163,16 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('records the resolved Kimi thinking keep default when thinking is enabled', async () => {
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
       ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
       ctx.mockNextResponse({ type: 'text', text: 'thinking response' });
 
@@ -172,8 +180,37 @@ describe('LLMRequester service migration coverage', () => {
 
       expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
       expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
-        thinkingEffort: 'high',
+        thinkingEffort: 'on',
         thinkingKeep: 'all',
+      });
+    });
+
+    it('records the env-forced Kimi effort used by the provider', async () => {
+      await ctx.dispose();
+      vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+      ctx = createTestAgent();
+      llmRequester = ctx.get(IAgentLLMRequesterService);
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
+      const profile = ctx.get(IAgentProfileService);
+      profile.update({ thinkingLevel: 'high' });
+      expect(profile.data().thinkingLevel).toBe('on');
+      expect(profile.resolveModelContext().thinkingLevel).toBe('max');
+      ctx.mockNextResponse({ type: 'text', text: 'forced thinking response' });
+
+      await llmRequester.request();
+
+      expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
+      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
+        thinkingEffort: 'max',
       });
     });
 
@@ -367,13 +404,53 @@ describe('LLMRequester service migration coverage', () => {
         event: 'api_error',
         properties: expect.objectContaining({
           error_type: 'rate_limit',
+          agent_id: 'main',
           model: 'mock-model',
           alias: 'mock-model',
+          // vendor and wire protocol are separate fields now: the mock
+          // provider is the kimi vendor over the openai base.
           provider_type: 'kimi',
-          protocol: 'kimi',
+          protocol: 'openai',
           retryable: expect.any(Boolean),
           duration_ms: expect.any(Number),
           status_code: 429,
+        }),
+      });
+    });
+
+    it('tags api_error with turn_id and request_kind from the request source', async () => {
+      const records: TelemetryRecord[] = [];
+      ctx = createTestAgent(
+        llmGenerateServices(async () => {
+          throw new APIConnectionError('terminated');
+        }),
+        telemetryServices(recordingTelemetry(records)),
+      );
+      const llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      await expect(
+        llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
+      await expect(
+        llmRequester.request({
+          source: { type: 'operation', turnId: 7, requestKind: 'full_compaction' },
+        }),
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
+
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'network',
+          turn_id: 3,
+          request_kind: 'turn',
+        }),
+      });
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'network',
+          turn_id: 7,
+          request_kind: 'full_compaction',
         }),
       });
     });
@@ -391,10 +468,10 @@ describe('LLMRequester service migration coverage', () => {
       const { logger, entries } = captureLogs();
       logEntries = entries;
       ctx = createTestAgent(
-        llmGenerateServices(async (provider, _systemPrompt, _tools, _messages, callbacks, options) => {
-          requestMaxTokens = (
-            provider as unknown as { readonly modelParameters: Record<string, unknown> }
-          ).modelParameters['max_tokens'];
+        llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, callbacks, options) => {
+          // The per-turn completion budget arrives as a GenerateOptions
+          // intent (the morph-era baked `modelParameters.max_tokens` is gone).
+          requestMaxTokens = options?.maxCompletionTokens;
           options?.onRequestStart?.();
           await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
           options?.onStreamEnd?.();
@@ -516,14 +593,55 @@ describe('LLMRequester service migration coverage', () => {
       const timing = finish.timing;
 
       expect(timing?.firstTokenLatencyMs).toBeGreaterThanOrEqual(0);
-      // kosong accounts the decode window (server wait vs. client consume) and
-      // the requester surfaces it on the timing event.
       expect(timing?.serverDecodeMs).toBeGreaterThanOrEqual(0);
       expect(timing?.clientConsumeMs).toBeGreaterThanOrEqual(0);
-      // The scripted provider does not fire onRequestSent, so the TTFT split is
-      // not reported through the requester event.
       expect(timing?.requestBuildMs).toBeUndefined();
       expect(timing?.serverFirstTokenMs).toBeUndefined();
+    });
+  });
+
+  describe('per-turn intent handoff', () => {
+    let ctx: TestAgentContext;
+    let llmRequester: IAgentLLMRequesterService;
+    let capturedCacheKey: unknown;
+
+    beforeEach(() => {
+      capturedCacheKey = undefined;
+      ctx = createTestAgent(
+        llmGenerateServices(async (_provider, _systemPrompt, _tools, _messages, _callbacks, options) => {
+          capturedCacheKey = options?.cacheKey;
+          return {
+            id: 'response-1',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'intent' }],
+              toolCalls: [],
+            },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        }),
+      );
+      llmRequester = ctx.get(IAgentLLMRequesterService);
+    });
+
+    afterEach(async () => {
+      try {
+        await ctx.expectResumeMatches();
+      } finally {
+        await ctx.dispose();
+      }
+    });
+
+    it('forwards the session id as the per-turn cache-key intent', async () => {
+      // The engine half of the cache-key probe: the same session's id reaches
+      // the composed provider as GenerateOptions.cacheKey. How each dialect
+      // encodes it (Kimi `prompt_cache_key`, Anthropic `metadata.user_id`) is
+      // asserted at the kosong/provider composition layer.
+      await llmRequester.request();
+
+      expect(capturedCacheKey).toBe('test-session');
     });
   });
 
@@ -562,8 +680,8 @@ function userMessage(text: string) {
 }
 
 async function collectLLMRequest(
-  request: (onPart: (part: StreamedMessagePart) => void) => Promise<LLMRequestFinish>,
-): Promise<{ parts: StreamedMessagePart[]; finish: LLMRequestFinish }> {
+  request: (onPart: (part: StreamedMessagePart) => void) => Promise<AgentLLMRequestFinish>,
+): Promise<{ parts: StreamedMessagePart[]; finish: AgentLLMRequestFinish }> {
   const parts: StreamedMessagePart[] = [];
   const finish = await request((part) => {
     parts.push(part);

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { hostRequestHeadersSeed, IHostRequestHeaders } from '@moonshot-ai/agent-core-v2';
+import { hostRequestHeadersSeed, IHostRequestHeaders, ISkillCatalogRuntimeOptions } from '@moonshot-ai/agent-core-v2';
 
-import type { LockContents } from '../src/lock';
+import { listLiveServerInstances } from '../src/instanceRegistry';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
 import { getServerVersion } from '../src/version';
 import { authedFetch } from './helpers/auth';
@@ -80,6 +80,34 @@ describe('server-v2 boot', () => {
     expect(oauthBody.data).toBeNull();
   });
 
+  it('reports opts.version as server_version instead of the package version', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-version-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      version: '9.9.9-host',
+    });
+
+    const base = `http://127.0.0.1:${server.port}`;
+    const meta = await authedFetch(server, base, '/api/v1/meta');
+    const metaBody = await meta.json() as {
+      code: number;
+      data: { server_version: string };
+    };
+    expect(metaBody.data.server_version).toBe('9.9.9-host');
+
+    // The host version is also what the instance registry advertises to
+    // status/ps clients.
+    const [instance] = await listLiveServerInstances(home);
+    expect(instance?.hostVersion).toBe('9.9.9-host');
+
+    // ... and it backs the default product User-Agent.
+    const defaults = server.core.accessor.get(IHostRequestHeaders);
+    expect(defaults.headers['User-Agent']).toBe('kimi-code-cli/9.9.9-host');
+  });
+
   it('seeds a default product User-Agent that opts.seeds can override', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ua-'));
     server = await startServer({
@@ -104,6 +132,31 @@ describe('server-v2 boot', () => {
     });
     const overridden = server.core.accessor.get(IHostRequestHeaders);
     expect(overridden.headers['User-Agent']).toBe('custom-host/9.9');
+  });
+
+  it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      skillDirs: ['/skills/explicit'],
+    });
+    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toEqual([
+      '/skills/explicit',
+    ]);
+
+    // Without skillDirs the registered default carries no explicit dirs.
+    await server.close();
+    server = undefined;
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toBeUndefined();
   });
 });
 
@@ -249,11 +302,11 @@ describe('server-v2 boot — port retry', () => {
     }
   });
 
-  it('retries on port+1 and advertises the bound port in the lock', async () => {
+  it('retries on port+1 and advertises the bound port in the instance registry', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-port-retry-'));
     const { port, next } = await allocateAdjacentFreePair();
     // Occupy the requested port with a raw TCP server (a "third-party" process
-    // from the server's point of view — it does NOT hold the lock).
+    // from the server's point of view — it is not a registered kimi instance).
     const occupant = await listenOnPort('127.0.0.1', port);
     try {
       server = await startServer({
@@ -263,14 +316,12 @@ describe('server-v2 boot — port retry', () => {
         logLevel: 'silent',
       });
 
-      // Bound to the next available port (>= next); the lock advertises it so
-      // status/kill/ps work. On Windows a recently-closed probe port can linger
-      // in TIME_WAIT, so the retry may land on port+2 instead of port+1.
+      // Bound to the next available port (>= next); the registry advertises it
+      // so status/kill/ps work. On Windows a recently-closed probe port can
+      // linger in TIME_WAIT, so the retry may land on port+2 instead of port+1.
       expect(server.port).toBeGreaterThanOrEqual(next);
-      const stored = JSON.parse(
-        await readFile(join(home, 'server', 'lock'), 'utf8'),
-      ) as LockContents;
-      expect(stored.port).toBe(server.port);
+      const [instance] = await listLiveServerInstances(home);
+      expect(instance?.port).toBe(server.port);
     } finally {
       await closeNetServer(occupant);
     }

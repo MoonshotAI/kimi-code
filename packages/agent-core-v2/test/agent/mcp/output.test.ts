@@ -1,5 +1,5 @@
 import { ContentBlockSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { Jimp } from 'jimp';
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -176,6 +176,20 @@ describe('convertMCPContentBlock', () => {
       type: 'image_url',
       imageUrl: { url: 'https://example.com/img.png' },
     });
+  });
+
+  test('replaces a resource_link whose declared image format is unsupported with a notice', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'img.avif',
+      uri: 'https://example.com/img.avif',
+      mimeType: 'image/avif',
+    });
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('image/avif');
+    expect(text).toContain('https://example.com/img.avif');
   });
 
   test('converts resource_link with audio/* mimeType to AudioURLPart with URL', () => {
@@ -522,6 +536,7 @@ describe('createMcpTool', () => {
       async callTool() {
         return { content: [{ type: 'text', text: 'ok' }], isError: false };
       },
+      async ping() {},
     } satisfies MCPClient;
     const tool = createMcpTool(
       'mcp__server__tool',

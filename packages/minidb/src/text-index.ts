@@ -24,6 +24,12 @@ import type { PostingEntry } from './text-postings.js';
 
 const LATIN = /[a-z0-9]+/g;
 const CJK = /[\u3400-\u9fff\u3040-\u30ff\uff00-\uffef]+/g;
+// Postings records store the term length in a uint16. A single document with a
+// longer token previously made every postings rebuild throw after the index had
+// already been cleared, permanently poisoning the index (and compaction). Such
+// tokens can never be real query terms — drop them at tokenization so one
+// pathological document cannot destroy the index.
+const MAX_TERM_CHARS = 0xffff;
 
 /** Tokenize text into terms (lowercased latin words + CJK uni/bigrams). */
 export function tokenize(str: unknown): string[] {
@@ -32,7 +38,8 @@ export function tokenize(str: unknown): string[] {
   const latin = s.match(LATIN);
   // Loop-push instead of `terms.push(...latin)`: spreading a large match array
   // (hundreds of thousands of tokens from a big doc) overflows the call stack.
-  if (latin) for (const t of latin) terms.push(t);
+  // Latin matches are ASCII, so chars == utf8 bytes for the length guard.
+  if (latin) for (const t of latin) if (t.length <= MAX_TERM_CHARS) terms.push(t);
   const runs = s.match(CJK) ?? [];
   for (const r of runs) {
     for (let i = 0; i < r.length; i++) {
@@ -143,23 +150,24 @@ export class TextIndex {
    * Assigns fresh dense docIDs, writes a new postings file (disk mode) or
    * replaces the in-memory base (memory mode), and clears the delta +
    * tombstones. Called on open and on compaction.
+   *
+   * Atomic on failure: everything is staged off to the side first and swapped
+   * in only after the new postings file is durably renamed (disk mode), so a
+   * failed rebuild (e.g. a transient ENOSPC/EMFILE inside rebuildSync) leaves
+   * the PREVIOUS index fully functional instead of silently emptying it until
+   * the next successful build.
    */
   build(entries: Iterable<{ key: string; value: unknown }>): void {
-    this.postings.clear();
-    this.docLen.clear();
-    this.keys.length = 0;
-    this.keyToId.clear();
-    this.delta.clear();
-    this.deltaCount = 0;
-    this.removed.clear();
-    this.cache.clear();
-    this.N = 0;
-
+    // Staged state.
     const agg = new Map<string, Map<number, number>>(); // term -> (docID -> freq)
+    const newKeys: (string | undefined)[] = []; // docID -> key
+    const newKeyToId = new Map<string, number>(); // key -> docID
+    const newDocLen = new Map<number, number>(); // docID -> token count
+    let n = 0;
     for (const { key, value } of entries) {
-      const docID = this.keys.length;
-      this.keys.push(key);
-      this.keyToId.set(key, docID);
+      const docID = newKeys.length;
+      newKeys.push(key);
+      newKeyToId.set(key, docID);
       const tokens = tokenize(this.extract(value));
       const counts = new Map<string, number>();
       for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
@@ -168,23 +176,63 @@ export class TextIndex {
         if (!m) agg.set(t, (m = new Map()));
         m.set(docID, c); // docIDs increase monotonically -> insertion order is sorted
       }
-      this.docLen.set(docID, tokens.length);
-      this.N++;
+      newDocLen.set(docID, tokens.length);
+      n++;
     }
 
     if (this.path) {
-      // Disk mode: rewrite the postings file, then reopen for reads.
-      if (this.pf) {
-        this.pf.close();
+      // Disk mode: write the new postings file (tmp + fsync + atomic rename in
+      // rebuildSync). The old read handle is closed before the rename (an open
+      // fd would block the rename on Windows), so the in-memory state below is
+      // NOT touched until the new file is in place — if rebuildSync throws,
+      // the old file is still intact and is simply re-attached.
+      const oldPf = this.pf;
+      if (oldPf) {
+        oldPf.close();
         this.pf = null;
       }
-      const dict = PostingsFile.rebuildSync(this.path, aggToSorted(agg));
+      let dict: Map<string, PostingEntry>;
+      try {
+        dict = PostingsFile.rebuildSync(this.path, aggToSorted(agg));
+      } catch (e) {
+        // rebuildSync failed before the atomic rename, so the old file is
+        // intact: re-attach it and keep serving the previous index until the
+        // next successful build.
+        if (oldPf) {
+          try {
+            this.pf = PostingsFile.open(this.path);
+          } catch {
+            /* old handle unrecoverable; the next successful build fixes it */
+          }
+        }
+        throw e;
+      }
+      // The rename happened — the old postings are replaced on disk, so from
+      // here the swap commits to the new index. A failed reopen (EMFILE & co.)
+      // is not special-cased: readBase treats a null pf as an empty base, so
+      // reads degrade to delta-only until the next build instead of reading
+      // through a stale dictionary.
+      const newPf = PostingsFile.open(this.path);
+      this.postings.clear();
       for (const [t, e] of dict) this.postings.set(t, e);
-      this.pf = PostingsFile.open(this.path);
+      this.pf = newPf;
     } else {
-      // Memory mode.
+      // Memory mode: pure in-memory staging, no fallible I/O involved.
       this.memBase = agg;
     }
+
+    // Swap in the staged per-doc state and drop the write buffer.
+    this.docLen.clear();
+    for (const [id, len] of newDocLen) this.docLen.set(id, len);
+    this.keys.length = 0;
+    for (const k of newKeys) this.keys.push(k);
+    this.keyToId.clear();
+    for (const [k, id] of newKeyToId) this.keyToId.set(k, id);
+    this.delta.clear();
+    this.deltaCount = 0;
+    this.removed.clear();
+    this.cache.clear();
+    this.N = n;
   }
 
   /** Add or replace a document. Overwrites tombstone the old docID. */

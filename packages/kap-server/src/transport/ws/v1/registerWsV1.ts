@@ -1,7 +1,7 @@
 /**
  * `/api/v1/ws` — creates the v1 (legacy) WebSocket server. The HTTP `upgrade`
  * event is dispatched by the bootstrap (`start.ts`), which routes by path so
- * this endpoint coexists with `/api/v2/ws`.
+ * this is the only WebSocket endpoint.
  *
  * Each connection is a {@link WsConnectionV1}, tracked in the shared
  * {@link IConnectionRegistry}; shutdown (close-all + wss.close) is owned by the
@@ -28,8 +28,6 @@ export interface RegisterWsV1Options {
   readonly broadcaster: SessionEventBroadcaster;
   readonly fsWatchBridge: FsWatchBridge;
   readonly logger?: JournalLogger;
-  readonly pingIntervalMs?: number;
-  readonly pongTimeoutMs?: number;
   readonly maxBufferSize?: number;
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
@@ -51,8 +49,6 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
       remoteAddress: req.socket.remoteAddress ?? null,
       userAgent: req.headers['user-agent'] ?? null,
       logger: opts.logger,
-      pingIntervalMs: opts.pingIntervalMs,
-      pongTimeoutMs: opts.pongTimeoutMs,
       maxBufferSize: opts.maxBufferSize,
       flushIntervalMs: opts.flushIntervalMs,
       maxBatchSize: opts.maxBatchSize,

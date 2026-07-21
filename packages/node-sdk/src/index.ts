@@ -52,6 +52,7 @@ export {
 // RootLogger / getRootLogger / LoggingConfig stay inside agent-core.
 export {
   flushDiagnosticLogs,
+  flushDiagnosticLogsSync,
   log,
   redact,
   resolveGlobalLogPath,
@@ -63,6 +64,7 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agen
 // by hosts (e.g. the CLI's server telemetry bootstrap) that need to inspect
 // config without spinning up a full KimiCore.
 export { effectiveModelAlias, loadRuntimeConfigSafe, resolveConfigPath } from '@moonshot-ai/agent-core';
+export { limitAgentReplayByTurns } from '@moonshot-ai/agent-core';
 
 // Process-wide HTTP proxy bootstrap — installed once at CLI startup so all
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.

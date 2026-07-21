@@ -11,16 +11,15 @@
  * live record. Bound at Agent scope.
  */
 
-import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
+import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 
-import type { LLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import type { UsageRecordedContext, UsageStatus } from './usage';
 import { IAgentUsageService } from './usage';
 import {
@@ -41,13 +40,13 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
   private currentTurn: TokenUsage | undefined;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus?: IEventBus,
   ) {
     super();
   }
 
-  record(model: string, usage: TokenUsage, source?: LLMRequestSource): void {
+  record(model: string, usage: TokenUsage, source?: AgentLLMRequestSource): void {
     const usageScope: UsageRecordScope = source?.type === 'turn' ? 'turn' : 'session';
     this.wire.dispatch(recordUsage({ model, usage, usageScope }));
 
@@ -75,6 +74,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentUsageService,
   AgentUsageService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'usage',
 );

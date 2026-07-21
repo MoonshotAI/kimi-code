@@ -2,8 +2,9 @@
  * `/models` + `/providers` catalog route handlers — server-v2 port.
  *
  * Implements the v1 model/provider catalog wire contract on top of
- * `agent-core-v2`'s `IModelCatalogService` (the OAuth-only managed refresh
- * additionally lives on `IOAuthService`):
+ * `agent-core-v2`'s `IModelCatalog` (the remote-discovery refresh lives on
+ * `IProviderDiscoveryService`; the OAuth-only managed refresh additionally
+ * lives on `IOAuthService`):
  *   GET  /models                       — list configured model aliases
  *   GET  /providers                    — list configured providers
  *   GET  /providers/{provider_id}      — get a configured provider by id
@@ -12,7 +13,7 @@
  *   POST /providers:refresh_oauth      — refresh OAuth-backed provider models
  *   POST /providers/{tail} (:refresh)  — refresh a single provider by id
  *
- * **Wire fidelity**: reuses `@moonshot-ai/protocol`'s catalog schemas and the
+ * **Wire fidelity**: reuses agent-core-v2's catalog schemas and the local
  * numeric `ErrorCode` envelope verbatim, so the response shape and error codes
  * (`40412` provider-not-found, `40413` model-not-found, `40001` validation) are
  * byte-for-byte compatible with v1's `routes/modelCatalog.ts`. The v2 domain
@@ -22,23 +23,24 @@
 
 import {
   IConfigService,
-  IModelCatalogService,
+  IModelCatalog,
   IOAuthService,
+  IProviderDiscoveryService,
   isError2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  getProviderResponseSchema,
-  listModelsResponseSchema,
-  listProvidersResponseSchema,
-  refreshProviderModelsResponseSchema,
-  setDefaultModelResponseSchema,
-} from '@moonshot-ai/protocol';
+import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import { refreshProviderModelsResponseSchema } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  getProviderResponseSchema,
+  listModelsResponseSchema,
+  listProvidersResponseSchema,
+} from '../protocol/rest-modelCatalog';
 import { parseActionSuffix } from './action-suffix';
 
 interface ModelCatalogRouteHost {
@@ -82,9 +84,14 @@ const providerCollectionActionParamSchema = z.object({
  * await `IConfigService.ready` so an immediate request never observes an empty
  * (not-yet-loaded) catalog.
  */
-async function loadCatalog(core: Scope): Promise<IModelCatalogService> {
+async function loadCatalog(core: Scope): Promise<IModelCatalog> {
   await core.accessor.get(IConfigService).ready;
-  return core.accessor.get(IModelCatalogService);
+  return core.accessor.get(IModelCatalog);
+}
+
+async function loadDiscovery(core: Scope): Promise<IProviderDiscoveryService> {
+  await core.accessor.get(IConfigService).ready;
+  return core.accessor.get(IProviderDiscoveryService);
 }
 
 async function loadOAuth(core: Scope): Promise<IOAuthService> {
@@ -194,7 +201,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
         return;
       }
       if (action === 'refresh') {
-        const result = await (await loadCatalog(core)).refreshProviderModels({ scope: 'all' });
+        const result = await (await loadDiscovery(core)).refreshProviderModels({ scope: 'all' });
         reply.send(okEnvelope(result, req.id));
         return;
       }
@@ -235,7 +242,7 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
           return;
         }
-        const result = await (await loadCatalog(core)).refreshProviderModels({
+        const result = await (await loadDiscovery(core)).refreshProviderModels({
           providerId: parsed.id,
         });
         reply.send(okEnvelope(result, req.id));

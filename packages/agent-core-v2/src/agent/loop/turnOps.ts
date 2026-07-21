@@ -15,14 +15,14 @@
  * observed in a replayed loop event — the v1 `observeRestoredTurnId`
  * semantics. The `turn.started` / `turn.ended` / `error` signals are not part
  * of this Op set and remain on their existing path (published by the loop
- * service around a run). Consumed by the Agent-scope `loopService` and by the
- * `activity` kernel (which reads the next turn id on admission).
+ * service around a run). Consumed by the Agent-scope `loopService` (which
+ * reads the next turn id on admission).
  */
 
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 
 export interface TurnModelState {

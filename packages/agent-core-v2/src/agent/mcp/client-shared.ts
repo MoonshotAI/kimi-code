@@ -1,24 +1,11 @@
 import { getCoreVersion } from '#/_base/version';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
-import type { MCPToolDefinition, MCPToolResult } from './types';
+import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
 
 export const KIMI_MCP_CLIENT_NAME = 'kimi-code';
-// Resolved from agent-core's package.json so MCP servers see the real version
-// in `initialize` (used for compatibility checks, telemetry, debugging).
-// `getCoreVersion()` falls back to '0.0.0' if the package.json read fails.
 export const KIMI_MCP_CLIENT_VERSION = getCoreVersion();
 
-/**
- * Why-context attached when a runtime client notices its underlying transport
- * has gone away on its own — i.e. {@link RuntimeMcpClient.close} was NOT
- * called. The connection manager turns this into a `failed` status so the
- * UI/SDK do not keep advertising tools backed by a dead transport.
- *
- * - `error` is the last error reported via the SDK's `onerror` channel, if
- *   any. Useful for HTTP where there is no stderr.
- * - `stderr` is the tail of bytes captured from the child process's stderr;
- *   populated only for the stdio transport.
- */
 export interface UnexpectedCloseReason {
   readonly error?: Error;
   readonly stderr?: string;
@@ -26,17 +13,68 @@ export interface UnexpectedCloseReason {
 
 export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
 
+export function isMcpConnectionClosedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { readonly code?: unknown }).code === ErrorCode.ConnectionClosed
+  );
+}
+
+export function isMcpTransportFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (isMcpConnectionClosedError(error)) return true;
+  return !(error instanceof McpError);
+}
+
+/**
+ * Timeout for the liveness probe sent after an ambiguous tool-call failure.
+ * Kept short: the probe runs on an already-failed call, so it must not add
+ * anywhere near a tool-call timeout to the turn.
+ */
+export const MCP_LIVENESS_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * True when the error is a client-side validation failure of an otherwise
+ * well-formed JSON-RPC response: the SDK rejects with a `ZodError` when the
+ * result of `tools/call` does not match `CallToolResultSchema`
+ * (shared/protocol.js rejects with `parseResult.error`). The server did
+ * answer, so reconnecting is pointless — but the error is not an `McpError`,
+ * so `isMcpTransportFailure` alone cannot tell it apart from a dead
+ * transport. Matched by name because the repo carries more than one zod
+ * copy, which makes `instanceof` unreliable.
+ */
+export function isMcpMalformedResultError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'ZodError';
+}
+
+/**
+ * Probes whether the client's transport is still usable by sending a ping.
+ * A server that answers in any way — including `MethodNotFound`, a JSON-RPC
+ * error, or an unparseable result — counts as alive; only errors that prove
+ * the bytes never made a round trip (closed connection, fetch failures) or
+ * a probe that itself timed out (alive socket, unresponsive server) count
+ * as dead. Never rejects; an abort surfaces as a dead verdict and is the
+ * caller's job to detect via the signal.
+ */
+export async function probeMcpLiveness(client: MCPClient, signal: AbortSignal): Promise<boolean> {
+  try {
+    await client.ping(signal);
+    return true;
+  } catch (error) {
+    if (isMcpConnectionClosedError(error)) return false;
+    if (isMcpMalformedResultError(error)) return true;
+    if (error instanceof McpError) {
+      return (error as Error & { readonly code?: unknown }).code !== ErrorCode.RequestTimeout;
+    }
+    return false;
+  }
+}
+
 export interface McpRequestOptions {
   readonly timeout?: number;
   readonly signal?: AbortSignal;
 }
 
-/**
- * Build the `RequestOptions` object accepted by the MCP SDK's `callTool`,
- * including either the configured tool-call timeout, an in-flight abort
- * signal, both, or neither. Returns `undefined` when nothing needs to be
- * passed so the SDK falls back to its defaults.
- */
 export function buildRequestOptions(
   toolCallTimeoutMs: number | undefined,
   signal: AbortSignal | undefined,
@@ -59,12 +97,6 @@ export function toMcpToolDefinition(tool: SdkListedTool): MCPToolDefinition {
   };
 }
 
-/**
- * Normalise the SDK's `callTool` return into kosong's {@link MCPToolResult}.
- * The SDK can return either the modern `{ content, isError }` shape or a
- * legacy `{ toolResult }` shape; we collapse the legacy shape to a single
- * text content block.
- */
 export function toMcpToolResult(result: unknown): MCPToolResult {
   if (typeof result === 'object' && result !== null && 'content' in result) {
     const typed = result as { content: unknown; isError?: unknown };

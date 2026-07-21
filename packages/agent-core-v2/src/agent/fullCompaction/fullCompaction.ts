@@ -16,6 +16,7 @@ export interface FullCompactionTask {
   readonly promise: Promise<CompactionResult>;
   readonly trigger: CompactionSource;
   readonly tokenCount: number;
+  readonly traceId?: string;
 }
 
 export interface IAgentFullCompactionService {
@@ -28,7 +29,6 @@ export interface IAgentFullCompactionService {
     onWillCompact: FullCompactionTask;
   }>;
 
-  /** Fires once a compaction finishes (after the summary lands on the wire). */
   readonly onDidFinishCompaction: Event<FullCompactionTask>;
 }
 

@@ -195,7 +195,6 @@ async function runGit(
   try {
     proc.stdin.end();
   } catch {
-    /* stdin already closed */
   }
 
   const work = Promise.all([collectStream(proc.stdout), collectStream(proc.stderr), proc.wait()]);
@@ -218,7 +217,6 @@ async function runGit(
     try {
       await proc.kill('SIGKILL');
     } catch {
-      /* process already gone */
     }
     await work.catch(() => {});
     if (timedOut) return { ok: false, kind: 'timeout' };
@@ -241,6 +239,5 @@ async function disposeProcess(proc: IProcess): Promise<void> {
   try {
     await proc.dispose();
   } catch {
-    /* best-effort cleanup */
   }
 }

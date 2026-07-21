@@ -1,7 +1,7 @@
 /**
  * `/api/v1/ws` connection — speaks the v1 WebSocket protocol
  * (`server_hello` / `client_hello` / `subscribe` / `unsubscribe` / `ack` /
- * `resync_required` / `ping` / `pong` / event envelopes).
+ * `resync_required` / event envelopes).
  *
  * Each connection is a {@link BroadcastTarget}: sequenced envelopes from the
  * {@link SessionEventBroadcaster} are forwarded to the socket. On
@@ -9,10 +9,14 @@
  * `{seq, epoch}` cursor, or sends `resync_required` when the gap cannot be
  * served incrementally.
  *
- * Mirrors v1's `WsConnection` (`packages/server/src/ws/connection.ts`).
+ * The server never initiates a disconnect: unlike v1's `WsConnection`
+ * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
+ * a connection stays open until the client closes it or the process shuts
+ * down.
  */
 
-import { WS_PROTOCOL_VERSION, type SessionCursor } from '@moonshot-ai/protocol';
+import { WS_PROTOCOL_VERSION, type SessionCursor } from '../../../protocol/ws-control';
+import { transcriptSubscriptionSchema, type TranscriptGradeSpec } from '@moonshot-ai/transcript';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
@@ -24,7 +28,6 @@ import {
 } from './sessionEventJournal';
 import {
   buildAck,
-  buildPing,
   buildResyncRequired,
   buildServerHello,
 } from './protocol';
@@ -33,12 +36,14 @@ import {
   type BroadcastTarget,
   type ResyncReason,
   type SessionEventBroadcaster,
+  type TargetSubscription,
 } from './sessionEventBroadcaster';
 import { FsWatchBridge } from './fsWatchBridge';
 
-const DEFAULT_PING_INTERVAL_MS = 30_000;
-const DEFAULT_PONG_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
+
+/** Per-session subscription state held by the connection (see `TargetSubscription`). */
+type SessionSubscription = TargetSubscription;
 
 // Outbound send buffer — coalesces a burst of frames (notably high-frequency
 // volatile text deltas) into fewer `socket.send` calls and applies backpressure
@@ -71,8 +76,6 @@ export interface WsConnectionV1Options {
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
   readonly logger?: JournalLogger;
-  readonly pingIntervalMs?: number;
-  readonly pongTimeoutMs?: number;
   readonly maxBufferSize?: number;
   /** Delay before a buffered batch is flushed; coalesces frames within the window. */
   readonly flushIntervalMs?: number;
@@ -92,8 +95,6 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly broadcaster: SessionEventBroadcaster;
   private readonly fsWatchBridge?: FsWatchBridge;
   private readonly validateCredential?: CredentialValidator;
-  private readonly pingIntervalMs: number;
-  private readonly pongTimeoutMs: number;
   private readonly maxBufferSize: number;
   private readonly flushIntervalMs: number;
   private readonly maxBatchSize: number;
@@ -102,11 +103,8 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private closed = false;
   private gotClientHello = false;
-  /** Per-session subscription state, with each session's optional agent allowlist. */
-  readonly subscriptions = new Map<string, AgentFilter>();
-
-  private pingTimer?: ReturnType<typeof setInterval>;
-  private pongTimer?: ReturnType<typeof setTimeout>;
+  /** Per-session subscription state: legacy agent allowlist + opt-in transcript grades. */
+  readonly subscriptions = new Map<string, SessionSubscription>();
 
   /** Outbound frames awaiting the next flush. */
   private outbound: unknown[] = [];
@@ -125,8 +123,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.fsWatchBridge = opts.fsWatchBridge;
     this.validateCredential = opts.validateCredential;
     this.logger = opts.logger;
-    this.pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
-    this.pongTimeoutMs = opts.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.maxBatchSize = opts.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
@@ -137,12 +133,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.socket.on('error', () => this.onClose());
 
     opts.connectionRegistry.add(this);
-    this.startHeartbeat();
     this.sendFrame(
       buildServerHello({
         ws_connection_id: this.id,
         protocol_version: WS_PROTOCOL_VERSION,
-        heartbeat_ms: this.pingIntervalMs,
         max_event_buffer_size: this.maxBufferSize,
         capabilities: { event_batching: false, compression: false },
       }),
@@ -188,9 +182,6 @@ export class WsConnectionV1 implements BroadcastTarget {
       case 'watch_fs_remove':
         void this.onWatchFs(frame, false);
         return;
-      case 'pong':
-        this.onPong();
-        return;
       default:
         // Unknown / not-yet-implemented control frame (e.g. terminal_*, abort)
         // — ignore for now; terminal/abort stay on REST.
@@ -206,6 +197,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const subscriptions = asStringArray(payload['subscriptions']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
+    const transcript = parseTranscriptSubscription(payload['transcript']);
 
     const accepted: string[] = [];
     const resyncRequired: string[] = [];
@@ -216,6 +208,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         sid,
         cursors?.[sid],
         agentFilter?.[sid],
+        transcript?.[sid],
         accepted,
         resyncRequired,
         serverCursors,
@@ -236,6 +229,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     const sessionIds = asStringArray(payload['session_ids']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
     const agentFilter = parseAgentFilter(payload['agent_filter']);
+    const transcript = parseTranscriptSubscription(payload['transcript']);
 
     const accepted: string[] = [];
     const notFound: string[] = [];
@@ -244,16 +238,22 @@ export class WsConnectionV1 implements BroadcastTarget {
 
     for (const sid of sessionIds) {
       const filter = agentFilter?.[sid];
-      const ok = await this.broadcaster.subscribe(sid, this, filter);
+      const grades = transcript?.[sid];
+      const cursor = cursors?.[sid];
+      // With a cursor the transcript baseline defers until after the replay —
+      // its seq must follow the replayed backlog, never precede it.
+      const ok = await this.broadcaster.subscribe(sid, this, filter, grades, {
+        deferTranscriptReset: cursor !== undefined,
+      });
       if (!ok) {
         notFound.push(sid);
         continue;
       }
-      this.subscriptions.set(sid, filter);
+      this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
       accepted.push(sid);
-      const cursor = cursors?.[sid];
       if (cursor !== undefined) {
         await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+        await this.broadcaster.flushTranscriptSeed(sid, this);
       } else {
         const cur = await this.broadcaster.getCursor(sid);
         serverCursors[sid] = cur;
@@ -320,19 +320,24 @@ export class WsConnectionV1 implements BroadcastTarget {
     sid: string,
     cursor: SessionCursor | undefined,
     filter: AgentFilter | undefined,
+    transcriptGrades: TranscriptGradeSpec | undefined,
     accepted: string[],
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const ok = await this.broadcaster.subscribe(sid, this, filter);
+    // Same ordering rule as onSubscribe: baseline after the cursor replay.
+    const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
+      deferTranscriptReset: cursor !== undefined,
+    });
     if (!ok) {
       resyncRequired.push(sid);
       return;
     }
-    this.subscriptions.set(sid, filter);
+    this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
     accepted.push(sid);
     if (cursor !== undefined) {
       await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+      await this.broadcaster.flushTranscriptSeed(sid, this);
     } else {
       const cur = await this.broadcaster.getCursor(sid);
       serverCursors[sid] = cur;
@@ -378,31 +383,6 @@ export class WsConnectionV1 implements BroadcastTarget {
       return false;
     }
     return true;
-  }
-
-  private onPong(): void {
-    if (this.pongTimer !== undefined) {
-      clearTimeout(this.pongTimer);
-      this.pongTimer = undefined;
-    }
-  }
-
-  private startHeartbeat(): void {
-    this.pingTimer = setInterval(() => {
-      if (this.closed) return;
-      this.sendFrame(buildPing());
-      if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
-      this.pongTimer = setTimeout(() => {
-        if (this.closed) return;
-        try {
-          this.socket.terminate();
-        } catch {
-          // ignore
-        }
-      }, this.pongTimeoutMs);
-      this.pongTimer.unref?.();
-    }, this.pingIntervalMs);
-    this.pingTimer.unref?.();
   }
 
   private sendFrame(msg: unknown): void {
@@ -495,8 +475,6 @@ export class WsConnectionV1 implements BroadcastTarget {
   private onClose(): void {
     if (this.closed) return;
     this.closed = true;
-    if (this.pingTimer !== undefined) clearInterval(this.pingTimer);
-    if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     this.outbound = [];
@@ -529,6 +507,21 @@ function parseAgentFilter(value: unknown): Record<string, AgentFilter> | undefin
     out[sid] = set;
   }
   return out;
+}
+
+/**
+ * Parse the opt-in wire `transcript` payload (`Record<session_id,
+ * Record<agent_id|'*', grade>>`). Validated against the shared zod schema so
+ * a malformed grade cannot widen into a subscription; a bad field degrades to
+ * "no transcript" for the whole frame, matching how `agent_filter` drops bad
+ * entries.
+ */
+function parseTranscriptSubscription(
+  value: unknown,
+): Record<string, TranscriptGradeSpec> | undefined {
+  if (value === undefined) return undefined;
+  const parsed = transcriptSubscriptionSchema.safeParse(value);
+  return parsed.success ? (parsed.data as Record<string, TranscriptGradeSpec>) : undefined;
 }
 
 function rawDataToString(data: RawData): string {

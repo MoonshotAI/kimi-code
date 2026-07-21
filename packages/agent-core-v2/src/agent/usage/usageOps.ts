@@ -16,8 +16,7 @@
 
 import { z } from 'zod';
 
-import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
-import type { AgentPhase } from '#/agent/runtime/runtime';
+import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { defineModel } from '#/wire/model';
 
 import type { UsageStatus } from './usage';
@@ -26,16 +25,14 @@ export type UsageRecordScope = 'session' | 'turn';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    // Canonical declaration for the agent status-bar event (`IEventBus`); each
-    // domain derives/publishes a subset.
     'agent.status.updated': {
       usage?: UsageStatus;
       swarmMode?: boolean;
       planMode?: boolean;
       model?: string;
+      thinkingEffort?: string;
       maxContextTokens?: number;
       contextTokens?: number;
-      phase?: AgentPhase;
     };
   }
 }

@@ -5,10 +5,12 @@ import {
   classifyBaseApiError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
+  parseTraceId,
+  throwIfAbortError,
 } from '#/errors';
 import { extractText } from '#/message';
 import type { ContentPart, Message } from '#/message';
-import type { FinishReason, ThinkingEffort } from '#/provider';
+import type { FinishReason } from '#/provider';
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import {
@@ -89,8 +91,17 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
 
 /**
  * Convert an OpenAI SDK error (or raw Error) to a kosong `ChatProviderError`.
+ * The FIRST line is the abort guard: a user cancellation (SDK
+ * `APIUserAbortError`, bare `AbortError`, the standard abort DOMException) is
+ * THROWN as the standard abort shape at the very front of the classification
+ * chain — it can never be converted into, nor returned as, a retryable
+ * provider error.
  */
 export function convertOpenAIError(error: unknown): ChatProviderError {
+  // Abort guard FIRST: throws (never returns) the standard abort DOMException
+  // for any abort shape, so a user cancellation is never misclassified as a
+  // retryable provider failure.
+  throwIfAbortError(error);
   if (error instanceof ChatProviderError) {
     return error;
   }
@@ -109,6 +120,7 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
       error.message,
       reqId,
       parseRetryAfterMs(error.headers),
+      parseTraceId(error.headers),
     );
   }
   // Base APIError with no status and no body => transport-layer failure.
@@ -151,56 +163,7 @@ export function isFunctionToolCall<T extends { type: string }>(
 ): tc is T & FunctionToolCallShape {
   return tc.type === 'function';
 }
-/**
- * Map kosong `ThinkingEffort` to OpenAI `reasoning_effort` string.
- */
-export function thinkingEffortToReasoningEffort(effort: ThinkingEffort): string | undefined {
-  switch (effort) {
-    case 'off':
-      return undefined;
-    case 'low':
-      return 'low';
-    case 'medium':
-      return 'medium';
-    case 'high':
-      return 'high';
-    case 'xhigh':
-    case 'max':
-      return 'xhigh';
-    default:
-      // 'on' (boolean models) or any model-declared effort OpenAI does not
-      // recognize: send no reasoning_effort and let the model use its own
-      // default, rather than throwing on a value the model itself advertised.
-      return undefined;
-  }
-}
 
-/**
- * Map OpenAI `reasoning_effort` string back to kosong `ThinkingEffort`.
- */
-export function reasoningEffortToThinkingEffort(
-  reasoning: string | undefined,
-): ThinkingEffort | null {
-  if (reasoning === undefined || reasoning === null) {
-    return null;
-  }
-  switch (reasoning) {
-    case 'low':
-    case 'minimal':
-      return 'low';
-    case 'medium':
-      return 'medium';
-    case 'high':
-      return 'high';
-    case 'xhigh':
-    case 'max':
-      return 'xhigh';
-    case 'none':
-      return 'off';
-    default:
-      return 'off';
-  }
-}
 /**
  * Extract `TokenUsage` from an OpenAI-compatible usage object.
  */

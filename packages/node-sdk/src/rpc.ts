@@ -6,6 +6,7 @@ import {
   type AgentContextData,
   type ApprovalRequest,
   type ApprovalResponse,
+  type BeginGlobalMcpServerAuthResult,
   type CoreAPI,
   type Event,
   type ExperimentalFeatureState,
@@ -32,13 +33,16 @@ import type {
   CreateGoalInput,
   ForkSessionInput,
   GetConfigOptions,
+  McpServerConfig,
   GoalSnapshot,
   GoalToolResult,
+  JsonObject,
   KimiConfig,
   KimiConfigPatch,
   ListSessionsOptions,
   McpServerInfo,
   McpStartupMetrics,
+  McpTestResult,
   PermissionMode,
   PluginInfo,
   PluginSummary,
@@ -62,10 +66,21 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
+  /**
+   * Client-managed session tool denylist (full-replace semantics), forwarded
+   * to engines with profile tool gating. Omit to keep the persisted value;
+   * `[]` clears the client portion.
+   */
+  readonly disabledTools?: readonly string[];
 }
 
 export interface SessionIdRpcInput {
   readonly sessionId: string;
+}
+
+export interface ImportContextRpcInput extends SessionIdRpcInput {
+  readonly content: string;
+  readonly source: string;
 }
 
 export interface ReloadSessionRpcInput extends SessionIdRpcInput {
@@ -87,6 +102,10 @@ export interface SetSessionThinkingRpcInput extends SessionIdRpcInput {
 
 export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
   readonly mode: PermissionMode;
+}
+
+export interface UpdateSessionMetadataRpcInput extends SessionIdRpcInput {
+  readonly metadata: JsonObject;
 }
 
 export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
@@ -177,6 +196,7 @@ export abstract class SDKRpcClientBase {
       id: input.forkId,
       title: input.title,
       metadata: input.metadata,
+      turnIndex: input.turnIndex,
     });
   }
 
@@ -185,9 +205,19 @@ export abstract class SDKRpcClientBase {
     return rpc.closeSession({ sessionId: input.sessionId });
   }
 
+  async deleteSession(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.deleteSession({ sessionId: input.sessionId });
+  }
+
   async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSessions(input);
+  }
+
+  async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
+    const rpc = await this.getRpc();
+    return rpc.listWorkspaceSkills({ workDir });
   }
 
   async renameSession(input: RenameSessionInput): Promise<void> {
@@ -235,6 +265,57 @@ export abstract class SDKRpcClientBase {
     return rpc.removeKimiProvider({ providerId });
   }
 
+  async listGlobalMcpServers(): Promise<readonly McpServerConfig[]> {
+    const rpc = await this.getRpc();
+    return rpc.listGlobalMcpServers({});
+  }
+
+  async addGlobalMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+    const rpc = await this.getRpc();
+    return rpc.addGlobalMcpServer({ server });
+  }
+
+  async updateGlobalMcpServer(server: McpServerConfig): Promise<readonly McpServerConfig[]> {
+    const rpc = await this.getRpc();
+    return rpc.updateGlobalMcpServer({ server });
+  }
+
+  async removeGlobalMcpServer(name: string): Promise<readonly McpServerConfig[]> {
+    const rpc = await this.getRpc();
+    return rpc.removeGlobalMcpServer({ name });
+  }
+
+  async beginGlobalMcpServerAuth(name: string): Promise<BeginGlobalMcpServerAuthResult> {
+    const rpc = await this.getRpc();
+    return rpc.beginGlobalMcpServerAuth({ name });
+  }
+
+  async completeGlobalMcpServerAuth(
+    input: { readonly flowId: string; readonly timeoutMs?: number },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.completeGlobalMcpServerAuth(input, { signal });
+  }
+
+  async cancelGlobalMcpServerAuth(flowId: string): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.cancelGlobalMcpServerAuth({ flowId });
+  }
+
+  async resetGlobalMcpServerAuth(name: string): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.resetGlobalMcpServerAuth({ name });
+  }
+
+  async testGlobalMcpServer(
+    name: string,
+    options: { readonly cwd?: string } = {},
+  ): Promise<McpTestResult> {
+    const rpc = await this.getRpc();
+    return rpc.testGlobalMcpServer({ name, cwd: options.cwd });
+  }
+
   async prompt(input: SessionPromptRpcInput): Promise<void> {
     const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
@@ -242,6 +323,7 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
       input: input.input,
+      disabledTools: input.disabledTools,
     });
   }
 
@@ -313,6 +395,24 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async clearContext(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.clearContext({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async importContext(input: ImportContextRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.importContext({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      content: input.content,
+      source: input.source,
+    });
+  }
+
   async setModel(input: SetSessionModelRpcInput): Promise<SetSessionModelRpcResult> {
     const rpc = await this.getRpc();
     return rpc.setModel({
@@ -337,6 +437,16 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
       mode: input.mode,
+    });
+  }
+
+  async updateSessionMetadata(input: UpdateSessionMetadataRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    const current = await rpc.getSessionMetadata({ sessionId: input.sessionId });
+    const metadata = { ...current.custom, ...input.metadata } as JsonObject;
+    await rpc.updateSessionMetadata({
+      sessionId: input.sessionId,
+      metadata: { custom: metadata },
     });
   }
 

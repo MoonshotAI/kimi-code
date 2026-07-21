@@ -1449,7 +1449,7 @@ onUnmounted(() => {
               <tbody>
                 <tr><td>Width / cursor</td><td>4px / <code>col-resize</code></td></tr>
                 <tr><td>Normal / active</td><td>transparent / <code>accent</code> fill</td></tr>
-                <tr><td>Layer</td><td><code>--z-sticky</code>, over the column border</td></tr>
+                <tr><td>Layer</td><td><code>--z-dropdown</code>, above pane-level sticky chrome (chat dock at <code>--z-sticky</code>) so the overhang stays visible and grabbable</td></tr>
                 <tr><td>Behavior</td><td>panel width follows the pointer 1:1 while dragging (the parent disables transitions to avoid lag); on release it is persisted to localStorage</td></tr>
               </tbody>
             </table>

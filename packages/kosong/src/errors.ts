@@ -43,18 +43,27 @@ export class APIStatusError extends ChatProviderError {
    * exponential delay.
    */
   readonly retryAfterMs: number | null;
+  /**
+   * Provider trace identifier from the `x-trace-id` response header
+   * (Kimi/KFC only), or `null` when the error response did not carry one.
+   * A failed request usually still returns response headers, so hosts can
+   * attribute the failure to its server-side request.
+   */
+  readonly traceId: string | null;
 
   constructor(
     statusCode: number,
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
     super(message);
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
     this.retryAfterMs = retryAfterMs ?? null;
+    this.traceId = traceId ?? null;
   }
 }
 
@@ -68,8 +77,9 @@ export class APIContextOverflowError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs);
+    super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIContextOverflowError';
   }
 }
@@ -86,8 +96,9 @@ export class APIRequestTooLargeError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs);
+    super(statusCode, message, requestId, retryAfterMs, traceId);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -97,8 +108,13 @@ export class APIRequestTooLargeError extends APIStatusError {
  * request.
  */
 export class APIProviderRateLimitError extends APIStatusError {
-  constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
-    super(429, message, requestId, retryAfterMs);
+  constructor(
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+    traceId?: string | null,
+  ) {
+    super(429, message, requestId, retryAfterMs, traceId);
     this.name = 'APIProviderRateLimitError';
   }
 }
@@ -121,6 +137,49 @@ export class APIEmptyResponseError extends ChatProviderError {
     this.name = 'APIEmptyResponseError';
     this.finishReason = options.finishReason ?? null;
     this.rawFinishReason = options.rawFinishReason ?? null;
+  }
+}
+
+/**
+ * The single standard abort shape for the wire layer: a DOMException named
+ * `'AbortError'`, matching the platform's own `AbortSignal.reason`
+ * convention. Every user-cancellation path — the `generate()` driver,
+ * provider error converters, stream wrappers — throws exactly this shape so
+ * upstream code can recognize cancellation without SDK knowledge.
+ */
+export function createAbortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError');
+}
+
+/**
+ * Whether `error` is any abort shape that can surface from a provider call:
+ *
+ *  - the standard abort DOMException (`createAbortError`, `signal.reason`),
+ *  - a bare `Error` named `'AbortError'` (generic abort helpers), or
+ *  - an SDK user-abort (`APIUserAbortError` in both the OpenAI and Anthropic
+ *    SDKs) — recognized structurally by constructor name so this module
+ *    stays SDK-free.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true;
+  if (error instanceof Error && error.name === 'AbortError') return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    error.constructor?.name === 'APIUserAbortError'
+  );
+}
+
+/**
+ * The abort guard for provider error converters. Must run at the very front
+ * of every error classification chain: when `error` is abort-shaped this
+ * THROWS the standard abort DOMException — it never returns a converted
+ * error — so a user cancellation can never be misclassified as a retryable
+ * provider failure. Does nothing for non-abort errors.
+ */
+export function throwIfAbortError(error: unknown): void {
+  if (isAbortError(error)) {
+    throw createAbortError();
   }
 }
 
@@ -297,6 +356,29 @@ const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
   /request (?:body )?too large/,
 ] as const;
 
+const THINKING_EFFORT_CONFIG_DOCS_URL =
+  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
+
+const THINKING_EFFORT_STATUS_MESSAGE_PATTERNS = [
+  /reasoning[_ .-]?effort/,
+  /thinking[_ .-]?effort/,
+  /output_config[\s\S]*effort/,
+  /unsupported[\s\S]*effort/,
+  /invalid[\s\S]*effort/,
+] as const;
+
+function appendThinkingEffortConfigHint(statusCode: number, message: string): string {
+  if (statusCode !== 400 && statusCode !== 422) return message;
+  const lowerMessage = message.toLowerCase();
+  if (!THINKING_EFFORT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage))) {
+    return message;
+  }
+  if (message.includes(THINKING_EFFORT_CONFIG_DOCS_URL)) return message;
+  return `${message}
+
+The provider rejected the configured thinking effort. Non-Kimi providers receive effort strings without client-side mapping; choose an effort supported by the selected model. For Kimi models, check support_efforts and default_effort. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`;
+}
+
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
   return code === 'context_length_exceeded';
 }
@@ -306,19 +388,50 @@ export function normalizeAPIStatusError(
   message: string,
   requestId?: string | null,
   retryAfterMs?: number | null,
+  traceId?: string | null,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
   }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
   // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, traceId);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, traceId);
   }
-  return new APIStatusError(statusCode, message, requestId, retryAfterMs);
+  return new APIStatusError(
+    statusCode,
+    appendThinkingEffortConfigHint(statusCode, message),
+    requestId,
+    retryAfterMs,
+    traceId,
+  );
+}
+
+/**
+ * Read a single response header from an unknown headers-like object (anything
+ * exposing a `get(name)` method, e.g. the Fetch `Headers` the SDKs carry on
+ * their errors). Returns `null` when the object is not headers-like or the
+ * header is absent.
+ */
+function readResponseHeader(headers: unknown, name: string): string | null {
+  return headers !== null &&
+    typeof headers === 'object' &&
+    typeof (headers as { get?: unknown }).get === 'function'
+    ? (headers as { get(name: string): string | null }).get(name)
+    : null;
+}
+
+/**
+ * Parse the provider trace identifier from the `x-trace-id` response header
+ * (Kimi/KFC only). Returns `null` when the header is absent or empty.
+ */
+export function parseTraceId(headers: unknown): string | null {
+  const raw = readResponseHeader(headers, 'x-trace-id');
+  if (raw === null || raw === undefined || raw.length === 0) return null;
+  return raw;
 }
 
 /**
@@ -329,12 +442,7 @@ export function normalizeAPIStatusError(
  * backoff directive.
  */
 export function parseRetryAfterMs(headers: unknown): number | null {
-  const raw =
-    headers !== null &&
-    typeof headers === 'object' &&
-    typeof (headers as { get?: unknown }).get === 'function'
-      ? (headers as { get(name: string): string | null }).get('retry-after')
-      : null;
+  const raw = readResponseHeader(headers, 'retry-after');
   if (raw === null || raw === undefined) return null;
   const seconds = Number.parseInt(raw, 10);
   if (!Number.isFinite(seconds) || seconds < 0) return null;
@@ -425,6 +533,12 @@ const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
   // when a provider reused a call id (e.g. per-response counter ids) earlier
   // in the session; the strict resend dedupes the ids.
   /tool_use[\s\S]*ids must be unique/,
+  // Moonshot / Kimi rejects a message whose serialized form carries nothing —
+  // no content, no tool_calls, an empty reasoning_content: "the message at
+  // position N with role 'assistant' must not be empty". Seen when a filtered
+  // response left an assistant message holding only an empty thinking part in
+  // the history; the strict resend's projection drops such vacuous messages.
+  /message at position \d+ with role ['"`]?[a-z]+['"`]? must not be empty/,
 ] as const;
 
 export function isRecoverableRequestStructureError(error: unknown): boolean {

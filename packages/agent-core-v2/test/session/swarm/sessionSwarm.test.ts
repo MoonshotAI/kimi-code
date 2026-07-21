@@ -13,16 +13,19 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { APIProviderRateLimitError } from '#/app/llmProtocol/errors';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
-  type AgentTaskHooks,
   type CreateAgentOptions,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { createHooks } from '#/hooks';
+import {
+  type AgentTaskHooks,
+  ISessionSubagentService,
+} from '#/session/subagent/subagent';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
   ISessionMetadata,
@@ -836,6 +839,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let agents: Record<string, AgentMeta>;
   let handles: Map<string, IAgentScopeHandle>;
   let lifecycle: IAgentLifecycleService;
+  let subagents: ISessionSubagentService;
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
@@ -847,13 +851,16 @@ describe('SessionSwarmService metadata compatibility', () => {
     handles = new Map();
     eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
+    subagents = subagentStub();
     createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
-    runAgent = lifecycle.run as ReturnType<typeof vi.fn>;
+    runAgent = subagents.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
     ix.stub(IAgentLifecycleService, lifecycle);
-    ix.stub(IAgentProfileCatalogService, {
+    ix.stub(ISessionSubagentService, subagents);
+    ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
+      ready: Promise.resolve(),
       get: (name: string) =>
         name === 'coder'
           ? { name: 'coder', tools: [], systemPrompt: () => '' }
@@ -905,17 +912,14 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('reads swarm items from caller-owned v2 labels and legacy v1 metadata', async () => {
     agents['v2-child'] = {
-      homedir: '/tmp/kimi/s1/agents/v2-child',
       labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
     };
     agents['legacy-child'] = {
-      homedir: '/tmp/kimi/s1/agents/legacy-child',
       type: 'sub',
       parentAgentId: 'main',
       swarmItem: 'src/legacy.ts',
     };
     agents['other-child'] = {
-      homedir: '/tmp/kimi/s1/agents/other-child',
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
     };
 
@@ -937,7 +941,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('prefers labels over legacy metadata fields when both are present', async () => {
     agents['mixed-child'] = {
-      homedir: '/tmp/kimi/s1/agents/mixed-child',
       labels: { parentAgentId: 'main', swarmItem: 'src/labels.ts' },
       type: 'sub',
       parentAgentId: 'other',
@@ -957,7 +960,6 @@ describe('SessionSwarmService metadata compatibility', () => {
   it('normalizes legacy subagent metadata into labels for new writes', () => {
     expect(
       labelsFromAgentMeta({
-        homedir: '/tmp/kimi/s1/agents/legacy-child',
         type: 'sub',
         parentAgentId: 'main',
         swarmItem: 'src/legacy.ts',
@@ -965,7 +967,6 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).toEqual({ parentAgentId: 'main', swarmItem: 'src/legacy.ts' });
     expect(
       labelsFromAgentMeta({
-        homedir: '/tmp/kimi/s1/agents/mixed-child',
         labels: { parentAgentId: 'main', swarmItem: 'src/labels.ts', custom: 'kept' },
         type: 'sub',
         parentAgentId: 'other',
@@ -998,7 +999,6 @@ describe('SessionSwarmService metadata compatibility', () => {
           thinking: 'medium',
           cwd: '/repo',
         },
-        permissionMode: 'auto',
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
       }),
     );
@@ -1042,7 +1042,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('keeps v1 resume ownership errors inside the per-subagent result', async () => {
     agents['other-child'] = {
-      homedir: '/tmp/kimi/s1/agents/other-child',
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
     };
     handles.set('other-child', agentHandle('other-child', lifecycle, eventBusStub()));
@@ -1065,7 +1064,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('realigns resumed children to the caller current model', async () => {
     agents['agent-existing'] = {
-      homedir: '/tmp/kimi/s1/agents/agent-existing',
       labels: { parentAgentId: 'main' },
     };
     const child = agentHandle('agent-existing', lifecycle, eventBus, {
@@ -1094,11 +1092,9 @@ describe('SessionSwarmService metadata compatibility', () => {
     vi.useFakeTimers();
     try {
       agents['agent-retry'] = {
-        homedir: '/tmp/kimi/s1/agents/agent-retry',
         labels: { parentAgentId: 'main' },
       };
       agents['agent-blocker'] = {
-        homedir: '/tmp/kimi/s1/agents/agent-blocker',
         labels: { parentAgentId: 'main' },
       };
       handles.set('agent-retry', agentHandle('agent-retry', lifecycle, eventBus));
@@ -1155,7 +1151,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('rejects resume of an already running child before launching or emitting spawned', async () => {
     agents['agent-existing'] = {
-      homedir: '/tmp/kimi/s1/agents/agent-existing',
       labels: { parentAgentId: 'main' },
     };
     handles.set(
@@ -1224,15 +1219,15 @@ function lifecycleStub(
   handles: Map<string, IAgentScopeHandle>,
   eventBus: IEventBus,
 ): IAgentLifecycleService {
-  const hooks = createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']);
   const lifecycle = {
     _serviceBrand: undefined,
-    hooks,
-    onDidStopAgentTask: Event.None,
     onDidCreate: Event.None,
-    onDidCreateMain: Event.None,
     onDidDispose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
+      if (opts.agentId !== undefined) {
+        const existing = handles.get(opts.agentId);
+        if (existing !== undefined) return existing;
+      }
       const id = opts.agentId ?? 'agent-new';
       const handle = agentHandle(id, lifecycle as IAgentLifecycleService, eventBus, {
         profileName: opts.binding?.profile ?? 'coder',
@@ -1243,22 +1238,29 @@ function lifecycleStub(
       handles.set(id, handle);
       return handle;
     }),
-    ensureMcpReady: async () => {},
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
     fork: vi.fn(),
+    get: (agentId: string) => handles.get(agentId),
+    list: () => [...handles.values()],
+    remove: async (agentId: string) => {
+      handles.delete(agentId);
+    },
+    broadcastPermissionMode: () => {},
+  };
+  return lifecycle as IAgentLifecycleService;
+}
+
+function subagentStub(): ISessionSubagentService {
+  return {
+    _serviceBrand: undefined,
+    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+    onDidStopAgentTask: Event.None,
     run: vi.fn(async (agentId: string) => ({
       agentId,
       turn: {} as never,
       completion: Promise.resolve({ summary: 'child summary' }),
     })),
-    getHandle: (agentId: string) => handles.get(agentId),
-    list: () => [...handles.values()],
-    remove: async (agentId: string) => {
-      handles.delete(agentId);
-    },
-  };
-  return lifecycle as IAgentLifecycleService;
+    notifyAgentTaskStopped: () => {},
+  } as ISessionSubagentService;
 }
 
 function agentHandle(

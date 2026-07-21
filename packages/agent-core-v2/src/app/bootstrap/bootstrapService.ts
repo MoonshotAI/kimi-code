@@ -58,9 +58,6 @@ export class BootstrapService implements IBootstrapService {
     this.storeDir = join(options.homeDir, 'store');
     this.cacheDir = join(options.homeDir, 'cache');
     this.logsDir = join(options.homeDir, 'logs');
-    // The config document sits at `<homeDir>/<configKey>`; scope('config') is
-    // the empty string (join skips empty segments) so `<key>` addresses the
-    // homeDir directly.
     this.configKey = basename(options.configPath);
     this.scopes = {
       config: '',

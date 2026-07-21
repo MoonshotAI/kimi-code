@@ -30,8 +30,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** Per-store ceiling; the sweep evicts oldest files beyond this. */
-const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024; // 1 GiB
+const DEFAULT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 
 const MIME_EXTENSION: Readonly<Record<string, string>> = {
   'image/png': 'png',
@@ -44,36 +43,18 @@ const MIME_EXTENSION: Readonly<Record<string, string>> = {
 };
 
 export interface PersistOriginalImageOptions {
-  /**
-   * Target directory — pass `sessionMediaOriginalsDir(sessionDir)` when the
-   * session is known. Defaults to the shared temp-dir fallback.
-   */
   readonly dir?: string;
-  /** Override the store size cap in bytes (tests). */
   readonly maxTotalBytes?: number;
 }
 
-/**
- * Fallback store used when a call site has no session context:
- * `<os-tmp>/kimi-code-original-images`.
- */
 export function originalImageCacheDir(): string {
   return join(tmpdir(), 'kimi-code-original-images');
 }
 
-/**
- * The session-owned originals store: `<sessionDir>/media-originals`. Sits
- * next to the session's other artifacts (`tasks/`, `cron/`, `logs/`,
- * `agents/`) and is removed with the session.
- */
 export function sessionMediaOriginalsDir(sessionDir: string): string {
   return join(sessionDir, 'media-originals');
 }
 
-/**
- * Persist `bytes` into the originals store and return the absolute file
- * path, or null on any failure. Idempotent for identical bytes.
- */
 export async function persistOriginalImage(
   bytes: Uint8Array,
   mimeType: string,
@@ -89,14 +70,11 @@ export async function persistOriginalImage(
     await mkdir(dir, { recursive: true });
 
     const existing = await stat(path).catch(() => null);
-    // Content-addressed: an existing entry with the right size IS this image.
     if (existing === null || existing.size !== bytes.length) {
       await writeFile(path, bytes);
     }
 
     await sweepCache(dir, maxTotalBytes);
-    // The just-written file may itself have been evicted by the sweep when a
-    // single original exceeds the cap; report persistence honestly.
     const persisted = await stat(path).catch(() => null);
     return persisted === null ? null : path;
   } catch {
@@ -104,7 +82,6 @@ export async function persistOriginalImage(
   }
 }
 
-/** Evict oldest files (by mtime) until the store fits `maxTotalBytes`. */
 async function sweepCache(dir: string, maxTotalBytes: number): Promise<void> {
   const names = await readdir(dir);
   const entries: { path: string; size: number; mtimeMs: number }[] = [];

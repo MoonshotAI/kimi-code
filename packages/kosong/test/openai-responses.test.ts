@@ -359,6 +359,25 @@ describe('OpenAIResponsesChatProvider', () => {
       });
     });
 
+    it('serializes an explicitly empty ThinkPart as an empty reasoning summary', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const input = body['input'] as Array<Record<string, unknown>>;
+
+      expect(input.find((item) => item['type'] === 'reasoning')).toMatchObject({
+        type: 'reasoning',
+        summary: [{ type: 'summary_text', text: '' }],
+      });
+    });
+
     it('consecutive ThinkParts with different encrypted values produce separate reasoning items', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -900,6 +919,22 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['max_output_tokens']).toBe(2048);
     });
 
+    it('passes constructor generationKwargs into the request body', async () => {
+      // The construction-time channel (session affinity): kwargs seeded via
+      // the options land on every request, no morph required.
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        generationKwargs: { prompt_cache_key: 'session-test' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['prompt_cache_key']).toBe('session-test');
+    });
+
     it('withMaxCompletionTokens sets max_output_tokens on the cloned provider', async () => {
       const original = createProvider();
       const provider = original.withMaxCompletionTokens(1024);
@@ -1041,9 +1076,7 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['reasoning']).toEqual({ effort: 'xhigh', summary: 'auto' });
     });
 
-    it('with_thinking("max") on gpt-5.1-codex-max clamps up to xhigh on the wire', async () => {
-      // Regression guard: "max" used to fall back to "high"; for OpenAI it
-      // must clamp up to their highest supported effort, xhigh.
+    it('with_thinking("max") passes max through to the wire', async () => {
       const provider = new OpenAIResponsesChatProvider({
         model: 'gpt-5.1-codex-max',
         apiKey: 'test-key',
@@ -1053,7 +1086,36 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect((body['reasoning'] as Record<string, unknown>)['effort']).toBe('xhigh');
+      expect((body['reasoning'] as Record<string, unknown>)['effort']).toBe('max');
+    });
+
+    it('passes concrete effort strings through verbatim', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+      }).withThinking('extreme');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect((body['reasoning'] as Record<string, unknown>)['effort']).toBe('extreme');
+      expect(provider.thinkingEffort).toBe('extreme');
+    });
+
+    it('does not filter concrete efforts through a client-side allow-list', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const maxBody = await captureRequestBody(provider.withThinking('max'), '', [], history);
+      const xhighBody = await captureRequestBody(provider.withThinking('xhigh'), '', [], history);
+
+      expect((maxBody['reasoning'] as Record<string, unknown>)['effort']).toBe('max');
+      expect((xhighBody['reasoning'] as Record<string, unknown>)['effort']).toBe('xhigh');
     });
   });
 
@@ -1236,6 +1298,30 @@ describe('OpenAIResponsesChatProvider', () => {
         { type: 'think', think: 'Step 2', encrypted: 'enc_token_abc' },
         { type: 'text', text: 'done' },
       ]);
+    });
+
+    it('yields an empty ThinkPart from a non-stream reasoning item with no summaries', async () => {
+      const provider = createProvider();
+      (provider as any)._stream = false;
+      ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
+        .fn()
+        .mockResolvedValue({
+          id: 'resp_empty_reasoning',
+          output: [
+            {
+              type: 'reasoning',
+              encrypted_content: 'enc_empty',
+              summary: [],
+            },
+          ],
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        });
+
+      const stream = await provider.generate('', [], []);
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([{ type: 'think', think: '', encrypted: 'enc_empty' }]);
     });
 
     it('non-stream reasoning without encrypted_content yields ThinkPart without encrypted field', async () => {

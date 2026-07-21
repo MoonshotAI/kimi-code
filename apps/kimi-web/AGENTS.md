@@ -45,14 +45,13 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 All via `pnpm --filter @moonshot-ai/kimi-web …`:
 
 - `dev` — Vite dev server (port `WEB_PORT`, default 5175; proxies `/api/v1` to `KIMI_SERVER_URL`, default `http://127.0.0.1:58627`).
-- `dev:stub` — offline stub daemon (`dev/stub-daemon.mjs`).
 - `build` — production build into `dist/`.
 - `typecheck` — `vue-tsc --noEmit`.
 - `test` — `vitest run` (pure logic tests only; no jsdom / component tests).
 - `check:style` — design-system §06 anti-pattern guard (`scripts/check-style.mjs`).
 - There is **no `lint` script** in this package; linting runs at the repo root via oxlint.
 
-Debugging against the two backend engines (v1 `@moonshot-ai/server`, v2 `@moonshot-ai/kap-server`): start them from the repo root with `pnpm dev:v1` (port 58627) and `pnpm dev:v2` (`KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1`, port 58628 — both can run at once). The dev server proxies `/api/v1` to the v1 preset by default; the Sidebar brand row carries a dev-only backend pill (`v1`/`v2` + endpoint, from `GET /api/v1/meta`'s `backend` field) whose menu repoints the proxy at runtime — no Vite restart. Presets default to `http://127.0.0.1:58627` / `:58628`, overridable via `KIMI_BACKEND_V1_URL` / `KIMI_BACKEND_V2_URL`; the switcher endpoints (`GET/POST /__kimi-dev/backend`, dev-only, see `backendSwitcherPlugin` in `vite.config.ts`) drive the menu.
+Debugging against kap-server instances: start one from the repo root with `pnpm dev:server` (port 58627), optionally a second with `pnpm dev:v2` (port 58628 — instances share the home dir via the registry, so both can run at once). The dev server proxies `/api/v1` to the `default` preset; the Sidebar brand row carries a dev-only backend pill (engine generation `v1`/`v2` from `GET /api/v1/meta`'s `backend` field + endpoint) whose menu repoints the proxy at runtime — no Vite restart. Presets default to `http://127.0.0.1:58627` / `:58628`, overridable via `KIMI_BACKEND_DEFAULT_URL` / `KIMI_BACKEND_MULTI_URL`; the switcher endpoints (`GET/POST /__kimi-dev/backend`, dev-only, see `backendSwitcherPlugin` in `vite.config.ts`) drive the menu.
 
 ## Gotchas / hard rules
 
@@ -61,4 +60,4 @@ Debugging against the two backend engines (v1 `@moonshot-ai/server`, v2 `@moonsh
 - Vite-injected globals (`__KIMI_DEV_PROXY_TARGET__`, `__KIMI_DEV_BACKENDS__`, `__KIMI_WEB_VERSION__`, `__KIMI_WEB_COMMIT__`) are declared in `src/env.d.ts` and defined in `vite.config.ts`. Do not hand-edit `dist/`.
 - **Theming:** the root element carries `data-color-scheme` (`light` | `dark` | `system`); react to it through `useIsDark()`, not by reading the DOM directly.
 - Keep the Vite **dev** proxy and **`preview`** proxy in sync — both are defined in `vite.config.ts` (shared `apiProxyOptions`).
-- The shared proxy strips the browser `Origin` header on forwarded requests: `changeOrigin` rewrites `Host` to the server but leaves `Origin` pointing at the Vite origin, and the **v1** server's WS upgrade path rejects that mismatch with 403. An Origin-less request is treated as a non-browser client by both engines. If you add another proxied path, route it through the same options.
+- The shared proxy strips the browser `Origin` header on forwarded requests: `changeOrigin` rewrites `Host` to the server but leaves `Origin` pointing at the Vite origin, and kap-server's WS upgrade path rejects that mismatch with 403. An Origin-less request is treated as a non-browser client. If you add another proxied path, route it through the same options.

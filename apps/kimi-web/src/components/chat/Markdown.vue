@@ -338,6 +338,15 @@ const codeBlockProps = {
   loading: false,
 };
 
+function copyCodeBlockFallback(code: string): void {
+  // markstream emits `copy` even when it skipped the write because the
+  // Clipboard API is unavailable. Reuse our plain-HTTP fallback in that case,
+  // while avoiding a duplicate write after markstream succeeds on HTTPS.
+  const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+  if (clipboard && typeof clipboard.writeText === 'function') return;
+  void copyTextToClipboard(code);
+}
+
 // Root cause for the "large session turns into code skeletons" failure:
 // markstream mounts every code block in the loaded transcript, then shiki has
 // to tokenize all of them. `loading: false` removes the visible skeleton gate,
@@ -437,6 +446,7 @@ function copyDiff(code: string, idx: number) {
         :smooth-streaming="streaming"
         :batch-rendering="allowBatchRender"
         :defer-nodes-until-visible="false"
+        @copy="copyCodeBlockFallback"
       />
 
       <!-- ```diff fence → local renderer (preserves +/- markers + colours) -->

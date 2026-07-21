@@ -47,6 +47,21 @@ function createMockProvider(stream: StreamedMessage): ChatProvider {
   };
 }
 describe('generate()', () => {
+  it('omits trace metadata when the provider does not expose it', async () => {
+    const onTraceId = vi.fn();
+    const result = await generate(
+      createMockProvider(createMockStream([{ type: 'text', text: 'ok' }])),
+      '',
+      [],
+      [],
+      undefined,
+      { onTraceId },
+    );
+
+    expect(onTraceId).not.toHaveBeenCalled();
+    expect(Object.hasOwn(result, 'traceId')).toBe(false);
+  });
+
   it('merges consecutive TextParts and filters empty ones', async () => {
     const stream = createMockStream([
       { type: 'text', text: 'Hello, ' },
@@ -267,6 +282,23 @@ describe('generate()', () => {
 
     expect(result.message.content.some((p) => p.type === 'think')).toBe(true);
     expect(result.message.toolCalls.length).toBeGreaterThan(0);
+  });
+
+  it('preserves an explicitly empty ThinkPart alongside a tool call', async () => {
+    const stream = createMockStream([
+      { type: 'think', think: '' },
+      {
+        type: 'function',
+        id: 'tool#1',
+        name: 'read_file',
+        arguments: '{"path":"/tmp"}',
+      },
+    ]);
+    const provider = createMockProvider(stream);
+
+    const result = await generate(provider, '', [], []);
+
+    expect(result.message.content).toEqual([{ type: 'think', think: '' }]);
   });
 
   it('preserves stream id and usage', async () => {

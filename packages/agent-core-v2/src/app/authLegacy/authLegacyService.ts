@@ -11,17 +11,17 @@
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
-import type { AuthSummary } from '@moonshot-ai/protocol';
+import type { AuthSummary } from './authLegacy';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
-import { IProviderService } from '#/app/provider/provider';
+import { DEFAULT_MODEL_SECTION } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
 
 import { IAuthLegacyService } from './authLegacy';
 
-const DEFAULT_MODEL_SECTION = 'defaultModel';
 const MANAGED_PROVIDER_NAME = KIMI_CODE_PROVIDER_NAME;
 
 export class AuthLegacyService implements IAuthLegacyService {
@@ -34,8 +34,6 @@ export class AuthLegacyService implements IAuthLegacyService {
   ) {}
 
   async get(): Promise<AuthSummary> {
-    // Config loads asynchronously during bootstrap; mirror the catalog route's
-    // guard so a first-paint probe never observes a not-yet-loaded snapshot.
     await this.config.ready;
 
     const providers = this.providerService.list();
@@ -63,8 +61,6 @@ export class AuthLegacyService implements IAuthLegacyService {
     try {
       return (await this.oauth.status(MANAGED_PROVIDER_NAME)).loggedIn;
     } catch {
-      // Token-storage failures must not block the readiness probe; treat any
-      // error as "no usable token" (matches v1's `_hasCachedToken`).
       return false;
     }
   }
@@ -80,6 +76,6 @@ registerScopedService(
   LifecycleScope.App,
   IAuthLegacyService,
   AuthLegacyService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'authLegacy',
 );

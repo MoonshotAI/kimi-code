@@ -5,12 +5,14 @@
  *
  * The argument is intentionally just a status enum — no reason or evidence. The
  * model explains itself in its own reply; the status is the machine-readable
- * signal.
+ * signal. Registered for the main agent only, mirroring v1's
+ * `agent.type === 'main'` gate.
  */
 
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
@@ -56,11 +58,18 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
       description: `Setting goal status: ${status}`,
       stopBatchAfterThis: status !== 'active' && goalIsActive,
       approvalRule: this.name,
-      execute: async () => {
+      execute: async ({ turnId }) => {
+        const goalAtExecution = this.goal.getGoal().goal;
+        if (goalAtExecution === null || (currentGoal === null && status === 'active')) {
+          return { output: missingGoalOutput(status) };
+        }
+        if (
+          goalAtExecution.goalId !== currentGoal?.goalId &&
+          !this.goal.isGoalToolTarget(turnId, goalAtExecution.goalId)
+        ) {
+          return { output: changedGoalOutput(status) };
+        }
         if (status === 'active') {
-          if (currentGoal === null) {
-            return { output: 'Goal not resumed: no current goal.' };
-          }
           await this.goal.resumeGoal({}, 'model');
           return { output: 'Goal resumed.' };
         }
@@ -91,4 +100,18 @@ function isUpdateGoalStatus(status: unknown): status is UpdateGoalToolInput['sta
   return status === 'active' || status === 'complete' || status === 'blocked';
 }
 
-registerTool(UpdateGoalTool);
+function missingGoalOutput(status: UpdateGoalToolInput['status']): string {
+  if (status === 'active') return 'Goal not resumed: no current goal.';
+  if (status === 'complete') return 'Goal not completed: no active goal.';
+  return 'Goal not blocked: no active goal.';
+}
+
+function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
+  if (status === 'active') return 'Goal not resumed: the current goal changed.';
+  if (status === 'complete') return 'Goal not completed: the current goal changed.';
+  return 'Goal not blocked: the current goal changed.';
+}
+
+registerTool(UpdateGoalTool, {
+  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
+});

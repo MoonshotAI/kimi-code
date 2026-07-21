@@ -397,12 +397,21 @@ export class CustomEditor extends Editor {
       }
       if (this.onPasteImage !== undefined) {
         const handler = this.onPasteImage;
-        void handler().then((handled) => {
-          if (!handled) {
-            this.onTextPaste?.();
-            super.handleInput.call(this, normalized);
-          }
-        });
+        const pasteAsText = (): void => {
+          this.onTextPaste?.();
+          super.handleInput.call(this, normalized);
+        };
+        void handler().then(
+          (handled) => {
+            if (!handled) pasteAsText();
+          },
+          () => {
+            // A rejecting image-paste handler must not leak an unhandled
+            // rejection (the CLI turns those into a silent exit) — treat it
+            // the same as "no image available" and fall back to text paste.
+            pasteAsText();
+          },
+        );
         return;
       }
     }

@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
 
@@ -19,8 +21,6 @@ interface WorkspaceWire {
   id: string;
   root: string;
   name: string;
-  is_git_repo: boolean;
-  branch: string | null;
   created_at: string;
   last_opened_at: string;
   session_count: number;
@@ -100,12 +100,6 @@ describe('server-v2 /api/v1/workspaces', () => {
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
-  /** Lay down a minimal git fixture: `.git/HEAD` referring to a branch. */
-  async function makeGitRepo(root: string, branch: string): Promise<void> {
-    await mkdir(join(root, '.git'), { recursive: true });
-    await writeFile(join(root, '.git', 'HEAD'), `ref: refs/heads/${branch}\n`, 'utf8');
-  }
-
   it('creates a workspace with the full wire shape', async () => {
     const root = home as string;
     const { status, body } = await postJson<WorkspaceWire>('/api/v1/workspaces', {
@@ -117,43 +111,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(body.data.root).toBe(root);
     expect(body.data.name).toBe('proj');
     expect(body.data.id).toMatch(/^wd_[a-z0-9._-]+_[0-9a-f]{12}$/);
-    expect(typeof body.data.is_git_repo).toBe('boolean');
-    expect(body.data.branch).toBeNull();
     expect(typeof body.data.session_count).toBe('number');
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
     expect(Number.isNaN(Date.parse(body.data.last_opened_at))).toBe(false);
-  });
-
-  it('resolves branch from .git/HEAD (and null when detached)', async () => {
-    const repo = join(home as string, 'repo');
-    await makeGitRepo(repo, 'feature/x');
-    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: repo });
-    expect(created.body.data.is_git_repo).toBe(true);
-    expect(created.body.data.branch).toBe('feature/x');
-
-    const detached = join(home as string, 'detached');
-    await mkdir(join(detached, '.git'), { recursive: true });
-    await writeFile(
-      join(detached, '.git', 'HEAD'),
-      '0123456789abcdef0123456789abcdef01234567\n',
-      'utf8',
-    );
-    const det = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: detached });
-    expect(det.body.data.is_git_repo).toBe(true);
-    expect(det.body.data.branch).toBeNull();
-  });
-
-  it('resolves branch through a .git worktree file', async () => {
-    const root = join(home as string, 'worktree');
-    const realGitDir = join(home as string, 'real-git');
-    await mkdir(realGitDir, { recursive: true });
-    await writeFile(join(realGitDir, 'HEAD'), 'ref: refs/heads/wt-branch\n', 'utf8');
-    await mkdir(root, { recursive: true });
-    await writeFile(join(root, '.git'), `gitdir: ${realGitDir}\n`, 'utf8');
-
-    const { body } = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
-    expect(body.data.is_git_repo).toBe(true);
-    expect(body.data.branch).toBe('wt-branch');
   });
 
   it('derives the default name from the root when name is omitted', async () => {
@@ -233,5 +193,58 @@ describe('server-v2 /api/v1/workspaces', () => {
     const { body } = await getJson<ListWire>('/api/v1/workspaces');
     const ws = body.data.items.find((w) => w.id === created.body.data.id);
     expect(ws?.session_count).toBe(1);
+  });
+
+  it('sums session_count across legacy split buckets of one root', async () => {
+    // Legacy pre-fold data: one physical directory registered under two
+    // spelling variants, with sessions bucketed per minted id.
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const lowerRoot = 'c:\\users\\foo\\proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const lowerId = encodeWorkDirKey(lowerRoot);
+    await writeFile(
+      join(home as string, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          [typedId]: {
+            root: typedRoot,
+            name: 'proj',
+            created_at: '2024-01-01T00:00:00.000Z',
+            last_opened_at: '2024-01-01T00:00:00.000Z',
+          },
+          [lowerId]: {
+            root: lowerRoot,
+            name: 'proj',
+            created_at: '2024-01-01T00:00:00.000Z',
+            last_opened_at: '2024-01-01T00:00:00.000Z',
+          },
+        },
+      }),
+      'utf8',
+    );
+    const seedBucket = async (
+      wsId: string,
+      sid: string,
+      meta: Record<string, unknown>,
+    ): Promise<void> => {
+      const dir = join(home as string, 'sessions', wsId, sid);
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, 'state.json'),
+        JSON.stringify({ version: 2, cwd: typedRoot, createdAt: 1, updatedAt: 1, ...meta }),
+        'utf8',
+      );
+    };
+    await seedBucket(typedId, 's-typed', {});
+    // Archived sessions count too (the wire counts every persisted session).
+    await seedBucket(lowerId, 's-lower', { archived: true, updatedAt: 2 });
+
+    // The catalog dedupes to one workspace whose count covers both buckets.
+    const { body } = await getJson<ListWire>('/api/v1/workspaces');
+    expect(body.code).toBe(0);
+    expect(body.data.items).toHaveLength(1);
+    expect([typedId, lowerId]).toContain(body.data.items[0]?.id);
+    expect(body.data.items[0]?.session_count).toBe(2);
   });
 });

@@ -13,6 +13,7 @@
  *   GET    /sessions/{session_id}/children     list child sessions
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
+ *   GET    /sessions/{session_id}/goal         current goal (null when none)
  *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
@@ -26,9 +27,10 @@
  * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
  * and `ISessionIndex.list({ childOf })` directly — the child markers and
  * parent-title default live in the lifecycle, and the child filter lives in the
- * index. Only `POST /sessions/{id}/profile` (`updateProfile`) and
- * `GET /sessions/{id}/status` go through `ISessionLegacyService` (the
- * `agent_config` patch and the status rollup hold real cross-domain adaptation);
+ * index. Only `POST /sessions/{id}/profile` (`updateProfile`),
+ * `GET /sessions/{id}/status`, and `GET /sessions/{id}/goal` go through
+ * `ISessionLegacyService` (the `agent_config` patch, the status rollup, and the
+ * current-goal read hold real cross-domain adaptation);
  * the route forwards each adapter result verbatim, mirroring v1's thin handler.
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
@@ -48,16 +50,17 @@
  * from `ISessionIndex` (with `cwd` persisted on the session itself), and now
  * also surfaces `last_prompt` and the merged custom `metadata`.
  *
- * **Status**: v1's `SessionService` overwrites the placeholder `status` with the
- * live value before projecting (`_patchSessionStatus`). v2 does the same:
- * `toWireSession` takes the live `ISessionActivity.status()` resolved from the
- * session's scope (or `'idle'` when the session is cold), so the wire `status`
- * is real on every session-producing endpoint here. `GET /sessions` and
- * `GET /sessions/{id}/children` filter their projected page by the `status`
+ * **Busy / last turn**: v1's `SessionService` overwrites the placeholder
+ * `status` with the live value before projecting (`_patchSessionStatus`). v2
+ * projects the orthogonal facts instead: `toWireSession` takes
+ * `resolveSessionFacts` — `busy` from the session lifecycle's authoritative
+ * drain registry and `last_turn_reason` from the main agent's activity view (a
+ * cold session is not busy and carries no reason) — so both are real on every
+ * session-producing endpoint here. `GET /sessions` and
+ * `GET /sessions/{id}/children` filter their projected page by the `busy`
  * query param (post-page, matching v1 — `has_more` reflects the pre-filter
- * page), except `archived_only` lists filter status before route pagination so
- * they can drain archived pages the same way v1 does. The `aborted` phase is not
- * derived yet (gap G10); v2 never reports it.
+ * page), except `archived_only` lists filter busy before route pagination so
+ * they can drain archived pages the same way v1 does.
  *
  * **cwd resolution (gap G3 closed)**: the session's frozen work dir is
  * persisted on its metadata document (`ISessionMetadata`) and surfaced on the
@@ -74,12 +77,14 @@ import {
   IAgentProfileService,
   IAgentPromptService,
   IAgentFullCompactionService,
+  IAgentLifecycleService,
   IAgentRPCService,
+  IAgentActivityView,
   IAuthSummaryService,
   ISessionBtwService,
-  ISessionActivity,
   ISessionContext,
   ISessionIndex,
+  ISessionInteractionService,
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
@@ -92,34 +97,38 @@ import {
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../protocol/error-codes';
+import { pageResponseSchema } from '../protocol/pagination';
 import {
-  ErrorCode,
   archiveSessionResponseSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
-  emptySessionUsage,
   forkSessionRequestSchema,
+  getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
-  pageResponseSchema,
   sessionAbortResponseSchema,
-  sessionSchema,
   sessionStatusResponseSchema,
-  sessionStatusSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   undoSessionRequestSchema,
   undoSessionResponseSchema,
   updateSessionProfileRequestSchema,
-  workspaceIdSchema,
-} from '@moonshot-ai/protocol';
-import type { Session, SessionStatus } from '@moonshot-ai/protocol';
+} from '../protocol/rest-session';
+import {
+  emptySessionUsage,
+  sessionSchema,
+  type Session,
+  type SessionPendingInteraction,
+} from '../protocol/session';
+import { workspaceIdSchema } from '../protocol/workspace';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
+import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
 interface SessionRouteHost {
@@ -154,14 +163,16 @@ const DEFAULT_SESSION_LIST_PAGE_SIZE = 20;
 // not implement `cursor`, so we page over its recency-sorted result); `status`
 // filters the projected page (post-page, matching v1). `include_archive` →
 // `includeArchived`; `archived_only` forces `includeArchived` and then keeps
-// only archived sessions; `workspace_id` → `workspaceId`; `exclude_empty` drops
-// sessions with no prompt.
+// only archived sessions; `workspace_id` → `workspaceIds` after
+// `resolveAliasIds` expands the alias set of the directory (legacy split
+// buckets list as one workspace); `exclude_empty` drops sessions with no
+// prompt.
 const sessionsListQueryCoercion = z
   .object({
     before_id: z.string().min(1).optional(),
     after_id: z.string().min(1).optional(),
     page_size: z.coerce.number().int().min(1).max(100).optional(),
-    status: sessionStatusSchema.optional(),
+    busy: booleanQueryParam,
     include_archive: booleanQueryParam,
     exclude_empty: booleanQueryParam,
     archived_only: booleanQueryParam,
@@ -190,16 +201,16 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-// Mirrors v1's children query: id-cursors + page_size + status. The route
-// projects the live `ISessionActivity.status()` onto each child and filters the
-// page by `status` (post-page, matching v1); the child-marker filtering lives in
-// `ISessionIndex.list({ childOf })`, the status filter stays at the edge.
+// Mirrors v1's children query: id-cursors + page_size + busy. The route
+// projects the live busy fact onto each child and filters the page by it
+// (post-page, matching v1); the child-marker filtering lives in
+// `ISessionIndex.list({ childOf })`, the busy filter stays at the edge.
 const sessionChildrenListQueryCoercion = z
   .object({
     before_id: z.string().min(1).optional(),
     after_id: z.string().min(1).optional(),
     page_size: z.coerce.number().int().min(1).max(100).optional(),
-    status: sessionStatusSchema.optional(),
+    busy: booleanQueryParam,
   })
   .superRefine((value, ctx) => {
     if (value.before_id !== undefined && value.after_id !== undefined) {
@@ -311,7 +322,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const session = toWireSession(
           { ...meta, workspaceId: touched.id },
           touched.root,
-          handle.accessor.get(ISessionActivity).status(),
+          { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
         );
         core.accessor.get(IEventService).publish({
           type: 'event.session.created',
@@ -319,7 +330,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         });
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -351,8 +362,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const roots = new Map(workspaces.map((w) => [w.id, w.root]));
 
       // v1 resolves `workspace_id` to its root and 40410s when it is unknown;
-      // the index filters by `workspaceId` directly, so only the existence
-      // check is needed here (the root itself is not used by the query).
+      // the existence check stays on the listed (root-deduped) registry so an
+      // unknown id fails byte-identically, and only then is a known id
+      // expanded to every id spelling of the same directory — legacy split
+      // buckets (casing/slash variants) list as one workspace.
       if (raw.workspace_id !== undefined && !roots.has(raw.workspace_id)) {
         reply.send(
           errEnvelope(
@@ -367,10 +380,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       // `FileSessionIndex` does not implement `cursor` (gap G5 closed here), so
       // we fetch the full recency-sorted set (no `limit`) and apply the id
       // cursor in this handler. `list()` already orders by `updatedAt` desc and
-      // filters by workspace / archived. `archived_only` forces archived rows
-      // into the set, then the filter below keeps only them.
+      // filters across the workspace-id set / archived. `archived_only` forces
+      // archived rows into the set, then the filter below keeps only them.
+      const workspaceIds =
+        raw.workspace_id === undefined
+          ? undefined
+          : await core.accessor.get(IWorkspaceRegistry).resolveAliasIds(raw.workspace_id);
       const page = await core.accessor.get(ISessionIndex).list({
-        workspaceId: raw.workspace_id,
+        workspaceIds,
         includeArchived: archivedOnly ? true : raw.include_archive,
       });
 
@@ -383,7 +400,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const eligible: {
         readonly summary: (typeof page.items)[number];
         readonly cwd: string;
-        readonly status?: Session['status'];
+        readonly facts?: SessionFacts;
       }[] = [];
       for (const summary of page.items) {
         const cwd = summary.cwd ?? roots.get(summary.workspaceId);
@@ -413,12 +430,12 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       let visible = window;
       if (archivedOnly) {
         visible =
-          raw.status === undefined
+          raw.busy === undefined
             ? window.filter((entry) => entry.summary.archived === true)
             : window.flatMap((entry) => {
                 if (entry.summary.archived !== true) return [];
-                const status = resolveSessionStatus(core, entry.summary.id);
-                return status === raw.status ? [{ ...entry, status }] : [];
+                const facts = resolveSessionFacts(core, entry.summary.id);
+                return facts.busy === raw.busy ? [{ ...entry, facts }] : [];
               });
       }
       const limit = archivedOnly
@@ -427,14 +444,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const hasMore = visible.length > limit;
       const projected: Session[] = visible
         .slice(0, limit)
-        .map(({ summary, cwd, status }) =>
-          toWireSession(summary, cwd, status ?? resolveSessionStatus(core, summary.id)),
+        .map(({ summary, cwd, facts }) =>
+          toWireSession(summary, cwd, facts ?? resolveSessionFacts(core, summary.id)),
         );
-      // v1 filters ordinary lists by `status` post-page; `archived_only` already
-      // applied status before pagination above so it can drain to a full page.
+      // v1 filters ordinary lists by the busy fact post-page; `archived_only`
+      // already applied it before pagination above so it can drain to a full page.
       const items =
-        raw.status !== undefined && !archivedOnly
-          ? projected.filter((session) => session.status === raw.status)
+        raw.busy !== undefined && !archivedOnly
+          ? projected.filter((session) => session.busy === raw.busy)
           : projected;
       reply.send(okEnvelope({ items, has_more: hasMore }, req.id));
     },
@@ -482,7 +499,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionStatus(core, session_id)), req.id),
+        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
       );
     },
   );
@@ -527,7 +544,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionStatus(core, session_id)), req.id),
+        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
       );
     },
   );
@@ -557,7 +574,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const fields = await core.accessor
           .get(ISessionLegacyService)
           .updateProfile(session_id, req.body);
-        const session = toWireSession(fields, fields.root, resolveSessionStatus(core, fields.id));
+        const session = toWireSession(fields, fields.root, resolveSessionFacts(core, fields.id));
         // Broadcast the title change to every connection (including clients not
         // subscribed to this session, and covering inactive sessions), so session
         // lists stay in sync — mirrors v1's `session.meta.updated` publish.
@@ -574,7 +591,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -641,12 +658,16 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           const session = toWireSession(
             { ...meta, workspaceId: ctx.workspaceId },
             ctx.cwd,
-            resolveSessionStatus(core, meta.id),
+            resolveSessionFacts(core, meta.id),
           );
           core.accessor.get(IEventService).publish({
             type: 'event.session.created',
             payload: { agentId: 'main', sessionId: session.id, session },
           });
+          requestLog(req)?.info(
+            { session_id: parsed.id, action: 'fork', new_session_id: session.id },
+            'session action completed',
+          );
           reply.send(okEnvelope(session, req.id));
           return;
         }
@@ -660,6 +681,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           agent.accessor
             .get(IAgentFullCompactionService)
             .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+          requestLog(req)?.info({ session_id: parsed.id, action: 'compact' }, 'session action completed');
           reply.send(okEnvelope({}, req.id));
           return;
         }
@@ -674,6 +696,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           // (cross-domain) and is reused here verbatim.
           agent.accessor.get(IAgentPromptService).undo(body.count);
           const history = agent.accessor.get(IAgentContextMemoryService).get();
+          requestLog(req)?.info({ session_id: parsed.id, action: 'undo' }, 'session action completed');
           const [summary, status] = await Promise.all([
             core.accessor.get(ISessionIndex).get(parsed.id),
             legacy.status(parsed.id),
@@ -700,6 +723,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           // No turnId → cancel whatever turn is active; a safe no-op when idle.
           // v1 always reports success once the session exists.
           await agent.accessor.get(IAgentRPCService).cancel({});
+          requestLog(req)?.info({ session_id: parsed.id, action: 'abort' }, 'session action completed');
           reply.send(okEnvelope({ aborted: true }, req.id));
           return;
         }
@@ -730,8 +754,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           const session = toWireSession(
             { ...meta, workspaceId: ctx.workspaceId },
             ctx.cwd,
-            resolveSessionStatus(core, meta.id),
+            resolveSessionFacts(core, meta.id),
           );
+          requestLog(req)?.info({ session_id: parsed.id, action: 'restore' }, 'session action completed');
           reply.send(okEnvelope(session, req.id));
           return;
         }
@@ -744,9 +769,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
         await core.accessor.get(ISessionLifecycleService).archive(parsed.id);
+        requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -818,18 +844,18 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           toWireSession(
             summary,
             summary.cwd ?? roots.get(summary.workspaceId) ?? '',
-            resolveSessionStatus(core, summary.id),
+            resolveSessionFacts(core, summary.id),
           ),
         );
-        // v1 filters the projected page by `status` (post-page); `has_more`
+        // v1 filters the projected page by the busy fact (post-page); `has_more`
         // reflects the pre-filter page.
         const items =
-          req.query.status !== undefined
-            ? projected.filter((session) => session.status === req.query.status)
+          req.query.busy !== undefined
+            ? projected.filter((session) => session.busy === req.query.busy)
             : projected;
         reply.send(okEnvelope({ items, has_more: slice.length > pageSize }, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -871,7 +897,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const session = toWireSession(
           { ...meta, workspaceId: ctx.workspaceId },
           ctx.cwd,
-          resolveSessionStatus(core, meta.id),
+          resolveSessionFacts(core, meta.id),
         );
         core.accessor.get(IEventService).publish({
           type: 'event.session.created',
@@ -879,7 +905,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         });
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -908,7 +934,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const status = await core.accessor.get(ISessionLegacyService).status(session_id);
         reply.send(okEnvelope(status, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -916,6 +942,35 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     statusRoute.path,
     statusRoute.options,
     statusRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
+
+  const goalRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/goal',
+      params: sessionIdParamSchema,
+      success: { data: getSessionGoalResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'Get the current session goal (null when none is active)',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const goal = await core.accessor.get(ISessionLegacyService).goal(session_id);
+        reply.send(okEnvelope(goal, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.get(
+    goalRoute.path,
+    goalRoute.options,
+    goalRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 
   const sessionWarningsRoute = defineRoute(
@@ -961,7 +1016,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
               ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -992,7 +1047,7 @@ export interface SessionWireFields {
 export function toWireSession(
   fields: SessionWireFields,
   cwd: string,
-  status: SessionStatus,
+  facts: SessionFacts,
 ): Session {
   return {
     id: fields.id,
@@ -1000,7 +1055,10 @@ export function toWireSession(
     title: fields.title ?? '',
     created_at: new Date(fields.createdAt).toISOString(),
     updated_at: new Date(fields.updatedAt).toISOString(),
-    status,
+    busy: facts.busy,
+    main_turn_active: facts.mainTurnActive,
+    pending_interaction: facts.pendingInteraction,
+    last_turn_reason: facts.lastTurnReason,
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
     metadata: buildWireMetadata(fields.custom, cwd),
@@ -1012,17 +1070,57 @@ export function toWireSession(
   };
 }
 
+/** Live activity and interaction facts projected onto the wire `Session`. */
+export interface SessionFacts {
+  readonly busy: boolean;
+  readonly mainTurnActive: boolean;
+  readonly pendingInteraction: SessionPendingInteraction;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+}
+
 /**
- * Resolve a session's live wire `status`. Mirrors v1's
- * `SessionService._patchSessionStatus`: the live `ISessionActivity.status()`
- * wins, and a cold session (no live handle) reports `'idle'` — it carries no
- * pending approval/question and no active turn. The `aborted` phase is not
- * derived in v2 yet (gap G10), so it is never returned here.
+ * Resolve a session's live wire facts, derived on demand from the agents'
+ * activity views: `busy` = any agent with an active turn or background task;
+ * the reason is the main agent's latest turn outcome (`blocked` folds into
+ * `failed`). Nothing is booked at session level — a cold session (no live
+ * handle) is not busy and carries no outcome.
  */
-function resolveSessionStatus(core: Scope, sessionId: string): SessionStatus {
+export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
   const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
-  if (handle === undefined) return 'idle';
-  return handle.accessor.get(ISessionActivity).status();
+  if (handle === undefined) {
+    return {
+      busy: false,
+      mainTurnActive: false,
+      pendingInteraction: 'none',
+    };
+  }
+  const agents = handle.accessor.get(IAgentLifecycleService);
+  const mainActivity = agents.get(MAIN_AGENT_ID)?.accessor.get(IAgentActivityView).state();
+  const interactions = handle.accessor.get(ISessionInteractionService);
+  let busy = false;
+  for (const agent of agents.list()) {
+    const state = agent.accessor.get(IAgentActivityView).state();
+    if (state.turn !== undefined || state.background.length > 0) {
+      busy = true;
+      break;
+    }
+  }
+  const reason = mainActivity?.lastTurn?.reason;
+  const pendingInteraction = resolvePendingInteraction(interactions);
+  return {
+    busy,
+    mainTurnActive: mainActivity?.turn !== undefined,
+    pendingInteraction,
+    lastTurnReason: reason === 'blocked' ? 'failed' : reason,
+  };
+}
+
+function resolvePendingInteraction(
+  interactions: ISessionInteractionService,
+): SessionPendingInteraction {
+  if (interactions.listPending('approval').length > 0) return 'approval';
+  if (interactions.listPending('question').length > 0) return 'question';
+  return 'none';
 }
 
 /**
@@ -1117,9 +1215,11 @@ function buildValidationEnvelope(
 
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
-  requestId: string,
+  req: { id: string },
   err: unknown,
 ): void {
+  const requestId = req.id;
+  const log = requestLog(req);
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
@@ -1170,6 +1270,7 @@ function sendMappedError(
         return;
     }
   }
+  log?.error({ err }, 'session request failed');
   reply.send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,

@@ -23,6 +23,8 @@ export interface AuthFailureLimiterOptions {
   readonly windowMs?: number;
   /** Ban duration in ms once the threshold is hit. Default `60_000`. */
   readonly banMs?: number;
+  /** Emits a warn line when a source crosses into a ban. */
+  readonly logger?: { warn(obj: unknown, msg: string): void };
 }
 
 /** Minimal surface consumed by `createAuthHook`. */
@@ -87,7 +89,14 @@ export function createAuthFailureLimiter(
       }
       entry.count += 1;
       if (entry.count >= maxFailures) {
+        const wasBanned = entry.bannedUntil > now;
         entry.bannedUntil = now + banMs;
+        if (!wasBanned) {
+          opts?.logger?.warn(
+            { ip, bannedUntil: entry.bannedUntil },
+            'too many failed auth attempts; source temporarily banned',
+          );
+        }
       }
     },
     isBanned(ip: string): boolean {

@@ -1,7 +1,7 @@
-import { type Message } from '#/app/llmProtocol/message';
+import { type Message } from '#/kosong/contract/message';
 import { describe, expect, it } from 'vitest';
 
-import { estimateTokensForMessages } from '#/_base/utils/tokens';
+import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { DefaultCompactionStrategy } from '#/agent/fullCompaction/strategy';
 
 describe('DefaultCompactionStrategy', () => {
@@ -89,8 +89,6 @@ describe('DefaultCompactionStrategy', () => {
       textMessage('user', 'next prompt'),
     ];
 
-    // The only valid split is before the parallel exchange (after 'old assistant'),
-    // never between tool_a and tool_b — that would leave tool_b as an orphan.
     expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
   });
 

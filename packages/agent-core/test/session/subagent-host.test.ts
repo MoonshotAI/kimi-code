@@ -74,6 +74,13 @@ describe('resolveSubagentTimeoutMs', () => {
     process.env[SUBAGENT_TIMEOUT_ENV] = '-5';
     expect(resolveSubagentTimeoutMs()).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
   });
+
+  it('treats 0 as no timeout from both config and env', () => {
+    delete process.env[SUBAGENT_TIMEOUT_ENV];
+    expect(resolveSubagentTimeoutMs(0)).toBe(0);
+    process.env[SUBAGENT_TIMEOUT_ENV] = '0';
+    expect(resolveSubagentTimeoutMs(600000)).toBe(0);
+  });
 });
 
 describe('formatSubagentTimeoutDescription', () => {
@@ -327,6 +334,9 @@ describe('SessionSubagentHost', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('subagent_created', {
       subagent_name: 'explore',
       run_in_background: false,
+      agent_id: 'agent-0',
+      parent_agent_id: 'main',
+      parent_tool_call_id: 'call_agent',
     });
     expect(parent.allEvents).toContainEqual(
       expect.objectContaining({
@@ -449,10 +459,19 @@ describe('SessionSubagentHost', () => {
     expect(child.llmCalls[0]?.systemPrompt).toContain('You are now running as a subagent.');
     expect(child.llmCalls[0]?.tools.map((tool) => tool.name).toSorted()).toEqual([
       'Bash',
+      'CronCreate',
+      'CronDelete',
+      'CronList',
       'Edit',
+      'EnterPlanMode',
+      'ExitPlanMode',
       'Glob',
       'Grep',
       'Read',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+      'TodoList',
       'Write',
     ]);
     expect(child.llmCalls[0]?.history).toMatchObject([

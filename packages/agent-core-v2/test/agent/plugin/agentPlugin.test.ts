@@ -122,7 +122,6 @@ describe('AgentPluginService plugin session-start wiring', () => {
       ),
     );
 
-    // Force-instantiate the real service (production does this from createMain).
     ctx.get(IAgentPluginService);
 
     await injectRegistered(ctx);

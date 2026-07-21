@@ -11,7 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -66,13 +66,48 @@ function mediaPathTag(text: string): { kind: 'image' | 'video' | 'audio'; path: 
  *  recover the fileId from the cache filename to build a playable URL. Returns
  *  undefined when the basename isn't shaped like a file-store id (`f_…`) — e.g.
  *  TUI cache names (`<uuid>-<label>`) or legacy `/tmp/foo.mp4` paths — so the
- *  caller leaves the raw tag as text instead of fabricating a broken /files url. */
-const FILE_STORE_ID_RE = /^f_[A-Za-z0-9]{10,}$/;
+ *  caller leaves the raw tag as text instead of fabricating a broken /files url.
+ *
+ *  File-store ids come in two shapes: v1 `f_`<26-char ULID> (no hyphens) and
+ *  v2 `f_`<randomUUID> (32 hex chars + 4 hyphens). */
+const FILE_STORE_ID_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/;
+/** Same two id shapes, anchored at the start of a `<fileId>-<name>` basename.
+    Splitting on the first '-' instead would truncate v2 UUID ids at their
+    first inner hyphen. */
+const FILE_STORE_ID_AT_START_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?=-)/;
 function fileIdFromCachePath(p: string): string | undefined {
   const base = p.split(/[\\/]/).at(-1) ?? '';
   const dot = base.lastIndexOf('.');
   const id = dot > 0 ? base.slice(0, dot) : base;
   return FILE_STORE_ID_RE.test(id) ? id : undefined;
+}
+
+/** A generic file attachment comes back from the server as a text notice (see
+ *  resolvePromptMediaFiles in the kap-server prompts route):
+ *    Attached file "<name>" (<mime>, <n> bytes): <dir>/<fileId>-<name> — open it with the Read tool
+ *  Recover the chip from the notice instead of dumping it — absolute server
+ *  path and all — into the bubble. The fileId is matched by shape at the start
+ *  of the basename (ULID or UUID, see FILE_STORE_ID_AT_START_RE). Inline-base64
+ *  attachments are content-hash named (no fileId): they still become a chip so
+ *  the notice stays hidden, just without bytes to open. */
+const ATTACHED_FILE_NOTICE_RE =
+  /^Attached file "(.+)" \(([^,]+), (\d+) bytes\): (.+) — open it with the Read tool$/;
+
+function attachedFileNotice(
+  text: string,
+): { name: string; mediaType: string; size: number; fileId?: string } | null {
+  const m = ATTACHED_FILE_NOTICE_RE.exec(text.trim());
+  if (!m) return null;
+  const base = (m[4] ?? '').split(/[\\/]/).at(-1) ?? '';
+  const id = FILE_STORE_ID_AT_START_RE.exec(base)?.[0];
+  return {
+    name: m[1]!,
+    mediaType: m[2]!,
+    size: Number(m[3]),
+    fileId: id !== undefined && FILE_STORE_ID_RE.test(id) ? id : undefined,
+  };
 }
 
 function bytesFromBase64(b64: string): number {
@@ -347,13 +382,14 @@ interface Group {
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
   /**
-   * Content signatures already folded into this group, used to drop a duplicate
-   * assistant message. The same logical reply can reach us under two different
-   * ids — e.g. the streamed copy plus the persisted copy after a reload — and
-   * since both share the promptId they'd otherwise merge and render the text +
-   * tool cards twice. Dedupe by exact content so a turn shows each reply once.
+   * Normalized signatures already folded into this group, used to drop a
+   * duplicate assistant message. The same logical reply can reach us under two
+   * different ids — e.g. the streamed copy plus the persisted copy after a
+   * reload — and since both share the promptId they'd otherwise merge and
+   * render the text + tool cards twice. Dedupe by normalized content (see
+   * `contentSig` / `covers`) so a turn shows each reply once.
    */
-  seenSigs: Set<string>;
+  foldedSigs: ContentSig[];
 }
 
 // ---------------------------------------------------------------------------
@@ -435,12 +471,13 @@ function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_mis
 
 
 /**
- * Whether a USER-role message should be shown. Mirrors the TUI's
- * isReplayUserTurnRecord: only real user input (origin `user`/absent, or a
- * user-typed slash command) is displayed; system-injected user turns
- * (compaction summaries, injections, hook results, retries, system triggers,
- * background tasks, cron) are hidden. The origin arrives via message metadata
- * (see toProtocolMessage in @moonshot-ai/agent-core).
+ * Whether a USER-role message should be shown. Mirrors agent-core's
+ * isAgentReplayUserTurnRecord (agent/replay/turns.ts): only real user input
+ * (origin `user`/absent, or a user-typed slash command) is displayed;
+ * system-injected user turns (compaction summaries, injections, hook results,
+ * retries, system triggers, background tasks, cron) are hidden. The origin
+ * arrives via message metadata (see toProtocolMessage in
+ * @moonshot-ai/agent-core).
  */
 function isDisplayableUserMessage(msg: AppMessage): boolean {
   const origin = msg.metadata?.['origin'] as { kind?: string; trigger?: string } | undefined;
@@ -483,6 +520,57 @@ function parsePlanSavedPath(output: string[] | undefined): string | undefined {
     if (line.startsWith(marker)) return line.slice(marker.length).trim();
   }
   return undefined;
+}
+
+/**
+ * Normalize an assistant message's content for duplicate detection. The same
+ * logical reply reaches us as both a persisted transcript message and a
+ * streamed copy (live deltas, or a resync seed from `in_flight_turn`), and the
+ * two differ in ways that must not defeat the dedup: the persisted thinking
+ * part may carry a provider `signature`, the seeded tool card may carry
+ * progress `outputLines`, and the seeded copy concatenates each stream into a
+ * single part instead of keeping the model's part boundaries. Reduce to the
+ * concatenated stream text plus sorted tool-call ids — a toolCallId is unique
+ * per call, so identical id sets mean the same logical message.
+ */
+interface ContentSig {
+  text: string;
+  thinking: string;
+  toolIds: string[];
+  rest: string[];
+}
+
+function contentSig(content: AppMessage['content']): ContentSig {
+  let text = '';
+  let thinking = '';
+  const toolIds: string[] = [];
+  const rest: string[] = [];
+  for (const c of content) {
+    if (c.type === 'text') text += c.text;
+    else if (c.type === 'thinking') thinking += c.thinking;
+    else if (c.type === 'toolUse') toolIds.push(c.toolCallId);
+    else rest.push(JSON.stringify(c));
+  }
+  toolIds.sort();
+  rest.sort();
+  return { text, thinking, toolIds, rest };
+}
+
+/**
+ * Whether an already-folded message's signature fully covers `incoming` —
+ * i.e. `incoming` is a duplicate of it. Subset, not equality: a resync seed
+ * carries only the still-running tools of a parallel batch (finished ones
+ * left `running_tools`), so its id set is a strict subset of the persisted
+ * message's. Empty text/thinking in `incoming` adds nothing and counts as
+ * covered.
+ */
+function covers(folded: ContentSig, incoming: ContentSig): boolean {
+  if (incoming.text !== '' && incoming.text !== folded.text) return false;
+  if (incoming.thinking !== '' && incoming.thinking !== folded.thinking) return false;
+  return (
+    incoming.toolIds.every((id) => folded.toolIds.includes(id)) &&
+    incoming.rest.every((j) => folded.rest.includes(j))
+  );
 }
 
 export function messagesToTurns(
@@ -614,6 +702,28 @@ export function messagesToTurns(
     }
   }
 
+  /**
+   * Fold the volatile extras of a dropped duplicate into the group: a resync
+   * seed's tool cards carry live progress (`outputLines` from
+   * `in_flight_turn.running_tools[].last_progress`) that the persisted copy
+   * lacks — without this, a mid-tool refresh blanks the card's latest output
+   * until the next progress frame. Never overwrite output a tool result
+   * already settled.
+   */
+  function mergeVolatileExtras(g: Group, content: AppMessage['content']): void {
+    for (const c of content) {
+      if (c.type !== 'toolUse' || !c.outputLines?.length) continue;
+      const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
+      if (idx === -1) continue;
+      const tool = g.tools[idx]!;
+      if (tool.output !== undefined) continue;
+      const updated: ToolCall = { ...tool, output: c.outputLines };
+      g.tools[idx] = updated;
+      const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
+      if (blk && blk.kind === 'tool') blk.tool = updated;
+    }
+  }
+
   function resolveMediaUrl(
     c: AppMessage['content'][number],
   ): { url: string; kind: 'image' | 'video'; fileId?: string } | undefined {
@@ -691,7 +801,7 @@ export function messagesToTurns(
         origin?.kind === 'plugin_command' && origin?.trigger === 'user-slash';
 
       const textParts: string[] = [];
-      const images: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] = [];
+      const attachments: TurnAttachment[] = [];
       for (const c of msg.content) {
         if (c.type === 'text') {
           if (isSkillActivation) {
@@ -712,9 +822,25 @@ export function messagesToTurns(
             if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
               const fileId = fileIdFromCachePath(tag.path);
               if (fileId) {
-                images.push({ url: getFileUrl(fileId), kind: tag.kind, alt: fileId, fileId });
+                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
                 continue;
               }
+            }
+            // A generic file upload comes back as an "Attached file …" notice;
+            // recover the chip the same way (see attachedFileNotice).
+            const attached = attachedFileNotice(c.text);
+            if (attached) {
+              attachments.push({
+                kind: 'file',
+                // No recoverable fileId (inline-base64 upload) → no URL: the
+                // chip renders name/size but stays non-clickable.
+                url: attached.fileId && getFileUrl ? getFileUrl(attached.fileId) : '',
+                fileId: attached.fileId,
+                name: attached.name,
+                mediaType: attached.mediaType,
+                size: attached.size,
+              });
+              continue;
             }
             const stripped = stripImageCompressionCaptions(c.text);
             if (stripped !== c.text && stripped.trim().length === 0) continue;
@@ -722,14 +848,34 @@ export function messagesToTurns(
           }
         }
         const media = resolveMediaUrl(c);
-        if (media) images.push({ url: media.url, kind: media.kind, alt: c.type === 'file' ? c.name : undefined, fileId: media.fileId });
+        if (media) {
+          attachments.push({
+            url: media.url,
+            kind: media.kind,
+            name: c.type === 'file' ? c.name : undefined,
+            fileId: media.fileId,
+          });
+          continue;
+        }
+        // Non-media files (pdf/zip/yaml/…) carry no playable URL, but the chip
+        // still renders them with name/size and a download action.
+        if (c.type === 'file' && getFileUrl) {
+          attachments.push({
+            kind: 'file',
+            url: getFileUrl(c.fileId),
+            fileId: c.fileId,
+            name: c.name,
+            mediaType: c.mediaType || undefined,
+            size: c.size,
+          });
+        }
       }
       turns.push({
         id: msg.id,
         role: 'user',
         no: no++,
         text: textParts.join('\n'),
-        images: images.length > 0 ? images : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
         skillActivation: isSkillActivation
           ? { name: origin.skillName!, args: origin.skillArgs }
           : undefined,
@@ -769,7 +915,7 @@ export function messagesToTurns(
         blocks: [],
         approval: undefined,
         approvalId: undefined,
-        seenSigs: new Set<string>(),
+        foldedSigs: [],
         durationMs: msg.durationMs,
       };
     } else if (pendingGroup !== null && pendingGroup.promptId === undefined && pid !== undefined) {
@@ -781,10 +927,15 @@ export function messagesToTurns(
 
     // Drop an assistant message whose content was already folded into this group
     // (a duplicate streamed-vs-persisted copy sharing the promptId), so the turn
-    // doesn't render the same text + tools twice.
-    const sig = JSON.stringify(msg.content);
-    if (group.promptId !== undefined && group.seenSigs.has(sig)) continue;
-    group.seenSigs.add(sig);
+    // doesn't render the same text + tools twice. The duplicate can still carry
+    // volatile extras the persisted copy lacks (tool progress), so merge those
+    // into the existing cards before dropping it.
+    const sig = contentSig(msg.content);
+    if (group.promptId !== undefined && group.foldedSigs.some((folded) => covers(folded, sig))) {
+      mergeVolatileExtras(group, msg.content);
+      continue;
+    }
+    group.foldedSigs.push(sig);
 
     absorbContent(group, msg.content);
   }

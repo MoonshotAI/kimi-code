@@ -8,13 +8,13 @@
  * `registerMediaTools` and re-runs it whenever the resolved model or its
  * media capabilities change.
  *
- * `createVideoUploader` is a thin binder over a runnable `Model`'s optional
- * `uploadVideo`. Auth is already resolved via the Model's `authProvider`
+ * `createVideoUploader` is a thin binder over a `ModelRequester`'s optional
+ * `uploadVideo`. Auth is already resolved via the requester's auth-provider
  * closure; media tooling doesn't need to know about tokens.
  */
 
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { Model } from '#/app/model/modelInstance';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
@@ -31,18 +31,9 @@ export interface RegisterMediaToolsDeps {
   readonly workspace: WorkspaceConfig;
   readonly capabilities: ModelCapability;
   readonly videoUploader?: VideoUploader;
-  /** Sink for the `image_compress` / `image_crop` events (source 'read_media'). */
   readonly telemetry?: ITelemetryService;
 }
 
-/**
- * Register the media tools against the agent tool registry.
- *
- * Registers `ReadMediaFile` only when the active model supports image or
- * video input. Returns an `IDisposable` that unregisters whatever was
- * registered (a no-op when nothing matched), so the caller can tie it to a
- * lifecycle and re-run registration cleanly on capability changes.
- */
 export function registerMediaTools(
   toolRegistry: IAgentToolRegistryService,
   deps: RegisterMediaToolsDeps,
@@ -62,23 +53,13 @@ export function registerMediaTools(
   );
 }
 
-/**
- * Bind a runnable Model's `uploadVideo` into the `VideoUploader` shape the
- * media tool expects. Returns `undefined` when the Model does not support
- * video upload, in which case the tool falls back to an inline data URL.
- *
- * With `telemetry` set, every upload reports a `video_upload` event — outcome
- * (success/error), byte size, mime type, duration, and the caller's static
- * props (model alias, protocol). A throwing telemetry client never affects
- * the upload outcome.
- */
 export function createVideoUploader(
-  model: Pick<Model, 'uploadVideo'> | undefined,
+  requester: Pick<ModelRequester, 'uploadVideo'> | undefined,
   telemetry?: VideoUploadTelemetry,
 ): VideoUploader | undefined {
-  const uploadVideo = model?.uploadVideo;
+  const uploadVideo = requester?.uploadVideo;
   if (uploadVideo === undefined) return undefined;
-  const bound = uploadVideo.bind(model);
+  const bound = uploadVideo.bind(requester);
   if (telemetry === undefined) return (input) => bound(input);
 
   return async (input) => {
@@ -92,7 +73,6 @@ export function createVideoUploader(
       try {
         telemetry.client.track2('video_upload', props);
       } catch {
-        // Telemetry must never affect the upload outcome.
       }
     };
     try {
@@ -111,9 +91,7 @@ export function createVideoUploader(
   };
 }
 
-/** Wiring for the optional `video_upload` telemetry events. */
 export interface VideoUploadTelemetry {
   readonly client: ITelemetryService;
-  /** Static properties merged into every event, e.g. model alias and protocol. */
   readonly props?: Pick<VideoUploadEvent, 'model' | 'provider_type' | 'protocol'>;
 }

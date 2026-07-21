@@ -24,7 +24,6 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentPromptService,
-  ISessionActivity,
   ISessionIndex,
   ISessionInteractionService,
   ISessionLifecycleService,
@@ -36,16 +35,12 @@ import {
   type Scope,
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
-import type {
-  InFlightTurn,
-  SessionSnapshotResponse,
-  SessionStatus,
-} from '@moonshot-ai/protocol';
 
 import { toWireApproval } from '../../routes/approvals';
 import { toWireQuestion } from '../../routes/questions';
-import { toWireSession } from '../../routes/sessions';
+import { resolveSessionFacts, toWireSession } from '../../routes/sessions';
 import { type SessionEventBroadcaster } from '../../transport/ws/v1/sessionEventBroadcaster';
+import type { InFlightTurn, SessionSnapshotResponse } from '../../protocol/rest-snapshot';
 import { SnapshotNotFoundError } from './snapshot';
 import type { ISnapshotReader } from './snapshot';
 import { type SnapshotConfig } from './snapshotConfig';
@@ -76,6 +71,7 @@ interface TranscriptCacheEntry {
   readonly size: number;
   readonly mtimeMs: number;
   readonly messages: ContextMessage[];
+  readonly times: readonly (number | undefined)[];
 }
 
 interface LocatedSession {
@@ -106,16 +102,24 @@ export class SnapshotReader implements ISnapshotReader {
     const offset = hasMore ? full.length - SNAPSHOT_MESSAGE_PAGE_SIZE : 0;
     const page = hasMore ? full.slice(offset) : full;
     await this.rehydrateBlobRefs(page, join(located.sessionDir, AGENTS_DIR, MAIN_AGENT_ID, BLOBS_DIR));
-    const items = page.map((msg, i) =>
-      toProtocolMessage(sid, offset + i, msg, located.meta.createdAt),
-    );
+    // `created_at` prefers the real per-record time stamped onto wire.jsonl at
+    // dispatch; records predating the stamp (or the `metadata` envelope) fall
+    // back to the synthesized `session.createdAt + index`, clamped so the
+    // page stays strictly increasing (mirrors `MessageLegacyService.list`).
+    let previousMs = Number.NEGATIVE_INFINITY;
+    const items = page.map((msg, i) => {
+      const index = offset + i;
+      const baseMs = transcript.times[index] ?? located.meta.createdAt + index;
+      const createdAtMs = Math.max(previousMs + 1, baseMs);
+      previousMs = createdAtMs;
+      return toProtocolMessage(sid, index, msg, located.meta.createdAt, createdAtMs);
+    });
 
     const live = core.accessor.get(ISessionLifecycleService).get(sid);
-    const status = this.resolveStatus(live);
     const session = toWireSession(
       { ...located.meta, workspaceId: located.workspaceId },
       located.cwd,
-      status,
+      resolveSessionFacts(core, sid),
     );
 
     const inFlightTurn = this.attachCurrentPromptId(sid, live, snapState.inFlightTurn);
@@ -138,6 +142,7 @@ export class SnapshotReader implements ISnapshotReader {
       session,
       messages: { items, has_more: hasMore },
       in_flight_turn: inFlightTurn,
+      subagents: snapState.subagents,
       pending_approvals: approvals,
       pending_questions: questions,
     };
@@ -180,6 +185,7 @@ export class SnapshotReader implements ISnapshotReader {
     sessionDir: string,
   ): Promise<{
     messages: ContextMessage[];
+    times: readonly (number | undefined)[];
     tag: 'hit' | 'miss' | 'shrink_invalidate' | 'enoent';
     wireBytes: number;
   }> {
@@ -192,7 +198,7 @@ export class SnapshotReader implements ISnapshotReader {
     }
     if (info === undefined) {
       this.transcriptCache.delete(sid);
-      return { messages: [], tag: 'enoent', wireBytes: 0 };
+      return { messages: [], times: [], tag: 'enoent', wireBytes: 0 };
     }
 
     const cached = this.transcriptCache.get(sid);
@@ -200,7 +206,7 @@ export class SnapshotReader implements ISnapshotReader {
       // LRU touch.
       this.transcriptCache.delete(sid);
       this.transcriptCache.set(sid, cached);
-      return { messages: cached.messages, tag: 'hit', wireBytes: info.size };
+      return { messages: cached.messages, times: cached.times, tag: 'hit', wireBytes: info.size };
     }
 
     const tag: 'miss' | 'shrink_invalidate' =
@@ -208,21 +214,15 @@ export class SnapshotReader implements ISnapshotReader {
     if (cached !== undefined) this.transcriptCache.delete(sid);
 
     const records = await readWireRecords(wirePath);
-    const messages = [...reduceContextTranscript(records).entries];
-    this.transcriptCache.set(sid, { size: info.size, mtimeMs: info.mtimeMs, messages });
+    const { entries, times } = reduceContextTranscript(records);
+    const messages = [...entries];
+    this.transcriptCache.set(sid, { size: info.size, mtimeMs: info.mtimeMs, messages, times });
     while (this.transcriptCache.size > this.deps.config.cacheLimit) {
       const oldest = this.transcriptCache.keys().next().value;
       if (oldest === undefined) break;
       this.transcriptCache.delete(oldest);
     }
-    return { messages, tag, wireBytes: info.size };
-  }
-
-  private resolveStatus(
-    live: ReturnType<ISessionLifecycleService['get']>,
-  ): SessionStatus {
-    if (live === undefined) return 'idle';
-    return live.accessor.get(ISessionActivity).status();
+    return { messages, times, tag, wireBytes: info.size };
   }
 
   private attachCurrentPromptId(
@@ -231,7 +231,7 @@ export class SnapshotReader implements ISnapshotReader {
     inFlightTurn: InFlightTurn | null,
   ): InFlightTurn | null {
     if (inFlightTurn === null || live === undefined) return inFlightTurn;
-    const main = live.accessor.get(IAgentLifecycleService).getHandle(MAIN_AGENT_ID);
+    const main = live.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
     if (main === undefined) return inFlightTurn;
     let currentPromptId: string | undefined;
     try {

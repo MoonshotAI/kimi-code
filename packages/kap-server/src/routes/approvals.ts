@@ -37,17 +37,18 @@ import {
   type Interaction,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   approvalAlreadyResolvedDataSchema,
   approvalResolveRequestSchema,
   approvalResolveResultSchema,
-  ErrorCode,
   listPendingApprovalsQuerySchema,
   listPendingApprovalsResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '../protocol/rest-approval';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 interface ApprovalRouteHost {
@@ -170,6 +171,11 @@ export function registerApprovalsRoutes(app: ApprovalRouteHost, core: Scope): vo
         selectedLabel: body.selected_label,
       };
       handle.accessor.get(ISessionApprovalService).decide(approval_id, response);
+      // Security-sensitive: record who resolved what, and how.
+      requestLog(req)?.info(
+        { session_id, approval_id, decision: response.decision, scope: response.scope },
+        'approval decided',
+      );
       reply.send(
         okEnvelope({ resolved: true as const, resolved_at: new Date().toISOString() }, req.id),
       );

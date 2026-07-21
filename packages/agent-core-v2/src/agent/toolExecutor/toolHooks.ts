@@ -9,13 +9,15 @@
  * no scoped service.
  */
 
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 
 import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution } from '#/tool/toolContract';
 
 export interface ToolExecutionHookContext {
   readonly turnId: number;
   readonly signal: AbortSignal;
+  readonly trace?: LLMRequestTrace;
   readonly toolCall: ToolCall;
   readonly toolCalls: readonly ToolCall[];
   readonly tool?: ExecutableTool | undefined;

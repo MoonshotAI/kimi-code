@@ -34,7 +34,6 @@ export interface HookRunCallbacks {
   ) => void;
 }
 
-/** Group hook definitions by event name, preserving declaration order. */
 export function indexHooks(hooks: readonly HookDef[]): Map<string, HookDef[]> {
   const byEvent = new Map<string, HookDef[]>();
   for (const hook of hooks) {
@@ -45,7 +44,6 @@ export function indexHooks(hooks: readonly HookDef[]): Map<string, HookDef[]> {
   return byEvent;
 }
 
-/** Run every hook in `byEvent` whose matcher matches `args.matcherValue`. */
 export async function runMatchedHooks(
   hostProcess: IHostProcessService,
   byEvent: ReadonlyMap<string, readonly HookDef[]>,
@@ -103,7 +101,6 @@ export async function runMatchedHooks(
   return results;
 }
 
-/** Reduce a trigger's results into a single block/allow decision. */
 export function blockDecision(
   event: string,
   results: readonly HookResult[],

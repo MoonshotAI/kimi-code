@@ -10,13 +10,8 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { ContentPart } from '#/app/llmProtocol/message';
-import type {
-  ToolCallStartedEvent,
-  ToolInputDisplay,
-  ToolProgressEvent,
-  ToolResultEvent,
-} from '@moonshot-ai/protocol';
+import type { ContentPart, ToolCall } from '#/kosong/contract/message';
+import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 import {
   compileToolArgsValidator,
@@ -25,8 +20,7 @@ import {
   type ToolArgsValidator,
 } from '#/tool/args-validator';
 import { PathSecurityError } from '#/tool/path-access';
-import { isUserCancellation } from "#/_base/utils/abort";
-import { isAbortError } from '#/_base/utils/abort';
+import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import {
   ToolAccesses,
@@ -39,7 +33,6 @@ import {
 } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -48,20 +41,17 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import {
   IAgentToolExecutorService,
   type MissingToolDescriber,
+  type ToolCallGuard,
   type ToolCallDupType,
   type ToolExecutionResult,
   type ToolExecutorExecuteOptions,
   type UnavailableToolDescriber,
 } from './toolExecutor';
 import { ToolScheduler } from './toolScheduler';
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'tool.call.started': ToolCallStartedEvent;
-    'tool.result': ToolResultEvent;
-    'tool.progress': ToolProgressEvent;
-  }
-}
+// Loads the `DomainEventMap` augmentation for the `tool.call.*` / `tool.result`
+// events this service publishes (the augmentation lives with the event
+// definitions; without an import it would not enter every consumer's program).
+import './toolExecutorEvents';
 
 const ABORT_GRACE_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
@@ -108,14 +98,19 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
   private missingToolDescriber: MissingToolDescriber | undefined;
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
-  // Duplicate-call tags written by the `toolDedupe` plugin, consumed by
-  // `trackToolCall`. Pruned on turn change so entries from calls that never
-  // reached telemetry (e.g. an aborted batch) cannot leak across turns.
+  private toolCallGuard: ToolCallGuard | undefined;
   private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
   private dupTypeTurnId: number | undefined;
 
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void {
     this.toolCallDupTypes.set(toolCallId, dupType);
+  }
+
+  registerToolCallGuard(guard: ToolCallGuard) {
+    this.toolCallGuard = guard;
+    return toDisposable(() => {
+      if (this.toolCallGuard === guard) this.toolCallGuard = undefined;
+    });
   }
 
   registerUnavailableToolDescriber(describer: UnavailableToolDescriber) {
@@ -155,6 +150,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       preflightToolCall(
         this.toolRegistry,
         call,
+        this.toolCallGuard,
         this.unavailableToolDescriber,
         this.missingToolDescriber,
         this.log,
@@ -257,7 +253,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const finalized = await this.finalizeToolResult(call, rawResult, options);
 
     this.dispatchToolResult(call, finalized, options);
-    this.trackToolCall(call, finalized, timedResult.durationMs, options.turnId);
+    this.trackToolCall(call, finalized, timedResult.durationMs, options);
 
     return {
       toolCallId: call.toolCall.id,
@@ -270,19 +266,20 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     call: PreflightedToolCall,
     result: ToolResult,
     durationMs: number,
-    turnId: number,
+    options: ToolExecutorExecuteOptions,
   ): void {
     const outcome = toolTelemetryOutcome(result);
     const toolCallId = call.toolCall.id;
     const dupType = this.toolCallDupTypes.get(toolCallId) ?? 'normal';
     this.toolCallDupTypes.delete(toolCallId);
     const properties: ToolCallEvent = {
-      turn_id: turnId,
+      turn_id: options.turnId,
       tool_call_id: toolCallId,
       tool_name: call.toolName,
       outcome,
       duration_ms: durationMs,
       dup_type: dupType,
+      trace_id: options.trace?.traceId,
     };
     if (result.isError === true) properties['error_type'] = toolTelemetryErrorType(outcome);
     this.telemetry.track2('tool_call', properties);
@@ -466,6 +463,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       const executePromise = execution.execute({
         turnId: options.turnId,
         toolCallId: call.toolCall.id,
+        trace: options.trace,
         metadata,
         signal,
         onUpdate: (update) => {
@@ -563,6 +561,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const didCtx: ToolDidExecuteContext = {
       turnId: options.turnId,
       signal: options.signal,
+      trace: options.trace,
       toolCall: call.toolCall,
       toolCalls: [call.toolCall],
       tool: call.tool,
@@ -590,7 +589,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const effectiveResult = normalizeToolResult(coercedResult);
     const finalResult: ToolResult = {
       ...effectiveResult,
-      message: coercedResult.message ?? result.message,
       description: result.description,
       display: result.display,
       approvalRule: result.approvalRule,
@@ -599,9 +597,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         didCtx.stopTurn === true ||
         effectiveResult.stopTurn === true,
       stopBatchAfterThis: result.stopBatchAfterThis,
-      // Thread the declared delivery through to the yielded result. An
-      // `onDidExecuteTool` hook (the agent/L4 layer) may have already consumed
-      // it by stripping it from `didCtx.result`; in that case this is undefined.
       delivery: coercedResult.delivery,
     };
     return this.resultTruncation.truncateForModel({
@@ -649,6 +644,7 @@ function buildWillExecuteContext(
   return {
     turnId: options.turnId,
     signal: options.signal,
+    trace: options.trace,
     toolCall: call.toolCall,
     toolCalls: allCalls,
     tool: call.tool,
@@ -660,6 +656,7 @@ function buildWillExecuteContext(
 function preflightToolCall(
   toolRegistry: IAgentToolRegistryService,
   toolCall: ToolCall,
+  guard: ToolCallGuard | undefined,
   describeUnavailableTool: UnavailableToolDescriber | undefined,
   describeMissingTool: MissingToolDescriber | undefined,
   log?: ILogService,
@@ -674,16 +671,6 @@ function preflightToolCall(
       error: parsedArgs.error,
     });
   }
-  const unavailable = describeUnavailableTool?.(toolName);
-  if (unavailable !== undefined) {
-    return {
-      kind: 'rejected',
-      toolCall,
-      toolName,
-      args: parsedArgs.data,
-      output: unavailable,
-    };
-  }
   const tool = toolRegistry.resolve(toolName);
   if (tool === undefined) {
     return {
@@ -692,6 +679,27 @@ function preflightToolCall(
       toolName,
       args: parsedArgs.data,
       output: describeMissingTool?.(toolName) ?? `Tool "${toolName}" not found`,
+    };
+  }
+  const source = toolRegistry.list().find((entry) => entry.name === toolName)?.source ?? 'builtin';
+  const denied = guard?.({ name: toolName, source });
+  if (denied !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: denied,
+    };
+  }
+  const unavailable = describeUnavailableTool?.(toolName);
+  if (unavailable !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: unavailable,
     };
   }
   const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
@@ -897,7 +905,6 @@ async function raceWithAbortGrace<Result>(
       try {
         signal.removeEventListener('abort', onAbort);
       } catch {
-        // Some AbortSignal polyfills do not implement removeEventListener.
       }
     }
   }
@@ -911,6 +918,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolExecutorService,
   AgentToolExecutorService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'toolExecutor',
 );

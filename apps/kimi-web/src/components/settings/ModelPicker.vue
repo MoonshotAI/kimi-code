@@ -5,6 +5,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
+import { formatTokens } from '../../lib/formatTokens';
 import Dialog from '../ui/Dialog.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
@@ -197,7 +198,7 @@ function selectTab(tabId: string): void {
             </span>
           </span>
           <span class="model-provider">{{ m.provider }}</span>
-          <span class="model-ctx">{{ t('model.contextSuffix', { size: Math.round(m.maxContextSize / 1000) }) }}</span>
+          <span class="model-ctx">{{ t('model.contextSuffix', { size: formatTokens(m.maxContextSize) }) }}</span>
           <IconButton
             size="sm"
             :label="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"

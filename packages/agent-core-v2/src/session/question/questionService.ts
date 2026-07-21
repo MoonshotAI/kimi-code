@@ -20,20 +20,15 @@ export class SessionQuestionService implements ISessionQuestionService {
 
   constructor(@ISessionInteractionService private readonly interaction: ISessionInteractionService) {}
 
-  request(req: QuestionRequest, options?: { signal?: AbortSignal }): Promise<QuestionResult> {
+  request(req: QuestionRequest, options?: { signal?: AbortSignal; agentId?: string }): Promise<QuestionResult> {
     const id = requestId(req);
     const pending = this.interaction.request<QuestionRequest, QuestionResult>({
       id,
       kind: 'question',
       payload: req,
-      origin: { turnId: req.turnId },
+      origin: { turnId: req.turnId, agentId: options?.agentId },
     });
 
-    // Mirrors the v1 broker: when the caller aborts (turn interrupted,
-    // background task killed) — or was aborted before parking — the entry is
-    // dismissed so listPending()/session status don't stay stuck in
-    // awaiting_question, and the caller receives the same `null` (dismissed)
-    // result as an explicit dismiss.
     const signal = options?.signal;
     if (signal !== undefined) {
       if (signal.aborted) {
@@ -81,4 +76,4 @@ function requestId(req: QuestionRequest): string {
   return req.id ?? req.toolCallId ?? `question:${String(Date.now())}`;
 }
 
-registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, InstantiationType.Delayed, 'question');
+registerScopedService(LifecycleScope.Session, ISessionQuestionService, SessionQuestionService, InstantiationType.Eager, 'question');

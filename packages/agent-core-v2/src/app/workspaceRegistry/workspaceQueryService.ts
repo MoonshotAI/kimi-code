@@ -18,7 +18,7 @@ export class WorkspaceQueryService implements IWorkspaceQueryService {
   constructor(@ISessionIndex private readonly index: ISessionIndex) {}
 
   async listRecentSessions(workspaceId: string): Promise<readonly SessionSummary[]> {
-    const page = await this.index.list({ workspaceId, limit: RECENT_SESSIONS_LIMIT });
+    const page = await this.index.list({ workspaceIds: [workspaceId], limit: RECENT_SESSIONS_LIMIT });
     return page.items;
   }
 }
@@ -27,6 +27,6 @@ registerScopedService(
   LifecycleScope.App,
   IWorkspaceQueryService,
   WorkspaceQueryService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'workspaceRegistry',
 );

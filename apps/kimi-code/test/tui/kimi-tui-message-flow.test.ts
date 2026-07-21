@@ -12,13 +12,23 @@ import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
 } from '#/tui/components/messages/agent-swarm-progress';
+import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import {
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT,
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
+  TRANSCRIPT_KEEP_RECENT_STEPS,
+} from '#/tui/utils/transcript-window';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
+import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
@@ -125,6 +135,8 @@ function makeStartupInput(): KimiTUIStartupInput {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      agent: undefined,
+      agentFiles: [],
     },
     tuiConfig: {
       theme: 'dark',
@@ -139,6 +151,8 @@ function makeStartupInput(): KimiTUIStartupInput {
 }
 
 function makeSession(overrides: Record<string, unknown> = {}) {
+  let model = 'k2';
+  let thinkingEffort = 'off';
   return {
     id: 'ses-1',
     model: 'k2',
@@ -151,8 +165,8 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
-      model: 'k2',
-      thinkingEffort: 'off',
+      model,
+      thinkingEffort,
       permission: 'manual',
       planMode: false,
       contextTokens: 0,
@@ -162,8 +176,12 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
-    setModel: vi.fn(async () => {}),
-    setThinking: vi.fn(async () => {}),
+    setModel: vi.fn(async (alias: string) => {
+      model = alias;
+    }),
+    setThinking: vi.fn(async (effort: string) => {
+      thinkingEffort = effort;
+    }),
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
     setSwarmMode: vi.fn(async () => {}),
@@ -2987,6 +3005,24 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
   });
 
+  it('applies the effective thinking effort from status updates', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        model: 'turbo',
+        thinkingEffort: 'mid',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinkingEffort).toBe('mid');
+  });
+
   it('renders swarm mode markers from /swarm commands, not tool-triggered status updates', async () => {
     const { driver } = await makeDriver();
 
@@ -3845,7 +3881,7 @@ command = "vim"
       expect(output).toContain('Permissions  auto');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');
-      expect(output).toContain('25.0%');
+      expect(output).toContain('25%');
     });
   });
 
@@ -4588,6 +4624,67 @@ command = "vim"
     expect(driver.state.appState.thinkingEffort).toBe('on');
   });
 
+  it('uses the effective effort returned after a model-switch fallback', async () => {
+    let switched = false;
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: switched ? 'turbo' : 'k2',
+        thinkingEffort: switched ? 'mid' : 'ultra',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+      setModel: vi.fn(async () => {
+        switched = true;
+      }),
+    });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'ultra'],
+            defaultEffort: 'ultra',
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'mid', 'high'],
+            defaultEffort: 'mid',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'ultra' },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true, effort: 'mid' },
+      });
+    });
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinkingEffort).toBe('mid');
+    expect(renderTranscript(driver)).toContain('Switched to kimi-turbo with thinking mid.');
+  });
+
   it('persists /model selection even when runtime state is unchanged', async () => {
     const session = makeSession();
     const setConfig = vi.fn(async () => ({ providers: {} }));
@@ -4624,6 +4721,116 @@ command = "vim"
     });
     expect(session.setModel).not.toHaveBeenCalled();
     expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('does not write config when re-confirming the current effort in the picker', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'k2',
+        // No persisted effort: re-confirming the shown level must not turn the
+        // runtime default into a stored preference.
+        thinking: { enabled: true },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as EffortSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Already using Kimi K2 with thinking high.');
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('persists only the model when a switch keeps the same effort', async () => {
+    let switched = false;
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: switched ? 'turbo' : 'k2',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+      setModel: vi.fn(async () => {
+        switched = true;
+      }),
+    });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            defaultEffort: 'high',
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Turbo',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'high' },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    // The effort matches the value shown when the picker opened, so the patch
+    // carries no effort key; the stored preference stays as-is via the merge.
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true },
+      });
+    });
   });
 
   it('refreshes only OAuth provider models before opening /model picker', async () => {
@@ -4871,6 +5078,65 @@ command = "vim"
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
   });
 
+  it('does not create a thinking component for whitespace-only thinking deltas', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: ' ',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+
+    // Nothing to render: no component, and the phase is not hijacked into thinking.
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+
+    // Real thinking text after the whitespace still starts thinking normally.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: 'actual reasoning',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+
+    expect(driver.state.appState.streamingPhase).toBe('thinking');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(true);
+    expect(stripSgr(renderTranscript(driver))).toContain('actual reasoning');
+  });
+
+  it('does not create a thinking component for whitespace-only thinking on session replay', async () => {
+    const { driver } = await makeDriver();
+
+    // Session replay flushes stored thinking verbatim through onThinkingUpdate
+    // (see SessionReplayRenderer.flushAssistant), so a persisted whitespace-only
+    // think part must not become a bare bullet line.
+    driver.streamingUI.onThinkingUpdate(' ');
+    driver.streamingUI.onThinkingEnd();
+
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof ThinkingComponent,
+      ),
+    ).toHaveLength(0);
+
+    // Real stored thinking still replays normally.
+    driver.streamingUI.onThinkingUpdate('visible reasoning');
+    driver.streamingUI.onThinkingEnd();
+
+    expect(stripSgr(renderTranscript(driver))).toContain('visible reasoning');
+  });
+
   it('keeps the waiting moon spinner while reasoning streams only empty (encrypted) thinking deltas', async () => {
     const { driver } = await makeDriver();
 
@@ -5076,16 +5342,20 @@ describe('/model status displayName override', () => {
 });
 
 describe('/effort support_efforts override', () => {
-  it('rejects efforts hidden by support_efforts override', async () => {
+  it('warns and applies efforts hidden by an Anthropic support_efforts override', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
         models: {
           k2: {
-            provider: 'managed:kimi-code',
-            model: 'kimi-k2',
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
             maxContextSize: 100,
-            displayName: 'Kimi K2',
+            displayName: 'Compatible Model',
             capabilities: ['thinking'],
             supportEfforts: ['low', 'high', 'max'],
             overrides: { supportEfforts: ['low', 'high'] },
@@ -5099,8 +5369,245 @@ describe('/effort support_efforts override', () => {
     driver.handleUserInput('/effort max');
 
     await vi.waitFor(() => {
-      expect(renderTranscript(driver)).toContain('Unsupported thinking effort "max" for k2. Available: off, low, high');
+      expect(session.setThinking).toHaveBeenCalledWith('max');
     });
-    expect(renderTranscript(driver)).not.toContain('Switched to Kimi K2 with thinking max.');
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to max.');
+    });
+    const transcript = renderTranscript(driver).replaceAll(/\s+/g, ' ');
+    expect(transcript).toContain(
+      'Thinking effort "max" is not listed for k2 (known: low, high). Sending "max" unchanged; the configured provider will validate it.',
+    );
+    expect(transcript).toContain('Thinking set to max.');
+  });
+
+  it('offers the latest Opus efforts for an unknown Anthropic-compatible model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).not.toContain('Max');
+  });
+
+  it('offers the latest Opus efforts for a flat providerless Anthropic model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {},
+        models: {
+          // v2 flat model shape: no named provider, inline endpoint + protocol.
+          k2: {
+            model: 'compatible-model',
+            baseUrl: 'https://anthropic.example.test',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('keeps rejecting efforts hidden by a Kimi support_efforts override', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          kimi: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'kimi',
+            model: 'kimi-model',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high'],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain(
+        'Unsupported thinking effort "max" for k2. Available: off, low, high',
+      );
+    });
+    expect(session.setThinking).not.toHaveBeenCalled();
+  });
+});
+
+describe('transcript step and assistant folding', () => {
+  function driveSteps(driver: MessageDriver, cycles: number): void {
+    for (let i = 0; i < cycles; i++) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: `msg-${i} `,
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: `call_${i}`,
+          name: 'Bash',
+          args: { command: 'ls' },
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: `call_${i}`,
+          output: 'ok',
+          isError: undefined,
+        } as Event,
+        vi.fn(),
+      );
+    }
+  }
+
+  it('folds the oldest assistant messages and steps beyond their per-turn caps', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('fold me');
+
+    const cycles = Math.max(TRANSCRIPT_KEEP_RECENT_ASSISTANT, TRANSCRIPT_KEEP_RECENT_STEPS) + 7;
+    driveSteps(driver, cycles);
+
+    const children = driver.state.transcriptContainer.children;
+    const assistantCount = children.filter(
+      (child) => child instanceof AssistantMessageComponent,
+    ).length;
+    const toolCount = children.filter((child) => child instanceof ToolCallComponent).length;
+    expect(assistantCount).toBe(TRANSCRIPT_KEEP_RECENT_ASSISTANT);
+    expect(toolCount).toBe(TRANSCRIPT_KEEP_RECENT_STEPS);
+
+    const summaries = children.filter((child) => child instanceof StepSummaryComponent);
+    expect(summaries).toHaveLength(1);
+    const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
+    expect(summaryText).toContain(`call ${cycles - TRANSCRIPT_KEEP_RECENT_STEPS} tools`);
+    expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT} messages`);
+
+    // Folding drops mounted components only; every transcript entry is kept.
+    const assistantEntries = driver.state.transcriptEntries.filter(
+      (entry) => entry.kind === 'assistant',
+    );
+    expect(assistantEntries).toHaveLength(cycles);
+  });
+
+  it('does not fold a turn within the caps', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('small turn');
+    driveSteps(driver, 3);
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof AssistantMessageComponent)).toHaveLength(3);
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(3);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('folds a completed turn down to its conclusion tail on turn end', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('round one');
+    const cycles = 10;
+    driveSteps(driver, cycles);
+
+    // Below the active-turn caps, nothing folds while the turn is live.
+    let children = driver.state.transcriptContainer.children;
+    expect(
+      children.filter((child) => child instanceof AssistantMessageComponent),
+    ).toHaveLength(cycles);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    children = driver.state.transcriptContainer.children;
+    const assistants = children.filter((child) => child instanceof AssistantMessageComponent);
+    expect(assistants).toHaveLength(TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED);
+
+    const summaries = children.filter((child) => child instanceof StepSummaryComponent);
+    expect(summaries).toHaveLength(1);
+    const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
+    expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
+
+    // Steps below the step cap are untouched by the completed-turn fold.
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(cycles);
+
+    // The conclusion stays mounted.
+    const lastAssistant = assistants.at(-1)!;
+    expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
   });
 });

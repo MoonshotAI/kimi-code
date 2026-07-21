@@ -36,16 +36,19 @@ import KimiSetting from '~icons/kimi/setting';
 // Components (Tabler) ---------------------------------------------------------
 import TablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse';
 import TablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand';
+import TablerPaperclip from '~icons/tabler/paperclip';
 
 // Components (Remix) ---------------------------------------------------------
 import RiAddLine from '~icons/ri/add-line';
 import RiAlertLine from '~icons/ri/alert-line';
+import RiArchiveLine from '~icons/ri/archive-line';
 import RiArrowDownLine from '~icons/ri/arrow-down-line';
 import RiArrowDownSLine from '~icons/ri/arrow-down-s-line';
 import RiArrowGoBackLine from '~icons/ri/arrow-go-back-line';
 import RiArrowRightLine from '~icons/ri/arrow-right-line';
 import RiArrowRightSLine from '~icons/ri/arrow-right-s-line';
 import RiArrowUpLine from '~icons/ri/arrow-up-line';
+import RiArrowUpSLine from '~icons/ri/arrow-up-s-line';
 import RiBracesLine from '~icons/ri/braces-line';
 import RiCalendarCloseLine from '~icons/ri/calendar-close-line';
 import RiCalendarScheduleLine from '~icons/ri/calendar-schedule-line';
@@ -67,6 +70,7 @@ import RiFileTextLine from '~icons/ri/file-text-line';
 import RiFlashlightLine from '~icons/ri/flashlight-line';
 import RiFolderAddLine from '~icons/ri/folder-add-line';
 import RiFolderFill from '~icons/ri/folder-fill';
+import RiGitForkLine from '~icons/ri/git-fork-line';
 import RiGitPullRequestLine from '~icons/ri/git-pull-request-line';
 import RiGlobalLine from '~icons/ri/global-line';
 import RiImageLine from '~icons/ri/image-line';
@@ -104,16 +108,19 @@ import RawKimiSetting from '~icons/kimi/setting?raw';
 // Raw SVG strings (Tabler) ----------------------------------------------------
 import RawTablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse?raw';
 import RawTablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand?raw';
+import RawTablerPaperclip from '~icons/tabler/paperclip?raw';
 
 // Raw SVG strings (Remix) ----------------------------------------------------
 import RawAddLine from '~icons/ri/add-line?raw';
 import RawAlertLine from '~icons/ri/alert-line?raw';
+import RawArchiveLine from '~icons/ri/archive-line?raw';
 import RawArrowDownLine from '~icons/ri/arrow-down-line?raw';
 import RawArrowDownSLine from '~icons/ri/arrow-down-s-line?raw';
 import RawArrowGoBackLine from '~icons/ri/arrow-go-back-line?raw';
 import RawArrowRightLine from '~icons/ri/arrow-right-line?raw';
 import RawArrowRightSLine from '~icons/ri/arrow-right-s-line?raw';
 import RawArrowUpLine from '~icons/ri/arrow-up-line?raw';
+import RawArrowUpSLine from '~icons/ri/arrow-up-s-line?raw';
 import RawBracesLine from '~icons/ri/braces-line?raw';
 import RawCalendarCloseLine from '~icons/ri/calendar-close-line?raw';
 import RawCalendarScheduleLine from '~icons/ri/calendar-schedule-line?raw';
@@ -135,6 +142,7 @@ import RawFileTextLine from '~icons/ri/file-text-line?raw';
 import RawFlashlightLine from '~icons/ri/flashlight-line?raw';
 import RawFolderAddLine from '~icons/ri/folder-add-line?raw';
 import RawFolderFill from '~icons/ri/folder-fill?raw';
+import RawGitForkLine from '~icons/ri/git-fork-line?raw';
 import RawGitPullRequestLine from '~icons/ri/git-pull-request-line?raw';
 import RawGlobalLine from '~icons/ri/global-line?raw';
 import RawImageLine from '~icons/ri/image-line?raw';
@@ -170,6 +178,7 @@ export type IconName =
   | 'calendar-todo'
   | 'close'
   | 'check'
+  | 'archive'
   | 'search'
   | 'copy'
   | 'link'
@@ -183,6 +192,7 @@ export type IconName =
   | 'log-in'
   | 'chevron-down'
   | 'chevron-right'
+  | 'chevron-up'
   | 'arrow-up'
   | 'arrow-down'
   | 'arrow-right'
@@ -203,6 +213,7 @@ export type IconName =
   | 'file-edit'
   | 'file-plus'
   | 'file-off'
+  | 'attachment'
   | 'image-off'
   | 'code'
   | 'terminal'
@@ -212,6 +223,7 @@ export type IconName =
   | 'globe'
   | 'check-list'
   | 'bolt'
+  | 'git-fork'
   | 'git-pull-request'
   | 'message'
   | 'mail'
@@ -252,6 +264,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'calendar-todo': entry(RiCalendarTodoLine, RawCalendarTodoLine),
   close: entry(RiCloseLine, RawCloseLine),
   check: entry(RiCheckLine, RawCheckLine),
+  archive: entry(RiArchiveLine, RawArchiveLine),
   search: entry(KimiSearch, RawKimiSearch),
   copy: entry(RiFileCopyLine, RawFileCopyLine),
   link: entry(RiLinksLine, RawLinksLine),
@@ -265,6 +278,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'log-in': entry(RiLoginBoxLine, RawLoginBoxLine),
   'chevron-down': entry(RiArrowDownSLine, RawArrowDownSLine),
   'chevron-right': entry(RiArrowRightSLine, RawArrowRightSLine),
+  'chevron-up': entry(RiArrowUpSLine, RawArrowUpSLine),
   'arrow-up': entry(RiArrowUpLine, RawArrowUpLine),
   'arrow-down': entry(RiArrowDownLine, RawArrowDownLine),
   'arrow-right': entry(RiArrowRightLine, RawArrowRightLine),
@@ -285,6 +299,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'file-edit': entry(RiFileEditLine, RawFileEditLine),
   'file-plus': entry(RiFileAddLine, RawFileAddLine),
   'file-off': entry(RiFileLine, RawFileLine),
+  attachment: entry(TablerPaperclip, RawTablerPaperclip),
   'image-off': entry(RiImageLine, RawImageLine),
   code: entry(RiCodeLine, RawCodeLine),
   terminal: entry(RiTerminalBoxLine, RawTerminalBoxLine),
@@ -294,6 +309,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   globe: entry(RiGlobalLine, RawGlobalLine),
   'check-list': entry(RiListCheck, RawListCheck),
   bolt: entry(RiFlashlightLine, RawFlashlightLine),
+  'git-fork': entry(RiGitForkLine, RawGitForkLine),
   'git-pull-request': entry(RiGitPullRequestLine, RawGitPullRequestLine),
   message: entry(RiMessageLine, RawMessageLine),
   mail: entry(RiMailLine, RawMailLine),
@@ -339,6 +355,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
     'Actions',
     [
       'plus',
+      'attachment',
       'chat-new',
       'close',
       'check',
@@ -360,6 +377,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
     [
       'chevron-down',
       'chevron-right',
+      'chevron-up',
       'arrow-up',
       'arrow-down',
       'arrow-right',
@@ -394,7 +412,9 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'globe',
       'check-list',
       'bolt',
+      'git-fork',
       'git-pull-request',
+      'archive',
       'target',
       'calendar-schedule',
       'calendar-todo',

@@ -30,9 +30,9 @@ export type ResponseFormat = JsonObjectResponseFormat | JsonSchemaResponseFormat
  * `string` at runtime; it exists purely as a semantic marker that a value is
  * expected to be `'off'`, `'on'`, or a model-declared effort.
  *
- * The model's `support_efforts` is the single source of truth for which
- * efforts are valid — providers normalize any unrecognized effort by omitting
- * the effort on the wire rather than rejecting it.
+ * Provider adapters receive an already-resolved effort. Adapters with a native
+ * effort field pass concrete strings through to their upstream API; model
+ * compatibility and fallback are resolved before this boundary.
  */
 export type ThinkingEffort = 'off' | 'on' | (string & {});
 
@@ -110,6 +110,14 @@ export interface StreamedMessage {
    * `null` if the provider did not emit a finish_reason.
    */
   readonly rawFinishReason: string | null;
+  /**
+   * Provider trace identifier read from the `x-trace-id` response header
+   * (Kimi/KFC only). Available as soon as the response headers arrive —
+   * before the stream body is drained — so hosts can attribute even an
+   * interrupted stream to its server-side request. `null` when the provider
+   * does not report one.
+   */
+  readonly traceId?: string | null;
 }
 
 /**
@@ -156,6 +164,14 @@ export interface GenerateOptions {
    * attribute latency to the client vs. the API server.
    */
   onRequestSent?: () => void;
+  /**
+   * Host-side instrumentation hook fired as soon as the provider response
+   * headers arrive (before the stream body is drained), carrying the
+   * provider trace identifier from the `x-trace-id` header, or `null` when
+   * the provider does not report one. Firing early lets hosts attribute a
+   * stream that is cancelled mid-flight to its server-side request.
+   */
+  onTraceId?: (traceId: string | null) => void;
   /**
    * Host-side instrumentation hook fired after the provider stream is fully
    * drained, before post-processing the assembled response. Receives the

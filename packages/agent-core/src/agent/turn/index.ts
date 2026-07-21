@@ -10,6 +10,7 @@ import {
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
+  type Message,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
 import { basename } from 'pathe';
@@ -26,6 +27,7 @@ import { isAbortError, isMaxStepsExceededError } from '../../loop/errors';
 import {
   createLoopEventDispatcher,
   runTurn,
+  type LLMRequestTrace,
   type ExecutableToolResult,
   type LoopEvent,
   type LoopRecordedEvent,
@@ -37,6 +39,11 @@ import type { TelemetryPropertyValue } from '../../telemetry';
 import { gateImageFormatParts } from '../../tools/support/image-compress';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
+import {
+  captureMediaStripSnapshot,
+  stripMediaPartsBySnapshot,
+  type MediaStripSnapshot,
+} from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
@@ -117,13 +124,19 @@ export class TurnFlow {
   private steerBuffer: BufferedSteer[] = [];
   private turnId = -1;
   private activeTurn: 'resuming' | ActiveTurn | null = null;
-  private readonly toolCallStartedAt = new Map<string, { name: string; startedAt: number }>();
+  private readonly toolCallStartedAt = new Map<
+    string,
+    { name: string; startedAt: number; traceId: string | undefined }
+  >();
   private readonly toolCallDupType = new Map<string, 'normal' | 'cross_step'>();
   private readonly stepToolCallKeys = new Map<number, Set<string>>();
   private readonly telemetryModeByTurn = new Map<number, 'agent' | 'plan'>();
   private readonly currentStepByTurn = new Map<number, number>();
   private readonly interruptedTelemetryTurnIds = new Set<number>();
+  private readonly interruptedTraceIdByTurn = new Map<number, string | undefined>();
   private readonly stepFailureByTurn = new Map<number, LoopTurnInterruptedEvent>();
+  private activeRequestTrace: LLMRequestTrace | undefined;
+  private latestTraceId: string | undefined;
   private currentStep = 0;
 
   constructor(protected readonly agent: Agent) {}
@@ -272,6 +285,10 @@ export class TurnFlow {
 
   get currentId() {
     return this.turnId;
+  }
+
+  activeRequestTraceId(): string | undefined {
+    return this.activeRequestTrace?.traceId;
   }
 
   get hasActiveTurn(): boolean {
@@ -515,7 +532,7 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { mode: telemetryMode, ...this.requestProtocolProps() });
+    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, thinking_effort: this.agent.config.thinkingEffort, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
@@ -584,6 +601,17 @@ export class TurnFlow {
           if (inputTokens !== undefined) {
             properties['input_tokens'] = inputTokens;
           }
+          // The failed request's own trace id: from the error response
+          // headers when it is a status error; otherwise from the in-flight
+          // capture — a failure after response headers arrived (mid-stream
+          // decode error, empty response) carries no trace on the error
+          // itself, but the request's headers were captured. Failures before
+          // any response (network errors, local aborts) leave the per-step
+          // capture empty, so those still report no trace.
+          const traceId = this.activeRequestTrace?.traceId;
+          if (traceId !== undefined) {
+            properties['trace_id'] = traceId;
+          }
           this.agent.telemetry.track('api_error', properties);
         }
       }
@@ -612,11 +640,20 @@ export class TurnFlow {
         inputData: { turnId, reason: 'cancelled' },
       });
     }
+    const terminalTraceId =
+      ended.reason === 'completed'
+        ? this.latestTraceId
+        : this.interruptedTraceIdByTurn.has(turnId)
+          ? this.interruptedTraceIdByTurn.get(turnId)
+          : this.activeRequestTrace?.traceId;
     this.agent.telemetry.track('turn_ended', {
+      turn_id: turnId,
       reason: ended.reason,
       duration_ms: ended.durationMs,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       ...this.requestProtocolProps(),
+      trace_id: terminalTraceId,
     });
     this.agent.emitEvent(ended);
     // Release the active turn in the same frame as turn.ended for a standalone
@@ -650,12 +687,16 @@ export class TurnFlow {
         turnId,
         this.currentStepByTurn.get(turnId) ?? this.currentStep,
         interruptReason,
+        this.activeRequestTrace?.traceId,
       );
     }
     this.telemetryModeByTurn.delete(turnId);
     this.currentStepByTurn.delete(turnId);
     this.interruptedTelemetryTurnIds.delete(turnId);
+    this.interruptedTraceIdByTurn.delete(turnId);
     this.stepFailureByTurn.delete(turnId);
+    this.activeRequestTrace = undefined;
+    this.latestTraceId = undefined;
     return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
   }
 
@@ -727,10 +768,18 @@ export class TurnFlow {
     // appended only when the loadable set actually changed, so quiet turns
     // keep the prompt cache fully warm.
     this.agent.injection.injectToolsDiff();
+    let mediaStripSnapshot: MediaStripSnapshot | undefined;
+    const buildMessagesMediaStripped = (): Message[] => {
+      const messages = this.agent.context.messages;
+      mediaStripSnapshot ??= captureMediaStripSnapshot(messages);
+      return stripMediaPartsBySnapshot(messages, mediaStripSnapshot);
+    };
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
       const loopControl = this.agent.kimiConfig?.loopControl;
+      const maxStepsPerTurn = resolveMaxStepsPerTurn(loopControl?.maxStepsPerTurn);
+      const maxRetriesPerStep = resolveMaxRetriesPerStep(loopControl?.maxRetriesPerStep);
       let stopForGoalBudget = false;
       try {
         const result = await runTurn({
@@ -740,15 +789,15 @@ export class TurnFlow {
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
           buildMessagesMediaDegraded: () => this.agent.context.mediaDegradedMessages,
-          buildMessagesMediaStripped: () => this.agent.context.mediaStrippedMessages,
+          buildMessagesMediaStripped,
           dispatchEvent: this.buildDispatchEvent(turnId),
           // Re-read per step (not snapshotted per turn) so a select_tools load
           // is dispatchable on the very next step of the same turn.
           buildTools: () => this.agent.tools.loopTools,
           describeMissingTool: (name) => this.agent.tools.missingToolMessage(name),
           log: this.agent.log,
-          maxSteps: loopControl?.maxStepsPerTurn,
-          maxRetryAttempts: loopControl?.maxRetriesPerStep,
+          maxSteps: maxStepsPerTurn,
+          maxRetryAttempts: maxRetriesPerStep,
           recordStepUsage: async (usage) => {
             try {
               const snapshot = await this.agent.goal.recordTokenUsage(usage.output);
@@ -756,6 +805,10 @@ export class TurnFlow {
             } catch (error) {
               this.agent.log.warn('goal token accounting failed', { error });
             }
+          },
+          onRequestTrace: (trace) => {
+            this.activeRequestTrace = trace;
+            deduper.beginStep(trace);
           },
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
@@ -769,7 +822,6 @@ export class TurnFlow {
               // re-injected later, so append them only after compaction runs.
               this.flushSteerBuffer();
               await this.agent.injection.inject();
-              deduper.beginStep();
               return;
             },
             afterStep: async ({ usage }) => {
@@ -830,7 +882,7 @@ export class TurnFlow {
               ) {
                 goalOutcomeMessageContinuationUsed = true;
                 goalOutcomeToolResultPending = false;
-                if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
+                if (!hasStepBudgetRemaining(maxStepsPerTurn, ctx.stepNumber)) {
                   return { continue: false };
                 }
                 return { continue: true };
@@ -1002,7 +1054,15 @@ export class TurnFlow {
       this.beginTrackedStep(turnId, event.step);
       return;
     }
+    if (event.type === 'step.end') {
+      // Final write: the completed step's last attempt wins over any earlier
+      // mid-stream capture (e.g. from a retried attempt).
+      this.latestTraceId = event.traceId;
+      this.activeRequestTrace = undefined;
+      return;
+    }
     if (event.type === 'turn.interrupted') {
+      this.interruptedTraceIdByTurn.set(turnId, event.traceId);
       if (event.reason === 'error' && event.activeStep !== undefined) {
         this.stepFailureByTurn.set(turnId, event);
       }
@@ -1010,6 +1070,7 @@ export class TurnFlow {
         turnId,
         interruptedStep(event),
         event.interruptReason ?? telemetryInterruptReason(event.reason, false),
+        event.traceId,
       );
       return;
     }
@@ -1019,6 +1080,7 @@ export class TurnFlow {
   private beginTrackedStep(turnId: number, step: number): void {
     this.currentStepByTurn.set(turnId, step);
     this.currentStep = step;
+    this.activeRequestTrace = undefined;
     if (!this.stepToolCallKeys.has(step)) {
       this.stepToolCallKeys.set(step, new Set());
     }
@@ -1026,7 +1088,13 @@ export class TurnFlow {
 
   private trackToolLifecycle(event: LoopEvent, turnId: number): void {
     if (event.type === 'tool.call') {
-      const dupType = this.trackDuplicateToolCall(turnId, event.step, event.name, event.args);
+      const dupType = this.trackDuplicateToolCall(
+        turnId,
+        event.step,
+        event.name,
+        event.args,
+        event.traceId,
+      );
       this.toolCallDupType.set(
         event.toolCallId,
         dupType === 'cross_step' ? 'cross_step' : 'normal',
@@ -1034,6 +1102,7 @@ export class TurnFlow {
       this.toolCallStartedAt.set(event.toolCallId, {
         name: event.name,
         startedAt: Date.now(),
+        traceId: event.traceId,
       });
       return;
     }
@@ -1045,10 +1114,12 @@ export class TurnFlow {
       this.toolCallDupType.delete(event.toolCallId);
       const outcome = telemetryToolOutcome(event.result);
       const properties: Record<string, TelemetryPropertyValue> = {
+        turn_id: turnId,
         tool_name: started.name,
         outcome,
         duration_ms: Date.now() - started.startedAt,
         dup_type: dupType,
+        trace_id: event.traceId ?? started.traceId,
       };
       const errorType = outcome === 'error' ? telemetryToolErrorType(event.result) : undefined;
       if (errorType !== undefined) {
@@ -1063,6 +1134,7 @@ export class TurnFlow {
     step: number,
     toolName: string,
     args: unknown,
+    traceId: string | undefined,
   ): 'normal' | 'same_step' | 'cross_step' {
     const argsText = canonicalTelemetryArgs(args);
     const key = `${toolName}\u0000${argsText}`;
@@ -1085,6 +1157,7 @@ export class TurnFlow {
       tool_name: toolName,
       dup_type: dupType,
       args_hash: createHash('sha256').update(argsText).digest('hex').slice(0, 8),
+      trace_id: traceId,
     });
     return dupType;
   }
@@ -1100,14 +1173,19 @@ export class TurnFlow {
     turnId: number,
     atStep: number,
     interruptReason: TelemetryInterruptReason,
+    traceId: string | undefined,
   ): void {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
+    this.interruptedTraceIdByTurn.set(turnId, traceId);
     this.agent.telemetry.track('turn_interrupted', {
+      turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
+      thinking_effort: this.agent.config.thinkingEffort,
       at_step: atStep,
       interrupt_reason: interruptReason,
       ...this.requestProtocolProps(),
+      trace_id: traceId,
     });
   }
 
@@ -1140,6 +1218,36 @@ export class TurnFlow {
     const failure = this.stepFailureByTurn.get(turnId);
     return failure?.reason === 'error' && failure.activeStep !== undefined;
   }
+}
+
+const MAX_STEPS_PER_TURN_ENV = 'KIMI_LOOP_MAX_STEPS_PER_TURN';
+const MAX_RETRIES_PER_STEP_ENV = 'KIMI_LOOP_MAX_RETRIES_PER_STEP';
+
+/**
+ * Resolve the effective per-turn step cap. Precedence:
+ * `KIMI_LOOP_MAX_STEPS_PER_TURN` (non-negative integer) → config
+ * (`loop_control.max_steps_per_turn`) → `undefined` (no cap). `0` means no
+ * cap, same as the config field; an invalid env value is ignored.
+ */
+export function resolveMaxStepsPerTurn(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_STEPS_PER_TURN_ENV) ?? configValue;
+}
+
+/**
+ * Resolve the effective per-step retry budget. Precedence:
+ * `KIMI_LOOP_MAX_RETRIES_PER_STEP` (non-negative integer) → config
+ * (`loop_control.max_retries_per_step`) → `undefined` (the loop's built-in
+ * default). An invalid env value is ignored.
+ */
+export function resolveMaxRetriesPerStep(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_RETRIES_PER_STEP_ENV) ?? configValue;
+}
+
+function nonNegativeIntFromEnv(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw.length === 0 || !/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {

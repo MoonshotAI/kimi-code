@@ -72,7 +72,6 @@ describe('ServiceCollection', () => {
     expect(consumer.service1).toBeInstanceOf(Service1);
     expect(consumer.service1.c).toBe(1);
 
-    // add IService2 AFTER the InstantiationService was built
     collection.set(IService2, new Service2());
 
     const target2 = service.createInstance(Target2Dep);

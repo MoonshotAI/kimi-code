@@ -9,7 +9,7 @@
  * the v2 live loop emits the same records (`LoopService` →
  * `ContextMemory.appendLoopEvent`), keeping the on-disk shape byte-compatible.
  * This fold turns them into assistant / tool messages — at live dispatch time
- * and again when `WireService.replay` restores a session. Without it, replay
+ * and again when `WireService.restore` restores an Agent. Without it, restore
  * would skip those records (no Op is registered for the type) and the restored
  * `ContextModel` — and every consumer built on it (`/messages`, `/snapshot`,
  * live resume) — would show only the user prompts.
@@ -25,9 +25,10 @@
  *                     wrapping), clear its pending id
  *   - `step.end`    → settle the assistant
  * "Settle" closes any tool exchange left open (interrupted result messages),
- * then drops the partial assistant when it is empty (no content, no tool
- * calls — an empty assistant only trips provider message validation) and
- * seals it (`partial: undefined`) when it carries output. v1 never produced
+ * then drops the partial assistant when nothing sendable was recorded (no
+ * tool calls; every content part vacuous — an output-free assistant only
+ * trips provider message validation) and seals it (`partial: undefined`)
+ * when it carries output. v1 never produced
  * `step.begin` without `step.end` (its retries stayed inside one request), so
  * the drop/seal rule is the v2 extension that makes loop-level retries — a
  * retried attempt is its own `step.begin` — replay to the same history the
@@ -42,11 +43,12 @@
  * concurrent replays of different agent scopes never share fold state.
  */
 
-import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import { createToolMessage, type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { FinishReason } from '#/kosong/contract/provider';
+import { createToolMessage, type ContentPart, type ToolCall } from '#/kosong/contract/message';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import type { ContextMessage } from './types';
+import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
@@ -127,7 +129,6 @@ function bind(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextM
   return state;
 }
 
-/** Defer-aware `context.append_message` (matches v1 `ContextMemory.appendMessage`). */
 export function foldAppendMessage(
   state: readonly ContextMessage[],
   message: ContextMessage,
@@ -140,7 +141,6 @@ export function foldAppendMessage(
   return bind([...state, message], ctx);
 }
 
-/** Reduce one `context.append_loop_event` record into the history. */
 export function foldLoopEvent(
   state: readonly ContextMessage[],
   event: LoopRecordedEvent,
@@ -148,9 +148,6 @@ export function foldLoopEvent(
   const ctx = ctxOf(state);
   switch (event.type) {
     case 'step.begin': {
-      // A step that failed before `step.end` (a retried attempt, an aborted
-      // turn) leaves its partial assistant open; settle it before opening the
-      // next one so an empty attempt does not strand a ghost assistant.
       const settled = settleOpenStep(state, ctx);
       const assistant: ContextMessage = { role: 'assistant', content: [], toolCalls: [], partial: true };
       ctx.openStepUuid = event.uuid;
@@ -196,11 +193,6 @@ export function foldLoopEvent(
   }
 }
 
-/**
- * Clear fold bookkeeping after an op that invalidates any open exchange
- * (`context.undo` / `context.clear` / `context.apply_compaction`). Returns
- * the same state reference with a fresh fold ctx.
- */
 export function resetFold(state: readonly ContextMessage[]): readonly ContextMessage[] {
   foldCtxMap.set(state, { openStepUuid: undefined, pending: new Set(), deferred: [] });
   return state;
@@ -217,12 +209,6 @@ function appendToOpenAssistant(
   return next;
 }
 
-/**
- * Close the step currently left open: pending tool calls get their interrupted
- * result messages, then the partial assistant is dropped when it is empty
- * (nothing to keep — an empty assistant only trips provider message
- * validation) or sealed in place when it carries content or tool calls.
- */
 function settleOpenStep(
   state: readonly ContextMessage[],
   ctx: FoldCtx,
@@ -231,7 +217,7 @@ function settleOpenStep(
   const index = findOpenAssistantIndex(closed);
   if (index === -1) return closed;
   const open = closed[index]!;
-  if (open.content.length === 0 && open.toolCalls.length === 0) {
+  if (open.toolCalls.length === 0 && open.content.every(isVacuousContentPart)) {
     return [...closed.slice(0, index), ...closed.slice(index + 1)];
   }
   const next = closed.slice();

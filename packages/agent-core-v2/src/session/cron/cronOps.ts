@@ -17,7 +17,7 @@
  * `OP_REGISTRY` at import time.
  */
 
-import type { CronJobOrigin } from '@moonshot-ai/protocol';
+import type { CronJobOrigin } from '#/agent/contextMemory/types';
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';

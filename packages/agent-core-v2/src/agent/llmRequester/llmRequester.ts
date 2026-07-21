@@ -1,88 +1,75 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import type { Message, StreamedMessagePart } from '#/app/llmProtocol/message';
-import type { Tool } from '#/app/llmProtocol/tool';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { FinishReason, ThinkingEffort } from '#/kosong/contract/provider';
+import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import type { TokenUsage } from '#/kosong/contract/usage';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
 import type { LogContext } from '#/_base/log/log';
 
-export type LLMRequestLogFields = Readonly<LogContext>;
+export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
-export type LLMRequestSource =
+export type AgentLLMRequestSource =
   | {
       readonly type: 'turn';
       readonly turnId: number;
       readonly step?: number;
-      readonly logFields?: LLMRequestLogFields;
+      readonly logFields?: AgentLLMRequestLogFields;
     }
   | {
       readonly type: 'operation';
+      readonly turnId?: number;
       readonly requestKind?: string;
-      readonly logFields?: LLMRequestLogFields;
+      readonly logFields?: AgentLLMRequestLogFields;
     };
 
-export interface LLMStreamTiming {
-  readonly firstTokenLatencyMs: number;
-  readonly streamDurationMs: number;
-  /**
-   * Portion of `firstTokenLatencyMs` spent in-process building the request
-   * (message serialization, param assembly) before the provider dispatched the
-   * network call. `undefined` when the provider does not report the
-   * client/server boundary (no `onRequestSent`).
-   */
-  readonly requestBuildMs?: number;
-  /**
-   * Portion of `firstTokenLatencyMs` spent waiting on the network + API server
-   * from request dispatch to the first streamed token. `undefined` when the
-   * provider does not report the client/server boundary.
-   */
-  readonly serverFirstTokenMs?: number;
-  /**
-   * Split of `streamDurationMs` (the decode window): time spent awaiting parts
-   * from the provider vs. time spent processing parts in-process. Both are
-   * `undefined` when the provider stream did not report decode accounting.
-   */
-  readonly serverDecodeMs?: number;
-  readonly clientConsumeMs?: number;
-}
-
-export interface LLMRequestParams {
-  messages: Message[];
-  tools: readonly Tool[];
-  signal: AbortSignal;
-  source?: LLMRequestSource;
-}
-
-export interface LLMRequestFinish {
-  /** Fully assembled assistant message for this provider step. */
+export interface AgentLLMRequestFinish {
   message: Message;
   usage: TokenUsage;
-  /** Model name/alias used for usage accounting, when known by the requester. */
   model?: string | undefined;
   providerFinishReason?: FinishReason;
   rawFinishReason?: string;
-  /** Provider-assigned response/message id, when available. */
   providerMessageId?: string;
-  timing?: LLMStreamTiming;
+  timing?: ModelRequestTiming;
+  /** Trace id of the request that produced this finish (Kimi `x-trace-id`). */
+  traceId?: string;
 }
 
-export type LLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;
+export type AgentLLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;
 
-export interface LLMRequestOverrides {
+export interface AgentLLMRequestOverrides {
   messages?: readonly Message[];
   tools?: readonly Tool[];
   systemPrompt?: string;
-  source?: LLMRequestSource;
+  source?: AgentLLMRequestSource;
   maxOutputSize?: number;
+}
+
+export interface AgentLLMRequestTask {
+  readonly trace: LLMRequestTrace;
+  readonly result: Promise<AgentLLMRequestFinish>;
+}
+
+export interface PreparedTurnRequestConfig {
+  readonly thinkingEffort: ThinkingEffort;
 }
 
 export interface IAgentLLMRequesterService {
   readonly _serviceBrand: undefined;
 
+  prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
+
   request(
-    overrides?: LLMRequestOverrides,
-    onPart?: LLMRequestPartHandler,
+    overrides?: AgentLLMRequestOverrides,
+    onPart?: AgentLLMRequestPartHandler,
     signal?: AbortSignal,
-  ): Promise<LLMRequestFinish>;
+  ): Promise<AgentLLMRequestFinish>;
+
+  start(
+    overrides?: AgentLLMRequestOverrides,
+    onPart?: AgentLLMRequestPartHandler,
+    signal?: AbortSignal,
+  ): AgentLLMRequestTask;
 }
 
 export const IAgentLLMRequesterService = createDecorator<IAgentLLMRequesterService>(

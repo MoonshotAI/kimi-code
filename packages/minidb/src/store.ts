@@ -89,6 +89,12 @@ class MinHeap {
 export interface StoreOptions {
   activeExpireIntervalMs?: number;
   activeExpireMaxPerTick?: number;
+  /** Time budget (ms) per active-expiration tick, used once
+   *  `activeExpireMaxPerTick` entries have been reaped: a simultaneously-expired
+   *  burst keeps being reaped within this budget, so TTL storms drain far
+   *  faster than the fixed per-tick count alone, while the event-loop pause per
+   *  tick stays bounded. */
+  activeExpireTimeBudgetMs?: number;
   /** Read a value back from disk for disk-backed records. Required whenever a
    *  StoreRecord may hold a disk ref. */
   readValue?: ValueReader;
@@ -106,13 +112,22 @@ export class Store {
   /** Approximate bytes held by live + expired-not-yet-reaped records. In
    *  valueMode:'disk' this counts keys/metadata/refs, not the value bulk. */
   bytes = 0;
+  /** Number of records with an expiry set. Enables an O(1) size fast path when
+   *  TTL is not in use. */
+  private expiring = 0;
   private readonly maxPerTick: number;
+  private readonly expireTimeBudgetMs: number;
+  /** Sticky flag: set when the last tick reaped ≥ maxPerTick (i.e. there is an
+   *  expiry backlog), making the next ticks aggressive until the storm drains
+   *  — like Redis's aggressive expire cycle. */
+  private expireAggressive = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly onExpire?: (key: string, record: StoreRecord) => void;
   private readonly readValue?: ValueReader;
 
   constructor(opts: StoreOptions = {}) {
     this.maxPerTick = opts.activeExpireMaxPerTick ?? 100;
+    this.expireTimeBudgetMs = opts.activeExpireTimeBudgetMs ?? 2;
     this.onExpire = opts.onExpire;
     this.readValue = opts.readValue;
     const interval = opts.activeExpireIntervalMs ?? 100;
@@ -121,6 +136,8 @@ export class Store {
   }
 
   get size(): number {
+    // O(1) fast path: with no TTL ever set, every map entry is live.
+    if (this.expiring === 0) return this.map.size;
     // Count only logically-live keys: expired-but-not-yet-reaped entries stay
     // in the map until lazy/active expiration removes them, so map.size would
     // otherwise over-report.
@@ -172,7 +189,10 @@ export class Store {
     const r = this.map.get(k);
     const ok = this.map.delete(k);
     if (ok) {
-      if (r) this.bytes -= Buffer.byteLength(k, 'binary') + this.refBytes(r.ref) + this.metaBytes(r.dt);
+      if (r) {
+        this.bytes -= Buffer.byteLength(k, 'binary') + this.refBytes(r.ref) + this.metaBytes(r.dt);
+        if (r.expireAt) this.expiring--;
+      }
       this.order.delete(k, k);
     }
     return ok;
@@ -190,14 +210,18 @@ export class Store {
 
   setRef(key: string | Buffer, ref: ValueRef, expireAt = 0, dt: Record<string, number> | null = null): void {
     const k = toKStr(key);
-    const existed = this.map.has(k);
-    if (existed) this.bytes -= this.recordBytes(k);
+    const prev = this.map.get(k);
+    if (prev) {
+      if (prev.expireAt) this.expiring--;
+      this.bytes -= this.recordBytes(k);
+    }
     const seq = ++this.seq;
     const stored = this.cloneRef(ref);
     this.map.set(k, { ref: stored, expireAt: expireAt || 0, seq, dt });
     this.bytes += Buffer.byteLength(k, 'binary') + this.refBytes(stored) + this.metaBytes(dt);
-    if (!existed) this.order.insert(k, k);
+    if (!prev) this.order.insert(k, k);
     if (expireAt) {
+      this.expiring++;
       this.heap.push({ t: expireAt, k, seq });
       // Overwriting a TTL key leaves a stale heap entry that is only reaped
       // when its (possibly far-future) timestamp passes, so the heap can grow
@@ -245,8 +269,18 @@ export class Store {
     return this.remove(toKStr(key));
   }
 
+  /** Metadata-only existence check: no value materialization (no buffer copy in
+   *  memory mode, no positioned disk read for disk-backed records). Applies the
+   *  same lazy-expiration semantics as get(). */
   has(key: string | Buffer): boolean {
-    return this.get(key) !== undefined;
+    const k = toKStr(key);
+    const r = this.map.get(k);
+    if (!r) return false;
+    if (r.expireAt && r.expireAt <= Date.now()) {
+      this.expireKey(k, r); // lazy expiration, same as get()
+      return false;
+    }
+    return true;
   }
 
   *entries(): Generator<StoreEntry> {
@@ -272,6 +306,16 @@ export class Store {
     yield* this.scan({ gte: pk, lt: pk + '\uffff', count: limit });
   }
 
+  /** Ordered scan yielding canonical keys only, without materializing values
+   *  (no buffer copies in memory mode, no positioned reads in disk mode).
+   *  Expired records are lazily reaped, exactly as in scan(). */
+  *rawKeys(opts: RangeOptions<string> = {}): Generator<string> {
+    for (const n of this.order.range(opts) as Iterable<RangeEntry<string, string>>) {
+      if (!this.getRecord(n.key)) continue;
+      yield n.key;
+    }
+  }
+
   /** Rewrite disk-backed value locations after compaction rotates the
    *  snapshot/WAL files. Memory refs are left untouched. */
   remapLocs(remap: (k: string, loc: ValueLoc, rec: StoreRecord) => ValueLoc | undefined): void {
@@ -284,14 +328,27 @@ export class Store {
 
   private activeExpire(): void {
     const now = Date.now();
+    // Normal ticks stay within the small budget; a tick that still finds a
+    // full quota of expired keys flips to aggressive mode (larger budget, like
+    // Redis's fast expire cycle) until the storm drains.
+    const deadline = now + (this.expireAggressive ? Math.max(this.expireTimeBudgetMs, 10) : this.expireTimeBudgetMs);
     let n = 0;
-    while (n++ < this.maxPerTick && this.heap.size && this.heap.peek()!.t <= now) {
+    let reaped = 0;
+    while (this.heap.size && this.heap.peek()!.t <= now) {
+      // Once the guaranteed per-tick quota is reaped, keep draining within the
+      // time budget: a fixed ~1000/s rate let a large simultaneous-expiry storm
+      // (e.g. 100k keys) linger in memory for minutes. The budget bounds the
+      // pause each tick instead of bounding the work.
+      if (n >= this.maxPerTick && (n & 15) === 0 && Date.now() >= deadline) break;
       const e = this.heap.pop()!;
       const r = this.map.get(e.k);
       if (r && r.seq === e.seq && r.expireAt && r.expireAt <= now) {
         this.expireKey(e.k, r);
+        reaped++;
       }
+      n++;
     }
+    this.expireAggressive = reaped >= this.maxPerTick;
   }
 
   /** Synchronously reap every expired record. Returns the number removed. */

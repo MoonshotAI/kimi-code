@@ -8,11 +8,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   KimiConfigSchema,
+  applyPrintModeConfigDefaults,
   configToTomlData,
   ensureConfigFile,
   loadRuntimeConfig,
   loadRuntimeConfigSafe,
   mergeConfigPatch,
+  migrateThinkingEffortMaxToHigh,
   parseConfigString,
   parseBooleanEnv,
   readConfigFile,
@@ -101,6 +103,7 @@ compaction_trigger_ratio = 0.85
 [background]
 max_running_tasks = 4
 keep_alive_on_exit = false
+bash_auto_background_on_timeout = false
 kill_grace_period_ms = 2000
 print_wait_ceiling_s = 3600
 
@@ -185,6 +188,7 @@ describe('harness config TOML loader', () => {
     expect(config.background).toMatchObject({
       maxRunningTasks: 4,
       keepAliveOnExit: false,
+      bashAutoBackgroundOnTimeout: false,
       killGracePeriodMs: 2000,
       printWaitCeilingS: 3600,
     });
@@ -955,5 +959,87 @@ support_efforts = ["low", "high"]
     const overrides = models['kimi-code/kimi-k2']?.['overrides'] as Record<string, unknown>;
 
     expect(overrides['support_efforts']).toEqual(['low', 'high']);
+  });
+});
+
+describe('applyPrintModeConfigDefaults', () => {
+  it('fills unbounded print defaults when nothing is configured', () => {
+    const config = applyPrintModeConfigDefaults({ providers: {} });
+    expect(config.loopControl?.maxStepsPerTurn).toBe(0);
+    expect(config.background?.bashTaskTimeoutS).toBe(0);
+    expect(config.subagent?.timeoutMs).toBe(0);
+  });
+
+  it('lets explicit user config win over every print default', () => {
+    const config = applyPrintModeConfigDefaults({
+      providers: {},
+      loopControl: { maxStepsPerTurn: 7 },
+      background: { bashTaskTimeoutS: 30, keepAliveOnExit: true },
+      subagent: { timeoutMs: 5000 },
+    });
+    expect(config.loopControl?.maxStepsPerTurn).toBe(7);
+    expect(config.background?.bashTaskTimeoutS).toBe(30);
+    expect(config.background?.keepAliveOnExit).toBe(true);
+    expect(config.subagent?.timeoutMs).toBe(5000);
+  });
+});
+
+describe('migrateThinkingEffortMaxToHigh', () => {
+  const BASE =
+    'default_model = "x"\n[providers.x]\ntype = "kimi"\napi_key = "k"\n[models.x]\nprovider = "x"\nmodel = "x"\nmax_context_size = 1000\n';
+
+  async function readMarkers(home: string): Promise<Record<string, string>> {
+    return JSON.parse(await readFile(join(home, 'migrations-effort.json'), 'utf-8')) as Record<
+      string,
+      string
+    >;
+  }
+
+  it('rewrites a persisted max to high once and records the marker', async () => {
+    const home = makeTempDir();
+    const configPath = join(home, 'config.toml');
+    await writeFile(configPath, `${BASE}[thinking]\nenabled = true\neffort = "max"\n`);
+
+    migrateThinkingEffortMaxToHigh(configPath, home);
+
+    expect(readConfigFile(configPath).thinking).toEqual({ enabled: true, effort: 'high' });
+    const markers = await readMarkers(home);
+    expect(markers['thinking-effort-max-to-high']).toBeDefined();
+
+    // A max the user writes by hand AFTER the migration is honored — the
+    // marker makes every later run a no-op.
+    await writeFile(configPath, `${BASE}[thinking]\neffort = "max"\n`);
+    migrateThinkingEffortMaxToHigh(configPath, home);
+    expect(readConfigFile(configPath).thinking?.effort).toBe('max');
+  });
+
+  it('leaves non-max values untouched and still records the marker', async () => {
+    const home = makeTempDir();
+    const configPath = join(home, 'config.toml');
+    await writeFile(configPath, `${BASE}[thinking]\neffort = "low"\n`);
+
+    migrateThinkingEffortMaxToHigh(configPath, home);
+
+    expect(readConfigFile(configPath).thinking?.effort).toBe('low');
+    const markers = await readMarkers(home);
+    expect(markers['thinking-effort-max-to-high']).toBeDefined();
+  });
+
+  it('marks a home without a config file as migrated', async () => {
+    const home = makeTempDir();
+    migrateThinkingEffortMaxToHigh(join(home, 'config.toml'), home);
+
+    const markers = await readMarkers(home);
+    expect(markers['thinking-effort-max-to-high']).toBeDefined();
+  });
+
+  it('skips an unparsable config without writing the marker', async () => {
+    const home = makeTempDir();
+    const configPath = join(home, 'config.toml');
+    await writeFile(configPath, 'not = [valid = toml\n');
+
+    migrateThinkingEffortMaxToHigh(configPath, home);
+
+    await expect(readFile(join(home, 'migrations-effort.json'), 'utf-8')).rejects.toThrow();
   });
 });
