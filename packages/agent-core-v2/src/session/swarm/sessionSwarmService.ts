@@ -160,6 +160,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       {
         workDir: this.sessionContext.cwd,
         profileName: profile.name,
+        bindingSlot: options.bindingSlot,
       },
     );
     if (bindingResolution.warning !== undefined) {
@@ -219,9 +220,10 @@ export class SessionSwarmService implements ISessionSwarmService {
     const child = this.requireHandle(agentId, 'Agent instance');
     this.requireIdleSubagent(agentId, child);
     this.realignChildModel(caller, child);
-    const profileName =
-      child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
+    const childData = child.accessor.get(IAgentProfileService).data();
+    const profileName = childData.profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
+      const selectionEnabled = this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID);
       emitAgentRunSpawned(caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
@@ -229,6 +231,8 @@ export class SessionSwarmService implements ISessionSwarmService {
         description: options.description,
         swarmIndex: options.swarmIndex,
         runInBackground: options.runInBackground,
+        modelAlias: selectionEnabled ? childData.modelAlias : undefined,
+        thinkingEffort: selectionEnabled ? childData.thinkingLevel : undefined,
       });
     }
     const request = retryTurn
@@ -268,6 +272,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private realignChildModel(caller: IAgentScopeHandle, child: IAgentScopeHandle): void {
+    if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) return;
     const modelAlias = caller.accessor.get(IAgentProfileService).data().modelAlias;
     if (modelAlias === undefined) {
       throw new Error('Caller agent has no model bound');

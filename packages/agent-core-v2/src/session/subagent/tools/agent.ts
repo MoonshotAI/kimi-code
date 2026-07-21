@@ -276,8 +276,12 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
       this.realignChildModel(target);
       agentId = target.id;
-      profileName =
-        target.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_LABEL;
+      const childData = target.accessor.get(IAgentProfileService).data();
+      profileName = childData.profileName ?? RESUMED_LABEL;
+      if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+        spawnedModelAlias = childData.modelAlias;
+        spawnedThinkingEffort = childData.thinkingLevel;
+      }
     } else {
       const requestedProfileName = args.subagent_type?.length
         ? args.subagent_type
@@ -385,6 +389,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   }
 
   private realignChildModel(target: IAgentScopeHandle): void {
+    if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) return;
     const modelAlias = this.profile.data().modelAlias;
     if (modelAlias === undefined) {
       throw new Error('Caller agent has no model bound');

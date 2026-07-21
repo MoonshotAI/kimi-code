@@ -66,6 +66,14 @@ export const AgentSwarmToolInputSchema = z
       .describe(
         `Values used to fill ${PROMPT_TEMPLATE_PLACEHOLDER}. Each item launches one new subagent.`,
       ),
+    binding_slot: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        'Named binding slot pre-configured by the user for this workspace (.kimi-code/local.toml under [subagent-slot.<name>]), applied to every subagent spawned from items. Set ONLY when the task or preset explicitly names a slot — a slot selects a user-configured model/effort. Never invent slot names, and never use this to choose a model yourself.',
+      ),
     resume_agent_ids: z
       .record(z.string().trim().min(1), z.string().trim().min(1))
       .optional()
@@ -195,6 +203,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       return {
         ...common,
         kind: 'spawn' as const,
+        bindingSlot: normalizeOptionalString(args.binding_slot),
       };
     });
     const results = await this.swarmService.run({

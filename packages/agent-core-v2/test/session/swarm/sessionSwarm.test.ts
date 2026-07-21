@@ -1106,6 +1106,78 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
+  it('applies the named binding slot to every item spawn when the flag is enabled', async () => {
+    ix.stub(IFlagService, stubFlag(true));
+    ix.stub(
+      IWorkspaceLocalConfigService,
+      stubWorkspaceLocalConfig({
+        bindings: { coder: { model: 'sub/model', thinkingEffort: 'high' } },
+        slotBindings: { fast: { model: 'slot/model', thinkingEffort: 'low' } },
+      }),
+    );
+    ix.stub(IModelCatalog, modelCatalogStub(['kimi-test', 'sub/model', 'slot/model']));
+    const published: DomainEvent[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+      published.push(event);
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts', 'fast'), spawnSessionTask('src/b.ts', 'fast')],
+    });
+
+    expect(createAgent).toHaveBeenCalledTimes(2);
+    createAgent.mock.calls.forEach((call) => {
+      expect(call[0]).toEqual(
+        expect.objectContaining({
+          binding: {
+            profile: 'coder',
+            model: 'slot/model',
+            thinking: 'low',
+            cwd: '/repo',
+          },
+        }),
+      );
+    });
+    const spawnedEvents = published.filter(
+      (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+    );
+    expect(spawnedEvents).toHaveLength(2);
+    spawnedEvents.forEach((spawned) => {
+      expect(spawned).toMatchObject({
+        modelAlias: 'slot/model',
+        thinkingEffort: 'low',
+      });
+    });
+  });
+
+  it('ignores the binding slot when the binding flag is disabled', async () => {
+    ix.stub(
+      IWorkspaceLocalConfigService,
+      stubWorkspaceLocalConfig({
+        slotBindings: { fast: { model: 'slot/model', thinkingEffort: 'low' } },
+      }),
+    );
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts', 'fast')],
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: {
+          profile: 'coder',
+          model: 'kimi-test',
+          thinking: 'medium',
+          cwd: '/repo',
+        },
+      }),
+    );
+  });
+
   it('inherits parent user tools on spawned children', async () => {
     const parentUserTools = userToolServiceStub();
     const childUserTools = userToolServiceStub();
@@ -1188,6 +1260,40 @@ describe('SessionSwarmService metadata compatibility', () => {
       { kind: 'prompt', prompt: 'Continue' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it('keeps the bound model on resumed children and reports it on the spawned event when the flag is enabled', async () => {
+    ix.stub(IFlagService, stubFlag(true));
+    agents['agent-existing'] = {
+      labels: { parentAgentId: 'main' },
+    };
+    const child = agentHandle('agent-existing', lifecycle, eventBus, {
+      profileName: 'explore',
+      modelAlias: 'sub/model',
+      thinkingLevel: 'high',
+    });
+    handles.set('agent-existing', child);
+    const published: DomainEvent[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+      published.push(event);
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-existing')],
+      }),
+    ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
+
+    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('sub/model');
+    const spawned = published.find(
+      (event): event is SubagentSpawnedEvent => event.type === 'subagent.spawned',
+    );
+    expect(spawned).toMatchObject({
+      modelAlias: 'sub/model',
+      thinkingEffort: 'high',
+    });
   });
 
   it('does not emit spawned again when a rate-limited child retries', async () => {
@@ -1289,7 +1395,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   });
 });
 
-function spawnSessionTask(swarmItem?: string): SessionSwarmTask {
+function spawnSessionTask(swarmItem?: string, bindingSlot?: string): SessionSwarmTask {
   return {
     kind: 'spawn',
     data: {},
@@ -1300,6 +1406,7 @@ function spawnSessionTask(swarmItem?: string): SessionSwarmTask {
     swarmIndex: 1,
     swarmItem,
     runInBackground: false,
+    bindingSlot,
   };
 }
 
