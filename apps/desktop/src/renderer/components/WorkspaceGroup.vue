@@ -113,7 +113,7 @@ function onHeaderDragStart(event: DragEvent): void {
   <div class="group" :class="{ dragging }">
     <div
       class="gh"
-      :class="{ on: group.workspace.id === activeWorkspaceId, collapsed: isCollapsed(group.workspace.id) }"
+      :class="{ on: group.workspace.id === activeWorkspaceId && activeId === '', collapsed: isCollapsed(group.workspace.id) }"
       draggable="true"
       @click.stop="emit('groupClick', group.workspace.id, $event)"
       @contextmenu="emit('groupContextmenu', group.workspace, $event)"
@@ -260,6 +260,11 @@ function onHeaderDragStart(event: DragEvent): void {
 }
 .gh:active { cursor: grabbing; }
 .gh:hover { background: var(--sb-hover, var(--color-surface-sunken)); }
+/* Active workspace with no session selected (the draft state — e.g. right
+   after adding the workspace, or after "New chat"): the same neutral selected
+   fill as a session row — selection reads as "where I am". Listed after
+   :hover so the fill wins on hover, mirroring .se.on in SessionRow. */
+.gh.on { background: var(--sb-selected, var(--color-selected)); }
 .gh-top {
   position: relative;
   display: flex;

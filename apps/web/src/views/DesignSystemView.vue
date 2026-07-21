@@ -1452,6 +1452,7 @@ onUnmounted(() => {
               <li>The name uses 500 weight with muted color (<code>--color-text-muted</code>, one step lighter than session titles), so group heads remain clear without competing with list content. No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
               <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm inside a floating actions layer anchored to the row's right edge — no reserved layout space, so the name uses the full row width when idle. Shown on hover, keyboard focus, or while the menu is open; the layer backs itself with the sidebar surface (container background) plus the row hover wash (an <code>::after</code> shown only while the row is hovered), so its color exactly equals the row's current background and the overlapped name tail doesn't bleed through (hidden via <code>opacity:0</code>, staying in the tab order).</li>
               <li>The group is collapsible; when collapsed its session list is hidden.</li>
+              <li>While the active workspace has no session selected (the draft state — e.g. right after adding the workspace, or after New chat), the group head carries the same neutral <code>--sb-selected</code> fill as a selected session row (selection reads as "where I am"; the fill wins over hover). Once a session is selected or created, the fill moves to that session row.</li>
             </ul>
 
             <h3 class="sub">Show more &amp; collapse</h3>

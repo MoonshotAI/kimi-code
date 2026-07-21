@@ -10,6 +10,7 @@ export default {
   newSession: '新建会话',
   newChat: '新建对话',
   newWorkspace: '新建工作区',
+  dropToAddWorkspace: '松开鼠标添加工作区',
   emptyState: '还没有会话 · 点击 新建会话 开始',
   archiveConfirm: '确认归档会话？归档后可以从「设置」中恢复',
   options: '选项',

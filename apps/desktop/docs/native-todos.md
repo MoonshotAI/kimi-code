@@ -139,6 +139,12 @@
   - TODO（代码内 `TODO(help-menu)` 注释同步）：What's New（changelog）、Send Feedback、Start Performance Trace（性能录制）三项后续再加。
   - 测试：`tests/main/menu.test.ts` +1 用例（Help 为最末菜单、两项双语 label、已接线 vs File 展示项）。
 
+- [x] **拖文件夹到侧边栏创建工作区**（已完成，desktop 专属）
+  - 实现：preload 新增 `getPathForFile(file)`（`webUtils.getPathForFile`——sandboxed renderer 拿拖放文件绝对路径的唯一官方姿势，`File.path` 早已移除；空串/异常归 `null`，零新 IPC channel，webUtils 就在 preload 进程内）。renderer 新增 `src/renderer/lib/nativeWorkspaceDrop.ts`：`canDropWorkspaceFolders()` 桥探测（桥缺 `getPathForFile` 方法即 false，旧桥自动降级）；`looksLikeFolderDrag()` dragover 启发式（拖拽处于 protected mode，只有 `kind`/`type` 可读，文件夹 = `kind:'file'` + 空 MIME，误报无害——drop 会权威复核）；`extractDroppedFolderPaths()` drop 权威提取（`webkitGetAsEntry().isDirectory` 过滤、桥解析路径、去重，解析失败跳过）。`Sidebar.vue` 在 `.col` 上挂 dragenter/dragover/dragleave/drop：启发式命中才 `preventDefault + stopPropagation`（后者压住 `useAttachmentUpload` document 级处理，composer 的全窗口附件 overlay 不为文件夹拖亮起；高亮用计数器跟踪嵌套 enter/leave，照抄同款模式），dragleave 刻意不 stopPropagation（document 计数 floor 0 兜底）；drop 提取到 ≥1 个路径才拦截并 `emit('addWorkspacePaths', paths)`，否则原样冒泡回落附件流程——普通文件拖放行为两端零变化；内部工作区排序拖是 `text/plain` payload，天然不命中启发式。高亮 UI 为 `.col` 内绝对定位 overlay（pointer-events:none、纯 CSS show/hide 不用 Transition，虚线 accent 卡片复用 composer drop-overlay 视觉语言）。`App.vue`（desktop 分叉块，同 requestAddWorkspace 区块）`@add-workspace-paths` 顺序循环复用 `addWorkspace()`（自动选中最后一个、接上 pending 首条消息），daemon 拒绝走 `addWorkspaceError` + 回退 dialog（同选择器失败的报错面）。多文件夹一次拖入 = 顺序逐个创建。
+  - **web 无桥恒不触发**：`Sidebar.vue` 与 `nativeWorkspaceDrop.ts` 两端同步、文件保持一致（仅既有的文件头 + 日志前缀 2 行品牌分叉），web 端「拖文件到侧边栏 = 附件」行为不变。拖到非侧边栏区域保持现状（用户明确决定：文件夹落聊天区仍走附件流程，不特判）。
+  - 测试：`tests/main/preload.test.ts`（白名单 + webUtils 路径/空串/抛错三态断言）；`tests/renderer/nativeWorkspaceDrop.test.ts`（13 用例：桥探测三态、启发式含 text/plain 排除、提取只收目录、去重、null 过滤、桥缺省/抛错）。
+
+
 ## 已原生化的（不用动）
 
 - 深色模式同步：renderer → `kimi:theme` → `nativeTheme.themeSource`

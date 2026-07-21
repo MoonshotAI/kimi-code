@@ -20,6 +20,11 @@ import {
   saveCollapsedWorkspaces,
 } from '../lib/storage';
 import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
+import {
+  canDropWorkspaceFolders,
+  extractDroppedFolderPaths,
+  looksLikeFolderDrag,
+} from '../lib/nativeWorkspaceDrop';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
@@ -102,6 +107,10 @@ const emit = defineEmits<{
   createInWorkspace: [workspaceId: string];
   selectWorkspace: [workspaceId: string];
   addWorkspace: [];
+  /** Folders dropped onto the sidebar, resolved to absolute paths (desktop
+   *  only — the flow is bridge-gated in lib/nativeWorkspaceDrop, so this
+   *  never fires on web). */
+  addWorkspacePaths: [paths: string[]];
   rename: [id: string, title: string];
   archive: [id: string];
   fork: [id: string];
@@ -307,6 +316,62 @@ function handleGhClick(wsId: string, e: MouseEvent): void {
 
 function onSelectSession(sessionId: string): void {
   emit('select', sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Folder drag & drop → add workspace (desktop only)
+// ---------------------------------------------------------------------------
+// Dropping folders anywhere on the sidebar registers each as a workspace.
+// Everything is bridge-gated (lib/nativeWorkspaceDrop): without the desktop
+// preload nothing here activates and drops keep their old meaning (file
+// attachments, via the document-level handlers in useAttachmentUpload).
+// Internal drags (workspace reorder) carry a text/plain payload, so they
+// never match the folder heuristic. Like the composer overlay, a counter
+// tracks nested dragenter/dragleave pairs instead of single events.
+const folderDropDepth = ref(0);
+const folderDropActive = ref(false);
+
+function folderDropReset(): void {
+  folderDropDepth.value = 0;
+  folderDropActive.value = false;
+}
+
+function onFolderDragEnter(event: DragEvent): void {
+  if (!canDropWorkspaceFolders() || !looksLikeFolderDrag(event)) return;
+  // stopPropagation keeps the document-level attachment handlers from seeing
+  // this drag — the composer overlay must not light up for a workspace drop.
+  event.preventDefault();
+  event.stopPropagation();
+  folderDropDepth.value += 1;
+  folderDropActive.value = true;
+}
+
+function onFolderDragOver(event: DragEvent): void {
+  if (!canDropWorkspaceFolders() || !looksLikeFolderDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+}
+
+function onFolderDragLeave(event: DragEvent): void {
+  // Deliberately NOT stopPropagation'd: the document-level handlers pair
+  // their own enter/leave bookkeeping (floored at 0, so the asymmetry from
+  // the swallowed enters above is harmless).
+  if (!canDropWorkspaceFolders() || !looksLikeFolderDrag(event)) return;
+  folderDropDepth.value = Math.max(0, folderDropDepth.value - 1);
+  if (folderDropDepth.value === 0) folderDropActive.value = false;
+}
+
+function onFolderDrop(event: DragEvent): void {
+  folderDropReset();
+  if (!canDropWorkspaceFolders()) return;
+  const paths = extractDroppedFolderPaths(event);
+  // Not folders after all (e.g. an extensionless file matched the dragover
+  // heuristic) — don't intercept; let the drop bubble to the attachment flow.
+  if (paths.length === 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  emit('addWorkspacePaths', paths);
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +744,14 @@ onBeforeUnmount(() => {
     :style="{ width: collapsed ? '0px' : colWidth + 'px' }"
   >
     <!-- Session column -->
-    <div class="col" :style="{ width: colWidth + 'px' }">
+    <div
+      class="col"
+      :style="{ width: colWidth + 'px' }"
+      @dragenter="onFolderDragEnter"
+      @dragover="onFolderDragOver"
+      @dragleave="onFolderDragLeave"
+      @drop="onFolderDrop"
+    >
       <!-- Header: brand + collapse. The collapse button lives INSIDE the header
            on non-mac platforms (right-aligned); on macOS desktop the brand is
            hidden (traffic lights own that corner) and the header is just a
@@ -856,6 +928,18 @@ onBeforeUnmount(() => {
           <span>{{ t('settings.title') }}</span>
         </button>
       </div>
+
+      <!-- Folder-drop affordance (desktop only): shown while a folder drag
+           hovers the sidebar. Purely visual (pointer-events none) — the
+           handlers on .col receive the drop. Pure CSS show/hide like the
+           composer's drop overlay (a <Transition> can strand an invisible
+           node when the drag ends before the enter transition starts). -->
+      <div class="folder-drop-overlay" :class="{ show: folderDropActive }" aria-hidden="true">
+        <div class="folder-drop-card">
+          <Icon name="folder" size="lg" />
+          <span>{{ t('sidebar.dropToAddWorkspace') }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- Workspace right-click menu (position:fixed) -->
@@ -1016,6 +1100,8 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--line);
   container-type: inline-size;
   container-name: sidebar-col;
+  /* Anchor for the folder-drop overlay. */
+  position: relative;
 }
 
 /* Header: brand strip (no border — flows into the workspace list). On non-mac
@@ -1348,6 +1434,55 @@ onBeforeUnmount(() => {
    will land. Inset shadows avoid layout shift. */
 .ws-drop-target.drop-before { box-shadow: inset 0 2px 0 var(--color-accent); }
 .ws-drop-target.drop-after { box-shadow: inset 0 -2px 0 var(--color-accent); }
+
+/* Folder-drop affordance: covers the whole column while a folder drag hovers
+   (desktop only — folderDropActive can never go true without the preload
+   bridge). Visual language mirrors the composer's full-window drop overlay:
+   dashed accent card on a dimmed surface. */
+.folder-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--color-sidebar-bg) 72%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-base) ease,
+    visibility var(--duration-base);
+}
+.folder-drop-overlay.show {
+  opacity: 1;
+  visibility: visible;
+}
+.folder-drop-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1.5px dashed var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-size: var(--ui-font-size-lg);
+  font-weight: var(--weight-medium);
+  box-shadow: var(--shadow-md);
+}
+.folder-drop-card svg {
+  flex: none;
+}
+.folder-drop-card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .empty {
   padding: var(--space-6) var(--space-3);

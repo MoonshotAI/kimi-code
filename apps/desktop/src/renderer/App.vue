@@ -709,6 +709,24 @@ function handleCloseAddWorkspace(): void {
   showAddWorkspace.value = false;
 }
 
+// Sidebar folder drop (desktop-only: the sidebar gates the whole flow on the
+// preload bridge, so this never fires on web). Adds each dropped folder via
+// the same path as the native picker; a daemon rejection surfaces in the
+// fallback dialog, like a picker failure. Part of the desktop-only
+// add-workspace block — keep on web→desktop re-copies (docs/native-todos.md).
+async function handleDropWorkspacePaths(paths: string[]): Promise<void> {
+  for (const path of paths) {
+    // Sequential: each addWorkspace() also selects its workspace, so the last
+    // successful drop ends up active — matching multi-pick order.
+    const added = await addWorkspace(path);
+    if (!added) {
+      addWorkspaceError.value = t('workspace.addFailed');
+      showAddWorkspace.value = true;
+      break;
+    }
+  }
+}
+
 function focusComposerAfterDraft(): void {
   void nextTick(() => {
     conversationPaneRef.value?.focusComposer();
@@ -801,6 +819,7 @@ function openPr(url: string): void {
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
         @select-workspace="client.openWorkspace($event)"
         @add-workspace="requestAddWorkspace()"
+        @add-workspace-paths="void handleDropWorkspacePaths($event)"
         @rename="(id, title) => client.renameSession(id, title)"
         @archive="confirmArchiveSession($event)"
         @fork="(id) => client.forkSession(id)"

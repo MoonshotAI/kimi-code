@@ -10,6 +10,7 @@ export default {
   newSession: 'New Session',
   newChat: 'New Chat',
   newWorkspace: 'New Workspace',
+  dropToAddWorkspace: 'Drop to add workspace',
   emptyState: 'No sessions yet · click New Session to start',
   archiveConfirm: 'Archive this session? You can restore it later from Settings.',
   options: 'Options',

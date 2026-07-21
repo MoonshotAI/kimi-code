@@ -4,6 +4,7 @@ const expose = vi.fn();
 const send = vi.fn();
 const removeListener = vi.fn();
 const invoke = vi.fn().mockResolvedValue(undefined);
+const getPathForFile = vi.fn<(file: File) => string>();
 
 // `ipcRenderer.on` records the listener so a test can fire it and assert the
 // renderer callback receives the forwarded payload (not just the channel name).
@@ -15,11 +16,13 @@ const on = vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: expose },
   ipcRenderer: { send, on, removeListener, invoke },
+  webUtils: { getPathForFile },
 }));
 
 const WHITELIST = [
   'checkForUpdates',
   'downloadUpdate',
+  'getPathForFile',
   'getServerToken',
   'getUpdateStatus',
   'installUpdate',
@@ -53,6 +56,7 @@ beforeEach(() => {
   on.mockClear();
   removeListener.mockClear();
   invoke.mockClear();
+  getPathForFile.mockReset();
   listeners.clear();
 });
 
@@ -245,5 +249,25 @@ describe('kimiDesktop preload bridge', () => {
       outcome: 'error',
       message: 'invalid update-check response',
     });
+  });
+
+  it('resolves dropped-file paths via webUtils, mapping failures to null', async () => {
+    await import('../../src/main/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+    const file = new File(['x'], 'folder');
+
+    getPathForFile.mockReturnValueOnce('/work/dir');
+    expect(exposed.getPathForFile(file)).toBe('/work/dir');
+    expect(getPathForFile).toHaveBeenCalledWith(file);
+
+    // No file backing (dragged out of a web page) → empty string → null.
+    getPathForFile.mockReturnValueOnce('');
+    expect(exposed.getPathForFile(file)).toBeNull();
+
+    // A webUtils throw must never cross the bridge.
+    getPathForFile.mockImplementationOnce(() => {
+      throw new Error('bad file');
+    });
+    expect(exposed.getPathForFile(file)).toBeNull();
   });
 });

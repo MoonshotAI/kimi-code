@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 // Renderer-facing surface of the `window.kimiDesktop` bridge. Keep this a tight
 // whitelist: every native capability is exposed as an explicit method. NEVER
@@ -164,6 +164,12 @@ export type KimiDesktopApi = {
   openExternal: (url: string) => Promise<void>;
   showOpenDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePaths: string[] }>;
   showSaveDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePath?: string }>;
+  /** Absolute filesystem path of a File the user dragged into the window.
+   *  `webUtils.getPathForFile` is the only supported way to recover a path in
+   *  the sandboxed renderer (File.path was removed in Electron 32). Returns
+   *  null for drops with no file backing (e.g. content dragged out of a web
+   *  page) or any failure — callers treat null as "not a local file". */
+  getPathForFile: (file: File) => string | null;
   listOpenInApps: () => Promise<OpenInApp[]>;
   openInApp: (appId: string, path: string) => Promise<OpenInResult>;
   getServerToken: () => Promise<string | undefined>;
@@ -230,6 +236,14 @@ export const api: KimiDesktopApi = {
   openExternal: (url) => ipcRenderer.invoke('kimi:open-external', url),
   showOpenDialog: (opts) => ipcRenderer.invoke('kimi:dialog-open', opts),
   showSaveDialog: (opts) => ipcRenderer.invoke('kimi:dialog-save', opts),
+  getPathForFile: (file) => {
+    try {
+      const path = webUtils.getPathForFile(file);
+      return path === '' ? null : path;
+    } catch {
+      return null;
+    }
+  },
   listOpenInApps: () => ipcRenderer.invoke('kimi:open-in-list'),
   openInApp: (appId, path) => ipcRenderer.invoke('kimi:open-in', appId, path),
   getServerToken: () => ipcRenderer.invoke('kimi:get-server-token'),
