@@ -216,6 +216,7 @@ const TRANSCRIPT_RESET_TAIL_TURNS = 30;
 async function disposeSessionState(state: SessionState): Promise<void> {
   for (const d of state.lifecycleDisposables) d.dispose();
   for (const d of state.agentDisposables.values()) d.dispose();
+  await state.queue;
   await state.journal.close();
 }
 
@@ -243,6 +244,8 @@ export class SessionEventBroadcaster {
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private readonly sessionLifecycleSubscription: IDisposable;
+  private readonly sessionWillCloseHook: IDisposable;
+  private readonly inactiveSessions = new Set<string>();
   private closed = false;
 
   constructor(
@@ -270,8 +273,17 @@ export class SessionEventBroadcaster {
     // accumulated work-fact).
     const lifecycle = opts.core.accessor.get(ISessionLifecycleService);
     this.sessionLifecycleSubscription = lifecycle.onDidCreateSession(({ sessionId }) => {
+      this.inactiveSessions.delete(sessionId);
       void this.activateSession(sessionId);
     });
+    this.sessionWillCloseHook = lifecycle.hooks.onWillCloseSession.register(
+      'kap-server.session-event-broadcaster',
+      async ({ sessionId }, next) => {
+        this.inactiveSessions.add(sessionId);
+        await this.dropSessionState(sessionId);
+        await next();
+      },
+    );
     for (const handle of lifecycle.list()) {
       void this.activateSession(handle.id);
     }
@@ -287,6 +299,14 @@ export class SessionEventBroadcaster {
         'session event producer activation failed',
       );
     }
+  }
+
+  private async dropSessionState(sessionId: string): Promise<void> {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    this.sessions.delete(sessionId);
+    await disposeSessionState(state);
+    this.opts.transcriptService?.dropSession(sessionId);
   }
 
   /**
@@ -699,6 +719,7 @@ export class SessionEventBroadcaster {
     this.closed = true;
     this.coreEventSubscription.dispose();
     this.sessionLifecycleSubscription.dispose();
+    this.sessionWillCloseHook.dispose();
     this.globalTargets.clear();
     for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
@@ -710,7 +731,7 @@ export class SessionEventBroadcaster {
   }
 
   private ensureState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return Promise.resolve(undefined);
+    if (this.closed || this.inactiveSessions.has(sessionId)) return Promise.resolve(undefined);
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return Promise.resolve(existing);
     let pending = this.pendingStates.get(sessionId);

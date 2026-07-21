@@ -183,10 +183,20 @@ function makeCore(
   sessions: Map<string, FakeLifecycle>,
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
-): Scope & { fireSessionCreated(sessionId: string): void } {
+): Scope & {
+  fireSessionCreated(sessionId: string): void;
+  fireSessionWillClose(sessionId: string): Promise<void>;
+} {
   const sessionCreatedHandlers: Array<
     (e: { sessionId: string; handle?: unknown; source?: string }) => void
   > = [];
+  const sessionWillCloseHooks = new Map<
+    string,
+    (
+      event: { sessionId: string; handle?: unknown; reason: string },
+      next: () => Promise<void>,
+    ) => void | Promise<void>
+  >();
   const sessionHandle = (sid: string) => {
     const lifecycle = sessions.get(sid);
     if (lifecycle === undefined) return undefined;
@@ -214,6 +224,20 @@ function makeCore(
             sessionCreatedHandlers.push(h);
             return { dispose: () => {} };
           },
+          hooks: {
+            onWillCloseSession: {
+              register: (
+                id: string,
+                hook: (
+                  event: { sessionId: string; handle?: unknown; reason: string },
+                  next: () => Promise<void>,
+                ) => void | Promise<void>,
+              ) => {
+                sessionWillCloseHooks.set(id, hook);
+                return { dispose: () => sessionWillCloseHooks.delete(id) };
+              },
+            },
+          },
           list: () => [...sessions.keys()].map((sid) => sessionHandle(sid)),
           get: sessionHandle,
         };
@@ -229,7 +253,22 @@ function makeCore(
         h({ sessionId, handle: sessionHandle(sessionId), source: 'startup' });
       }
     },
-  } as unknown as Scope & { fireSessionCreated(sessionId: string): void };
+    fireSessionWillClose: async (sessionId: string) => {
+      const hooks = [...sessionWillCloseHooks.values()];
+      const run = async (index: number): Promise<void> => {
+        const hook = hooks[index];
+        if (hook === undefined) return;
+        await hook(
+          { sessionId, handle: sessionHandle(sessionId), reason: 'exit' },
+          () => run(index + 1),
+        );
+      };
+      await run(0);
+    },
+  } as unknown as Scope & {
+    fireSessionCreated(sessionId: string): void;
+    fireSessionWillClose(sessionId: string): Promise<void>;
+  };
 }
 
 function agentEvent(type: string, extra: Record<string, unknown> = {}): AgentEvent {
@@ -1272,6 +1311,38 @@ describe('SessionEventBroadcaster', () => {
       await bc2.close();
       await rm(dir2, { recursive: true, force: true });
     }
+  });
+
+  it('rebinds producers when a closed session is restored with a new scope', async () => {
+    const first = new FakeLifecycle();
+    const firstMain = first.addAgent('main');
+    sessions.set('s1', first);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    const view = collectingTarget();
+    bc.registerGlobalTarget(view.target);
+    firstMain.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    await core.fireSessionWillClose('s1');
+    sessions.delete('s1');
+    const restored = new FakeLifecycle();
+    const restoredMain = restored.addAgent('main');
+    sessions.set('s1', restored);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    restoredMain.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    await bc.getCursor('s1');
+
+    expect(
+      view.envelopes.filter(
+        (event) =>
+          event.type === 'event.session.work_changed' &&
+          (event.payload as { busy?: boolean }).busy === true,
+      ),
+    ).toHaveLength(2);
   });
 
   it('re-emits the current work-fact when the producer mounts after the session became busy', async () => {
