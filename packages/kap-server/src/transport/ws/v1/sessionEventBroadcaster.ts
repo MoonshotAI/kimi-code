@@ -171,6 +171,8 @@ interface SessionState {
   emittedMainTurnActive: boolean;
   emittedPendingInteraction: SessionPendingInteraction;
   emittedTurnOutcome?: 'completed' | 'cancelled' | 'failed';
+  /** Number of work-fact transitions emitted since this producer mounted. */
+  workFactRevision: number;
   pendingInteraction: SessionPendingInteraction;
   /** Recent durable envelopes for in-memory replay. */
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
@@ -754,6 +756,7 @@ export class SessionEventBroadcaster {
       emittedMainTurnActive: activityByAgent.get(MAIN_AGENT_ID)?.turnActive ?? false,
       emittedPendingInteraction: pendingInteraction,
       emittedTurnOutcome: activityByAgent.get(MAIN_AGENT_ID)?.lastTurnReason,
+      workFactRevision: 0,
       pendingInteraction,
       tail: [],
       targets: new Map(),
@@ -809,6 +812,7 @@ export class SessionEventBroadcaster {
       emittedBusy: false,
       emittedMainTurnActive: false,
       emittedPendingInteraction: 'none',
+      workFactRevision: 0,
       pendingInteraction: 'none',
       tail: [],
       targets: new Map(),
@@ -1148,19 +1152,26 @@ export class SessionEventBroadcaster {
    * — and a hello-only connection would never learn it. Volatile: it re-states
    * current facts rather than recording a new one, so the journal and the
    * durable watermark stay untouched; later changes flow through
-   * `enqueueWorkChanged` as usual. A quiet session emits nothing — idle is
-   * every client's default assumption.
+   * `enqueueWorkChanged` as usual. A session that has never emitted a work
+   * transition and is still quiet emits nothing — idle is every client's
+   * default assumption. Once a session has emitted work, reconnecting targets
+   * also receive its current idle fact so an offline busy state cannot stick.
    */
   private enqueueWorkFactCatchup(
     state: SessionState,
     targets: readonly BroadcastTarget[],
   ): void {
+    const queuedAtRevision = state.workFactRevision;
     state.queue = state.queue
       .then(() => {
+        // A transition queued before this catch-up already reached the newly
+        // registered global target. Avoid restating it a second time.
+        if (state.workFactRevision !== queuedAtRevision) return;
         // Read the fact only after earlier transitions on this session queue
         // have drained. Capturing it before enqueueing can restate stale busy
         // state immediately after the queued transition sent the correct one.
         if (
+          state.workFactRevision === 0 &&
           !state.emittedBusy &&
           !state.emittedMainTurnActive &&
           state.emittedPendingInteraction === 'none'
@@ -1217,6 +1228,7 @@ export class SessionEventBroadcaster {
         state.emittedMainTurnActive = mainTurnActive;
         state.emittedPendingInteraction = state.pendingInteraction;
         state.emittedTurnOutcome = outcome;
+        state.workFactRevision += 1;
         await this.dispatch(
           state,
           {

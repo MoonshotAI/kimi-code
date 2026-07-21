@@ -1394,6 +1394,40 @@ describe('SessionEventBroadcaster', () => {
     expect(envelopes[0]!.volatile).toBeUndefined();
   });
 
+  it('seeds the current idle fact when a global target reconnects after work finished', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    const first = collectingTarget();
+    bc.registerGlobalTarget(first.target);
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+    bc.unregisterGlobalTarget(first.target);
+
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    await bc.getCursor('s1');
+
+    const reconnected = collectingTarget();
+    bc.registerGlobalTarget(reconnected.target);
+    await bc.getCursor('s1');
+
+    expect(reconnected.envelopes).toHaveLength(1);
+    expect(reconnected.envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      volatile: true,
+      session_id: 's1',
+      payload: {
+        busy: false,
+        main_turn_active: false,
+        pending_interaction: 'none',
+        last_turn_reason: 'completed',
+      },
+    });
+  });
+
   it('fans interaction notifications out to every global target while legacy events stay per-session', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
