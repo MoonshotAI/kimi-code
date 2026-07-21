@@ -19,6 +19,7 @@ export class MoonLoader extends Text {
   private interval: number;
   private colorFn?: (s: string) => string;
   private label: string;
+  private labelFn?: () => string;
   private displayText = '';
   // Inline text used when the spinner is embedded into another line (e.g. the
   // agent-swarm progress status line). It intentionally excludes the tip: the
@@ -64,7 +65,13 @@ export class MoonLoader extends Text {
   }
 
   setLabel(label: string): void {
+    this.labelFn = undefined;
     this.label = label;
+    this.updateDisplay();
+  }
+
+  setLabelFn(fn: (() => string) | undefined): void {
+    this.labelFn = fn;
     this.updateDisplay();
   }
 
@@ -89,6 +96,7 @@ export class MoonLoader extends Text {
   }
 
   private updateDisplay(): void {
+    if (this.labelFn !== undefined) this.label = this.labelFn();
     const frame = this.frames[this.currentFrame]!;
     const coloredFrame = this.colorFn ? this.colorFn(frame) : frame;
     const baseText = this.label ? `${coloredFrame} ${this.label}` : coloredFrame;

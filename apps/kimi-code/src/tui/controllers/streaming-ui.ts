@@ -1,4 +1,5 @@
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import type { Component } from '@moonshot-ai/pi-tui';
 
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
@@ -54,6 +55,15 @@ export class StreamingUIController {
   private _assistantDraft = '';
   private _thinkingDraft = '';
   private _streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null = null;
+  // Every transcript component mounted while streaming the current step's LLM
+  // attempt (assistant block, thinking bubble, tool-call previews and their
+  // group containers). A retry re-streams the step from scratch, so these are
+  // exactly what must be pulled from the transcript when the attempt fails —
+  // dispose()/reset methods only stop timers and drop refs, they do not
+  // unmount. Cleared at step boundaries; group upgrades replace a solo card
+  // in place, so removing both the card and its group is a safe no-op for
+  // whichever is no longer a direct child.
+  private _stepArtifacts: Array<{ component: Component; entry?: TranscriptEntry }> = [];
   private _activeThinkingComponent: ThinkingComponent | undefined = undefined;
   private _activeCompactionBlock: CompactionComponent | undefined = undefined;
   private _activeToolCalls = new Map<string, ToolCallBlockData>();
@@ -526,7 +536,40 @@ export class StreamingUIController {
     this._assistantDraft = '';
     this._streamingBlock = null;
     this._thinkingDraft = '';
+    this._stepArtifacts = [];
     this.disposeActiveThinkingComponent();
+  }
+
+  // Pull everything the failed attempt rendered — assistant blocks (including
+  // ones already finalized when a tool preview started), the thinking bubble,
+  // tool-call previews and their group containers — plus their transcript
+  // entries, so the retried attempt re-streams into a clean transcript.
+  discardStepArtifacts(): void {
+    if (this._stepArtifacts.length === 0 && this._streamingBlock === null) return;
+    const { state } = this.host;
+    for (const artifact of this._stepArtifacts) {
+      state.transcriptContainer.removeChild(artifact.component);
+    }
+    const droppedEntries = new Set(
+      this._stepArtifacts
+        .map((artifact) => artifact.entry)
+        .filter((entry) => entry !== undefined),
+    );
+    if (droppedEntries.size > 0) {
+      state.transcriptEntries = state.transcriptEntries.filter(
+        (entry) => !droppedEntries.has(entry),
+      );
+    }
+    this._stepArtifacts = [];
+    this._streamingBlock = null;
+    this._pendingAgentGroup = null;
+    this._pendingReadGroup = null;
+    state.ui.requestRender();
+  }
+
+  // Artifacts become permanent once the step outlives its retry window.
+  clearStepArtifactScope(): void {
+    this._stepArtifacts = [];
   }
 
   resetToolUi(): void {
@@ -602,6 +645,7 @@ export class StreamingUIController {
     this._streamingBlock = { component, entry };
     this.host.pushTranscriptEntry(entry);
     state.transcriptContainer.addChild(component);
+    this._stepArtifacts.push({ component, entry });
     state.ui.requestRender();
   }
 
@@ -640,6 +684,7 @@ export class StreamingUIController {
       );
       if (state.toolOutputExpanded) this._activeThinkingComponent.setExpanded(true);
       state.transcriptContainer.addChild(this._activeThinkingComponent);
+      this._stepArtifacts.push({ component: this._activeThinkingComponent });
     } else {
       this._activeThinkingComponent.setText(fullText);
     }
@@ -674,6 +719,7 @@ export class StreamingUIController {
     if (!handled) handled = this.tryAttachReadToolCall(toolCall, tc);
     if (!handled) {
       state.transcriptContainer.addChild(tc);
+      this._stepArtifacts.push({ component: tc });
       state.ui.requestRender();
     }
 
@@ -806,6 +852,7 @@ export class StreamingUIController {
     if (cur === null) {
       this._pendingAgentGroup = { step, turnId, solo: tc };
       state.transcriptContainer.addChild(tc);
+      this._stepArtifacts.push({ component: tc });
       state.ui.requestRender();
       return true;
     }
@@ -819,6 +866,7 @@ export class StreamingUIController {
     if (solo === undefined) {
       this._pendingAgentGroup = { step, turnId, solo: tc };
       state.transcriptContainer.addChild(tc);
+      this._stepArtifacts.push({ component: tc });
       state.ui.requestRender();
       return true;
     }
@@ -841,6 +889,7 @@ export class StreamingUIController {
       state.transcriptContainer.addChild(group);
     }
     group.attach(solo.toolCallView.id, solo);
+    this._stepArtifacts.push({ component: group });
     return group;
   }
 
@@ -863,6 +912,7 @@ export class StreamingUIController {
     if (cur === null) {
       this._pendingReadGroup = { step, turnId, solo: tc };
       state.transcriptContainer.addChild(tc);
+      this._stepArtifacts.push({ component: tc });
       state.ui.requestRender();
       return true;
     }
@@ -876,6 +926,7 @@ export class StreamingUIController {
     if (solo === undefined) {
       this._pendingReadGroup = { step, turnId, solo: tc };
       state.transcriptContainer.addChild(tc);
+      this._stepArtifacts.push({ component: tc });
       state.ui.requestRender();
       return true;
     }
@@ -898,6 +949,7 @@ export class StreamingUIController {
       state.transcriptContainer.addChild(group);
     }
     group.attach(solo.toolCallView.id, solo);
+    this._stepArtifacts.push({ component: group });
     return group;
   }
 }

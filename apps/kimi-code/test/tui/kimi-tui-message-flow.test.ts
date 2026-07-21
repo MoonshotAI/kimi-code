@@ -5481,3 +5481,235 @@ describe('/effort support_efforts override', () => {
     expect(session.setThinking).not.toHaveBeenCalled();
   });
 });
+
+describe('turn.step.retrying progress', () => {
+  function retryingEvent(overrides: Record<string, unknown> = {}): Event {
+    return {
+      type: 'turn.step.retrying',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      turnId: 1,
+      step: 0,
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 10,
+      delayMs: 30_000,
+      errorName: 'RateLimitError',
+      errorMessage: 'Too many requests',
+      statusCode: 429,
+      ...overrides,
+    } as unknown as Event;
+  }
+
+  function turnStarted(): Event {
+    return { type: 'turn.started', agentId: 'main', sessionId: 'ses-1', turnId: 1 } as Event;
+  }
+
+  it('shows the retry reason and attempt in the activity pane, without a tip', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    expect(driver.state.appState.streamingPhase).toBe('retrying');
+    expect(driver.state.appState.retryStatus).not.toBeNull();
+    expect(driver.state.appState.retryStatus?.nextAttempt).toBe(2);
+    const activity = stripSgr(renderActivity(driver));
+    expect(activity).toContain('Rate limited (429)');
+    expect(activity).toContain('attempt 2/10');
+    expect(activity).not.toContain('Tip:');
+  });
+
+  it('updates the attempt counter on a second retry event', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    driver.sessionEventHandler.handleEvent(
+      retryingEvent({ failedAttempt: 2, nextAttempt: 3 }),
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.retryStatus?.nextAttempt).toBe(3);
+    expect(stripSgr(renderActivity(driver))).toContain('attempt 3/10');
+  });
+
+  it('clears the retry status when assistant text starts streaming', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+    expect(driver.state.appState.streamingPhase).toBe('retrying');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'assistant.delta', agentId: 'main', sessionId: 'ses-1', delta: 'hello' } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.streamingPhase).toBe('composing');
+    expect(driver.state.appState.retryStatus).toBeNull();
+  });
+
+  it('clears the retry status on an empty (encrypted) thinking delta', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'thinking.delta', agentId: 'main', sessionId: 'ses-1', delta: '' } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.appState.retryStatus).toBeNull();
+  });
+
+  it('clears the retry status when a tool call starts', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_1',
+        name: 'Bash',
+        args: { command: 'ls' },
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.retryStatus).toBeNull();
+  });
+
+  it('clears the retry status when the turn is cancelled after a retry', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+    expect(driver.state.appState.streamingPhase).toBe('retrying');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.step.interrupted',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 0,
+        reason: 'aborted',
+      } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'cancelled' } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(driver.state.appState.retryStatus).toBeNull();
+  });
+
+  it('discards the partial assistant draft when the step retries', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+    driver.sessionEventHandler.handleEvent(
+      { type: 'assistant.delta', agentId: 'main', sessionId: 'ses-1', delta: 'half a thought' } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(stripSgr(renderTranscript(driver))).toContain('half a thought');
+
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('half a thought');
+  });
+
+  it('discards a rendered thinking bubble when the step retries', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+    driver.sessionEventHandler.handleEvent(
+      { type: 'thinking.delta', agentId: 'main', sessionId: 'ses-1', delta: 'pondering deeply' } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(stripSgr(renderTranscript(driver))).toContain('pondering deeply');
+
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('pondering deeply');
+  });
+
+  it('discards a tool-call preview when the step retries', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_retry_1',
+        name: 'Bash',
+        args: { command: 'ls -la /tmp/retry-probe' },
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(stripSgr(renderTranscript(driver))).toContain('retry-probe');
+
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('retry-probe');
+  });
+
+  it('discards assistant text already finalized by a tool-call preview when the step retries', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+    driver.sessionEventHandler.handleEvent(
+      { type: 'assistant.delta', agentId: 'main', sessionId: 'ses-1', delta: 'finalized preamble' } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_retry_2',
+        name: 'Bash',
+        args: { command: 'true' },
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(stripSgr(renderTranscript(driver))).toContain('finalized preamble');
+
+    driver.sessionEventHandler.handleEvent(retryingEvent(), vi.fn());
+
+    expect(stripSgr(renderTranscript(driver))).not.toContain('finalized preamble');
+  });
+
+  it('keeps a completed step\'s output when a later step retries', async () => {
+    const { driver } = await makeDriver();
+    driver.sessionEventHandler.handleEvent(turnStarted(), vi.fn());
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.step.started', agentId: 'main', sessionId: 'ses-1', turnId: 1, step: 0 } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'assistant.delta', agentId: 'main', sessionId: 'ses-1', delta: 'step zero result' } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.step.completed', agentId: 'main', sessionId: 'ses-1', turnId: 1, step: 0 } as Event,
+      vi.fn(),
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.step.started', agentId: 'main', sessionId: 'ses-1', turnId: 1, step: 1 } as Event,
+      vi.fn(),
+    );
+
+    driver.sessionEventHandler.handleEvent(retryingEvent({ step: 1 }), vi.fn());
+
+    expect(stripSgr(renderTranscript(driver))).toContain('step zero result');
+  });
+});
