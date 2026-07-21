@@ -35,6 +35,7 @@ import {
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { ISubagentRoutingService } from '#/session/subagent/subagentRouting';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   type AgentRunHandle,
@@ -639,6 +640,16 @@ describe('Agent tool execution contract', () => {
       sessionService(IAgentLifecycleService, lifecycle),
       sessionService(ISessionSubagentService, lifecycle),
       sessionService(ISessionCronService, cronStub),
+      sessionService(ISubagentRoutingService, {
+        _serviceBrand: undefined,
+        ready: Promise.resolve(),
+        getSubagentModel: () => undefined,
+        getSubagentThinkingEffort: () => undefined,
+        resolveChildModel: (parent: string) => parent,
+        resolveChildThinkingEffort: (parent: string) => parent,
+        setSubagentModel: async () => {},
+        setSubagentThinkingEffort: async () => {},
+      }),
       ...extra,
     );
     lifecycle.addHandle('main', 'agent');
@@ -1107,7 +1118,7 @@ describe('Agent tool execution contract', () => {
       resume: 'agent-existing',
     });
 
-    expect(targetProfile.update).toHaveBeenCalledWith({ modelAlias: 'mock-model' });
+    expect(targetProfile.update).toHaveBeenCalledWith({ modelAlias: 'mock-model', thinkingLevel: 'off' });
     expect(lifecycle.run).toHaveBeenCalledWith(
       'agent-existing',
       { kind: 'prompt', prompt: 'Continue' },

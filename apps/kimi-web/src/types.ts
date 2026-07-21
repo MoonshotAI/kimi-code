@@ -309,6 +309,9 @@ export interface ConversationStatus {
   model: string;
   /** Raw model id — the value selection lists compare against. */
   modelId: string;
+  /** Raw subagent model id, or undefined when subagents use the main model
+   *  (dual-model-routing experimental flag). */
+  subagentModelId?: string;
   ctxUsed: number;
   ctxMax: number;
   permission: 'manual' | 'auto' | 'yolo';

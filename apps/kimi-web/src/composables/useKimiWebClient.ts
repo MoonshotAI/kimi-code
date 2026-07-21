@@ -318,6 +318,10 @@ export interface ExtendedState extends KimiClientState {
   swarmModeBySession: Record<string, boolean>;
   /** Goal-mode (one-shot "next send creates a goal") toggle per session. */
   goalModeBySession: Record<string, boolean>;
+  /** Subagent model id per session (dual-model-routing experimental flag).
+   *  Undefined/empty means subagents use the main model. Fed by
+   *  GET /sessions/{id}/status and the setSubagentModel action. */
+  subagentModelBySession: Record<string, string | undefined>;
   loading: boolean;
   sessionLoading: boolean;
   queuedBySession: Record<string, QueuedPrompt[]>;
@@ -396,6 +400,7 @@ const rawState: ExtendedState = reactive({
   planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
+  subagentModelBySession: {},
   loading: false,
   sessionLoading: false,
   queuedBySession: {},
@@ -620,6 +625,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.swarmModeBySession[sessionId];
   delete rawState.goalModeBySession[sessionId];
   delete rawState.thinkingBySession[sessionId];
+  delete rawState.subagentModelBySession[sessionId];
   savePlanModeToStorage();
   saveSwarmModeToStorage();
   saveGoalModeToStorage();
@@ -667,6 +673,11 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   }));
   rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sessionId]: st.swarmMode };
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
+  // Fold the subagent model too (dual-model-routing experimental flag).
+  rawState.subagentModelBySession = {
+    ...rawState.subagentModelBySession,
+    [sessionId]: st.subagentModel,
+  };
   // Fold the session's own thinking level too — per-session state wins over the
   // per-model storage pick (see thinkingBySession on ExtendedState).
   if (st.thinkingEffort.length > 0) {
@@ -729,6 +740,8 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
+  subagentModel?: string;
+  subagentThinkingEffort?: string;
 }, sessionId?: string): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
   if (!sid) return Promise.resolve(false);
@@ -2242,6 +2255,7 @@ const status = computed<ConversationStatus>(() => {
     model: displayModel,
     // Raw id for exact comparison in pickers (display name diverges from id).
     modelId: matched?.id ?? rawModel,
+    subagentModelId: activeSession ? rawState.subagentModelBySession[activeSession.id] : undefined,
     ctxUsed: activeSession?.usage.contextTokens ?? 0,
     ctxMax: activeSession?.usage.contextLimit ?? 0,
     permission: rawState.permission,
@@ -2264,6 +2278,13 @@ const authReady = computed<boolean>(() => rawState.authReady);
 const defaultModel = computed<string | null>(() => rawState.defaultModel);
 const managedProviderStatus = computed<string | null>(() => rawState.managedProviderStatus);
 const config = computed<AppConfig | null>(() => rawState.config);
+
+/** True when the connected server has the dual-model-routing experimental
+ *  flag enabled (read from the daemon config's `experimental` map). Gates the
+ *  subagent model UI in the composer. */
+const dualModelRoutingEnabled = computed<boolean>(
+  () => rawState.config?.experimental?.['dual-model-routing'] === true,
+);
 
 /** path → status map for quick badge lookup in the file tree */
 const changesByPath = computed<Record<string, string>>(() => {
@@ -2940,6 +2961,7 @@ export function useKimiWebClient() {
     skills,
     activateSkill: modelProvider.activateSkill,
     setModel: modelProvider.setModel,
+    setSubagentModel: modelProvider.setSubagentModel,
     toggleStarModel: modelProvider.toggleStarModel,
     addProvider: modelProvider.addProvider,
     deleteProvider: modelProvider.deleteProvider,
@@ -2954,6 +2976,7 @@ export function useKimiWebClient() {
     // Config state + actions
     config,
     updateConfig: workspaceState.updateConfig,
+    dualModelRoutingEnabled,
 
     // Auth actions
     checkAuth: workspaceState.checkAuth,

@@ -35,6 +35,7 @@ import {
 } from '#/session/agentLifecycle/subagentMetadata';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { ISubagentRoutingService } from '#/session/subagent/subagentRouting';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -82,6 +83,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
+    @ISubagentRoutingService private readonly routing: ISubagentRoutingService,
   ) {}
 
   async getSwarmItem(args: {
@@ -144,11 +146,12 @@ export class SessionSwarmService implements ISessionSwarmService {
     if (callerData.modelAlias === undefined) {
       throw new Error('Caller agent has no model bound');
     }
+    await this.routing.ready;
     const child = await this.lifecycle.create({
       binding: {
         profile: profile.name,
-        model: callerData.modelAlias,
-        thinking: callerData.thinkingLevel,
+        model: this.routing.resolveChildModel(callerData.modelAlias),
+        thinking: this.routing.resolveChildThinkingEffort(callerData.thinkingLevel),
         cwd: callerData.cwd,
       },
       labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
@@ -189,7 +192,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
     const child = this.requireHandle(agentId, 'Agent instance');
     this.requireIdleSubagent(agentId, child);
-    this.realignChildModel(caller, child);
+    await this.realignChildModel(caller, child);
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
@@ -238,12 +241,22 @@ export class SessionSwarmService implements ISessionSwarmService {
     return handle;
   }
 
-  private realignChildModel(caller: IAgentScopeHandle, child: IAgentScopeHandle): void {
+  private async realignChildModel(
+    caller: IAgentScopeHandle,
+    child: IAgentScopeHandle,
+  ): Promise<void> {
     const modelAlias = caller.accessor.get(IAgentProfileService).data().modelAlias;
     if (modelAlias === undefined) {
       throw new Error('Caller agent has no model bound');
     }
-    child.accessor.get(IAgentProfileService).update({ modelAlias });
+    await this.routing.ready;
+    const resolvedModel = this.routing.resolveChildModel(modelAlias);
+    const resolvedThinking = this.routing.resolveChildThinkingEffort(
+      caller.accessor.get(IAgentProfileService).data().thinkingLevel,
+    );
+    child.accessor
+      .get(IAgentProfileService)
+      .update({ modelAlias: resolvedModel, thinkingLevel: resolvedThinking });
   }
 
   private requireIdleSubagent(agentId: string, child: IAgentScopeHandle): void {

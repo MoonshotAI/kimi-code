@@ -64,6 +64,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import { emitAgentRunSpawned, mirrorAgentRun } from '../mirrorAgentRun';
 import { ISessionSubagentService } from '../subagent';
+import { ISubagentRoutingService } from '../subagentRouting';
 import {
   formatSubagentTimeoutDescription,
   resolveSubagentTimeoutMs,
@@ -167,6 +168,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
+    @ISubagentRoutingService private readonly routing: ISubagentRoutingService,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
@@ -256,7 +258,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         throw new Error(`Agent instance "${resumeAgentId}" does not exist`);
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
-      this.realignChildModel(target);
+      await this.realignChildModel(target);
       agentId = target.id;
       profileName =
         target.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_LABEL;
@@ -277,11 +279,12 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       if (own.modelAlias === undefined) {
         throw new Error('Caller agent has no model bound');
       }
+      await this.routing.ready;
       const created = await this.lifecycle.create({
         binding: {
           profile: profile.name,
-          model: own.modelAlias,
-          thinking: own.thinkingLevel,
+          model: this.routing.resolveChildModel(own.modelAlias),
+          thinking: this.routing.resolveChildThinkingEffort(own.thinkingLevel),
           cwd: own.cwd,
         },
         labels: subagentLabels(this.callerAgentId),
@@ -343,12 +346,17 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     }
   }
 
-  private realignChildModel(target: IAgentScopeHandle): void {
-    const modelAlias = this.profile.data().modelAlias;
-    if (modelAlias === undefined) {
+  private async realignChildModel(target: IAgentScopeHandle): Promise<void> {
+    const ownModelAlias = this.profile.data().modelAlias;
+    if (ownModelAlias === undefined) {
       throw new Error('Caller agent has no model bound');
     }
-    target.accessor.get(IAgentProfileService).update({ modelAlias });
+    await this.routing.ready;
+    const modelAlias = this.routing.resolveChildModel(ownModelAlias);
+    const thinkingLevel = this.routing.resolveChildThinkingEffort(
+      this.profile.data().thinkingLevel,
+    );
+    target.accessor.get(IAgentProfileService).update({ modelAlias, thinkingLevel });
   }
 
   private async execution(

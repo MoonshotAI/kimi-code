@@ -44,6 +44,11 @@ export default {
   cacheNote: '提示：切换模型或思考程度会使已有的提示词缓存失效。建议新建对话，避免额外的 token 消耗。',
   starredModels: '收藏',
   moreModels: '更多模型…',
+  // 子智能体模型（dual-model-routing 实验开关）
+  subagentLabel: '子智能体',
+  subagentSameAsMain: '同主模型',
+  subagentModelSet: '点击更改子智能体模型',
+  subagentClear: '清除子智能体模型',
   // 状态面板
   statusPanelTitle: '会话状态',
   statusPanelClose: '关闭',

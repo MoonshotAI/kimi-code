@@ -28,6 +28,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { ISubagentRoutingService } from '#/session/subagent/subagentRouting';
 
 function accessor(
   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
@@ -84,6 +85,15 @@ describe('Session legacy status (best-effort runtime state)', () => {
         [
           IAgentActivityView,
           { state: () => ({ lifecycle: 'ready', background: [] }) },
+        ],
+        [
+          ISubagentRoutingService,
+          {
+            _serviceBrand: undefined,
+            ready: Promise.resolve(),
+            getSubagentModel: () => undefined,
+            getSubagentThinkingEffort: () => undefined,
+          },
         ],
       ]),
       dispose: () => {},

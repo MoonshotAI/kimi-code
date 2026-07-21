@@ -313,6 +313,9 @@ const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(nu
 
 // Dialog visibility refs
 const showModelPicker = ref(false);
+/** Model picker opened in "subagent" mode (dual-model-routing). Selection
+ *  routes to setSubagentModel instead of setModel. */
+const subagentPickerOpen = ref(false);
 const showProviders = ref(false);
 
 const showLogin = ref(false);
@@ -338,6 +341,7 @@ const anyOverlayOpen = computed<boolean>(
   () =>
     openDialogCount.value > 0 ||
     showModelPicker.value ||
+    subagentPickerOpen.value ||
     showProviders.value ||
     showLogin.value ||
     showAddWorkspace.value ||
@@ -411,6 +415,32 @@ async function handleComposerSelectModel(modelId: string): Promise<void> {
   if (switched && modelId !== client.defaultModel.value) {
     void client.updateConfig({ defaultModel: modelId });
   }
+}
+
+/** Open the model picker overlay in subagent mode (dual-model-routing).
+ *  Same ModelPicker component; selection is routed to setSubagentModel. */
+async function openSubagentModelPicker(): Promise<void> {
+  modelsLoading.value = true;
+  modelsUnavailable.value = false;
+  subagentPickerOpen.value = true;
+  try {
+    await client.refreshAllProviders();
+  } catch {
+    modelsUnavailable.value = true;
+  } finally {
+    modelsLoading.value = false;
+  }
+}
+
+/** Clear the active session's subagent model so subagents fall back to main. */
+function handleClearSubagentModel(): void {
+  void client.setSubagentModel(undefined);
+}
+
+/** Handle a selection from the model picker when it is in subagent mode. */
+async function handleSelectSubagentModel(modelId: string): Promise<void> {
+  subagentPickerOpen.value = false;
+  await client.setSubagentModel(modelId);
 }
 
 async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl?: string; defaultModel?: string }): Promise<void> {
@@ -823,6 +853,7 @@ function openPr(url: string): void {
       :session-title="activeSessionTitle"
       :pr="client.activePullRequest.value"
       :conversation-toc="client.conversationToc.value"
+      :dual-model-routing="client.dualModelRoutingEnabled.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
@@ -853,6 +884,8 @@ function openPr(url: string): void {
       @compact="client.compact()"
       @pick-model="openModelPicker()"
       @select-model="handleComposerSelectModel($event)"
+      @pick-subagent-model="openSubagentModelPicker()"
+      @clear-subagent-model="handleClearSubagentModel()"
       @open-file="openFilePreview($event)"
       @open-media="openMediaPreview($event)"
       @open-thinking="openThinkingPanel($event)"
@@ -982,6 +1015,20 @@ function openPr(url: string): void {
       @select="handleSelectModel($event)"
       @toggle-star="client.toggleStarModel($event)"
       @close="showModelPicker = false"
+    />
+
+    <!-- Subagent Model Picker overlay (dual-model-routing). Same component,
+         scoped to the subagent model — selection routes to setSubagentModel. -->
+    <ModelPicker
+      v-if="subagentPickerOpen"
+      :models="client.models.value"
+      :current="client.status.value.subagentModelId ?? ''"
+      :starred-ids="client.starredModelIds.value"
+      :loading="modelsLoading"
+      :unavailable="modelsUnavailable"
+      @select="handleSelectSubagentModel($event)"
+      @toggle-star="client.toggleStarModel($event)"
+      @close="subagentPickerOpen = false"
     />
 
     <!-- Settings page (modal) -->

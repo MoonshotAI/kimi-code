@@ -2,7 +2,8 @@
  * `subagent` domain (L6) — subagent config-section schema, env binding, and
  * timeout resolution.
  *
- * Owns the `[subagent]` configuration section (`timeout_ms` on disk) together
+ * Owns the `[subagent]` configuration section (`timeout_ms`,
+ * `default_subagent_model`, `default_subagent_thinking_effort` on disk) together
  * with the `KIMI_SUBAGENT_TIMEOUT_MS` env override, mirroring v1's
  * `resolveSubagentTimeoutMs` precedence (env > config.toml > 2h default). While
  * the env var is set, `stripEnvBoundFields` restores the env-free raw value
@@ -10,6 +11,8 @@
  * collaboration tools — `Agent` in this domain and `AgentSwarm` in the `swarm`
  * domain — resolve their per-run timeout through `resolveSubagentTimeoutMs`,
  * and render the timeout message with `formatSubagentTimeoutDescription`.
+ * `resolveDefaultSubagentModel` / `resolveDefaultSubagentThinkingEffort` feed
+ * the dual-model-routing fallback chain (session override > config default).
  * Self-registered at module load via `registerConfigSection`, so the `config`
  * domain never imports this domain's types.
  */
@@ -29,6 +32,10 @@ export const SUBAGENT_SECTION = 'subagent';
 export const SubagentConfigSchema = z.object({
   /** Per-run subagent timeout in milliseconds; set a large value to effectively disable the cap. */
   timeoutMs: z.number().int().min(1).optional(),
+  /** Default model alias for subagents when dual-model-routing is on and no session override is set. */
+  defaultSubagentModel: z.string().optional(),
+  /** Default thinking effort for subagents when dual-model-routing is on and no session override is set. */
+  defaultSubagentThinkingEffort: z.string().optional(),
 });
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
@@ -86,4 +93,14 @@ export function formatSubagentTimeoutDescription(ms: number): string {
     return `${s} second${s === 1 ? '' : 's'}`;
   }
   return `${ms} ms`;
+}
+
+/** Resolve the default subagent model alias from the `[subagent]` config section. */
+export function resolveDefaultSubagentModel(config: IConfigService): string | undefined {
+  return config.get<SubagentConfig | undefined>(SUBAGENT_SECTION)?.defaultSubagentModel;
+}
+
+/** Resolve the default subagent thinking effort from the `[subagent]` config section. */
+export function resolveDefaultSubagentThinkingEffort(config: IConfigService): string | undefined {
+  return config.get<SubagentConfig | undefined>(SUBAGENT_SECTION)?.defaultSubagentThinkingEffort;
 }

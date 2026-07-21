@@ -94,6 +94,11 @@ export interface WireSession {
     swarm_mode?: boolean;
     goal_objective?: string;
     goal_control?: 'pause' | 'resume' | 'cancel';
+    /** Separate model for subagents (dual-model-routing experimental flag).
+     *  Empty string clears it so subagents use the main model. */
+    subagent_model?: string;
+    /** Separate thinking effort for subagents (dual-model-routing). */
+    subagent_thinking_effort?: string;
   };
   usage: WireSessionUsage;
   permission_rules: WirePermissionRule[];
@@ -111,6 +116,11 @@ export interface WireSessionRuntimeStatus {
   context_tokens: number;
   max_context_tokens: number;
   context_usage: number;
+  /** Separate model for subagents (dual-model-routing experimental flag).
+   *  Empty/absent means subagents use the main model. */
+  subagent_model?: string;
+  /** Separate thinking effort for subagents (dual-model-routing). */
+  subagent_thinking_effort?: string;
 }
 
 // GET /sessions/{id}/goal — camelCase, same shape as the `goal.updated` event
