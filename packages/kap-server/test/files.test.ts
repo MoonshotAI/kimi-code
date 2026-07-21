@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { IBlobStore } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -348,7 +349,8 @@ describe('GET /api/v1/files/llm/{llm_id} (server-v2)', () => {
 
   it('never writes a mapping whose provider id leaves the safe alphabet', async () => {
     const writes: Array<[string, string]> = [];
-    const blobs = {
+    const blobs: IBlobStore = {
+      _serviceBrand: undefined,
       put: async (scope: string, key: string) => {
         writes.push([scope, key]);
       },
@@ -356,6 +358,7 @@ describe('GET /api/v1/files/llm/{llm_id} (server-v2)', () => {
       getStream: async function* () {},
       has: async () => false,
       delete: async () => {},
+      list: async () => [],
     };
     const { recordLlmVideoRef, resolveLlmVideoRef } = await import('../src/lib/llmVideoRefs');
 
