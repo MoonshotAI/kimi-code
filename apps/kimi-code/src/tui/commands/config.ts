@@ -207,8 +207,14 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
-  const customInstruction = args.trim() || undefined;
-  await session.compact({ instruction: customInstruction });
+  // Compaction must see the pending video message: chain behind in-flight
+  // uploads so the context isn't summarized without it.
+  host.queueBehindPendingUploads(() => {
+    const customInstruction = args.trim() || undefined;
+    void session.compact({ instruction: customInstruction }).catch((error: unknown) => {
+      host.showError(formatErrorMessage(error));
+    });
+  });
 }
 
 export async function handleEditorCommand(host: SlashCommandHost, args: string): Promise<void> {

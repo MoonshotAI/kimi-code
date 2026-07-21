@@ -155,6 +155,7 @@ export interface SlashCommandHost {
     commandName: string,
     args: string,
   ): void;
+  queueBehindPendingUploads(dispatch: () => void): void;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
 

@@ -164,6 +164,14 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
     return;
   }
 
+  // Chain behind in-flight uploads so the init turn cannot start ahead of the
+  // earlier message.
+  host.queueBehindPendingUploads(() => {
+    void runInit(host, session);
+  });
+}
+
+async function runInit(host: SlashCommandHost, session: Session): Promise<void> {
   host.deferUserMessages = true;
   host.beginSessionRequest();
   try {

@@ -1158,6 +1158,31 @@ export class KimiTUI {
   private pendingSubmits = 0;
   private inputSubmitChain: Promise<void> = Promise.resolve();
 
+  /**
+   * Run `dispatch` immediately, or chain it behind in-flight media uploads so
+   * a slow upload cannot be overtaken by a later action (slash commands,
+   * compaction, init, bash). A mid-upload session/model switch drops the
+   * deferred dispatch with a resend hint — the same fence pending prompt
+   * submits use.
+   */
+  queueBehindPendingUploads(dispatch: () => void): void {
+    if (this.pendingSubmits === 0) {
+      dispatch();
+      return;
+    }
+    const session = this.session;
+    const modelAtSubmit = this.state.appState.model;
+    this.inputSubmitChain = this.inputSubmitChain.then(() => {
+      if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
+        this.showError(
+          'The session or model changed while the video was uploading — please resend.',
+        );
+        return;
+      }
+      dispatch();
+    });
+  }
+
   sendNormalUserInput(text: string): void {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {

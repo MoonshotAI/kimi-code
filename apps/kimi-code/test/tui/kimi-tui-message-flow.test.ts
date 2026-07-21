@@ -158,6 +158,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     model: 'k2',
     summary: { title: null },
     prompt: vi.fn(async () => {}),
+    compact: vi.fn(async () => {}),
     uploadVideo: vi.fn(async () => ({
       type: 'video_url',
       videoUrl: { url: 'ms://stub-video', id: 'stub-video' },
@@ -1900,6 +1901,80 @@ command = "vim"
       // Never executed (nor queued) into the new session's workspace.
       expect(runShellCommand).not.toHaveBeenCalled();
       expect(driver.state.queuedMessages).toHaveLength(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('queues /compact behind a pending video upload', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(session.uploadVideo).toHaveBeenCalled();
+      });
+
+      driver.handleUserInput('/compact');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(session.compact).not.toHaveBeenCalled();
+
+      releaseUpload();
+      await vi.waitFor(() => {
+        expect(session.compact).toHaveBeenCalled();
+      });
+      // The video prompt landed before compaction starts.
+      expect(session.prompt).toHaveBeenCalled();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('queues /init behind a pending video upload', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      let releaseUpload!: () => void;
+      vi.mocked(session.uploadVideo).mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseUpload = () =>
+              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
+          }),
+      );
+
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+      await vi.waitFor(() => {
+        expect(session.uploadVideo).toHaveBeenCalled();
+      });
+
+      driver.handleUserInput('/init');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(session.init).not.toHaveBeenCalled();
+
+      releaseUpload();
+      await vi.waitFor(() => {
+        expect(session.init).toHaveBeenCalled();
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
