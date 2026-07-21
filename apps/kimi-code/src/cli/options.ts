@@ -1,3 +1,5 @@
+import { isKimiV2Enabled } from './experimental-v2';
+
 export type UIMode = 'shell' | 'print';
 export type PromptOutputFormat = 'text' | 'stream-json';
 
@@ -44,6 +46,8 @@ export interface CLIOptions {
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
   skillsDirs: string[];
+  agent: string | undefined;
+  agentFiles: string[];
   addDirs?: string[];
 }
 
@@ -82,6 +86,26 @@ export function validateOptions(
   }
   if (promptMode && opts.plan) {
     throw new OptionConflictError('Cannot combine --prompt with --plan.');
+  }
+  if (opts.agent !== undefined && opts.agent.trim().length === 0) {
+    throw new OptionConflictError('Agent cannot be empty.');
+  }
+  if (opts.agentFiles.length > 1) {
+    throw new OptionConflictError('--agent-file may only be specified once.');
+  }
+  if (opts.agentFiles.some((file) => file.trim().length === 0)) {
+    throw new OptionConflictError('Agent file path cannot be empty.');
+  }
+  if (opts.agent !== undefined && opts.agentFiles.length > 0) {
+    throw new OptionConflictError('Cannot combine --agent with --agent-file.');
+  }
+  if (
+    (opts.agent !== undefined || opts.agentFiles.length > 0) &&
+    (!promptMode || !isKimiV2Enabled(env))
+  ) {
+    throw new OptionConflictError(
+      '--agent/--agent-file are only available with the v2 engine (kimi -p with KIMI_CODE_EXPERIMENTAL_FLAG=1).',
+    );
   }
   if (promptMode && opts.session === '') {
     throw new OptionConflictError('Cannot use --session without an id in prompt mode.');

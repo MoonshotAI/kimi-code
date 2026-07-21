@@ -441,12 +441,75 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target);
 
     const late = lc.addAgent('main'); // created after subscribe
+    // Let the lifecycle dispatch drain before driving the turn — a
+    // synchronous emit would fold its activity ahead of the queued
+    // work_changed task and reorder it in front of agent.created (see the
+    // note above about the production interleaving).
+    await bc.getCursor('s1');
     late.bus.emit(agentEvent('turn.started', { turnId: 7 }));
     await bc.getCursor('s1');
 
-    // work_changed(busy) (seq 1) is emitted ahead of turn.started (seq 2);
-    // the volatile agent.status.updated phase frame rides alongside.
-    expect(envelopes.filter((e) => e.volatile !== true).map((e) => e.seq)).toEqual([1, 2]);
+    // agent.created (seq 1) leads; work_changed(busy) (seq 2) is emitted ahead
+    // of turn.started (seq 3); the volatile agent.status.updated phase frame
+    // rides alongside.
+    expect(envelopes.filter((e) => e.volatile !== true).map((e) => e.seq)).toEqual([1, 2, 3]);
+    expect(envelopes[0]).toMatchObject({ type: 'agent.created' });
+    expect((envelopes[0]!.payload as { agentId: string }).agentId).toBe('main');
+  });
+
+  it('broadcasts agent.disposed only for agents this state attached', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    lc.removeAgent('agent-0');
+    // The creation-failure path fires onDidDispose for an agent that was
+    // never created (and never attached) — clients must not hear about it.
+    lc.removeAgent('ghost');
+    await bc.getCursor('s1');
+
+    const disposed = envelopes.filter((e) => e.type === 'agent.disposed');
+    expect(disposed).toHaveLength(1);
+    expect((disposed[0]!.payload as { agentId: string }).agentId).toBe('agent-0');
+    expect(disposed[0]!.volatile).toBeUndefined(); // durable
+  });
+
+  it('delivers lifecycle events past the agent allowlist (session-grained)', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target, new Set(['main']));
+
+    lc.addAgent('agent-0'); // outside the allowlist
+    lc.removeAgent('agent-0');
+    await bc.getCursor('s1');
+
+    const types = envelopes.map((e) => e.type);
+    expect(types).toContain('agent.created');
+    expect(types).toContain('agent.disposed');
+  });
+
+  it('journals lifecycle events for replay', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    lc.addAgent('agent-0');
+    lc.removeAgent('agent-0');
+    await bc.getCursor('s1');
+
+    const result = await bc.getBufferedSince('s1', { seq: 0 });
+    expect(result.resyncRequired).toBe(false);
+    expect(result.events.map((e) => e.envelope.type)).toEqual([
+      'agent.created',
+      'agent.disposed',
+    ]);
   });
 
   it('getSnapshotState returns the in-flight turn', async () => {

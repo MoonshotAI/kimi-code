@@ -16,12 +16,14 @@ import {
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentToolPolicyService,
   IAgentPromptService,
   IAuthSummaryService,
   IEventService,
   IFileService,
   ISessionMetadata,
   promptMetadataTextFromContentParts,
+  ProfileError,
   type ContentPart,
   type PromptHandle,
   type PromptQueueSnapshot,
@@ -36,6 +38,7 @@ import {
   decodeBase64Prefix,
   isError2,
   Error2,
+  ErrorCodes,
   isModelAcceptedImageMime,
   normalizeImageMime,
   persistOriginalImage,
@@ -132,8 +135,48 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     prompt: agent.accessor.get(IAgentPromptService),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
+    toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
   };
+}
+
+/**
+ * Bind the resolved agent to the profile named by a prompt submission's
+ * `profile` field. First-bind semantics live in the engine: a same-name
+ * repeat is short-circuited here as a no-op, while an unknown name or a
+ * post-bind switch is rejected by `AgentProfileService.bind` with a coded
+ * `ProfileError` — this edge only maps it onto 40001. Checking anything
+ * beyond the no-op shortcut here would re-introduce a check-then-act window
+ * the engine guard has already closed.
+ *
+ * `model` falls back to the configured default inside the engine. `thinking`
+ * rides along in the bind so an unsupported effort rejects atomically —
+ * before any state mutation — instead of wedging the session's identity with
+ * a successful bind followed by a failed `setThinking`.
+ *
+ * Returns true when a bind happened (i.e. `thinking` was consumed by it).
+ */
+async function applyProfileSelection(
+  profile: IAgentProfileService,
+  profileName: string,
+  model: string | undefined,
+  thinking: string | undefined,
+): Promise<boolean> {
+  if (profile.data().profileName === profileName) return false;
+  try {
+    await profile.bind({
+      profile: profileName,
+      model,
+      thinking,
+      strictThinking: thinking !== undefined,
+    });
+  } catch (error) {
+    if (error instanceof ProfileError) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+    }
+    throw error;
+  }
+  return true;
 }
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
@@ -204,11 +247,34 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         const resolved = await resolvePrompt(core, session_id, resolvedBody.agent_id);
         await resolved.auth.ensureReady();
-        if (resolvedBody.model !== undefined) await resolved.profile.setModel(resolvedBody.model);
-        if (resolvedBody.thinking !== undefined) resolved.profile.setThinking(resolvedBody.thinking);
-        if (resolvedBody.permission_mode !== undefined) resolved.permissionMode.setMode(resolvedBody.permission_mode);
-        const parts = contentToCoreParts(resolvedBody.content);
         const session = await resolveSession(core, session_id);
+        let thinkingConsumed = false;
+        if (resolvedBody.profile !== undefined) {
+          thinkingConsumed =
+            (await applyProfileSelection(
+              resolved.profile,
+              resolvedBody.profile,
+              resolvedBody.model,
+              resolvedBody.thinking,
+            )) && resolvedBody.thinking !== undefined;
+        }
+        if (resolvedBody.model !== undefined) await resolved.profile.setModel(resolvedBody.model);
+        if (resolvedBody.thinking !== undefined && !thinkingConsumed)
+          resolved.profile.setThinking(resolvedBody.thinking);
+        if (resolvedBody.permission_mode !== undefined) resolved.permissionMode.setMode(resolvedBody.permission_mode);
+        if (resolvedBody.disabled_tools !== undefined) {
+          // A session denylist before bind throws `profile.not_bound` — map it
+          // onto 40001 like the profile-selection errors above.
+          try {
+            await resolved.toolPolicy.setSessionDisabledTools(resolvedBody.disabled_tools);
+          } catch (error) {
+            if (error instanceof ProfileError) {
+              throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+            }
+            throw error;
+          }
+        }
+        const parts = contentToCoreParts(resolvedBody.content);
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),

@@ -1,4 +1,4 @@
-import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import { type IDisposable } from "#/_base/di/lifecycle";

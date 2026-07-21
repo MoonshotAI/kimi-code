@@ -72,7 +72,6 @@
     "js-yaml": "^4.1.1",
     "linkedom": "^0.18.12",
     "node-pty": "^1.1.0",
-    "nunjucks": "^3.2.4",
     "openai": "^6.34.0",
     "pathe": "^2.0.3",
     "picomatch": "^4.0.4",
@@ -89,7 +88,6 @@
   "devDependencies": {
     "@dagrejs/dagre": "^1.1.4",
     "@types/js-yaml": "^4.0.9",
-    "@types/nunjucks": "^3.2.6",
     "@types/picomatch": "^4.0.3",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",

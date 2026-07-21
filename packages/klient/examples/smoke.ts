@@ -2,7 +2,8 @@
  * Assert-based smoke check for klient against an in-process engine (memory
  * transport). Exercises the `global` facade end-to-end: env snapshot, read
  * models, a workspace round-trip, a provider set/delete round-trip with the
- * `providers.changed` event, and the error path.
+ * `providers.changed` event, a model set/delete round-trip with the
+ * `models.changed` event, the read-only model catalog, and the error path.
  *
  *   pnpm -C packages/klient smoke
  */
@@ -59,6 +60,44 @@ async function main(): Promise<void> {
     await klient.global.providers.delete(name);
     sub.dispose();
     console.log('[ok] providers set/get/delete + providers.changed');
+
+    // Model round-trip (flat config — no provider reference needed).
+    const seenModels: string[] = [];
+    const modelSub = klient.events.on('models.changed', (event) => {
+      seenModels.push(...event.added, ...event.changed, ...event.removed);
+    });
+    const modelId = '__klient_smoke__';
+    await klient.global.models.set({
+      id: modelId,
+      config: {
+        model: 'smoke-model',
+        apiKey: 'smoke-key',
+        baseUrl: 'http://127.0.0.1:1',
+        protocol: 'openai',
+        maxContextSize: 8192,
+      },
+    });
+    assert(
+      (await klient.global.models.get(modelId)) !== undefined,
+      'models.get returns the new model',
+    );
+    const modelDeadline = Date.now() + 5_000;
+    while (!seenModels.includes(modelId) && Date.now() < modelDeadline) await tick(25);
+    assert(seenModels.includes(modelId), 'models.changed fired for the new model');
+    await klient.global.models.delete(modelId);
+    modelSub.dispose();
+    console.log('[ok] models set/get/delete + models.changed');
+
+    // The read-only catalog projection over the same materialization.
+    assert(
+      Array.isArray(await klient.global.catalog.listModels()),
+      'catalog.listModels returns an array',
+    );
+    assert(
+      Array.isArray(await klient.global.catalog.listProviders()),
+      'catalog.listProviders returns an array',
+    );
+    console.log('[ok] catalog.listModels / listProviders');
 
     const config = await klient.global.config.getAll();
     assert(typeof config === 'object' && config !== null, 'config.getAll returns an object');

@@ -605,6 +605,39 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['max_tokens']).toBe(2048);
     });
 
+    it('passes constructor generationKwargs into the request body', async () => {
+      // The construction-time channel (session affinity): kwargs seeded via
+      // the options land on every request, no morph required.
+      const provider = new OpenAILegacyChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        stream: false,
+        generationKwargs: { prompt_cache_key: 'session-test' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['prompt_cache_key']).toBe('session-test');
+    });
+
+    it('explicit maxTokens wins over constructor generationKwargs on conflict', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        stream: false,
+        maxTokens: 1024,
+        generationKwargs: { max_tokens: 512 },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_tokens']).toBe(1024);
+    });
+
     it('maps json_schema response format to response_format', async () => {
       const provider = createProvider();
       const history: Message[] = [

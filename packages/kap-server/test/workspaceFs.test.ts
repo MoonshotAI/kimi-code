@@ -180,3 +180,152 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     expect(body.data.recent_roots).toContain(root);
   });
 });
+
+describe('server-v2 /api/v1 fs:content', () => {
+  let server: RunningServer | undefined;
+  let dir: string | undefined;
+  let instancesDir: string | undefined;
+  let base: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-'));
+    instancesDir = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fscontent-instances-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: dir,
+      instancesDir,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (dir !== undefined) {
+      await rm(dir, { recursive: true, force: true });
+      dir = undefined;
+    }
+    if (instancesDir !== undefined) {
+      await rm(instancesDir, { recursive: true, force: true });
+      instancesDir = undefined;
+    }
+  });
+
+  function contentUrl(path: string): string {
+    return `${base}/api/v1/fs:content?path=${encodeURIComponent(path)}`;
+  }
+
+  async function getContent(
+    path: string,
+    headers: Record<string, string> = {},
+  ): Promise<Response> {
+    // `connection: close` keeps every fetch on its own short-lived socket so
+    // undici never pools an idle keep-alive connection that would hold
+    // `server.close()` open in afterEach.
+    return fetch(contentUrl(path), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer), ...headers },
+    } as never);
+  }
+
+  it('serves a text file raw with mime, etag, and length headers', async () => {
+    const file = join(dir as string, 'hello.md');
+    await writeFile(file, '# hi\n');
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/markdown');
+    expect(res.headers.get('content-length')).toBe('5');
+    expect(typeof res.headers.get('etag')).toBe('string');
+    expect(typeof res.headers.get('last-modified')).toBe('string');
+    expect(await res.text()).toBe('# hi\n');
+  });
+
+  it('serves an unknown-extension text file as text/plain', async () => {
+    const file = join(dir as string, 'notes.weird');
+    await writeFile(file, 'just text');
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+  });
+
+  it('serves binary files byte-for-byte with an octet-stream fallback mime', async () => {
+    const file = join(dir as string, 'blob.bin');
+    const original = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x10, 0x80]);
+    await writeFile(file, original);
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/octet-stream');
+    expect(Buffer.from(await res.arrayBuffer()).equals(original)).toBe(true);
+  });
+
+  it('guesses image mime from the extension', async () => {
+    const file = join(dir as string, 'pic.png');
+    await writeFile(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
+
+    const res = await getContent(file);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('image/png');
+  });
+
+  it('answers If-None-Match with 304 when the etag matches', async () => {
+    const file = join(dir as string, 'cached.txt');
+    await writeFile(file, 'cache me');
+
+    const first = await getContent(file);
+    const etag = first.headers.get('etag') as string;
+
+    const res = await getContent(file, { 'if-none-match': etag });
+    expect(res.status).toBe(304);
+    expect(res.headers.get('etag')).toBe(etag);
+    expect(await res.text()).toBe('');
+  });
+
+  it('honors single-range requests with 206', async () => {
+    const file = join(dir as string, 'long.txt');
+    await writeFile(file, '0123456789');
+
+    const res = await getContent(file, { range: 'bytes=2-5' });
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe('bytes 2-5/10');
+    expect(res.headers.get('content-length')).toBe('4');
+    expect(await res.text()).toBe('2345');
+  });
+
+  it('rejects a relative path (40001)', async () => {
+    const res = await getContent('relative/path.txt');
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40001);
+  });
+
+  it('rejects a nonexistent path (40409)', async () => {
+    const res = await getContent(join(dir as string, 'does-not-exist.txt'));
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40409);
+  });
+
+  it('rejects a directory path (40906)', async () => {
+    const res = await getContent(dir as string);
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40906);
+  });
+
+  // /dev/null is a character device, not a regular file.
+  it.skipIf(process.platform === 'win32')('rejects non-regular files (40001)', async () => {
+    const res = await getContent('/dev/null');
+    const body = (await res.json()) as Envelope<null>;
+    expect(body.code).toBe(40001);
+  });
+
+  it('does not serve the double-colon URL', async () => {
+    const res = await fetch(`${base}/api/v1/fs::content?path=%2Ftmp`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(res.status).toBe(404);
+  });
+});

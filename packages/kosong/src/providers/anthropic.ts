@@ -5,6 +5,7 @@ import {
   classifyBaseApiError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
+  throwIfAbortError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { isToolDeclarationOnlyMessage } from '#/message';
@@ -582,6 +583,10 @@ function shouldKeepConvertedMessage(message: MessageParam): boolean {
 }
 
 export function convertAnthropicError(error: unknown): ChatProviderError {
+  // Abort guard FIRST: throws (never returns) the standard abort DOMException
+  // for any abort shape, so a user cancellation is never misclassified as a
+  // retryable provider failure.
+  throwIfAbortError(error);
   // Check timeout before connection (APIConnectionTimeoutError extends APIConnectionError)
   if (error instanceof AnthropicTimeoutError) {
     return new APITimeoutError(error.message);

@@ -21,7 +21,7 @@ import type {
   ConfigInspectValue,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import type {
   AuthStatus,
   IOAuthService,
@@ -31,10 +31,9 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelConfig } from '@moonshot-ai/agent-core-v2/app/model/model';
-import type {
-  IModelCatalogService,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
 import type {
   PluginCommandDef,
   PluginInfo,
@@ -67,15 +66,15 @@ export type OAuthFlowSnapshot = NonNullable<Awaited<ReturnType<IOAuthService['ge
 export type OAuthLoginCancelResponse = Awaited<ReturnType<IOAuthService['cancelLogin']>>;
 export type OAuthLogoutResponse = Awaited<ReturnType<IOAuthService['logout']>>;
 
-export type ModelCatalogItem = Awaited<ReturnType<IModelCatalogService['listModels']>>[number];
+export type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
 export type ProviderCatalogItem = Awaited<
-  ReturnType<IModelCatalogService['listProviders']>
+  ReturnType<IModelCatalog['listProviders']>
 >[number];
 export type SetDefaultModelResponse = Awaited<
-  ReturnType<IModelCatalogService['setDefaultModel']>
+  ReturnType<IModelCatalog['setDefaultModel']>
 >;
 export type RefreshProviderModelsOptions = NonNullable<
-  Parameters<IModelCatalogService['refreshProviderModels']>[0]
+  Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;
 
 /** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
@@ -131,9 +130,9 @@ export interface GlobalProvidersFacade {
 }
 
 export interface GlobalModelsFacade {
-  list(): Promise<Readonly<Record<string, ModelConfig>>>;
-  get(id: string): Promise<ModelConfig | undefined>;
-  set(input: { id: string; config: ModelConfig }): Promise<void>;
+  list(): Promise<Readonly<Record<string, ModelRecord>>>;
+  get(id: string): Promise<ModelRecord | undefined>;
+  set(input: { id: string; config: ModelRecord }): Promise<void>;
   delete(id: string): Promise<void>;
 }
 
@@ -304,27 +303,27 @@ export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
 
     models: {
       list: () =>
-        call('modelService', 'list', []) as Promise<Readonly<Record<string, ModelConfig>>>,
-      get: (id) => call('modelService', 'get', [id]) as Promise<ModelConfig | undefined>,
+        call('modelService', 'list', []) as Promise<Readonly<Record<string, ModelRecord>>>,
+      get: (id) => call('modelService', 'get', [id]) as Promise<ModelRecord | undefined>,
       set: ({ id, config }) => call('modelService', 'set', [id, config]) as Promise<void>,
       delete: (id) => call('modelService', 'delete', [id]) as Promise<void>,
     },
 
     catalog: {
       listModels: () =>
-        call('modelCatalogService', 'listModels', []) as Promise<readonly ModelCatalogItem[]>,
+        call('modelResolver', 'listModels', []) as Promise<readonly ModelCatalogItem[]>,
       listProviders: () =>
-        call('modelCatalogService', 'listProviders', []) as Promise<
+        call('modelResolver', 'listProviders', []) as Promise<
           readonly ProviderCatalogItem[]
         >,
       getProvider: (providerId) =>
-        call('modelCatalogService', 'getProvider', [providerId]) as Promise<ProviderCatalogItem>,
+        call('modelResolver', 'getProvider', [providerId]) as Promise<ProviderCatalogItem>,
       setDefaultModel: (modelId) =>
-        call('modelCatalogService', 'setDefaultModel', [modelId]) as Promise<
+        call('modelResolver', 'setDefaultModel', [modelId]) as Promise<
           SetDefaultModelResponse
         >,
       refresh: (input) =>
-        call('modelCatalogService', 'refreshProviderModels', [
+        call('providerDiscovery', 'refreshProviderModels', [
           input,
         ]) as Promise<RefreshProviderModelsResponse>,
     },

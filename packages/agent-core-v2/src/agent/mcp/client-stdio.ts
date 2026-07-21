@@ -9,6 +9,7 @@ import {
   buildRequestOptions,
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
+  MCP_LIVENESS_PROBE_TIMEOUT_MS,
   toMcpToolDefinition,
   toMcpToolResult,
   type UnexpectedCloseListener,
@@ -113,6 +114,10 @@ export class StdioMcpClient implements MCPClient {
     const requestOptions = buildRequestOptions(this.toolCallTimeoutMs, signal);
     const result = await this.client.callTool({ name, arguments: args }, undefined, requestOptions);
     return toMcpToolResult(result);
+  }
+
+  async ping(signal?: AbortSignal): Promise<void> {
+    await this.client.ping(buildRequestOptions(MCP_LIVENESS_PROBE_TIMEOUT_MS, signal));
   }
 
   private async closeStartedClient(): Promise<void> {

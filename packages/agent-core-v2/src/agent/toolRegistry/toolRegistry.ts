@@ -16,11 +16,17 @@ export interface ToolRegistrationOptions {
   readonly source?: ToolSource;
 }
 
+export interface ToolReference {
+  readonly name: string;
+  readonly source: ToolSource;
+}
+
 export interface IAgentToolRegistryService {
   readonly _serviceBrand: undefined;
 
   register(tool: ExecutableTool, options?: ToolRegistrationOptions): IDisposable;
   list(): readonly ToolInfo[];
+  listReferences(): readonly ToolReference[];
   resolve(name: string): ExecutableTool | undefined;
 }
 

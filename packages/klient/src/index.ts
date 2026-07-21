@@ -92,10 +92,10 @@ export type {
   ConfigDiagnostic,
   ConfigInspectValue,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+export type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 export type { AuthStatus } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 export type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
-export type { ModelConfig } from '@moonshot-ai/agent-core-v2/app/model/model';
+export type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 export type {
   FsBrowseResponse,
   FsHomeResponse,
@@ -124,5 +124,5 @@ export type {
   Interaction,
   InteractionKind,
 } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
-export type { ContentPart } from '@moonshot-ai/agent-core-v2/app/llmProtocol/message';
+export type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
