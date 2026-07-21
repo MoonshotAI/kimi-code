@@ -36,12 +36,20 @@ import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
+import '#/agent/loop/configSection';
+import {
+  LOOP_CONTROL_SECTION,
+  LOOP_MAX_RETRIES_PER_STEP_ENV,
+  LOOP_MAX_STEPS_PER_TURN_ENV,
+  type LoopControl,
+} from '#/agent/loop/configSection';
 import {
   THINKING_SECTION,
   type ThinkingConfig,
 } from '#/agent/profile/configSection';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
+  MAX_RUNNING_TASKS_ENV,
   resolveAgentTaskConfig,
   resolvePrintBackgroundMode,
   type AgentTaskConfig,
@@ -528,6 +536,54 @@ describe('image config section', () => {
   });
 });
 
+describe('loopControl config section', () => {
+  it('registers the loopControl section with a non-negative-int schema', () => {
+    const registry = new ConfigRegistry();
+
+    const section = registry.getSection(LOOP_CONTROL_SECTION);
+    expect(section).toBeDefined();
+
+    expect(registry.validate(LOOP_CONTROL_SECTION, {})).toEqual({});
+    expect(
+      registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 100, maxRetriesPerStep: 3 }),
+    ).toEqual({ maxStepsPerTurn: 100, maxRetriesPerStep: 3 });
+    expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxStepsPerTurn: -1 })).toThrow();
+    expect(() => registry.validate(LOOP_CONTROL_SECTION, { maxRetriesPerStep: 1.5 })).toThrow();
+  });
+
+  it('re-applies loopControl env bindings on every get() and ignores invalid env', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
+
+    env[LOOP_MAX_STEPS_PER_TURN_ENV] = 'abc';
+    env[LOOP_MAX_RETRIES_PER_STEP_ENV] = '-1';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
+
+    env[LOOP_MAX_STEPS_PER_TURN_ENV] = '100';
+    env[LOOP_MAX_RETRIES_PER_STEP_ENV] = '3';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxStepsPerTurn: 100,
+      maxRetriesPerStep: 3,
+    });
+
+    env[LOOP_MAX_STEPS_PER_TURN_ENV] = '50';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(50);
+
+    disposables.dispose();
+  });
+});
+
 describe('task config section', () => {
   it('re-applies the keepAliveOnExit env binding on every get()', async () => {
     const env: Record<string, string> = {};
@@ -581,6 +637,39 @@ describe('task config section', () => {
       killGracePeriodMs: 25,
       keepAliveOnExit: true,
     });
+
+    disposables.dispose();
+  });
+
+  it('re-applies the maxRunningTasks env binding on every get() and ignores invalid env', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createTaskConfig(env);
+
+    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBeUndefined();
+
+    env[MAX_RUNNING_TASKS_ENV] = 'abc';
+    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBeUndefined();
+    env[MAX_RUNNING_TASKS_ENV] = '0';
+    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBeUndefined();
+
+    env[MAX_RUNNING_TASKS_ENV] = '4';
+    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBe(4);
+    expect(config.get<AgentTaskConfig>('background')?.maxRunningTasks).toBe(4);
+
+    env[MAX_RUNNING_TASKS_ENV] = '2';
+    expect(config.get<AgentTaskConfig>('task')?.maxRunningTasks).toBe(2);
+
+    disposables.dispose();
+  });
+
+  it('lets the maxRunningTasks env binding override the config value', async () => {
+    const env: Record<string, string> = { [MAX_RUNNING_TASKS_ENV]: '8' };
+    const { config, disposables } = await createTaskConfig(
+      env,
+      '[background]\nmax_running_tasks = 3\n',
+    );
+
+    expect(resolveAgentTaskConfig(config)?.maxRunningTasks).toBe(8);
 
     disposables.dispose();
   });

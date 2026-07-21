@@ -5,8 +5,9 @@
  * The legacy `[background]` section is registered with the same schema so old
  * configs continue to load while callers migrate; effective values use legacy
  * fields as the base and let `[task]` override matching fields.
- * `keepAliveOnExit` also
- * accepts the v1 env override `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT`
+ * `keepAliveOnExit` and `maxRunningTasks` also
+ * accept the v1 env overrides `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` /
+ * `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`
  * (applied live by the config env overlay, never persisted). Also owns the
  * `kimi -p` print-mode background policy (`printBackgroundMode` /
  * `printWaitCeilingS` / `printMaxTurns`), resolved with v1 semantics by
@@ -63,9 +64,19 @@ export function resolvePrintBackgroundMode(config: IConfigService): PrintBackgro
 }
 
 export const KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
+export const MAX_RUNNING_TASKS_ENV = 'KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS';
+
+/** Parse the env override; anything but a positive integer is ignored. */
+function parsePositiveInt(raw: string): number | undefined {
+  const value = raw.trim();
+  if (value.length === 0 || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
 
 export const taskEnvBindings: EnvBindings<AgentTaskConfig> = envBindings(AgentTaskConfigSchema, {
   keepAliveOnExit: { env: KEEP_ALIVE_ON_EXIT_ENV, parse: parseBooleanEnv },
+  maxRunningTasks: { env: MAX_RUNNING_TASKS_ENV, parse: parsePositiveInt },
 });
 
 registerConfigSection(TASK_SECTION, AgentTaskConfigSchema, { env: taskEnvBindings });
