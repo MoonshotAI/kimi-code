@@ -9,6 +9,7 @@
 
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart } from '#/kosong/contract/message';
+import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -709,6 +710,22 @@ describe('ReadMediaFileTool', () => {
     );
     expect(result.isError).toBe(true);
     expect(result.output).toContain('401 Unauthorized');
+  });
+
+  it('surfaces the by-design no-hook error instead of falling back to inline', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(
+        new VideoUploadUnsupportedError(
+          'Model "stub" (protocol=openai) does not support video upload',
+        ),
+      );
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('does not support video upload');
   });
 
   it('rejects empty files', async () => {

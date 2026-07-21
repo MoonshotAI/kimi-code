@@ -29,6 +29,18 @@ export class APIConnectionError extends ChatProviderError {
   }
 }
 
+/**
+ * The provider has no video upload hook at all — a by-design capability gap
+ * (distinct from an upload that failed at runtime), so callers that would
+ * otherwise degrade gracefully can tell the two apart.
+ */
+export class VideoUploadUnsupportedError extends ChatProviderError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VideoUploadUnsupportedError';
+  }
+}
+
 export class APITimeoutError extends ChatProviderError {
   constructor(message: string) {
     super(message);
