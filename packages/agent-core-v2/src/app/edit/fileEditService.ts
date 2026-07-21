@@ -13,6 +13,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { fileStatTuplesEqual } from '#/session/sessionFileLedger/fileLedger';
 
 import { EditService } from './editService';
 import { type FileEditInput, type FileEditResult, IFileEditService } from './fileEdit';
@@ -22,7 +23,7 @@ function sameRevision(
   a: { readonly ino?: number; readonly mtimeMs?: number; readonly size: number },
   b: { readonly ino?: number; readonly mtimeMs?: number; readonly size: number },
 ): boolean {
-  return a.ino === b.ino && a.mtimeMs === b.mtimeMs && a.size === b.size;
+  return fileStatTuplesEqual({ exists: true, ...a }, { exists: true, ...b });
 }
 
 export class FileEditService implements IFileEditService {

@@ -42,10 +42,6 @@ export class LockFile {
     if (!this.checkHeld()) throw new LockError(`database write lock was lost: ${this.path}`);
   }
 
-  async release(): Promise<void> {
-    this.releaseSync();
-  }
-
   releaseSync(): void {
     if (!this.held) return;
     this.held = false;
@@ -55,10 +51,6 @@ export class LockFile {
   }
 
   private markLost(): void {
-    if (!this.held) return;
-    this.held = false;
-    const handle = this.handle;
-    this.handle = undefined;
-    handle?.release();
+    this.releaseSync();
   }
 }

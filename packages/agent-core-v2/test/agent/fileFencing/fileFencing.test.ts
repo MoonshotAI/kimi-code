@@ -23,8 +23,7 @@ import type {
   ToolDidExecuteContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IFlagService } from '#/app/flag/flag';
-import type { ToolCall } from '#/app/llmProtocol/message';
-import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import type { ToolCall } from '#/kosong/contract/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -44,29 +43,12 @@ import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorServi
 
 import { stubToolExecutor } from '../loop/stubs';
 import { stubFlag } from '../../app/flag/stubs';
-import { fakeHostFsWatch, type FakeWatch } from '../../session/sessionFs/stubs';
+import { countingHostFs, fakeHostFsWatch, type FakeWatch } from '../../session/sessionFs/stubs';
 
 void AgentFileFencingService;
 void SessionFileLedger;
 void SessionWorkspaceContextService;
 void AgentToolExecutorService;
-
-function countingHostFs(): { fs: IHostFileSystem; statCalls: () => number } {
-  const real = new HostFileSystem();
-  let count = 0;
-  const fs = new Proxy(real, {
-    get(target, prop, receiver) {
-      if (prop === 'stat') {
-        return async (path: string) => {
-          count += 1;
-          return target.stat(path);
-        };
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  }) as IHostFileSystem;
-  return { fs, statCalls: () => count };
-}
 
 interface Env {
   readonly host: ScopedTestHost;
@@ -290,6 +272,9 @@ describe('AgentFileFencingService', () => {
     writeFileSync(file, 'hello');
     await runOk(world, 'Read', file);
 
+    // An intervening successful Edit re-baselines, so the next Edit starts clean.
+    await runOk(world, 'Edit', file);
+
     writeFileSync(file, 'hello world');
 
     const blocked = await runBlocked(world, 'Edit', file);
@@ -391,19 +376,7 @@ describe('AgentFileFencingService', () => {
     await runOk(world, 'Edit', file);
   });
 
-  it('allows consecutive Edits without watcher events', async () => {
-    const world = setup();
-    const file = join(world.env.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-
-    await runOk(world, 'Read', file);
-    await runOk(world, 'Edit', file);
-    await runOk(world, 'Edit', file);
-
-    expect(await world.ledger.compare(file)).toBe('clean');
-  });
-
-  it('keeps consecutive Edits clean while the stat tuple matches the baseline', async () => {
+  it('allows consecutive Edits and keeps them clean while the stat tuple matches the baseline', async () => {
     const world = setup();
     const file = join(world.env.workDir, 'a.txt');
     writeFileSync(file, 'hello');
@@ -415,20 +388,8 @@ describe('AgentFileFencingService', () => {
 
     await runOk(world, 'Edit', file);
     expect(world.env.statCalls()).toBe(2);
-  });
 
-  it('checks the current stat on every execution: unchanged passes and changed blocks', async () => {
-    const world = setup();
-    const file = join(world.env.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-    await runOk(world, 'Read', file);
-
-    await runOk(world, 'Edit', file);
-
-    writeFileSync(file, 'hello world');
-
-    const blocked = await runBlocked(world, 'Edit', file);
-    expect(blocked.output).toContain('changed on disk since');
+    expect(await world.ledger.compare(file)).toBe('clean');
   });
 
   it('blocks ranged-Read followed by Edit because ranged reads never baseline', async () => {

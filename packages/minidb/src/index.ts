@@ -375,7 +375,11 @@ export class MiniDb<V = unknown> {
       db.valueReader?.close();
       db.store?.close();
       if (db.lock) {
-        await db.lock.release().catch(() => {});
+        try {
+          db.lock.releaseSync();
+        } catch {
+          // best-effort cleanup
+        }
         db.lock = null;
       }
       throw err;
@@ -1647,7 +1651,7 @@ export class MiniDb<V = unknown> {
     this.valueReader?.close();
     await this.wal.close();
     if (this.lock) {
-      await this.lock.release();
+      this.lock.releaseSync();
       this.lock = null;
     }
   }

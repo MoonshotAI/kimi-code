@@ -76,7 +76,7 @@ export interface ExportTraceMetadata {
   operation?: string;
   /** Ownership decision outcome ('redirect' | 'retry' | 'notify'). */
   action?: string;
-  /** Ownership details kind ('held-by-peer' | 'unregistered-writer'). */
+  /** Ownership details kind ('held-by-peer'). */
   kind?: string;
   /** 'creating' retry attempt number. */
   attempt?: number;

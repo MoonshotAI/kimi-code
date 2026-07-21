@@ -53,6 +53,6 @@ for (let r = 0; r < rounds; r++) {
         await sleep(1);
       }
     }
-    await lf.release();
+    lf.releaseSync();
   }
 }

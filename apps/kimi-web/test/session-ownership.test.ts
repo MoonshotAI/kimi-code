@@ -58,12 +58,6 @@ describe('narrowSessionOwnershipDetails', () => {
     });
   });
 
-  it('accepts unregistered-writer', () => {
-    expect(narrowSessionOwnershipDetails({ kind: 'unregistered-writer' })).toEqual({
-      kind: 'unregistered-writer',
-    });
-  });
-
   it('drops invalid optional fields instead of failing the whole payload', () => {
     expect(
       narrowSessionOwnershipDetails({
@@ -94,12 +88,20 @@ describe('getSessionOwnershipDetails', () => {
 
   it('extracts details from a 40921 DaemonApiError', () => {
     expect(
-      getSessionOwnershipDetails(apiError(SESSION_HELD_BY_PEER_CODE, { kind: 'unregistered-writer' })),
-    ).toEqual({ kind: 'unregistered-writer' });
+      getSessionOwnershipDetails(
+        apiError(SESSION_HELD_BY_PEER_CODE, {
+          kind: 'held-by-peer',
+          phase: 'creating',
+          retry_after_ms: 500,
+        }),
+      ),
+    ).toEqual({ kind: 'held-by-peer', phase: 'creating', address: undefined, retry_after_ms: 500 });
   });
 
   it('returns undefined for other codes, malformed details, and non-API errors', () => {
-    expect(getSessionOwnershipDetails(apiError(40401, { kind: 'unregistered-writer' }))).toBeUndefined();
+    expect(
+      getSessionOwnershipDetails(apiError(40401, { kind: 'held-by-peer', phase: 'routable' })),
+    ).toBeUndefined();
     expect(getSessionOwnershipDetails(apiError(SESSION_HELD_BY_PEER_CODE, { nope: 1 }))).toBeUndefined();
     expect(getSessionOwnershipDetails(new Error('boom'))).toBeUndefined();
     expect(getSessionOwnershipDetails(undefined)).toBeUndefined();
@@ -150,13 +152,6 @@ describe('buildPeerTargetUrl', () => {
 });
 
 describe('decideSessionOwnershipAction', () => {
-  it('unregistered-writer → terminal notice', () => {
-    expect(decideSessionOwnershipAction({ kind: 'unregistered-writer' }, makeCtx())).toEqual({
-      type: 'notify',
-      key: 'unregisteredWriter',
-    });
-  });
-
   it('routable with address → redirect carrying origin + current path', () => {
     expect(decideSessionOwnershipAction(ROUTABLE, makeCtx())).toEqual({
       type: 'redirect',

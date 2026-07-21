@@ -46,12 +46,6 @@ describe('sessionOwnershipDetailsSchema', () => {
     expect(sessionOwnershipDetailsSchema.parse(payload)).toEqual(payload);
   });
 
-  it('parses the unregistered-writer variant', () => {
-    expect(sessionOwnershipDetailsSchema.parse({ kind: 'unregistered-writer' })).toEqual({
-      kind: 'unregistered-writer',
-    });
-  });
-
   it('rejects an unknown kind', () => {
     expect(sessionOwnershipDetailsSchema.safeParse({ kind: 'stolen', phase: 'routable' }).success).toBe(false);
   });

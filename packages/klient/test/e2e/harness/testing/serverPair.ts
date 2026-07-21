@@ -23,11 +23,7 @@ import { join } from 'node:path';
 import type { RunningServer } from '@moonshot-ai/kap-server';
 
 import { HttpClient } from '../http.js';
-
-// `recursive` rm can hit ENOTEMPTY on macOS while the closing server is still
-// flushing/unlinking its own files — retry briefly (same trick as the v2
-// smoke test's home cleanup).
-const RM_HOME_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
+import { RM_HOME_OPTIONS } from './serverProcess.js';
 
 export interface ServerPairOptions {
   /** Shared home for both instances. Created via `mkdtemp` when omitted. */

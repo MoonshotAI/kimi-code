@@ -11,7 +11,6 @@ import type { SessionOwnershipDetails } from '../api/daemon/sessionOwnership';
 export type OwnershipNotifyKey =
   | 'creatingTimeout'
   | 'heldByLocalInstance'
-  | 'unregisteredWriter'
   | 'redirectSameHost'
   | 'redirectLoopGuard'
   | 'redirectUnavailable';
@@ -69,10 +68,6 @@ export function decideSessionOwnershipAction(
   details: SessionOwnershipDetails,
   ctx: OwnershipDecisionContext,
 ): SessionOwnershipAction {
-  if (details.kind === 'unregistered-writer') {
-    return { type: 'notify', key: 'unregisteredWriter' };
-  }
-
   switch (details.phase) {
     case 'creating': {
       if (ctx.creatingAttempts >= ctx.maxCreatingAttempts) {

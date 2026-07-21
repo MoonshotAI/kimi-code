@@ -112,11 +112,13 @@ describe('CrossProcessLockService', () => {
     handles.push(first);
     setTimeout(() => first.release(), 20);
 
-    const second = await service('beta', 2002).acquireWithWait(lockPath, {
-      wait: { timeoutMs: 500, retryIntervalMs: 5 },
-    });
-    handles.push(second);
-    expect(second.checkHeld()).toBe(true);
+    await service('beta', 2002).withLock(
+      lockPath,
+      { wait: { timeoutMs: 500, retryIntervalMs: 5 } },
+      (handle) => {
+        expect(handle.checkHeld()).toBe(true);
+      },
+    );
   });
 
   it('times out waiting for a held lock', async () => {
@@ -124,9 +126,7 @@ describe('CrossProcessLockService', () => {
     handles.push(first);
 
     await expect(
-      service('beta', 2002).acquireWithWait(lockPath, {
-        wait: { timeoutMs: 15, retryIntervalMs: 5 },
-      }),
+      service('beta', 2002).withLock(lockPath, { wait: { timeoutMs: 15, retryIntervalMs: 5 } }, () => {}),
     ).rejects.toMatchObject({ code: CrossProcessLockErrorCode.WaitTimeout });
   });
 
@@ -144,13 +144,12 @@ describe('CrossProcessLockService', () => {
     });
 
     const result = await waiter
-      .acquireWithWait(lockPath, { wait: { timeoutMs: 10, retryIntervalMs: 100 } })
+      .withLock(lockPath, { wait: { timeoutMs: 10, retryIntervalMs: 100 } }, () => {})
       .then(
-        (handle) => ({ status: 'acquired' as const, handle }),
+        () => ({ status: 'acquired' as const }),
         (error: unknown) => ({ status: 'rejected' as const, error }),
       );
 
-    if (result.status === 'acquired') handles.push(result.handle);
     expect(sleepDurations).toEqual([10]);
     expect(result.status).toBe('rejected');
     if (result.status === 'rejected') {

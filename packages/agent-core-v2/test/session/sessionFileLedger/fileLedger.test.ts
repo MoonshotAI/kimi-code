@@ -15,41 +15,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LifecycleScope } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { unwrapErrorCause } from '#/_base/errors/errors';
-import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionFileLedger } from '#/session/sessionFileLedger/fileLedger';
 import { SessionFileLedger } from '#/session/sessionFileLedger/fileLedgerService';
 
-import { fakeHostFsWatch, type FakeWatch } from '../sessionFs/stubs';
+import { countingHostFs, fakeHostFsWatch, type FakeWatch } from '../sessionFs/stubs';
 
 void SessionFileLedger;
-
-function countingHostFs(poisonedPaths: Set<string>): {
-  fs: IHostFileSystem;
-  statCalls: () => number;
-} {
-  const real = new HostFileSystem();
-  let count = 0;
-  const fs = new Proxy(real, {
-    get(target, prop, receiver) {
-      if (prop === 'stat') {
-        return async (path: string) => {
-          count += 1;
-          if (poisonedPaths.has(path)) {
-            const err = new Error(`EACCES: permission denied, stat '${path}'`) as NodeJS.ErrnoException;
-            err.code = 'EACCES';
-            throw err;
-          }
-          return target.stat(path);
-        };
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  }) as IHostFileSystem;
-  return { fs, statCalls: () => count };
-}
 
 interface World {
   readonly workDir: string;
@@ -151,7 +125,6 @@ describe('SessionFileLedger', () => {
     world.fake.fire('a.txt', 'modified');
 
     expect(await world.ledger.compare(file)).toBe('no-baseline');
-    expect(world.fake.watchCalls).toEqual([]);
   });
 
   it('returns stale when a baselined file is modified outside the session', async () => {
@@ -179,17 +152,6 @@ describe('SessionFileLedger', () => {
     expect(world.statCalls()).toBe(3);
   });
 
-  it('detects an outside modification using only the stat tuple', async () => {
-    const world = makeWorld();
-    const file = join(world.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-    await recordCurrentBaseline(world, file);
-
-    writeFileSync(file, 'hello world');
-
-    expect(await world.ledger.compare(file)).toBe('stale');
-  });
-
   it('tracks a write-then-delete baseline as non-existence', async () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
@@ -206,7 +168,7 @@ describe('SessionFileLedger', () => {
     expect(await world.ledger.compare(file)).toBe('stale');
   });
 
-  it('uses the same stat-only comparison outside the workspace', async () => {
+  it('uses the same stat-only comparison outside the workspace, never starting a watcher', async () => {
     const world = makeWorld();
     const file = join(world.outsideDir, 'b.txt');
     writeFileSync(file, 'hello');
@@ -224,16 +186,6 @@ describe('SessionFileLedger', () => {
 
     rmSync(file);
     expect(await world.ledger.compare(file)).toBe('stale');
-  });
-
-  it('never starts a watcher when recording or comparing paths', async () => {
-    const world = makeWorld();
-    const file = join(world.outsideDir, 'b.txt');
-    writeFileSync(file, 'hello');
-
-    expect(await world.ledger.compare(file)).toBe('no-baseline');
-    await recordCurrentBaseline(world, file);
-    expect(await world.ledger.compare(file)).toBe('clean');
     expect(world.fake.watchCalls).toEqual([]);
   });
 

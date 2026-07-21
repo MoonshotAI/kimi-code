@@ -20,6 +20,7 @@ import {
   type IDisposable,
 } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
+import { enqueueKeyedOperation } from '#/_base/utils/promise';
 
 import {
   IFileSystemStorageService,
@@ -133,17 +134,7 @@ export class InMemoryStorageService implements IFileSystemStorageService {
   }
 
   runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
-    const id = this.watchKey(scope, key);
-    const previous = this.operationQueues.get(id) ?? Promise.resolve();
-    const result = previous.then(op);
-    const tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.operationQueues.set(id, tail);
-    return result.finally(() => {
-      if (this.operationQueues.get(id) === tail) this.operationQueues.delete(id);
-    });
+    return enqueueKeyedOperation(this.operationQueues, this.watchKey(scope, key), op);
   }
 
   private notifyWatchers(scope: string, key: string): void {

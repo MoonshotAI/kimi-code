@@ -8,10 +8,11 @@
  * dropped. Session-scoped — the scope itself is the session, so no
  * `sessionId` is threaded through.
  *
- * Also owns the lexical key helper shared with the optimistic-concurrency
- * ledger (`sessionFileLedger`) so both sides key paths identically:
- * `normalizeFsWatchKey` (lexical normalize only, no `realpath`; case-folded
- * on macOS/Windows).
+ * Also owns the lexical key helper `normalizeFsWatchKey` (lexical normalize
+ * only, no `realpath`; case-folded on macOS/Windows). The watch service
+ * itself never keys paths with it — the sole consumer is the
+ * optimistic-concurrency ledger (`sessionFileLedger`), which keys its
+ * baselines with it.
  */
 
 import { normalize, sep } from 'node:path';

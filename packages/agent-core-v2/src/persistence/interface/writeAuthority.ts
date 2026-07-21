@@ -9,7 +9,8 @@
  * to the authority the session lifecycle registered, so a write for a
  * session with no registered authority is a bypass attempt and must be
  * rejected. `sessionIdFromScope` keeps the filesystem-layout knowledge
- * (`sessions/<wsId>/<sessionId>[/agents/<agentId>]`) in exactly one place;
+ * (`sessions/<wsId>/<sessionId>[/agents/<agentId>]`) in exactly one place and
+ * `assertScopeWritable` applies the fail-closed gate for every backend;
  * the root scope (`''`, e.g. `session_index.jsonl`) and any scope outside
  * the sessions tree deliberately carry no authority and pass untouched.
  * The concrete registry lives in
@@ -18,6 +19,7 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
+import { Error2, ErrorCodes } from '#/errors';
 
 export interface ISessionWriteAuthority {
   readonly sessionId: string;
@@ -46,4 +48,28 @@ export function sessionIdFromScope(scope: string): string | undefined {
   if (parts.length < 3 || parts[0] !== 'sessions') return undefined;
   const sessionId = parts[2];
   return parts[1] === '' || sessionId === undefined || sessionId === '' ? undefined : sessionId;
+}
+
+/**
+ * The pre-write fencing gate every Store backend applies immediately before
+ * bytes hit storage: resolve the scope's session authority through the
+ * registry and re-verify it. The root scope and scopes outside the sessions
+ * tree carry no authority and pass untouched, as does a missing registry
+ * (a consumer whose DI binding is `@optional`); a session scope with no
+ * registered authority is a bypass attempt and fails closed with
+ * `Error2(session.lease_lost)`.
+ */
+export function assertScopeWritable(
+  scope: string,
+  authorityRegistry: IWriteAuthorityRegistry | undefined,
+): void {
+  const sessionId = sessionIdFromScope(scope);
+  if (sessionId === undefined || authorityRegistry === undefined) return;
+  const authority = authorityRegistry.resolve(sessionId);
+  if (authority === undefined) {
+    throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session has no registered write authority', {
+      details: { sessionId },
+    });
+  }
+  authority.assertWritable();
 }

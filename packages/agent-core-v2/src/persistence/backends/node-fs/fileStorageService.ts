@@ -34,8 +34,7 @@ import { DisposableStore, combinedDisposable, toDisposable, type IDisposable } f
 import { optional } from '#/_base/di/instantiation';
 import { Emitter, type Event } from '#/_base/event';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { atomicWrite, syncDir } from '#/_base/utils/fs';
-import { Error2, ErrorCodes } from '#/errors';
+import { atomicWrite, isSpecialFileStat, syncDir } from '#/_base/utils/fs';
 import {
   CrossProcessLockError,
   CrossProcessLockErrorCode,
@@ -50,7 +49,7 @@ import type {
 } from '#/persistence/interface/storage';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
 import {
-  sessionIdFromScope,
+  assertScopeWritable,
   IWriteAuthorityRegistry,
 } from '#/persistence/interface/writeAuthority';
 
@@ -227,8 +226,7 @@ export class FileStorageService implements IFileSystemStorageService {
           // chokidar attaches fs.watch to every scanned entry; special files
           // (unix sockets, fifos, devices — e.g. an ipc `klient.sock` sharing
           // the home root) make that call throw UNKNOWN. Skip them up front.
-          ignored: (_path, stats) =>
-            stats !== undefined && !stats.isFile() && !stats.isDirectory() && !stats.isSymbolicLink(),
+          ignored: (_path, stats) => isSpecialFileStat(stats),
         });
         watcher.on('all', (_event, changedPath) => {
           if (normalize(changedPath) === normalizedTarget) schedule();
@@ -323,15 +321,7 @@ export class FileStorageService implements IFileSystemStorageService {
   }
 
   private assertScopeWritable(scope: string): void {
-    const sessionId = sessionIdFromScope(scope);
-    if (sessionId === undefined || this.authorityRegistry === undefined) return;
-    const authority = this.authorityRegistry.resolve(sessionId);
-    if (authority === undefined) {
-      throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session has no registered write authority', {
-        details: { sessionId },
-      });
-    }
-    authority.assertWritable();
+    assertScopeWritable(scope, this.authorityRegistry);
   }
 
   private async syncDirOnce(dir: string): Promise<void> {

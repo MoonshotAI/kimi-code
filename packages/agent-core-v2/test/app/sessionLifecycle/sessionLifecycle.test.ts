@@ -411,15 +411,6 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function waitFor(cond: () => boolean, timeoutMs = 5_000): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    if (cond()) return;
-    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out');
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 let disposedSessionServices = 0;
 
 class NoopSessionExternalHooksService

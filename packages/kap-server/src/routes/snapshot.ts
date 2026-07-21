@@ -196,8 +196,8 @@ async function readViaLegacyAssembly(
 
   return {
     as_of_seq: snapState.seq,
-    // A journal with no baseline yet has `epoch: undefined`; on the wire the
-    // field is simply absent (never fabricated).
+    // `epoch` is absent when the journal has no baseline (never fabricated) —
+    // see services/snapshot/snapshotReader.ts.
     epoch: snapState.epoch,
     session,
     messages: { items, has_more: hasMore },

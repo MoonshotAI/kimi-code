@@ -42,7 +42,6 @@ export function stubCrossProcessLock(): ICrossProcessLockService {
   return {
     _serviceBrand: undefined,
     acquire: (lockPath) => Promise.resolve(acquireHandle(lockPath)),
-    acquireWithWait: (lockPath) => Promise.resolve(acquireHandle(lockPath)),
     withLock: async <T>(
       lockPath: string,
       _options: Parameters<ICrossProcessLockService['withLock']>[1],

@@ -10,7 +10,6 @@ export interface KernelFileLockBinding {
 export type KernelFileLockBindingLoader = () => KernelFileLockBinding | undefined;
 
 export interface KernelFileLockHandle {
-  readonly path: string;
   checkHeld(): boolean;
   release(): void;
 }
@@ -39,7 +38,7 @@ class KernelFileLockHandleImpl implements KernelFileLockHandle {
   private released = false;
 
   constructor(
-    readonly path: string,
+    private readonly path: string,
     private readonly fd: number,
     private readonly binding: KernelFileLockBinding,
   ) {}

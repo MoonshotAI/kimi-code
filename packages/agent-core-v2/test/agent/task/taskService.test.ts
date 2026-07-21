@@ -48,7 +48,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
-import type { TaskServiceTestManager } from './stubs';
+import { stubWriteAuthorityRegistry, type TaskServiceTestManager } from './stubs';
 
 function fakeProcessTask(): AgentTask {
   return {
@@ -149,10 +149,7 @@ describe('AgentTaskService', () => {
       flush: async () => {},
       close: async () => {},
     });
-    ix.stub(IWriteAuthorityRegistry, {
-      resolve: () => ({ sessionId: 'test-session', assertWritable: () => {} }),
-      register: () => toDisposable(() => {}),
-    });
+    ix.stub(IWriteAuthorityRegistry, stubWriteAuthorityRegistry());
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
   });
   afterEach(() => disposables.dispose());
@@ -566,10 +563,7 @@ describe('AgentTaskService', () => {
     );
     ix.stub(IAtomicDocumentStore, docs);
     ix.stub(IFileSystemStorageService, bytes);
-    ix.stub(IWriteAuthorityRegistry, {
-      resolve: () => ({ sessionId: 'test-session', assertWritable: () => {} }),
-      register: () => toDisposable(() => {}),
-    });
+    ix.stub(IWriteAuthorityRegistry, stubWriteAuthorityRegistry());
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
     return ix;
   }

@@ -115,44 +115,13 @@ test('WAL open and close are idempotent', async () => {
 
 // --- LockFile kernel ownership ---------------------------------------------
 
-test('LockFile.acquire returns false when a live process holds the lock', async () => {
-  const dir = await tmpDir();
-  const p = path.join(dir, 'db.lock');
-  const a = new LockFile(p);
-  assert.equal(await a.acquire(), true);
-  const b = new LockFile(p);
-  assert.equal(await b.acquire(), false);
-  await a.release();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
 test('arbitrary sentinel contents are ignored when no kernel lock is held', async () => {
   const dir = await tmpDir();
   const p = path.join(dir, 'db.lock');
   await fs.writeFile(p, 'not-json');
   const b = new LockFile(p);
   assert.equal(await b.acquire(), true);
-  await b.release();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-test('MiniDb opens over a legacy lock payload without renaming the sentinel', async () => {
-  const dir = await tmpDir();
-  const p = path.join(dir, 'db.lock');
-  await fs.writeFile(p, JSON.stringify({ pid: 0x7fffffff, ts: Date.now() }));
-  const db = await MiniDb.open({ dir, valueCodec: 'string' });
-  await db.set('a', '1');
-  assert.equal(db.get('a'), '1');
-  await db.close();
-  assert.equal((await fs.readdir(dir)).some((entry) => entry.includes('.stale.')), false);
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-test('LockFile release/releaseSync are no-ops when not held', async () => {
-  const dir = await tmpDir();
-  const lock = new LockFile(path.join(dir, 'db.lock'));
-  await assert.doesNotReject(() => lock.release());
-  assert.doesNotThrow(() => lock.releaseSync());
+  b.releaseSync();
   await fs.rm(dir, { recursive: true, force: true });
 });
 

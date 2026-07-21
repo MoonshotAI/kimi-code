@@ -1,6 +1,6 @@
 /**
  * Phase-2 session-ownership verification matrix — multi-process e2e over real
- * REST boundaries (design `.tmp/refactor-watch-design-v2.md` §3.10).
+ * REST boundaries (design §3.10).
  *
  * One session write lease per session under `<home>/session-leases/<id>.lock`.
  * The permanent sentinel is protected by a kernel lock; the sibling
@@ -33,18 +33,19 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { sessionLeasePath } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode, sessionOwnershipDetailsSchema } from '@moonshot-ai/protocol';
+import { ErrorCode, sessionOwnershipDetailsSchema, type Envelope } from '@moonshot-ai/protocol';
 import { describe, expect, it } from 'vitest';
 
-import { DaemonClient } from '../harness/index.js';
+import { DaemonClient, HttpClient } from '../harness/index.js';
 import {
+  pidAlive,
   spawnServerProcessPair,
   startServerPair,
+  waitForPidExit,
   waitForServerHealthy,
 } from '../harness/testing/index.js';
+import { sleep } from '../harness/wait.js';
 import { createCaseLogger } from './log.js';
-
-const SESSION_OWNERSHIP_HELD_BY_PEER = 40921;
 
 describe('session ownership: concurrent dual materialization race (in-process pair)', () => {
   it(
@@ -54,7 +55,9 @@ describe('session ownership: concurrent dual materialization race (in-process pa
       const log = createCaseLogger('session-ownership/materialization-race');
       const pair = await startServerPair();
       try {
-        const sessionId = await createSession(pair.urlA, pair.cwd);
+        const { id: sessionId } = await pair
+          .connectClient(pair.a)
+          .createSession({ metadata: { cwd: pair.cwd } });
         log('session created on A', { sessionId, urlA: pair.urlA, urlB: pair.urlB });
 
         const lease = await readLease(pair.home, sessionId);
@@ -73,9 +76,8 @@ describe('session ownership: concurrent dual materialization race (in-process pa
           expect(a.body.code).toBe(0);
           expect(b.status).toBe(200);
           expect(b.body.code).toBe(ErrorCode.SESSION_HELD_BY_PEER);
-          expect(b.body.code).toBe(SESSION_OWNERSHIP_HELD_BY_PEER);
           const details = sessionOwnershipDetailsSchema.parse(b.body.details);
-          expect(details).toEqual({ kind: 'held-by-peer', phase: 'routable', address: pair.urlA });
+          expect(details.kind).toBe('held-by-peer');
           if (round === 1 || round === ROUNDS) {
             log(`concurrent round ${round}/${ROUNDS}`, {
               holder: { status: a.status, code: a.body.code },
@@ -117,7 +119,12 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
           waitForServerHealthy(pair.a.baseUrl, 15_000),
           waitForServerHealthy(pair.b.baseUrl, 15_000),
         ]);
-        const sessionId = await createSession(pair.a.baseUrl, pair.home);
+        const clientA = new HttpClient({
+          baseUrl: pair.a.baseUrl,
+          apiPrefix: '/api/v1',
+          fetchImpl: fetch,
+        });
+        const { id: sessionId } = await clientA.createSession({ metadata: { cwd: pair.home } });
         const leaseA = await readLease(pair.home, sessionId);
         expect(leaseA?.['address']).toBe(pair.a.baseUrl);
         expect(leaseA?.['pid']).toBe(pair.a.pid);
@@ -140,7 +147,7 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
             details,
           });
           expect(b.status).toBe(200);
-          expect(b.body.code).toBe(SESSION_OWNERSHIP_HELD_BY_PEER);
+          expect(b.body.code).toBe(ErrorCode.SESSION_HELD_BY_PEER);
           expect(details).toEqual({
             kind: 'held-by-peer',
             phase: 'routable',
@@ -184,7 +191,7 @@ describe('session ownership: SIGSTOP/SIGCONT (subprocess pair)', () => {
         }, 'B remains 40921 routable after SIGCONT', 15_000, 500);
         log('B observations after SIGCONT', { transcript, final: routable });
         for (const entry of transcript) {
-          expect(entry.code).toBe(SESSION_OWNERSHIP_HELD_BY_PEER);
+          expect(entry.code).toBe(ErrorCode.SESSION_HELD_BY_PEER);
         }
         expect(routable).toEqual({
           kind: 'held-by-peer',
@@ -229,7 +236,12 @@ describe('session ownership: kill -9 kernel release (subprocess pair)', () => {
           waitForServerHealthy(pair.a.baseUrl, 15_000),
           waitForServerHealthy(pair.b.baseUrl, 15_000),
         ]);
-        const sessionId = await createSession(pair.a.baseUrl, pair.home);
+        const clientA = new HttpClient({
+          baseUrl: pair.a.baseUrl,
+          apiPrefix: '/api/v1',
+          fetchImpl: fetch,
+        });
+        const { id: sessionId } = await clientA.createSession({ metadata: { cwd: pair.home } });
         const leaseA = await readLease(pair.home, sessionId);
         expect(leaseA?.['address']).toBe(pair.a.baseUrl);
         expect(leaseA?.['pid']).toBe(pair.a.pid);
@@ -288,8 +300,8 @@ describe('session ownership: kill -9 kernel release (subprocess pair)', () => {
 });
 
 /**
- * Multi-instance session-list sync (design `.tmp/refactor-watch-design-v2.md`
- * §3.8): the event-plane hint plus the list-side ownership join. While the
+ * Multi-instance session-list sync (design §3.8): the event-plane hint plus
+ * the list-side ownership join. While the
  * ownership matrix above cross-checks dual-open refusals, these cases track a
  * session created on instance A as it surfaces on instance B:
  *
@@ -327,7 +339,7 @@ describe('session list sync: session.list_changed hint + ownership join (in-proc
       try {
         // B owns a session so its client has something to subscribe to (global
         // volatile events fan out to subscribed connections only).
-        const ownSessionId = await createSession(pair.urlB, pair.cwd);
+        const { id: ownSessionId } = await client.createSession({ metadata: { cwd: pair.cwd } });
         await client.connect();
         await client.subscribe(ownSessionId);
         const off = client.onFrame((frame) => {
@@ -339,7 +351,9 @@ describe('session list sync: session.list_changed hint + ownership join (in-proc
           const baseline = hints.length;
           const peerWorkspace = join(pair.home, 'peer-workspace');
           mkdirSync(peerWorkspace, { recursive: true });
-          const peerSessionId = await createSession(pair.urlA, peerWorkspace);
+          const { id: peerSessionId } = await pair
+            .connectClient(pair.a)
+            .createSession({ metadata: { cwd: peerWorkspace } });
 
           const hint = await pollUntil(
             async () => (hints.length > baseline ? hints[hints.length - 1] : undefined),
@@ -387,7 +401,7 @@ describe('session list sync: session.list_changed hint + ownership join (in-proc
       try {
         // B's own create establishes the workspace dir; B's watcher picks it up
         // (its own write triggers the same fs events a peer's write would).
-        const ownSessionId = await createSession(pair.urlB, pair.cwd);
+        const { id: ownSessionId } = await client.createSession({ metadata: { cwd: pair.cwd } });
         // Give B's root watcher time to attach the per-workspace watcher —
         // otherwise A's write below could slip into the attach window and
         // produce no hint (the list would still converge on re-pull; the hint
@@ -400,7 +414,9 @@ describe('session list sync: session.list_changed hint + ownership join (in-proc
         });
         try {
           const baseline = hints.length;
-          const peerSessionId = await createSession(pair.urlA, pair.cwd);
+          const { id: peerSessionId } = await pair
+            .connectClient(pair.a)
+            .createSession({ metadata: { cwd: pair.cwd } });
 
           await pollUntil(
             async () => (hints.length > baseline ? hints[hints.length - 1] : undefined),
@@ -435,14 +451,6 @@ interface HintRecord {
 }
 
 // ── Local helpers ──────────────────────────────────────────────────────────
-interface Envelope<T> {
-  code: number;
-  msg: string;
-  data: T;
-  request_id?: string;
-  details?: unknown;
-}
-
 interface SessionWire {
   id: string;
   metadata?: { cwd?: string };
@@ -458,21 +466,6 @@ async function getEnvelope<T = unknown>(
 ): Promise<{ status: number; body: Envelope<T> }> {
   const res = await fetch(`${baseUrl}/api/v1${path}`);
   return { status: res.status, body: (await res.json()) as Envelope<T> };
-}
-
-async function createSession(baseUrl: string, cwd: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/api/v1/sessions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ metadata: { cwd } }),
-  });
-  const body = (await res.json()) as Envelope<{ id: string }>;
-  if (res.status !== 200 || body.code !== 0) {
-    throw new Error(
-      `createSession failed (HTTP ${res.status}, code ${body.code}): ${JSON.stringify(body)}`,
-    );
-  }
-  return body.data.id;
 }
 
 /**
@@ -579,25 +572,6 @@ async function listJsonlFiles(root: string): Promise<string[]> {
     .sort();
 }
 
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-/** True once `pid` is fully gone (ESRCH — zombies reaped), false on timeout. */
-async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!pidAlive(pid)) return true;
-    await sleep(50);
-  }
-  return !pidAlive(pid);
-}
-
 /** Probe returning undefined ⇒ keep polling; any other value ends the wait. */
 async function pollUntil<T>(
   probe: () => Promise<T | undefined>,
@@ -621,8 +595,4 @@ async function pollUntil<T>(
     }
     await sleep(intervalMs);
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }

@@ -6,14 +6,13 @@
  * handle closes it. Bound at App scope.
  */
 
-import type { Stats } from 'node:fs';
-
 import { FSWatcher } from 'chokidar';
 
 import { Emitter, type Event } from '#/_base/event';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import { isSpecialFileStat } from '#/_base/utils/fs';
 
 import {
   type HostFsChange,
@@ -25,10 +24,6 @@ import {
 } from '#/os/interface/hostFsWatch';
 
 const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.test(p);
-
-function isSpecialEntry(stats: Stats | undefined): boolean {
-  return stats !== undefined && !stats.isFile() && !stats.isDirectory() && !stats.isSymbolicLink();
-}
 
 class HostFsWatchHandle implements IHostFsWatchHandle {
   readonly ready: Promise<void>;
@@ -55,7 +50,7 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       followSymlinks: false,
       depth: options?.recursive === false ? 0 : undefined,
       ignored: (path, stats) =>
-        isSpecialEntry(stats) || (options?.ignored?.(path) ?? DEFAULT_IGNORED(path)),
+        isSpecialFileStat(stats) || (options?.ignored?.(path) ?? DEFAULT_IGNORED(path)),
     });
     this.watcher.on('all', (eventName: string, absPath: string) => {
       if (this.disposed) return;

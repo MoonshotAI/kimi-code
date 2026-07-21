@@ -19,6 +19,7 @@ import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises
 import { dirname, join } from 'node:path';
 
 import { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
+import { syncDir } from '@moonshot-ai/agent-core-v2/_base/utils/fs';
 import { ulid } from 'ulid';
 
 /** Default cadence for refreshing `heartbeat_at`. */
@@ -144,17 +145,6 @@ async function readInstanceFile(filePath: string): Promise<ServerInstanceInfo | 
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     return undefined;
-  }
-}
-
-/** fsync a directory so the rename entry in it is durable. No-op on win32 (unsupported). */
-async function syncDir(dirPath: string): Promise<void> {
-  if (process.platform === 'win32') return;
-  const dirFh = await open(dirPath, 'r');
-  try {
-    await dirFh.sync();
-  } finally {
-    await dirFh.close();
   }
 }
 

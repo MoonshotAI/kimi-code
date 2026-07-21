@@ -13,6 +13,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
+import { enqueueKeyedOperation } from '#/_base/utils/promise';
 
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import {
@@ -92,17 +93,7 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
     if (this.storage.runExclusive !== undefined) {
       return this.storage.runExclusive(scope, key, op);
     }
-    const id = `${scope}\0${key}`;
-    const previous = this.operationQueues.get(id) ?? Promise.resolve();
-    const result = previous.then(op);
-    const tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.operationQueues.set(id, tail);
-    return result.finally(() => {
-      if (this.operationQueues.get(id) === tail) this.operationQueues.delete(id);
-    });
+    return enqueueKeyedOperation(this.operationQueues, `${scope}\0${key}`, op);
   }
 
   async delete(scope: string, key: string): Promise<void> {

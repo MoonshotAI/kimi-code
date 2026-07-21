@@ -31,13 +31,7 @@ export const heldByPeerDetailsSchema = z.object({
 });
 export type HeldByPeerDetails = z.infer<typeof heldByPeerDetailsSchema>;
 
-export const unregisteredWriterDetailsSchema = z.object({
-  kind: z.literal('unregistered-writer'),
-});
-export type UnregisteredWriterDetails = z.infer<typeof unregisteredWriterDetailsSchema>;
-
 export const sessionOwnershipDetailsSchema = z.discriminatedUnion('kind', [
   heldByPeerDetailsSchema,
-  unregisteredWriterDetailsSchema,
 ]);
 export type SessionOwnershipDetails = z.infer<typeof sessionOwnershipDetailsSchema>;

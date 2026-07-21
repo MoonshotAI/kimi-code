@@ -49,11 +49,6 @@ export interface ICrossProcessLockService {
     options?: CrossProcessLockAcquireOptions,
   ): Promise<ICrossProcessLockHandle>;
 
-  acquireWithWait(
-    lockPath: string,
-    options: CrossProcessLockAcquireOptions & { wait: CrossProcessLockWaitOptions },
-  ): Promise<ICrossProcessLockHandle>;
-
   withLock<T>(
     lockPath: string,
     options: CrossProcessLockAcquireOptions & { wait: CrossProcessLockWaitOptions },

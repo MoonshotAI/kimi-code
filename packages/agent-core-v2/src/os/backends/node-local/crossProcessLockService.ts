@@ -208,7 +208,7 @@ export class CrossProcessLockService implements ICrossProcessLockService {
     }
   }
 
-  async acquireWithWait(
+  private async acquireWithWait(
     lockPath: string,
     options: CrossProcessLockAcquireOptions & { wait: CrossProcessLockWaitOptions },
   ): Promise<ICrossProcessLockHandle> {

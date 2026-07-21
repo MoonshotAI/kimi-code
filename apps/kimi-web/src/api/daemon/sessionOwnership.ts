@@ -10,7 +10,6 @@
 //   - creating                lease file observed mid-creation; retry shortly
 //   - routable                holder is live and registered an address; redirect
 //   - held-by-local-instance  holder has no address (local/embedded); terminal
-//   - unregistered-writer     session dir written by an unregistered process
 
 import { isDaemonApiError } from '../errors';
 
@@ -31,11 +30,7 @@ export interface HeldByPeerDetails {
   retry_after_ms?: number;
 }
 
-export interface UnregisteredWriterDetails {
-  kind: 'unregistered-writer';
-}
-
-export type SessionOwnershipDetails = HeldByPeerDetails | UnregisteredWriterDetails;
+export type SessionOwnershipDetails = HeldByPeerDetails;
 
 const PHASES: ReadonlySet<SessionOwnershipPhase> = new Set([
   'creating',
@@ -56,7 +51,6 @@ export function narrowSessionOwnershipDetails(
 ): SessionOwnershipDetails | undefined {
   if (typeof details !== 'object' || details === null) return undefined;
   const record = details as Record<string, unknown>;
-  if (record['kind'] === 'unregistered-writer') return { kind: 'unregistered-writer' };
   if (record['kind'] !== 'held-by-peer') return undefined;
   const phase = record['phase'];
   if (typeof phase !== 'string' || !isSessionOwnershipPhase(phase)) {

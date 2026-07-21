@@ -165,15 +165,13 @@ import { ISessionQuestionService, type QuestionResult } from '#/session/question
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
 import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-} from '#/os/interface/hostFsWatch';
+import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+import { stubWriteAuthorityRegistry } from '../agent/task/stubs';
+import { fakeHostFsWatch } from '../session/sessionFs/stubs';
 import { stubSessionLeaseService } from '../session/sessionLease/stubs';
 import { createScriptedGenerate } from './scripted-generate';
 import {
@@ -652,15 +650,6 @@ const noopHookRunner: IExternalHooksRunnerService = {
   fireAndForgetTrigger: async () => [],
 };
 
-const noopHostFsWatchService: IHostFsWatchService = {
-  _serviceBrand: undefined,
-  watch: () => ({
-    ready: Promise.resolve(),
-    onDidChange: Event.None as Event<HostFsChange>,
-    dispose: () => {},
-  }),
-};
-
 export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
   return agentService(IAgentPermissionModeService, createPermissionModeService(mode));
 }
@@ -1008,13 +997,8 @@ export class AgentTestContext {
           })) {
             reg.defineInstance(id, value);
           }
-          const authorityRegistry = new WriteAuthorityRegistryService();
-          authorityRegistry.register({
-            sessionId,
-            assertWritable: () => {},
-          });
-          reg.defineInstance(IWriteAuthorityRegistry, authorityRegistry);
-          reg.defineInstance(IHostFsWatchService, noopHostFsWatchService);
+          reg.defineInstance(IWriteAuthorityRegistry, stubWriteAuthorityRegistry(sessionId));
+          reg.defineInstance(IHostFsWatchService, fakeHostFsWatch().service);
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
             new SyncDescriptor(InMemoryStorageService, [], true);
           reg.defineDescriptor(IFileSystemStorageService, memoryStorage());

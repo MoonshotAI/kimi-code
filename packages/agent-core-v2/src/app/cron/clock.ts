@@ -10,11 +10,11 @@
  *
  *   2. monotonic ms — a strictly non-decreasing counter that never
  *      jumps backwards across NTP adjustments, suspend/resume, or
- *      simulated-clock injection. Used for the poll cadence — anything
- *      where "did 5 seconds elapse since we last looked" must hold
- *      even when the wall clock is frozen.
+ *      simulated-clock injection. Used for the poll cadence and the
+ *      lock heartbeat — anything where "did 5 seconds elapse since we
+ *      last looked" must hold even when the wall clock is frozen.
  *
- * Mixing the two pollutes test reproducibility: a poll cadence tied to
+ * Mixing the two pollutes test reproducibility: a heartbeat tied to
  * `wallNow()` will appear stuck when the test clock is frozen; a cron
  * fire tied to `monoNowMs()` will not advance when the bench rewinds
  * the simulated day. Every component in the cron domain MUST take a
@@ -22,7 +22,7 @@
  *
  * `monoNowMs` is ALWAYS `process.hrtime.bigint()` (converted to ms).
  * It is not overridable — accepting an external monotonic clock would
- * let a frozen test clock silently stall the poll cadence.
+ * defeat the safety net the lock heartbeat depends on.
  *
  * `wallNow` resolution is driven by the `KIMI_CRON_CLOCK` env var; see
  * `resolveClockSources` below. Defaults to `Date.now()`.

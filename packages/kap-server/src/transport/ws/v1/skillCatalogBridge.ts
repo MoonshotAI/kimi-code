@@ -28,6 +28,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { SkillCatalogChangedEvent } from './events';
+import { registerSessionReleaseHook } from './sessionReleaseHook';
 
 import type { EventEnvelope, JournalLogger } from './sessionEventJournal';
 
@@ -68,15 +69,11 @@ export class SkillCatalogBridge implements IDisposable {
   constructor(opts: { core: Scope; logger?: JournalLogger }) {
     this.core = opts.core;
     this.logger = opts.logger;
-    this.sessionReleaseHook = this.core.accessor
-      .get(ISessionLifecycleService)
-      .hooks.onWillReleaseSession.register(
-        'skillCatalogBridge',
-        async ({ sessionId }, next) => {
-          this.releaseSession(sessionId);
-          await next();
-        },
-      );
+    this.sessionReleaseHook = registerSessionReleaseHook(
+      this.core,
+      'skillCatalogBridge',
+      (sessionId) => this.releaseSession(sessionId),
+    );
   }
 
   dispose(): void {

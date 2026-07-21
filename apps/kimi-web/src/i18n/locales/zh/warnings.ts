@@ -59,7 +59,6 @@ export default {
     creating: '会话正在另一个实例上创建，稍后自动重试…',
     creatingTimeout: '会话仍在另一个实例上创建中，请稍后再试。',
     heldByLocalInstance: '会话被本机另一个无网络地址的实例（如 CLI/TUI）持有。请到该实例继续，或先关闭它。',
-    unregisteredWriter: '会话目录正被未注册的外部进程写入，已拒绝打开以保护数据。',
     redirectSameHost: '该会话的持有者就是当前实例。请刷新页面后重试。',
     redirectLoopGuard: '多次跳转仍未到达持有会话的实例。请直接打开该实例后重试。',
     redirectUnavailable: '该会话由另一个实例持有，但该实例未发布可跳转的地址。',

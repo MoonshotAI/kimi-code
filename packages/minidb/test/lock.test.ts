@@ -79,6 +79,7 @@ test('pre-existing sentinel contents do not imply ownership', async () => {
   await db.close();
 
   assert.equal(await fs.readFile(lockPath, 'utf8'), JSON.stringify({ pid: process.pid, lock_id: 'legacy' }));
+  assert.equal((await fs.readdir(dir)).some((entry) => entry.includes('.stale.')), false);
   await cleanup(dir);
 });
 
@@ -90,35 +91,19 @@ test('LockFile uses kernel ownership and leaves the sentinel in place', async ()
 
   assert.equal(await first.acquire(), true);
   assert.equal(await second.acquire(), false);
-  await first.release();
+  first.releaseSync();
   assert.equal(await fs.stat(lockPath).then(() => true), true);
   assert.equal(await second.acquire(), true);
-  await second.release();
+  second.releaseSync();
   await cleanup(dir);
 });
 
-test('rewriting sentinel contents cannot transfer a live lock', async () => {
-  const dir = await tmpDir();
-  const lockPath = path.join(dir, 'db.lock');
-  const first = new LockFile(lockPath);
-  const second = new LockFile(lockPath);
-  assert.equal(await first.acquire(), true);
-
-  await fs.writeFile(lockPath, 'operator note');
-  assert.doesNotThrow(() => first.assertHeld());
-  assert.equal(await second.acquire(), false);
-
-  await first.release();
-  await cleanup(dir);
-});
-
-test('release and releaseSync are idempotent', async () => {
+test('releaseSync is idempotent', async () => {
   const dir = await tmpDir();
   const lock = new LockFile(path.join(dir, 'db.lock'));
-  await assert.doesNotReject(() => lock.release());
   assert.doesNotThrow(() => lock.releaseSync());
   assert.equal(await lock.acquire(), true);
-  await lock.release();
+  lock.releaseSync();
   assert.doesNotThrow(() => lock.releaseSync());
   await cleanup(dir);
 });

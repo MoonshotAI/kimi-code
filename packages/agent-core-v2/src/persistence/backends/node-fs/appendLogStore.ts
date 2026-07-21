@@ -25,11 +25,10 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { Error2, ErrorCodes } from '#/errors';
 
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import {
-  sessionIdFromScope,
+  assertScopeWritable,
   IWriteAuthorityRegistry,
 } from '#/persistence/interface/writeAuthority';
 import {
@@ -278,15 +277,7 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   private assertScopeWritable(scope: string): void {
-    const sessionId = sessionIdFromScope(scope);
-    if (sessionId === undefined) return;
-    const authority = this.authorityRegistry.resolve(sessionId);
-    if (authority === undefined) {
-      throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session has no registered write authority', {
-        details: { sessionId },
-      });
-    }
-    authority.assertWritable();
+    assertScopeWritable(scope, this.authorityRegistry);
   }
 }
 

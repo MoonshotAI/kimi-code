@@ -40,9 +40,11 @@ import { describe, expect, it } from 'vitest';
 
 import { HttpClient } from '../harness/http.js';
 import {
+  pidAlive,
   spawnServerProcess,
   spawnServerProcessPair,
   startServerPair,
+  waitForPidExit,
   waitForServerHealthy,
 } from '../harness/testing/index.js';
 import { createCaseLogger, errorForLog } from './log.js';
@@ -224,22 +226,4 @@ const KNOWN_CLOSE_GAP = 'writeAuthorityRegistry';
 
 function isKnownCloseGap(error: unknown): boolean {
   return error instanceof Error && error.message.includes(KNOWN_CLOSE_GAP);
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!pidAlive(pid)) return true;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-  }
-  return !pidAlive(pid);
 }

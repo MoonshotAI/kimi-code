@@ -31,3 +31,26 @@ export function timeoutOutcome<Outcome>(
     },
   });
 }
+
+/**
+ * Keyed promise-chain exclusion over a shared `id → tail promise` map: `op`
+ * runs after every previously enqueued operation for `id` settles, a
+ * rejection does not poison later operations for the same key, and the map
+ * entry is dropped once the queue drains.
+ */
+export function enqueueKeyedOperation<T>(
+  queues: Map<string, Promise<void>>,
+  id: string,
+  op: () => Promise<T>,
+): Promise<T> {
+  const previous = queues.get(id) ?? Promise.resolve();
+  const result = previous.then(op);
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  queues.set(id, tail);
+  return result.finally(() => {
+    if (queues.get(id) === tail) queues.delete(id);
+  });
+}

@@ -36,6 +36,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { sleep } from '../wait.js';
 import {
   SPAWN_SERVER_HOME_ENV,
   type SpawnServerMessage,
@@ -51,7 +52,7 @@ const STOP_GRACE_MS = 10_000;
 const STDERR_TAIL_LIMIT = 8_192;
 // `recursive` rm can hit ENOTEMPTY on macOS while the closing server is still
 // flushing/unlinking its own files — retry briefly.
-const RM_HOME_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
+export const RM_HOME_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
 
 export interface SpawnServerProcessOptions {
   /** Home directory for the child server. Created via `mkdtemp` when omitted. */
@@ -315,6 +316,21 @@ function raceExit(exited: Promise<number | null>, timeoutMs: number): Promise<bo
   return Promise.race([exited.then(() => true), sleep(timeoutMs).then(() => false)]);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** True once `pid` is fully gone (ESRCH — zombies reaped), false on timeout. */
+export async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!pidAlive(pid)) return true;
+    await sleep(50);
+  }
+  return !pidAlive(pid);
 }

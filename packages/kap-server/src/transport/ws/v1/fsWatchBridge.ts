@@ -14,16 +14,10 @@
  * {@link SessionEventBroadcaster}); it is **not** DI-registered and carries no
  * `_serviceBrand`. It owns the per-`(connection, session)` subscription sets,
  * fans the core feed out to each connection filtered by that connection's
- * paths, and assigns a **per-connection monotonic `seq`**: each connection
- * numbers only the frames actually delivered to it — matched change frames and
- * `truncated` frames alike — starting at 1 with no gaps; a frame the
- * connection never receives consumes nothing. A `seq` gap, a `truncated: true`
- * payload, or an epoch change each invalidate the incremental stream: the
- * client must fall back to a full baseline re-pull (snapshot + incremental +
- * resync), per the wire contract pinned on `fsChangeEventSchema`
- * (`@moonshot-ai/protocol` `fs.ts`). Frames are sent straight to the socket —
- * they never enter the broadcaster / journal (fs changes are volatile: on
- * overflow the client sees `truncated` and re-syncs).
+ * paths, and numbers the delivered frames per connection. Frames are sent
+ * straight to the socket — they never enter the broadcaster / journal. The
+ * `seq` / `truncated` / rebuild contract is pinned on `fsChangeEventSchema` in
+ * `@moonshot-ai/protocol` (`packages/protocol/src/fs.ts`) — see there.
  *
  * The core `ISessionFsWatchService` keeps a single subscription set per
  * session; the bridge drives it with the **union** of every connection's
@@ -43,6 +37,7 @@ import {
 import type { FsChangeEntry, FsChangeEvent } from '@moonshot-ai/agent-core-v2/session/sessionFs/fsWatch';
 
 import type { EventEnvelope, JournalLogger } from './sessionEventJournal';
+import { registerSessionReleaseHook } from './sessionReleaseHook';
 
 const MAX_PATHS_PER_CONNECTION = 100;
 
@@ -100,15 +95,11 @@ export class FsWatchBridge implements IDisposable {
   constructor(opts: { core: Scope; logger?: JournalLogger }) {
     this.core = opts.core;
     this.logger = opts.logger;
-    this.sessionReleaseHook = this.core.accessor
-      .get(ISessionLifecycleService)
-      .hooks.onWillReleaseSession.register(
-        'fsWatchBridge',
-        async ({ sessionId }, next) => {
-          this.releaseSession(sessionId);
-          await next();
-        },
-      );
+    this.sessionReleaseHook = registerSessionReleaseHook(
+      this.core,
+      'fsWatchBridge',
+      (sessionId) => this.releaseSession(sessionId),
+    );
   }
 
   dispose(): void {

@@ -512,8 +512,8 @@ export interface SessionCreatedEvent {
 
 /**
  * Volatile, payload-less hint that the set of sessions on disk changed
- * (design `.tmp/refactor-watch-design-v2.md` §3.8): a workspace or session
- * directory appeared or vanished under the shared `<home>/sessions` tree,
+ * (design §3.8): a workspace or session directory appeared or vanished
+ * under the shared `<home>/sessions` tree,
  * possibly created by ANOTHER server instance sharing the home. Clients
  * should re-pull `GET /sessions` instead of reading anything into the event
  * itself — it is fanned out live only (never journaled, never replayed).
@@ -1438,15 +1438,6 @@ export const sessionCreatedEventSchema = z.object({
   session: sessionSchema,
 }) satisfies z.ZodType<SessionCreatedEvent>;
 
-export const sessionListChangedEventSchema = z.object({
-  type: z.literal('session.list_changed'),
-}) satisfies z.ZodType<SessionListChangedEvent>;
-
-export const skillCatalogChangedEventSchema = z.object({
-  type: z.literal('skill_catalog.changed'),
-  sourceId: z.string().min(1),
-}) satisfies z.ZodType<SkillCatalogChangedEvent>;
-
 export const workspaceCreatedEventSchema = z.object({
   type: z.literal('event.workspace.created'),
   workspace: workspaceSchema,
@@ -1808,8 +1799,6 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   agentStatusUpdatedEventSchema,
   sessionMetaUpdatedEventSchema,
   sessionCreatedEventSchema,
-  sessionListChangedEventSchema,
-  skillCatalogChangedEventSchema,
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,

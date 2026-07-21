@@ -103,6 +103,7 @@ import {
   IWorkspaceService,
   isError2,
   Error2,
+  heldByPeerDetailsFromInspection,
   sessionLeasePath,
   toProtocolMessage,
   type ContextMessage,
@@ -1171,11 +1172,11 @@ function resolveSessionOwnership(
   const inspection = core
     .accessor.get(ICrossProcessLockService)
     .inspect(sessionLeasePath(homeDir, sessionId));
-  if (inspection.state === 'held' || inspection.state === 'creating') {
-    const address = inspection.payload?.address;
-    return address !== undefined ? { held_by: 'peer', address } : { held_by: 'peer' };
-  }
-  return { held_by: 'none' };
+  const heldByPeer = heldByPeerDetailsFromInspection(inspection);
+  if (heldByPeer === undefined) return { held_by: 'none' };
+  return heldByPeer.address !== undefined
+    ? { held_by: 'peer', address: heldByPeer.address }
+    : { held_by: 'peer' };
 }
 
 /**

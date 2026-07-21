@@ -15,6 +15,7 @@ import {
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
+import type { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 
 export type TaskServiceTestManager = IAgentTaskService & {
   loadFromDisk(): Promise<void>;
@@ -25,19 +26,28 @@ export const TASK_TEST_SESSION_SCOPE = 'sessions/test-workspace/test-session';
 
 export const TASK_TEST_AGENT_SCOPE = `${TASK_TEST_SESSION_SCOPE}/agents/main`;
 
-export function createAgentTaskPersistence(homedir: string): AgentTaskPersistence {
-  const storage = new FileStorageService(homedir);
-  const authorityRegistry = new WriteAuthorityRegistryService();
-  authorityRegistry.register({
-    sessionId: 'test-session',
+/**
+ * A real write-authority registry pre-registered with a lenient authority for
+ * the test session, so persistence writes pass the fencing check without a
+ * kernel lease.
+ */
+export function stubWriteAuthorityRegistry(sessionId = 'test-session'): IWriteAuthorityRegistry {
+  const registry = new WriteAuthorityRegistryService();
+  registry.register({
+    sessionId,
     assertWritable: () => {},
   });
+  return registry;
+}
+
+export function createAgentTaskPersistence(homedir: string): AgentTaskPersistence {
+  const storage = new FileStorageService(homedir);
   return new AgentTaskPersistence(
     join(homedir, TASK_TEST_AGENT_SCOPE),
     TASK_TEST_AGENT_SCOPE,
     new JsonAtomicDocumentStore(storage),
     storage,
     undefined,
-    authorityRegistry,
+    stubWriteAuthorityRegistry(),
   );
 }

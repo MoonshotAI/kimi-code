@@ -1,13 +1,24 @@
 /**
- * Low-level durable file-write primitives — atomic writes plus file and
- * directory fsync helpers.
+ * Low-level filesystem helpers — durable file-write primitives (atomic writes
+ * plus file and directory fsync) and stat classification shared by watchers.
  */
 
 import { randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, openSync } from 'node:fs';
 import * as nodeFs from 'node:fs';
+import type { Stats } from 'node:fs';
 import { open, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'pathe';
+
+/**
+ * True for directory entries that are neither a regular file, a directory,
+ * nor a symlink (unix sockets, fifos, devices). File watchers must skip
+ * these: chokidar attaches `fs.watch` to every scanned entry and that call
+ * throws `UNKNOWN` on special files.
+ */
+export function isSpecialFileStat(stats: Stats | undefined): boolean {
+  return stats !== undefined && !stats.isFile() && !stats.isDirectory() && !stats.isSymbolicLink();
+}
 
 export async function syncDir(dirPath: string): Promise<void> {
   if (process.platform === 'win32') return;

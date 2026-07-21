@@ -102,6 +102,7 @@ import {
   SessionEventJournal,
   sessionJournalPath,
 } from './sessionEventJournal';
+import { registerSessionReleaseHook } from './sessionReleaseHook';
 
 export type ResyncReason = 'buffer_overflow' | 'session_recreated' | 'epoch_changed';
 
@@ -261,15 +262,11 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
-    this.sessionReleaseHook = opts.core.accessor
-      .get(ISessionLifecycleService)
-      .hooks.onWillReleaseSession.register(
-        'sessionEventBroadcaster',
-        async ({ sessionId }, next) => {
-          await this.releaseSessionState(sessionId);
-          await next();
-        },
-      );
+    this.sessionReleaseHook = registerSessionReleaseHook(
+      opts.core,
+      'sessionEventBroadcaster',
+      (sessionId) => this.releaseSessionState(sessionId),
+    );
   }
 
   /**

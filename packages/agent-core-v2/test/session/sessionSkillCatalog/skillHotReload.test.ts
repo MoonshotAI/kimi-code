@@ -24,10 +24,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
-import {
-  EXTRA_SKILL_DIRS_SECTION,
-  MERGE_ALL_AVAILABLE_SKILLS_SECTION,
-} from '#/app/skillCatalog/configSection';
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
@@ -38,84 +34,9 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { configStub, pluginStub, workspaceStub } from './stubs';
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-function configStub(): IConfigService & {
-  setExtraSkillDirs(dirs: readonly string[]): void;
-  fireSectionChange(domain: string): void;
-} {
-  let extraSkillDirs: readonly string[] = [];
-  const sectionChangeListeners: Array<(event: unknown) => void> = [];
-  return {
-    _serviceBrand: undefined,
-    ready: Promise.resolve(),
-    onDidChangeConfiguration: () => ({ dispose: () => {} }),
-    onDidSectionChange: (listener: (event: unknown) => void) => {
-      sectionChangeListeners.push(listener);
-      return { dispose: () => {} };
-    },
-    get: (domain: string) => {
-      if (domain === EXTRA_SKILL_DIRS_SECTION) return [...extraSkillDirs];
-      if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return true;
-      return undefined;
-    },
-    inspect: () => ({ value: undefined, defaultValue: undefined, userValue: undefined, memoryValue: undefined }),
-    getAll: () => ({}),
-    set: async () => {},
-    replace: async () => {},
-    reload: async () => {},
-    diagnostics: () => [],
-    setExtraSkillDirs: (dirs: readonly string[]) => {
-      extraSkillDirs = [...dirs];
-    },
-    fireSectionChange: (domain: string) => {
-      for (const listener of sectionChangeListeners) {
-        listener({ domain, source: 'set', value: undefined, previousValue: undefined });
-      }
-    },
-  } as unknown as IConfigService & {
-    setExtraSkillDirs(dirs: readonly string[]): void;
-    fireSectionChange(domain: string): void;
-  };
-}
-
-function pluginStub(): IPluginService {
-  return {
-    _serviceBrand: undefined,
-    onDidReload: () => ({ dispose: () => {} }),
-    listPlugins: async () => [],
-    installPlugin: async () => ({ id: '' }) as never,
-    setPluginEnabled: async () => {},
-    setPluginMcpServerEnabled: async () => {},
-    removePlugin: async () => {},
-    reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
-    getPluginInfo: async () => {
-      throw new Error('getPluginInfo is not used by these tests');
-    },
-    listPluginCommands: async () => [],
-    checkUpdates: async () => [],
-    pluginSkillRoots: async () => [],
-    enabledSessionStarts: async () => [],
-    enabledMcpServers: async () => ({}),
-    enabledHooks: async () => [],
-  };
-}
-
-function workspaceStub(workDir: string): ISessionWorkspaceContext {
-  return {
-    _serviceBrand: undefined,
-    workDir,
-    additionalDirs: [],
-    setWorkDir: () => {},
-    setAdditionalDirs: () => {},
-    resolve: (rel: string) => rel,
-    isWithin: () => true,
-    assertAllowed: (p: string) => p,
-    addAdditionalDir: () => {},
-    removeAdditionalDir: () => {},
-  } satisfies ISessionWorkspaceContext;
-}
 
 interface HotReloadFixture {
   readonly host: ScopedTestHost;
@@ -158,7 +79,7 @@ function makeHost(
     stubPair(IHostFsWatchService, new HostFsWatchService()),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [
-    stubPair(ISessionWorkspaceContext, workspaceStub(workDir)),
+    stubPair(ISessionWorkspaceContext, workspaceStub(workDir).stub),
     stubPair(ILogService, stubLog()),
   ]);
   const catalog = session.accessor.get(ISessionSkillCatalog);

@@ -49,7 +49,7 @@ export type HeldByPeerDetails = {
   readonly retry_after_ms?: number;
 };
 
-export type SessionOwnershipDetails = HeldByPeerDetails | { readonly kind: 'unregistered-writer' };
+export type SessionOwnershipDetails = HeldByPeerDetails;
 
 /**
  * Classify a lease inspection into `held-by-peer` details. Shared by every
