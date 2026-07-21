@@ -5,9 +5,10 @@
  * upgrade, the client sends `client_hello` with the session in
  * `subscriptions` plus the opt-in `transcript` grade map, and forwards every
  * `transcript.ops` frame to the consumer. Full state never comes from here:
- * `transcript.reset` snapshots are ignored, because complete data (initial
- * load and any refresh) is read back from the REST transcript API, paged
- * from the tail backwards.
+ * `transcript.reset` snapshots are ignored by the store (they are surfaced
+ * through the optional `onReset` handler for observers like the audit panel),
+ * because complete data (initial load and any refresh) is read back from the
+ * REST transcript API, paged from the tail backwards.
  *
  * Loss signals are surfaced, not repaired locally — transcript frames are
  * volatile by design (never journaled), so the consumer answers them with a
@@ -23,14 +24,39 @@
 
 import {
   transcriptOpsEventSchema,
+  transcriptResetEventSchema,
+  type AgentTranscriptSnapshot,
   type TranscriptOperation,
 } from '@moonshot-ai/transcript';
 
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
+/** Envelope/payload metadata carried alongside a transcript frame (for auditing + seq tracking). */
+export interface TranscriptFrameMeta {
+  /** Envelope `timestamp` (server send time, ISO); absent on legacy servers. */
+  readonly at?: string | undefined;
+  /** Op-batch sequence number (payload `seq`); absent on legacy servers. */
+  readonly seq?: number | undefined;
+}
+
 export interface TranscriptWsHandlers {
   /** Incremental L2 op batch for the agent (the only data frame consumed). */
-  onOps: (agentId: string, ops: readonly TranscriptOperation[]) => void;
+  onOps: (
+    agentId: string,
+    ops: readonly TranscriptOperation[],
+    meta?: TranscriptFrameMeta,
+  ) => void;
+  /**
+   * Baseline snapshot frame. The chat consumer deliberately ignores these
+   * (full state is REST-sourced) — the handler exists for observers such as
+   * the audit panel that want to record every frame on the wire.
+   */
+  onReset?: (
+    agentId: string,
+    snapshot: AgentTranscriptSnapshot,
+    hasMoreOlder: boolean,
+    meta?: TranscriptFrameMeta,
+  ) => void;
   /** Server signalled desync for our session — consumer should REST-refresh. */
   onResyncRequired: () => void;
   /** Socket re-established after a drop — volatile ops were missed meanwhile. */
@@ -44,6 +70,12 @@ export interface TranscriptWsOptions {
   readonly sessionId: string;
   readonly agentId: string;
   readonly handlers: TranscriptWsHandlers;
+  /**
+   * Returns the caller's current op-batch watermark at (re)subscribe time;
+   * when defined it is sent as the `transcript_since` cursor so a sequenced
+   * server replays missed batches instead of sending a baseline reset.
+   */
+  readonly getSince?: (() => number | undefined) | undefined;
   /** WebSocket implementation; defaults to the global `WebSocket`. */
   readonly WebSocketImpl?: WsLikeCtor;
   /** Base delay (ms) for the reconnect backoff. Default `500`. */
@@ -54,6 +86,7 @@ interface ServerFrame {
   readonly type: string;
   readonly id?: string;
   readonly code?: number;
+  readonly timestamp?: string;
   readonly payload?: unknown;
 }
 
@@ -65,6 +98,7 @@ export class TranscriptWs {
   private readonly sessionId: string;
   private readonly agentId: string;
   private readonly handlers: TranscriptWsHandlers;
+  private readonly getSince?: (() => number | undefined) | undefined;
   private readonly WsCtor: WsLikeCtor;
   private readonly reconnectDelayMs: number;
 
@@ -81,6 +115,7 @@ export class TranscriptWs {
     this.sessionId = opts.sessionId;
     this.agentId = opts.agentId;
     this.handlers = opts.handlers;
+    this.getSince = opts.getSince;
     const ctor = opts.WebSocketImpl ?? (globalThis.WebSocket as unknown as WsLikeCtor | undefined);
     if (ctor === undefined) {
       throw new Error('no WebSocket implementation available; pass WebSocketImpl');
@@ -119,6 +154,7 @@ export class TranscriptWs {
       this.reconnectAttempt = 0;
       this.helloId = `kimi-inspect-${Date.now().toString(36)}`;
       this.helloAcked = false;
+      const since = this.getSince?.();
       this.send({
         type: 'client_hello',
         id: this.helloId,
@@ -126,6 +162,8 @@ export class TranscriptWs {
           client_id: 'kimi-inspect',
           subscriptions: [this.sessionId],
           transcript: { [this.sessionId]: { [this.agentId]: 'delta' } },
+          transcript_since:
+            since !== undefined ? { [this.sessionId]: { [this.agentId]: since } } : undefined,
         },
       });
       // The reconcile fires on the subscribe ACK (see onMessage) — the server
@@ -168,12 +206,26 @@ export class TranscriptWs {
       case 'transcript.ops': {
         const parsed = transcriptOpsEventSchema.safeParse(frame.payload);
         if (!parsed.success) return;
-        this.handlers.onOps(parsed.data.agent_id, parsed.data.ops);
+        this.handlers.onOps(parsed.data.agent_id, parsed.data.ops, {
+          at: frame.timestamp,
+          seq: parsed.data.seq,
+        });
         return;
       }
-      case 'transcript.reset':
-        // Snapshots are deliberately ignored: full state is REST-sourced.
+      case 'transcript.reset': {
+        // Snapshots are deliberately ignored by the chat store: full state is
+        // REST-sourced. Surface them to optional observers (audit panel).
+        if (this.handlers.onReset === undefined) return;
+        const parsed = transcriptResetEventSchema.safeParse(frame.payload);
+        if (!parsed.success) return;
+        this.handlers.onReset(
+          parsed.data.agent_id,
+          parsed.data.snapshot,
+          parsed.data.has_more_older,
+          { at: frame.timestamp, seq: parsed.data.seq },
+        );
         return;
+      }
       case 'ping': {
         const nonce = (frame.payload as { nonce?: unknown } | undefined)?.nonce;
         this.send({ type: 'pong', payload: { nonce } });

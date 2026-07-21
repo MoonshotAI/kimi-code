@@ -8,8 +8,8 @@
  *  - media content parts become attachment entities (metadata only — base64
  *    bytes are dropped, never shipped); mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
- *  - interaction frames do not appear (approvals are not persisted as
- *    context messages);
+ *  - interactions do not appear: they are entities, live-only, never rebuilt
+ *    from history (approvals are not persisted as context messages);
  *  - persisted messages carry no turn ids, so turn ordinals are assigned by
  *    grouping — **0-based, matching the engine's live turn numbering** — and
  *    can drift from the engine's ids when hidden origins (e.g. retries) make
@@ -252,7 +252,7 @@ export function groupMessagesIntoSnapshot(
   }
 
   // Approvals / questions are never persisted, so a cold rebuild carries no
-  // interaction entities (same as the pre-entity frame model).
+  // interaction entities (interactions are live-only).
   return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
 }
 

@@ -1774,7 +1774,7 @@ describe('SessionEventBroadcaster', () => {
       ).toBe(true);
     });
 
-    it('redacts reset snapshots to the subscribed grade (turn = headers only)', async () => {
+    it('sends an items-empty baseline reset marking older history, with global state and the watermark', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
       sessions.set('s1', lc);
@@ -1789,18 +1789,37 @@ describe('SessionEventBroadcaster', () => {
       main.bus.emit(agentEvent('turn.step.completed', { turnId: 1, step: 1 }));
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
 
-      // A 'turn'-grade subscriber must not receive the step/frame detail in
-      // its reset — the snapshot is redacted to headers + global state.
-      const coarse = collectingTarget();
-      await bc.subscribe('s1', coarse.target, undefined, { main: 'turn' });
-      const resets = transcriptEnvelopes(coarse.envelopes).filter((e) => e.type === 'transcript.reset');
+      // A late subscriber's baseline embeds no turns — history pages in over
+      // REST — but still reports that older history exists, carries the
+      // global state, and is stamped with the watermark seq.
+      const late = collectingTarget();
+      await bc.subscribe('s1', late.target, undefined, { main: 'turn' });
+      const resets = transcriptEnvelopes(late.envelopes).filter((e) => e.type === 'transcript.reset');
       expect(resets).toHaveLength(1);
-      const snapshot = (
-        resets[0]!.payload as { snapshot: { items: { kind: string; steps?: unknown[] }[] } }
-      ).snapshot;
-      const turn = snapshot.items.find((item) => item.kind === 'turn');
-      expect(turn?.steps).toEqual([]);
-      expect(JSON.stringify(snapshot)).not.toContain('secret body');
+      const payload = resets[0]!.payload as {
+        snapshot: {
+          items: unknown[];
+          tasks: unknown[];
+          interactions: unknown[];
+          attachments: unknown[];
+          todos: unknown[];
+          meta: unknown;
+        };
+        has_more_older: boolean;
+        seq?: number;
+      };
+      expect(payload.snapshot.items).toEqual([]);
+      expect(payload.has_more_older).toBe(true);
+      expect(payload.seq).toBeTypeOf('number');
+      // The global state still rides the baseline (empty here — no tasks or
+      // interactions were emitted — but the fields are present).
+      expect(payload.snapshot).toMatchObject({
+        tasks: [],
+        interactions: [],
+        attachments: [],
+        todos: [],
+      });
+      expect(JSON.stringify(payload.snapshot)).not.toContain('secret body');
     });
 
     it('honours per-agent grade overrides over the wildcard', async () => {
@@ -1822,6 +1841,122 @@ describe('SessionEventBroadcaster', () => {
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
       late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+    });
+
+    it('stamps ops payloads with the batch seq and resets with the watermark', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+      const reset = transcriptEnvelopes(view.envelopes)[0]!;
+      expect(reset.type).toBe('transcript.reset');
+      const watermark = (reset.payload as { seq?: number }).seq;
+      expect(watermark).toBeTypeOf('number');
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+
+      const ops = transcriptEnvelopes(view.envelopes).filter((e) => e.type === 'transcript.ops');
+      expect(ops.length).toBeGreaterThan(0);
+      const seqs = ops.map((e) => (e.payload as { seq?: number }).seq);
+      // Every batch seq is past the baseline watermark and strictly
+      // increasing (a connection sees a grade-filtered subsequence of the
+      // consecutive per-agent numbering).
+      expect(seqs.every((seq) => seq !== undefined && seq > watermark!)).toBe(true);
+      expect([...seqs].toSorted((a, b) => a! - b!)).toEqual(seqs);
+      // The envelope-level seq stays the durable watermark — transcript
+      // frames never advance it.
+      expect(ops.every((e) => e.volatile === true && e.seq === reset.seq)).toBe(true);
+    });
+
+    it('replays journaled batches instead of a reset when transcript_since is covered', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      // A first connection establishes state and observes the batch seqs.
+      const first = collectingTarget();
+      await bc.subscribe('s1', first.target, undefined, { '*': 'delta' });
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      const cursor = (
+        transcriptEnvelopes(first.envelopes).at(-1)!.payload as { seq: number }
+      ).seq;
+
+      // More ops land while the client is away.
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'hi' }));
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+
+      // Reconnect with the covered cursor: exactly the missed batches replay
+      // (grade-filtered, in seq order) and NO baseline reset is sent.
+      const second = collectingTarget();
+      await bc.subscribe('s1', second.target, undefined, { '*': 'delta' }, {
+        transcriptSince: { main: cursor },
+      });
+      const frames = transcriptEnvelopes(second.envelopes);
+      expect(frames.some((e) => e.type === 'transcript.reset')).toBe(false);
+      const replayed = frames.filter((e) => e.type === 'transcript.ops');
+      expect(replayed.length).toBeGreaterThan(0);
+      const seqs = replayed.map((e) => (e.payload as { seq: number }).seq);
+      expect(seqs.every((seq) => seq > cursor)).toBe(true);
+      expect([...seqs].toSorted((a, b) => a - b)).toEqual(seqs);
+
+      // The connection is seeded: live ops keep flowing after the replay.
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'again' }));
+      expect(transcriptEnvelopes(second.envelopes).at(-1)!.type).toBe('transcript.ops');
+    });
+
+    it('replays nothing (and no reset) when transcript_since is already current', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const first = collectingTarget();
+      await bc.subscribe('s1', first.target, undefined, { '*': 'delta' });
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      const cursor = (
+        transcriptEnvelopes(first.envelopes).at(-1)!.payload as { seq: number }
+      ).seq;
+
+      const second = collectingTarget();
+      await bc.subscribe('s1', second.target, undefined, { '*': 'delta' }, {
+        transcriptSince: { main: cursor },
+      });
+      expect(transcriptEnvelopes(second.envelopes)).toHaveLength(0);
+    });
+
+    it('falls back to a watermarked reset when transcript_since is not covered', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const first = collectingTarget();
+      await bc.subscribe('s1', first.target, undefined, { '*': 'delta' });
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+
+      // A cursor ahead of the watermark cannot be vouched for — the ordinary
+      // baseline reset rides instead, stamped with the current watermark.
+      const second = collectingTarget();
+      await bc.subscribe('s1', second.target, undefined, { '*': 'delta' }, {
+        transcriptSince: { main: 9999 },
+      });
+      const resets = transcriptEnvelopes(second.envelopes).filter(
+        (e) => e.type === 'transcript.reset',
+      );
+      expect(resets).toHaveLength(1);
+      const watermark = (resets[0]!.payload as { seq?: number }).seq;
+      expect(watermark).toBeTypeOf('number');
+      expect(
+        (
+          transcriptEnvelopes(first.envelopes).filter((e) => e.type === 'transcript.ops').at(-1)!
+            .payload as { seq: number }
+        ).seq,
+      ).toBeLessThanOrEqual(watermark!);
     });
   });
 });

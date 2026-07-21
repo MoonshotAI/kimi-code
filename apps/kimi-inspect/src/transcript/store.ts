@@ -57,6 +57,7 @@ export async function recoverLoadedWindow(
   prevOldestTurnId: string | undefined,
   fetchPage: (beforeTurn: string) => Promise<TranscriptPage>,
   isDisposed: () => boolean,
+  onPageApplied?: (page: TranscriptPage) => void,
 ): Promise<void> {
   if (prevOldestTurnId === undefined) return;
   while (!hasTurnId(store.getState().items, prevOldestTurnId) && store.getState().hasMoreOlder) {
@@ -66,6 +67,7 @@ export async function recoverLoadedWindow(
     const page = await fetchPage(oldest);
     if (isDisposed()) return;
     store.applyPage(page);
+    onPageApplied?.(page);
     if (countTurns(store.getState().items) === before) break;
   }
 }

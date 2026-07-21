@@ -16,7 +16,11 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { WsLike } from '../channel/wsLike';
-import { fetchTranscriptPage, type TranscriptPage } from './api';
+import {
+  fetchTranscriptOps,
+  fetchTranscriptPage,
+  type TranscriptPage,
+} from './api';
 import {
   countTurns,
   createCoalescedRunner,
@@ -127,7 +131,8 @@ class FakeWs implements WsLike {
 
 function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0]['handlers']> = {}) {
   const seen = {
-    ops: [] as { agentId: string; ops: readonly TranscriptOperation[] }[],
+    ops: [] as { agentId: string; ops: readonly TranscriptOperation[]; at?: string; seq?: number }[],
+    resets: [] as { agentId: string; hasMoreOlder: boolean; at?: string; seq?: number }[],
     resyncs: 0,
     reconnects: 0,
   };
@@ -138,9 +143,13 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0][
     agentId: 'main',
     WebSocketImpl: FakeWs,
     handlers: {
-      onOps: (agentId, ops) => {
-        seen.ops.push({ agentId, ops });
-        handlers.onOps?.(agentId, ops);
+      onOps: (agentId, ops, meta) => {
+        seen.ops.push({ agentId, ops, at: meta?.at, seq: meta?.seq });
+        handlers.onOps?.(agentId, ops, meta);
+      },
+      onReset: (agentId, _snapshot, hasMoreOlder, meta) => {
+        seen.resets.push({ agentId, hasMoreOlder, at: meta?.at, seq: meta?.seq });
+        handlers.onReset?.(agentId, _snapshot, hasMoreOlder, meta);
       },
       onResyncRequired: () => {
         seen.resyncs += 1;
@@ -169,6 +178,7 @@ describe('fetchTranscriptPage', () => {
     meta: { activity: 'turn' },
     agents: [],
     pending_interactions: ['apr-1'],
+    seq: 42,
   };
 
   it('requests the endpoint with cursor params and bearer auth, unwraps the envelope', async () => {
@@ -185,13 +195,14 @@ describe('fetchTranscriptPage', () => {
     expect(calls[0]!.url).toContain('/api/v1/sessions/s%201/transcript?');
     expect(calls[0]!.url).toContain('agent_id=main');
     expect(calls[0]!.url).toContain('before_turn=t5');
-    expect(calls[0]!.url).toContain('page_size=30');
+    expect(calls[0]!.url).toContain('page_size=1');
     expect(calls[0]!.init?.headers).toEqual({ authorization: 'Bearer tok' });
     expect(page.hasMoreOlder).toBe(true);
     expect(page.items.map((item) => itemId(item))).toEqual(['t1']);
     expect(page.tasks.map((task) => task.taskId)).toEqual(['bash-1']);
     expect(page.meta.activity).toBe('turn');
     expect(page.pendingInteractions).toEqual(['apr-1']);
+    expect(page.seq).toBe(42);
   });
 
   it('throws on a non-zero envelope code', async () => {
@@ -206,6 +217,66 @@ describe('fetchTranscriptPage', () => {
     await expect(
       fetchTranscriptPage({ baseUrl: 'http://h:1', sessionId: 's1', agentId: 'main', fetchImpl }),
     ).rejects.toThrow('unexpected response shape');
+  });
+});
+
+// ---------------------------------------------------------------- ops catch-up
+
+describe('fetchTranscriptOps', () => {
+  const catchupData = {
+    agent_id: 'main',
+    batches: [
+      { seq: 6, ops: [{ op: 'meta.merge', meta: { activity: 'turn' } }] },
+      { seq: 7, ops: [{ op: 'turn.upsert', turn: turnHeader(7, 'running') }] },
+    ],
+    latest_seq: 7,
+    complete: true,
+  };
+
+  it('requests the ops endpoint with since_seq and unwraps batches in order', async () => {
+    const { calls, fetchImpl } = fakeFetch(okEnvelope(catchupData));
+    const res = await fetchTranscriptOps({
+      baseUrl: 'http://h:1',
+      token: 'tok',
+      sessionId: 's1',
+      agentId: 'main',
+      sinceSeq: 5,
+      fetchImpl,
+    });
+    expect(calls[0]!.url).toContain('/api/v1/sessions/s1/transcript/ops?');
+    expect(calls[0]!.url).toContain('agent_id=main');
+    expect(calls[0]!.url).toContain('since_seq=5');
+    expect(res.complete).toBe(true);
+    expect(res.latestSeq).toBe(7);
+    expect(res.batches.map((batch) => batch.seq)).toEqual([6, 7]);
+  });
+
+  it('surfaces an incomplete catch-up (journal cannot cover)', async () => {
+    const { fetchImpl } = fakeFetch(
+      okEnvelope({ ...catchupData, batches: [], latest_seq: 500, complete: false }),
+    );
+    const res = await fetchTranscriptOps({
+      baseUrl: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      sinceSeq: 5,
+      fetchImpl,
+    });
+    expect(res.complete).toBe(false);
+    expect(res.batches).toEqual([]);
+  });
+
+  it('throws on a legacy server (envelope error) so callers fall back', async () => {
+    const { fetchImpl } = fakeFetch({ code: 40404, msg: 'unknown route', data: null });
+    await expect(
+      fetchTranscriptOps({
+        baseUrl: 'http://h:1',
+        sessionId: 's1',
+        agentId: 'main',
+        sinceSeq: 5,
+        fetchImpl,
+      }),
+    ).rejects.toThrow('unknown route');
   });
 });
 
@@ -228,7 +299,7 @@ describe('TranscriptWs', () => {
     });
   });
 
-  it('forwards transcript.ops and ignores transcript.reset snapshots', () => {
+  it('forwards transcript.ops and surfaces transcript.reset via onReset, both with envelope meta', () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
@@ -244,24 +315,96 @@ describe('TranscriptWs', () => {
         agent_id: 'main',
         snapshot: { items: [], tasks: [], interactions: [], meta: {} },
         has_more_older: true,
+        seq: 41,
       },
     });
     expect(seen.ops).toHaveLength(0);
+    expect(seen.resets).toEqual([
+      { agentId: 'main', hasMoreOlder: true, at: '2026-01-01T00:00:00Z', seq: 41 },
+    ]);
     sock.serverFrame({
       type: 'transcript.ops',
       seq: 1,
       volatile: true,
       session_id: 's1',
-      timestamp: '2026-01-01T00:00:00Z',
+      timestamp: '2026-01-01T00:00:01Z',
       payload: {
         type: 'transcript.ops',
         agent_id: 'main',
         ops: [{ op: 'meta.merge', meta: { activity: 'turn' } }],
+        seq: 42,
       },
     });
     expect(seen.ops).toHaveLength(1);
     expect(seen.ops[0]!.agentId).toBe('main');
+    expect(seen.ops[0]!.at).toBe('2026-01-01T00:00:01Z');
+    expect(seen.ops[0]!.seq).toBe(42);
     expect(seen.ops[0]!.ops[0]).toMatchObject({ op: 'meta.merge' });
+  });
+
+  it('sends transcript_since in client_hello when getSince has a watermark', async () => {
+    FakeWs.reset();
+    let watermark: number | undefined;
+    new TranscriptWs({
+      url: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      WebSocketImpl: FakeWs,
+      getSince: () => watermark,
+      reconnectDelayMs: 1,
+      handlers: { onOps: () => {}, onResyncRequired: () => {}, onReconnected: () => {} },
+    });
+    const sock = FakeWs.instances[0]!;
+    sock.open();
+    expect(sock.sentFrames()[0]).toMatchObject({
+      type: 'client_hello',
+      payload: { transcript: { s1: { main: 'delta' } } },
+    });
+    expect(
+      (sock.sentFrames()[0] as { payload: Record<string, unknown> }).payload['transcript_since'],
+    ).toBeUndefined();
+    watermark = 42;
+    sock.emit('close');
+    await vi.waitFor(() => {
+      expect(FakeWs.instances.length).toBeGreaterThan(1);
+    });
+    const second = FakeWs.instances[1]!;
+    second.open();
+    expect(second.sentFrames()[0]).toMatchObject({
+      type: 'client_hello',
+      payload: { transcript_since: { s1: { main: 42 } } },
+    });
+  });
+
+  it('still ignores transcript.reset when no onReset handler is set', () => {
+    FakeWs.reset();
+    const seen = { ops: 0 };
+    new TranscriptWs({
+      url: 'http://h:1',
+      sessionId: 's1',
+      agentId: 'main',
+      WebSocketImpl: FakeWs,
+      handlers: {
+        onOps: () => {
+          seen.ops += 1;
+        },
+        onResyncRequired: () => {},
+        onReconnected: () => {},
+      },
+    });
+    const sock = FakeWs.instances[0]!;
+    sock.open();
+    sock.serverFrame({
+      type: 'transcript.reset',
+      timestamp: '2026-01-01T00:00:00Z',
+      payload: {
+        type: 'transcript.reset',
+        agent_id: 'main',
+        snapshot: { items: [], tasks: [], interactions: [], meta: {} },
+        has_more_older: false,
+      },
+    });
+    expect(seen.ops).toBe(0);
   });
 
   it('answers ping with pong carrying the nonce', () => {
@@ -503,6 +646,26 @@ describe('recoverLoadedWindow', () => {
     // The anchor no longer exists server-side: one no-progress probe, then stop.
     expect(fetched).toEqual(['t10']);
     expect(countTurns(store.getState().items)).toBe(11);
+  });
+
+  it('reports each applied page through onPageApplied', async () => {
+    const store = new TranscriptChatStore();
+    store.applyPage(pageOf(range(36, 65), true), { replace: true });
+    const applied: TranscriptPage[] = [];
+    await recoverLoadedWindow(
+      store,
+      't1',
+      async (beforeTurn) =>
+        beforeTurn === 't36' ? pageOf(range(6, 35), true) : pageOf(range(1, 5), false),
+      () => false,
+      (page) => {
+        applied.push(page);
+      },
+    );
+    expect(applied.map((page) => page.items.map((item) => itemId(item)))).toEqual([
+      range(6, 35).map((turn) => turn.turnId),
+      range(1, 5).map((turn) => turn.turnId),
+    ]);
   });
 });
 

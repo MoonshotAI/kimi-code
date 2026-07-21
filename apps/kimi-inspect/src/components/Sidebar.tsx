@@ -1,5 +1,5 @@
 /**
- * Left sidebar — two columns: the workspace registry (`IWorkspaceRegistry`)
+ * Left sidebar — two columns: the workspace catalog (`IWorkspaceService`)
  * and the sessions of the selected workspace (`ISessionIndex`). Clicking a
  * session opens it in the main view. Lists refresh on a slow poll only: the
  * core-event stream that used to trigger a debounced refresh went away with
@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
-import { IWorkspaceRegistry, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceService, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 
 import { useConnection } from '../connection';
 import { Badge, ErrorLine, relTime } from '../ui';
@@ -29,7 +29,7 @@ export function Sidebar({
 
   const workspaces = useQuery({
     queryKey: ['workspaces'],
-    queryFn: () => klient.core(IWorkspaceRegistry).list(),
+    queryFn: () => klient.core(IWorkspaceService).list(),
     refetchInterval: 15_000,
   });
 

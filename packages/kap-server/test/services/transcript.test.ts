@@ -42,6 +42,7 @@ import {
   healTurnOps,
   TranscriptService,
   snapshotToOps,
+  TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
 
 function ev(payload: Record<string, unknown>): DomainEvent {
@@ -733,7 +734,7 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('emits interactions on both channels (legacy frame + global entity), back-links on resolve', () => {
+  it('emits interactions as global entities only (no inline frame), back-links on resolve', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
@@ -765,17 +766,10 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    // Legacy channel: the inline frame, placed next to the gating tool call.
-    const legacy = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'interaction');
-    expect(legacy).toMatchObject({
-      frameId: 'i-apr-1',
-      interactionId: 'apr-1',
-      interactionKind: 'approval',
-      toolCallId: 'call_9',
-      state: 'pending',
-      request,
-    });
-    // Authoritative channel: the global entity, anchored by toolCallId.
+    // Interactions are entity-only: the step carries just the tool frame, no
+    // inline interaction frame.
+    expect(turnOps('t2', tx.getItems()).steps[0]!.frames.map((f) => f.kind)).toEqual(['tool']);
+    // The global entity, anchored by toolCallId.
     expect(tx.getInteraction('apr-1')).toMatchObject({
       interactionId: 'apr-1',
       interactionKind: 'approval',
@@ -789,9 +783,8 @@ describe('AgentTranscriptProjector', () => {
 
     const tool = turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
     expect(tool).toMatchObject({ approvalId: 'apr-1' });
-    expect(
-      turnOps('t2', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'interaction'),
-    ).toMatchObject({ state: 'approved', response: { decision: 'approved', scope: 'session' } });
+    // Resolve also leaves the step frames untouched (entity-only).
+    expect(turnOps('t2', tx.getItems()).steps[0]!.frames.map((f) => f.kind)).toEqual(['tool']);
     expect(tx.getInteraction('apr-1')).toMatchObject({
       state: 'approved',
       response: { decision: 'approved', scope: 'session' },
@@ -877,9 +870,9 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getTodo('todo')?.items).toHaveLength(2);
   });
 
-  it('places only the legacy frame when the payload has no toolCallId (fallback placement)', () => {
-    // The entity requires its anchor (every real interaction comes from a
-    // tool call); the legacy frame keeps its historical fallback placement.
+  it('emits an unanchored entity when the payload has no toolCallId', () => {
+    // An interaction without an anchor tool call still becomes an entity
+    // (toolCallId omitted); it renders floating in consumers, never inline.
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
 
@@ -891,16 +884,17 @@ describe('AgentTranscriptProjector', () => {
         origin: { agentId: 'main', turnId: 3 },
       }),
     );
-    const turn = turnOps('t3', tx.getItems());
-    expect(turn.steps[0]!.stepId).toBe('t3.1');
-    expect(turn.steps[0]!.frames[0]).toMatchObject({ kind: 'interaction', state: 'pending' });
-    expect(tx.getInteraction('q1')).toBeUndefined();
+    // No turn/step/frame is materialized for the interaction.
+    expect(tx.getItems()).toHaveLength(0);
+    const entity = tx.getInteraction('q1');
+    expect(entity).toMatchObject({ interactionKind: 'question', state: 'pending' });
+    expect(entity?.toolCallId).toBeUndefined();
+    expect(tx.listPendingInteractions()).toEqual(['q1']);
 
     // Dismissed question (null response).
     tx.apply(projector.mapInteractionResolved('q1', null));
-    expect(turnOps('t3', tx.getItems()).steps[0]!.frames[0]).toMatchObject({
-      state: 'dismissed',
-    });
+    expect(tx.getInteraction('q1')).toMatchObject({ state: 'dismissed' });
+    expect(tx.listPendingInteractions()).toEqual([]);
   });
 
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
@@ -1394,12 +1388,9 @@ describe('bindSessionTranscript', () => {
     });
 
     // Seeding creates the projector WITHOUT a lifecycle handle — no bus
-    // subscription can exist yet. (Two ops: the legacy frame + the entity.)
+    // subscription can exist yet. (One op: the entity upsert.)
     binding.seedPendingInteractions('sub-1');
-    expect(byAgent.get('sub-1')?.map((op) => op.op).toSorted()).toEqual([
-      'frame.upsert',
-      'interaction.upsert',
-    ]);
+    expect(byAgent.get('sub-1')?.map((op) => op.op)).toEqual(['interaction.upsert']);
 
     // The agent materializes later: it must still get its live subscription
     // (guarding on the projector's existence would drop every live event).
@@ -1501,5 +1492,90 @@ describe('bindSessionTranscript', () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  });
+
+  describe('op journal', () => {
+    it('assigns consecutive per-agent seqs and serves catch-up from the journal', async () => {
+      const agents = new FakeAgents();
+      const main = agents.add('main');
+      const service = new TranscriptService({
+        homeDir: '/nonexistent-home',
+        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+      });
+      service.forSessionLive('s1');
+      await service.whenReady('s1');
+      // The backfill dispatch is the first journaled batch for main; measure
+      // everything relative to it.
+      const base = service.getSeqWatermark('s1', 'main');
+
+      const seen: number[] = [];
+      service.onSessionOps('s1', (_event, seq) => seen.push(seq));
+      main.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } }));
+      main.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+      expect(seen).toEqual([base + 1, base + 2]);
+      expect(service.getSeqWatermark('s1', 'main')).toBe(base + 2);
+
+      // Complete catch-up: exactly the batches past the cursor, ascending.
+      const catchup = service.getOpsSince('s1', 'main', base);
+      expect(catchup?.complete).toBe(true);
+      expect(catchup?.latestSeq).toBe(base + 2);
+      expect(catchup?.batches.map((batch) => batch.seq)).toEqual([base + 1, base + 2]);
+
+      // An up-to-date cursor replays nothing but is still complete.
+      expect(service.getOpsSince('s1', 'main', base + 2)).toMatchObject({
+        batches: [],
+        latestSeq: base + 2,
+        complete: true,
+      });
+      // A cursor ahead of the watermark belongs to a dead journal
+      // incarnation — the server cannot vouch for it.
+      expect(service.getOpsSince('s1', 'main', base + 3)?.complete).toBe(false);
+
+      // Seqs are per agent: a late agent starts its own counter at 1 (no
+      // backfill batch precedes its live ops).
+      const sub = agents.add('sub-1');
+      sub.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } }));
+      expect(service.getSeqWatermark('s1', 'sub-1')).toBe(1);
+      expect(service.getOpsSince('s1', 'sub-1', 0)?.batches.map((batch) => batch.seq)).toEqual([1]);
+
+      // Unknown agent / cold session: watermark 0, no journal at all.
+      expect(service.getSeqWatermark('s1', 'nope')).toBe(0);
+      expect(service.getOpsSince('nope-session', 'main', 0)).toBeUndefined();
+      service.dropSession('s1');
+    });
+
+    it('marks catch-up incomplete once the bounded journal evicts old batches', async () => {
+      const agents = new FakeAgents();
+      const main = agents.add('main');
+      const service = new TranscriptService({
+        homeDir: '/nonexistent-home',
+        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+      });
+      service.forSessionLive('s1');
+      await service.whenReady('s1');
+      const base = service.getSeqWatermark('s1', 'main');
+
+      for (let turnId = 1; turnId <= TRANSCRIPT_OPS_JOURNAL_CAPACITY + 1; turnId++) {
+        main.bus.emit(ev({ type: 'turn.started', turnId, origin: { kind: 'user' } }));
+      }
+      const watermark = service.getSeqWatermark('s1', 'main');
+      expect(watermark).toBe(base + TRANSCRIPT_OPS_JOURNAL_CAPACITY + 1);
+
+      // The oldest batches evicted: a cursor at the former base is no longer
+      // covered.
+      const evicted = service.getOpsSince('s1', 'main', base);
+      expect(evicted?.complete).toBe(false);
+      expect(evicted?.latestSeq).toBe(watermark);
+      expect(evicted?.batches).toHaveLength(TRANSCRIPT_OPS_JOURNAL_CAPACITY);
+
+      // A recent cursor is still fully covered.
+      const recent = service.getOpsSince('s1', 'main', watermark - 10);
+      expect(recent?.complete).toBe(true);
+      expect(recent?.batches.map((batch) => batch.seq)).toEqual(
+        Array.from({ length: 10 }, (_, i) => watermark - 9 + i),
+      );
+      service.dropSession('s1');
+    });
   });
 });

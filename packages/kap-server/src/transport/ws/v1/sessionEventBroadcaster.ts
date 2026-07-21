@@ -68,6 +68,7 @@ import {
   type AgentTranscript,
   type TranscriptGrade,
   type TranscriptGradeSpec,
+  type TranscriptOperation,
   type TranscriptOpsEvent,
   type TranscriptResetEvent,
   type TranscriptStore,
@@ -170,7 +171,10 @@ interface SessionState {
   /** Connections whose transcript baseline reset has landed — the ops fan-out is gated on it. */
   readonly transcriptSeeded: Set<BroadcastTarget>;
   /** Resets deferred until the connection's cursor replay completes (ordering: backlog before baseline). */
-  readonly deferredTranscriptSeeds: Map<BroadcastTarget, { readonly spec: TranscriptGradeSpec }>;
+  readonly deferredTranscriptSeeds: Map<
+    BroadcastTarget,
+    { readonly spec: TranscriptGradeSpec; readonly transcriptSince?: Record<string, number> }
+  >;
 }
 
 /** The aggregate-relevant slice of one agent's activity state. */
@@ -182,8 +186,7 @@ interface AgentWorkFold {
 
 export const DEFAULT_MAX_BUFFER_SIZE = 1000;
 const GLOBAL_SESSION_ID = '__global__';
-/** Turns shipped in a `transcript.reset` snapshot; older turns page in over REST. */
-const TRANSCRIPT_RESET_TAIL_TURNS = 30;
+const TRANSCRIPT_RESET_TAIL_TURNS = 0;
 
 async function disposeSessionState(state: SessionState): Promise<void> {
   for (const d of state.lifecycleDisposables) d.dispose();
@@ -246,7 +249,7 @@ export class SessionEventBroadcaster {
     target: BroadcastTarget,
     filter?: AgentFilter,
     transcriptGrades?: TranscriptGradeSpec,
-    opts?: { deferTranscriptReset?: boolean },
+    opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
   ): Promise<boolean> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) return false;
@@ -257,7 +260,10 @@ export class SessionEventBroadcaster {
         // The baseline rides `flushTranscriptSeed` (after the caller's cursor
         // replay), so the reset's seq always follows the replayed backlog.
         state.transcriptSeeded.delete(target);
-        state.deferredTranscriptSeeds.set(target, { spec: transcriptGrades });
+        state.deferredTranscriptSeeds.set(target, {
+          spec: transcriptGrades,
+          transcriptSince: opts.transcriptSince,
+        });
       } else {
         state.deferredTranscriptSeeds.delete(target);
         // Gate the ops fan-out only while a replacement baseline is actually
@@ -270,6 +276,7 @@ export class SessionEventBroadcaster {
           transcriptGrades,
           prev?.transcriptGrades,
           prev?.agentFilter,
+          opts?.transcriptSince,
         );
         // A no-reset subscription owes no baseline — the target is seeded
         // either way (a fresh session with an empty roster must still
@@ -313,8 +320,10 @@ export class SessionEventBroadcaster {
    * — callers run it after their cursor replay so the reset never lands ahead
    * of the replayed (lower-seq) backlog. The baseline is forced for every
    * admitted agent (no previous grades): volatile ops fanned out while the
-   * target sat unseeded were dropped, so only a full reset closes that gap,
-   * even when the grade/filter did not change.
+   * target sat unseeded were dropped, so only a full reset closes that gap —
+   * unless the subscription carried a `transcriptSince` cursor the journal
+   * still covers, in which case replaying exactly the missed batches closes
+   * it and no reset is sent for that agent.
    */
   async flushTranscriptSeed(sessionId: string, target: BroadcastTarget): Promise<void> {
     const state = this.sessions.get(sessionId);
@@ -322,7 +331,7 @@ export class SessionEventBroadcaster {
     const deferred = state.deferredTranscriptSeeds.get(target);
     if (deferred === undefined) return;
     state.deferredTranscriptSeeds.delete(target);
-    await this.subscribeTranscript(state, target, deferred.spec, undefined);
+    await this.subscribeTranscript(state, target, deferred.spec, undefined, undefined, deferred.transcriptSince);
     if (state.targets.has(target)) state.transcriptSeeded.add(target);
   }
 
@@ -360,6 +369,7 @@ export class SessionEventBroadcaster {
     spec: TranscriptGradeSpec,
     prev: TranscriptGradeSpec | undefined,
     prevFilter?: AgentFilter,
+    transcriptSince?: Record<string, number>,
   ): Promise<void> {
     const service = this.opts.transcriptService;
     if (service === undefined) return;
@@ -391,6 +401,20 @@ export class SessionEventBroadcaster {
       if (agentFilter !== undefined && !agentFilter.has(descriptor.agentId)) continue;
       const grade = gradeFor(currentSpec, descriptor.agentId);
       if (grade === 'off') continue;
+      const transcript = store.getAgent(descriptor.agentId);
+      if (transcript === undefined) continue;
+      // A catch-up cursor the journal still covers replaces the baseline
+      // reset: replay exactly the batches past the cursor (grade-filtered, in
+      // seq order) and the connection converges without a snapshot. Anything
+      // the journal cannot vouch for falls through to the ordinary reset.
+      const since = transcriptSince?.[descriptor.agentId] ?? transcriptSince?.['*'];
+      if (since !== undefined) {
+        const catchup = service.getOpsSince(state.sessionId, descriptor.agentId, since);
+        if (catchup !== undefined && catchup.complete) {
+          this.replayTranscriptOps(state, target, descriptor.agentId, grade, catchup.batches);
+          continue;
+        }
+      }
       // A broadened legacy filter admits agents the grade transition alone
       // would skip (delta → delta) — having suppressed their ops so far, it
       // owes them a baseline now.
@@ -402,8 +426,36 @@ export class SessionEventBroadcaster {
       ) {
         continue;
       }
-      const transcript = store.getAgent(descriptor.agentId);
-      if (transcript !== undefined) this.sendTranscriptReset(state, target, transcript, grade);
+      this.sendTranscriptReset(state, target, transcript, grade);
+    }
+  }
+
+  /**
+   * Replay journaled op batches to one connection (the `transcript_since`
+   * catch-up path), grade-filtered like the live fan-out and stamped with
+   * their original batch seqs.
+   */
+  private replayTranscriptOps(
+    state: SessionState,
+    target: BroadcastTarget,
+    agentId: string,
+    grade: TranscriptGrade,
+    batches: readonly { seq: number; ops: readonly TranscriptOperation[] }[],
+  ): void {
+    for (const batch of batches) {
+      const filtered = filterOpsForGrade(grade, batch.ops);
+      if (filtered.length === 0) continue;
+      try {
+        target.send(
+          this.buildTranscriptEnvelope(state, 'transcript.ops', {
+            agent_id: agentId,
+            ops: filtered,
+            seq: batch.seq,
+          }),
+        );
+      } catch {
+        // best-effort fan-out; a broken target is dropped, not fatal
+      }
     }
   }
 
@@ -428,7 +480,7 @@ export class SessionEventBroadcaster {
     };
     state.transcriptStream = stream;
 
-    const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }) => {
+    const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }, seq) => {
       for (const [target, sub] of state.targets) {
         // No ops before the baseline reset (see subscribe).
         if (!state.transcriptSeeded.has(target)) continue;
@@ -442,6 +494,7 @@ export class SessionEventBroadcaster {
             this.buildTranscriptEnvelope(state, 'transcript.ops', {
               agent_id: agentId,
               ops: filtered,
+              seq,
             }),
           );
         } catch {
@@ -474,7 +527,11 @@ export class SessionEventBroadcaster {
     );
   }
 
-  /** Volatile `transcript.reset` envelope carrying a tail-windowed snapshot, redacted to the target's grade. */
+  /**
+   * Volatile `transcript.reset` baseline: an items-empty snapshot (global
+   * state only, redacted to the target's grade) plus the seq watermark.
+   * History is paged over REST; live ops stream from the watermark.
+   */
   private sendTranscriptReset(
     state: SessionState,
     target: BroadcastTarget,
@@ -490,6 +547,8 @@ export class SessionEventBroadcaster {
         agent_id: transcript.agentId,
         snapshot,
         has_more_older: snapshot.hasMoreOlder ?? false,
+        // Watermark: the snapshot includes every op batch dispatched so far.
+        seq: this.opts.transcriptService?.getSeqWatermark(state.sessionId, transcript.agentId),
       }),
     );
   }

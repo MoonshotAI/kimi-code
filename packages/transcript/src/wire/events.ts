@@ -8,12 +8,19 @@
  * discriminant, mirroring how core domain events sit in the envelope.
  *
  * Delivery contract (server-side): every transcript frame is `volatile: true`
- * with the current durable watermark as `seq` — frames are never journaled,
- * never replayed, and never advance the durable seq. Loss surfaces through
- * backpressure → `resync_required` → REST + re-subscribe, which resends
- * `transcript.reset` naturally. Convergence is guaranteed by the L2 rules
- * (every op except `append` is idempotent state; the block/turn flush upserts
- * re-carry whole state).
+ * with the current durable watermark as the envelope `seq` — frames are never
+ * journaled into the durable log and never advance its seq. Reliability comes
+ * from the transcript layer's own op-batch sequence (the payload `seq` —
+ * consecutive per agent, see `transcriptSeqSchema`): sequenced servers keep a
+ * bounded per-agent journal, so a client that detects a seq gap (or reconnects)
+ * catches up point-to-point via `GET .../transcript/ops?since_seq=` or the
+ * `transcript_since` subscription cursor; when the journal no longer covers
+ * the gap (`complete: false`) the client falls back to a REST refresh +
+ * re-subscribe, which resends `transcript.reset` naturally. Legacy peers omit
+ * `seq` entirely and rely on loss signals (`resync_required`, append gaps,
+ * reconnect acks) driving full refreshes. Convergence is guaranteed by the L2
+ * rules (every op except `append` is idempotent state; the block/turn flush
+ * upserts re-carry whole state).
  */
 
 import { z } from 'zod';
@@ -44,12 +51,16 @@ export interface TranscriptResetEvent {
   readonly agent_id: string;
   readonly snapshot: AgentTranscriptSnapshot;
   readonly has_more_older: boolean;
+  /** Watermark: the snapshot includes every op batch with seq <= N. */
+  readonly seq?: number;
 }
 
 export interface TranscriptOpsEvent {
   readonly type: 'transcript.ops';
   readonly agent_id: string;
   readonly ops: readonly TranscriptOperation[];
+  /** This batch's sequence number (consecutive per agent). */
+  readonly seq?: number;
 }
 
 export type TranscriptEvent = TranscriptResetEvent | TranscriptOpsEvent;

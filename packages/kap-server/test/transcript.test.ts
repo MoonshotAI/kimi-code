@@ -71,6 +71,14 @@ interface TranscriptWire {
   meta: Record<string, unknown>;
   agents: { agentId: string; type?: string }[];
   pending_interactions: string[];
+  seq?: number;
+}
+
+interface OpsCatchupWire {
+  agent_id: string;
+  batches: { seq: number; ops: { op: string }[] }[];
+  latest_seq: number;
+  complete: boolean;
 }
 
 function serverEvent(payload: Record<string, unknown>): DomainEvent {
@@ -806,5 +814,96 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       `/api/v1/sessions/${id}/transcript?agent_id=main&before_turn=t2&after_turn=t1`,
     );
     expect(body.code).toBe(40001);
+  });
+
+  it('carries the op-batch watermark on the live transcript response', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+
+    const bound = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(bound.body.data.seq).toBeTypeOf('number');
+    const base = bound.body.data.seq!;
+
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    const after = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(after.body.data.seq).toBeGreaterThan(base);
+  });
+
+  it('serves catch-up batches with seq > since_seq on the ops route', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+
+    // Bind the transcript and read the baseline watermark.
+    const bound = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const base = bound.body.data.seq!;
+
+    const bus = mainAgentBus(id);
+    bus.publish(serverEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    bus.publish(serverEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+
+    const catchup = await getJson<OpsCatchupWire>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${base}`,
+    );
+    expect(catchup.body.code).toBe(0);
+    expect(catchup.body.data.complete).toBe(true);
+    expect(catchup.body.data.latest_seq).toBeGreaterThan(base);
+    const seqs = catchup.body.data.batches.map((batch) => batch.seq);
+    // Ascending, consecutive, and strictly past the cursor.
+    expect(seqs.every((seq) => seq > base)).toBe(true);
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
+    expect(
+      catchup.body.data.batches.some((batch) => batch.ops.some((op) => op.op === 'turn.upsert')),
+    ).toBe(true);
+
+    // An up-to-date cursor replays nothing but is still complete.
+    const current = await getJson<OpsCatchupWire>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=${catchup.body.data.latest_seq}`,
+    );
+    expect(current.body.data).toMatchObject({ batches: [], complete: true });
+
+    // A cursor ahead of the watermark cannot be covered.
+    const stale = await getJson<OpsCatchupWire>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=99999`,
+    );
+    expect(stale.body.data.complete).toBe(false);
+  });
+
+  it('answers complete:false for a cold session and 40401 for an unknown one on the ops route', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ]);
+
+    // Reboot on the same home — the session drops out of memory (no journal).
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const cold = await getJson<OpsCatchupWire>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=0`,
+    );
+    expect(cold.body.code).toBe(0);
+    expect(cold.body.data).toMatchObject({ batches: [], complete: false });
+
+    const missing = await getJson<null>(
+      `/api/v1/sessions/nope/transcript/ops?agent_id=main&since_seq=0`,
+    );
+    expect(missing.body.code).toBe(40401);
+  });
+
+  it('rejects invalid since_seq / agent_id on the ops route with 40001', async () => {
+    const id = await createSession();
+    const negative = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=main&since_seq=-1`,
+    );
+    expect(negative.body.code).toBe(40001);
+    const hostile = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript/ops?agent_id=${encodeURIComponent('../main')}&since_seq=0`,
+    );
+    expect(hostile.body.code).toBe(40001);
   });
 });

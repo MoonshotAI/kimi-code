@@ -99,17 +99,6 @@ export const toolCallFrameSchema = z.object({
 export const interactionSchema = z.object({
   interactionId: z.string(),
   interactionKind: z.enum(['approval', 'question']),
-  toolCallId: z.string(),
-  state: z.enum(['pending', 'approved', 'rejected', 'cancelled', 'answered', 'dismissed']),
-  request: z.unknown().optional(),
-  response: z.unknown().optional(),
-});
-
-export const interactionFrameSchema = z.object({
-  kind: z.literal('interaction'),
-  frameId: frameIdSchema,
-  interactionId: z.string(),
-  interactionKind: z.enum(['approval', 'question']),
   toolCallId: z.string().optional(),
   state: z.enum(['pending', 'approved', 'rejected', 'cancelled', 'answered', 'dismissed']),
   request: z.unknown().optional(),
@@ -129,7 +118,6 @@ export const transcriptFrameSchema = z.discriminatedUnion('kind', [
   textFrameSchema,
   thinkingFrameSchema,
   toolCallFrameSchema,
-  interactionFrameSchema,
   noticeFrameSchema,
 ]);
 
@@ -315,6 +303,24 @@ export const transcriptOpBatchSchema = z.object({
 export const transcriptGradeSchema = z.enum(['off', 'turn', 'block', 'delta']);
 
 /**
+ * Transcript op-batch sequence number. Semantics (the protocol contract all
+ * peers implement against):
+ *
+ *  - Scope: per (session, agent). Starts at 1; the server increments it once
+ *    per DISPATCHED OP BATCH (not per op), so batch seqs are consecutive.
+ *  - Watermark: a `seq` on `transcript.reset` or on the REST transcript
+ *    response means "this state includes every batch with seq <= N".
+ *  - Catch-up: a client holding watermark N asks for batches with seq > N
+ *    (`GET .../transcript/ops?since_seq=N`, or the `transcript_since`
+ *    subscription cursor). A `complete: false` catch-up response means the
+ *    server's journal no longer reaches back to N — the client MUST fall
+ *    back to a full REST refresh.
+ *  - Legacy: seq is optional on every shape. A peer that omits it speaks the
+ *    pre-seq protocol; consumers fall back to loss-signal-driven refreshes.
+ */
+export const transcriptSeqSchema = z.number().int().nonnegative();
+
+/**
  * Per-session grade map: `'*'` is the default, explicit agent ids override.
  * Record<agentId|'*', grade>.
  */
@@ -329,6 +335,18 @@ export const transcriptGradeSpecSchema = z.record(z.string(), transcriptGradeSch
  * schema, so legacy servers/clients ignore it safely (absent = all off).
  */
 export const transcriptSubscriptionSchema = z.record(z.string(), transcriptGradeSpecSchema);
+
+/**
+ * Optional sibling of `transcript` in the `client_hello` / `subscribe`
+ * payloads: `Record<sessionId, Record<agentId|'*', seq>>` — the caller's
+ * last applied op-batch seq per agent. When present and the server's journal
+ * still covers it, the server replays the missing batches instead of sending
+ * a baseline `transcript.reset`; otherwise it falls back to the reset.
+ */
+export const transcriptSinceSchema = z.record(
+  z.string(),
+  z.record(z.string(), transcriptSeqSchema),
+);
 
 // ---------------------------------------------------------------- REST
 
@@ -385,6 +403,23 @@ export const transcriptResponseSchema = z.object({
   meta: transcriptMetaSchema,
   agents: z.array(agentDescriptorSchema),
   pending_interactions: z.array(z.string()),
+  /** Op-batch watermark: this state includes every batch with seq <= N. */
+  seq: transcriptSeqSchema.optional(),
+});
+
+/**
+ * `GET /v1/sessions/{session_id}/transcript/ops` response: journaled op
+ * batches with seq > `since_seq`, oldest first. `complete: false` means the
+ * journal does not reach back to `since_seq` (or the session is not live) —
+ * the caller must fall back to a full transcript refresh.
+ */
+export const transcriptOpsCatchupResponseSchema = z.object({
+  agent_id: agentIdSchema,
+  batches: z.array(
+    z.object({ seq: transcriptSeqSchema, ops: z.array(transcriptOperationSchema) }),
+  ),
+  latest_seq: transcriptSeqSchema,
+  complete: z.boolean(),
 });
 
 // ---------------------------------------------------------------- WS payloads
@@ -393,9 +428,13 @@ export const transcriptResetPayloadSchema = z.object({
   agent_id: agentIdSchema,
   snapshot: agentTranscriptSnapshotSchema,
   has_more_older: z.boolean(),
+  /** Watermark: the snapshot includes every op batch with seq <= N. */
+  seq: transcriptSeqSchema.optional(),
 });
 
 export const transcriptOpsPayloadSchema = z.object({
   agent_id: agentIdSchema,
   ops: z.array(transcriptOperationSchema),
+  /** This batch's sequence number (consecutive per agent; see transcriptSeqSchema). */
+  seq: transcriptSeqSchema.optional(),
 });

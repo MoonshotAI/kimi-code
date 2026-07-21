@@ -18,10 +18,20 @@
  *
  * **Error mapping**: unknown session → `40401` (session.not_found); invalid
  * query → `40001` (validation.failed, via defineRoute).
+ *
+ * `GET /sessions/{session_id}/transcript/ops` is the point-to-point catch-up
+ * companion: journaled op batches with seq > `since_seq` for one agent (live
+ * sessions only — cold sessions answer `complete: false`), letting a client
+ * that holds watermark N converge without a full refresh.
  */
 
 import { MAIN_AGENT_ID, type Scope } from '@moonshot-ai/agent-core-v2';
-import { isPlainAgentId, paginateTurns, transcriptResponseSchema } from '@moonshot-ai/transcript';
+import {
+  isPlainAgentId,
+  paginateTurns,
+  transcriptOpsCatchupResponseSchema,
+  transcriptResponseSchema,
+} from '@moonshot-ai/transcript';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -76,6 +86,26 @@ const transcriptQueryCoercion = z
   });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
+
+/**
+ * `GET .../transcript/ops` query: `since_seq` is the caller's op-batch
+ * watermark (coerced from the query string, like `page_size` above).
+ */
+const transcriptOpsQueryCoercion = z
+  .object({
+    agent_id: z.string().min(1),
+    since_seq: z.coerce.number().int().min(0),
+  })
+  .superRefine((value, ctx) => {
+    if (!isPlainAgentId(value.agent_id)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'agent_id must be a plain agent id (no path separators)',
+        path: ['agent_id'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+  });
 
 /** Default turns per page (protocol contract; max enforced by the query schema). */
 const DEFAULT_PAGE_SIZE = 20;
@@ -134,6 +164,8 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
               meta: transcript.getMeta(),
               agents: store.agents(),
               pending_interactions: transcript.listPendingInteractions(),
+              // Watermark: this state includes every op batch with seq <= N.
+              seq: transcriptService.getSeqWatermark(session_id, query.agent_id),
             },
             req.id,
           ),
@@ -181,6 +213,58 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
     },
   );
   app.get(route.path, route.options, route.handler as Parameters<TranscriptRouteHost['get']>[2]);
+
+  const opsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/transcript/ops',
+      params: sessionIdParamSchema,
+      querystring: transcriptOpsQueryCoercion,
+      success: { data: transcriptOpsCatchupResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description:
+        'Point-to-point transcript catch-up: journaled op batches with seq > since_seq for one agent, oldest first. complete:false means the session is not live or the journal no longer reaches back to since_seq — the caller must fall back to a full transcript refresh',
+      tags: ['transcript'],
+    },
+    async (req, reply) => {
+      const { session_id } = req.params;
+      const query = req.query;
+
+      const catchup = transcriptService.getOpsSince(session_id, query.agent_id, query.since_seq);
+      if (catchup === undefined) {
+        // Not live in this process: a truly unknown session is a 40401 (same
+        // mapping as the transcript route); a known-but-cold session has no
+        // journal, so the catch-up is incomplete by definition.
+        const roster = await transcriptService.readColdRoster(session_id);
+        if (roster === undefined) {
+          sendSessionNotFound(reply, req.id, session_id);
+          return;
+        }
+        reply.send(
+          okEnvelope(
+            { agent_id: query.agent_id, batches: [], latest_seq: 0, complete: false },
+            req.id,
+          ),
+        );
+        return;
+      }
+      reply.send(
+        okEnvelope(
+          {
+            agent_id: query.agent_id,
+            batches: catchup.batches,
+            latest_seq: catchup.latestSeq,
+            complete: catchup.complete,
+          },
+          req.id,
+        ),
+      );
+    },
+  );
+  app.get(opsRoute.path, opsRoute.options, opsRoute.handler as Parameters<TranscriptRouteHost['get']>[2]);
 }
 
 function sendSessionNotFound(

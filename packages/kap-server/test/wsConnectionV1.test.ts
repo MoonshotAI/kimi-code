@@ -213,6 +213,7 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     sessionId: string;
     filter: unknown;
     grades: unknown;
+    opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> };
   }
 
   function makeCapturingBroadcaster(): {
@@ -221,8 +222,14 @@ describe('WsConnectionV1 transcript subscriptions', () => {
   } {
     const calls: SubscribeCall[] = [];
     const broadcaster = {
-      subscribe: async (sessionId: string, _target: unknown, filter: unknown, grades: unknown) => {
-        calls.push({ sessionId, filter, grades });
+      subscribe: async (
+        sessionId: string,
+        _target: unknown,
+        filter: unknown,
+        grades: unknown,
+        opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
+      ) => {
+        calls.push({ sessionId, filter, grades, opts });
         return true;
       },
       unsubscribe: () => {},
@@ -368,6 +375,38 @@ describe('WsConnectionV1 transcript subscriptions', () => {
       agentFilter: undefined,
       transcriptGrades: undefined,
     });
+    conn.close();
+  });
+
+  it('forwards transcript_since cursors to the broadcaster and drops malformed ones', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe', {
+        session_ids: ['s1'],
+        transcript: { s1: { '*': 'delta' } },
+        transcript_since: { s1: { main: 7, '*': 3 } },
+      }),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.opts).toMatchObject({ transcriptSince: { main: 7, '*': 3 } });
+
+    // A malformed cursor field drops the cursors (never the grades), so the
+    // seeding falls back to baseline resets.
+    socket.emit(
+      'message',
+      controlFrame('subscribe', {
+        session_ids: ['s2'],
+        transcript: { s2: { '*': 'delta' } },
+        transcript_since: { s2: { main: 'not-a-number' } },
+      }),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]!.grades).toEqual({ '*': 'delta' });
+    expect(calls[1]!.opts?.transcriptSince).toBeUndefined();
     conn.close();
   });
 });

@@ -37,7 +37,6 @@
 import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
 import type {
   AgentRef,
-  InteractionFrame,
   StepHeader,
   TextFrame,
   ToolCallFrame,
@@ -107,15 +106,6 @@ export interface ToolFrameRecord {
   readonly frame: ToolCallFrame;
 }
 
-interface InteractionRecord {
-  readonly turnId: string;
-  readonly stepId: string;
-  /** Legacy inline frame (kept for wire compatibility). */
-  readonly frame: InteractionFrame;
-  /** Global entity (authoritative channel); absent when the payload carried no toolCallId. */
-  readonly interaction: TranscriptInteraction | undefined;
-}
-
 export class AgentTranscriptProjector {
   /** Latest header of the in-flight (or most recent) turn; kept whole so terminal upserts preserve `origin` / `startedAt` by reference. */
   private currentTurn: TurnHeader | undefined;
@@ -130,7 +120,8 @@ export class AgentTranscriptProjector {
   private readonly tasks = new Map<string, TranscriptTask>();
   /** shell `commandId` → transcript `taskId` (`shell.output` is keyed by command id only). */
   private readonly shellTasks = new Map<string, string>();
-  private readonly interactions = new Map<string, InteractionRecord>();
+  /** interaction id → the pending entity as last emitted (resolve spreads it). */
+  private readonly interactions = new Map<string, TranscriptInteraction>();
   private markerSeq = 0;
 
   constructor(
@@ -864,84 +855,41 @@ export class AgentTranscriptProjector {
   // ---------------------------------------------------------------- interactions
 
   /**
-   * `requested` — dual emission, by wire-compat contract:
-   *  - legacy: an inline `InteractionFrame` placed next to the tool call that
-   *    gated it (fallback: the turn's latest step), exactly as older
-   *    consumers read it;
-   *  - authoritative: the global interaction entity (`interaction.upsert`),
-   *    addressed by id, pagination-proof, visible at 'turn' grade.
-   * Both mirror the same interaction by `interactionId`; the entity's
-   * `toolCallId` is required (approvals gate a tool call; questions are
-   * emitted by the AskUserQuestion tool call itself), so a payload without
-   * one still produces the legacy frame (fallback placement) but no entity.
+   * `requested` — entity-only emission: the global interaction entity
+   * (`interaction.upsert`), addressed by id, pagination-proof, visible at
+   * 'turn' grade. Interactions never appear as inline step frames. The
+   * entity's `toolCallId` (the timeline anchor) is read from the payload
+   * when present and omitted otherwise; an unanchored interaction renders
+   * floating in consumers.
    */
   mapInteractionRequested(interaction: ProjectorInteraction): TranscriptOperation[] {
-    const payload = interaction.payload as { toolCallId?: unknown; turnId?: unknown };
+    const payload = interaction.payload as { toolCallId?: unknown };
     const toolCallId = typeof payload.toolCallId === 'string' ? payload.toolCallId : undefined;
-    // A mid-bind request adopts the seeded tool frame from the store first
-    // (the call started before this projector attached).
-    const hit =
-      toolCallId !== undefined
-        ? (this.toolFrames.get(toolCallId) ?? this.adoptToolFrame(toolCallId))
-        : undefined;
-    let turnId: string;
-    let stepId: string;
-    if (hit !== undefined) {
-      ({ turnId, stepId } = hit);
-    } else {
-      const turnNumber =
-        interaction.origin.turnId ??
-        (typeof payload.turnId === 'number' ? payload.turnId : undefined) ??
-        (this.currentTurn !== undefined ? this.currentTurn.ordinal : 1);
-      turnId = `t${turnNumber}`;
-      stepId = `${turnId}.${this.stepOrdinals.get(turnId) ?? 1}`;
-    }
-    const frame: InteractionFrame = {
-      kind: 'interaction',
-      frameId: `i-${interaction.id}`,
+    const entity: TranscriptInteraction = {
       interactionId: interaction.id,
       interactionKind: interaction.kind,
       toolCallId,
       state: 'pending',
       request: interaction.payload,
     };
-    const ops: TranscriptOperation[] = [{ op: 'frame.upsert', turnId, stepId, frame }];
-    let entity: TranscriptInteraction | undefined;
-    if (toolCallId !== undefined) {
-      entity = {
-        interactionId: interaction.id,
-        interactionKind: interaction.kind,
-        toolCallId,
-        state: 'pending',
-        request: interaction.payload,
-      };
-      ops.push({ op: 'interaction.upsert', interaction: entity });
-    }
-    this.interactions.set(interaction.id, { turnId, stepId, frame, interaction: entity });
-    return ops;
+    this.interactions.set(interaction.id, entity);
+    return [{ op: 'interaction.upsert', interaction: entity }];
   }
 
   /**
-   * `resolved` — terminal state plus the raw engine response on BOTH channels
-   * (legacy frame and entity); when the linked tool call is known, re-emit
-   * its frame with the `approvalId` back-link.
+   * `resolved` — terminal state plus the raw engine response on the entity;
+   * when the linked tool call is known, re-emit its frame with the
+   * `approvalId` back-link.
    */
   mapInteractionResolved(id: string, response: unknown): TranscriptOperation[] {
     const record = this.interactions.get(id);
     if (record === undefined) return [];
     this.interactions.delete(id);
-    const state = mapInteractionEndState(record.frame.interactionKind, response);
-    const frame: InteractionFrame = { ...record.frame, state, response };
+    const state = mapInteractionEndState(record.interactionKind, response);
     const ops: TranscriptOperation[] = [
-      { op: 'frame.upsert', turnId: record.turnId, stepId: record.stepId, frame },
+      { op: 'interaction.upsert', interaction: { ...record, state, response } },
     ];
-    if (record.interaction !== undefined) {
-      ops.push({
-        op: 'interaction.upsert',
-        interaction: { ...record.interaction, state, response },
-      });
-    }
-    const toolCallId = record.frame.toolCallId;
+    const toolCallId = record.toolCallId;
     if (toolCallId !== undefined) {
       // Adopt the seeded frame when the call predates this projector, so the
       // back-link still lands after a mid-bind attach.

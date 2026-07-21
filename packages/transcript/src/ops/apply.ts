@@ -94,21 +94,11 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
 // ---------------------------------------------------------------- reset
 
 function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'reset' }>): ApplyResult {
-  // Pending derives from BOTH channels: global entities (authoritative) and
-  // legacy inline interaction frames (older producers send only those).
+  // Pending derives from the global interaction entities (the only channel —
+  // interactions are never step frames).
   const pending = new Set<InteractionId>();
   for (const interaction of op.snapshot.interactions) {
     if (interaction.state === 'pending') pending.add(interaction.interactionId);
-  }
-  for (const item of op.snapshot.items) {
-    if (item.kind !== 'turn') continue;
-    for (const step of item.steps) {
-      for (const frame of step.frames) {
-        if (frame.kind === 'interaction' && frame.state === 'pending') {
-          pending.add(frame.interactionId);
-        }
-      }
-    }
   }
   return {
     state: {
@@ -278,7 +268,7 @@ function applyFrameUpsert(
     ? replaceTurn(state.items, op.turnId, () => nextTurn)
     : insertTurn(state.items, nextTurn);
   return {
-    state: { ...state, items, pendingInteractions: trackPending(state.pendingInteractions, op.frame) },
+    state: { ...state, items },
     changed: true,
   };
 }
@@ -310,30 +300,10 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
       a.agentRefs === b.agentRefs
     );
   }
-  if (a.kind === 'interaction' && b.kind === 'interaction') {
-    return a.state === b.state && a.request === b.request && a.response === b.response;
-  }
   if (a.kind === 'notice' && b.kind === 'notice') {
     return a.message === b.message && a.level === b.level && a.detail === b.detail;
   }
   return false;
-}
-
-function trackPending(
-  pending: ReadonlySet<InteractionId>,
-  frame: TranscriptFrame,
-): ReadonlySet<InteractionId> {
-  if (frame.kind !== 'interaction') return pending;
-  if (frame.state === 'pending') {
-    if (pending.has(frame.interactionId)) return pending;
-    const next = new Set(pending);
-    next.add(frame.interactionId);
-    return next;
-  }
-  if (!pending.has(frame.interactionId)) return pending;
-  const next = new Set(pending);
-  next.delete(frame.interactionId);
-  return next;
 }
 
 // ---------------------------------------------------------------- append (only non-idempotent op)
@@ -469,9 +439,8 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
   );
   const items = state.items.filter((entry) => !drop.has(itemIdOf(entry)));
   if (items.length === state.items.length) return { state, changed: false };
-  // Legacy semantics preserved: removing a turn removes its inline
-  // interaction frames (and their pending entries); the interaction ENTITY
-  // anchored to a tool call inside a removed turn dies with its anchor.
+  // Removing a turn kills the interaction ENTITIES anchored to a tool call
+  // inside it (they die with their anchor), pending entries included.
   let pending = state.pendingInteractions;
   let interactions = state.interactions;
   if (removedTurns.length > 0) {
@@ -482,12 +451,11 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
       for (const step of turn.steps) {
         for (const frame of step.frames) {
           if (frame.kind === 'tool') anchoredToolCallIds.add(frame.toolCallId);
-          if (frame.kind === 'interaction') nextPending.delete(frame.interactionId);
         }
       }
     }
     for (const interaction of interactions.values()) {
-      if (anchoredToolCallIds.has(interaction.toolCallId)) {
+      if (interaction.toolCallId !== undefined && anchoredToolCallIds.has(interaction.toolCallId)) {
         deadEntityIds.add(interaction.interactionId);
         nextPending.delete(interaction.interactionId);
       }

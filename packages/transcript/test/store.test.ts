@@ -162,7 +162,7 @@ describe('AgentTranscript', () => {
     expect(appendAtOffset('hello wo', 6, 'world')).toEqual({ text: 'hello world', changed: true });
   });
 
-  it('tracks pending interactions as a derived index (both channels)', () => {
+  it('tracks pending interactions as a derived index (entity channel)', () => {
     const tx = new AgentTranscript('main');
     const interaction = (state: TranscriptInteraction['state']): TranscriptInteraction => ({
       interactionId: 'appr-1',
@@ -170,23 +170,20 @@ describe('AgentTranscript', () => {
       toolCallId: 'call-1',
       state,
     });
-    // Authoritative channel: the global entity.
     tx.apply([turn1, { op: 'interaction.upsert', interaction: interaction('pending') }]);
     expect(tx.listPendingInteractions()).toEqual(['appr-1']);
     tx.apply([{ op: 'interaction.upsert', interaction: interaction('approved') }]);
     expect(tx.listPendingInteractions()).toEqual([]);
 
-    // Legacy channel: an inline interaction frame (older producers).
-    const legacyFrame = (state: 'pending' | 'answered') => ({
-      kind: 'interaction' as const,
-      frameId: 'i-appr-2',
+    // An entity without an anchor tool call tracks pending the same way.
+    const unanchored = (state: TranscriptInteraction['state']): TranscriptInteraction => ({
       interactionId: 'appr-2',
-      interactionKind: 'question' as const,
+      interactionKind: 'question',
       state,
     });
-    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: legacyFrame('pending') }]);
+    tx.apply([{ op: 'interaction.upsert', interaction: unanchored('pending') }]);
     expect(tx.listPendingInteractions()).toEqual(['appr-2']);
-    tx.apply([{ op: 'frame.upsert', turnId: 't1', stepId: 't1.1', frame: legacyFrame('answered') }]);
+    tx.apply([{ op: 'interaction.upsert', interaction: unanchored('answered') }]);
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
@@ -215,9 +212,9 @@ describe('AgentTranscript', () => {
     expect(tx.getTodo('todo')?.items).toHaveLength(0);
   });
 
-  it('items.remove clears anchored interactions and their pending entries (legacy semantics)', () => {
-    // Removing a turn removes its inline interaction frames; the interaction
-    // entity anchored to a tool call inside the turn dies with its anchor.
+  it('items.remove clears anchored interactions and their pending entries', () => {
+    // The interaction entity anchored to a tool call inside a removed turn
+    // dies with its anchor.
     const tx = new AgentTranscript('main');
     tx.apply([
       turn1,

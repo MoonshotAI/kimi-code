@@ -9,14 +9,12 @@
  * task entity (`taskId`), an interaction (`approvalId`), or a sibling agent
  * (`agentRefs`) whose own AgentTranscript can be subscribed separately.
  *
- * Interactions appear twice by design: inline as `InteractionFrame` (legacy
- * surface, kept for wire compatibility) and as global entities beside tasks
- * (`model/interaction.ts`, the authoritative channel). Both mirror the same
- * underlying interaction by `interactionId`.
+ * Interactions are global entities beside tasks (`model/interaction.ts`),
+ * never step frames: they resolve asynchronously, possibly long after the
+ * originating step flushed, so they do not live inside the paginated timeline.
  */
 
 import type { AgentId, AttachmentId, FrameId, InteractionId, TaskId, TodoId } from './ids';
-import type { InteractionKind, InteractionState } from './interaction';
 
 export type { InteractionKind, InteractionState } from './interaction';
 
@@ -84,30 +82,6 @@ export interface ToolCallFrame {
   readonly agentRefs?: readonly AgentRef[];
 }
 
-/**
- * An approval or AskUserQuestion surfaced inline — the **legacy inline
- * surface**, kept verbatim for wire compatibility: existing consumers read
- * interactions from step frames at this position with these fields.
- *
- * The authoritative channel is the global entity (`model/interaction.ts` +
- * `interaction.upsert`): producers emit BOTH (this frame mirrors the entity
- * by `interactionId`). Consumers should prefer the entity — it is addressed
- * by id, pagination-proof, and visible at 'turn' grade — and treat this
- * frame as the fallback when no entity with the same id is present.
- */
-export interface InteractionFrame {
-  readonly kind: 'interaction';
-  readonly frameId: FrameId;
-  readonly interactionId: InteractionId;
-  readonly interactionKind: InteractionKind;
-  readonly toolCallId?: string;
-  readonly state: InteractionState;
-  /** Open content: engine ApprovalRequest / QuestionRequest payload. */
-  readonly request?: unknown;
-  /** Open content: engine ApprovalResponse / QuestionResult payload. */
-  readonly response?: unknown;
-}
-
 /** Errors / warnings / informational notices attached to a step. */
 export interface NoticeFrame {
   readonly kind: 'notice';
@@ -123,5 +97,4 @@ export type TranscriptFrame =
   | TextFrame
   | ThinkingFrame
   | ToolCallFrame
-  | InteractionFrame
   | NoticeFrame;
