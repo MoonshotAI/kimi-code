@@ -307,6 +307,28 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.data.turn_id).toBe(0);
   });
 
+  it('rejects disabledTools before bind without mutating prompt metadata', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>(
+      'POST',
+      rpc('agent', IAgentRPCService, 'prompt', { sid: id, aid: 'main' }),
+      {
+        input: [{ type: 'text', text: 'must not become metadata' }],
+        disabledTools: ['Bash'],
+      },
+    );
+    expect(body.code).toBe(40001);
+
+    const metadata = await call<SessionMetaWire>(
+      'POST',
+      rpc('session', ISessionMetadata, 'read', { sid: id }),
+    );
+    expect(metadata.body.data.title).toBeUndefined();
+    expect(metadata.body.data.lastPrompt).toBeUndefined();
+  });
+
   it('derives the session title and lastPrompt from the first prompt', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

@@ -4,7 +4,7 @@
  * Stores provider configuration by name for App-scope consumer tests.
  */
 
-import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
+import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
 
 export function stubProviderService(
   providers: Readonly<Record<string, ProviderConfig>> = {},

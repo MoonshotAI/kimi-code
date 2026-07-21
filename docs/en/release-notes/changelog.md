@@ -6,6 +6,20 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.28.1 (2026-07-20)
+
+### Features
+
+- Allow ACP sessions to start with configured non-OAuth model credentials instead of requiring terminal login.
+
+### Polish
+
+- Run web servers foreground-only end to end: the /web slash command now always starts a new server, and the `kimi web kill` / `kimi web ps` subcommands are removed — foreground servers stop with Ctrl+C. `kimi server kill` remains as a deprecated fallback that only stops servers started by a version before 0.28.0.
+
+### Bug Fixes
+
+- Fix running subagents not observing permission mode switches made after they started.
+
 ## 0.28.0 (2026-07-20)
 
 ### Features

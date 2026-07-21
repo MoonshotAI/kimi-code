@@ -9,8 +9,8 @@
  * no scoped service.
  */
 
-import type { ToolCall } from '#/app/llmProtocol/message';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { ToolCall } from '#/kosong/contract/message';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 
 import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution } from '#/tool/toolContract';
 

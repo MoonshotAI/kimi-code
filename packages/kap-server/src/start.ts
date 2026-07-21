@@ -11,7 +11,7 @@ import {
   bootstrap,
   hostRequestHeadersSeed,
   IConfigService,
-  IModelCatalogService,
+  IProviderDiscoveryService,
   IWorkspaceRegistry,
   logSeed,
   resolveConfigPath,
@@ -226,7 +226,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
   }
   const modelCatalogRefreshScheduler = new ModelCatalogRefreshScheduler(
-    core.accessor.get(IModelCatalogService),
+    core.accessor.get(IProviderDiscoveryService),
     core.accessor.get(IConfigService),
     logger,
   );

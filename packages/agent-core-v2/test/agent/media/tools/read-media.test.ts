@@ -7,8 +7,8 @@
  * compression. Run: pnpm test -- test/agent/media/tools/read-media.test.ts
  */
 
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ContentPart } from '#/kosong/contract/message';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -36,7 +36,8 @@ import {
 } from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { IAgentProfileService } from '#/agent/profile/profile';
-import type { Model } from '#/app/model/modelInstance';
+import type { IModelCatalog } from '#/kosong/model/catalog';
+import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -748,7 +749,6 @@ describe('AgentMediaToolsRegistrar', () => {
   interface ProfileState {
     alias: string;
     capabilities: ModelCapability;
-    model: Model | undefined;
   }
 
   function createRegistrarHarness() {
@@ -757,13 +757,16 @@ describe('AgentMediaToolsRegistrar', () => {
     const state: ProfileState = {
       alias: '',
       capabilities: capabilities({ image_in: false, video_in: false }),
-      model: undefined,
     };
     const profile = {
       getModelCapabilities: () => state.capabilities,
       getModel: () => state.alias,
-      resolveModel: () => state.model,
     } as unknown as IAgentProfileService;
+    const modelCatalog = {
+      getRequester: (id: string) => ({
+        model: { id, name: id, providerName: 'test', protocol: 'openai' },
+      }),
+    } as unknown as IModelCatalog;
     const workspaceCtx = {
       workDir: '/workspace',
       additionalDirs: [],
@@ -771,6 +774,7 @@ describe('AgentMediaToolsRegistrar', () => {
     const registrar = new AgentMediaToolsRegistrar(
       registry,
       profile,
+      modelCatalog,
       eventBus,
       createTestFs({}),
       createTestEnv(),
@@ -847,13 +851,13 @@ describe('createVideoUploader', () => {
   };
   const input = { data: new Uint8Array(2048), mimeType: 'video/mp4', filename: 'clip.mp4' };
 
-  function modelWith(uploadVideo: Model['uploadVideo']): Pick<Model, 'uploadVideo'> {
-    return { uploadVideo } as Pick<Model, 'uploadVideo'>;
+  function modelWith(uploadVideo: ModelRequester['uploadVideo']): Pick<ModelRequester, 'uploadVideo'> {
+    return { uploadVideo } as Pick<ModelRequester, 'uploadVideo'>;
   }
 
   it('returns undefined when the model does not support video upload', () => {
     expect(createVideoUploader(undefined)).toBeUndefined();
-    expect(createVideoUploader({} as Pick<Model, 'uploadVideo'>)).toBeUndefined();
+    expect(createVideoUploader({} as Pick<ModelRequester, 'uploadVideo'>)).toBeUndefined();
   });
 
   it('binds uploadVideo without telemetry', async () => {

@@ -34,6 +34,10 @@ export function makeModelsMap(
     name?: string;
     thinkingSupported?: boolean;
     alwaysThinking?: boolean;
+    /** Declared `support_efforts` — presence turns the fixture into an effort-capable model. */
+    efforts?: readonly string[];
+    /** Declared `default_effort`; falls back to the middle `efforts` entry when omitted. */
+    defaultEffort?: string;
   }>,
 ): Record<string, ModelAlias> {
   const out: Record<string, ModelAlias> = {};
@@ -51,6 +55,8 @@ export function makeModelsMap(
       model: entry.id,
       ...(entry.name !== undefined ? { displayName: entry.name } : {}),
       ...(capabilities !== undefined ? { capabilities } : {}),
+      ...(entry.efforts !== undefined ? { supportEfforts: [...entry.efforts] } : {}),
+      ...(entry.defaultEffort !== undefined ? { defaultEffort: entry.defaultEffort } : {}),
     } as ModelAlias;
   }
   return out;

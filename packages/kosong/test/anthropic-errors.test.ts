@@ -13,6 +13,7 @@ import {
   APIConnectionTimeoutError as AnthropicTimeoutError,
   APIError as AnthropicAPIError,
   AnthropicError,
+  APIUserAbortError as AnthropicUserAbortError,
   AuthenticationError as AnthropicAuthenticationError,
   RateLimitError as AnthropicRateLimitError,
 } from '@anthropic-ai/sdk';
@@ -128,6 +129,35 @@ describe('convertAnthropicError', () => {
     const result = convertAnthropicError('string error');
     expect(result).toBeInstanceOf(ChatProviderError);
     expect(result.message).toContain('string error');
+  });
+
+  it('APIUserAbortError throws the standard abort DOMException instead of being classified', () => {
+    // A user cancellation must never be converted into (or returned as) a
+    // retryable provider error: the guard at the very front of the
+    // classification chain throws the standard abort shape.
+    const err = new AnthropicUserAbortError({ message: 'aborted by user' });
+    let thrown: unknown;
+    try {
+      convertAnthropicError(err);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
+  });
+
+  it('bare AbortError DOMException throws the standard abort DOMException', () => {
+    const err = new DOMException('The operation was aborted.', 'AbortError');
+    let thrown: unknown;
+    try {
+      convertAnthropicError(err);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
   });
 
   it('classifies undici TypeError("terminated") as a retryable APIConnectionError', () => {

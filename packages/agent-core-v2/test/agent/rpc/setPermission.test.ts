@@ -24,7 +24,7 @@ describe('setPermission RPC', () => {
     await ctx.rpc.setPermission({ mode: 'auto' });
 
     expect(ctx.get(IAgentPermissionModeService).mode).toBe('auto');
-    expect(records).toContainEqual({ event: 'afk_toggle', properties: { enabled: true } });
+    expect(records).toContainEqual({ event: 'afk_toggle', properties: { agent_id: 'main', enabled: true } });
   });
 
   it('tracks the yolo toggle on enter and exit', async () => {
@@ -35,7 +35,7 @@ describe('setPermission RPC', () => {
     await ctx.rpc.setPermission({ mode: 'manual' });
 
     expect(ctx.get(IAgentPermissionModeService).mode).toBe('manual');
-    expect(records).toContainEqual({ event: 'yolo_toggle', properties: { enabled: true } });
-    expect(records).toContainEqual({ event: 'yolo_toggle', properties: { enabled: false } });
+    expect(records).toContainEqual({ event: 'yolo_toggle', properties: { agent_id: 'main', enabled: true } });
+    expect(records).toContainEqual({ event: 'yolo_toggle', properties: { agent_id: 'main', enabled: false } });
   });
 });

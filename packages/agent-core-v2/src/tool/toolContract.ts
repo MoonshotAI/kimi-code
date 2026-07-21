@@ -15,9 +15,9 @@
  * scoped service.
  */
 
-import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
-import type { Tool } from '#/app/llmProtocol/tool';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { ContentPart, ToolCall } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];

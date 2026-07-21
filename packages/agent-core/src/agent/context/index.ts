@@ -498,6 +498,7 @@ export class ContextMemory {
     let leadingDropped = 0;
     let assistantsMerged = 0;
     let whitespaceDropped = 0;
+    let vacuousDropped = 0;
     for (const anomaly of notable) {
       if (anomaly.kind === 'tool_result_reordered') reordered += 1;
       else if (anomaly.kind === 'tool_result_synthesized') synthesized += 1;
@@ -506,6 +507,7 @@ export class ContextMemory {
       else if (anomaly.kind === 'duplicate_tool_result_dropped') duplicateResultsDropped += 1;
       else if (anomaly.kind === 'leading_non_user_dropped') leadingDropped += 1;
       else if (anomaly.kind === 'consecutive_assistants_merged') assistantsMerged += 1;
+      else if (anomaly.kind === 'vacuous_message_dropped') vacuousDropped += 1;
       else whitespaceDropped += 1;
     }
     const toolCallIds = [
@@ -522,6 +524,7 @@ export class ContextMemory {
       leadingDropped,
       assistantsMerged,
       whitespaceDropped,
+      vacuousDropped,
       toolCallIds,
     });
     this.agent.telemetry.track('context_projection_repaired', {
@@ -533,6 +536,7 @@ export class ContextMemory {
       leading_dropped: leadingDropped,
       assistants_merged: assistantsMerged,
       whitespace_dropped: whitespaceDropped,
+      vacuous_dropped: vacuousDropped,
     });
   }
 

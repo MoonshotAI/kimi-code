@@ -165,6 +165,10 @@ const getImageDataUri: Handler<FilePathParams, string | null> = async ({ filePat
   const mime = IMAGE_MIME_TYPES[path.extname(resolved.relativePath).toLowerCase()];
   if (!mime) return null;
   try {
+    // Same cap as the media picker: an oversized image inlined as a data URI
+    // would live in the webview DOM (and its decoded bitmap) forever.
+    const stat = await vscode.workspace.fs.stat(resolved.uri);
+    if (stat.size > 10 * 1024 * 1024) return null;
     const bytes = await vscode.workspace.fs.readFile(resolved.uri);
     return `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
   } catch {

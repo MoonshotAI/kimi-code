@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { describe, expect, it } from 'vitest';
 

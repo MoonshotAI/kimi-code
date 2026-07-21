@@ -28,6 +28,7 @@ import { z } from 'zod';
 import type { ExecutableTool as BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern } from '#/tool/rule-match';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { computeNextCronRun, cronToHuman, hasFireWithinYears, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
 import { formatLocalIsoWithOffset } from '#/app/cron/format';
@@ -80,7 +81,10 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     CronCreateInputSchema,
   );
 
-  constructor(@ISessionCronService private readonly cron: ISessionCronService) {}
+  constructor(
+    @ISessionCronService private readonly cron: ISessionCronService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+  ) {}
 
   resolveExecution(args: CronCreateInput): ToolExecution {
     if (this.cron.isDisabled()) {
@@ -188,7 +192,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
 
         const humanSchedule = cronToHuman(parsed);
 
-        this.cron.emitScheduled(task);
+        this.cron.emitScheduled(task, this.scopeContext.agentId);
 
         const output: CronCreateOutput = {
           id: task.id,

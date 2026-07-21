@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.4
+
+### Changed
+
+- Picking a model's highest thinking effort now applies to the current session
+  only instead of becoming the global default: the top tier saves just the
+  on/off toggle, lower tiers persist as the default as before, and
+  re-confirming the current effort no longer rewrites the saved preference.
+  The model and thinking pickers also note that switching mid-conversation
+  invalidates the existing prompt cache.
+- Unified the YOLO and Auto permission mode naming and descriptions with the
+  CLI (`/afk` is now `/auto`), and approval requests that fall outside the
+  active permission mode (sensitive files, plan reviews, ask rules) are now
+  always shown to you instead of being auto-approved.
+
 ## 0.6.3
 
 ### Fixed

@@ -546,7 +546,6 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
       .defaultHeaders;
     expect(headers).toBeDefined();
     expect('X-Msh-Platform' in headers!).toBe(false);
-    expect('generationKwargs' in resolved.provider).toBe(false);
   });
 });
 
@@ -713,33 +712,39 @@ describe('ProviderManager prompt cache key', () => {
     });
   });
 
-  it('does not add generation kwargs to non-Kimi providers', () => {
-    const manager = new ProviderManager({
-      promptCacheKey: 'session-test',
-      config: {
-        defaultModel: 'gpt-alias',
-        providers: {
-          openai: {
-            type: 'openai',
-            apiKey: 'sk-openai',
+  it('applies a prompt cache key to OpenAI providers (chat completions + responses)', () => {
+    for (const type of ['openai', 'openai_responses'] as const) {
+      const manager = new ProviderManager({
+        promptCacheKey: 'session-test',
+        config: {
+          defaultModel: 'gpt-alias',
+          providers: {
+            openai: {
+              type,
+              apiKey: 'sk-openai',
+            },
+          },
+          models: {
+            'gpt-alias': {
+              provider: 'openai',
+              model: 'gpt-runtime',
+              maxContextSize: 200000,
+            },
           },
         },
-        models: {
-          'gpt-alias': {
-            provider: 'openai',
-            model: 'gpt-runtime',
-            maxContextSize: 200000,
-          },
-        },
-      },
-    });
-    const resolved = manager.resolveProviderConfig('gpt-alias');
+      });
+      const resolved = manager.resolveProviderConfig('gpt-alias');
 
-    expect(resolved.provider).toMatchObject({
-      type: 'openai',
-      model: 'gpt-runtime',
-    });
-    expect('generationKwargs' in resolved.provider).toBe(false);
+      // Same session-affinity intent as the Kimi branch above: every request
+      // of the session routes through the same provider-side prompt cache.
+      expect(resolved.provider).toMatchObject({
+        type,
+        model: 'gpt-runtime',
+        generationKwargs: {
+          prompt_cache_key: 'session-test',
+        },
+      });
+    }
   });
 
   it('reads the current config when constructed with a function', () => {

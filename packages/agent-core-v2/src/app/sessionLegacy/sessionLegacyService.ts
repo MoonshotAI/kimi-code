@@ -27,7 +27,7 @@ import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { IConfigService } from '#/app/config/config';
-import { IModelResolver } from '#/app/model/modelResolver';
+import { IModelCatalog } from '#/kosong/model/catalog';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -204,7 +204,7 @@ function resolveDefaultModelContextTokens(agent: IAgentScopeHandle): number {
   const defaultModel = agent.accessor.get(IConfigService).get<string>('defaultModel');
   if (typeof defaultModel !== 'string' || defaultModel.length === 0) return 0;
   try {
-    return agent.accessor.get(IModelResolver).resolve(defaultModel).capabilities.max_context_tokens;
+    return agent.accessor.get(IModelCatalog).get(defaultModel).capabilities.max_context_tokens;
   } catch {
     return 0;
   }

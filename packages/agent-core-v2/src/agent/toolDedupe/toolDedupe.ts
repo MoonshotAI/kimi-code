@@ -8,7 +8,7 @@
  * Agent-scoped — one instance per agent.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 

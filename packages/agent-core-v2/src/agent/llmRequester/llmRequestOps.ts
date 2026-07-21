@@ -8,7 +8,7 @@
 
 import { z } from 'zod';
 
-import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
+import type { ThinkingEffort } from '#/kosong/contract/provider';
 import { defineModel } from '#/wire/model';
 
 export interface LlmRequestToolSchema {

@@ -10,9 +10,10 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { OrderedHookSlot } from '#/hooks';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { ToolSource } from '#/tool/toolContract';
 
 export interface ToolCallStartedPayload {
   readonly toolCallId: string;
@@ -35,6 +36,10 @@ export interface ToolExecutionResult {
 
 export type MissingToolDescriber = (toolName: string) => string | undefined;
 export type UnavailableToolDescriber = (toolName: string) => string | undefined;
+export type ToolCallGuard = (tool: {
+  readonly name: string;
+  readonly source: ToolSource;
+}) => string | undefined;
 
 export type ToolCallDupType = 'same_step' | 'cross_step';
 
@@ -50,6 +55,7 @@ export interface IAgentToolExecutorService {
 
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void;
 
+  registerToolCallGuard(guard: ToolCallGuard): IDisposable;
   registerUnavailableToolDescriber(describer: UnavailableToolDescriber): IDisposable;
   registerMissingToolDescriber(describer: MissingToolDescriber): IDisposable;
 }

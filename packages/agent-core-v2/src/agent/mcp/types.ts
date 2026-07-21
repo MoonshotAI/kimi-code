@@ -49,6 +49,13 @@ export interface MCPClient {
     args: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<MCPToolResult>;
+  /**
+   * Sends a protocol-level `ping` with a short built-in timeout, so a hung
+   * server rejects instead of blocking. Used to probe liveness after an
+   * ambiguous call failure; a server that answers in any way — even with
+   * `MethodNotFound` — proves the transport is usable.
+   */
+  ping(signal?: AbortSignal): Promise<void>;
 }
 
 export function assertMcpInputSchema(

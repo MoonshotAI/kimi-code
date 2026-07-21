@@ -23,6 +23,8 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { type ModelRequester } from '#/kosong/model/modelRequester';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -43,6 +45,7 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IEventBus eventBus: IEventBus,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
@@ -69,7 +72,13 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     const workspaceCtx = this.workspaceCtx;
     const skillCatalog = this.skillCatalog;
     const env = this.env;
-    const model = this.profile.resolveModel();
+    const modelAlias = this.profile.getModel();
+    let requester: ModelRequester | undefined;
+    let model: Model | undefined;
+    if (modelAlias !== '') {
+      requester = this.modelCatalog.getRequester(modelAlias);
+      model = requester.model;
+    }
     this.registration = registerMediaTools(this.toolRegistry, {
       fs: this.fs,
       env: this.env,
@@ -86,11 +95,11 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
         },
       },
       capabilities,
-      videoUploader: createVideoUploader(model, {
+      videoUploader: createVideoUploader(requester, {
         client: this.telemetry,
         props: {
-          model: this.profile.getModel(),
-          provider_type: model?.protocol,
+          model: modelAlias,
+          provider_type: model?.providerType ?? model?.protocol,
           protocol: model?.protocol,
         },
       }),

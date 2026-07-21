@@ -23,7 +23,8 @@ function ScrollButton() {
 }
 
 function MessageList() {
-  const { messages, isStreaming } = useChatStore();
+  const messages = useChatStore((s) => s.messages);
+  const isStreaming = useChatStore((s) => s.isStreaming);
 
   return (
     <>
@@ -43,9 +44,9 @@ function MessageList() {
 }
 
 export function ChatArea() {
-  const { messages } = useChatStore();
+  const messageCount = useChatStore((s) => s.messages.length);
 
-  if (messages.length === 0) {
+  if (messageCount === 0) {
     return (
       <div className="h-full flex items-center justify-center relative">
         <WelcomeScreen />

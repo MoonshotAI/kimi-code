@@ -1,3 +1,15 @@
+/**
+ * `rpc` domain (L7) — v2 native RPC contract.
+ *
+ * Request/response payloads and event types for the engine's native RPC
+ * surface. `PromptPayload.disabledTools` is the client-managed session
+ * denylist, applied via `IAgentProfileService.setSessionDisabledTools` before
+ * the prompt is enqueued: full-replace semantics, the profile's own
+ * `disallowedTools` always survive, omitting the field keeps the persisted
+ * value, and `[]` clears the client portion. It is ignored by engines without
+ * profile support.
+ */
+
 import type { AgentConfigData } from '#/agent/profile/profile';
 import type { AgentContextData } from '#/agent/contextMemory/types';
 import type { AgentTaskInfo } from '#/agent/task/task';
@@ -19,7 +31,7 @@ import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { ExperimentalFeatureState } from '#/app/flag/flag';
 import type { ResumeSessionResult } from '#/agent/replayBuilder/types';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { SessionWarning } from '#/app/sessionLegacy/sessionProtocol';
 import type { UsageStatus } from '#/agent/usage/usage';
 
@@ -113,6 +125,7 @@ export interface SessionSummary {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+  readonly disabledTools?: readonly string[];
 }
 export interface RunShellCommandPayload {
   readonly command: string;

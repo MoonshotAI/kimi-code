@@ -3,11 +3,11 @@
  *
  * These tests don't actually start the server — the foreground runner is
  * injected, so they verify option parsing, the ready banner / one-line ready
- * output, browser opening, and the kill / ps / rotate-token subcommands
- * against fake deps.
+ * output, browser opening, and the rotate-token / deprecated `kimi server kill`
+ * subcommands against fake deps.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,7 +16,7 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerWebCommand } from '#/cli/sub/web';
-import type { KillCommandDeps } from '#/cli/sub/web/kill';
+import type { LegacyKillDeps } from '#/cli/sub/web/legacy-kill';
 import type { WebCommandDeps } from '#/cli/sub/web/run';
 import type { ParsedServerOptions } from '#/cli/sub/web/shared';
 import { darkColors } from '#/tui/theme/colors';
@@ -80,12 +80,13 @@ function makeIo(): {
 }
 
 describe('kimi web', () => {
-  it('registers the `web` command with the kill/ps/rotate-token subcommands', () => {
+  it('registers the `web` command with only the rotate-token subcommand', () => {
     const program = makeProgram();
     const web = program.commands.find((c) => c.name() === 'web');
     expect(web).toBeDefined();
     const subs = web?.commands.map((c) => c.name()).toSorted();
-    expect(subs).toEqual(['kill', 'ps', 'rotate-token']);
+    // Foreground servers stop with Ctrl+C, so there is no kill/ps.
+    expect(subs).toEqual(['rotate-token']);
   });
 
   it('exposes the foreground server options on `web` itself', () => {
@@ -116,7 +117,7 @@ describe('kimi web', () => {
     for (const argv of [
       ['node', 'kimi', 'server'],
       ['node', 'kimi', 'server', 'run', '--port', '1'],
-      ['node', 'kimi', 'server', 'kill', 'abc'],
+      ['node', 'kimi', 'server', 'status'],
       ['node', 'kimi', 'server', 'ps', '--json'],
     ]) {
       const program = makeProgram();
@@ -138,6 +139,8 @@ describe('kimi web', () => {
       expect(exitCalls).toEqual([1]);
       expect(stderr).toContain('`kimi server` has been deprecated and no longer works.');
       expect(stderr).toContain('kimi web');
+      expect(stderr).toContain('kimi server kill');
+      expect(stderr).toContain('0.28.0');
       expect(stderr).toContain('next major version');
     }
   });
@@ -173,7 +176,7 @@ describe('`kimi web` ready banner', () => {
     expect(plain).toContain('Logs:');
     expect(plain).toContain('off');
     expect(plain).toContain('Stop:');
-    expect(plain).toContain('kimi web kill');
+    expect(plain).toContain('Ctrl+C');
     // No bordered panel (the token URL must print in full for copying), but
     // the Kimi sprite stays next to the title.
     expect(plain).not.toContain('╭');
@@ -257,7 +260,7 @@ describe('`kimi web` ready banner', () => {
     // Red, impossible-to-miss danger notice.
     expect(plain).toContain('DANGER: authentication is DISABLED');
     expect(plain).toContain('--dangerous-bypass-auth');
-    expect(plain).toContain('kimi web kill');
+    expect(plain).toContain('Ctrl+C');
     // The token is irrelevant when bypassed — neither printed nor carried in
     // any URL (so it cannot leak via copy/paste of the banner).
     expect(plain).not.toContain('tok');
@@ -541,46 +544,24 @@ describe('server web asset directory resolution', () => {
   });
 });
 
-describe('instanceConnectHost (M6.2 connect side)', () => {
-  it('maps a 0.0.0.0 bind to 127.0.0.1 so the CLI connects over loopback', async () => {
-    const { instanceConnectHost } = await import('#/cli/sub/web/shared');
-    // The server binds 0.0.0.0 (all interfaces), but the local CLI must
-    // connect over loopback — 0.0.0.0 is not a connectable address. The token
-    // then rides on that loopback connection (covered by the kill/ps
-    // Authorization tests).
-    expect(
-      instanceConnectHost({
-        serverId: 'srv',
-        pid: 1,
-        startedAt: 0,
-        heartbeatAt: 0,
-        port: 58627,
-        host: '0.0.0.0',
-      }),
-    ).toBe('127.0.0.1');
-  });
-
-  it('preserves a loopback / concrete bind host', async () => {
-    const { instanceConnectHost } = await import('#/cli/sub/web/shared');
-    const base = { serverId: 'srv', pid: 1, startedAt: 0, heartbeatAt: 0, port: 58627 };
-    expect(instanceConnectHost({ ...base, host: '127.0.0.1' })).toBe('127.0.0.1');
-    expect(instanceConnectHost({ ...base, host: '192.168.1.5' })).toBe('192.168.1.5');
-  });
-});
-
-function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
-  deps: KillCommandDeps;
+function makeLegacyKillDeps(overrides: Partial<LegacyKillDeps> = {}): {
+  deps: LegacyKillDeps;
   writes: string[];
+  errors: string[];
   signals: Array<{ pid: number; signal: NodeJS.Signals }>;
-  state: { shutdownCalls: number };
+  state: { shutdownCalls: number; removeCalls: number };
   clock: { t: number };
 } {
   const writes: string[] = [];
+  const errors: string[] = [];
   const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
-  const state = { shutdownCalls: 0 };
+  const state = { shutdownCalls: 0, removeCalls: 0 };
   const clock = { t: 0 };
-  const deps: KillCommandDeps = {
-    getLiveInstances: async () => [],
+  const deps: LegacyKillDeps = {
+    readLock: async () => undefined,
+    removeLock: async () => {
+      state.removeCalls += 1;
+    },
     requestShutdown: async () => {
       state.shutdownCalls += 1;
     },
@@ -599,56 +580,91 @@ function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
         return true;
       },
     },
+    stderr: {
+      write(chunk: string | Uint8Array) {
+        errors.push(String(chunk));
+        return true;
+      },
+    },
     now: () => clock.t,
     ...overrides,
   };
-  return { deps, writes, signals, state, clock };
+  return { deps, writes, errors, signals, state, clock };
 }
 
-describe('`kimi web kill`', () => {
-  const liveInstance = {
-    serverId: 'srv-1',
-    pid: 1234,
-    host: '127.0.0.1',
-    port: 58627,
-    startedAt: 1000,
-    heartbeatAt: 1000,
-  };
+describe('`kimi server kill` (deprecated, legacy servers only)', () => {
+  const legacyLock = { pid: 1234, host: '127.0.0.1', port: 58627 };
 
-  it('prints "No running Kimi server." and sends no signal when no live instance exists', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const { deps, writes, signals } = makeKillDeps({ getLiveInstances: async () => [] });
+  it('is registered as the only working subcommand of the deprecated `server` command', () => {
+    const program = makeProgram();
+    const server = program.commands.find((c) => c.name() === 'server');
+    expect(server).toBeDefined();
+    expect(server?.commands.map((c) => c.name())).toEqual(['kill']);
+  });
 
-    await handleKillCommand(deps);
+  it('prints a deprecation notice naming the 0.28.0 cutoff on every run', async () => {
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    const { deps, errors } = makeLegacyKillDeps();
 
-    expect(writes.join('')).toContain('No running Kimi server.');
+    await handleLegacyKillCommand(deps);
+
+    const notice = errors.join('');
+    expect(notice).toContain('deprecated');
+    expect(notice).toContain('0.28.0');
+    expect(notice).toContain('Ctrl+C');
+  });
+
+  it('prints "No running legacy Kimi server." and sends no signal when no lock exists', async () => {
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    const { deps, writes, signals } = makeLegacyKillDeps({ readLock: async () => undefined });
+
+    await handleLegacyKillCommand(deps);
+
+    expect(writes.join('')).toContain('No running legacy Kimi server.');
     expect(signals).toEqual([]);
   });
 
+  it('sweeps a stale lock whose pid is already dead', async () => {
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    const { deps, writes, signals, state } = makeLegacyKillDeps({
+      readLock: async () => legacyLock,
+      pidAlive: () => false,
+    });
+
+    await handleLegacyKillCommand(deps);
+
+    expect(writes.join('')).toContain('No running legacy Kimi server.');
+    expect(signals).toEqual([]);
+    expect(state.shutdownCalls).toBe(0);
+    expect(state.removeCalls).toBe(1);
+  });
+
   it('attempts the API shutdown, then stops after SIGTERM when the pid exits promptly', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const { deps, writes, signals, state, clock } = makeKillDeps({
-      getLiveInstances: async () => [liveInstance],
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    const { deps, writes, signals, state, clock } = makeLegacyKillDeps({
+      readLock: async () => legacyLock,
       pidAlive: () => clock.t < 50,
     });
 
-    await handleKillCommand(deps);
+    await handleLegacyKillCommand(deps);
 
     expect(state.shutdownCalls).toBe(1);
     expect(signals).toEqual([{ pid: 1234, signal: 'SIGTERM' }]);
     expect(writes.join('')).toContain('pid 1234');
     expect(writes.join('')).toContain('stopped.');
+    // The lock is removed once the pid is confirmed dead.
+    expect(state.removeCalls).toBe(1);
   });
 
   it('escalates to SIGKILL when the pid survives SIGTERM', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const { deps, writes, signals, clock } = makeKillDeps({
-      getLiveInstances: async () => [{ ...liveInstance, pid: 5678 }],
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    const { deps, writes, signals, clock } = makeLegacyKillDeps({
+      readLock: async () => ({ ...legacyLock, pid: 5678 }),
       // Survives the 3s SIGTERM grace, dies during the 2s SIGKILL grace.
       pidAlive: () => clock.t < 3100,
     });
 
-    await handleKillCommand(deps);
+    await handleLegacyKillCommand(deps);
 
     expect(signals.map((s) => s.signal)).toEqual(['SIGTERM', 'SIGKILL']);
     expect(writes.join('')).toContain('pid 5678');
@@ -656,81 +672,105 @@ describe('`kimi web kill`', () => {
   });
 
   it('throws a permissions error when the pid survives SIGKILL', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const { deps } = makeKillDeps({
-      getLiveInstances: async () => [{ ...liveInstance, pid: 9999 }],
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    const { deps } = makeLegacyKillDeps({
+      readLock: async () => ({ ...legacyLock, pid: 9999 }),
       pidAlive: () => true,
     });
 
-    await expect(handleKillCommand(deps)).rejects.toThrow(/insufficient permissions/);
+    await expect(handleLegacyKillCommand(deps)).rejects.toThrow(/insufficient permissions/);
   });
 
-  it('targets only the instance matching the given server-id', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const other = { ...liveInstance, serverId: 'srv-2', pid: 5678, port: 58628 };
-    const { deps, writes, signals } = makeKillDeps({
-      getLiveInstances: async () => [liveInstance, other],
-      pidAlive: () => false,
+  it('skips the API path when the lock records no port', async () => {
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    const { deps, signals, state, clock } = makeLegacyKillDeps({
+      readLock: async () => ({ pid: 1234 }),
+      // Alive at the initial check, dead when the SIGTERM grace polls.
+      pidAlive: () => clock.t < 50,
     });
 
-    await handleKillCommand(deps, 'srv-2');
+    await handleLegacyKillCommand(deps);
 
-    expect(signals).toEqual([{ pid: 5678, signal: 'SIGTERM' }]);
-    expect(writes.join('')).toContain('pid 5678');
+    expect(state.shutdownCalls).toBe(0);
+    expect(signals).toEqual([{ pid: 1234, signal: 'SIGTERM' }]);
   });
 
-  it('throws and lists live server ids when the given server-id matches nothing', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const { deps, signals } = makeKillDeps({
-      getLiveInstances: async () => [liveInstance],
+  it('passes the resolved token to requestShutdown', async () => {
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    let seenToken: string | undefined = 'unset';
+    const { deps, clock } = makeLegacyKillDeps({
+      readLock: async () => legacyLock,
+      resolveToken: () => 'tok-123',
+      requestShutdown: async (_origin, token) => {
+        seenToken = token;
+      },
+      pidAlive: () => clock.t < 50,
     });
 
-    await expect(handleKillCommand(deps, 'srv-nope')).rejects.toThrow(
-      /No running Kimi server with id srv-nope\. Live servers: srv-1\./,
+    await handleLegacyKillCommand(deps);
+
+    expect(seenToken).toBe('tok-123');
+  });
+
+  it('passes undefined when the token cannot be read (best-effort)', async () => {
+    const { handleLegacyKillCommand } = await import('#/cli/sub/web/legacy-kill');
+    let seenToken: string | undefined = 'unset';
+    const { deps, clock } = makeLegacyKillDeps({
+      readLock: async () => legacyLock,
+      resolveToken: () => undefined,
+      requestShutdown: async (_origin, token) => {
+        seenToken = token;
+      },
+      pidAlive: () => clock.t < 50,
+    });
+
+    await handleLegacyKillCommand(deps);
+
+    expect(seenToken).toBeUndefined();
+  });
+});
+
+describe('readLegacyLock', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-legacy-lock-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('parses a lock written by an old build', async () => {
+    const { readLegacyLock } = await import('#/cli/sub/web/legacy-kill');
+    const lockPath = join(dir, 'lock');
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: 1234, started_at: '2026-01-01T00:00:00.000Z', port: 58627 }),
     );
-    expect(signals).toEqual([]);
+
+    await expect(readLegacyLock(lockPath)).resolves.toEqual({
+      pid: 1234,
+      host: undefined,
+      port: 58627,
+    });
   });
 
-  it('kills every live instance when given the `all` keyword', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const other = { ...liveInstance, serverId: 'srv-2', pid: 5678, port: 58628 };
-    const { deps, writes, signals, state } = makeKillDeps({
-      getLiveInstances: async () => [liveInstance, other],
-      pidAlive: () => false,
-    });
-
-    await handleKillCommand(deps, 'all');
-
-    expect(state.shutdownCalls).toBe(2);
-    expect(signals).toEqual([
-      { pid: 1234, signal: 'SIGTERM' },
-      { pid: 5678, signal: 'SIGTERM' },
-    ]);
-    const out = writes.join('');
-    expect(out).toContain('server srv-1 (pid 1234) stopped.');
-    expect(out).toContain('server srv-2 (pid 5678) stopped.');
+  it('rejects a corrupt lock whose pid is not a positive integer', async () => {
+    const { readLegacyLock } = await import('#/cli/sub/web/legacy-kill');
+    const lockPath = join(dir, 'lock');
+    // pid 0 / negative pids have process-group semantics on POSIX — the lock
+    // must be treated as unusable rather than signaled.
+    for (const pid of [0, -1, 1.5, '1234']) {
+      writeFileSync(lockPath, JSON.stringify({ pid, port: 58627 }));
+      await expect(readLegacyLock(lockPath)).resolves.toBeUndefined();
+    }
   });
 
-  it('continues past a failed instance and reports the failure at the end', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    const wedged = { ...liveInstance, serverId: 'srv-2', pid: 9999, port: 58628 };
-    const { deps, writes, signals } = makeKillDeps({
-      getLiveInstances: async () => [liveInstance, wedged],
-      // srv-1 dies on SIGTERM; srv-2 survives everything.
-      pidAlive: (pid) => pid === 9999,
-    });
-
-    await expect(handleKillCommand(deps, 'all')).rejects.toThrow(
-      /server srv-2: Failed to stop Kimi server \(pid 9999\); insufficient permissions\?/,
-    );
-
-    // The healthy instance was still stopped before the error surfaced.
-    expect(signals).toEqual([
-      { pid: 1234, signal: 'SIGTERM' },
-      { pid: 9999, signal: 'SIGTERM' },
-      { pid: 9999, signal: 'SIGKILL' },
-    ]);
-    expect(writes.join('')).toContain('server srv-1 (pid 1234) stopped.');
+  it('returns undefined when the lock file is missing or unparseable', async () => {
+    const { readLegacyLock } = await import('#/cli/sub/web/legacy-kill');
+    await expect(readLegacyLock(join(dir, 'missing'))).resolves.toBeUndefined();
+    const lockPath = join(dir, 'lock');
+    writeFileSync(lockPath, 'not json');
+    await expect(readLegacyLock(lockPath)).resolves.toBeUndefined();
   });
 });
 
@@ -765,204 +805,6 @@ describe('authHeaders', () => {
   it('builds a Bearer Authorization header', async () => {
     const { authHeaders } = await import('#/cli/sub/web/shared');
     expect(authHeaders('abc')).toEqual({ Authorization: 'Bearer abc' });
-  });
-});
-
-describe('`kimi web kill` carries the bearer token', () => {
-  const liveInstance = {
-    serverId: 'srv-1',
-    pid: 1234,
-    host: '127.0.0.1',
-    port: 58627,
-    startedAt: 1000,
-    heartbeatAt: 1000,
-  };
-
-  it('passes the resolved token to requestShutdown', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    let seenToken: string | undefined = 'unset';
-    const { deps } = makeKillDeps({
-      getLiveInstances: async () => [liveInstance],
-      resolveToken: () => 'tok-123',
-      requestShutdown: async (_origin, token) => {
-        seenToken = token;
-      },
-      pidAlive: () => false,
-    });
-
-    await handleKillCommand(deps);
-
-    expect(seenToken).toBe('tok-123');
-  });
-
-  it('passes undefined when the token cannot be read (best-effort)', async () => {
-    const { handleKillCommand } = await import('#/cli/sub/web/kill');
-    let seenToken: string | undefined = 'unset';
-    const { deps } = makeKillDeps({
-      getLiveInstances: async () => [liveInstance],
-      resolveToken: () => undefined,
-      requestShutdown: async (_origin, token) => {
-        seenToken = token;
-      },
-      pidAlive: () => false,
-    });
-
-    await handleKillCommand(deps);
-
-    expect(seenToken).toBeUndefined();
-  });
-});
-
-describe('`kimi web ps`', () => {
-  let dir: string;
-  let prevHome: string | undefined;
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'kimi-ps-'));
-    prevHome = process.env['KIMI_CODE_HOME'];
-    process.env['KIMI_CODE_HOME'] = dir;
-    vi.resetModules();
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    if (prevHome === undefined) {
-      delete process.env['KIMI_CODE_HOME'];
-    } else {
-      process.env['KIMI_CODE_HOME'] = prevHome;
-    }
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  function writeInstance(serverId: string, port: number, startedAt: number): void {
-    mkdirSync(join(dir, 'server', 'instances'), { recursive: true });
-    writeFileSync(
-      join(dir, 'server', 'instances', `${serverId}.json`),
-      JSON.stringify({
-        server_id: serverId,
-        pid: process.pid,
-        host: '127.0.0.1',
-        port,
-        started_at: startedAt,
-        heartbeat_at: startedAt,
-      }),
-    );
-  }
-
-  function connection(id: string, userAgent: string): Record<string, unknown> {
-    return {
-      id,
-      connected_at: new Date().toISOString(),
-      remote_address: null,
-      user_agent: userAgent,
-      has_client_hello: true,
-      subscriptions: [],
-    };
-  }
-
-  function stubFetchForTwoServers(): void {
-    vi.stubGlobal('fetch', async (input: unknown) => {
-      const url = String(input);
-      if (url.endsWith('/api/v1/healthz')) {
-        return new Response(JSON.stringify({ code: 0 }), { status: 200 });
-      }
-      if (url === 'http://127.0.0.1:58627/api/v1/connections') {
-        return new Response(
-          JSON.stringify({
-            code: 0,
-            msg: 'ok',
-            data: { connections: [connection('conn-a', 'agent-a')] },
-          }),
-          { status: 200 },
-        );
-      }
-      if (url === 'http://127.0.0.1:58628/api/v1/connections') {
-        return new Response(
-          JSON.stringify({
-            code: 0,
-            msg: 'ok',
-            data: { connections: [connection('conn-b', 'agent-b')] },
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response('not found', { status: 404 });
-    });
-  }
-
-  function captureStdout(): { read(): string; restore(): void } {
-    let stdout = '';
-    const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      stdout += String(chunk);
-      return true;
-    });
-    return {
-      read: () => stdout,
-      restore: () => spy.mockRestore(),
-    };
-  }
-
-  it('lists connections grouped by server id, oldest instance first', async () => {
-    writeFileSync(join(dir, 'server.token'), 'tok');
-    writeInstance('srv-a', 58627, 1000);
-    writeInstance('srv-b', 58628, 2000);
-    stubFetchForTwoServers();
-
-    const { registerWebCommand } = await import('#/cli/sub/web');
-    const program = new Command('kimi').exitOverride();
-    registerWebCommand(program);
-    const out = captureStdout();
-
-    await program.parseAsync(['node', 'kimi', 'web', 'ps']);
-    out.restore();
-
-    const plain = stripAnsi(out.read());
-    expect(plain).toContain('server srv-a (pid ');
-    expect(plain).toContain('server srv-b (pid ');
-    // Oldest instance first, each connection under its own server section.
-    expect(plain.indexOf('server srv-a')).toBeLessThan(plain.indexOf('agent-a'));
-    expect(plain.indexOf('agent-a')).toBeLessThan(plain.indexOf('server srv-b'));
-    expect(plain.indexOf('server srv-b')).toBeLessThan(plain.indexOf('agent-b'));
-  });
-
-  it('prints per-server sections in --json', async () => {
-    writeFileSync(join(dir, 'server.token'), 'tok');
-    writeInstance('srv-a', 58627, 1000);
-    writeInstance('srv-b', 58628, 2000);
-    stubFetchForTwoServers();
-
-    const { registerWebCommand } = await import('#/cli/sub/web');
-    const program = new Command('kimi').exitOverride();
-    registerWebCommand(program);
-    const out = captureStdout();
-
-    await program.parseAsync(['node', 'kimi', 'web', 'ps', '--json']);
-    out.restore();
-
-    const parsed = JSON.parse(out.read()) as {
-      servers: Array<{ server_id: string; connections: Array<{ id: string }> }>;
-    };
-    expect(parsed.servers.map((s) => s.server_id)).toEqual(['srv-a', 'srv-b']);
-    expect(parsed.servers[0]?.connections.map((c) => c.id)).toEqual(['conn-a']);
-    expect(parsed.servers[1]?.connections.map((c) => c.id)).toEqual(['conn-b']);
-  });
-
-  it('errors when no server is running', async () => {
-    const { registerWebCommand } = await import('#/cli/sub/web');
-    const program = new Command('kimi').exitOverride();
-    registerWebCommand(program);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-    let stderr = '';
-    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
-      stderr += String(chunk);
-      return true;
-    });
-
-    await program.parseAsync(['node', 'kimi', 'web', 'ps']);
-    errSpy.mockRestore();
-    exitSpy.mockRestore();
-
-    expect(stderr).toContain('No running Kimi server.');
   });
 });
 

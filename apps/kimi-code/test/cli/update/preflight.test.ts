@@ -485,6 +485,8 @@ describe('runUpdatePreflight', () => {
     const { stdout, options } = captureOutput();
     await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
     expect(stdout.join('')).toContain('brew upgrade kimi-code');
+    expect(stdout.join('')).toContain('Third-party sources may lag behind the official release.');
+    expect(stdout.join('')).toContain('https://www.kimi.com/code');
     expect(promptForInstallChoice).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
   });

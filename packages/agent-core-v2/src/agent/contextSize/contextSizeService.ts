@@ -21,11 +21,11 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { estimateTokensForMessages } from '#/_base/utils/tokens';
+import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { Message } from '#/app/llmProtocol/message';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { Message } from '#/kosong/contract/message';
+import type { TokenUsage } from '#/kosong/contract/usage';
 import { IWireService } from '#/wire/wire';
 
 import { IAgentContextSizeService, type ContextSize } from './contextSize';

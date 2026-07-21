@@ -33,7 +33,7 @@ import { join } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import {
@@ -983,6 +983,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private recordTaskStarted(info: AgentTaskInfo): void {
     this.wire.dispatch(taskStarted({ info }));
     this.telemetry.track2('background_task_created', {
+      task_id: info.taskId,
       kind: info.kind === 'process' ? 'bash' : info.kind,
     });
   }
@@ -990,6 +991,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private recordTaskTerminated(info: AgentTaskInfo): void {
     this.wire.dispatch(taskTerminated({ info }));
     this.telemetry.track2('background_task_completed', {
+      task_id: info.taskId,
       kind: info.kind,
       duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
       status: info.status,

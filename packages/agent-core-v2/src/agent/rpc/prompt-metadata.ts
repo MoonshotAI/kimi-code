@@ -7,7 +7,7 @@
  * prompt adapter so both surfaces keep the same easy-title behavior.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { IEventService } from '#/app/event/event';
 import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 

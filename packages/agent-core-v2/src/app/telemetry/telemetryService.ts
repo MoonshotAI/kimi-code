@@ -1,10 +1,10 @@
 /**
  * `telemetry` domain (L1) — `ITelemetryService` implementation.
  *
- * Merges bound context into each tracked event and fans it out to the
- * registered `ITelemetryAppender` destinations; owns the appender set, the
- * enabled flag, and the bound context, but no enrichment or transport of its
- * own. Bound at App scope; has no cross-domain collaborators.
+ * Owns the appender set, enabled flag, and root context, and creates forwarding
+ * context views that merge scoped properties at emission time. Views retain no
+ * transport state, so appender and enablement changes remain controlled by the
+ * App-scoped root. Has no cross-domain collaborators.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -15,7 +15,7 @@ import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import type {
   StrictPropertyCheck,
   TelemetryEventName,
-  TelemetryEventProperties,
+  TelemetryEventPayload,
 } from './events';
 import {
   ITelemetryService,
@@ -46,19 +46,15 @@ export class TelemetryService implements ITelemetryService {
     }
   }
 
-  track2<K extends TelemetryEventName, E extends TelemetryEventProperties<K> = never>(
+  track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
     event: K,
-    properties?: StrictPropertyCheck<TelemetryEventProperties<K>, E>,
+    properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
   ): void {
     this.track(event, properties as TelemetryProperties);
   }
 
   withContext(patch: TelemetryContextPatch): ITelemetryService {
-    const child = new TelemetryService();
-    child.appenders = this.appenders.map((appender) => appender.withContext?.(patch) ?? appender);
-    child.context = { ...this.context, ...patch };
-    child.enabled = this.enabled;
-    return child;
+    return new TelemetryContextView(this, patch);
   }
 
   setContext(patch: TelemetryContextPatch): void {
@@ -99,6 +95,61 @@ export class TelemetryService implements ITelemetryService {
         Promise.resolve(appender.shutdown?.()).catch(onUnexpectedError),
       ),
     );
+  }
+}
+
+class TelemetryContextView implements ITelemetryService {
+  declare readonly _serviceBrand: undefined;
+  private context: TelemetryProperties;
+
+  constructor(
+    private readonly root: ITelemetryService,
+    context: TelemetryProperties,
+  ) {
+    this.context = context;
+  }
+
+  track(event: string, properties?: TelemetryProperties): void {
+    this.root.track(event, { ...this.context, ...properties });
+  }
+
+  track2<K extends TelemetryEventName, E extends TelemetryEventPayload<K> = never>(
+    event: K,
+    properties?: StrictPropertyCheck<TelemetryEventPayload<K>, E>,
+  ): void {
+    this.track(event, properties as TelemetryProperties);
+  }
+
+  withContext(patch: TelemetryContextPatch): ITelemetryService {
+    return new TelemetryContextView(this.root, { ...this.context, ...patch });
+  }
+
+  setContext(patch: TelemetryContextPatch): void {
+    this.context = { ...this.context, ...patch };
+  }
+
+  addAppender(appender: ITelemetryAppender): IDisposable {
+    return this.root.addAppender(appender);
+  }
+
+  removeAppender(appender: ITelemetryAppender): void {
+    this.root.removeAppender(appender);
+  }
+
+  setAppender(appender: ITelemetryAppender): void {
+    this.root.setAppender(appender);
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.root.setEnabled(enabled);
+  }
+
+  flush(): Promise<void> {
+    return this.root.flush();
+  }
+
+  shutdown(): Promise<void> {
+    return this.root.shutdown();
   }
 }
 

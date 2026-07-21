@@ -22,7 +22,7 @@
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 
 export interface TurnModelState {

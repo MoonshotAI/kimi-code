@@ -1,8 +1,8 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
-import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { FinishReason } from '#/kosong/contract/provider';
+import type { TokenUsage } from '#/kosong/contract/usage';
 import type { Hooks } from '#/hooks';
 import { LoopErrors } from './errors';
 import type { StepRequest } from './stepRequest';

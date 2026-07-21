@@ -1,24 +1,29 @@
 import { createHash } from 'node:crypto';
 
-import { gte, valid } from 'semver';
+import { eq, gte, lt, valid } from 'semver';
 
 import { KIMI_CODE_TIPS_BANNER_URL } from '#/constant/app';
 import type { BannerDisplay, BannerState } from '#/tui/types';
 
 import type { BannerDisplayState } from './state';
 
-interface TipsBannerFallbackItem {
+interface BannerVersionFields {
+  banner_min_version?: string | null;
+  banner_max_version?: string | null;
+  banner_version?: string | null;
+}
+
+interface TipsBannerFallbackItem extends BannerVersionFields {
   banner_id?: string | null;
   enabled?: boolean;
   banner_title?: string | null;
   banner_maintext?: string;
   banner_subtext?: string | null;
-  banner_min_version?: string | null;
   banner_display?: unknown;
   banner_display_ttl_hours?: unknown;
 }
 
-interface TipsBannerJson {
+interface TipsBannerJson extends BannerVersionFields {
   banner_id?: string | null;
   banner_enabled?: boolean;
   banner_title?: string | null;
@@ -26,7 +31,6 @@ interface TipsBannerJson {
   banner_subtext?: string | null;
   banner_start_time?: string | null;
   banner_end_time?: string | null;
-  banner_min_version?: string | null;
   banner_display?: unknown;
   banner_display_ttl_hours?: unknown;
   banner_fallback_enabled?: boolean;
@@ -102,13 +106,27 @@ function isWithinWindow(start: Date | null, end: Date | null, now: Date): boolea
   return true;
 }
 
-function meetsMinVersion(minVersion: unknown, clientVersion: string): boolean {
-  if (minVersion === undefined || minVersion === null) return true;
-  if (typeof minVersion !== 'string' || minVersion.length === 0) return true;
-  const min = valid(minVersion);
+type VersionConstraintCompare = (current: string, target: string) => boolean;
+
+function meetsVersionConstraint(
+  constraint: unknown,
+  clientVersion: string,
+  compare: VersionConstraintCompare,
+): boolean {
+  if (constraint === undefined || constraint === null) return true;
+  if (typeof constraint !== 'string' || constraint.length === 0) return true;
+  const target = valid(constraint);
   const current = valid(clientVersion);
-  if (min === null || current === null) return false;
-  return gte(current, min);
+  if (target === null || current === null) return false;
+  return compare(current, target);
+}
+
+function meetsVersion(banner: BannerVersionFields, clientVersion: string): boolean {
+  return (
+    meetsVersionConstraint(banner.banner_min_version, clientVersion, gte) &&
+    meetsVersionConstraint(banner.banner_max_version, clientVersion, lt) &&
+    meetsVersionConstraint(banner.banner_version, clientVersion, eq)
+  );
 }
 
 function parseBannerDisplay(value: unknown): BannerDisplay {
@@ -179,7 +197,7 @@ function pickActiveBanner(
   now: Date,
 ): BannerState | null {
   if (json.banner_enabled !== true) return null;
-  if (!meetsMinVersion(json.banner_min_version, clientVersion)) return null;
+  if (!meetsVersion(json, clientVersion)) return null;
   const start = parseDate(json.banner_start_time);
   const end = parseDate(json.banner_end_time);
   if (!isWithinWindow(start, end, now)) return null;
@@ -209,7 +227,7 @@ function pickFallbackCandidates(
     if (typeof raw !== 'object' || raw === null) continue;
     const item = raw as TipsBannerFallbackItem;
     if (item.enabled !== true) continue;
-    if (!meetsMinVersion(item.banner_min_version, clientVersion)) continue;
+    if (!meetsVersion(item, clientVersion)) continue;
     const mainText = normalizeText(item.banner_maintext);
     if (mainText === null) continue;
     const display = parseBannerDisplay(item.banner_display);

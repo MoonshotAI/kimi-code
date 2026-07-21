@@ -15,14 +15,14 @@ import {
   providersFromToml,
   providersToToml,
   stripProvidersEnv,
-} from '#/app/provider/configSection';
+} from '#/kosong/provider/configSection';
 import {
   ENV_MODEL_PROVIDER_KEY,
   IProviderService,
   type ProviderConfig,
   PROVIDERS_SECTION,
-} from '#/app/provider/provider';
-import { ProviderService } from '#/app/provider/providerService';
+} from '#/kosong/provider/provider';
+import { ProviderService } from '#/kosong/provider/providerService';
 
 describe('ProviderService', () => {
   let disposables: DisposableStore;

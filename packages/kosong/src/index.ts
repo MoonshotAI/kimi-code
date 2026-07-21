@@ -67,6 +67,8 @@ export {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  createAbortError,
+  isAbortError,
   isContextOverflowStatusError,
   isImageFormatError,
   isProviderRateLimitError,
@@ -74,6 +76,7 @@ export {
   isRequestTooLargeStatusError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
+  throwIfAbortError,
 } from './errors';
 
 /**

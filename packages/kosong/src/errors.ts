@@ -140,6 +140,49 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+/**
+ * The single standard abort shape for the wire layer: a DOMException named
+ * `'AbortError'`, matching the platform's own `AbortSignal.reason`
+ * convention. Every user-cancellation path — the `generate()` driver,
+ * provider error converters, stream wrappers — throws exactly this shape so
+ * upstream code can recognize cancellation without SDK knowledge.
+ */
+export function createAbortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError');
+}
+
+/**
+ * Whether `error` is any abort shape that can surface from a provider call:
+ *
+ *  - the standard abort DOMException (`createAbortError`, `signal.reason`),
+ *  - a bare `Error` named `'AbortError'` (generic abort helpers), or
+ *  - an SDK user-abort (`APIUserAbortError` in both the OpenAI and Anthropic
+ *    SDKs) — recognized structurally by constructor name so this module
+ *    stays SDK-free.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true;
+  if (error instanceof Error && error.name === 'AbortError') return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    error.constructor?.name === 'APIUserAbortError'
+  );
+}
+
+/**
+ * The abort guard for provider error converters. Must run at the very front
+ * of every error classification chain: when `error` is abort-shaped this
+ * THROWS the standard abort DOMException — it never returns a converted
+ * error — so a user cancellation can never be misclassified as a retryable
+ * provider failure. Does nothing for non-abort errors.
+ */
+export function throwIfAbortError(error: unknown): void {
+  if (isAbortError(error)) {
+    throw createAbortError();
+  }
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
@@ -490,6 +533,12 @@ const STRUCTURAL_REQUEST_MESSAGE_PATTERNS = [
   // when a provider reused a call id (e.g. per-response counter ids) earlier
   // in the session; the strict resend dedupes the ids.
   /tool_use[\s\S]*ids must be unique/,
+  // Moonshot / Kimi rejects a message whose serialized form carries nothing —
+  // no content, no tool_calls, an empty reasoning_content: "the message at
+  // position N with role 'assistant' must not be empty". Seen when a filtered
+  // response left an assistant message holding only an empty thinking part in
+  // the history; the strict resend's projection drops such vacuous messages.
+  /message at position \d+ with role ['"`]?[a-z]+['"`]? must not be empty/,
 ] as const;
 
 export function isRecoverableRequestStructureError(error: unknown): boolean {

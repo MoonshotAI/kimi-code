@@ -2,7 +2,11 @@ import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ExecutableTool, ToolInfo, ToolSource } from '#/tool/toolContract';
-import { IAgentToolRegistryService, type ToolRegistrationOptions } from './toolRegistry';
+import {
+  IAgentToolRegistryService,
+  type ToolReference,
+  type ToolRegistrationOptions,
+} from './toolRegistry';
 
 interface ToolEntry {
   readonly tool: ExecutableTool;
@@ -34,6 +38,12 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
         parameters: tool.parameters,
         source,
       }))
+      .toSorted((a, b) => a.name.localeCompare(b.name));
+  }
+
+  listReferences(): readonly ToolReference[] {
+    return [...this.tools.entries()]
+      .map(([name, { source }]) => ({ name, source }))
       .toSorted((a, b) => a.name.localeCompare(b.name));
   }
 

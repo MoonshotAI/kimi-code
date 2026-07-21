@@ -1,9 +1,10 @@
 /**
  * `telemetry` domain (L1) — `IAgentTelemetryContextService` implementation.
  *
- * Holds the agent's ambient telemetry context (defaults to `mode: 'agent'`);
- * merged into turn telemetry through `ITelemetryService.withContext` at turn
- * launch. Owns no cross-domain collaborators. Bound at Agent scope.
+ * Holds mutable request context (defaulting to `mode: 'agent'`) that turn
+ * telemetry snapshots through `ITelemetryService.withContext` at launch.
+ * Immutable Agent identity is owned by the scoped telemetry view. Bound at
+ * Agent scope; has no cross-domain collaborators.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -15,7 +16,11 @@ import {
 
 export class AgentTelemetryContextService implements IAgentTelemetryContextService {
   declare readonly _serviceBrand: undefined;
-  private context: AgentTelemetryContext = { mode: 'agent' };
+  private context: AgentTelemetryContext;
+
+  constructor() {
+    this.context = { mode: 'agent' };
+  }
 
   get(): AgentTelemetryContext {
     return this.context;

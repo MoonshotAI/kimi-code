@@ -1,7 +1,7 @@
-import { type Message } from '#/app/llmProtocol/message';
+import { type Message } from '#/kosong/contract/message';
 import { describe, expect, it } from 'vitest';
 
-import { estimateTokensForMessages } from '#/_base/utils/tokens';
+import { estimateTokensForMessages } from '#/kosong/contract/tokens';
 import { DefaultCompactionStrategy } from '#/agent/fullCompaction/strategy';
 
 describe('DefaultCompactionStrategy', () => {

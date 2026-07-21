@@ -39,6 +39,7 @@ import { z } from 'zod';
 
 import type { ExecutableTool as BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import CRON_DELETE_DESCRIPTION from './cron-delete.md?raw';
 
@@ -61,7 +62,10 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
     CronDeleteInputSchema,
   );
 
-  constructor(@ISessionCronService private readonly cron: ISessionCronService) {}
+  constructor(
+    @ISessionCronService private readonly cron: ISessionCronService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+  ) {}
 
   resolveExecution(args: CronDeleteInput): ToolExecution {
     if (!ID_PATTERN.test(args.id)) {
@@ -85,7 +89,7 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
           };
         }
 
-        this.cron.emitDeleted(args.id);
+        this.cron.emitDeleted(args.id, this.scopeContext.agentId);
 
         return {
           output: `Deleted cron job ${args.id}.`,

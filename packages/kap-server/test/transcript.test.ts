@@ -20,7 +20,7 @@ import {
   ISessionInteractionService,
   ISessionLifecycleService,
   ISessionQuestionService,
-  IModelResolver,
+  IModelCatalog,
   type ContextMessage,
   type DomainEvent,
   type ScopeSeed,
@@ -85,14 +85,33 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-transcript-'));
-    const modelResolver: IModelResolver = {
+    // Seed a stub IModelCatalog so the agent scope can instantiate if a
+    // transitive service needs it; the transcript route itself does not.
+    const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('modelResolver.resolve not exercised in this test');
+      get: () => {
+        throw new Error('modelCatalog.get not exercised in this test');
+      },
+      getRequester: () => {
+        throw new Error('modelCatalog.getRequester not exercised in this test');
+      },
+      inspect: () => {
+        throw new Error('modelCatalog.inspect not exercised in this test');
+      },
+      ping: () => {
+        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
+      listModels: async () => [],
+      listProviders: async () => [],
+      getProvider: async () => {
+        throw new Error('modelCatalog.getProvider not exercised in this test');
+      },
+      setDefaultModel: async () => {
+        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
+      },
     };
-    seeds = [[IModelResolver, modelResolver]];
+    seeds = [[IModelCatalog, modelCatalog]];
     await boot();
   });
 

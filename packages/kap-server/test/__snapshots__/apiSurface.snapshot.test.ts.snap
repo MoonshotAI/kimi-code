@@ -70,6 +70,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/fs:content",
+    ],
+    [
+      "GET",
       "/api/v1/fs:home",
     ],
     [

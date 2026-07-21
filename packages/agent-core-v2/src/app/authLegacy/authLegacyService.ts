@@ -17,11 +17,11 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
-import { IProviderService } from '#/app/provider/provider';
+import { DEFAULT_MODEL_SECTION } from '#/kosong/model/model';
+import { IProviderService } from '#/kosong/provider/provider';
 
 import { IAuthLegacyService } from './authLegacy';
 
-const DEFAULT_MODEL_SECTION = 'defaultModel';
 const MANAGED_PROVIDER_NAME = KIMI_CODE_PROVIDER_NAME;
 
 export class AuthLegacyService implements IAuthLegacyService {

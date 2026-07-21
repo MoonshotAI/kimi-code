@@ -8,13 +8,13 @@
  * `registerMediaTools` and re-runs it whenever the resolved model or its
  * media capabilities change.
  *
- * `createVideoUploader` is a thin binder over a runnable `Model`'s optional
- * `uploadVideo`. Auth is already resolved via the Model's `authProvider`
+ * `createVideoUploader` is a thin binder over a `ModelRequester`'s optional
+ * `uploadVideo`. Auth is already resolved via the requester's auth-provider
  * closure; media tooling doesn't need to know about tokens.
  */
 
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { Model } from '#/app/model/modelInstance';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
@@ -54,12 +54,12 @@ export function registerMediaTools(
 }
 
 export function createVideoUploader(
-  model: Pick<Model, 'uploadVideo'> | undefined,
+  requester: Pick<ModelRequester, 'uploadVideo'> | undefined,
   telemetry?: VideoUploadTelemetry,
 ): VideoUploader | undefined {
-  const uploadVideo = model?.uploadVideo;
+  const uploadVideo = requester?.uploadVideo;
   if (uploadVideo === undefined) return undefined;
-  const bound = uploadVideo.bind(model);
+  const bound = uploadVideo.bind(requester);
   if (telemetry === undefined) return (input) => bound(input);
 
   return async (input) => {

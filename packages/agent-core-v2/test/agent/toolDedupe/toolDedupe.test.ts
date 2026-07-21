@@ -4,8 +4,8 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
-import { type ToolCall } from '#/app/llmProtocol/message';
-import { emptyUsage } from '#/app/llmProtocol/usage';
+import { type ToolCall } from '#/kosong/contract/message';
+import { emptyUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -729,6 +729,7 @@ describe('AgentToolDedupeService', () => {
       const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2, 3]);
       expect(repeats.every((e) => e.properties?.['tool_name'] === 'Read')).toBe(true);
+      expect(repeats.every((e) => e.properties?.['turn_id'] === 1)).toBe(true);
     });
 
     it('does not emit telemetry on the first call', async () => {

@@ -165,6 +165,7 @@ describe('AgentShellCommandService', () => {
       _serviceBrand: undefined,
       register: () => ({ dispose: () => {} }),
       list: () => [],
+      listReferences: () => [],
       resolve: () => undefined,
     };
     ctx = createTestAgent(agentService(IAgentToolRegistryService, emptyRegistry));

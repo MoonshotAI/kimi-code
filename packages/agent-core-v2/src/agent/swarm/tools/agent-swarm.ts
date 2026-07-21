@@ -21,6 +21,12 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import {
+  subagentAllowlistFor,
+  subagentTypeNotAllowedMessage,
+} from '#/app/agentProfileCatalog/profile-shared';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { resolveSubagentTimeoutMs } from '#/session/subagent/configSection';
@@ -109,6 +115,8 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
+    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {
     this.callerAgentId = scopeContext.agentId;
   }
@@ -152,6 +160,13 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
+    if ((args.items?.length ?? 0) > 0) {
+      await this.catalog.ready;
+      const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
+      if (allowlist !== undefined && !allowlist.includes(profileName)) {
+        throw new Error(subagentTypeNotAllowedMessage(profileName, allowlist));
+      }
+    }
     const timeoutMs = resolveSubagentTimeoutMs(this.config);
     const specs = await createAgentSwarmSpecs(args, (agentId) =>
       this.swarmService.getSwarmItem({ callerAgentId: this.callerAgentId, agentId }),

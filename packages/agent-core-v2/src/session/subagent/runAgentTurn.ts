@@ -16,8 +16,8 @@
  * flow.
  */
 
-import { APIProviderRateLimitError, isProviderRateLimitError } from '#/app/llmProtocol/errors';
-import { type TokenUsage } from '#/app/llmProtocol/usage';
+import { APIProviderRateLimitError, isProviderRateLimitError } from '#/kosong/contract/errors';
+import { type TokenUsage } from '#/kosong/contract/usage';
 
 import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';

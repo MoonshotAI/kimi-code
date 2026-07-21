@@ -20,7 +20,7 @@ import type {
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 
-import type { OAuthRef } from '#/app/provider/provider';
+import type { OAuthRef } from '#/kosong/provider/provider';
 
 import { AuthErrors } from './errors';
 import type {

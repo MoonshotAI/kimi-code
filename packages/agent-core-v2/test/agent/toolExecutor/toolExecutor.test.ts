@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { DomainEvent } from '#/app/event/eventBus';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -18,13 +18,12 @@ import {
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
@@ -52,8 +51,8 @@ beforeEach(() => {
       registerTestAgentWireServices(reg, 'wire/tool-executor');
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
-      reg.defineInstance(IAgentTelemetryContextService, new AgentTelemetryContextService());
       reg.defineInstance(IAgentToolResultTruncationService, {
         _serviceBrand: undefined,
         truncateForModel: (input) => truncateForModel(input),
@@ -110,6 +109,25 @@ describe('AgentToolExecutorService', () => {
         duration_ms: expect.any(Number),
       }),
     });
+  });
+
+  it('rejects by policy before dynamic availability when a tool-call guard denies it', async () => {
+    const tool = new TestTool('blocked');
+    registry.register(tool, { source: 'mcp' });
+    executor.registerUnavailableToolDescriber(() => 'Tool "blocked" is not loaded');
+    executor.registerToolCallGuard(({ name, source }) =>
+      name === 'blocked' && source === 'mcp' ? 'Tool "blocked" is disabled' : undefined,
+    );
+
+    const results = await execute([toolCall('call_blocked', 'blocked', {})]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        isError: true,
+        output: 'Tool "blocked" is disabled',
+      }),
+    ]);
+    expect(tool.calls).toEqual([]);
   });
 
   it('tags tool_call telemetry with recorded dup types, defaulting to normal', async () => {

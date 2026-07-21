@@ -7,7 +7,7 @@
  * lives in the internal `agentRunBatch` module. Bound at Session scope.
  */
 
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 

@@ -439,4 +439,28 @@ describe('TranscriptStore', () => {
     expect(rosters).toEqual([2, 1]);
     expect(store.agents().map((a) => a.agentId)).toEqual(['main']);
   });
+
+  it('markDisposed stamps disposedAt on the existing descriptor only', () => {
+    const store = new TranscriptStore('s1');
+    store.ensureAgent('main', { agentId: 'main', type: 'main' });
+
+    // Never-announced agents must not gain a roster entry.
+    store.markDisposed('ghost', '2026-07-20T00:00:00.000Z');
+    expect(store.agents().map((a) => a.agentId)).toEqual(['main']);
+
+    const rosters: Array<readonly string[]> = [];
+    store.onRosterChange((agents) => rosters.push(agents.map((a) => a.agentId)));
+    store.markDisposed('main', '2026-07-20T01:00:00.000Z');
+    expect(rosters).toEqual([['main']]);
+    expect(store.agents()[0]).toMatchObject({
+      agentId: 'main',
+      type: 'main',
+      disposedAt: '2026-07-20T01:00:00.000Z',
+    });
+
+    // Idempotent: the first stamp wins and no roster re-emit fires.
+    store.markDisposed('main', '2026-07-20T02:00:00.000Z');
+    expect(store.agents()[0]?.disposedAt).toBe('2026-07-20T01:00:00.000Z');
+    expect(rosters).toHaveLength(1);
+  });
 });

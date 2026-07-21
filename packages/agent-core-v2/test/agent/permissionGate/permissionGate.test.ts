@@ -31,7 +31,7 @@ import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -320,6 +320,8 @@ describe('AgentPermissionGate', () => {
     expect(records).toContainEqual({
       event: 'permission_policy_decision',
       properties: expect.objectContaining({
+        turn_id: 1,
+        tool_call_id: 'call-AskUserQuestion',
         policy_name: 'auto-mode-ask-user-question-deny',
         tool_name: 'AskUserQuestion',
         decision: 'deny',
@@ -462,6 +464,8 @@ describe('AgentPermissionGate', () => {
     expect(records).toContainEqual({
       event: 'permission_approval_result',
       properties: expect.objectContaining({
+        turn_id: 1,
+        tool_call_id: 'call-Bash',
         policy_name: 'fallback-ask',
         tool_name: 'Bash',
         permission_mode: 'manual',
@@ -539,6 +543,8 @@ describe('AgentPermissionGate', () => {
     expect(records).toContainEqual({
       event: 'permission_approval_result',
       properties: expect.objectContaining({
+        turn_id: 1,
+        tool_call_id: 'call-ExitPlanMode',
         policy_name: 'exit-plan-mode-review-ask',
         tool_name: 'ExitPlanMode',
         result: 'error',

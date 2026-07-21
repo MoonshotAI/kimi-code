@@ -33,9 +33,9 @@
  * only registered when the active model supports image or video input.
  */
 
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { ContentPart, VideoURLPart } from '#/app/llmProtocol/message';
-import type { VideoUploadInput as ProviderVideoUploadInput } from '#/app/llmProtocol/request';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ContentPart, VideoURLPart } from '#/kosong/contract/message';
+import type { VideoUploadInput as ProviderVideoUploadInput } from '#/kosong/contract/provider';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { z } from 'zod';
 

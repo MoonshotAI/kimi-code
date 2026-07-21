@@ -38,7 +38,7 @@ export function Sidebar({
     queryFn: () =>
       klient
         .core(ISessionIndex)
-        .list({ workspaceId: workspaceId ?? undefined, includeArchived: true, limit: 200 }),
+        .list({ workspaceIds: workspaceId === null ? undefined : [workspaceId], includeArchived: true, limit: 200 }),
     refetchInterval: 15_000,
   });
 

@@ -25,7 +25,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
-import type { generate as kosongGenerate } from '#/app/llmProtocol/generate';
+import type { generate as kosongGenerate } from '#/kosong/contract/generate';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/session/subagent/tools/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
