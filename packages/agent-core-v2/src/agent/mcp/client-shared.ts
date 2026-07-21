@@ -1,5 +1,5 @@
 import { getCoreVersion } from '#/_base/version';
-import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import type { MCPToolDefinition, MCPToolResult } from './types';
 
@@ -18,6 +18,12 @@ export function isMcpConnectionClosedError(error: unknown): boolean {
     error instanceof Error &&
     (error as Error & { readonly code?: unknown }).code === ErrorCode.ConnectionClosed
   );
+}
+
+export function isMcpTransportFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (isMcpConnectionClosedError(error)) return true;
+  return !(error instanceof McpError);
 }
 
 export interface McpRequestOptions {

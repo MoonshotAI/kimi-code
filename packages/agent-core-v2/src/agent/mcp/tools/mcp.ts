@@ -3,11 +3,11 @@
  *
  * Each tool exposed by a connected MCP server is adapted into an
  * `ExecutableTool` whose `resolveExecution` forwards the call to the client
- * and normalizes the result. When the call throws because the transport
- * died (e.g. the stdio process exited), the adapter reconnects the server
- * through `options.reconnect` once and retries the call on the fresh
- * client, so a dropped connection surfaces as a slow call instead of a
- * failed turn.
+ * and normalizes the result. When the call fails at the transport layer
+ * (the stdio process exited, the remote server restarted, the client was
+ * already closed), the adapter reconnects the server through
+ * `options.reconnect` once and retries the call on the fresh client, so a
+ * dropped connection surfaces as a slow call instead of a failed turn.
  */
 
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
@@ -18,12 +18,11 @@ import { isAbortError } from '#/_base/utils/abort';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { MCPClient, MCPToolResult } from '#/agent/mcp/types';
-import { isMcpConnectionClosedError } from '#/agent/mcp/client-shared';
+import { isMcpTransportFailure } from '#/agent/mcp/client-shared';
 
 interface McpToolOptions {
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
-  readonly isConnectionLost?: () => boolean;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
 }
 
@@ -69,10 +68,9 @@ async function retryAfterReconnect(
   const reconnect = options.reconnect;
   if (
     reconnect === undefined ||
-    options.isConnectionLost?.() !== true ||
-    !isMcpConnectionClosedError(error) ||
     context.signal.aborted ||
-    isAbortError(error)
+    isAbortError(error) ||
+    !isMcpTransportFailure(error)
   ) {
     throw error;
   }

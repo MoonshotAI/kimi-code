@@ -77,6 +77,20 @@ class FakeMcpManager {
     await this.reconnectHandler(name);
   }
 
+  private readonly inFlightReconnects = new Map<string, Promise<void>>();
+
+  reconnectAndJoin(name: string): Promise<void> {
+    const existing = this.inFlightReconnects.get(name);
+    if (existing !== undefined) return existing;
+    const work = this.reconnect(name).finally(() => {
+      if (this.inFlightReconnects.get(name) === work) {
+        this.inFlightReconnects.delete(name);
+      }
+    });
+    this.inFlightReconnects.set(name, work);
+    return work;
+  }
+
   async waitForInitialLoad(): Promise<void> {}
 
   initialLoadDurationMs(): number {
@@ -367,12 +381,16 @@ describe('AgentMcpService', () => {
     expect(result.output).toBe('hello world');
   });
 
-  function throwingClient(base: MCPClient = fakeMcpClient(), onCall?: () => void): MCPClient {
+  function throwingClient(
+    base: MCPClient = fakeMcpClient(),
+    onCall?: () => void,
+    makeError: () => Error = () => new McpError(ErrorCode.ConnectionClosed, 'Connection closed'),
+  ): MCPClient {
     return {
       listTools: () => base.listTools(),
       async callTool() {
         onCall?.();
-        throw new McpError(ErrorCode.ConnectionClosed, 'Connection closed');
+        throw makeError();
       },
     };
   }
@@ -607,6 +625,70 @@ describe('AgentMcpService', () => {
     reconnectReleased.resolve();
     await expect(secondCall).resolves.toMatchObject({ output: 'ok' });
     expect(reconnects).toBe(1);
+  });
+
+  it('reconnects and retries when the call fails with a raw transport error the manager did not observe', async () => {
+    const manager = new FakeMcpManager();
+    const deadClient = throwingClient(
+      fakeMcpClient(),
+      undefined,
+      () => new TypeError('fetch failed'),
+    );
+    const freshClient = fakeMcpClient();
+    let reconnects = 0;
+    manager.reconnectHandler = async (name) => {
+      reconnects += 1;
+      manager.setResolved(name, freshClient, await discoverTools(freshClient));
+      manager.connect(name);
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-raw-transport',
+      args: { text: 'hello again' },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe('hello again');
+    expect(reconnects).toBe(1);
+  });
+
+  it('retries on the healed client without reconnecting again when the server already came back', async () => {
+    const manager = new FakeMcpManager();
+    const deadClient = throwingClient(fakeMcpClient(), undefined, () => new Error('Not connected'));
+    const freshClient = fakeMcpClient();
+    let reconnects = 0;
+    manager.reconnectHandler = async () => {
+      reconnects += 1;
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const registry = ix.get(IAgentToolRegistryService);
+    const staleEcho = registry.resolve('mcp__s__echo');
+
+    // Resolve the stale tool first, then heal the server the way a parallel
+    // call's reconnect would: the resolved entry swaps to a fresh client and
+    // the registry re-seeds, leaving `staleEcho` bound to the dead client.
+    manager.setResolved('s', freshClient, await discoverTools(freshClient));
+    manager.connect('s');
+
+    const result = await executeTool(staleEcho!, {
+      turnId: 1,
+      toolCallId: 'tc-healed',
+      args: { text: 'late call' },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe('late call');
+    expect(reconnects).toBe(0);
   });
 
   it('truncates oversized MCP text output through the wrapped tool path', async () => {

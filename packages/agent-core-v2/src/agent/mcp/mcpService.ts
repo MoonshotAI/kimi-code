@@ -70,7 +70,6 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly mcpToolsByServer = new Map<string, string[]>();
-  private readonly reconnectingByServer = new Map<string, Promise<MCPClient | undefined>>();
   private readonly pendingDiscoveries: Array<() => void> = [];
   private discoveryWritesReady = false;
 
@@ -132,25 +131,24 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     signal?.throwIfAborted();
   }
 
-  private reconnectForToolCall(serverName: string, signal?: AbortSignal): Promise<MCPClient | undefined> {
-    const inFlight = this.reconnectingByServer.get(serverName);
-    const work = inFlight ?? this.startToolCallReconnect(serverName);
+  private reconnectForToolCall(
+    serverName: string,
+    staleClient: MCPClient,
+    signal?: AbortSignal,
+  ): Promise<MCPClient | undefined> {
+    const work = this.joinHealedOrReconnect(serverName, staleClient);
     return signal === undefined ? work : abortable(work, signal);
   }
 
-  private startToolCallReconnect(serverName: string): Promise<MCPClient | undefined> {
-    const work = (async () => {
-      await this.reconnect(serverName);
-      return this.resolved(serverName)?.client;
-    })();
-    this.reconnectingByServer.set(serverName, work);
-    const clearInFlight = () => {
-      if (this.reconnectingByServer.get(serverName) === work) {
-        this.reconnectingByServer.delete(serverName);
-      }
-    };
-    void work.then(clearInFlight, clearInFlight);
-    return work;
+  private async joinHealedOrReconnect(
+    serverName: string,
+    staleClient: MCPClient,
+  ): Promise<MCPClient | undefined> {
+    const healed = this.resolved(serverName)?.client;
+    if (healed !== undefined && healed !== staleClient) return healed;
+    await this.sessionMcp.connectionManager().reconnectAndJoin(serverName);
+    const current = this.resolved(serverName)?.client;
+    return current !== undefined && current !== staleClient ? current : undefined;
   }
 
   onStatusChange(listener: Parameters<IAgentMcpService['onStatusChange']>[0]) {
@@ -290,8 +288,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
           createMcpTool(qualified, tool, client, {
             originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
             telemetry: this.telemetry,
-            isConnectionLost: () => this.resolved(serverName)?.client !== client,
-            reconnect: (signal) => this.reconnectForToolCall(serverName, signal),
+            reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
           }),
           { source: 'mcp' },
         ),
