@@ -77,8 +77,8 @@ import type {
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { FinishReason } from '@moonshot-ai/agent-core-v2/app/llmProtocol/finishReason';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/app/llmProtocol/usage';
+import type { FinishReason } from '@moonshot-ai/agent-core-v2/kosong/contract/provider';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/kosong/contract/usage';
 import type {
   SubagentCompletedEvent,
   SubagentFailedEvent,

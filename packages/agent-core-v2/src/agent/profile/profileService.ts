@@ -2,9 +2,11 @@
  * `profile` domain (L3) — `IAgentProfileService` implementation.
  *
  * Owns the active agent's model alias, thinking level, system prompt, and
- * active-tool set; resolves the runnable god-object Model through the App-
- * scope `IModelResolver`, persists the persistent config slice (`cwd` /
- * `modelAlias` / `profileName` / resolved base `thinkingLevel` /
+ * active-tool set; reads the bound model's pure data through the App-scope
+ * `IModelCatalog` and produces the dialect-free per-turn intent
+ * (`resolveRequestParams`: cache key / sampling / thinking effort+keep —
+ * wire encoding is each dialect's own hook), persists the persistent config
+ * slice (`cwd` / `modelAlias` / `profileName` / resolved base `thinkingLevel` /
  * `systemPrompt`) in the `wire` `ProfileModel` through the `config.update` Op
  * and the persisted active-tool set in the `wire` `ActiveToolsModel` through the
  * `tools.set_active_tools` Op (`wire.dispatch`), and reads both through
@@ -25,23 +27,29 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/app/llmProtocol/capability';
-import { type GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
-import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { type Model } from '#/app/model/modelInstance';
-import { type KimiModelOverrides } from '#/app/model/modelOverrides';
-import { IModelResolver } from '#/app/model/modelResolver';
+import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/kosong/contract/capability';
+import { type SamplingOptions, type ThinkingEffort } from '#/kosong/contract/provider';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { type ModelOverrides } from '#/kosong/model/model.types';
+import { type ModelRequestParams } from '#/kosong/model/modelRequester';
+import { IProtocolAdapterRegistry } from '#/kosong/protocol/protocol';
 import {
+  drivesThinkingThroughTraits,
+  modelSupportsThinkingEffort,
   normalizeRequestedThinkingEffort,
-  resolveKimiThinkingEffortOverride,
-} from '#/app/model/thinking';
+  resolveForcedThinkingEffort,
+  resolveThinkingEffortForModel,
+  resolveThinkingKeep,
+  THINKING_SECTION,
+  requiresStrictThinkingValidation,
+  type ThinkingConfig,
+} from '#/kosong/model/thinking';
+import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import picomatch from 'picomatch';
 
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { resolveThinkingEffort, resolveThinkingKeep, supportsThinkingEffort } from './thinking';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -67,10 +75,6 @@ import type {
   ProfileUpdateData,
 } from './profile';
 import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
-import {
-  THINKING_SECTION,
-  type ThinkingConfig,
-} from './configSection';
 import {
   ActiveToolsModel,
   configUpdate,
@@ -115,7 +119,8 @@ export class AgentProfileService implements IAgentProfileService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IConfigService private readonly config: IConfigService,
-    @IModelResolver private readonly modelFactory: IModelResolver,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IProtocolAdapterRegistry private readonly protocolAdapters: IProtocolAdapterRegistry,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -157,18 +162,14 @@ export class AgentProfileService implements IAgentProfileService {
     if (profile === undefined) {
       throw new Error(`Unknown agent profile: "${input.profile}"`);
     }
-    const model = this.modelFactory.resolve(input.model);
+    const model = this.modelCatalog.get(input.model);
 
     const context = await this.buildSystemPromptContext(input.cwd);
     const systemPrompt = profile.systemPrompt(context);
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
-    const thinkingLevel = resolveThinkingEffort(
-      input.thinking,
-      this.config.get<ThinkingConfig>(THINKING_SECTION),
-      model,
-    );
+    const thinkingLevel = this.resolveThinkingEffort(input.thinking, model);
 
     this.update({
       cwd: input.cwd,
@@ -183,7 +184,7 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   async setModel(alias: string): Promise<ProfileSetModelResult> {
-    const model = this.modelFactory.resolve(alias);
+    const model = this.modelCatalog.get(alias);
     if (this.profileName === undefined) {
       await this.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: alias });
       this.telemetry.track2('model_switch', { model: alias });
@@ -201,7 +202,7 @@ export class AgentProfileService implements IAgentProfileService {
     const previousEffort = this.thinkingLevel;
     const model = this.tryResolveRawModel();
     const normalized = normalizeRequestedThinkingEffort(level);
-    if (normalized !== undefined && !supportsThinkingEffort(normalized, model)) {
+    if (normalized !== undefined && !this.supportsThinkingEffort(normalized, model)) {
       const efforts = model?.supportEfforts ?? [];
       const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
       throw new ProfileError(
@@ -277,7 +278,7 @@ export class AgentProfileService implements IAgentProfileService {
 
   resolveModelContext(): ProfileModelContext {
     const modelAlias = this.model;
-    const model = this.modelFactory.resolve(modelAlias);
+    const model = this.modelCatalog.get(modelAlias);
     const loopControl = this.config.get<LoopControl>('loopControl');
     return {
       modelAlias,
@@ -290,59 +291,26 @@ export class AgentProfileService implements IAgentProfileService {
     };
   }
 
-  getProvider(): Model {
-    const model = this.resolveModel();
-    if (model === undefined) {
-      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
-    }
-    return model;
-  }
-
-  get provider(): Model {
-    return this.getProvider();
-  }
-
-  resolveModel(): Model | undefined {
-    if (this.modelAlias === undefined) return undefined;
-    let model: Model = this.modelFactory.resolve(this.modelAlias);
+  resolveRequestParams(): ModelRequestParams {
+    const model = this.tryResolveRawModel();
     const thinking = this.resolveThinkingState(model);
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
-    const kwargs: GenerationKwargs = {};
-    if (model.protocol === 'kimi') {
-      kwargs.prompt_cache_key = this.sessionContext.sessionId;
-    } else if (model.protocol === 'anthropic') {
-      model = model.withProviderOptions({
-        metadata: { user_id: this.sessionContext.sessionId },
-      });
-    }
-    const overrides = this.config.get<KimiModelOverrides>('modelOverrides');
-    if (overrides !== undefined) {
-      if (overrides.temperature !== undefined) kwargs.temperature = overrides.temperature;
-      if (overrides.topP !== undefined) kwargs.top_p = overrides.topP;
-    }
-    const keep = resolveThinkingKeep(
-      overrides?.thinkingKeep,
-      thinkingConfig?.keep,
-      thinking.effective,
-    );
-    if (keep !== undefined) {
-      if (model.protocol === 'kimi' && thinking.forced === undefined) {
-        kwargs.extra_body = { thinking: { keep } };
-      } else if (model.protocol === 'anthropic') {
-        model = model.withThinkingKeep(keep);
-      }
-    }
-    if (Object.keys(kwargs).length > 0) model = model.withGenerationKwargs(kwargs);
-    model = model.withThinking(thinking.effective);
-    if (model.protocol === 'kimi' && thinking.forced !== undefined) {
-      const requestThinking: { type: 'enabled'; effort: string; keep?: string } = {
-        type: 'enabled',
-        effort: thinking.forced,
-      };
-      if (keep !== undefined) requestThinking.keep = keep;
-      model = model.withGenerationKwargs({ extra_body: { thinking: requestThinking } });
-    }
-    return model;
+    const overrides = this.config.get<ModelOverrides>('modelOverrides');
+    const sampling: SamplingOptions = {
+      temperature: overrides?.temperature,
+      topP: overrides?.topP,
+    };
+    return {
+      cacheKey: this.sessionContext.sessionId,
+      sampling:
+        sampling.temperature === undefined && sampling.topP === undefined ? undefined : sampling,
+      thinkingEffort: thinking.effective,
+      thinkingKeep: resolveThinkingKeep(
+        overrides?.thinkingKeep,
+        thinkingConfig?.keep,
+        thinking.effective,
+      ),
+    };
   }
 
   getModelCapabilities(): ModelCapability {
@@ -407,11 +375,7 @@ export class AgentProfileService implements IAgentProfileService {
       const model = this.resolveModelForThinking(changed.modelAlias ?? this.modelAlias);
       const requested =
         changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
-      payload.thinkingEffort = resolveThinkingEffort(
-        requested,
-        this.config.get<ThinkingConfig>(THINKING_SECTION),
-        model,
-      );
+      payload.thinkingEffort = this.resolveThinkingEffort(requested, model);
     }
     if (changed.systemPrompt !== undefined) payload.systemPrompt = changed.systemPrompt;
     return payload;
@@ -422,8 +386,11 @@ export class AgentProfileService implements IAgentProfileService {
       void this.optionsValue.chdir?.(changed.cwd);
     }
     if (changed.modelAlias !== undefined) {
-      const protocol = this.tryResolveRawModel()?.protocol;
-      this.telemetryContext.set({ provider_type: protocol, protocol });
+      const model = this.tryResolveRawModel();
+      this.telemetryContext.set({
+        provider_type: model?.providerType ?? model?.protocol,
+        protocol: model?.protocol,
+      });
     }
     if (changed.modelAlias !== undefined || changed.thinkingLevel !== undefined) {
       this.warnAboutAnthropicThinkingEffort();
@@ -516,11 +483,7 @@ export class AgentProfileService implements IAgentProfileService {
   private get thinkingLevel(): ThinkingEffort {
     const stored = this.profileState.thinkingLevel;
     if (stored === 'off' && this.alwaysThinkingModel) {
-      return resolveThinkingEffort(
-        stored,
-        this.config.get<ThinkingConfig>(THINKING_SECTION),
-        this.tryResolveRawModel(),
-      );
+      return this.resolveThinkingEffort(stored, this.tryResolveRawModel());
     }
     return stored;
   }
@@ -530,12 +493,46 @@ export class AgentProfileService implements IAgentProfileService {
     readonly forced: ThinkingEffort | undefined;
   } {
     const base = this.thinkingLevel;
-    const forced = resolveKimiThinkingEffortOverride(
+    const forced = resolveForcedThinkingEffort(
       this.config.get<ThinkingConfig>(THINKING_SECTION)?.forcedEffort,
       base,
-      model?.providerType === 'kimi',
+      drivesThinkingThroughTraits(model?.providerType),
     );
     return { effective: forced ?? base, forced };
+  }
+
+  /**
+   * The registry-driven strict-validation verdict for one model (v1
+   * `provider.type === 'kimi'` parity): strict effort validation and
+   * trait-driven normalization apply only when the (protocol, providerType)
+   * pair's thinking driver marks `strictThinkingValidation`. Over a foreign
+   * transport (the `(kimi, anthropic)` registration, e.g. managed models on
+   * protocol `anthropic`) the profile stays lenient and warns instead of
+   * rejecting unlisted efforts.
+   */
+  private strictThinkingValidation(model: Model | undefined): boolean {
+    if (model === undefined) return false;
+    return requiresStrictThinkingValidation(
+      this.protocolAdapters,
+      model.protocol,
+      model.providerType,
+    );
+  }
+
+  private resolveThinkingEffort(
+    requested: string | undefined,
+    model: Model | undefined,
+  ): ThinkingEffort {
+    return resolveThinkingEffortForModel(
+      requested,
+      this.config.get<ThinkingConfig>(THINKING_SECTION),
+      model,
+      this.strictThinkingValidation(model),
+    );
+  }
+
+  private supportsThinkingEffort(effort: ThinkingEffort, model: Model | undefined): boolean {
+    return modelSupportsThinkingEffort(effort, model, this.strictThinkingValidation(model));
   }
 
   private get alwaysThinkingModel(): boolean {
@@ -550,7 +547,7 @@ export class AgentProfileService implements IAgentProfileService {
   private resolveModelForThinking(alias: string | undefined): Model | undefined {
     if (alias === undefined) return undefined;
     try {
-      return this.modelFactory.resolve(alias);
+      return this.modelCatalog.get(alias);
     } catch {
       return undefined;
     }

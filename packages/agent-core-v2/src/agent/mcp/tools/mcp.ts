@@ -6,7 +6,7 @@
  * and normalizes the result.
  */
 
-import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
+import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import type { ExecutableTool, ExecutableToolResult } from '#/tool/toolContract';

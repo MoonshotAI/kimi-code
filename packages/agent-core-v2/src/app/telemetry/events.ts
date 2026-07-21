@@ -237,6 +237,7 @@ export interface ContextProjectionRepairedEvent {
   leading_dropped: number;
   assistants_merged: number;
   whitespace_dropped: number;
+  vacuous_dropped: number;
 }
 
 export interface BackgroundTaskCreatedEvent {
@@ -666,6 +667,7 @@ export const telemetryEventDefinitions = {
       leading_dropped: 'Leading non-user messages dropped',
       assistants_merged: 'Consecutive assistant messages merged',
       whitespace_dropped: 'Whitespace-only text blocks dropped',
+      vacuous_dropped: 'Messages dropped because every recorded part serialized to nothing',
     },
   }),
   background_task_created: defineAgentTelemetryEvent<BackgroundTaskCreatedEvent>({

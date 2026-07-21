@@ -1,7 +1,7 @@
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import type { Model } from '#/app/model/modelInstance';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ThinkingEffort } from '#/kosong/contract/provider';
+import type { ModelRequestParams } from '#/kosong/model/modelRequester';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';
@@ -105,9 +105,12 @@ export interface IAgentProfileService {
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
-  getProvider(): Model;
-  resolveModel(): Model | undefined;
-  readonly provider: Model;
+  /**
+   * The dialect-free per-turn intent for the bound model: prompt-cache key,
+   * sampling overrides, thinking effort/keep. Wire encoding is each dialect's
+   * own business — the profile never branches on protocol or vendor.
+   */
+  resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
   getMaxOutputSize(): number | undefined;
   hasModel(): boolean;

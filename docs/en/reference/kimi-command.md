@@ -167,20 +167,16 @@ Multiple instances can share one home directory: each registers itself under `~/
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 
 ::: info
-The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The notice will be removed in the next major version of Kimi Code.
+The `kimi server` command tree is deprecated: any `kimi server …` invocation (including all legacy subcommands) only prints a deprecation notice and exits with code 1 — use `kimi web` instead. The one exception is `kimi server kill`, which stays functional for stopping servers started by a version before 0.28.0. The notice will be removed in the next major version of Kimi Code.
 :::
 
 ::: danger
-`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and run `kimi web kill` to stop the server when you are done.
+`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and stop the server with `Ctrl+C` when you are done.
 :::
 
-#### `kimi web kill [server-id|all]`
+#### `kimi server kill`
 
-Stop a running server instance: first tries `POST /api/v1/shutdown` for a graceful exit, then signals the instance pid with SIGTERM, escalating to SIGKILL when needed. With multiple instances sharing the home directory, `[server-id]` picks the target; without it the longest-running instance is stopped; the special keyword `all` stops every live instance; an unknown id errors with the live instance ids listed.
-
-#### `kimi web ps`
-
-List the clients currently connected to each instance (from `GET /api/v1/connections`), grouped by server id; `--json` prints the raw data nested per instance.
+Deprecated — only stops a server started by a version before 0.28.0. Those versions could leave a background server behind, recorded in the legacy single-instance lock at `~/.kimi-code/server/lock`; the command first tries `POST /api/v1/shutdown` for a graceful exit, then signals the recorded pid with SIGTERM, escalating to SIGKILL when needed, and removes the lock file once the process is confirmed dead. Servers started by `kimi web` run in the foreground — stop them with `Ctrl+C` instead.
 
 #### `kimi web rotate-token`
 

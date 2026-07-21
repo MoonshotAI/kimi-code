@@ -3,7 +3,7 @@
  *
  * Keeps a long-lived daemon's catalog fresh by refreshing once on start and
  * then on a configurable interval, delegating the work to
- * `IModelCatalogService.refreshProviderModels({ scope: 'all' })` (which
+ * `IProviderDiscoveryService.refreshProviderModels({ scope: 'all' })` (which
  * refreshes every refreshable provider — managed OAuth + open platforms +
  * custom registries — and publishes `event.model_catalog.changed` on change).
  *
@@ -18,7 +18,7 @@
 
 import {
   type IConfigService,
-  type IModelCatalogService,
+  type IProviderDiscoveryService,
   type ModelCatalogConfig,
   MODEL_CATALOG_SECTION,
 } from '@moonshot-ai/agent-core-v2';
@@ -35,7 +35,7 @@ export class ModelCatalogRefreshScheduler {
   private disposed = false;
 
   constructor(
-    private readonly modelCatalog: IModelCatalogService,
+    private readonly discovery: IProviderDiscoveryService,
     private readonly config: IConfigService,
     private readonly logger: Pick<ServerLogger, 'info' | 'warn'>,
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -72,7 +72,7 @@ export class ModelCatalogRefreshScheduler {
 
   private async refresh(trigger: 'startup' | 'interval'): Promise<void> {
     try {
-      const result = await this.modelCatalog.refreshProviderModels({ scope: 'all' });
+      const result = await this.discovery.refreshProviderModels({ scope: 'all' });
       if (result.failed.length > 0) {
         this.logger.warn(
           { trigger, failed: result.failed },

@@ -19,7 +19,7 @@ import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { ReloadSummary } from '#/app/plugin/types';
-import { IProviderService } from '#/app/provider/provider';
+import { IProviderService } from '#/kosong/provider/provider';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import {

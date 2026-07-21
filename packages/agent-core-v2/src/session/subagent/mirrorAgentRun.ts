@@ -24,8 +24,8 @@
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
-import { isProviderRateLimitError } from '#/app/llmProtocol/errors';
-import { type TokenUsage } from '#/app/llmProtocol/usage';
+import { isProviderRateLimitError } from '#/kosong/contract/errors';
+import { type TokenUsage } from '#/kosong/contract/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventBus } from '#/app/event/eventBus';
 import { isAbortError } from '#/_base/utils/abort';

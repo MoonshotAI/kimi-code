@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

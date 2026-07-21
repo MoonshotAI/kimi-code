@@ -60,16 +60,20 @@ import '#/app/event/eventBusService';
 import '#/app/event/eventService';
 export { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 export { IEventService, type DomainEvent as GlobalEvent } from '#/app/event/event';
-export * from '#/app/llmProtocol/capability';
-export * from '#/app/llmProtocol/errors';
-export * from '#/app/llmProtocol/finishReason';
-export * from '#/app/llmProtocol/kimiOptions';
-export * from '#/app/llmProtocol/message';
-export * from '#/app/llmProtocol/messageHelpers';
-export * from '#/app/llmProtocol/request';
-export * from '#/app/llmProtocol/thinkingEffort';
-export * from '#/app/llmProtocol/tool';
-export * from '#/app/llmProtocol/usage';
+export * from '#/kosong/contract/capability';
+export * from '#/kosong/contract/errors';
+export * from '#/kosong/contract/message';
+export * from '#/kosong/contract/messageHelpers';
+export * from '#/kosong/contract/tool';
+export * from '#/kosong/contract/usage';
+export * from '#/kosong/contract/provider';
+export * from '#/kosong/contract/generate';
+export * from '#/kosong/contract/requestTrace';
+export type {
+  ExtraBody,
+  GenerationKwargs,
+  KimiThinkingConfig,
+} from '#/kosong/provider/providers/kimi/kimi.contrib';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
@@ -77,39 +81,45 @@ export * from '#/session/sessionMetadata/sessionMetadata';
 export * from '#/session/sessionMetadata/sessionMetadataService';
 export * from '#/app/config/config';
 export * from '#/app/config/configService';
-import '#/app/provider/configSection';
-export * from '#/app/provider/provider';
-export * from '#/app/provider/providerService';
-import '#/app/platform/configSection';
-export * from '#/app/platform/platform';
-export * from '#/app/platform/platformService';
+import '#/kosong/provider/configSection';
+export * from '#/kosong/provider/provider';
+export * from '#/kosong/provider/providerService';
+export * from '#/kosong/provider/providerDefinition';
+export * from '#/kosong/provider/protocolAdapterRegistry';
 import '#/app/skillCatalog/configSection';
-import '#/app/protocol/errors';
-export type { ChatProvider } from '#/app/llmProtocol/provider';
-export type { GenerateResult } from '#/app/llmProtocol/generate';
-export { generate } from '#/app/llmProtocol/generate';
-export * from '#/app/protocol/errors';
-export * from '#/app/protocol/protocol';
-export * from '#/app/protocol/protocolAdapterRegistry';
-import '#/app/model/configSection';
-import '#/app/model/envOverlay';
-export * from '#/app/model/completionBudget';
-export * from '#/app/model/hostRequestHeaders';
-export * from '#/app/model/model';
-export type {
-  AuthProvider,
-  LLMRequestInput,
-  Model,
-  LLMEvent as ModelRequestEvent,
-} from '#/app/model/modelInstance';
-export * from '#/app/model/modelOverrides';
-export * from '#/app/model/modelResolver';
-export * from '#/app/model/modelResolverService';
-export * from '#/app/model/modelService';
-export * from '#/app/model/thinking';
-export * from '#/app/modelCatalog/configSection';
-export * from '#/app/modelCatalog/modelCatalog';
-export * from '#/app/modelCatalog/modelCatalogService';
+import '#/kosong/protocol/errors';
+export * from '#/kosong/protocol/errors';
+export * from '#/kosong/protocol/protocol';
+export * from '#/kosong/protocol/protocolBase';
+export * from '#/kosong/protocol/protocolTrait';
+import '#/kosong/model/configSection';
+import '#/kosong/model/envOverlay';
+import '#/kosong/model/thinking';
+export * from '#/kosong/model/completionBudget';
+export * from '#/kosong/model/hostRequestHeaders';
+export * from '#/kosong/model/model';
+export * from '#/kosong/model/model.types';
+export * from '#/kosong/model/modelService';
+export * from '#/kosong/model/thinking';
+export * from '#/kosong/model/catalog';
+export * from '#/kosong/model/catalogService';
+export * from '#/kosong/model/modelRequester';
+import '#/kosong/model/errors';
+import '#/kosong/model/discoveryConfigSection';
+// `ModelCatalogConfig` / `MODEL_CATALOG_SECTION` live in the configSection
+// side-effect module but the edge (kap-server's refresh scheduler) consumes
+// them from the package root — re-export here.
+export * from '#/kosong/model/discoveryConfigSection';
+export * from '#/kosong/model/discovery';
+export * from '#/kosong/model/discoveryService';
+// kosong wire composition roots — importing these modules registers the four
+// protocol bases and every provider definition (kimi + the canonical vendor
+// endpoints); without them the adapter registry stays empty.
+import '#/kosong/provider/bases/anthropic/index';
+import '#/kosong/provider/bases/google-genai/index';
+import '#/kosong/provider/bases/openai/index';
+import '#/kosong/provider/providers/kimi/kimi.contrib';
+import '#/kosong/provider/providers/standard.contrib';
 export * from '#/app/agentProfileCatalog/agentProfileCatalog';
 export * from '#/app/agentProfileCatalog/agentProfileCatalogService';
 export * from '#/app/agentProfileCatalog/profile-shared';
@@ -409,7 +419,6 @@ import '#/agent/permissionRules/configSection';
 export * from '#/agent/permissionRules/permissionRules';
 export * from '#/agent/permissionRules/matchesRule';
 export * from '#/agent/permissionRules/permissionRulesService';
-import '#/agent/profile/configSection';
 export * from '#/agent/profile/profile';
 export * from '#/agent/profile/profileService';
 export * from '#/agent/profile/context';

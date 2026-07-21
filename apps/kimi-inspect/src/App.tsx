@@ -3,7 +3,9 @@
  * push anymore: the v2 socket (`/api/v2/ws`) that fed the core/session/agent
  * event streams was removed server-side, so Service panels and the pending
  * interactions card fetch on demand and the sidebar polls.
- * Layout: header / left sidebar (workspaces + sessions) / chat / inspector.
+ * Layout: header / icon rail / view. The `chat` view is the classic trio
+ * (left sidebar with workspaces + sessions, chat, inspector); the `models`
+ * view is the full-width model catalog.
  */
 
 import { useEffect, useState } from 'react';
@@ -12,6 +14,8 @@ import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/session
 
 import { ChatView } from './components/ChatView';
 import { Inspector } from './components/Inspector';
+import { ModelCatalogView } from './components/ModelCatalogView';
+import { NavRail, type AppView } from './components/NavRail';
 import { ServerSwitcher } from './components/ServerSwitcher';
 import { Sidebar } from './components/Sidebar';
 import { useConnection } from './connection';
@@ -21,6 +25,7 @@ export function App() {
   const { klient, baseUrl, disconnect } = useConnection();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [agentId, setAgentId] = useState('main');
+  const [view, setView] = useState<AppView>('chat');
   const [ready, setReady] = useState(false);
   const [resumeError, setResumeError] = useState<unknown>(null);
 
@@ -66,20 +71,32 @@ export function App() {
         </button>
       </header>
       <div className="flex min-h-0 flex-1">
-        <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
-        {resumeError !== null ? (
-          <div className="flex flex-1 items-center justify-center p-6 text-center text-[12px] text-red-400">
-            Failed to open session: {errorMessage(resumeError)}
-          </div>
+        <NavRail view={view} onChange={setView} />
+        {view === 'models' ? (
+          <ModelCatalogView
+            onOpenSession={(id) => {
+              setSessionId(id);
+              setView('chat');
+            }}
+          />
         ) : (
-          <ChatView sessionId={sessionId} agentId={agentId} ready={ready} />
+          <>
+            <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
+            {resumeError !== null ? (
+              <div className="flex flex-1 items-center justify-center p-6 text-center text-[12px] text-red-400">
+                Failed to open session: {errorMessage(resumeError)}
+              </div>
+            ) : (
+              <ChatView sessionId={sessionId} agentId={agentId} ready={ready} />
+            )}
+            <Inspector
+              sessionId={sessionId}
+              agentId={agentId}
+              onAgentChange={setAgentId}
+              ready={ready}
+            />
+          </>
         )}
-        <Inspector
-          sessionId={sessionId}
-          agentId={agentId}
-          onAgentChange={setAgentId}
-          ready={ready}
-        />
       </div>
     </div>
   );
