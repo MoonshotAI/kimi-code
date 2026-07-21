@@ -531,6 +531,108 @@ describe('WsConnectionV1 global target registration', () => {
     expect(registered).toHaveLength(0);
   });
 
+  it('stops client_hello when the socket closes during authorization', async () => {
+    const socket = new FakeSocket();
+    let releaseAuthorization!: () => void;
+    const authorizationGate = new Promise<void>((resolve) => {
+      releaseAuthorization = resolve;
+    });
+    const authorizationStarted = vi.fn();
+    const authorizationFinished = vi.fn();
+    const subscribe = vi.fn(async () => true);
+    const registered: unknown[] = [];
+    const broadcaster = {
+      subscribe,
+      unsubscribe: () => {},
+      registerGlobalTarget: (target: unknown) => registered.push(target),
+      unregisterGlobalTarget: () => {},
+      getCursor: async () => ({ seq: 0, epoch: '' }),
+      getBufferedSince: async () => ({
+        events: [],
+        resyncRequired: false,
+        currentSeq: 0,
+        epoch: '',
+      }),
+    } as unknown as SessionEventBroadcaster;
+    makeConn(socket, {
+      broadcaster,
+      validateCredential: async () => {
+        authorizationStarted();
+        await authorizationGate;
+        authorizationFinished();
+        return true;
+      },
+    });
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h1',
+        payload: { client_id: 'c1', token: 'token', subscriptions: ['s1'] },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(authorizationStarted).toHaveBeenCalledOnce();
+    });
+    socket.emit('close');
+    releaseAuthorization();
+    await vi.waitFor(() => {
+      expect(authorizationFinished).toHaveBeenCalledOnce();
+    });
+
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(registered).toHaveLength(0);
+  });
+
+  it('undoes a subscription that resolves after the socket closed', async () => {
+    const socket = new FakeSocket();
+    let releaseSubscription!: () => void;
+    const subscriptionGate = new Promise<void>((resolve) => {
+      releaseSubscription = resolve;
+    });
+    const subscriptionStarted = vi.fn();
+    const unsubscribed: string[] = [];
+    const registered: unknown[] = [];
+    const broadcaster = {
+      subscribe: async () => {
+        subscriptionStarted();
+        await subscriptionGate;
+        return true;
+      },
+      unsubscribe: (sessionId: string) => unsubscribed.push(sessionId),
+      registerGlobalTarget: (target: unknown) => registered.push(target),
+      unregisterGlobalTarget: () => {},
+      getCursor: async () => ({ seq: 0, epoch: '' }),
+      getBufferedSince: async () => ({
+        events: [],
+        resyncRequired: false,
+        currentSeq: 0,
+        epoch: '',
+      }),
+    } as unknown as SessionEventBroadcaster;
+    makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h1',
+        payload: { client_id: 'c1', subscriptions: ['s1'] },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(subscriptionStarted).toHaveBeenCalledOnce();
+    });
+    socket.emit('close');
+    releaseSubscription();
+    await vi.waitFor(() => {
+      expect(unsubscribed).toEqual(['s1']);
+    });
+
+    expect(registered).toHaveLength(0);
+  });
+
   it('does not register without a client_hello', () => {
     const socket = new FakeSocket();
     const { broadcaster, registered, unregistered } = makeRegisteringBroadcaster();

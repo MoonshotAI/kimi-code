@@ -196,6 +196,7 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private async onClientHello(frame: InboundFrame): Promise<void> {
     if (!(await this.authorize(frame))) return;
+    if (this.closed) return;
     this.gotClientHello = true;
 
     const payload = frame.payload ?? {};
@@ -341,6 +342,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
       deferTranscriptReset: cursor !== undefined,
     });
+    if (this.closed) {
+      if (ok) this.broadcaster.unsubscribe(sid, this);
+      return;
+    }
     if (!ok) {
       resyncRequired.push(sid);
       return;
