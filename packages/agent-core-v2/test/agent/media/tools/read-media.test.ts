@@ -699,6 +699,18 @@ describe('ReadMediaFileTool', () => {
     });
   });
 
+  it('surfaces auth rejections from the upload channel instead of falling back', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(Object.assign(new Error('401 Unauthorized'), { statusCode: 401 }));
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('401 Unauthorized');
+  });
+
   it('rejects empty files', async () => {
     const result = await execute(
       makeTool({ '/workspace/sample.png': { data: pngBuffer(), size: 0 } }),

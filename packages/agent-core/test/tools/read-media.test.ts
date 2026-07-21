@@ -449,6 +449,35 @@ describe('ReadMediaFileTool', () => {
     });
   });
 
+  it('surfaces auth rejections from the upload channel instead of falling back', async () => {
+    const videoUploader = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('401 Unauthorized'), { statusCode: 401 }));
+    const tool = new ReadMediaFileTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MP4_HEADER.length,
+        }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(MP4_HEADER),
+      }),
+      PERMISSIVE_WORKSPACE,
+      capabilities(),
+      videoUploader,
+    );
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c4c',
+      args: { path: '/workspace/sample.mp4' },
+      signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('401 Unauthorized');
+    expect(result.output).not.toContain('base64');
+  });
+
   it('rejects text files with a Read hint', async () => {
     const text = Buffer.from('hello');
     const tool = makeReadMediaTool({

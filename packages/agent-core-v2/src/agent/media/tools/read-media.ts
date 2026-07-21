@@ -36,6 +36,7 @@
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart, VideoURLPart } from '#/kosong/contract/message';
 import type { VideoUploadInput as ProviderVideoUploadInput } from '#/kosong/contract/provider';
+import { ProtocolErrors } from '#/kosong/protocol/errors';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { z } from 'zod';
 
@@ -237,6 +238,19 @@ function buildFullResolutionLimitError(path: string, finalBytes: number): string
   );
 }
 
+/**
+ * Auth rejections from the upload channel that must surface (they drive
+ * credential refresh and a clear auth error). The auth layer wraps provider
+ * 401/403s as `provider.auth_error`; a raw status-coded error is matched
+ * directly.
+ */
+function isAuthUploadError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  if ((error as { code?: unknown }).code === ProtocolErrors.codes.PROVIDER_AUTH_ERROR) return true;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return statusCode === 401 || statusCode === 403;
+}
+
 export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
@@ -257,9 +271,12 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
 
   /**
    * Deliver a video through the provider's upload channel when available,
-   * falling back to an inline base64 part when the channel is missing or the
-   * upload itself fails (e.g. the provider has no files endpoint) — a failed
-   * upload must not turn the whole read into an error.
+   * falling back to an inline base64 part when the channel is missing or
+   * broken (e.g. the provider has no files endpoint) — a failed upload must
+   * not turn the whole read into an error. Auth rejections (401/403) are
+   * the exception: they must surface, because they drive credential
+   * refresh and a clear auth error instead of masking a bad token behind
+   * an inline payload the next request will also reject.
    */
   private async videoContentPart(
     data: Buffer,
@@ -273,7 +290,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           mimeType,
           filename: safePath.split(/[\\/]/).at(-1),
         });
-      } catch {
+      } catch (error) {
+        if (isAuthUploadError(error)) throw error;
         // Fall through to the inline form.
       }
     }
