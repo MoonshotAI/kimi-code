@@ -323,6 +323,18 @@ describe('AgentFileFencingService', () => {
     expect(blocked.output).toContain('has not been read in this session');
   });
 
+  it('keeps Edit blocked when a default Read has no complete-file revision', async () => {
+    const world = setup();
+    const file = join(world.env.workDir, 'a.txt');
+    writeFileSync(file, 'partial read');
+    const ctx = await runBefore(world, beforeCtx('Read', file));
+
+    await runDid(world, ctx, { output: 'partial' });
+
+    const blocked = await runBlocked(world, 'Edit', file);
+    expect(blocked.output).toContain('has not been read in this session');
+  });
+
   it('blocks out-of-root writes through the stat-only fallback and allows them after Read', async () => {
     const world = setup();
     const file = join(world.env.outsideDir, 'b.txt');

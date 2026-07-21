@@ -301,7 +301,7 @@ describe('ReadTool', () => {
     );
   });
 
-  it('respects one-based line_offset and positive n_lines', async () => {
+  it('returns the requested line range without a complete-file revision', async () => {
     const tool = toolWithContent('a\nb\nc\nd\ne');
 
     const result = await execute(tool, { path: '/tmp/a.txt', line_offset: 2, n_lines: 2 });
@@ -310,6 +310,7 @@ describe('ReadTool', () => {
       output: '2\tb\n3\tc',
       note: readNote('2 lines read from file starting from line 2. Total lines in file: 5.'),
     });
+    expect(result[toolFileRevision]).toBeUndefined();
   });
 
   it('returns an empty successful output when line_offset is beyond EOF', async () => {
@@ -597,7 +598,7 @@ describe('ReadTool', () => {
     expect(output).not.toContain('encoded data was not valid');
   });
 
-  it('truncates long lines and surfaces the affected line numbers', async () => {
+  it('marks long-line truncation as an incomplete read', async () => {
     const long = 'x'.repeat(MAX_LINE_LENGTH + 10);
     const tool = toolWithContent([long, 'short', long].join('\n'));
 
@@ -605,9 +606,10 @@ describe('ReadTool', () => {
 
     expect(result.note).toContain('Lines [1, 3] were truncated.');
     expect(result.output).toContain('...');
+    expect(result[toolFileRevision]).toBeUndefined();
   });
 
-  it('checks the byte cap before adding the next rendered line', async () => {
+  it('marks byte-capped output as an incomplete read', async () => {
     const line = 'x'.repeat(MAX_LINE_LENGTH);
     const content = Array.from({ length: 80 }, () => line).join('\n');
     const tool = toolWithContent(content);
@@ -617,6 +619,7 @@ describe('ReadTool', () => {
 
     expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(MAX_BYTES);
     expect(result.note).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    expect(result[toolFileRevision]).toBeUndefined();
   });
 
   it('reads through bounded byte preflight and streams line iteration without full readText', async () => {
@@ -654,7 +657,7 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('caps default reads at MAX_LINES', async () => {
+  it('marks line-capped default reads as incomplete', async () => {
     const content = Array.from({ length: MAX_LINES + 1 }, (_, i) => `line ${String(i + 1)}`).join(
       '\n',
     );
@@ -665,6 +668,7 @@ describe('ReadTool', () => {
     expect(result.note).toContain(`Max ${String(MAX_LINES)} lines reached.`);
     expect(result.output).toContain(`${String(MAX_LINES)}\tline ${String(MAX_LINES)}`);
     expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
+    expect(result[toolFileRevision]).toBeUndefined();
   });
 
   it('tail byte truncation keeps the newest lines closest to EOF', async () => {
