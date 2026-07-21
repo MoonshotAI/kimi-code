@@ -12,6 +12,7 @@ const WorkspaceLocalTomlSchema = z.object({
   workspace: z
     .object({
       additional_dir: z.array(z.string()),
+      plugin_dir: z.array(z.string()).optional(),
     })
     .optional(),
 });
@@ -22,6 +23,7 @@ export interface WorkspaceAdditionalDirsLoadResult {
   readonly projectRoot: string;
   readonly configPath: string;
   readonly additionalDirs: readonly string[];
+  readonly pluginDirs: readonly string[];
   readonly warning?: string;
 }
 
@@ -41,14 +43,20 @@ export async function loadWorkspaceLocalConfig(
   const file = await readWorkspaceLocalToml(kaos, configPath);
 
   const additionalDirs = file?.parsed.workspace?.additional_dir;
-  if (additionalDirs === undefined) {
-    return { projectRoot, configPath, additionalDirs: [] };
+  const pluginDirs = file?.parsed.workspace?.plugin_dir;
+  if (additionalDirs === undefined && pluginDirs === undefined) {
+    return { projectRoot, configPath, additionalDirs: [], pluginDirs: [] };
   }
 
   return {
     projectRoot,
     configPath,
-    additionalDirs: await resolveAdditionalDirs(kaos, projectRoot, additionalDirs),
+    additionalDirs: additionalDirs !== undefined
+      ? await resolveAdditionalDirs(kaos, projectRoot, additionalDirs)
+      : [],
+    pluginDirs: pluginDirs !== undefined
+      ? await resolvePluginDirs(kaos, projectRoot, pluginDirs)
+      : [],
   };
 }
 
@@ -81,7 +89,7 @@ export async function appendWorkspaceAdditionalDir(
   const fileExistingDirs = resolveExistingAdditionalDirs(kaos, projectRoot, fileAdditionalDirs);
 
   if (hasSameAdditionalDir(kaos, fileExistingDirs, additionalDir)) {
-    return { projectRoot, configPath, additionalDirs: fileExistingDirs };
+    return { projectRoot, configPath, additionalDirs: fileExistingDirs, pluginDirs: [] };
   }
 
   const workspace = cloneRecord(file.raw['workspace']);
@@ -91,7 +99,7 @@ export async function appendWorkspaceAdditionalDir(
   await kaos.mkdir(dirname(configPath), { parents: true, existOk: true });
   await kaos.writeText(configPath, `${stringifyToml(file.raw)}\n`);
 
-  return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
+  return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir], pluginDirs: [] };
 }
 
 export function normalizeAdditionalDirs(additionalDirs: readonly string[]): string[] {
@@ -182,6 +190,9 @@ function describeWorkspaceLocalValidationError(error: z.ZodError): string {
   if (issue?.path[0] === 'workspace' && issue.path[1] === 'additional_dir') {
     return 'workspace.additional_dir must be an array of strings';
   }
+  if (issue?.path[0] === 'workspace' && issue.path[1] === 'plugin_dir') {
+    return 'workspace.plugin_dir must be an array of strings';
+  }
   if (issue?.path[0] === 'workspace') return 'workspace must be a table';
   return `Invalid workspace local config: ${error.message}`;
 }
@@ -195,6 +206,22 @@ async function resolveAdditionalDirs(
 
   for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
     const resolvedDir = await resolveAdditionalDir(kaos, projectRoot, additionalDir);
+    if (hasSameAdditionalDir(kaos, resolvedDirs, resolvedDir)) continue;
+    resolvedDirs.push(resolvedDir);
+  }
+
+  return resolvedDirs;
+}
+
+async function resolvePluginDirs(
+  kaos: Kaos,
+  projectRoot: string,
+  pluginDirs: readonly string[],
+): Promise<string[]> {
+  const resolvedDirs: string[] = [];
+
+  for (const pluginDir of normalizeAdditionalDirs(pluginDirs)) {
+    const resolvedDir = resolvePath(kaos, projectRoot, pluginDir);
     if (hasSameAdditionalDir(kaos, resolvedDirs, resolvedDir)) continue;
     resolvedDirs.push(resolvedDir);
   }

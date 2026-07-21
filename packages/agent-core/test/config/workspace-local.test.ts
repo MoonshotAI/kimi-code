@@ -48,6 +48,7 @@ describe('workspace local config', () => {
       projectRoot: root,
       configPath: join(root, '.kimi-code', 'local.toml'),
       additionalDirs: [],
+      pluginDirs: [],
     });
   });
 
@@ -68,6 +69,7 @@ describe('workspace local config', () => {
       projectRoot: root,
       configPath: join(root, '.kimi-code', 'local.toml'),
       additionalDirs: [sharedDir, otherDir],
+      pluginDirs: [],
     });
   });
 

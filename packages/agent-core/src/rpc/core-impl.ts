@@ -3,7 +3,8 @@ import { homedir } from 'node:os';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
-import { PluginManager } from '#/plugin';
+import { PluginManager, scanProjectPluginDirs } from '#/plugin';
+import type { SkillRoot } from '../skill/types';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
@@ -354,6 +355,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const pluginCommands = await this.plugins.enabledCommands();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
 
+    // Scan project-level plugin directories from workspace local config
+    const projectPluginSkillRoots = localWorkspaceDirs.pluginDirs.length > 0
+      ? await scanProjectPluginDirs(persistenceKaos, localWorkspaceDirs.pluginDirs)
+      : [];
+
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const runtime = await this.resolveRuntime(config);
@@ -370,7 +376,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       background: sessionConfig.background,
       hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
       permissionRules: config.permission?.rules,
-      skills: this.resolveSessionSkillConfig(config),
+      skills: this.resolveSessionSkillConfig(config, projectPluginSkillRoots),
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
@@ -499,9 +505,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const pluginCommands = await this.plugins.enabledCommands();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
+
     const runtime = await this.resolveRuntime(config);
     const parentKaos = parentKaosForRead;
     const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
+
+    // Scan project-level plugin directories from workspace local config
+    const projectPluginSkillRoots = localWorkspaceDirs.pluginDirs.length > 0
+      ? await scanProjectPluginDirs(persistenceKaos, localWorkspaceDirs.pluginDirs)
+      : [];
+
     const session = new Session({
       kaos: parentKaos.withCwd(summary.workDir),
       persistenceKaos,
@@ -515,7 +528,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       background: sessionConfig.background,
       hooks: [...(config.hooks ?? []), ...this.plugins.enabledHooks()],
       permissionRules: config.permission?.rules,
-      skills: this.resolveSessionSkillConfig(config),
+      skills: this.resolveSessionSkillConfig(config, projectPluginSkillRoots),
       mcpConfig,
       experimentalFlags: this.experimentalFlags,
       imageLimits: this.imageLimits,
@@ -1169,14 +1182,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.kaos;
   }
 
-  private resolveSessionSkillConfig(config: KimiConfig): SessionSkillConfig {
+  private resolveSessionSkillConfig(
+    config: KimiConfig,
+    extraProjectSkillRoots?: readonly SkillRoot[],
+  ): SessionSkillConfig {
     const explicitDirs = this.skillDirs.length > 0 ? this.skillDirs : undefined;
+    const pluginSkillRoots = this.plugins.pluginSkillRoots();
     return {
       userHomeDir: this.userHomeDir,
       brandHomeDir: this.homeDir,
       explicitDirs,
       extraDirs: config.extraSkillDirs,
-      pluginSkillRoots: this.plugins.pluginSkillRoots(),
+      pluginSkillRoots: extraProjectSkillRoots !== undefined
+        ? [...pluginSkillRoots, ...extraProjectSkillRoots]
+        : pluginSkillRoots,
       mergeAllAvailableSkills: config.mergeAllAvailableSkills,
     };
   }
