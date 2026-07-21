@@ -128,8 +128,16 @@ describe('resolveThinkingEffort', () => {
     ).toBe('high');
   });
 
-  it('preserves off for always-thinking models on compatible protocols', () => {
-    expect(resolveThinkingEffort('off', undefined, alwaysThinkingEffortModel, false)).toBe('off');
+  it('clamps always-thinking models to their default effort on every protocol', () => {
+    // A model declared always-on never resolves to off — claiming off while
+    // upstream keeps reasoning at its default would be a lie.
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingEffortModel, false)).toBe(
+      'high',
+    );
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel, false)).toBe('on');
   });
 
   it('does not force on for models that are not always-thinking', () => {

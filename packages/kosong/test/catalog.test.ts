@@ -45,6 +45,8 @@ describe('inferWireType', () => {
   it('refuses SDKs known to be proprietary instead of guessing', () => {
     expect(inferWireType({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toBeUndefined();
     expect(isGuessedWireType({ id: 'amazon-bedrock', npm: '@ai-sdk/amazon-bedrock' })).toBe(false);
+    expect(inferWireType({ id: 'cohere', npm: '@ai-sdk/cohere' })).toBeUndefined();
+    expect(isGuessedWireType({ id: 'cohere', npm: '@ai-sdk/cohere' })).toBe(false);
   });
 });
 

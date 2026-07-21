@@ -144,10 +144,18 @@ describe('resolveThinkingEffortForModel', () => {
     expect(resolveThinkingEffortForModel(undefined, { enabled: false }, booleanModel)).toBe('off');
   });
 
-  it('preserves off for Kimi-managed always-thinking models using Anthropic protocol', () => {
+  it('clamps always-thinking models to their default effort even without strict validation', () => {
+    // A model declared always-on never resolves to off, on any wire — claiming
+    // off while upstream keeps reasoning at its default would be a lie. This
+    // covers Kimi-managed models routed through the Anthropic transport and
+    // catalog-imported always-thinking models (e.g. gpt-5) alike.
     expect(
       resolveThinkingEffortForModel('off', undefined, alwaysThinkingAnthropicEffortModel),
-    ).toBe('off');
+    ).toBe('high');
+    expect(
+      resolveThinkingEffortForModel(undefined, { enabled: false }, alwaysThinkingAnthropicEffortModel),
+    ).toBe('high');
+    expect(resolveThinkingEffortForModel('off', undefined, alwaysThinkingModel)).toBe('on');
   });
 
   it('carries custom requested efforts through', () => {

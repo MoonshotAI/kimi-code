@@ -400,7 +400,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('max');
   });
 
-  it('preserves unlisted and off efforts for Kimi-managed Anthropic models', () => {
+  it('preserves unlisted efforts with a warning for Kimi-managed Anthropic models', () => {
     profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
 
     expect(() => {
@@ -416,20 +416,19 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
       },
     });
+  });
+
+  it('clamps off to the model default for always-on models, on any transport', () => {
+    // A model declared always-on never resolves to off: the clamp turns the
+    // request into the model default ('max') instead of sending a dishonest
+    // off upstream. (The always-on warning path remains as a defensive layer
+    // for off values that bypass resolution.)
+    profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
 
     expect(() => {
       profile.setThinking('off');
     }).not.toThrow();
-    expect(profile.data().thinkingLevel).toBe('off');
-    expect(ctx.allEvents).toContainEqual({
-      type: '[rpc]',
-      event: 'warning',
-      args: {
-        code: 'anthropic-thinking-cannot-disable',
-        message:
-          'Model "compatible-model" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.',
-      },
-    });
+    expect(profile.data().thinkingLevel).toBe('max');
   });
 });
 

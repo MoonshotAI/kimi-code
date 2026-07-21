@@ -145,8 +145,11 @@ export function inferWireType(entry: CatalogProviderEntry): ProviderType | undef
   // does not know — refuse it rather than guessing (a future kokub protocol
   // must not be silently wired as OpenAI).
   if (typeof entry.type === 'string' && entry.type.length > 0) return undefined;
+  // SDKs known to be non-OpenAI proprietary — the fallback below would write
+  // a config that can never work (Bedrock Converse API, Cohere's native chat
+  // API), so callers keep refusing those instead.
   const npm = (entry.npm ?? '').toLowerCase();
-  if (npm.includes('amazon-bedrock')) return undefined;
+  if (npm.includes('amazon-bedrock') || npm.includes('cohere')) return undefined;
   return 'openai';
 }
 
