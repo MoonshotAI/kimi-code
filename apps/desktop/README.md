@@ -37,13 +37,21 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 - `src/main/tray.ts` — 系统托盘（macOS 菜单栏 / Windows 通知区）：图标、上下文菜单、待处理
   badge（菜单栏计数 + 托盘菜单按会话跳转）；主进程原生界面文案的 en/zh 字符串表与
   `kimi:locale` 语言同步也在这里。
+- `src/main/pet.ts` — 桌面宠物「小蓝」（macOS only）：透明无边框 always-on-top 小窗
+  （`focusable:false` 不抢焦点），内容是 renderer 多页构建的 `pet.html`（纯 TS 入口
+  `src/renderer/pet/`，不连 server）；形象用官方 Rive 资产 `src/renderer/assets/pet/
+  kimi_avatar_default.riv`（与 kimi.com 头像同源，`KimiDoodle.vue` 同款 runtime 懒加载，
+  静态 SVG 兜底）；拖拽走 `kimi:pet-drag-*` IPC（主进程按 `PointerEvent.screenX/screenY`
+  全局坐标 `setPosition`）；位置与可见性持久化在 `userData/pet-state.json`，View 菜单
+  有「Kimi Pet」勾选开关（`togglePetVisibility()`）。
 - `src/main/ipc.ts` / `ipc-channels.ts` — IPC handler 注册、channel 常量与 payload 类型。
 - `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist；`server_version`
   经 tsdown 注入的 `__KIMI_CORE_VERSION__`（`scripts/kimi-core-version.mjs` 读 submodule 的 CLI 版本）
   显式传给 kap-server——bundle 后 kap-server 默认的 package.json 查找会落到 desktop app 自己的版本上。
 - `src/main/protocol.ts` — `app://renderer` scheme/protocol 注册与 `rendererUrl` 拼接。
 - `src/main/preload.ts` — contextIsolation 下的白名单 IPC（主题、菜单/快捷键转发等）。
-- `src/renderer/` — web UI 副本（构建源）。
+- `src/renderer/` — web UI 副本（构建源）。`pet.html` 与 `pet/` 是 desktop 专属的桌宠入口，
+  不属于 web 快照，整目录 re-copy 同步时必须保留（见 `docs/native-todos.md`）。
 - `vite.renderer.config.ts` — renderer 构建配置。
 - 主进程测试在 `tests/main/`，renderer 测试与源码同目录。
 

@@ -5,8 +5,9 @@ import { app, nativeImage } from 'electron';
 import { registerRendererScheme, registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
 import { createWindow, selectSessionInRenderer, showMainWindow } from './window';
+import { createPetWindow, isPetVisible } from './pet';
 import { createTray, destroyTray } from './tray';
-import { buildMenu } from './menu';
+import { buildMenu, setMenuPetVisible } from './menu';
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
 import { initAutoUpdater } from './updater';
@@ -40,6 +41,14 @@ export function main(): void {
     registerGlobalShortcuts();
     buildMenu();
     createWindow();
+    // Desktop pet: macOS only for now. Lives independently of the main window
+    // (keeps floating when the main window closes), dies with the app.
+    if (process.platform === 'darwin') {
+      createPetWindow();
+      // Seed the View-menu pet checkbox with the persisted initial
+      // visibility (buildMenu ran before the pet window existed).
+      setMenuPetVisible(isPetVisible());
+    }
     createTray({
       showMainWindow,
       // Tray attention item click: surface the window, then hand the session

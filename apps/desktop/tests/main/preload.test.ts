@@ -33,6 +33,9 @@ const WHITELIST = [
   'onUpdateStatus',
   'openExternal',
   'openInApp',
+  'petDragEnd',
+  'petDragMove',
+  'petDragStart',
   'setLocale',
   'setTheme',
   'setTrayAttention',
@@ -99,6 +102,18 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:locale', 'zh');
     exposed.setLocale('fr'); // unsupported locale ignored
     expect(send).toHaveBeenCalledTimes(3);
+
+    // Pet drag: validated screen points forward; junk never reaches main.
+    exposed.petDragStart({ screenX: 100, screenY: 200 });
+    expect(send).toHaveBeenCalledWith('kimi:pet-drag-start', { screenX: 100, screenY: 200 });
+    exposed.petDragMove({ screenX: 120, screenY: 220 });
+    expect(send).toHaveBeenCalledWith('kimi:pet-drag-move', { screenX: 120, screenY: 220 });
+    exposed.petDragStart({ screenX: '100', screenY: 200 });
+    exposed.petDragMove({ screenX: Number.NaN, screenY: 0 });
+    expect(send).toHaveBeenCalledTimes(5);
+    exposed.petDragEnd();
+    expect(send).toHaveBeenCalledWith('kimi:pet-drag-end');
+    expect(send).toHaveBeenCalledTimes(6);
 
     exposed.showWindow();
     expect(send).toHaveBeenCalledWith('kimi:show-window');

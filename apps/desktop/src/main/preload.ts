@@ -140,6 +140,22 @@ function asUpdateCheckResult(value: unknown): UpdateCheckResult | null {
   }
 }
 
+/** Pointer position in global display coordinates (pet-window drag). */
+export type ScreenPoint = { screenX: number; screenY: number };
+
+function asScreenPoint(value: unknown): value is ScreenPoint {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as { screenX?: unknown; screenY?: unknown };
+  return (
+    typeof candidate.screenX === 'number' &&
+    Number.isFinite(candidate.screenX) &&
+    typeof candidate.screenY === 'number' &&
+    Number.isFinite(candidate.screenY)
+  );
+}
+
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   onMenu: (cb: (action: string) => void) => () => void;
@@ -178,6 +194,12 @@ export type KimiDesktopApi = {
   /** Sync the in-app language so native surfaces (today: the tray menu and
    *  tooltip) follow it instead of only the OS language. */
   setLocale: (locale: 'en' | 'zh') => void;
+  /** Desktop-pet window drag lifecycle (pet.html only). Positions are global
+   *  screen coordinates from PointerEvent.screenX/screenY; the main process
+   *  moves the window keeping the offset captured at drag start. */
+  petDragStart: (pos: ScreenPoint) => void;
+  petDragMove: (pos: ScreenPoint) => void;
+  petDragEnd: () => void;
   /** Bring the native window back on screen (notification clicks): with
    *  macOS hide-on-close it may be alive but hidden, and the renderer's own
    *  window.focus() can't un-hide it. */
@@ -255,6 +277,19 @@ export const api: KimiDesktopApi = {
     if (locale === 'en' || locale === 'zh') {
       ipcRenderer.send('kimi:locale', locale);
     }
+  },
+  petDragStart: (pos) => {
+    if (asScreenPoint(pos)) {
+      ipcRenderer.send('kimi:pet-drag-start', pos);
+    }
+  },
+  petDragMove: (pos) => {
+    if (asScreenPoint(pos)) {
+      ipcRenderer.send('kimi:pet-drag-move', pos);
+    }
+  },
+  petDragEnd: () => {
+    ipcRenderer.send('kimi:pet-drag-end');
   },
   showWindow: () => {
     ipcRenderer.send('kimi:show-window');

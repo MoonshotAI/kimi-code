@@ -1,0 +1,62 @@
+/* Desktop-pet window. The window itself is transparent: only the mascot is
+   painted, so clicks anywhere else fall through to the desktop (Electron
+   hit-tests on pixel alpha — the Rive canvas has alpha where nothing is
+   drawn). */
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#pet {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding-bottom: 12px;
+  cursor: grab;
+}
+
+#pet.dragging {
+  cursor: grabbing;
+}
+
+/* Static stand-in shown until the Rive canvas is ready (and permanently when
+   the runtime can't load or reduced motion is requested). Sized to roughly
+   the blob's rendered footprint inside the Rive artboard (~60/72 of the
+   104px canvas). */
+.fallback {
+  width: 90px;
+}
+
+.fallback svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+#pet.rive-ready .fallback {
+  display: none;
+}
+
+/* CSS box matched to the artboard's portrait 72:100 bounds (probed from the
+   live asset; the drawn content is contain-fit, so any mismatch would just
+   letterbox). Bitmap is set to this × DPR on load. */
+.mascot-canvas {
+  display: none;
+  width: 104px;
+  height: 144px;
+}
+
+#pet.rive-ready .mascot-canvas {
+  display: block;
+}
