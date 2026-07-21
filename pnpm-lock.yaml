@@ -692,6 +692,9 @@ importers:
       '@moonshot-ai/protocol':
         specifier: workspace:^
         version: link:../protocol
+      '@moonshot-ai/tree-sitter-bash':
+        specifier: workspace:^
+        version: link:../tree-sitter-bash
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
