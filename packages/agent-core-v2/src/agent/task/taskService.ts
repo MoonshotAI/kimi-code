@@ -38,6 +38,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/kosong/contract/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { toErrorMessage } from '#/_base/errors/errorMessage';
 import {
   abortable,
   userCancellationReason,
@@ -506,7 +507,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           : entry.outputWriteQueue !== promise;
       });
       if (changed) continue;
-      if (firstFailure !== undefined) throw firstFailure;
+      if (firstFailure !== undefined) {
+        throw firstFailure instanceof Error
+          ? firstFailure
+          : new Error(toErrorMessage(firstFailure));
+      }
       return;
     }
   }

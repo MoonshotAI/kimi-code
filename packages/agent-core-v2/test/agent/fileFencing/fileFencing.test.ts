@@ -117,6 +117,7 @@ interface AgentWorld {
   readonly executor: IAgentToolExecutorService;
   readonly watch: ISessionFsWatchService;
   readonly workspace: ISessionWorkspaceContext;
+  readonly ledger: ISessionFileLedger;
 }
 
 function makeAgent(env: Env, session: Scope): AgentWorld {
@@ -125,7 +126,6 @@ function makeAgent(env: Env, session: Scope): AgentWorld {
     stubPair(IAgentToolExecutorService, executor),
   ]);
   agent.accessor.get(IAgentFileFencingService);
-  session.accessor.get(ISessionFileLedger);
   return {
     env,
     session,
@@ -133,6 +133,7 @@ function makeAgent(env: Env, session: Scope): AgentWorld {
     executor,
     watch: session.accessor.get(ISessionFsWatchService),
     workspace: session.accessor.get(ISessionWorkspaceContext),
+    ledger: session.accessor.get(ISessionFileLedger),
   };
 }
 
@@ -381,6 +382,8 @@ describe('AgentFileFencingService', () => {
     const file = join(world.env.workDir, 'new.txt');
 
     await runOk(world, 'Write', file);
+    expect(await world.ledger.compare(file)).toBe('clean');
+
     await runOk(world, 'Edit', file);
   });
 
@@ -390,6 +393,8 @@ describe('AgentFileFencingService', () => {
     writeFileSync(file, 'hello');
 
     await runOk(world, 'Read', file);
+    expect(await world.ledger.compare(file)).toBe('clean');
+
     await runOk(world, 'Edit', file);
   });
 
@@ -401,6 +406,8 @@ describe('AgentFileFencingService', () => {
     await runOk(world, 'Read', file);
     await runOk(world, 'Edit', file);
     await runOk(world, 'Edit', file);
+
+    expect(await world.ledger.compare(file)).toBe('clean');
   });
 
   it('keeps consecutive Edits clean through the own-write watcher echo and re-baselines', async () => {
