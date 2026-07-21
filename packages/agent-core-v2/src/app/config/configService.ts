@@ -7,8 +7,9 @@
  * target. Maintains five layered views of a domain — `rawSnake` (snake_case
  * write base keyed by the on-disk section key, kept for lossless round-trip),
  * `raw` (camelCase, env-free), `validated` (validated `raw`, env-free — the
- * base every live env re-application starts from, so a degraded or removed env
- * value falls back to the file instead of a stale overlay), `effective`
+ * base every live env re-application starts from and never mutates, so a
+ * degraded or removed env value falls back to the file instead of a stale
+ * overlay), `effective`
  * (`validated` plus the env overlay, recomputed on load/set), and `memory`
  * (per-run overrides)
  * — plus a `delivered` snapshot per domain used as the diff base for
@@ -94,13 +95,10 @@ function applyEnvBindings(
       const resolved = resolveBinding(binding, getEnv, target[key]);
       if (resolved !== undefined) target[key] = resolved;
     } else if (binding !== undefined) {
-      let child: Record<string, unknown>;
-      if (isPlainObject(target[key])) {
-        child = target[key];
-      } else {
-        child = {};
-        target[key] = child;
-      }
+      const child: Record<string, unknown> = isPlainObject(target[key])
+        ? { ...target[key] }
+        : {};
+      target[key] = child;
       applyEnvBindings(child, binding as AnyEnvBindings, getEnv);
       if (Object.keys(child).length === 0) {
         delete target[key];

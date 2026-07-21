@@ -784,6 +784,34 @@ describe('loopControl config section', () => {
 
     disposables.dispose();
   });
+
+  it('preserves unknown on-disk fields when the stripped result is otherwise empty', async () => {
+    const env: Record<string, string> = { [LOOP_MAX_STEPS_PER_TURN_ENV]: '7' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[loop_control]\nfuture_field = 1\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await config.set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 7 });
+
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('future_field = 1');
+    expect(onDisk).not.toContain('max_steps_per_turn');
+
+    disposables.dispose();
+  });
 });
 
 describe('task config section', () => {
@@ -1103,6 +1131,45 @@ describe('get() freshness for overlay-written domains', () => {
     expect(config.get('overlayDomain')).toEqual({ flag: true });
     delete env['SMOKE_OVERLAY_FLAG'];
     expect(config.get('overlayDomain')).toBeUndefined();
+
+    disposables.dispose();
+  });
+});
+
+describe('nested env bindings', () => {
+  it('does not mutate the env-free base when applying nested bindings', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode('[nested_demo.inner]\nvalue = "file"\n'),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    const nestedSchema = { parse: (value: unknown) => value as { inner?: { value?: string } } };
+    ix.get(IConfigRegistry).registerSection('nestedDemo', nestedSchema, {
+      env: { inner: { value: 'SMOKE_NESTED_ENV' } },
+    });
+
+    env['SMOKE_NESTED_ENV'] = 'env-value';
+    expect(config.get<{ inner?: { value?: string } }>('nestedDemo')).toEqual({
+      inner: { value: 'env-value' },
+    });
+
+    delete env['SMOKE_NESTED_ENV'];
+    expect(config.get<{ inner?: { value?: string } }>('nestedDemo')).toEqual({
+      inner: { value: 'file' },
+    });
 
     disposables.dispose();
   });
