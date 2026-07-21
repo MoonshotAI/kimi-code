@@ -41,4 +41,8 @@ export default {
     expand: '展开',
     collapse: '收起',
   },
+  fold: {
+    worked: '已工作 {duration}',
+    workedUnknown: '工作过程',
+  },
 } as const;

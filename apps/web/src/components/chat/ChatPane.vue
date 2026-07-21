@@ -2,9 +2,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment } from '../../types';
+import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment, UIQuestion } from '../../types';
 import ToolCall from './ToolCall.vue';
 import ActivityRun from './ActivityRun.vue';
+import TurnFold from './TurnFold.vue';
 import { Markdown } from '@moonshot-ai/web-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
@@ -17,14 +18,17 @@ import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { openFileAttachment } from '../../lib/openFileAttachment';
 import {
-  assistantRenderBlocks,
   formatDuration,
   formatTokens,
+  isoMs,
   renderBlockKey,
+  splitAssistantFold,
+  turnActivitySeedMs,
   turnBlocks,
-  turnFinalText,
   turnToMarkdown,
+  turnVisibleFinalText,
 } from '../chatTurnRendering';
+import type { AssistantFold } from '../chatTurnRendering';
 
 const { t } = useI18n();
 const { confirm } = useConfirmDialog();
@@ -51,7 +55,10 @@ onUnmounted(() => {
 const props = withDefaults(
   defineProps<{
     turns: ChatTurn[];
-    approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
+    approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string; toolCallId?: string }[];
+    /** Pending questions for the session (AskUserQuestion awaiting an answer) —
+        a tool tail waiting on one reads as parked, not streaming. */
+    questions?: UIQuestion[];
     /**
      * True while the MAIN agent has a turn in flight (not merely "session
      * busy" — background subagents and BTW side chats don't set this). Marks
@@ -108,6 +115,7 @@ const props = withDefaults(
   }>(),
   {
     approvals: () => [],
+    questions: () => [],
     turnActive: false,
     working: false,
     fastMoon: false,
@@ -388,9 +396,11 @@ function assistantRunEndingAt(index: number): ChatTurn[] {
   return run;
 }
 
+/** The run's copyable final answer: only the text still visible after the
+    turn-level fold (interim texts folded away must not be copied). */
 function assistantRunFinalText(index: number): string {
   return assistantRunEndingAt(index)
-    .map((t) => turnFinalText(t))
+    .map((t) => turnVisibleFinalText(t))
     .filter(Boolean)
     .join('\n\n');
 }
@@ -510,6 +520,33 @@ function isStreamingActivityRun(turn: ChatTurn, block: { items: { sourceIndex: n
   // A settled thinking tail means the turn parked on an approval/question.
   if (last?.kind === 'thinking' && last.durationMs !== undefined) return false;
   return last !== undefined && last.sourceIndex === turnBlocks(turn).length - 1;
+}
+
+/** Turn-level fold split (see chatTurnRendering.splitAssistantFold): everything
+    before the turn's final text block folds into a TurnFold row; the final
+    text and any trailing blocks keep their normal rendering. */
+const EMPTY_FOLD: AssistantFold = { folded: [], visible: [] };
+function assistantFold(turn: ChatTurn): AssistantFold {
+  if (turn.role !== 'assistant') return EMPTY_FOLD;
+  return splitAssistantFold(turn);
+}
+
+/** The sourceIndex of the turn's live tail block while it streams; null for
+    every settled turn (the TurnFold's streaming vocabulary). A settled
+    thinking tail — or a tool tail awaiting a pending approval/question —
+    means the turn parked on user interaction: the fold treats the turn as
+    settled (row shown, clock frozen) until the stream moves on. */
+function streamingTailIndex(turn: ChatTurn): number | null {
+  if (turn.id !== streamingTurnId.value) return null;
+  const blocks = turnBlocks(turn);
+  const last = blocks.at(-1);
+  if (last?.kind === 'thinking' && last.durationMs !== undefined) return null;
+  if (last?.kind === 'tool' && last.tool.status === 'running') {
+    const id = last.tool.id;
+    if (props.approvals?.some((a) => a.toolCallId === id)) return null;
+    if (props.questions?.some((q) => q.toolCallId === id)) return null;
+  }
+  return blocks.length - 1;
 }
 
 // NOTE: the turn-summary line ("已调用 N 个工具…") was removed in f9417af. If it
@@ -634,9 +671,26 @@ function isStreamingActivityRun(turn: ChatTurn, block: { items: { sourceIndex: n
            a lightweight in-transcript notice rather than a user bubble. -->
       <CronNotice v-else-if="turn.role === 'cron'" :text="turn.text" :cron="turn.cron" :turn-id="turn.id" :created-at="turn.createdAt" />
 
-      <!-- Assistant turn → left-aligned, no name/role label. -->
+      <!-- Assistant turn → left-aligned, no name/role label. Everything before
+           the final text block folds into a TurnFold row once the turn
+           settles; the final text (and any trailing blocks) stays visible. -->
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
-        <template v-for="(blk, bi) in assistantRenderBlocks(turn)" :key="renderBlockKey(blk, bi)">
+        <TurnFold
+          v-if="assistantFold(turn).folded.length > 0"
+          :items="assistantFold(turn).folded"
+          mobile
+          :streaming-tail-index="streamingTailIndex(turn)"
+          :live="turn.id === streamingTurnId"
+          :parked="turn.id === streamingTurnId && streamingTailIndex(turn) === null"
+          :seed-ms="turnActivitySeedMs(turnBlocks(turn))"
+          :created-ms="isoMs(turn.createdAt)"
+          :ended-ms="isoMs(turn.endedAt)"
+          :duration-ms="turn.durationMs"
+          @open-media="emit('openMedia', $event)"
+          @open-file="emit('openFile', $event)"
+          @open-agent="emit('openAgent', $event)"
+        />
+        <template v-for="(blk, bi) in assistantFold(turn).visible" :key="renderBlockKey(blk, bi)">
           <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" mobile :streaming="isStreamingRenderBlock(turn, blk)" :started-at="blk.startedAt" :duration-ms="blk.durationMs" />
           <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="isStreamingRenderBlock(turn, blk)" :open-file="(target) => emit('openFile', target)" /></div>
           <ActivityRun
@@ -1043,7 +1097,7 @@ function isStreamingActivityRun(turn: ChatTurn, block: { items: { sourceIndex: n
 }
 .a-msg .msg {
   font-size: var(--ui-font-size);
-  line-height: 1.6;
+  line-height: var(--leading-prose);
   color: var(--color-text);
   font-weight: 500;
 }

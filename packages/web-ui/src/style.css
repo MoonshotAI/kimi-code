@@ -339,6 +339,8 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --text-2xl: 22px;
   --leading-tight: 1.25;
   --leading-normal: 1.5;
+  /* Chat prose (Markdown message bodies). */
+  --leading-prose: 1.6;
   --leading-relaxed: 1.7;
   --weight-regular: 400;
   --weight-option-label: 475;

@@ -124,3 +124,52 @@ describe('messagesToTurns hidden injections', () => {
     expect(turns.map((t) => t.role)).toEqual(['assistant', 'cron', 'assistant']);
   });
 });
+
+describe('messagesToTurns turn stamps', () => {
+  it('leaves endedAt undefined for a single-message turn (no Worked-0s span)', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'thinking', thinking: 'plan' },
+          { type: 'text', text: 'answer' },
+        ]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns[0]?.endedAt).toBeUndefined();
+  });
+
+  it('stamps endedAt from a later tool-result message', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-1', toolName: 'bash', input: { command: 'ls' } },
+        ]),
+        message('t1', 'tool', [{ type: 'toolResult', toolCallId: 'tool-1', output: 'x' }], {
+          createdAt: '2026-01-01T00:00:30.000Z',
+        }),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns[0]?.endedAt).toBe('2026-01-01T00:00:30.000Z');
+  });
+
+  it('stamps endedAt from the last assistant message of a multi-message turn', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [{ type: 'thinking', thinking: 'plan' }]),
+        message('a2', 'assistant', [{ type: 'text', text: 'answer' }], {
+          createdAt: '2026-01-01T00:00:42.000Z',
+        }),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns[0]?.endedAt).toBe('2026-01-01T00:00:42.000Z');
+  });
+});

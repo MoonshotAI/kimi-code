@@ -23,7 +23,7 @@ const { t } = useI18n();
 const props = defineProps<{
   turns: ChatTurn[];
   sessionId?: string;
-  approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
+  approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string; toolCallId?: string }[];
   gitInfo?: { branch: string; ahead: number; behind: number } | null;
   tasks: TaskItem[];
   /** Model-maintained todo list (TodoList tool) — shown as a floating card. */
@@ -585,7 +585,7 @@ function scrollAnchorTop(container: HTMLElement, node: HTMLElement): number {
   // hidden content cannot create a fake layout delta while the stable tool id
   // remains usable.
   const inert = node.closest<HTMLElement>('[inert]');
-  const positionNode = inert?.closest<HTMLElement>('.tool-group, .activity-run') ?? node;
+  const positionNode = inert?.closest<HTMLElement>('.tool-group, .activity-run, .turn-fold') ?? node;
   return (
     positionNode.getBoundingClientRect().top -
     container.getBoundingClientRect().top +
@@ -1482,6 +1482,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
               :approvals="approvals"
+              :questions="questions"
               :turn-active="turnActive"
               :working="working"
               :fast-moon="fastMoon"

@@ -126,9 +126,116 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   return rendered;
 }
 
+/** Turn-level fold split (the second folding level above the activity run).
+    Once an assistant turn settles, everything BEFORE its final text block
+    folds into a single "worked Ns" row; the final text
+    — and anything after it, so trailing media / standalone cards stay on
+    screen — keeps its normal rendering. A turn with no text block keeps every
+    successful-media tool visible from the first one onward for the same
+    reason (inline media IS the turn's output); anything else without text
+    (e.g. interrupted) folds wholesale, and a text-only turn has nothing to
+    fold. */
+export interface AssistantFold {
+  folded: AssistantRenderBlock[];
+  visible: AssistantRenderBlock[];
+}
+
+export function splitAssistantFold(turn: ChatTurn): AssistantFold {
+  const rendered = assistantRenderBlocks(turn);
+  let splitAt = -1;
+  for (let i = rendered.length - 1; i >= 0; i--) {
+    const block = rendered[i];
+    if (block?.kind === 'text' && block.text.trim().length > 0) {
+      splitAt = i;
+      break;
+    }
+  }
+  if (splitAt === -1) {
+    // No text block: the successful-media tools ARE the turn's output, so the
+    // split lands before the FIRST one — every media result stays visible,
+    // not just the last. Anything else without text (e.g. interrupted) folds
+    // wholesale.
+    for (let i = 0; i < rendered.length; i++) {
+      const block = rendered[i];
+      if (block?.kind === 'tool' && !rendersToolCard(block)) {
+        splitAt = i;
+        break;
+      }
+    }
+    if (splitAt === -1) return { folded: rendered, visible: [] };
+  }
+  return { folded: rendered.slice(0, splitAt), visible: rendered.slice(splitAt) };
+}
+
+/** Earliest thinking-block streaming-open stamp across the turn (renderer-
+    measured, live sessions only) — seeds the turn-fold clock so the measured
+    span covers the first step too. Undefined for history turns. */
+export function turnActivitySeedMs(blocks: TurnBlock[]): number | undefined {
+  let best: number | undefined;
+  for (const block of blocks) {
+    if (block.kind !== 'thinking' || block.startedAt === undefined) continue;
+    const ms = Date.parse(block.startedAt);
+    if (Number.isNaN(ms)) continue;
+    if (best === undefined || ms < best) best = ms;
+  }
+  return best;
+}
+
+/** Parse an ISO timestamp to epoch ms; undefined for missing/invalid input. */
+export function isoMs(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
+/** The turn-fold clock's working state: live while the turn is open (the row
+    ticks, parked included), settled once it ends. */
+export type TurnWorkState = { phase: 'live'; nowMs: number } | { phase: 'settled' };
+
+/** The turn's ELAPSED span in ms (the fold row's "worked Ns"). While the turn
+    is open it ticks from the stamped start — approval/question waits are part
+    of the elapsed span by design, so no park bookkeeping exists. Once settled
+    it prefers the daemon's own end-to-end durationMs, falls back to the
+    server message stamps, and to undefined (generic wording) when nothing is
+    stamped. Wall-clock feeds only the live tick; every settled value derives
+    from stamps, so throttled tabs, session switches and remounts cannot
+    corrupt it. */
+export function turnWorkMs(input: {
+  startMs?: number;
+  endedMs?: number;
+  durationMs?: number;
+  state: TurnWorkState;
+}): number | undefined {
+  if (input.state.phase === 'settled') {
+    if (input.durationMs !== undefined) return Math.max(0, input.durationMs);
+    if (input.startMs === undefined || input.endedMs === undefined) return undefined;
+    return Math.max(0, input.endedMs - input.startMs);
+  }
+  if (input.startMs === undefined) return undefined;
+  return Math.max(0, input.state.nowMs - input.startMs);
+}
+
+/** Whole-seconds work span, `37s` / `1m37s` — the turn-fold row's vocabulary;
+    unlike formatDuration it never shows a decimal fraction. */
+export function formatWorkDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${s % 60}s`;
+}
+
 export function turnFinalText(turn: ChatTurn): string {
   return turnBlocks(turn)
     .flatMap((blk) => (blk.kind === 'text' && blk.text ? [blk.text] : []))
+    .join('\n\n');
+}
+
+/** The turn's VISIBLE final text — only the text blocks left on screen after
+    the turn-level fold. The fold prefix's interim texts are hidden, so the
+    final-answer copy must not include them (unlike turnFinalText, which joins
+    every text block for full-transcript exports). */
+export function turnVisibleFinalText(turn: ChatTurn): string {
+  return splitAssistantFold(turn)
+    .visible.flatMap((blk) => (blk.kind === 'text' && blk.text ? [blk.text] : []))
     .join('\n\n');
 }
 

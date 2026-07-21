@@ -4,11 +4,16 @@ import {
   assistantRenderBlocks,
   formatDuration,
   formatTokens,
+  formatWorkDuration,
   rendersToolCard,
   renderBlockKey,
+  splitAssistantFold,
+  turnActivitySeedMs,
   turnBlocks,
   turnFinalText,
   turnToMarkdown,
+  turnVisibleFinalText,
+  turnWorkMs,
 } from '../../src/renderer/components/chatTurnRendering';
 
 function tool(id: string, over: Partial<ToolCall> = {}): ToolCall {
@@ -251,5 +256,207 @@ describe('renderBlockKey', () => {
         0,
       ),
     ).toBe('activity-run-5');
+  });
+});
+
+describe('splitAssistantFold', () => {
+  it('folds nothing when the turn is a lone text block', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([{ kind: 'text', text: 'answer' }]),
+    );
+    expect(folded).toEqual([]);
+    expect(visible.map((b) => b.kind)).toEqual(['text']);
+  });
+
+  it('folds everything before the final text block', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([
+        { kind: 'thinking', thinking: 'plan' },
+        { kind: 'text', text: 'interim' },
+        toolBlock('a'),
+        toolBlock('b'),
+        { kind: 'text', text: 'final' },
+      ]),
+    );
+    // thinking+interim text stand alone; a+b fold into one activity-run.
+    expect(folded.map((b) => b.kind)).toEqual(['thinking', 'text', 'activity-run']);
+    expect(visible.map((b) => b.kind)).toEqual(['text']);
+    expect(visible[0]).toMatchObject({ text: 'final' });
+  });
+
+  it('keeps trailing blocks after the final text visible (media/cards stay on screen)', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([
+        toolBlock('a'),
+        toolBlock('b'),
+        { kind: 'text', text: 'final' },
+        toolBlock('m', { status: 'ok', media: { kind: 'image', url: 'x' } }),
+      ]),
+    );
+    expect(folded.map((b) => b.kind)).toEqual(['activity-run']);
+    expect(visible.map((b) => b.kind)).toEqual(['text', 'tool']);
+  });
+
+  it('folds the whole turn when it has no text block (e.g. interrupted)', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([{ kind: 'thinking', thinking: 'plan' }, toolBlock('a'), toolBlock('b')]),
+    );
+    expect(folded.map((b) => b.kind)).toEqual(['activity-run']);
+    expect(visible).toEqual([]);
+  });
+
+  it('keeps a media-only final output visible (inline media is the turn output)', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([
+        toolBlock('a'),
+        toolBlock('m', { status: 'ok', media: { kind: 'image', url: 'x' } }),
+      ]),
+    );
+    expect(folded.map((b) => b.kind)).toEqual(['tool']);
+    expect(visible.map((b) => b.kind)).toEqual(['tool']);
+    expect(visible[0]).toMatchObject({ tool: { id: 'm' } });
+  });
+
+  it('keeps every media output visible when a no-text turn produces several', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([
+        { kind: 'thinking', thinking: 'plan' },
+        toolBlock('m1', { status: 'ok', media: { kind: 'image', url: 'x' } }),
+        toolBlock('m2', { status: 'ok', media: { kind: 'image', url: 'y' } }),
+      ]),
+    );
+    expect(folded.map((b) => b.kind)).toEqual(['thinking']);
+    expect(visible.map((b) => b.kind)).toEqual(['tool', 'tool']);
+    expect(visible[0]).toMatchObject({ tool: { id: 'm1' } });
+    expect(visible[1]).toMatchObject({ tool: { id: 'm2' } });
+  });
+
+  it('still folds wholesale when a no-text turn ends with a failed media tool', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([toolBlock('e', { status: 'error', media: { kind: 'image', url: 'x' } })]),
+    );
+    expect(folded.map((b) => b.kind)).toEqual(['tool']);
+    expect(visible).toEqual([]);
+  });
+
+  it('ignores empty text blocks when locating the final text', () => {
+    const { folded, visible } = splitAssistantFold(
+      assistantTurn([
+        { kind: 'text', text: 'final' },
+        { kind: 'text', text: '   ' },
+      ]),
+    );
+    expect(folded).toEqual([]);
+    expect(visible.map((b) => b.kind)).toEqual(['text', 'text']);
+  });
+
+  it('returns an empty split for an empty turn', () => {
+    const { folded, visible } = splitAssistantFold(assistantTurn([]));
+    expect(folded).toEqual([]);
+    expect(visible).toEqual([]);
+  });
+});
+
+describe('turnActivitySeedMs', () => {
+  it('returns the earliest thinking start across the turn', () => {
+    const blocks: TurnBlock[] = [
+      { kind: 'text', text: 'x' },
+      { kind: 'thinking', thinking: 'b', startedAt: '2026-07-20T10:00:10.000Z' },
+      { kind: 'thinking', thinking: 'a', startedAt: '2026-07-20T10:00:05.000Z' },
+    ];
+    expect(turnActivitySeedMs(blocks)).toBe(Date.parse('2026-07-20T10:00:05.000Z'));
+  });
+
+  it('is undefined without timed thinking blocks (history turns)', () => {
+    expect(turnActivitySeedMs([{ kind: 'text', text: 'x' }])).toBeUndefined();
+    expect(turnActivitySeedMs([{ kind: 'thinking', thinking: 'plan' }])).toBeUndefined();
+  });
+
+  it('skips unparseable stamps', () => {
+    const blocks: TurnBlock[] = [
+      { kind: 'thinking', thinking: 'bad', startedAt: 'not-a-date' },
+      { kind: 'thinking', thinking: 'ok', startedAt: '2026-07-20T10:00:05.000Z' },
+    ];
+    expect(turnActivitySeedMs(blocks)).toBe(Date.parse('2026-07-20T10:00:05.000Z'));
+  });
+});
+
+describe('formatWorkDuration', () => {
+  it('rounds to whole seconds and switches to minutes at 60s', () => {
+    expect(formatWorkDuration(0)).toBe('0s');
+    expect(formatWorkDuration(400)).toBe('0s');
+    expect(formatWorkDuration(14_000)).toBe('14s');
+    expect(formatWorkDuration(59_400)).toBe('59s');
+    expect(formatWorkDuration(59_500)).toBe('1m0s');
+    expect(formatWorkDuration(60_000)).toBe('1m0s');
+    expect(formatWorkDuration(297_000)).toBe('4m57s');
+  });
+});
+
+describe('turnVisibleFinalText', () => {
+  it('returns the only text of a text-only turn', () => {
+    expect(turnVisibleFinalText(assistantTurn([{ kind: 'text', text: 'answer' }]))).toBe('answer');
+  });
+
+  it('drops the interim texts folded before the final text block', () => {
+    const turn = assistantTurn([
+      { kind: 'text', text: 'interim' },
+      toolBlock('a'),
+      { kind: 'text', text: 'final' },
+    ]);
+    expect(turnVisibleFinalText(turn)).toBe('final');
+  });
+
+  it('is empty when the turn has no text block', () => {
+    expect(
+      turnVisibleFinalText(assistantTurn([{ kind: 'thinking', thinking: 'plan' }, toolBlock('a')])),
+    ).toBe('');
+  });
+
+  it('ignores trailing non-text blocks after the final text', () => {
+    const turn = assistantTurn([
+      { kind: 'text', text: 'final' },
+      toolBlock('m', { status: 'ok', media: { kind: 'image', url: 'x' } }),
+    ]);
+    expect(turnVisibleFinalText(turn)).toBe('final');
+  });
+});
+
+describe('turnWorkMs', () => {
+  const T0 = Date.parse('2026-07-20T10:00:00.000Z');
+
+  it('is undefined without a stamped start while live', () => {
+    expect(turnWorkMs({ state: { phase: 'live', nowMs: T0 + 5000 } })).toBeUndefined();
+  });
+
+  it('ticks end-to-end from the stamped start while live', () => {
+    expect(turnWorkMs({ startMs: T0, state: { phase: 'live', nowMs: T0 + 37_000 } })).toBe(37_000);
+  });
+
+  it('prefers the daemon duration once settled', () => {
+    expect(
+      turnWorkMs({
+        startMs: T0,
+        endedMs: T0 + 99_000,
+        durationMs: 42_000,
+        state: { phase: 'settled' },
+      }),
+    ).toBe(42_000);
+  });
+
+  it('falls back to the server message stamps once settled (history)', () => {
+    expect(turnWorkMs({ startMs: T0, endedMs: T0 + 65_000, state: { phase: 'settled' } })).toBe(
+      65_000,
+    );
+  });
+
+  it('is undefined once settled without any stamps', () => {
+    expect(turnWorkMs({ state: { phase: 'settled' } })).toBeUndefined();
+    expect(turnWorkMs({ startMs: T0, state: { phase: 'settled' } })).toBeUndefined();
+  });
+
+  it('never goes negative', () => {
+    expect(turnWorkMs({ startMs: T0 + 5000, endedMs: T0, state: { phase: 'settled' } })).toBe(0);
+    expect(turnWorkMs({ startMs: T0, state: { phase: 'live', nowMs: T0 - 1000 } })).toBe(0);
   });
 });

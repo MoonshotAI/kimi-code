@@ -248,6 +248,11 @@ export interface ChatTurn {
   compaction?: { trigger?: 'manual' | 'auto'; tokensBefore?: number; tokensAfter?: number };
   /** ISO timestamp when the message was created (used for the user bubble timestamp). */
   createdAt?: string;
+  /** Server `created_at` of the turn's last absorbed message — the stamped
+      end of its work span (thinking stamps cover the start; this covers the
+      end, immune to renderer throttling). Present for assistant turns whose
+      messages carry server timestamps, absent otherwise. */
+  endedAt?: string;
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
   /** Skill activation metadata: when a user turn was triggered by a slash
@@ -333,6 +338,8 @@ export interface QueuedPromptView {
 export interface UIQuestion {
   questionId: string;
   sessionId: string;
+  /** The AskUserQuestion tool call this request is waiting on, when known. */
+  toolCallId?: string;
   questions: {
     id: string;
     question: string;

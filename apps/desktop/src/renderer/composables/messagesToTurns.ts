@@ -404,6 +404,10 @@ interface Group {
   approvalId: string | undefined;
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
+  /** Server `created_at` of the group's first message (turn start stamp). */
+  createdAt?: string;
+  /** Server `created_at` of the last absorbed message (turn end stamp). */
+  endedAt?: string;
   /**
    * Content signatures already folded into this group, used to drop a duplicate
    * assistant message. The same logical reply can reach us under two different
@@ -601,6 +605,8 @@ export function messagesToTurns(
       approval: g.approval,
       approvalId: g.approvalId,
       durationMs: g.durationMs,
+      createdAt: g.createdAt,
+      endedAt: g.endedAt,
     });
   }
 
@@ -879,7 +885,10 @@ export function messagesToTurns(
 
     // Tool-role messages (toolResult) fold into the pending group's tool list
     if (msg.role === 'tool') {
-      if (pendingGroup) absorbContent(pendingGroup, msg.content);
+      if (pendingGroup) {
+        absorbContent(pendingGroup, msg.content);
+        pendingGroup.endedAt = msg.createdAt;
+      }
       continue;
     }
 
@@ -907,6 +916,7 @@ export function messagesToTurns(
         approvalId: undefined,
         seenSigs: new Set<string>(),
         durationMs: msg.durationMs,
+        createdAt: msg.createdAt,
       };
     } else if (pendingGroup !== null && pendingGroup.promptId === undefined && pid !== undefined) {
       pendingGroup.promptId = pid;
@@ -922,7 +932,16 @@ export function messagesToTurns(
     if (group.promptId !== undefined && group.seenSigs.has(sig)) continue;
     group.seenSigs.add(sig);
 
+    // Assistant absorb site also tracks the daemon's own turn measurement:
+    // the reducer stamps durationMs on the turn's LAST assistant message at
+    // turn.ended, so the last stamped value wins (the group-opening read only
+    // ever sees it for single-step turns).
+    if (msg.durationMs !== undefined) group.durationMs = msg.durationMs;
     absorbContent(group, msg.content);
+    // Only a LATER message proves the turn spanned time — stamping the end
+    // from the opener itself would read as Worked 0s for single-message turns
+    // (an in-place completed reply shares one created_at).
+    if (msg.id !== group.id) group.endedAt = msg.createdAt;
   }
 
   flushGroup(true);
