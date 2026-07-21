@@ -43,9 +43,9 @@
  * concurrent replays of different agent scopes never share fold state.
  */
 
-import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import { createToolMessage, type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { FinishReason } from '#/kosong/contract/provider';
+import { createToolMessage, type ContentPart, type ToolCall } from '#/kosong/contract/message';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import type { ContextMessage } from './types';
 import { isVacuousContentPart } from './vacuousContent';

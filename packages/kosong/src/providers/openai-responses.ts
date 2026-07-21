@@ -348,6 +348,13 @@ export interface OpenAIResponsesOptions {
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
+  /**
+   * Construction-time free-form request kwargs (e.g. `prompt_cache_key` for
+   * session affinity), merged into every request at generate time. Explicit
+   * first-class options (`maxOutputTokens`) win on conflict; the
+   * `withGenerationKwargs` morph layers on top of both.
+   */
+  generationKwargs?: OpenAIResponsesGenerationKwargs | undefined;
 }
 
 export interface OpenAIResponsesGenerationKwargs {
@@ -1037,7 +1044,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._defaultHeaders = options.defaultHeaders;
     this._model = options.model;
     this._stream = true; // Responses API always supports streaming
-    this._generationKwargs = {};
+    this._generationKwargs = { ...options.generationKwargs };
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;

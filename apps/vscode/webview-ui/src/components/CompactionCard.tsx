@@ -2,7 +2,7 @@ import { IconLoader2 } from "@tabler/icons-react";
 import { useChatStore } from "@/stores";
 
 export function CompactionCard() {
-  const { isCompacting } = useChatStore();
+  const isCompacting = useChatStore((s) => s.isCompacting);
 
   return (
     <div className="rounded-lg border border-border bg-muted/20 overflow-hidden">

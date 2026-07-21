@@ -144,14 +144,18 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     if (failed !== undefined) return failed;
 
     if (this.permissionMode.mode === 'auto') {
-      this.telemetry.track2('plan_resolved', { outcome: 'auto_approved' });
+      this.telemetry.track2('plan_resolved', {
+        outcome: 'auto_approved',
+      });
       return {
         isError: false,
         output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
       };
     }
 
-    this.telemetry.track2('plan_resolved', { outcome: 'approved' });
+    this.telemetry.track2('plan_resolved', {
+      outcome: 'approved',
+    });
     return {
       isError: false,
       output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,

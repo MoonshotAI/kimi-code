@@ -10,6 +10,7 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
+import { ReplayTurnBoundaryComponent } from '../components/messages/user-message';
 import { currentTheme } from '../theme';
 import type { TodoItem } from '../components/chrome/todo-panel';
 import type {
@@ -23,6 +24,7 @@ import { formatBackgroundAgentTranscript } from '../utils/background-agent-statu
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import { formatBashOutputForDisplay } from '../utils/shell-output';
+import { markTranscriptComponent } from '../utils/transcript-component-metadata';
 import {
   appStateFromResumeAgent,
   backgroundOrigin,
@@ -305,6 +307,16 @@ export class SessionReplayRenderer {
     // reminders, stop-hook reasons, …) are model-facing only: the live event
     // stream never renders them, so replay must not leak them either.
     if (message.origin?.kind === 'system_trigger') {
+      if (message.origin.name === 'goal_continuation') {
+        // The goal driver's synthetic "continue" prompt starts a new replay
+        // turn even though nothing visible is mounted: advance the turn and
+        // mark an invisible boundary so each goal round groups under its own
+        // turn and step/assistant folding can find the turn edges.
+        this.advanceTurn(context);
+        const boundary = new ReplayTurnBoundaryComponent();
+        markTranscriptComponent(boundary, replayEntry(context, 'user', '', 'plain'));
+        this.host.state.transcriptContainer.addChild(boundary);
+      }
       return;
     }
 
@@ -647,8 +659,9 @@ export class SessionReplayRenderer {
       (child) => child instanceof ToolCallComponent && child.toolCallView.id === toolCallId,
     );
     if (childIndex >= 0) {
+      // Structural removal only: the container's ref-checked render cache
+      // detects the child-list change; no tree-wide invalidate needed.
       children.splice(childIndex, 1);
-      state.transcriptContainer.invalidate();
     }
   }
 

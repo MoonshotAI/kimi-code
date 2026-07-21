@@ -1,6 +1,9 @@
 /**
  * `providerService` — provider configuration registry. Mirrors
- * `agent-core-v2/app/provider/provider.ts` (`ProviderConfigSchema`).
+ * `agent-core-v2/kosong/provider/provider.ts` (`ProviderConfigSchema`).
+ * `type` is free-form text, not an enum: vendor identity is validated at
+ * resolve time against the engine's provider-definition registry, so external
+ * packages can register new vendors without touching this schema.
  */
 
 import { z } from 'zod';
@@ -8,14 +11,7 @@ import { z } from 'zod';
 import { maybe, noResult } from '../helpers.js';
 import type { ServiceContract } from '../types.js';
 
-const providerTypeSchema = z.enum([
-  'anthropic',
-  'openai',
-  'kimi',
-  'google-genai',
-  'openai_responses',
-  'vertexai',
-]);
+const providerTypeSchema = z.string();
 
 const oAuthRefSchema = z.object({
   storage: z.enum(['file', 'keyring']),
@@ -28,7 +24,6 @@ const stringRecordSchema = z.record(z.string(), z.string());
 const modelSourceSchema = z.enum(['static', 'discover', 'oauth-catalog']);
 
 export const providerConfigSchema = z.object({
-  platformId: z.string().optional(),
   modelSource: modelSourceSchema.optional(),
 
   baseUrl: z.string().optional(),

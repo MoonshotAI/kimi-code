@@ -250,6 +250,21 @@ describe('AgentRecords persistence metadata', () => {
     await expect(records.replay()).rejects.toThrow('Missing wire migration for version 0.9');
   });
 
+  it('replays a tools.set_active_tools record without names without crashing', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      // v2-engine wires may omit `names` (= every tool active); replaying
+      // such a record must not throw.
+      { type: 'tools.set_active_tools' } as unknown as AgentRecord,
+      { type: 'goal.create', goalId: 'g1', objective: 'do work' } as AgentRecord,
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+    // Replay continued past the names-less record.
+    expect(agent.goal.getGoal().goal?.goalId).toBe('g1');
+  });
+
   it('restores goal.* records during replay', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },

@@ -17,6 +17,13 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui
 import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
+import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
+import {
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
+  TRANSCRIPT_KEEP_RECENT_STEPS,
+} from '#/tui/utils/transcript-window';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
@@ -49,6 +56,8 @@ function makeStartupInput(): KimiTUIStartupInput {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      agent: undefined,
+      agentFiles: [],
     },
     tuiConfig: {
       theme: 'dark',
@@ -1217,5 +1226,88 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('replay final approved plan');
     expect(transcript).not.toContain('Plan rejected by user.');
     expect(transcript).not.toContain('Plan mode: OFF');
+  });
+
+  it('trims goal sessions to the most recent goal turns and hides continuation prompts', async () => {
+    const replay: AgentReplayRecord[] = [goalReplay(goalSnapshot(), { kind: 'created' })];
+    for (let i = 0; i < 25; i++) {
+      replay.push(
+        message('user', [{ type: 'text', text: 'Continue working toward the active goal.' }], {
+          origin: { kind: 'system_trigger', name: 'goal_continuation' },
+        }),
+        message('assistant', [{ type: 'text', text: `round ${i} summary` }], {
+          toolCalls: [toolCall(`call_${i}`, 'Bash', { command: 'ls' })],
+        }),
+        message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: `call_${i}` }),
+      );
+    }
+
+    const driver = await replayIntoDriver(replay);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+
+    // Continuation prompts are model-facing and never render as user bubbles.
+    expect(transcript).not.toContain('Continue working toward the active goal.');
+    // Only the most recent REPLAY_TURN_LIMIT goal turns are replayed.
+    expect(transcript).not.toContain('round 0 summary');
+    expect(transcript).not.toContain('round 14 summary');
+    expect(transcript).toContain('round 15 summary');
+    expect(transcript).toContain('round 24 summary');
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof ToolCallComponent,
+      ),
+    ).toHaveLength(10);
+  });
+
+  it('folds oversized goal rounds even though continuation boundaries are hidden', async () => {
+    const replay: AgentReplayRecord[] = [goalReplay(goalSnapshot(), { kind: 'created' })];
+    // Ten continuation rounds — exactly at the replay turn limit, so nothing
+    // is trimmed and only folding can bound the oversized final round.
+    for (let i = 0; i < 9; i++) {
+      replay.push(
+        message('user', [{ type: 'text', text: 'Continue working toward the active goal.' }], {
+          origin: { kind: 'system_trigger', name: 'goal_continuation' },
+        }),
+        message('assistant', [{ type: 'text', text: `round ${i} summary` }], {
+          toolCalls: [toolCall(`call_${i}`, 'Bash', { command: 'ls' })],
+        }),
+        message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: `call_${i}` }),
+      );
+    }
+    // Final round: 40 tool calls and 5 assistant texts in one continuation turn.
+    replay.push(
+      message('user', [{ type: 'text', text: 'Continue working toward the active goal.' }], {
+        origin: { kind: 'system_trigger', name: 'goal_continuation' },
+      }),
+    );
+    for (let t = 0; t < 40; t++) {
+      replay.push(
+        message('assistant', t < 5 ? [{ type: 'text', text: `final text ${t}` }] : [], {
+          toolCalls: [toolCall(`final_${t}`, 'Bash', { command: 'ls' })],
+        }),
+        message('tool', [{ type: 'text', text: 'ok' }], { toolCallId: `final_${t}` }),
+      );
+    }
+
+    const driver = await replayIntoDriver(replay);
+    const children = driver.state.transcriptContainer.children;
+
+    // The oversized round folds to the per-turn caps even with no visible
+    // boundary component mounted for the continuation prompt.
+    const tools = children.filter((child) => child instanceof ToolCallComponent);
+    expect(tools).toHaveLength(9 + TRANSCRIPT_KEEP_RECENT_STEPS);
+    const assistants = children.filter((child) => child instanceof AssistantMessageComponent);
+    expect(assistants).toHaveLength(9 + TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED);
+
+    const summaries = children.filter((child) => child instanceof StepSummaryComponent);
+    expect(summaries).toHaveLength(1);
+    const summaryText = stripAnsi(summaries[0]!.render(120).join('\n'));
+    expect(summaryText).toContain(`call ${40 - TRANSCRIPT_KEEP_RECENT_STEPS} tools`);
+    expect(summaryText).toContain(`${5 - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
+
+    // The folded content is gone from view; the latest work stays.
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('final text 0');
+    expect(transcript).toContain('final text 4');
   });
 });
