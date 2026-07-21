@@ -435,11 +435,18 @@ function applyModelProviderOverride(
   const override = raw.provider;
   if (override === undefined) return model;
   // An api-only override keeps the provider's wire; an npm override points at
-  // a (possibly different) one. Unrecognized npm gets the same
-  // OpenAI-compatible fallback as top-level entries so a concretely declared
-  // endpoint is not silently dropped.
+  // a (possibly different) one. Known proprietary SDKs are refused like at
+  // top level; other unrecognized npm gets the same OpenAI-compatible
+  // fallback so a concretely declared endpoint is not silently dropped.
+  const overrideNpm = typeof override.npm === 'string' ? override.npm.toLowerCase() : undefined;
+  if (
+    overrideNpm !== undefined &&
+    (overrideNpm.includes('amazon-bedrock') || overrideNpm.includes('cohere'))
+  ) {
+    return undefined;
+  }
   const overrideWire =
-    typeof override.npm === 'string' ? (inferOverrideWire(override.npm) ?? 'openai') : providerWire;
+    overrideNpm !== undefined ? (inferOverrideWire(overrideNpm) ?? 'openai') : providerWire;
   if (overrideWire === undefined) return model;
   const rawApi = override.api;
   const api = rawApi ?? entry.api;

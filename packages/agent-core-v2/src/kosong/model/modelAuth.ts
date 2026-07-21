@@ -119,14 +119,13 @@ export function effectiveModelConfig(
   ) {
     delete effective.defaultEffort;
   }
-  if (
+  const clamped =
     effective.maxInputSize !== undefined &&
     effective.maxContextSize !== undefined &&
     effective.maxInputSize > effective.maxContextSize
-  ) {
-    effective.maxInputSize = effective.maxContextSize;
-  }
-  return withAnthropicProfile(effective, providerType);
+      ? { ...effective, maxInputSize: effective.maxContextSize }
+      : effective;
+  return withAnthropicProfile(clamped, providerType);
 }
 
 function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelRecord {

@@ -24,14 +24,13 @@ export function effectiveModelAlias(
 
   // The input cap can never exceed the effective total window (an override
   // lowering max_context_size must not leave a stale, larger cap behind).
-  if (
-    effective.maxInputSize !== undefined &&
-    effective.maxInputSize > effective.maxContextSize
-  ) {
-    effective.maxInputSize = effective.maxContextSize;
-  }
+  // Build a copy for the clamp — never rewrite the caller's config record.
+  const clamped =
+    effective.maxInputSize !== undefined && effective.maxInputSize > effective.maxContextSize
+      ? { ...effective, maxInputSize: effective.maxContextSize }
+      : effective;
 
-  return withAnthropicProfile(effective, providerType);
+  return withAnthropicProfile(clamped, providerType);
 }
 
 function withAnthropicProfile(model: ModelAlias, providerType?: ProviderType): ModelAlias {

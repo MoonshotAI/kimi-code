@@ -608,6 +608,12 @@ describe('ModelCatalog inspect', () => {
           maxInputSize: 272000,
           overrides: { maxContextSize: 128000 },
         },
+        clampedOverride: {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 400000,
+          overrides: { maxContextSize: 128000, maxInputSize: 272000 },
+        },
         plain: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 100 },
       },
     });
@@ -627,6 +633,18 @@ describe('ModelCatalog inspect', () => {
       });
       expect(clampedView.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
         kind: 'synthesized',
+      });
+
+      // An override value itself above the window is attributed to the clamp,
+      // not to models.*.overrides.
+      const clampedOverrideView = catalog.inspect('clampedOverride');
+      expect(clampedOverrideView.resolved.maxInputSize).toBe(128000);
+      expect(clampedOverrideView.sources['model.effective.maxInputSize']).toMatchObject({
+        kind: 'synthesized',
+        detail: expect.stringContaining('clamped'),
+      });
+      expect(clampedOverrideView.sources['model.effective.maxInputSize']).not.toMatchObject({
+        kind: 'override',
       });
 
       const plainView = catalog.inspect('plain');

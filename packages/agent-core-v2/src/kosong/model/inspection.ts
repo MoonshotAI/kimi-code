@@ -184,6 +184,20 @@ export function attributeEffectiveFields(
     const before = (base as Record<string, unknown>)[key];
     const after = (effective as Record<string, unknown>)[key];
     if (before === undefined && after === undefined) continue;
+    if (key === 'maxInputSize') {
+      const rawValue = (overridden.has(key) ? overrides?.[key] : before) as number | undefined;
+      if (
+        rawValue !== undefined &&
+        effective.maxContextSize !== undefined &&
+        rawValue > effective.maxContextSize
+      ) {
+        trace.record(path, {
+          kind: 'synthesized',
+          detail: 'clamped to the effective max_context_size',
+        });
+        continue;
+      }
+    }
     if (overridden.has(key)) {
       trace.record(path, { kind: 'override', detail: 'models.*.overrides' });
       continue;
@@ -192,17 +206,6 @@ export function attributeEffectiveFields(
       trace.record(path, {
         kind: 'synthesized',
         detail: 'removed by the effective pass (defaultEffort not in override supportEfforts)',
-      });
-      continue;
-    }
-    if (
-      key === 'maxInputSize' &&
-      before !== undefined &&
-      JSON.stringify(before) !== JSON.stringify(after)
-    ) {
-      trace.record(path, {
-        kind: 'synthesized',
-        detail: 'clamped to the effective max_context_size',
       });
       continue;
     }
@@ -497,9 +500,6 @@ function attributeCapabilities(
     kind: 'synthesized',
     detail: 'forced to the resolved maxContextSize',
   });
-  // The capability-level input cap mirrors the field-level provenance of
-  // maxInputSize (config / override / clamp); without a declaration the
-  // total window is the only ceiling.
   const maxInputSource = sources.get('model.effective.maxInputSize');
   sources.set(
     'resolved.capabilities.max_input_tokens',

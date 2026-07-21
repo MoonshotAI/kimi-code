@@ -475,7 +475,7 @@ export class SessionService extends Disposable implements ISessionService {
     const capability = config.modelCapabilities;
     const maxContextTokens = capability?.max_input_tokens ?? capability?.max_context_tokens ?? 0;
     const contextTokens = context.tokenCount;
-    const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
+    const contextUsage = maxContextTokens > 0 ? Math.min(1, contextTokens / maxContextTokens) : 0;
 
     const agentState = this.promptService.getAgentStateSnapshot(id);
 

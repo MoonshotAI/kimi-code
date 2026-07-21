@@ -700,6 +700,24 @@ describe('catalogProviderModels', () => {
     expect(models).toHaveLength(0);
   });
 
+  it('refuses known proprietary override SDKs instead of falling back to OpenAI', () => {
+    for (const npm of ['@ai-sdk/cohere', '@ai-sdk/amazon-bedrock']) {
+      const models = catalogProviderModels({
+        id: 'gateway',
+        npm: '@ai-sdk/openai-compatible',
+        api: 'https://gateway.example.test/v1',
+        models: {
+          'vendor-model': {
+            id: 'vendor-model',
+            limit: { context: 1000 },
+            provider: { npm, api: 'https://tenant.example.test/v1' },
+          },
+        },
+      });
+      expect(models).toHaveLength(0);
+    }
+  });
+
   it('falls back to the OpenAI wire for unrecognized override SDKs, preserving a concrete endpoint', () => {
     // xai-flavored model on an OpenAI-compatible gateway: the npm is unknown
     // but the endpoint is concrete — carry it (same-wire), do not drop it.

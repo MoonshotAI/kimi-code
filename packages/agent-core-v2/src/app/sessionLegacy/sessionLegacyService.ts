@@ -180,7 +180,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       swarm_mode: swarm.isActive,
       context_tokens: tokens,
       max_context_tokens: maxTokens,
-      context_usage: maxTokens > 0 ? tokens / maxTokens : 0,
+      context_usage: maxTokens > 0 ? Math.min(1, tokens / maxTokens) : 0,
     };
   }
 
@@ -209,7 +209,8 @@ function resolveDefaultModelContextTokens(agent: IAgentScopeHandle): number {
   const defaultModel = agent.accessor.get(IConfigService).get<string>('defaultModel');
   if (typeof defaultModel !== 'string' || defaultModel.length === 0) return 0;
   try {
-    return agent.accessor.get(IModelCatalog).get(defaultModel).capabilities.max_context_tokens;
+    const capabilities = agent.accessor.get(IModelCatalog).get(defaultModel).capabilities;
+    return capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   } catch {
     return 0;
   }

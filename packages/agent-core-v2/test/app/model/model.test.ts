@@ -28,17 +28,29 @@ import '#/kosong/provider/providers/kimi/kimi.contrib';
 import '#/kosong/provider/providers/standard.contrib';
 
 describe('effectiveModelConfig', () => {
-  it('clamps the input cap to the effective total window', () => {
-    const effective = effectiveModelConfig({
+  it('clamps the input cap to the effective total window without mutating the source', () => {
+    const record = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 128000,
+      maxInputSize: 272000,
+    };
+
+    const effective = effectiveModelConfig(record);
+    expect(effective.maxInputSize).toBe(128000);
+    expect(record.maxInputSize).toBe(272000);
+
+    const withOverrides = {
       provider: 'custom',
       model: 'gpt-5',
       maxContextSize: 400000,
       maxInputSize: 272000,
       overrides: { maxContextSize: 128000 },
-    });
-
-    expect(effective.maxContextSize).toBe(128000);
-    expect(effective.maxInputSize).toBe(128000);
+    };
+    const effectiveOverride = effectiveModelConfig(withOverrides);
+    expect(effectiveOverride.maxContextSize).toBe(128000);
+    expect(effectiveOverride.maxInputSize).toBe(128000);
+    expect(withOverrides.maxInputSize).toBe(272000);
   });
 
   it('derives the official effort metadata from a Claude model name', () => {
