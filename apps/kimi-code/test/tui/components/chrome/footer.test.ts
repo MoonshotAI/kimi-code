@@ -270,6 +270,63 @@ describe('FooterComponent subagent model badge', () => {
     expect(rendered).not.toContain('subagents:');
   });
 
+  it('shows the badge when the model is the same but the thinking effort differs', () => {
+    setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k3',
+      thinkingEffort: 'low',
+      subagentModel: 'kimi-k3',
+      subagentThinkingEffort: 'high',
+      availableModels: {
+        'kimi-k3': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k3',
+          maxContextSize: 1_048_576,
+          displayName: 'Kimi K3',
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(140).join('\n');
+
+    expect(rendered).toContain('subagents:');
+    expect(rendered).toContain('Kimi K3 · high');
+  });
+
+  it('shows the badge with provider prefix when the model name is the same but the provider differs', () => {
+    setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
+    // Two aliases serve the same underlying model (kimi-k3) via different
+    // providers: the main agent uses managed:kimi-code, the subagent uses
+    // opencode-go. The badge shows the provider prefix on the subagent side
+    // so the user can tell the routes apart.
+    const state: AppState = {
+      ...appState,
+      model: 'kimi-k3',
+      subagentModel: 'kimi-k3-opencode',
+      availableModels: {
+        'kimi-k3': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-k3',
+          maxContextSize: 1_048_576,
+          displayName: 'Kimi K3',
+        },
+        'kimi-k3-opencode': {
+          provider: 'opencode-go',
+          model: 'kimi-k3',
+          maxContextSize: 1_048_576,
+          displayName: 'Kimi K3',
+        },
+      },
+    };
+    const footer = new FooterComponent(state);
+    const rendered = footer.render(160).join('\n');
+
+    expect(rendered).toContain('subagents:');
+    // The provider prefix is shown so the user can tell the routes apart.
+    expect(rendered).toContain('opencode-go/Kimi K3');
+  });
+
   it('appends the thinking-effort suffix to the subagent badge when set', () => {
     setExperimentalFeatures([{ id: 'dual-model-routing', enabled: true }]);
     const state: AppState = {

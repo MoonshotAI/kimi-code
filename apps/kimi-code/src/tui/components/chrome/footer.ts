@@ -146,6 +146,10 @@ function modelDisplayName(state: AppState): string {
  * Display name for the subagent model (`dual-model-routing` experimental
  * feature). Returns the empty string when no subagent model is set, so the
  * caller can skip rendering it.
+ *
+ * When the subagent alias matches the main model but the provider differs
+ * (e.g. the same model served by a different provider), the provider id is
+ * prepended so the user can tell the two apart at a glance.
  */
 function subagentModelDisplayName(state: AppState): string {
   const alias = state.subagentModel;
@@ -153,11 +157,21 @@ function subagentModelDisplayName(state: AppState): string {
   const model = state.availableModels[alias];
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   const base = effective?.displayName ?? effective?.model ?? alias;
+  // Prepend the provider when the subagent alias matches the main model but
+  // the underlying provider differs (same model, different route).
+  const mainModel = state.availableModels[state.model];
+  const mainProvider = mainModel === undefined ? undefined : effectiveModelAlias(mainModel).provider;
+  const subProvider = effective?.provider;
+  // Prepend the provider when it differs from the main model's provider,
+  // so the user can distinguish two routes that serve the same model name
+  // (e.g. the same kimi-k3 via managed:kimi-code vs opencode-go).
+  const providerPrefix =
+    subProvider !== undefined && subProvider !== mainProvider ? `${subProvider}/` : '';
   // Append the thinking-effort suffix when a separate effort is set for
   // subagents (e.g. "GLM-5.2 · high").
   const effort = state.subagentThinkingEffort;
-  if (effort !== undefined && effort.length > 0) return `${base} · ${effort}`;
-  return base;
+  if (effort !== undefined && effort.length > 0) return `${providerPrefix}${base} · ${effort}`;
+  return `${providerPrefix}${base}`;
 }
 
 function shortenCwd(path: string): string {
@@ -303,19 +317,33 @@ export class FooterComponent implements Component {
       left.push(renderedModelLabel);
     }
 
-    // Subagent model badge — only shown when the `dual-model-routing`
-    // experimental feature is active and a DISTINCT subagent model is set
-    // (different alias from the main model). When the subagent alias equals
-    // the main model — e.g. auth-flow hydration sets it from config even when
-    // defaultSubagentModel === defaultModel — there is nothing to surface.
-    // The flag check is defense-in-depth: getSubagentModel() / getStatus also
-    // gate on the flag, so appState.subagentModel should already be undefined
-    // when the feature is off.
+    // Subagent model badge — shown when the `dual-model-routing` experimental
+    // feature is active and the subagent's effective settings differ from the
+    // main agent's. Three dimensions of distinctness, any one of which makes
+    // the badge relevant: (1) a different model alias, (2) the same alias on a
+    // different provider (e.g. the same model served elsewhere), or (3) a
+    // different thinking effort. When all three match the main agent there is
+    // nothing to surface. The flag check is defense-in-depth:
+    // getSubagentModel() / getStatus also gate on the flag, so
+    // appState.subagentModel should already be undefined when the feature is off.
     const subagentAlias = state.subagentModel;
-    const subagentLabel =
-      isExperimentalFlagEnabled('dual-model-routing') &&
+    const subagentEffort = state.subagentThinkingEffort;
+    const subagentEntry =
+      subagentAlias !== undefined ? state.availableModels[subagentAlias] : undefined;
+    const subagentProvider = subagentEntry
+      ? effectiveModelAlias(subagentEntry).provider
+      : undefined;
+    const mainEntry = state.availableModels[state.model];
+    const mainProvider = mainEntry ? effectiveModelAlias(mainEntry).provider : undefined;
+    const isDistinct =
       subagentAlias !== undefined &&
       subagentAlias !== state.model
+        ? true // different alias → always distinct
+        : subagentAlias !== undefined &&
+          (subagentProvider !== mainProvider || // same alias, different provider
+            (subagentEffort !== undefined && subagentEffort !== state.thinkingEffort)); // same alias, different effort
+    const subagentLabel =
+      isExperimentalFlagEnabled('dual-model-routing') && isDistinct
         ? subagentModelDisplayName(state)
         : '';
     if (subagentLabel.length > 0) {
