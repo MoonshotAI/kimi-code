@@ -100,12 +100,15 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   }
 
   private registerListeners(): void {
-    this.registerToolHooks(
-      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolExecutorService)),
-    );
-
+    // Fetching the gate first forces its `'permission'` hook to be
+    // registered, so the PreToolUse hook below can anchor ahead of it:
+    // external PreToolUse blocks must land before the permission flow.
     this.registerPermissionHooks(
       this.instantiation.invokeFunction((accessor) => accessor.get(IAgentPermissionGate)),
+    );
+
+    this.registerToolHooks(
+      this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolExecutorService)),
     );
 
     this.registerPromptHooks(
@@ -128,16 +131,26 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
   }
 
   private registerToolHooks(toolExecutor: IAgentToolExecutorService): void {
-    this._register(
-      toolExecutor.hooks.onBeforeExecuteTool.register('externalHooks', async (ctx, next) => {
-        const reason = await this.runPreToolUse(ctx);
-        if (reason !== undefined) {
-          ctx.decision = { block: true, reason };
-          return;
-        }
-        await next();
-      }),
-    );
+    const slot = toolExecutor.hooks.onBeforeExecuteTool;
+    const handler = async (
+      ctx: ToolBeforeExecuteContext,
+      next: () => Promise<void>,
+    ): Promise<void> => {
+      const reason = await this.runPreToolUse(ctx);
+      if (reason !== undefined) {
+        ctx.decision = { block: true, reason };
+        return;
+      }
+      await next();
+    };
+    // Anchor ahead of the gate's 'permission' hook so external PreToolUse
+    // blocks land before the permission flow; compositions that stub the
+    // gate have no such hook to anchor on, so fall back to appending.
+    try {
+      this._register(slot.register('externalHooks', handler, { before: 'permission' }));
+    } catch {
+      this._register(slot.register('externalHooks', handler));
+    }
     this._register(
       toolExecutor.hooks.onDidExecuteTool.register('externalHooks', async (ctx, next) => {
         this.notifyPostToolUse(ctx);
