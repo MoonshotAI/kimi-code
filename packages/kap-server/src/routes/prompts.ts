@@ -213,16 +213,19 @@ async function applyProfileSelection(
 }
 
 /**
- * Fail fast on stale file references before anything session-scoped happens:
- * a bad `file_id` must reject the request without creating the prompt agent
- * and without touching the session's model/thinking/permission.
+ * Fail fast on stale or mis-kinded file references before anything
+ * session-scoped happens: a bad `file_id` (unknown, or a real file used with
+ * the wrong media kind, e.g. a PDF submitted as a video) must reject the
+ * request without creating the prompt agent and without touching the
+ * session's model/thinking/permission.
  */
 async function assertPromptFileRefs(body: PromptSubmission, store: IFileService): Promise<void> {
   for (const part of body.content) {
     if (part.type === 'file') {
       await store.get(part.file_id);
     } else if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'file') {
-      await store.get(part.source.file_id);
+      const file = await store.get(part.source.file_id);
+      assertMediaFile(file, part.type);
     }
   }
 }

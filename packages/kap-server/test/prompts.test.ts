@@ -232,6 +232,32 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
+  it('rejects a mis-kinded file reference without creating the agent', async () => {
+    const id = await createSession(home as string);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+
+    // A real upload, but referenced with the wrong media kind.
+    const form = new FormData();
+    form.set('file', new Blob([Buffer.from('%PDF-1.4 fake')], { type: 'application/pdf' }), 'spec.pdf');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
+    expect(uploaded.code).toBe(0);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'stub',
+      content: [
+        { type: 'text', text: 'watch this' },
+        { type: 'video', source: { kind: 'file', file_id: uploaded.data.id } },
+      ],
+    });
+    expect(body.code).toBe(40001);
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
   it('falls back to cache path tags for uploaded videos when the model has no upload channel', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
