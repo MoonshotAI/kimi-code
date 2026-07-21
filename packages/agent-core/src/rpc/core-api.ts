@@ -83,6 +83,12 @@ export interface ResumeSessionPayload {
   readonly additionalDirs?: readonly string[];
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
+  /**
+   * Limit each returned agent replay to the most recent N user turns. Omit to
+   * return the full replay. Lets UI callers that only render the tail avoid
+   * serializing the entire history over the RPC boundary.
+   */
+  readonly replayTurnLimit?: number;
 }
 
 export interface ReloadSessionPayload {
@@ -184,6 +190,14 @@ export interface SessionSummary {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+  /**
+   * Client-managed session denylist, applied via
+   * `IAgentProfileService.setSessionDisabledTools` before the prompt is
+   * enqueued: full-replace semantics, the profile's own `disallowedTools`
+   * always survive. Omit to keep the persisted value; `[]` clears the client
+   * portion. Ignored by engines without profile support.
+   */
+  readonly disabledTools?: readonly string[];
 }
 export interface RunShellCommandPayload {
   readonly command: string;

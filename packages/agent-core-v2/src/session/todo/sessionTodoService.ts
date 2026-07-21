@@ -24,7 +24,7 @@ import { Emitter } from '#/_base/event';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IWireService } from '#/wire/wire';
 
@@ -106,9 +106,9 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
 
   private staleReminder(handle: IAgentScopeHandle): string | undefined {
     const memory = handle.accessor.get(IAgentContextMemoryService);
-    const profile = handle.accessor.get(IAgentProfileService);
+    const toolPolicy = handle.accessor.get(IAgentToolPolicyService);
     return todoListStaleReminder({
-      active: profile.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
+      active: toolPolicy.isToolActive(TODO_LIST_TOOL_NAME, 'builtin'),
       history: memory.get(),
       todos: this.getTodos(),
     });

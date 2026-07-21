@@ -20,8 +20,9 @@ import {
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
-import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { IProviderService } from '#/app/provider/provider';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IProviderService } from '#/kosong/provider/provider';
+import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 
 import { LocalFetchURLProvider } from './providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from './providers/moonshot-fetch-url';
@@ -42,7 +43,7 @@ export class WebFetchService implements IWebFetchService {
 
   getUrlFetcher(): UrlFetcher {
     const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
-    if (provider?.type !== 'kimi' || provider.oauth === undefined) {
+    if (provider === undefined || !isOAuthCatalogVendor(provider.type) || provider.oauth === undefined) {
       return this.localFetcher;
     }
     const tokenProvider = this.oauth.resolveTokenProvider(

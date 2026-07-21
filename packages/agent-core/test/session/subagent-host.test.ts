@@ -334,6 +334,9 @@ describe('SessionSubagentHost', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('subagent_created', {
       subagent_name: 'explore',
       run_in_background: false,
+      agent_id: 'agent-0',
+      parent_agent_id: 'main',
+      parent_tool_call_id: 'call_agent',
     });
     expect(parent.allEvents).toContainEqual(
       expect.objectContaining({

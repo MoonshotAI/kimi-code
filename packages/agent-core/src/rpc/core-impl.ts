@@ -12,6 +12,7 @@ import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
 import { resolveThinkingEffort } from '../agent/config/thinking';
 import { Agent } from '../agent';
+import { limitAgentReplayByTurns } from '../agent/replay/turns';
 import {
   applyPrintModeConfigDefaults,
   ensureKimiHome,
@@ -489,7 +490,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       }
       await active.setBaseAdditionalDirs(additionalDirs);
       return withAdditionalDirs(
-        await resumeSessionResult(summary, active, undefined, input.includeSubagents),
+        await resumeSessionResult(
+          summary,
+          active,
+          undefined,
+          input.includeSubagents,
+          input.replayTurnLimit,
+        ),
         active,
       );
     }
@@ -550,7 +557,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       // (and any SDK caller's resumeState) reflects the refreshed plugin context.
       await session.appendPluginSessionStartReminder();
     }
-    return resumeSessionResult(summary, session, warning, input.includeSubagents);
+    return resumeSessionResult(
+      summary,
+      session,
+      warning,
+      input.includeSubagents,
+      input.replayTurnLimit,
+    );
   }
 
   async reloadSession(input: ReloadSessionPayload): Promise<ResumeSessionResult> {
@@ -1524,6 +1537,7 @@ async function resumeSessionResult(
   session: Session,
   warning?: string,
   includeSubagents = false,
+  replayTurnLimit?: number,
 ): Promise<ResumeSessionResult> {
   if (includeSubagents) {
     const persistedAgentIds = Object.keys(session.metadata.agents).filter(
@@ -1555,7 +1569,7 @@ async function resumeSessionResult(
       type: agent.type,
       config,
       context,
-      replay: agent.replayBuilder.buildResult(),
+      replay: limitAgentReplayByTurns(agent.replayBuilder.buildResult(), replayTurnLimit),
       permission,
       plan,
       swarmMode,

@@ -36,6 +36,8 @@
     "typecheck:examples": "tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
     "smoke": "tsx --tsconfig ./tsconfig.examples.json --import ../../build/register-raw-text-loader.mjs examples/smoke.ts",
+    "smoke:boundary": "tsx --tsconfig ./tsconfig.examples.json --import ../../build/register-raw-text-loader.mjs examples/model-requester-boundary.ts",
+    "smoke:select-tools": "tsx --tsconfig ./tsconfig.examples.json --import ../../build/register-raw-text-loader.mjs examples/kimi-select-tools.ts",
     "clean": "rm -rf dist",
     "docker:e2e": "bash scripts/run-docker-e2e.sh"
   },

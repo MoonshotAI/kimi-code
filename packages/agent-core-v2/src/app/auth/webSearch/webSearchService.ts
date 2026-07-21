@@ -28,8 +28,9 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IOAuthService } from '#/app/auth/auth';
 import { IConfigService } from '#/app/config/config';
-import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
-import { IProviderService } from '#/app/provider/provider';
+import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IProviderService } from '#/kosong/provider/provider';
+import { isOAuthCatalogVendor } from '#/kosong/provider/providerDefinition';
 
 import { SERVICES_SECTION, type ServicesConfig } from '../configSection';
 import { MoonshotWebSearchProvider } from './providers/moonshot-web-search';
@@ -70,7 +71,7 @@ export class WebSearchProviderService implements IWebSearchProviderService {
 
   private fromManagedOAuth(): WebSearchProvider | undefined {
     const provider = this.providers.get(KIMI_CODE_PROVIDER_NAME);
-    if (provider?.type !== 'kimi' || provider.oauth === undefined) {
+    if (provider === undefined || !isOAuthCatalogVendor(provider.type) || provider.oauth === undefined) {
       return undefined;
     }
     const tokenProvider = this.oauth.resolveTokenProvider(

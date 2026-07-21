@@ -59,6 +59,24 @@ describe('promptSubmissionSchema', () => {
     expect(parsed.thinking).toBeUndefined();
   });
 
+  it('accepts an agent profile selection', () => {
+    const parsed = promptSubmissionSchema.parse({
+      content: [{ type: 'text', text: 'hi' }],
+      profile: 'reviewer',
+      model: 'kimi-code/k2',
+    });
+    expect(parsed.profile).toBe('reviewer');
+  });
+
+  it('rejects an empty profile string', () => {
+    expect(() =>
+      promptSubmissionSchema.parse({
+        content: [{ type: 'text', text: 'hi' }],
+        profile: '',
+      }),
+    ).toThrow();
+  });
+
   it('accepts the full bundle of controls when supplied', () => {
     const parsed = promptSubmissionSchema.parse({
       content: [{ type: 'text', text: 'hi' }],

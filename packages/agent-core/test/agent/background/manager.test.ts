@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BackgroundTaskPersistence,
   ProcessBackgroundTask,
+  resolveMaxRunningTasks,
   type BackgroundManager,
   type BackgroundTaskInfo,
 } from '../../../src/agent/background';
@@ -372,6 +373,41 @@ describe('BackgroundManager', () => {
     expect(() => {
       manager.registerTask(agentTask(new Promise(() => {}), 'agent task'));
     }).toThrow('Too many background tasks are already running.');
+  });
+
+  describe('KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS env override', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('caps registration from the env even without config', () => {
+      vi.stubEnv('KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS', '1');
+      const { manager } = createBackgroundManager({ maxRunningTasks: 4 });
+
+      registerProcess(manager, pendingProcess().proc, 'sleep 60', 'first task');
+
+      expect(() => {
+        registerProcess(manager, pendingProcess().proc, 'sleep 60', 'second task');
+      }).toThrow('Too many background tasks are already running.');
+    });
+
+    it('prefers the env value over config and ignores invalid values', () => {
+      expect(resolveMaxRunningTasks(4)).toBe(4);
+      expect(resolveMaxRunningTasks()).toBeUndefined();
+
+      vi.stubEnv('KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS', '2');
+      expect(resolveMaxRunningTasks(4)).toBe(2);
+      expect(resolveMaxRunningTasks()).toBe(2);
+
+      // `0` is invalid for this field (schema minimum is 1): no cap.
+      vi.stubEnv('KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS', '0');
+      expect(resolveMaxRunningTasks(4)).toBe(4);
+
+      vi.stubEnv('KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS', 'abc');
+      expect(resolveMaxRunningTasks(4)).toBe(4);
+      vi.stubEnv('KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS', '-2');
+      expect(resolveMaxRunningTasks()).toBeUndefined();
+    });
   });
 
   it('captures process output', async () => {

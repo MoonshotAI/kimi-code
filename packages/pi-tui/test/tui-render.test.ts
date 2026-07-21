@@ -829,3 +829,164 @@ describe("Text negative width safety", () => {
 		assert.doesNotThrow(() => text.render(-1));
 	});
 });
+
+describe("TUI steady-frame processed-line reuse", () => {
+	it("writes only the changed line when one component updates in a long transcript", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const staticComponent = new TestComponent();
+		staticComponent.lines = Array.from({ length: 30 }, (_, i) => `static-${String(i).padStart(2, "0")}`);
+		const spinner = new TestComponent();
+		spinner.lines = ["frame-a"];
+		tui.addChild(staticComponent);
+		tui.addChild(spinner);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		spinner.lines = ["frame-b"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("frame-b"), "changed line should be written");
+		assert.ok(!writes.includes("static-"), "unchanged transcript lines must not be rewritten");
+		assert.ok(!writes.includes("\x1b[2J"), "no full clear for an in-viewport change");
+
+		tui.stop();
+	});
+
+	it("writes nothing but the cursor hide for an identical frame", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		component.lines = ["alpha", "beta", "gamma"];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.strictEqual(writes.replaceAll("\x1b[?25l", ""), "");
+		tui.stop();
+	});
+
+	it("does not serve stale processed lines when a line toggles between two values", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		component.lines = ["head", "value-a", "tail"];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		component.lines = ["head", "value-b", "tail"];
+		tui.requestRender();
+		await terminal.waitForRender();
+		component.lines = ["head", "value-a", "tail"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const viewport = await terminal.flushAndGetViewport();
+		assert.strictEqual(viewport[0], "head");
+		assert.strictEqual(viewport[1], "value-a");
+		assert.strictEqual(viewport[2], "tail");
+		tui.stop();
+	});
+
+	it("fully redraws when the terminal width changes", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		component.lines = ["one", "two", "three"];
+		tui.addChild(component);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		terminal.resize(30, 10);
+		await terminal.waitForRender();
+
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes("\x1b[2J"), "width change should clear and redraw");
+		assert.ok(writes.includes("one") && writes.includes("two") && writes.includes("three"));
+		tui.stop();
+	});
+
+	it("redraws a kitty image block when a line above it changes", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui = new TUI(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 2 },
+				{ widthPx: 20, heightPx: 20 },
+			);
+			const imageLines = image.render(40);
+			const imageSequence = imageLines[0]!;
+			component.lines = ["header", ...imageLines, "footer"];
+			tui.start();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			component.lines = ["header2", ...imageLines, "footer"];
+			tui.requestRender();
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.ok(writes.includes("header2"), "changed line should be written");
+			assert.ok(
+				writes.includes(imageSequence),
+				"image block should be redrawn when a line above it changes",
+			);
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+
+	it("does not rewrite a kitty image on an identical frame", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui = new TUI(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 2 },
+				{ widthPx: 20, heightPx: 20 },
+			);
+			const imageLines = image.render(40);
+			const imageSequence = imageLines[0]!;
+			component.lines = ["header", ...imageLines, "footer"];
+			tui.start();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			tui.requestRender();
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.ok(!writes.includes(imageSequence), "identical frame must not rewrite the image");
+			assert.strictEqual(writes.replaceAll("\x1b[?25l", ""), "");
+			tui.stop();
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
+});

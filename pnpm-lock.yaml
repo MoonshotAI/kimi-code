@@ -719,9 +719,6 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
-      nunjucks:
-        specifier: ^3.2.4
-        version: 3.2.4(chokidar@4.0.3)
       openai:
         specifier: ^6.34.0
         version: 6.34.0(ws@8.20.0)(zod@4.3.6)
@@ -765,9 +762,6 @@ importers:
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
-      '@types/nunjucks':
-        specifier: ^3.2.6
-        version: 3.2.6
       '@types/picomatch':
         specifier: ^4.0.3
         version: 4.0.3
