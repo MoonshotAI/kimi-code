@@ -29,6 +29,15 @@
  * Path safety: goes through the shared path access resolver used by
  * Read/Write/Edit.
  *
+ * Videos are delivered through the provider's upload channel when one is
+ * bound, falling back to an inline base64 part when the channel exists but
+ * fails at runtime (no files endpoint, network/server failure) — a failed
+ * upload must not turn the whole read into an error. Two cases surface as
+ * tool errors instead: a provider with no upload hook by design
+ * (`VideoUploadUnsupportedError`, whose wire would drop the inline payload
+ * anyway), and auth rejections (`provider.auth_error` / 401 / 403), which
+ * drive credential refresh rather than mask a bad token.
+ *
  * Registration is capability-gated by `registerMediaTools`: this tool is
  * only registered when the active model supports image or video input.
  */
@@ -239,17 +248,6 @@ function buildFullResolutionLimitError(path: string, finalBytes: number): string
   );
 }
 
-/**
- * Upload-channel errors that must surface as a tool error rather than
- * degrade to inline delivery:
- *  - `VideoUploadUnsupportedError` — the provider has no upload hook by
- *    design; an inline payload would be dropped on the wire anyway, so the
- *    honest "does not support video upload" error wins;
- *  - auth rejections (`provider.auth_error` / 401 / 403) — they drive
- *    credential refresh and a clear auth error.
- * Everything else (no files endpoint, network/server failures) falls back
- * to inline delivery.
- */
 function shouldSurfaceVideoUploadError(error: unknown): boolean {
   if (error instanceof VideoUploadUnsupportedError) return true;
   if (typeof error !== 'object' || error === null) return false;
@@ -276,15 +274,6 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
   }
 
-  /**
-   * Deliver a video through the provider's upload channel when available,
-   * falling back to an inline base64 part when the channel exists but is
-   * broken (no files endpoint, network/server failure) — a failed upload
-   * must not turn the whole read into an error. Errors that must surface
-   * instead (see {@link shouldSurfaceVideoUploadError}): a provider with no
-   * upload hook by design, whose wire would drop the inline payload anyway,
-   * and auth rejections, which drive credential refresh.
-   */
   private async videoContentPart(
     data: Buffer,
     mimeType: string,

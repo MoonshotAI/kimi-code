@@ -5,6 +5,9 @@
  * the `API*Error` class family, the retry verdict (`isRetryableGenerateError`),
  * the telemetry classification (`ApiErrorKind` / `classifyApiError`), and the
  * status-error normalizer every dialect's error converter funnels through.
+ * Alongside the wire-status classes, `VideoUploadUnsupportedError` marks the
+ * by-design capability gap (provider has no video upload hook) so callers
+ * can tell it apart from an upload that failed at runtime.
  *
  * Abort has exactly one standard shape here: the DOMException built by
  * `createAbortError`. Provider error converters must run the `throwIfAbortError`
@@ -29,11 +32,6 @@ export class APIConnectionError extends ChatProviderError {
   }
 }
 
-/**
- * The provider has no video upload hook at all — a by-design capability gap
- * (distinct from an upload that failed at runtime), so callers that would
- * otherwise degrade gracefully can tell the two apart.
- */
 export class VideoUploadUnsupportedError extends ChatProviderError {
   constructor(message: string) {
     super(message);

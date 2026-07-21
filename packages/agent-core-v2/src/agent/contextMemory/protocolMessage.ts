@@ -4,6 +4,11 @@
  * Defined next to `messageProjection.ts`, which projects `ContextMessage`
  * into this shape; consumed by the `messageLegacy` edge adapter and the
  * transports.
+ *
+ * Media sources come in three kinds: `url`, `base64`, and `file` (a daemon
+ * upload id). The `url` kind optionally pairs an `id` — the provider-issued
+ * file id behind a reference such as `ms://…` — forwarded on the wire when
+ * the provider keys media by id.
  */
 
 import { z } from 'zod';
@@ -39,8 +44,6 @@ export const imageSourceSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('url'),
     url: z.string().min(1),
-    // Provider-issued file id paired with `url` (e.g. a `ms://` reference),
-    // forwarded on the wire when the provider keys media by id.
     id: z.string().min(1).optional(),
   }),
   z.object({
