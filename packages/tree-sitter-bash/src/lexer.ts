@@ -352,12 +352,35 @@ export function scanBalancedStatements(
 }
 
 /** Skip a $-construct starting at `i` (which points at the `$`). Handles
- *  $(...), $((...)), ${...}, $name and the single-character specials. A `$`
- *  followed by anything else (including a quote) consumes just the `$`. */
+ *  $(...), $((...)), ${...}, $'...' (escape-aware: \' does not close),
+ *  $name and the single-character specials. A `$` followed by anything else
+ *  (including a double quote) consumes just the `$`. */
 export function skipDollar(source: string, budget: ParseBudget, i: number, end: number): number {
   const next = source[i + 1];
   if (next === '(') return scanBalancedStatements(source, budget, i + 1, end).end;
   if (next === '{') return scanBalanced(source, budget, i + 1, end, '{', '}').end;
+  // $[...] legacy arithmetic (only when `[` directly follows the `$`; `$a[0]`
+  // takes the word-character branch above).
+  if (next === '[') return scanBalanced(source, budget, i + 1, end, '[', ']').end;
+  if (next === "'") {
+    // ANSI-C string: \' is an escaped quote and does not terminate it.
+    let j = i + 2;
+    let sinceTick = 0;
+    while (j < end) {
+      if (++sinceTick >= SCAN_TICK_INTERVAL) {
+        budget.progress();
+        sinceTick = 0;
+      }
+      const ch = source[j]!;
+      if (ch === '\\') {
+        j += 2;
+        continue;
+      }
+      if (ch === "'") return j + 1;
+      j++;
+    }
+    return end;
+  }
   if (isWordChar(next)) {
     let j = i + 1;
     while (j < end && isWordChar(source[j])) j++;

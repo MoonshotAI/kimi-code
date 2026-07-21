@@ -55,7 +55,7 @@ import {
   SPECIAL_VARIABLE_CHARS,
   UNSET_COMMAND_KEYWORDS,
 } from '#/grammar';
-import { Lexer, scanBalanced, scanBalancedStatements, skipBacktick, skipDoubleQuoted, skipSingleQuoted } from '#/lexer';
+import { Lexer, scanBalanced, scanBalancedStatements, skipBacktick, skipDollar, skipDoubleQuoted, skipSingleQuoted } from '#/lexer';
 import type { BalancedScan, HeredocBody, HeredocSpec, Token } from '#/lexer';
 import { SyntaxNodeBuilder } from '#/node';
 
@@ -87,6 +87,9 @@ const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 const ASSIGNMENT_SPLIT_RE = /^([A-Za-z_][A-Za-z0-9_]*)(\+?=)/;
 const SUBSCRIPT_ASSIGNMENT_RE = /^(\w+)\[([^\]\n]*)\](\+?=)/;
 const IDENTIFIER_RE = /^[A-Za-z_]\w*$/;
+/** Function names additionally allow `:` (`foo::bar() { … }` — the
+ *  reference accepts any such word as a function name). */
+const FUNCTION_NAME_RE = /^[A-Za-z_][\w:]*$/;
 const BRACE_EXPRESSION_RE = /^\{(\d+)\.\.(\d+)\}/;
 /** Statement-position `((…))` that tree-sitter-bash parses as a
  *  test_command: inner text starting with an identifier-ish token
@@ -956,6 +959,13 @@ export class Parser {
    * (* ? [) or that are followed by `|` — those are extglob_pattern nodes,
    * matching the reference scanner.
    */
+  /** case_item: `( pattern (| pattern)* ) statements? terminator?`.
+   *  Patterns are scanned character-wise (they may hold extglob groups with
+   *  parens the token stream cannot represent) and classified following the
+   *  reference scanner: a bare literal is a word (or concatenation pieces),
+   *  glob material is one extglob_pattern, and a pattern mixing glob text
+   *  with a quote/expansion splits into extglob_pattern pieces around the
+   *  construct (the grammar's _extglob_blob). */
   private parseCaseItem(): Frame {
     const kids: Frame[] = [];
     let token = this.lexer.peek();
@@ -964,21 +974,17 @@ export class Parser {
       kids.push(this.anon('(', token.start, token.end));
     }
     // Patterns.
+    let firstAlternative = true;
     for (;;) {
       token = this.lexer.peek();
       if (token.type !== 'word') {
         this.hasError = true; // missing pattern
         break;
       }
-      const [start, end] = this.consumeWordRun();
-      const raw = this.text(start, end);
-      const bare = !/["'$`\\]/.test(raw);
-      const followedByAlternate = this.lexer.peek().type === 'op' && this.tokenText(this.lexer.peek()) === '|';
-      if (bare && (/[*?[\]]/.test(raw) || followedByAlternate)) {
-        kids.push(this.frame('extglob_pattern', start, end));
-      } else {
-        kids.push(this.parseLiteral(start, end));
-      }
+      const alt = this.scanCasePatternEnd(token.start);
+      kids.push(...this.parseCasePattern(token.start, alt.end, firstAlternative));
+      firstAlternative = false;
+      this.lexer.reposition(alt.end);
       token = this.lexer.peek();
       if (token.type === 'op' && this.tokenText(token) === '|') {
         this.lexer.next();
@@ -1008,6 +1014,265 @@ export class Parser {
     // terminator (usually a newline) in the reference.
     const end = Math.max(this.endOf(kids, token.start), this.lastTerminatorEnd);
     return this.frame('case_item', start, end, kids);
+  }
+
+  /** End of one case pattern alternative: the position of the top-level `)`
+   *  or `|` (extglob group parens nest). Quote/escape/substitution aware. */
+  private scanCasePatternEnd(i: number): { end: number } {
+    const end = this.lexer.rangeEnd;
+    let depth = 0;
+    let j = i;
+    let sinceTick = 0;
+    while (j < end) {
+      if (++sinceTick >= SCAN_TICK_INTERVAL) {
+        this.budget.progress();
+        sinceTick = 0;
+      }
+      const ch = this.source[j]!;
+      if (ch === '\n' || ch === ';') break; // defensive: malformed item
+      if (ch === '\\') {
+        j += 2;
+        continue;
+      }
+      if (ch === '"') {
+        j = skipDoubleQuoted(this.source, this.budget, j, end);
+        continue;
+      }
+      if (ch === "'") {
+        j = skipSingleQuoted(this.source, this.budget, j, end);
+        continue;
+      }
+      if (ch === '`') {
+        j = skipBacktick(this.source, this.budget, j, end);
+        continue;
+      }
+      if (ch === '$') {
+        j = this.skipDollarConstruct(j, end);
+        continue;
+      }
+      if (ch === '(') {
+        depth++;
+        j++;
+        continue;
+      }
+      if (ch === ')') {
+        if (depth === 0) return { end: j };
+        depth--;
+        j++;
+        continue;
+      }
+      if (ch === '|' && depth === 0) return { end: j };
+      if ((ch === ' ' || ch === '\t' || ch === '\r') && depth === 0) return { end: j };
+      j++;
+    }
+    return { end: j };
+  }
+
+  /** Build the frames for one case pattern alternative. The extglob_blob
+   *  piece split (glob text around a quote/expansion) only applies to the
+   *  FIRST alternative — after `|` the reference keeps such patterns as
+   *  plain concatenations. */
+  private parseCasePattern(start: number, end: number, allowBlob: boolean): Frame[] {
+    const raw = this.text(start, end);
+    // Extglob group present: accepted groups make the whole alternative one
+    // extglob_pattern; rejected ones degrade with hasError (the reference
+    // reparses the group as a new item — a recovery shape we do not mirror).
+    // `.(` is not a sigil, but the reference rejects it the same way.
+    const group = /[?*+@!.]\(/.exec(raw);
+    if (group !== null) {
+      if (this.extglobGroupAccepted(start, end)) return [this.frame('extglob_pattern', start, end)];
+      this.hasError = true;
+      return [this.frame('ERROR', start, end)];
+    }
+    if (!/["'$`]/.test(raw)) {
+      // Bare pattern.
+      if (this.isBareGlobPattern(start, end)) return [this.frame('extglob_pattern', start, end)];
+      return [this.parseLiteral(start, end)];
+    }
+    // Glob text mixed with a quote/expansion: extglob_pattern pieces around
+    // a single construct when the leading run qualifies as a glob.
+    if (allowBlob) {
+      const pieces = this.parseExtglobBlob(start, end);
+      if (pieces !== null) return pieces;
+    }
+    return [this.parseLiteral(start, end)];
+  }
+
+  /**
+   * Whether the extglob scanner accepts a group-containing pattern
+   * (scanner.c's first/second character rules): the first character must be
+   * a letter or one of `?*+@!-)\.[` (a leading escape consumes the escaped
+   * space/quote with it, plus one more character), and the character at the
+   * scanner's check position must be alphanumeric or one of `([?/\_*`.
+   */
+  private extglobGroupAccepted(start: number, end: number): boolean {
+    const isAlpha = (ch: string): boolean => /[A-Za-z]/.test(ch);
+    const isAlnum = (ch: string): boolean => /[A-Za-z0-9]/.test(ch);
+    const c0 = this.source[start]!;
+    if (!isAlpha(c0) && !'?*+@!-)\\.['.includes(c0)) return false;
+    if (c0 === '[') return true; // the scanner skips the second-char check
+    let check = start + 1;
+    if (c0 === '\\') {
+      const after = this.source[start + 1];
+      if (after === undefined || !(after === ' ' || after === '\t' || after === '\r' || after === '"')) return false;
+      check = start + 3; // escape pair + one unconditionally consumed char
+    }
+    if (check >= end) return false;
+    const ch = this.source[check]!;
+    return isAlnum(ch) || '([?/\\_*'.includes(ch);
+  }
+
+  /**
+   * Whether a bare case pattern (no quotes, substitutions or groups) is an
+   * extglob_pattern in the reference, derived from scanner.c's
+   * extglob_pattern scanner (the same source as isTestExtglob for `[[ ]]`
+   * right sides) and verified against the wasm build on an ~90-pattern
+   * matrix (foo_bar/word1/abc1d/v2.0/a1/a_ → glob; abc/a.b/1a/é/a-b → word):
+   *  1. the first character must be a (Unicode) letter or one of
+   *     `?*+@!-)\.[`, else the pattern is a literal;
+   *  2. a leading single dash makes the pattern a word when the rest is
+   *     plain alphanumerics (the scanner's special-variable branch eats
+   *     the `-` before the glob scan: `-o`, `-xy`, `-abc` → word, `-1` →
+   *     number); `--anything` is a glob, and so is a single dash with an
+   *     inner dash run (`-x-`, `-x-y`, `-x-y-z` → glob) unless the inner
+   *     dashes are doubled (`-x--` → word);
+   *  3. single-character patterns use the scanner's early exits: a letter
+   *     before `)` is a word, anything else (and anything before `|` or
+   *     whitespace) is a glob;
+   *  4. a dash in second position is consumed together with its
+   *     alphanumeric run BEFORE the validity check; the pattern is a word
+   *     when the run ends the pattern directly before `)` (`a-b)`, `z-)`)
+   *     or is followed by `.` / a character that is not valid pattern
+   *     material (`a-b-c`). Before `|` or whitespace the glob survives
+   *     (`a-b|`, `a-b `);
+   *  5. the second character must be alphanumeric or one of `([?/\_*`
+   *     (`*.txt`, `a.b`, `q+w`, `a:b` → word; skipped for a leading `[`);
+   *  6. ending quirk: a pattern directly followed by `|` is always a glob;
+   *  7. otherwise the pattern is a glob iff some character counts as glob
+   *     material: the first character when it is not a letter, or any later
+   *     character that is neither a letter nor `.` (digits and `_` count —
+   *     `foo_bar`, `abc1d` are globs; `abc`, `foo.txt` are words).
+   */
+  private isBareGlobPattern(start: number, end: number): boolean {
+    const raw = this.text(start, end);
+    if (raw.includes('\\')) return false;
+    if (NUMBER_RE.test(raw)) return false; // 12, -1, 0x1F → number
+    const isAlpha = (ch: string): boolean => /^\p{L}$/u.test(ch);
+    const isAlnum = (ch: string): boolean => /^[\p{L}\p{N}]$/u.test(ch);
+    const next = this.source[end] ?? '';
+    const c0 = raw[0]!;
+    // (1) first character
+    if (!isAlpha(c0) && !'?*+@!-)\\.['.includes(c0)) return false;
+    // (2) leading dash: the scanner's special-variable branch eats a
+    // leading `-` before the glob scan. A single dash followed by plain
+    // alphanumerics is a word/number (`-o`, `-xy`, `-x1` → word, `-1` →
+    // number); `--anything` is a glob; so is a single dash with exactly
+    // one INNER dash run (`-x-`, `-x-y`, `-x-y-z` → glob) — but a doubled
+    // inner dash falls back to a word (`-x--`).
+    if (c0 === '-') {
+      if (raw.length > 1 && raw[1] === '-') return true;
+      let innerDash = -1;
+      for (let i = 1; i < raw.length; i++) {
+        if (raw[i] === '-') {
+          innerDash = i;
+          break;
+        }
+      }
+      if (innerDash === -1) return false;
+      return raw[innerDash + 1] !== '-';
+    }
+    // (3) single-character patterns: the scanner's early exits — but only
+    // at a real pattern END (`)`, `|` or whitespace; when a quote or
+    // substitution follows, the run continues as a blob piece and the
+    // glob-material check below decides).
+    if (raw.length === 1) {
+      if (next === ')') return !isAlpha(c0);
+      if (next === '|' || next === ' ' || next === '\t' || next === '\r' || next === '\n' || next === '') return true;
+    }
+    // (4) a dash in second position is consumed together with its
+    // alphanumeric run BEFORE the validity check; the pattern is a word
+    // when the run ends the pattern directly before `)` (a-b), z-)) or is
+    // followed by `.` / a character that is not valid pattern material
+    // (a-b-c). Before `|` or whitespace the glob survives (a-b|, a-b␣).
+    if (raw.length > 1) {
+      let p = 1;
+      if (raw[1] === '-') {
+        let i = 2;
+        while (i < raw.length && isAlnum(raw[i]!)) i++;
+        if (i >= raw.length) {
+          if (next === ')') return false;
+          return true;
+        }
+        const after = raw[i]!;
+        if (after === '.' || after === '\\') return false;
+        if (!isAlnum(after) && !'([?/\\_*'.includes(after)) return false;
+        p = i;
+      }
+      // (5) second-character validity (skipped for a leading `[`)
+      if (c0 !== '[' && p === 1 && !isAlnum(raw[1]!) && !'([?/\\_*'.includes(raw[1]!)) return false;
+    }
+    // (6) ending quirk: directly before `|` the scanner accepts unconditionally
+    if (next === '|') return true;
+    // (7) glob material?
+    if (!isAlpha(c0)) return true;
+    for (let i = 1; i < raw.length; i++) {
+      const ch = raw[i]!;
+      if (ch !== '.' && !isAlpha(ch)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The _extglob_blob shape: extglob_pattern pieces around ONE construct
+   * (string / raw_string / expansion / command_substitution). Returns null
+   * when the leading bare run does not qualify as a glob (the pattern is a
+   * plain concatenation in the reference) or the shape does not fit.
+   */
+  private parseExtglobBlob(start: number, end: number, leadValidator?: (s: number, e: number) => boolean): Frame[] | null {
+    // Find the first construct.
+    let i = start;
+    while (i < end) {
+      const ch = this.source[i]!;
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`' || ch === '$') break;
+      i++;
+    }
+    if (i >= end || i === start) return null;
+    // The leading bare run must qualify as a glob. Runs with escapes count
+    // when they contain an explicit glob character (`*\ ${x}` → extglob
+    // "*\ "); unescaped runs go through the bare-pattern rule. A custom
+    // validator applies for group-containing runs (test patterns).
+    const leadText = this.text(start, i);
+    const leadIsGlob =
+      leadValidator !== undefined
+        ? leadValidator(start, i)
+        : leadText.includes('\\')
+          ? /[*?[]/.test(leadText)
+          : this.isBareGlobPattern(start, i);
+    if (!leadIsGlob) return null;
+    const lead = this.frame('extglob_pattern', start, i);
+    // The construct.
+    let construct: Frame;
+    let next: number;
+    const ch = this.source[i]!;
+    if (ch === '"') {
+      [construct, next] = this.parseString(i, end);
+    } else if (ch === "'") {
+      next = skipSingleQuoted(this.source, this.budget, i, end);
+      construct = this.frame('raw_string', i, next);
+    } else if (ch === '`') {
+      [construct, next] = this.parseBacktickSubstitution(i, end);
+    } else {
+      const dollar = this.parseDollar(i, end);
+      if (dollar === null) return null;
+      [construct, next] = dollar;
+    }
+    if (next >= end) return [lead, construct];
+    const trail = this.frame('extglob_pattern', next, end);
+    return [lead, construct, trail];
   }
 
   /** case_item statements with the esac-argument guard active (see
@@ -1101,7 +1366,7 @@ export class Parser {
   private isFunctionDefinitionAhead(): boolean {
     const name = this.lexer.peek();
     const text = this.tokenText(name);
-    if (!IDENTIFIER_RE.test(text) || RESERVED_WORD_SET.has(text)) return false;
+    if (!FUNCTION_NAME_RE.test(text) || RESERVED_WORD_SET.has(text)) return false;
     const open = this.lexer.peekAt(1);
     if (open.type !== 'op' || this.tokenText(open) !== '(') return false;
     const close = this.lexer.peekAt(2);
@@ -1433,7 +1698,15 @@ export class Parser {
     if (descriptor !== null) kids.push(descriptor);
     kids.push(this.anon(op, opToken.start, opToken.end));
     let end = opToken.end;
-    if (op !== '>&-' && op !== '<&-') {
+    if (op === '>&-' || op === '<&-') {
+      // Close-fd operators take an OPTIONAL single destination in the
+      // reference (`exec {a} <&- {b}>&-` puts `{b}` in the `<&-` redirect).
+      if (this.lexer.peek().type === 'word') {
+        const destination = this.parseWordArgument();
+        kids.push(destination);
+        end = destination.end;
+      }
+    } else {
       let destinations = 0;
       while (destinations < maxDestinations && this.lexer.peek().type === 'word') {
         const destination = this.parseWordArgument();
@@ -1807,6 +2080,22 @@ export class Parser {
         this.addKid(string, this.frame('string_content', chunkStart, upto));
       }
     };
+    /** A whitespace-only chunk is absorbed into the next construct's opener
+     *  (` " ${x}"` → (${) token " ${"), or into the closing quote after an
+     *  expansion (`"$x "` → (") token " \"") — the reference scanner never
+     *  emits a whitespace-only string_content at those positions. Leaf
+     *  constructs without an opener token (ansi_c_string) cannot absorb. */
+    const whitespaceOnlyChunk = (upto: number): boolean => {
+      if (upto <= chunkStart) return false;
+      return /^[ \t\r]+$/.test(this.source.slice(chunkStart, upto));
+    };
+    const absorbInto = (piece: Frame): boolean => {
+      const first = piece.children[0];
+      if (first === undefined) return false;
+      piece.start = chunkStart;
+      first.start = chunkStart;
+      return true;
+    };
     let sinceTick = 0;
     while (i < rangeEnd) {
       if (++sinceTick >= SCAN_TICK_INTERVAL) {
@@ -1815,8 +2104,14 @@ export class Parser {
       }
       const ch = this.source[i]!;
       if (ch === '"') {
-        flushChunk(i);
-        this.addKid(string, this.anon('"', i, i + 1));
+        const last = string.children.at(-1);
+        if (whitespaceOnlyChunk(i) && last !== undefined && last.isNamed && last.type !== 'string_content') {
+          // Absorbed into the closing quote (see whitespaceOnlyChunk).
+          this.addKid(string, this.anon('"', chunkStart, i + 1));
+        } else {
+          flushChunk(i);
+          this.addKid(string, this.anon('"', i, i + 1));
+        }
         string.end = i + 1;
         return [string, i + 1];
       }
@@ -1827,13 +2122,20 @@ export class Parser {
       if (ch === '$') {
         const dollar = this.parseDollar(i, rangeEnd);
         if (dollar !== null) {
-          flushChunk(i);
+          if (!(whitespaceOnlyChunk(i) && absorbInto(dollar[0]))) {
+            flushChunk(i);
+          }
           this.addKid(string, dollar[0]);
           i = dollar[1];
           chunkStart = i;
           continue;
         }
+        // A `$` that starts no construct is an anonymous ($) token, splitting
+        // the content (`"s$"` → string_content "s", ($) "$").
+        flushChunk(i);
+        this.addKid(string, this.anon('$', i, i + 1));
         i++;
+        chunkStart = i;
         continue;
       }
       if (ch === '`') {
@@ -1921,8 +2223,8 @@ export class Parser {
    * expansion: ${ … } with optional prefix operators (! #), a variable_name
    * / special_variable_name / subscript, and an optional infix operator
    * whose value layout follows the reference:
-   *   # ## % %%     removal — the pattern is a regex node (quotes become
-   *                 string/raw_string pieces)
+   *   # ## % %%     removal — the pattern is a regex node (single-quoted
+   *                   segments fold into it; double quotes stay strings)
    *   / // /# /%    replacement — regex pattern, optional `/` + literal
    *   ^ ^^ , ,,     case modification — optional regex
    *   @X            transformation — two anonymous operator nodes
@@ -1945,6 +2247,53 @@ export class Parser {
     } finally {
       this.literalDepth--;
     }
+  }
+
+  /**
+   * Whether a ${a[…]} subscript index parses as an expression in the
+   * reference (binary/unary/parenthesized) rather than as a plain literal:
+   * true when the index contains a top-level arithmetic operator ADJACENT
+   * TO WHITESPACE (`${a[1 + 2]}` — a fused `i+1` stays a word) or starts
+   * with ++/-- (`${w[++counter]}`). Operators inside parens, brackets,
+   * quotes and $-constructs do not count.
+   */
+  private isArithmeticSubscriptIndex(start: number, end: number): boolean {
+    if (this.source.startsWith('++', start) || this.source.startsWith('--', start)) return true;
+    const isBlank = (ch: string | undefined): boolean => ch === ' ' || ch === '\t' || ch === '\r';
+    let i = start;
+    while (i < end) {
+      const ch = this.source[i]!;
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        i++;
+        continue;
+      }
+      if (ch === '$') {
+        i = this.skipDollarConstruct(i, end);
+        continue;
+      }
+      if (ch === '(') {
+        i = this.scanBalanced(i, end, '(', ')').end;
+        continue;
+      }
+      if (ch === '[') {
+        i = this.scanBalanced(i, end, '[', ']').end;
+        continue;
+      }
+      if ('+-*/%<>=!&|^~?,'.includes(ch) && (isBlank(this.source[i - 1]) || isBlank(this.source[i + 1]))) return true;
+      i++;
+    }
+    return false;
+  }
+
+  /** Rename variable_name leaves to word (the reference uses plain _literal
+   *  operands — word, not variable_name — in subscript index expressions). */
+  private remapVariableNamesToWords(frame: Frame): void {
+    if (frame.type === 'variable_name') frame.type = 'word';
+    for (const child of frame.children) this.remapVariableNamesToWords(child);
   }
 
   private parseExpansionInner(i: number, rangeEnd: number): [Frame, number] {
@@ -1974,12 +2323,21 @@ export class Parser {
       this.addKid(expansion, this.frame(special ? 'special_variable_name' : 'variable_name', j, nameEnd));
       j = nameEnd;
       hasName = true;
+    } else if (j < innerEnd && (this.source[j] === '#' || this.source[j] === '!') && j + 1 === innerEnd) {
+      // A lone # / ! in variable position is an anonymous token in the
+      // reference (`${#}`, `${!#}`, `${!##}`, `${#!}` — the length/indirect
+      // operator with no name), not a special_variable_name.
+      this.addKid(expansion, this.anon(this.source[j]!, j, j + 1));
+      j++;
     } else if (j < innerEnd && SPECIAL_VARIABLE_CHARS.includes(this.source[j]!)) {
       this.addKid(expansion, this.frame('special_variable_name', j, j + 1));
       j++;
       hasName = true;
     }
-    // Subscript: ${a[0]} — replaces the bare variable_name child.
+    // Subscript: ${a[0]} — replaces the bare variable_name child. A simple
+    // index is a literal; an index with a top-level arithmetic operator or a
+    // ++/-- prefix is an expression in the reference (`${a[1 + 2]}` →
+    // binary_expression, `${w[++c]}` → unary_expression).
     if (j < innerEnd && this.source[j] === '[' && hasName) {
       const sub = this.scanBalanced(j, rangeEnd, '[', ']');
       const subEnd = sub.end;
@@ -1991,7 +2349,22 @@ export class Parser {
         this.anon('[', j, j + 1),
       ]);
       if (indexEnd > j + 1) {
-        this.addKid(subscript, this.parseLiteral(j + 1, indexEnd));
+        const indexText = this.text(j + 1, indexEnd);
+        if (indexText === '*' || indexText === '@') {
+          // ${a[*]} / ${a[@]} — all-indices subscripts are plain words.
+          this.addKid(subscript, this.parseLiteral(j + 1, indexEnd));
+        } else if (this.isArithmeticSubscriptIndex(j + 1, indexEnd)) {
+          const st = this.newExprState(j + 1, indexEnd, 'arith');
+          const index = this.parseExpression(st, 0);
+          if (index !== null) {
+            this.remapVariableNamesToWords(index);
+            this.addKid(subscript, index);
+          }
+          const leftover = this.exprLeftover(st);
+          if (leftover !== null) this.addKid(subscript, leftover);
+        } else {
+          this.addKid(subscript, this.parseLiteral(j + 1, indexEnd));
+        }
       } else {
         this.hasError = true;
       }
@@ -2030,7 +2403,7 @@ export class Parser {
         this.addKid(expansion, this.anon('/', pos, pos + 1));
         pos++;
         if (pos < innerEnd) {
-          this.addKid(expansion, this.parseExpansionValue(pos, innerEnd));
+          for (const piece of this.parseExpansionValue(pos, innerEnd)) this.addKid(expansion, piece);
           pos = innerEnd;
         }
       }
@@ -2066,7 +2439,7 @@ export class Parser {
         this.addKid(expansion, this.anon(operator, j, j + operator.length));
         const pos = j + operator.length;
         if (pos < innerEnd) {
-          this.addKid(expansion, this.parseExpansionValue(pos, innerEnd));
+          for (const piece of this.parseExpansionValue(pos, innerEnd)) this.addKid(expansion, piece);
         }
         return innerEnd;
       }
@@ -2077,11 +2450,29 @@ export class Parser {
     return innerEnd;
   }
 
-  /** A removal/replacement pattern inside ${…}: regex chunks (raw text,
-   *  spaces included) interleaved with string/raw_string pieces. `stop`
-   *  optionally ends the pattern (the replacement separator `/`). */
+  /** A removal/replacement pattern inside ${…}: regex chunks interleaved
+   *  with string pieces. Rules from the reference scanner:
+   *  - leading whitespace after the operator drops out of the tree when
+   *    more pattern follows (${G%% *} → regex "*"); an all-whitespace
+   *    pattern stays a regex (${B[0]# } → regex " ");
+   *  - in the REPLACEMENT pattern (before the separator `/`), single-quoted
+   *    segments fold INTO the surrounding regex chunk (${M/'N'X/O} →
+   *    regex "'N'X"); in removal patterns (# ## % %% ^ ^ , ,,) they stay
+   *    separate raw_string nodes, and double quotes always stay strings;
+   *  - the replacement separator `/` ends the pattern even when escaped
+   *    (a pattern ending in backslash-slash → regex keeps the backslash,
+   *    then the `/` operator). */
   private parseExpansionPattern(expansion: Frame, j: number, innerEnd: number, stop?: string): number {
     let pos = j;
+    while (pos < innerEnd && (this.source[pos] === ' ' || this.source[pos] === '\t' || this.source[pos] === '\r')) {
+      pos++;
+    }
+    if (pos > j && (pos >= innerEnd || (stop !== undefined && this.source[pos] === stop))) {
+      // An all-whitespace pattern stays a regex node.
+      this.addKid(expansion, this.frame('regex', j, pos));
+      return pos;
+    }
+    const mergeQuotes = stop === '/';
     while (pos < innerEnd) {
       this.budget.progress();
       const ch = this.source[pos]!;
@@ -2091,20 +2482,32 @@ export class Parser {
         pos = next;
         continue;
       }
-      if (ch === "'") {
+      if (ch === "'" && !mergeQuotes) {
         const close = skipSingleQuoted(this.source, this.budget, pos, innerEnd);
         this.addKid(expansion, this.frame('raw_string', pos, close));
         pos = close;
         continue;
       }
+      // One regex chunk: bare text, plus single-quoted segments when they
+      // fold into the regex (replacement patterns).
       let k = pos;
       let sinceTick = 0;
-      while (k < innerEnd && this.source[k] !== '"' && this.source[k] !== "'" && this.source[k] !== stop) {
+      while (k < innerEnd && this.source[k] !== '"' && this.source[k] !== stop) {
         if (++sinceTick >= SCAN_TICK_INTERVAL) {
           this.budget.progress();
           sinceTick = 0;
         }
-        if (this.source[k] === '\\' && k + 1 < innerEnd) {
+        const ck = this.source[k]!;
+        if (ck === "'") {
+          if (!mergeQuotes) break;
+          k = skipSingleQuoted(this.source, this.budget, k, innerEnd);
+          continue;
+        }
+        if (ck === '\\' && k + 1 < innerEnd) {
+          if (stop !== undefined && this.source[k + 1] === stop) {
+            k++; // the escape backslash stays in the chunk; the stop char ends it
+            break;
+          }
           k += 2;
           continue;
         }
@@ -2117,24 +2520,73 @@ export class Parser {
     return pos;
   }
 
-  /** A default/assign value inside ${…} (`${v:-word}`): bare text is a word
-   *  (never a number — `${v:-1}` is a word in the reference); a bare value
-   *  containing a space splits into two word pieces inside a concatenation
-   *  (`${v:-d e f}` → word "d" + word " e f", matching the reference's
-   *  _expansion_word scanner). */
-  private parseExpansionValue(start: number, end: number): Frame {
+  /** A default/assign value inside ${…} (`${v:-word}`), as a list of frames
+   *  (usually one — the reference sometimes attaches the value as several
+   *  direct children of the expansion). Layout rules from the reference:
+   *  - a bare value is a word (never a number — `${v:-1}` is a word). An
+   *    interior space splits it into word + word (the second keeps the
+   *    leading space: `${v:-d e f}` → word "d" + word " e f"); trailing-only
+   *    whitespace stays inside the single word (`${v:-) }` → word ") "), and
+   *    a leading `? ` (Gentoo atom syntax) keeps the whole value as one word;
+   *  - bare word pieces directly before a quote/construct are right-trimmed
+   *    (`${v:-command '$1' x}` → word "command", raw_string, word " x") and
+   *    a whitespace-only piece before a construct drops out entirely
+   *    (`${2+ ${2}}` → just the expansion);
+   *  - a command_substitution followed by a bare remainder attaches as two
+   *    children without a concatenation wrapper. */
+  private parseExpansionValue(start: number, end: number): Frame[] {
     const raw = this.text(start, end);
     if (!/["'$`\\]/.test(raw)) {
-      const space = raw.indexOf(' ');
-      if (space > 0) {
-        return this.frame('concatenation', start, end, [
-          this.frame('word', start, start + space),
-          this.frame('word', start + space, end),
-        ]);
+      // Bare value. Rules from the reference's _expansion_word scanner:
+      // - an interior space splits it into word + word (the second keeps
+      //   the leading space: `${v:-d e f}` → word "d" + word " e f");
+      // - leading or trailing whitespace stays inside the single word
+      //   (`${v:- -quiet}` → word " -quiet", `${v:-) }` → word ") "), and a
+      //   leading `? ` (Gentoo atom syntax) keeps the whole value as one
+      //   word. Whitespace only drops out directly before a quote or a
+      //   construct (handled by the piece path below).
+      if (this.source.startsWith('? ', start)) return [this.frame('word', start, end)];
+      for (let k = start + 1; k < end; k++) {
+        const ch = this.source[k]!;
+        if (ch !== ' ' && ch !== '\t' && ch !== '\r') continue;
+        // Split at the first interior space (non-space text follows it).
+        if (/[^ \t\r]/.test(this.source.slice(k + 1, end))) {
+          return [
+            this.frame('concatenation', start, end, [
+              this.frame('word', start, k),
+              this.frame('word', k, end),
+            ]),
+          ];
+        }
+        break;
       }
-      return this.frame('word', start, end);
+      return [this.frame('word', start, end)];
     }
-    return this.parseLiteral(start, end);
+    const value = this.parseLiteral(start, end);
+    const pieces = value.type === 'concatenation' ? [...value.children] : [value];
+    // Right-trim bare word pieces that directly precede another piece (the
+    // whitespace drops out of the tree); drop pieces that become empty.
+    // Pieces starting with `(` keep their spaces (the reference's
+    // expansion_word scanner treats them via its paren branch).
+    const trimmed: Frame[] = [];
+    for (let p = 0; p < pieces.length; p++) {
+      const piece = pieces[p]!;
+      if (piece.type === 'word' && p + 1 < pieces.length && this.source[piece.start] !== '(') {
+        let newEnd = piece.end;
+        while (newEnd > piece.start && (this.source[newEnd - 1] === ' ' || this.source[newEnd - 1] === '\t' || this.source[newEnd - 1] === '\r')) {
+          newEnd--;
+        }
+        if (newEnd === piece.start) continue;
+        trimmed.push(newEnd === piece.end ? piece : this.frame('word', piece.start, newEnd));
+      } else {
+        trimmed.push(piece);
+      }
+    }
+    // command_substitution + bare remainder: two direct children.
+    if (trimmed.length === 2 && trimmed[0]!.type === 'command_substitution') return trimmed;
+    if (trimmed.length === 1) return trimmed;
+    if (trimmed.length === 0) return [];
+    return [this.frame('concatenation', start, end, trimmed)];
   }
 
   /** One arithmetic value of ${v:offset:length} (up to `:` or innerEnd). */
@@ -2194,7 +2646,9 @@ export class Parser {
     return i + 1 < end ? i + 2 : i + 1;
   }
 
-  /** command_substitution: $( _statements ). The close-paren scan is
+  /** command_substitution: $( _statements ) — or the special $( redirect )
+   *  form (`$(< file)`), which holds a bare file_redirect without the
+   *  redirected_statement wrapper in the reference. The close-paren scan is
    *  case-aware (see scanBalancedStatements): a case_item pattern `)` must
    *  not close the substitution early. */
   private parseCommandSubstitution(i: number, rangeEnd: number): [Frame, number] {
@@ -2203,7 +2657,16 @@ export class Parser {
     if (!scan.balanced) this.hasError = true;
     const innerEnd = scan.balanced ? close - 1 : close;
     const substitution = this.frame('command_substitution', i, close, [this.anon('$(', i, i + 2)]);
-    for (const child of this.parseScopedStatements(i + 2, innerEnd)) {
+    let children = this.parseScopedStatements(i + 2, innerEnd);
+    if (
+      children.length === 1 &&
+      children[0]!.type === 'redirected_statement' &&
+      children[0]!.children.length > 0 &&
+      children[0]!.children.every((child) => child.type === 'file_redirect' || child.type === 'herestring_redirect')
+    ) {
+      children = children[0]!.children;
+    }
+    for (const child of children) {
       this.addKid(substitution, child);
     }
     if (scan.balanced) this.addKid(substitution, this.anon(')', close - 1, close));
@@ -2432,20 +2895,20 @@ export class Parser {
         const right = this.parseTestRegex(st);
         const kids: Frame[] = [left, this.anon('=~', token.start, token.end)];
         if (right === null) this.hasError = true;
-        else kids.push(right);
+        else kids.push(...right);
         left = this.frame('binary_expression', left.start, this.endOf(kids, token.end), kids);
         st.expectOperator = true;
         continue;
       }
       const rightPrecedence = token.text === '**' && st.mode === 'test' ? precedence : precedence + 1;
       let right: Frame | null;
-      // An extglob group pattern after ==/!= is one extglob_pattern node
-      // (`[[ $a == +(!a) ]]` in the reference).
+      // A pattern-shaped right side after ==/!= (extglob group, or glob
+      // text mixed with a quote/expansion) — see tryParseTestPattern.
       if (st.mode === 'test' && (token.text === '==' || token.text === '!=')) {
-        right = this.tryParseExtglobGroup(st);
-        if (right !== null) {
-          const kids: Frame[] = [left, this.anon(token.text, token.start, token.end), right];
-          left = this.frame('binary_expression', left.start, right.end, kids);
+        const pattern = this.tryParseTestPattern(st);
+        if (pattern !== null) {
+          const kids: Frame[] = [left, this.anon(token.text, token.start, token.end), ...pattern.frames];
+          left = this.frame('binary_expression', left.start, pattern.end, kids);
           st.expectOperator = true;
           continue;
         }
@@ -2566,9 +3029,14 @@ export class Parser {
     }
   }
 
-  /** The right side of `=~` in a test command: a quoted string, an
-   *  expansion, or a raw regex run (up to whitespace). */
-  private parseTestRegex(st: ExprState): Frame | null {
+  /** The right side of `=~` in a test command, as a list of frames. Quote
+   *  rules from the reference scanner: a regex STARTING with a single quote
+   *  folds the quoted segments into the regex token (`' boop '(.*)$` is one
+   *  regex) unless the whole thing is just a quoted string plus plain word
+   *  characters (`'a'b` → raw_string + word); a quote appearing mid-run
+   *  makes the whole thing a plain concatenation (`a'b'c`). Whitespace
+   *  inside (…) stays inside the regex token. */
+  private parseTestRegex(st: ExprState): Frame[] | null {
     let i = st.pos;
     while (i < st.end && (this.source[i] === ' ' || this.source[i] === '\t' || this.source[i] === '\r')) i++;
     st.pos = i;
@@ -2578,18 +3046,22 @@ export class Parser {
     if (ch === '"') {
       const [piece, next] = this.parseString(i, st.end);
       st.pos = next;
-      return piece;
-    }
-    if (ch === "'") {
-      const close = skipSingleQuoted(this.source, this.budget, i, st.end);
-      st.pos = close;
-      return this.frame('raw_string', i, close);
+      return [piece];
     }
     if (ch === '$') {
       // An expansion holds the pattern: parse a normal operand.
-      return this.parseExpression(st, PREC_TEST + 1);
+      const operand = this.parseExpression(st, PREC_TEST + 1);
+      return operand === null ? null : [operand];
     }
+    // Scan the run as one regex token: it ends at whitespace that is not
+    // protected by an open paren (the reference scanner includes whitespace
+    // inside (…) in the token), at an unbalanced closer, or at the region
+    // end. Single quotes toggle an in-quote state; `$`-constructs are raw
+    // text (the scanner does not split them out here).
     let j = i;
+    let inQuote = false;
+    let hasQuote = false;
+    let parenDepth = 0;
     let sinceTick = 0;
     while (j < st.end) {
       if (++sinceTick >= SCAN_TICK_INTERVAL) {
@@ -2597,33 +3069,121 @@ export class Parser {
         sinceTick = 0;
       }
       const c = this.source[j]!;
-      if (c === ' ' || c === '\t' || c === '\r' || c === '\n') break;
+      if (!inQuote && parenDepth === 0 && (c === ' ' || c === '\t' || c === '\r' || c === '\n')) break;
+      if (c === "'") {
+        hasQuote = true;
+        inQuote = !inQuote;
+        j++;
+        continue;
+      }
       if (c === '\\') {
         j += 2;
         continue;
       }
+      if (!inQuote) {
+        if (c === '(') parenDepth++;
+        else if (c === ')') {
+          if (parenDepth === 0) break;
+          parenDepth--;
+        }
+      }
       j++;
     }
     st.pos = j;
-    return this.frame('regex', i, j);
+    if (ch === "'") {
+      // Quoted string plus plain word characters → a plain literal.
+      if (/^'[^']*'\w*$/.test(this.text(i, j))) return [this.parseLiteral(i, j)];
+      return [this.frame('regex', i, j)];
+    }
+    if (hasQuote) return [this.parseLiteral(i, j)];
+    return [this.frame('regex', i, j)];
   }
 
-  /** An extglob group pattern (`?(…)`, `*(…)`, `+(…)`, `@(…)`, `!(…)`)
-   *  after `==`/`!=` in a test command: one raw extglob_pattern node over
-   *  the operator and its balanced group. Null (no state touched) when the
-   *  upcoming text is not a group. */
-  private tryParseExtglobGroup(st: ExprState): Frame | null {
+  /**
+   * Pattern-shaped right side of ==/!= in a test command (the grammar's
+   * _extglob_blob). Handles what a plain expression parse cannot:
+   *  - a whole extglob group pattern (+(a|b), X/@(default).vim with X a
+   *    glob, *([0-9])([0-9])) as ONE extglob_pattern, when the scanner's
+   *    first/second character rules accept it;
+   *  - glob text mixed with one quote/expansion (*${var2}*, *"7f 4c"*),
+   *    split into extglob_pattern pieces around the construct.
+   * Returns null (no state touched) for plain operands — those go through
+   * the normal expression parse plus convertTestRightSide.
+   */
+  private tryParseTestPattern(st: ExprState): { frames: Frame[]; end: number } | null {
     let i = st.pos;
     while (i < st.end && (this.source[i] === ' ' || this.source[i] === '\t' || this.source[i] === '\r')) i++;
-    const ch = this.source[i];
-    if ((ch === '?' || ch === '*' || ch === '+' || ch === '@' || ch === '!') && this.source[i + 1] === '(') {
-      const scan = this.scanBalanced(i + 1, st.end, '(', ')');
-      if (!scan.balanced) return null;
-      st.pos = scan.end;
-      st.lookahead = null;
-      return this.frame('extglob_pattern', i, scan.end);
+    if (i >= st.end) return null;
+    // Find the end of the pattern: unquoted whitespace at paren depth 0.
+    let depth = 0;
+    let j = i;
+    let sawGroup = false;
+    let sawConstruct = false;
+    while (j < st.end) {
+      const ch = this.source[j]!;
+      if (ch === '\\') {
+        j += 2;
+        continue;
+      }
+      if (ch === '"') {
+        sawConstruct = true;
+        j = skipDoubleQuoted(this.source, this.budget, j, st.end);
+        continue;
+      }
+      if (ch === "'") {
+        sawConstruct = true;
+        j = skipSingleQuoted(this.source, this.budget, j, st.end);
+        continue;
+      }
+      if (ch === '`') {
+        sawConstruct = true;
+        j = skipBacktick(this.source, this.budget, j, st.end);
+        continue;
+      }
+      if (ch === '$') {
+        sawConstruct = true;
+        j = skipDollar(this.source, this.budget, j, st.end);
+        continue;
+      }
+      if ((ch === '?' || ch === '*' || ch === '+' || ch === '@' || ch === '!') && this.source[j + 1] === '(') {
+        sawGroup = true;
+      }
+      if (ch === '(') {
+        depth++;
+        j++;
+        continue;
+      }
+      if (ch === ')') {
+        if (depth > 0) {
+          depth--;
+          j++;
+          continue;
+        }
+        break;
+      }
+      if (depth === 0 && (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n')) break;
+      j++;
     }
-    return null;
+    const hasGroup = sawGroup;
+    const hasConstruct = sawConstruct;
+    // A pattern containing an extglob group but no construct: one
+    // extglob_pattern node when the scanner accepts it; rejected groups
+    // keep the normal (error) path.
+    if (hasGroup && !hasConstruct) {
+      if (!this.extglobGroupAccepted(i, j)) return null;
+      st.pos = j;
+      st.lookahead = null;
+      return { frames: [this.frame('extglob_pattern', i, j)], end: j };
+    }
+    if (!hasConstruct) return null;
+    // Glob text (possibly with a group) mixed with one quote/expansion:
+    // extglob_pattern pieces around the construct (`@(*${x}.tar|*.sig)` →
+    // extglob "@(*", expansion, extglob ".tar|*.sig)").
+    const pieces = this.parseExtglobBlob(i, j, hasGroup ? (s, e) => this.extglobGroupAccepted(s, e) : undefined);
+    if (pieces === null) return null;
+    st.pos = j;
+    st.lookahead = null;
+    return { frames: pieces, end: j };
   }
 
   /** Reference-shaped right-hand sides for test comparisons:
@@ -2980,6 +3540,23 @@ export class Parser {
     const exprStart = openToken.end + (double ? 1 : 0);
     const kids: Frame[] = [this.anon(opener, openToken.start, exprStart)];
     const scan = this.scanTestCloser(exprStart, double);
+    // A single-bracket test whose body contains a top-level redirect is a
+    // redirected statement in the reference, not a test expression
+    // (`[ ! command -v go &>/dev/null ]` → redirected_statement with a
+    // negated_command inside the test_command).
+    if (!double && scan.closerStart > exprStart && this.rangeHasTopLevelRedirect(exprStart, scan.closerStart)) {
+      const statements = this.parseScopedStatements(exprStart, scan.closerStart);
+      kids.push(...statements);
+      let end = scan.closerStart;
+      if (scan.found) {
+        kids.push(this.anon(closer, scan.closerStart, scan.afterCloser));
+        end = scan.afterCloser;
+      } else {
+        this.hasError = true;
+      }
+      this.lexer.reposition(end);
+      return this.frame('test_command', openToken.start, end, kids);
+    }
     if (scan.closerStart > exprStart) {
       const st = this.newExprState(exprStart, scan.closerStart, 'test');
       const expression = this.parseExpression(st, 0);
@@ -3021,6 +3598,44 @@ export class Parser {
     }
     this.lexer.reposition(end);
     return this.frame('test_command', openToken.start, end, kids);
+  }
+
+  /** Whether [start, end) contains a top-level redirect operator (`<`/`>`
+   *  outside quotes, substitutions and `<(`/`>(`). Used to recognize the
+   *  redirected-statement form of a single-bracket test command. */
+  private rangeHasTopLevelRedirect(start: number, end: number): boolean {
+    let j = start;
+    let sinceTick = 0;
+    while (j < end) {
+      if (++sinceTick >= SCAN_TICK_INTERVAL) {
+        this.budget.progress();
+        sinceTick = 0;
+      }
+      const ch = this.source[j]!;
+      if (ch === '\\') {
+        j += 2;
+        continue;
+      }
+      if (ch === '"') {
+        j = skipDoubleQuoted(this.source, this.budget, j, end);
+        continue;
+      }
+      if (ch === "'") {
+        j = skipSingleQuoted(this.source, this.budget, j, end);
+        continue;
+      }
+      if (ch === '`') {
+        j = skipBacktick(this.source, this.budget, j, end);
+        continue;
+      }
+      if (ch === '$') {
+        j = this.skipDollarConstruct(j, end);
+        continue;
+      }
+      if ((ch === '<' || ch === '>') && this.source[j + 1] !== '(') return true;
+      j++;
+    }
+    return false;
   }
 
   /** Find the closer of a test command, skipping quotes and substitutions.
@@ -3097,6 +3712,13 @@ export class Parser {
         continue;
       }
       if (ch === '$') {
+        // `$'` is NOT an ANSI-C string inside a heredoc body — bash does not
+        // expand those there and the reference keeps the text as plain
+        // content too (except for its line-start quirk, see README).
+        if (this.source[i + 1] === "'") {
+          i++;
+          continue;
+        }
         const dollar = this.parseDollar(i, end);
         if (dollar !== null) {
           flush(i);
