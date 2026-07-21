@@ -255,6 +255,35 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
       telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
   }
 
+  /**
+   * Deliver a video through the provider's upload channel when available,
+   * falling back to an inline base64 part when the channel is missing or the
+   * upload itself fails (e.g. the provider has no files endpoint) — a failed
+   * upload must not turn the whole read into an error.
+   */
+  private async videoContentPart(
+    data: Buffer,
+    mimeType: string,
+    safePath: string,
+  ): Promise<ContentPart> {
+    if (this.videoUploader !== undefined) {
+      try {
+        return await this.videoUploader({
+          data,
+          mimeType,
+          filename: safePath.split(/[\\/]/).at(-1),
+        });
+      } catch {
+        // Fall through to the inline form.
+      }
+    }
+    const base64 = data.toString('base64');
+    return {
+      type: 'video_url',
+      videoUrl: { url: `data:${mimeType};base64,${base64}` },
+    };
+  }
+
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
@@ -475,18 +504,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
           }
         }
-      } else if (this.videoUploader !== undefined) {
-        mediaPart = await this.videoUploader({
-          data,
-          mimeType: fileType.mimeType,
-          filename: safePath.split(/[\\/]/).at(-1),
-        });
       } else {
-        const base64 = data.toString('base64');
-        mediaPart = {
-          type: 'video_url',
-          videoUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
-        };
+        mediaPart = await this.videoContentPart(data, fileType.mimeType, safePath);
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';

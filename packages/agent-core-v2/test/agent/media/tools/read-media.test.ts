@@ -684,6 +684,21 @@ describe('ReadMediaFileTool', () => {
     expect(parts[1]).toEqual(uploadResult);
   });
 
+  it('falls back to an inline base64 video part when the upload fails', async () => {
+    const videoUploader = vi.fn<VideoUploader>().mockRejectedValue(new Error('404 route not found'));
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(videoUploader).toHaveBeenCalledOnce();
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${mp4Buffer().toString('base64')}` },
+    });
+  });
+
   it('rejects empty files', async () => {
     const result = await execute(
       makeTool({ '/workspace/sample.png': { data: pngBuffer(), size: 0 } }),

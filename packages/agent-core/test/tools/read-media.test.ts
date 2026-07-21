@@ -419,6 +419,36 @@ describe('ReadMediaFileTool', () => {
     });
   });
 
+  it('falls back to an inline base64 video part when the upload fails', async () => {
+    const videoUploader = vi.fn().mockRejectedValue(new Error('404 route not found'));
+    const tool = new ReadMediaFileTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MP4_HEADER.length,
+        }),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(MP4_HEADER),
+      }),
+      PERMISSIVE_WORKSPACE,
+      capabilities(),
+      videoUploader,
+    );
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c4b',
+      args: { path: '/workspace/sample.mp4' },
+      signal,
+    });
+
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${MP4_HEADER.toString('base64')}` },
+    });
+  });
+
   it('rejects text files with a Read hint', async () => {
     const text = Buffer.from('hello');
     const tool = makeReadMediaTool({
