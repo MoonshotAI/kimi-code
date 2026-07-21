@@ -608,6 +608,29 @@ describe('HarnessAPI session skills', () => {
     });
   });
 
+  it('reports a skill-load-failed session warning for a SKILL.md that fails to parse', async () => {
+    // Regression for #1972: an unquoted colon in `description` (e.g.
+    // "Triggers on: ...") makes the frontmatter invalid YAML, and the skill
+    // used to be dropped with no signal reaching the TUI, which calls this
+    // same `getSessionWarnings` RPC at session start.
+    await writeSkill('broken', [
+      '---',
+      'name: broken',
+      'description: Explore the codebase. Triggers on: find callers of.',
+      '---',
+      '',
+      'Body.',
+    ]);
+    const { rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_skill_warning', workDir });
+
+    const warnings = await rpc.getSessionWarnings({ sessionId: created.id });
+
+    const skillWarning = warnings.find((warning) => warning.code === 'skill-load-failed');
+    expect(skillWarning?.message).toContain('broken/SKILL.md');
+    expect(skillWarning?.severity).toBe('warning');
+  });
+
   it('rejects missing and non-inline skills with structured errors', async () => {
     const { core, rpc } = await createTestRpc();
     const created = await rpc.createSession({ id: 'ses_skill_errors', workDir });

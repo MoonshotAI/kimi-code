@@ -694,6 +694,17 @@ export class Session {
         severity: 'warning',
       });
     }
+    // Surface any skill that got dropped during catalog load (invalid
+    // frontmatter, unsupported `type`, …) instead of leaving it silently
+    // missing from the skill list.
+    await this.skillsReady;
+    for (const skipped of this.skills.getSkippedByPolicy()) {
+      warnings.push({
+        code: 'skill-load-failed',
+        message: `Skill at ${skipped.path} was not loaded: ${skipped.reason}`,
+        severity: 'warning',
+      });
+    }
     return warnings;
   }
 

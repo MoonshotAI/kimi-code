@@ -407,6 +407,13 @@ async function parseAndRegister(input: {
       });
     } else if (error instanceof SkillParseError) {
       input.warn(`Skipping invalid skill at ${input.skillMdPath}: ${error.message}`, error);
+      // Also record it as skipped (not just logged) so it surfaces as a
+      // session warning instead of vanishing silently.
+      input.skip({
+        path: input.skillMdPath,
+        type: 'invalid-frontmatter',
+        reason: error.message,
+      });
     } else {
       input.warn(`Skipping skill at ${input.skillMdPath} due to unexpected error`, error);
     }
