@@ -184,7 +184,7 @@ function makeCore(
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
 ): Scope & {
-  fireSessionCreated(sessionId: string): void;
+  fireSessionCreated(sessionId: string, lifecycle?: FakeLifecycle): void;
   fireSessionWillClose(sessionId: string): Promise<void>;
 } {
   const sessionCreatedHandlers: Array<
@@ -197,8 +197,8 @@ function makeCore(
       next: () => Promise<void>,
     ) => void | Promise<void>
   >();
-  const sessionHandle = (sid: string) => {
-    const lifecycle = sessions.get(sid);
+  const sessionHandle = (sid: string, announcedLifecycle?: FakeLifecycle) => {
+    const lifecycle = announcedLifecycle ?? sessions.get(sid);
     if (lifecycle === undefined) return undefined;
     const sessionAccessor = {
       get: (t: unknown) => {
@@ -248,9 +248,9 @@ function makeCore(
   return {
     accessor,
     // Test hook: simulate the runtime materializing a session scope.
-    fireSessionCreated: (sessionId: string) => {
+    fireSessionCreated: (sessionId: string, lifecycle?: FakeLifecycle) => {
       for (const h of [...sessionCreatedHandlers]) {
-        h({ sessionId, handle: sessionHandle(sessionId), source: 'startup' });
+        h({ sessionId, handle: sessionHandle(sessionId, lifecycle), source: 'startup' });
       }
     },
     fireSessionWillClose: async (sessionId: string) => {
@@ -266,7 +266,7 @@ function makeCore(
       await run(0);
     },
   } as unknown as Scope & {
-    fireSessionCreated(sessionId: string): void;
+    fireSessionCreated(sessionId: string, lifecycle?: FakeLifecycle): void;
     fireSessionWillClose(sessionId: string): Promise<void>;
   };
 }
@@ -1343,6 +1343,30 @@ describe('SessionEventBroadcaster', () => {
           (event.payload as { busy?: boolean }).busy === true,
       ),
     ).toHaveLength(2);
+  });
+
+  it('mounts a resumed producer from the create-event handle before lifecycle.get is ready', async () => {
+    const resumed = new FakeLifecycle();
+    const main = resumed.addAgent('main');
+    const view = collectingTarget();
+    bc.registerGlobalTarget(view.target);
+
+    // Production resume emits onDidCreateSession while the id is still hidden
+    // from lifecycle.get(). The event handle must be sufficient to bind now.
+    core.fireSessionCreated('s1', resumed);
+    sessions.set('s1', resumed);
+    await bc.getCursor('s1');
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    expect(view.envelopes).toContainEqual(
+      expect.objectContaining({
+        type: 'event.session.work_changed',
+        session_id: 's1',
+        payload: expect.objectContaining({ busy: true, main_turn_active: true }),
+      }),
+    );
   });
 
   it('re-emits the current work-fact when the producer mounts after the session became busy', async () => {

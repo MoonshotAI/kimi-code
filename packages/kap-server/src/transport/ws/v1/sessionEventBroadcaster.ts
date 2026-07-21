@@ -272,9 +272,9 @@ export class SessionEventBroadcaster {
     // attached (their mount is a late one, so the catch-up re-emits any
     // accumulated work-fact).
     const lifecycle = opts.core.accessor.get(ISessionLifecycleService);
-    this.sessionLifecycleSubscription = lifecycle.onDidCreateSession(({ sessionId }) => {
+    this.sessionLifecycleSubscription = lifecycle.onDidCreateSession(({ sessionId, handle }) => {
       this.inactiveSessions.delete(sessionId);
-      void this.activateSession(sessionId);
+      void this.activateSession(sessionId, handle);
     });
     this.sessionWillCloseHook = lifecycle.hooks.onWillCloseSession.register(
       'kap-server.session-event-broadcaster',
@@ -285,14 +285,17 @@ export class SessionEventBroadcaster {
       },
     );
     for (const handle of lifecycle.list()) {
-      void this.activateSession(handle.id);
+      void this.activateSession(handle.id, handle);
     }
   }
 
   /** Mount a session's producer chain, logging (not propagating) activation failures. */
-  private async activateSession(sessionId: string): Promise<void> {
+  private async activateSession(
+    sessionId: string,
+    handle?: ISessionScopeHandle,
+  ): Promise<void> {
     try {
-      await this.ensureState(sessionId);
+      await this.ensureState(sessionId, handle);
     } catch (error) {
       this.opts.logger?.warn(
         { sessionId, err: error },
@@ -730,13 +733,16 @@ export class SessionEventBroadcaster {
     this.sessions.clear();
   }
 
-  private ensureState(sessionId: string): Promise<SessionState | undefined> {
+  private ensureState(
+    sessionId: string,
+    handle?: ISessionScopeHandle,
+  ): Promise<SessionState | undefined> {
     if (this.closed || this.inactiveSessions.has(sessionId)) return Promise.resolve(undefined);
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return Promise.resolve(existing);
     let pending = this.pendingStates.get(sessionId);
     if (pending === undefined) {
-      pending = this.createSessionState(sessionId).finally(() => {
+      pending = this.createSessionState(sessionId, handle).finally(() => {
         if (this.pendingStates.get(sessionId) === pending) {
           this.pendingStates.delete(sessionId);
         }
@@ -746,10 +752,17 @@ export class SessionEventBroadcaster {
     return pending;
   }
 
-  private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
+  private async createSessionState(
+    sessionId: string,
+    announcedHandle?: ISessionScopeHandle,
+  ): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
 
-    const session = this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    // `onDidCreateSession` fires while resume still hides the id from
+    // `lifecycle.get()`. Prefer its authoritative handle so hello-only clients
+    // get a producer immediately, before any later subscribe/API lookup.
+    const session =
+      announcedHandle ?? this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) return undefined;
 
     const journal = await SessionEventJournal.open(
