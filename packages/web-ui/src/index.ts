@@ -42,4 +42,5 @@ export { default as TopBar } from './components/ui/TopBar.vue';
 
 // UI infrastructure shared with the consumer (not presentational components):
 export { openDialogCount } from './composables/dialogStack';
+export { useImeComposition } from './composables/useImeComposition';
 export { IconResolverKey, SIZE_PX, type IconSize } from './icons';

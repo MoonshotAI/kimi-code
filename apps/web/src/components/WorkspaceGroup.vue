@@ -9,7 +9,7 @@ import { computed, type ComponentPublicInstance, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
-import { Icon, IconButton, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -91,6 +91,13 @@ function setRenameInputRef(el: Element | ComponentPublicInstance | null): void {
   props.renameInputRef.value = el instanceof HTMLInputElement ? el : null;
 }
 
+// IME guard: Enter that only confirms a composition candidate must not commit.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+function onRenameEnter(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) return;
+  emit('confirmRename');
+}
+
 // Drag-to-reorder: the group header is the drag handle. We stash the workspace
 // id on the dataTransfer (so drop targets elsewhere could read it) and tell the
 // sidebar which group is being dragged so it can compute the new order on drop.
@@ -128,8 +135,10 @@ function onHeaderDragStart(event: DragEvent): void {
           v-model="renameValueModel"
           class="gh-rename"
           type="text"
-          @keydown.enter="emit('confirmRename')"
+          @keydown.enter="onRenameEnter"
           @keydown.esc="emit('cancelRename')"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
           @blur="emit('cancelRename')"
           @click.stop
         />

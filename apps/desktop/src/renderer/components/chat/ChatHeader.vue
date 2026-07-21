@@ -9,7 +9,7 @@ import { copyTextToClipboard } from '../../lib/clipboard';
 import { isMacosDesktop } from '../../lib/desktopFlag';
 import { canOpenInNative, listNativeOpenInApps, openInNativeApp } from '../../lib/nativeOpenIn';
 import OpenInMenu from './OpenInMenu.vue';
-import { Icon, IconButton, Menu, MenuItem, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, IconButton, Menu, MenuItem, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -168,6 +168,8 @@ function copySessionId(): void {
 const renaming = ref(false);
 const renameValue = ref('');
 const renameInputRef = ref<HTMLInputElement | null>(null);
+// IME guard: Enter that only confirms a composition candidate must not commit.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 
 async function startRename(): Promise<void> {
   closeMenu();
@@ -189,6 +191,10 @@ function commitRename(): void {
     emit('renameSession', props.sessionId, newTitle);
   }
   renaming.value = false;
+}
+function onRenameEnter(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) return;
+  commitRename();
 }
 
 function cancelRename(): void {
@@ -263,8 +269,10 @@ async function onOpenInApp(appId: string): Promise<void> {
         v-model="renameValue"
         class="ch-rename"
         type="text"
-        @keydown.enter.stop="commitRename"
+        @keydown.enter.stop="onRenameEnter"
         @keydown.esc.stop="cancelRename"
+        @compositionstart="handleCompositionStart"
+        @compositionend="handleCompositionEnd"
         @blur="commitRename"
         @click.stop
       />

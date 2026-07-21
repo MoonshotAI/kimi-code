@@ -6,7 +6,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ChatPane from './ChatPane.vue';
-import { Icon, MoonSpinner, PanelHeader, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, MoonSpinner, PanelHeader, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 import type { ChatTurn } from '../../types';
 
 const props = defineProps<{
@@ -83,8 +83,11 @@ const showLoading = computed(() => {
   return last?.role === 'user';
 });
 
+// IME guard: Enter that only confirms a composition candidate must not send.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.key === 'Enter' && !e.shiftKey && !isComposingKeyEvent(e)) {
     e.preventDefault();
     submit();
   }
@@ -129,6 +132,8 @@ function autosize(): void {
         :placeholder="t('sideChat.placeholder')"
         @input="autosize"
         @keydown="onKeydown"
+        @compositionstart="handleCompositionStart"
+        @compositionend="handleCompositionEnd"
       ></textarea>
       <Tooltip :text="t('sideChat.send')">
         <button type="button" class="sc-send" :disabled="!draft.trim()" @click="submit">

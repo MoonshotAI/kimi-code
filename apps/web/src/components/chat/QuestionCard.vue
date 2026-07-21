@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { UIQuestion } from '../../types';
 import type { QuestionAnswer, QuestionResponse } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
-import { Badge, Button, Icon, IconButton, openDialogCount } from '@moonshot-ai/web-ui';
+import { Badge, Button, Icon, IconButton, openDialogCount, useImeComposition } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
   question: UIQuestion;
@@ -223,12 +223,17 @@ watch([step, () => props.question.questionId], () => {
   highlight.value = 0;
 });
 
+// IME guard: while composing in the "Other" field every keystroke belongs to
+// the IME — Enter confirming a candidate must not advance/submit the card.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+
 function handleKeydown(e: KeyboardEvent): void {
   const tag = (document.activeElement?.tagName ?? '').toLowerCase();
   const inField = tag === 'input' || tag === 'textarea';
   // While an answer/dismiss is in flight, ignore shortcuts so a stray Enter
   // can't fire a duplicate submit.
   if (busy.value) return;
+  if (isComposingKeyEvent(e)) return;
   // A modal dialog/lightbox owns the whole keyboard — Enter included. No card
   // shortcut fires through it (the Esc branch adds a defaultPrevented check).
   if (openDialogCount.value > 0) return;
@@ -392,6 +397,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
               :placeholder="current.otherLabel ?? t('question.otherDefault')"
               @input="pickOther(current.id)"
               @focus="pickOther(current.id)"
+              @compositionstart="handleCompositionStart"
+              @compositionend="handleCompositionEnd"
             />
           </label>
         </div>

@@ -8,7 +8,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FsBrowseEntry, FsBrowseResult } from '../../api/types';
-import { Badge, Button, Dialog, Field, Icon, IconButton, Input, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Badge, Button, Dialog, Field, Icon, IconButton, Input, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -178,6 +178,19 @@ function handlePasteAdd(): void {
   emit('add', pathTrimmed.value);
 }
 
+// IME guard: Enter that only confirms a composition candidate must not submit.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+function onPasteEnter(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) return;
+  handlePasteAdd();
+}
+// Escape while composing only cancels the candidate — keep it from bubbling
+// to Dialog's window-level closeOnEsc handler. No preventDefault: the
+// browser's candidate-cancel is the default action and must still run.
+function onPasteKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && isComposingKeyEvent(e)) e.stopPropagation();
+}
+
 onMounted(async () => {
   loading.value = true;
   try {
@@ -303,7 +316,10 @@ onUnmounted(() => {
                 :placeholder="t('workspace.pathPlaceholder')"
                 autocomplete="off"
                 spellcheck="false"
-                @keydown.enter.stop="handlePasteAdd"
+                @keydown.enter.stop="onPasteEnter"
+                @keydown="onPasteKeydown"
+                @compositionstart="handleCompositionStart"
+                @compositionend="handleCompositionEnd"
               />
             </div>
             <IconButton

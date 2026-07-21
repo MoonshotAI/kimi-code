@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock, FilePreviewRequest } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
-import { Badge, Button, Icon, IconButton, Spinner, openDialogCount } from '@moonshot-ai/web-ui';
+import { Badge, Button, Icon, IconButton, Spinner, openDialogCount, useImeComposition } from '@moonshot-ai/web-ui';
 import HighlightedCode from '../HighlightedCode.vue';
 
 const props = defineProps<{
@@ -128,7 +128,11 @@ function cancelFeedback(): void {
   feedbackText.value = '';
 }
 
+// IME guard: Enter that only confirms a composition candidate must not submit.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+
 function onFeedbackKeydown(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     submitFeedback();
@@ -369,6 +373,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
             :placeholder="t('approval.feedbackPlaceholder')"
             rows="2"
             @keydown="onFeedbackKeydown"
+            @compositionstart="handleCompositionStart"
+            @compositionend="handleCompositionEnd"
           />
           <div class="feedback-hint">{{ t('approval.feedbackHint') }}</div>
         </div>

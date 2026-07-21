@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import { formatTokens } from '../../lib/formatTokens';
-import { Dialog, Icon, IconButton, Input, Kbd, Spinner } from '@moonshot-ai/web-ui';
+import { Dialog, Icon, IconButton, Input, Kbd, Spinner, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -118,7 +118,12 @@ watch(selectedIdx, async () => {
 // Keyboard navigation
 // -------------------------------------------------------------------------
 
+// IME guard: keys that only drive the composition (Enter confirming a
+// candidate, arrows moving inside the candidate window) must not act on the list.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+
 function handleKeydown(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) return;
   if (e.key === 'Escape') {
     emit('close');
     return;
@@ -174,6 +179,8 @@ function selectTab(tabId: string): void {
           autocomplete="off"
           spellcheck="false"
           autofocus
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
         />
         <button
           type="button"

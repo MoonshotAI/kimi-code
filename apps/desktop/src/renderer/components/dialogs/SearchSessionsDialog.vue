@@ -7,7 +7,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../../types';
 import { highlightHtml, snippet } from '../../lib/searchHighlight';
-import { Dialog, EmptyState, Icon, Input, Kbd } from '@moonshot-ai/web-ui';
+import { Dialog, EmptyState, Icon, Input, Kbd, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -109,7 +109,18 @@ function focusInput(): HTMLElement | null {
   return inputRef.value?.el ?? null;
 }
 
+// IME guard: keys that only drive the composition (Enter confirming a
+// candidate, arrows moving inside the candidate window) must not act on the list.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+
 function onKeydown(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) {
+    // Escape while composing only cancels the candidate — keep it from
+    // bubbling to Dialog's window-level closeOnEsc handler. No preventDefault:
+    // the browser's candidate-cancel is the default action and must still run.
+    if (e.key === 'Escape') e.stopPropagation();
+    return;
+  }
   if (e.key === 'ArrowDown') {
     e.preventDefault();
     move(1);
@@ -149,6 +160,8 @@ onMounted(() => {
           autocomplete="off"
           spellcheck="false"
           @keydown="onKeydown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
         />
         <button
           type="button"

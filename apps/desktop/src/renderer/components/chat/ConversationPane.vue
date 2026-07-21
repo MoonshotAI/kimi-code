@@ -12,7 +12,7 @@ import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
 import KimiDoodle from '../KimiDoodle.vue';
-import { Icon, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
@@ -1199,16 +1199,23 @@ function composerPopupOpen(): boolean {
   return (dockedComposerRef.value?.anyPopupOpen ?? emptyComposerRef.value?.anyPopupOpen) === true;
 }
 
+// IME guard, tracked at document level (composition events bubble): an Escape
+// that only cancels a composition candidate — in the approval/question cards,
+// the composer, anywhere — must not interrupt the turn.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
+
 function onKeyDown(event: KeyboardEvent): void {
   // Escape is owned by whatever sits above the conversation: a modal layer
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
-  // or any earlier handler that consumed the key (defaultPrevented). The same
-  // keypress must not also interrupt a running prompt behind any of these.
+  // an active IME composition (it only cancels the candidate), or any earlier
+  // handler that consumed the key (defaultPrevented). The same keypress must
+  // not also interrupt a running prompt behind any of these.
   if (
     event.key === 'Escape' &&
     !props.overlayOpen &&
     !composerPopupOpen() &&
     !event.defaultPrevented &&
+    !isComposingKeyEvent(event) &&
     (props.running || props.working)
   ) {
     event.preventDefault();
@@ -1258,6 +1265,8 @@ onMounted(() => {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
+      document.addEventListener('compositionstart', handleCompositionStart);
+      document.addEventListener('compositionend', handleCompositionEnd);
     }
     window.visualViewport?.addEventListener('resize', onVisualViewportResize);
   });
@@ -1279,6 +1288,8 @@ onUnmounted(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', onVisibilityChange);
     document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('compositionstart', handleCompositionStart);
+    document.removeEventListener('compositionend', handleCompositionEnd);
   }
   window.visualViewport?.removeEventListener('resize', onVisualViewportResize);
 });

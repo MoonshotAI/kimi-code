@@ -6,7 +6,7 @@ import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
-import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Badge, Icon, IconButton, Menu, MenuItem, Spinner, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -130,6 +130,8 @@ onUnmounted(() => {
 const renaming = ref(false);
 const renameValue = ref('');
 const renameInputRef = ref<HTMLInputElement | null>(null);
+// IME guard: Enter that only confirms a composition candidate must not commit.
+const { handleCompositionStart, handleCompositionEnd, isComposingKeyEvent } = useImeComposition();
 async function startRename(): Promise<void> {
   closeMenu();
   renaming.value = true;
@@ -149,6 +151,10 @@ function commitRename(): void {
   // updated_at and reshuffle the sidebar ordering.
   if (newTitle && newTitle !== props.session.title) emit('rename', props.session.id, newTitle);
   renaming.value = false;
+}
+function onRenameEnter(e: KeyboardEvent): void {
+  if (isComposingKeyEvent(e)) return;
+  commitRename();
 }
 function cancelRename(): void {
   renaming.value = false;
@@ -252,8 +258,10 @@ defineExpose({ closeMenu });
           v-model="renameValue"
           class="rename-input"
           @click.stop
-          @keydown.enter.stop="commitRename"
+          @keydown.enter.stop="onRenameEnter"
           @keydown.esc.stop="cancelRename"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
           @blur="commitRename"
         />
         <span v-else class="t" @dblclick.stop="startRename">{{ session.title }}</span>
