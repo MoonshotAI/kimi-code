@@ -3,8 +3,6 @@
  *
  *   POST   /files            upload a file (multipart/form-data) → FileMeta
  *   GET    /files/{file_id}  download a file (binary stream)
- *   GET    /files/llm/{llm_id}  redirect a provider-issued video file id to
- *                               the local file it was uploaded from
  *   DELETE /files/{file_id}  delete a file → { deleted: true }
  *
  * Backed by the v2 `IFileService` (Core scope), which stores bytes in
@@ -18,7 +16,6 @@ import multipart from '@fastify/multipart';
 import {
   DEFAULT_MAX_UPLOAD_BYTES,
   ErrorCodes,
-  IBlobStore,
   IFileService,
   Error2,
   type Scope,
@@ -26,7 +23,6 @@ import {
 import { z } from 'zod';
 
 import { requestLog } from '../lib/requestLog';
-import { resolveLlmVideoRef } from '../lib/llmVideoRefs';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import { errEnvelope, okEnvelope } from '../protocol/envelope';
@@ -34,7 +30,6 @@ import {
   deleteFileParamSchema,
   deleteFileResponseSchema,
   getFileParamSchema,
-  getLlmVideoParamSchema,
   uploadFileResponseSchema,
 } from '../protocol/rest-file';
 
@@ -208,38 +203,6 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
     downloadRoute.path,
     downloadRoute.options,
     downloadRoute.handler as unknown as Parameters<FilesRouteHost['get']>[2],
-  );
-
-  const llmVideoRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/files/llm/{llm_id}',
-      params: getLlmVideoParamSchema,
-      errors: {
-        [ErrorCode.FILE_NOT_FOUND]: {},
-      },
-      description:
-        'Redirect a provider-issued video file id to the local file it was uploaded from',
-      tags: ['files'],
-    },
-    async (req, reply) => {
-      try {
-        const { llm_id } = req.params;
-        const localFileId = await resolveLlmVideoRef(core.accessor.get(IBlobStore), llm_id);
-        if (localFileId === undefined) {
-          throw new Error2(ErrorCodes.FILE_NOT_FOUND, 'file not found');
-        }
-        const r = reply as unknown as FilesReply;
-        r.code(302).header('location', `/api/v1/files/${localFileId}`).send('');
-      } catch (error) {
-        sendMappedError(reply as unknown as FilesReply, req, error);
-      }
-    },
-  );
-  app.get(
-    llmVideoRoute.path,
-    llmVideoRoute.options,
-    llmVideoRoute.handler as unknown as Parameters<FilesRouteHost['get']>[2],
   );
 
   const deleteRoute = defineRoute(

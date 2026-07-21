@@ -797,10 +797,11 @@ export class ToolManager {
     const baseProps = this.videoUploadTelemetryProps(modelAlias);
     const upload =
       withAuth === undefined
-        ? (input: b.VideoUploadInput) => uploadVideo(input)
-        : (input: b.VideoUploadInput) => withAuth((auth) => uploadVideo(input, { auth }));
+        ? (input: b.VideoUploadInput, signal?: AbortSignal) => uploadVideo(input, { signal })
+        : (input: b.VideoUploadInput, signal?: AbortSignal) =>
+            withAuth((auth) => uploadVideo(input, { auth, signal }));
 
-    return async (input) => {
+    return async (input, options) => {
       const startedAt = Date.now();
       const base = {
         ...baseProps,
@@ -815,7 +816,7 @@ export class ToolManager {
         }
       };
       try {
-        const part = await upload(input);
+        const part = await upload(input, options?.signal);
         track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
         return part;
       } catch (error) {

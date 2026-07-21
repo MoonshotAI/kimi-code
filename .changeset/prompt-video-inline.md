@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Send pasted videos to the model directly with the prompt instead of routing them through a ReadMediaFile tool call, so video input is faster and no longer depends on an extra tool round trip.
+Send videos attached to a prompt (pasted in the TUI or uploaded in the web UI) to the model together with the prompt, instead of routing them through a ReadMediaFile tool call — video input no longer costs an extra tool round trip.

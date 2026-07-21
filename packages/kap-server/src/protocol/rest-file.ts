@@ -1,7 +1,6 @@
 /**
  *   POST   /v1/files                  (multipart upload)
  *   GET    /v1/files/{file_id}        (binary stream)
- *   GET    /v1/files/llm/{llm_id}     (redirect to the local file a provider video id came from)
  *   DELETE /v1/files/{file_id}
  */
 
@@ -16,13 +15,6 @@ export const getFileParamSchema = z.object({
   file_id: z.string().min(1),
 });
 export type GetFileParam = z.infer<typeof getFileParamSchema>;
-
-export const getLlmVideoParamSchema = z.object({
-  // The id is used as a blob-store key; keep it inside the provider-id
-  // alphabet so a crafted value can never address another storage path.
-  llm_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
-});
-export type GetLlmVideoParam = z.infer<typeof getLlmVideoParamSchema>;
 
 export const deleteFileParamSchema = z.object({
   file_id: z.string().min(1),

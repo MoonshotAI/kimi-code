@@ -1,6 +1,4 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { createServer, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -258,7 +256,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
-  it('falls back to cache path tags for uploaded videos when the model has no upload channel', async () => {
+  it('carries an uploaded video into the prompt as an internal kimi-file reference', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const videoBytes = Buffer.from('tiny fake mp4 bytes');
@@ -280,16 +278,24 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+    // The edge no longer uploads to the provider. The queued prompt reprojects
+    // the video as the file reference it came from — a `{ kind: 'file' }` source
+    // is only ever produced from an internal `kimi-file://` url, so this proves
+    // the enqueued message carries the reference (its materialization path is
+    // never leaked back to the client).
+    const content = submitted.body.data.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
     expect(content[0]).toEqual({ type: 'text', text: 'what happens in this video?' });
-    expect(content[1]?.type).toBe('text');
-    const match = /<video path="([^"]+)"><\/video>/.exec(content[1]?.text ?? '');
-    expect(match).not.toBeNull();
-    const cachePath = match![1]!;
-    expect(cachePath.startsWith(join(home as string, 'cache'))).toBe(true);
-    expect(cachePath.endsWith('.mp4')).toBe(true);
-    expect(await readFile(cachePath)).toEqual(videoBytes);
+    expect(content[1]).toEqual({
+      type: 'video',
+      source: { kind: 'file', file_id: uploaded.data.id },
+    });
+
+    // The `?path=` of that reference points at a materialized copy of the bytes
+    // (written during the submit), which the engine resolver falls back to when
+    // it cannot upload or inline the video.
+    const materialized = join(home as string, 'cache', `${uploaded.data.id}.mp4`);
+    expect(await readFile(materialized)).toEqual(videoBytes);
   });
 
   it('compresses uploaded image prompts into base64 image parts with a readback caption', async () => {
@@ -894,388 +900,5 @@ describe('server-v2 /api/v1 prompts', () => {
       .get(IAgentToolPolicyService);
     expect(toolPolicy?.isToolActive('Bash')).toBe(false);
     expect(toolPolicy?.isToolActive('Read')).toBe(true);
-  });
-});
-
-describe('server-v2 /api/v1 prompts with a video-upload-capable model', () => {
-  let server: RunningServer | undefined;
-  let home: string | undefined;
-  let base: string;
-  let stubClose: (() => Promise<void>) | undefined;
-  let stubBodies: Buffer[];
-  let uploadGate: Promise<void> | null;
-
-  function kimiToml(stubUrl: string): string {
-    return [
-      'default_model = "stub"',
-      '',
-      '[providers.stub]',
-      'type = "kimi"',
-      `base_url = "${stubUrl}"`,
-      'api_key = "stub"',
-      '',
-      '[models.stub]',
-      'provider = "stub"',
-      'model = "stub"',
-      'max_context_size = 1000',
-      'capabilities = [ "video_in", "image_in" ]',
-      '',
-      '[models.stub2]',
-      'provider = "stub"',
-      'model = "stub2"',
-      'max_context_size = 1000',
-      'capabilities = [ "video_in", "image_in" ]',
-      '',
-    ].join('\n');
-  }
-
-  beforeEach(async () => {
-    stubBodies = [];
-    uploadGate = null;
-    let uploadCounter = 0;
-    const pendingGenerations: ServerResponse[] = [];
-    const stub = createServer((req, res) => {
-      if (req.method === 'POST' && req.url === '/files') {
-        const chunks: Buffer[] = [];
-        req.on('data', (chunk: Buffer) => chunks.push(chunk));
-        req.on('end', () => {
-          void (async () => {
-            if (uploadGate !== null) {
-              const gate = uploadGate;
-              uploadGate = null;
-              await gate;
-            }
-            uploadCounter += 1;
-            stubBodies.push(Buffer.concat(chunks));
-            res.writeHead(200, { 'content-type': 'application/json' });
-            res.end(
-              JSON.stringify({
-                id: `stub-llm-video-${String(uploadCounter)}`,
-                object: 'file',
-                bytes: 17,
-                created_at: 0,
-                filename: 'clip.mp4',
-                purpose: 'video',
-              }),
-            );
-          })();
-        });
-        return;
-      }
-      if (req.method === 'POST' && req.url === '/chat/completions') {
-        // Hang until the turn is aborted: an answered request (404 or a
-        // completed stream) can end the turn before the test's abort lands,
-        // making the cleanup racy.
-        pendingGenerations.push(res);
-        req.on('close', () => {
-          const index = pendingGenerations.indexOf(res);
-          if (index >= 0) pendingGenerations.splice(index, 1);
-          res.end();
-        });
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
-    await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
-    const { port } = stub.address() as AddressInfo;
-    stubClose = () =>
-      new Promise<void>((resolve) => {
-        for (const pending of pendingGenerations.splice(0)) pending.destroy();
-        stub.close(() => resolve());
-      });
-
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-prompts-kimi-'));
-    await writeFile(join(home, 'config.toml'), kimiToml(`http://127.0.0.1:${String(port)}`), 'utf-8');
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    base = `http://127.0.0.1:${server.port}`;
-  });
-
-  afterEach(async () => {
-    if (server !== undefined) {
-      await server.close();
-      server = undefined;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    if (stubClose !== undefined) {
-      await stubClose();
-      stubClose = undefined;
-    }
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 } as never);
-      home = undefined;
-    }
-  });
-
-  async function createSessionWithAgent(): Promise<string> {
-    const res = await fetch(`${base}/api/v1/sessions`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ metadata: { cwd: home } }),
-    } as never);
-    const body = (await res.json()) as Envelope<{ id: string }>;
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(body.data.id);
-    await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-    return body.data.id;
-  }
-
-  async function uploadVideoFile(name: string, bytes: Buffer): Promise<string> {
-    const form = new FormData();
-    form.set('file', new Blob([bytes], { type: 'video/mp4' }), name);
-    const res = await fetch(`${base}/api/v1/files`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer),
-      body: form,
-    } as never);
-    const body = (await res.json()) as Envelope<{ id: string }>;
-    expect(body.code).toBe(0);
-    return body.data.id;
-  }
-
-  async function submitVideoPrompt(sessionId: string, fileIds: string[]): Promise<Envelope<PromptItemWire>> {
-    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/prompts`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({
-        // The prompt-time model override is applied before media resolution,
-        // so the video uploader is built from this model.
-        model: 'stub',
-        content: [
-          { type: 'text', text: 'what happens in this video?' },
-          ...fileIds.map((fileId) => ({ type: 'video', source: { kind: 'file', file_id: fileId } })),
-        ],
-      }),
-    } as never);
-    const body = (await res.json()) as Envelope<PromptItemWire>;
-    expect(body.code).toBe(0);
-    return body;
-  }
-
-  async function abortPrompt(sessionId: string, promptId: string): Promise<void> {
-    // The stub serves no generation, so the turn keeps retrying in the
-    // background; abort it deterministically to let the server close.
-    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/prompts/${promptId}:abort`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    expect(res.status).toBe(200);
-  }
-
-  async function redirectOf(llmId: string): Promise<{ status: number; location: string | null }> {
-    const res = await fetch(`${base}/api/v1/files/llm/${llmId}`, {
-      headers: authHeaders(server as RunningServer),
-      redirect: 'manual',
-    } as never);
-    return { status: res.status, location: res.headers.get('location') };
-  }
-
-  it('inlines an uploaded video prompt as the provider-issued reference', async () => {
-    const id = await createSessionWithAgent();
-    const videoBytes = Buffer.from('tiny fake mp4 bytes');
-    const fileId = await uploadVideoFile('clip.mp4', videoBytes);
-
-    const submitted = await submitVideoPrompt(id, [fileId]);
-
-    // The prompt carries the provider-issued reference, not a path tag.
-    const content = submitted.data.content as Array<Record<string, unknown>>;
-    expect(content[0]).toEqual({ type: 'text', text: 'what happens in this video?' });
-    expect(content[1]).toEqual({
-      type: 'video',
-      source: { kind: 'url', url: 'ms://stub-llm-video-1', id: 'stub-llm-video-1' },
-    });
-
-    // The upload happened synchronously, before the prompt was accepted, and
-    // carried the video bytes.
-    expect(stubBodies).toHaveLength(1);
-    expect(stubBodies[0]!.includes(videoBytes)).toBe(true);
-
-    // The provider id maps back to the local upload for playback.
-    const { status, location } = await redirectOf('stub-llm-video-1');
-    expect(status).toBe(302);
-    expect(location).toBe(`/api/v1/files/${fileId}`);
-
-    const downloadRes = await fetch(`${base}${location}`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    expect(downloadRes.status).toBe(200);
-    expect(Buffer.from(await downloadRes.arrayBuffer())).toEqual(videoBytes);
-
-    await abortPrompt(id, submitted.data.prompt_id);
-  });
-
-  it('maps each inlined video back to its own upload', async () => {
-    const id = await createSessionWithAgent();
-    const fileA = await uploadVideoFile('a.mp4', Buffer.from('video-A'));
-    const fileB = await uploadVideoFile('b.mp4', Buffer.from('video-B'));
-
-    const submitted = await submitVideoPrompt(id, [fileA, fileB]);
-
-    expect(stubBodies).toHaveLength(2);
-    const content = submitted.data.content as Array<Record<string, unknown>>;
-    expect(content[1]).toEqual({
-      type: 'video',
-      source: { kind: 'url', url: 'ms://stub-llm-video-1', id: 'stub-llm-video-1' },
-    });
-    expect(content[2]).toEqual({
-      type: 'video',
-      source: { kind: 'url', url: 'ms://stub-llm-video-2', id: 'stub-llm-video-2' },
-    });
-    expect((await redirectOf('stub-llm-video-1')).location).toBe(`/api/v1/files/${fileA}`);
-    expect((await redirectOf('stub-llm-video-2')).location).toBe(`/api/v1/files/${fileB}`);
-
-    await abortPrompt(id, submitted.data.prompt_id);
-  });
-
-  it('serves range requests through the llm redirect', async () => {
-    const id = await createSessionWithAgent();
-    const fileId = await uploadVideoFile('clip.mp4', Buffer.from('0123456789'));
-
-    const submitted = await submitVideoPrompt(id, [fileId]);
-
-    const { location } = await redirectOf('stub-llm-video-1');
-    const rangeRes = await fetch(`${base}${location}`, {
-      headers: { ...authHeaders(server as RunningServer), range: 'bytes=2-5' },
-    } as never);
-    expect(rangeRes.status).toBe(206);
-    expect(rangeRes.headers.get('content-range')).toBe('bytes 2-5/10');
-    expect(Buffer.from(await rangeRes.arrayBuffer()).toString()).toBe('2345');
-
-    await abortPrompt(id, submitted.data.prompt_id);
-  });
-
-  it('falls back to the tag form when an uploaded "video" sniffs as another kind', async () => {
-    const id = await createSessionWithAgent();
-    // Declared video/mp4 at upload time, but the bytes are a PNG (magic
-    // bytes are authoritative; a text lookalike would be indistinguishable
-    // from MPEG-PS and is the provider's call, same as ReadMediaFile).
-    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
-    const fileId = await uploadVideoFile('clip.mp4', pngBytes);
-
-    const submitted = await submitVideoPrompt(id, [fileId]);
-
-    // No provider upload is attempted for bytes sniffed as a non-video kind.
-    expect(stubBodies).toHaveLength(0);
-    const content = submitted.data.content as Array<Record<string, unknown>>;
-    expect(content[1]?.['type']).toBe('text');
-    expect(String(content[1]?.['text'])).toMatch(/<video path="[^"]+"><\/video>/);
-
-    await abortPrompt(id, submitted.data.prompt_id);
-  });
-
-  it('rejects the submission when the model switches mid-upload', async () => {
-    const id = await createSessionWithAgent();
-    const fileId = await uploadVideoFile('clip.mp4', Buffer.from('0123456789'));
-
-    let releaseUpload!: () => void;
-    uploadGate = new Promise<void>((resolve) => {
-      releaseUpload = resolve;
-    });
-    const submit = fetch(`${base}/api/v1/sessions/${id}/prompts`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({
-        model: 'stub',
-        content: [
-          { type: 'text', text: 'watch this' },
-          { type: 'video', source: { kind: 'file', file_id: fileId } },
-        ],
-      }),
-    } as never);
-
-    // A concurrent model switch lands while the upload is parked.
-    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
-    const agent = session!.accessor.get(IAgentLifecycleService).get('main')!;
-    await agent.accessor.get(IAgentProfileService).setModel('stub2');
-    releaseUpload();
-
-    const body = (await (await submit).json()) as Envelope<null>;
-    expect(body.code).toBe(40901);
-  });
-
-  it('inlines videos on a first prompt that binds a profile without an explicit model', async () => {
-    const id = await createSessionWithAgent();
-    const videoBytes = Buffer.from('tiny fake mp4 bytes');
-    const fileId = await uploadVideoFile('clip.mp4', videoBytes);
-
-    // `profile` without `model`: the uploader must resolve the configured
-    // default model (video-capable) instead of falling back to a path tag.
-    const submitRes = await fetch(`${base}/api/v1/sessions/${id}/prompts`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({
-        profile: 'agent',
-        content: [
-          { type: 'text', text: 'what happens in this video?' },
-          { type: 'video', source: { kind: 'file', file_id: fileId } },
-        ],
-      }),
-    } as never);
-    const submitted = (await submitRes.json()) as Envelope<PromptItemWire>;
-    expect(submitted.code).toBe(0);
-
-    const content = submitted.data.content as Array<Record<string, unknown>>;
-    expect(content[1]).toEqual({
-      type: 'video',
-      source: { kind: 'url', url: 'ms://stub-llm-video-1', id: 'stub-llm-video-1' },
-    });
-    expect(stubBodies).toHaveLength(1);
-
-    await abortPrompt(id, submitted.data.prompt_id);
-  });
-
-  it('serializes concurrent submissions so a media upload cannot be overtaken', async () => {
-    const id = await createSessionWithAgent();
-    const fileId = await uploadVideoFile('clip.mp4', Buffer.from('0123456789'));
-
-    // Gate the provider upload: the video submit parks inside media
-    // resolution while a later text submit races it.
-    let releaseUpload!: () => void;
-    uploadGate = new Promise<void>((resolve) => {
-      releaseUpload = resolve;
-    });
-    const first = submitVideoPrompt(id, [fileId]);
-    const second = fetch(`${base}/api/v1/sessions/${id}/prompts`, {
-      method: 'POST',
-      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ content: [{ type: 'text', text: 'follow-up' }] }),
-    } as never);
-    await new Promise((r) => setTimeout(r, 100));
-    releaseUpload();
-
-    const [firstSubmitted, secondRes] = await Promise.all([first, second]);
-    const secondSubmitted = (await secondRes.json()) as Envelope<PromptItemWire>;
-    expect(firstSubmitted.code).toBe(0);
-    expect(secondSubmitted.code).toBe(0);
-
-    // The video prompt holds the active slot; the follow-up waits behind it
-    // in the queue instead of overtaking.
-    const listRes = await fetch(`${base}/api/v1/sessions/${id}/prompts`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    const list = ((await listRes.json()) as Envelope<{
-      active: { prompt_id: string } | null;
-      queued: Array<{ prompt_id: string }>;
-    }>).data;
-    expect(list.active?.prompt_id).toBe(firstSubmitted.data.prompt_id);
-    expect(list.queued.map((p) => p.prompt_id)).toEqual([secondSubmitted.data.prompt_id]);
-
-    await abortPrompt(id, firstSubmitted.data.prompt_id);
-  });
-
-  it('keeps the llm video mapping across a server restart', async () => {    const id = await createSessionWithAgent();
-    const fileId = await uploadVideoFile('clip.mp4', Buffer.from('persisted'));
-
-    const submitted = await submitVideoPrompt(id, [fileId]);
-    await abortPrompt(id, submitted.data.prompt_id);
-
-    await server!.close();
-    server = undefined;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    base = `http://127.0.0.1:${server.port}`;
-
-    const { status, location } = await redirectOf('stub-llm-video-1');
-    expect(status).toBe(302);
-    expect(location).toBe(`/api/v1/files/${fileId}`);
   });
 });

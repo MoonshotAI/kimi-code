@@ -291,7 +291,7 @@ function focus(): void {
   // or if focus is triggered during an animation/transition.
   textareaRef.value?.focus({ preventScroll: true });
 }
-function loadAttachmentsForEdit(atts: { fileId?: string; llmFileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   loadAttachments(atts);
 }
 defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });

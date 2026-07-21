@@ -9,7 +9,11 @@
  * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
  * params)` attempt plus projection rebuilds for request structure or media
  * compatibility; general retry policy remains in the loop's `stepRetry`
- * plugin. When a model is configured, `prepareTurnConfig` snapshots the
+ * plugin. Before each request the projected messages pass through `media`'s
+ * video resolver, which rewrites every `kimi-file://` prompt-video reference
+ * to a provider-acceptable part (uploaded `ms://`, inline base64, or a
+ * `<video path>` tag) so the internal reference never reaches the wire. When a
+ * model is configured, `prepareTurnConfig` snapshots the
  * model, effective thinking effort, and system prompt at the turn boundary
  * so loop telemetry and every request in that turn share one configuration.
  * Forwards streamed `part` events to the caller's `onPart`
@@ -38,6 +42,7 @@ import {
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
@@ -149,6 +154,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
     @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
+    @IAgentVideoResolverService private readonly videoResolver: IAgentVideoResolverService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentUsageService private readonly usage: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
@@ -299,7 +305,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
     const run = async (projection: RequestProjection): Promise<AgentLLMRequestFinish> => {
       onRequestTrace(undefined);
-      const input = requestInput(projection);
+      const projected = requestInput(projection);
+      const input = {
+        ...projected,
+        messages: await this.videoResolver.resolve(
+          projected.messages,
+          request.requester,
+          signal,
+        ),
+      };
       const fields =
         projection === 'normal'
           ? request.logFields

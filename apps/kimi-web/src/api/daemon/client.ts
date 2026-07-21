@@ -1389,14 +1389,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return this.http.getBlob(`/files/${encodeURIComponent(fileId)}`);
   }
 
-  getLlmFileUrl(llmFileId: string): string {
-    return buildRestUrl(this.config.serverHttpUrl, `/files/llm/${encodeURIComponent(llmFileId)}`);
-  }
-
-  async getLlmFileBlob(llmFileId: string): Promise<Blob> {
-    return this.http.getBlob(`/files/llm/${encodeURIComponent(llmFileId)}`);
-  }
-
   // -------------------------------------------------------------------------
   // WebSocket events
   // -------------------------------------------------------------------------

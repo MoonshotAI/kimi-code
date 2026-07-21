@@ -936,7 +936,7 @@ describe('createVideoUploader', () => {
     const uploadVideo = vi.fn().mockResolvedValue(uploadResult);
     const uploader = createVideoUploader(modelWith(uploadVideo));
     await expect(uploader!(input)).resolves.toEqual(uploadResult);
-    expect(uploadVideo).toHaveBeenCalledWith(input);
+    expect(uploadVideo).toHaveBeenCalledWith(input, undefined);
   });
 
   it('reports video_upload telemetry on success', async () => {

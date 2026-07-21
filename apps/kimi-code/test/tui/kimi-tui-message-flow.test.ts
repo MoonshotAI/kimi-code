@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
-import { KIMI_CODE_HOME_ENV, KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
   AgentSwarmProgressComponent,
@@ -157,12 +157,8 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     id: 'ses-1',
     model: 'k2',
     summary: { title: null },
-    prompt: vi.fn(async () => {}),
+    prompt: vi.fn(async (_input: unknown) => {}),
     compact: vi.fn(async () => {}),
-    uploadVideo: vi.fn(async () => ({
-      type: 'video_url',
-      videoUrl: { url: 'ms://stub-video', id: 'stub-video' },
-    })),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
     startBtw: vi.fn(async () => 'agent-btw'),
@@ -1559,7 +1555,7 @@ command = "vim"
     expect(transcript).not.toContain('review');
   });
 
-  it('uploads pasted videos and sends the issued video_url part', async () => {
+  it('sends a pasted video as a file:// video_url part', async () => {
     const { driver, session } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
     const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
@@ -1568,433 +1564,26 @@ command = "vim"
       await writeFile(srcVideo, 'video-bytes');
       const attachment = imageStore.addVideo('video/mp4', srcVideo);
 
+      // Submission is fully synchronous: the paste is copied to the cache and
+      // referenced by a `file://` video_url the engine resolves in-turn.
       driver.handleUserInput(`watch ${attachment.placeholder}`);
 
-      await vi.waitFor(() => {
-        expect(session.prompt).toHaveBeenCalledWith([
-          { type: 'text', text: 'watch ' },
-          { type: 'video_url', videoUrl: { url: 'ms://stub-video', id: 'stub-video' } },
-        ]);
-      });
-      expect(session.uploadVideo).toHaveBeenCalledWith(srcVideo);
+      const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
+        | Array<{
+            type: string;
+            text?: string;
+            videoUrl?: { url: string };
+          }>
+        | undefined;
+      expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
+      expect(parts?.[1]?.type).toBe('video_url');
+      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it('falls back to a cache-path video tag when the upload fails', async () => {
-    const { driver, session } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    const home = await mkdtemp(join(tmpdir(), 'tui-video-home-'));
-    const prevHome = process.env[KIMI_CODE_HOME_ENV];
-    process.env[KIMI_CODE_HOME_ENV] = home;
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-      vi.mocked(session.uploadVideo).mockRejectedValueOnce(new Error('upload failed'));
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-
-      await vi.waitFor(() => {
-        expect(session.prompt).toHaveBeenCalled();
-      });
-      const promptCalls = vi.mocked(session.prompt).mock.calls as unknown as ReadonlyArray<
-        [Array<{ type: string; text?: string }>]
-      >;
-      const parts = promptCalls[0]?.[0] ?? [];
-      const text = parts
-        .filter((p) => p.type === 'text')
-        .map((p) => p.text)
-        .join('');
-      expect(text).toContain('watch ');
-      expect(text).toMatch(/<video path="[^"]+clip\.mp4"><\/video>/);
-    } finally {
-      if (prevHome === undefined) delete process.env[KIMI_CODE_HOME_ENV];
-      else process.env[KIMI_CODE_HOME_ENV] = prevHome;
-      await rm(dir, { recursive: true, force: true });
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps submit order when a video upload is in flight', async () => {
-    const { driver, session } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      driver.handleUserInput('plain follow-up');
-
-      // Nothing may overtake the in-flight upload.
-      await new Promise((r) => setTimeout(r, 20));
-      expect(session.prompt).not.toHaveBeenCalled();
-
-      releaseUpload();
-      await vi.waitFor(() => {
-        expect(session.prompt).toHaveBeenCalledWith([
-          { type: 'text', text: 'watch ' },
-          { type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } },
-        ]);
-      });
-      // The video prompt starts a turn, so the follow-up holds in the queue —
-      // submission order is preserved either way.
-      expect(session.prompt).toHaveBeenCalledTimes(1);
-      expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['plain follow-up']);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('drops a pending video submit when the model changes mid-upload', async () => {
-    const { driver, session } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-      driver.state.appState.model = 'another-model';
-      releaseUpload();
-
-      await vi.waitFor(() => {
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-          'The session or model changed while the video was uploading',
-        );
-      });
-      expect(session.prompt).not.toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('drops a pending video submit when the session changes mid-upload', async () => {
-    const { driver, session } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-      (driver as unknown as { session: unknown }).session = makeSession();
-      releaseUpload();
-
-      await vi.waitFor(() => {
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-          'The session or model changed while the video was uploading',
-        );
-      });
-      expect(session.prompt).not.toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('queues a bash submit behind a pending video upload', async () => {
-    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
-    const session = makeSession({ runShellCommand });
-    const { driver } = await makeDriver(session);
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-
-      driver.state.appState.inputMode = 'bash';
-      driver.handleUserInput('ls');
-      driver.state.appState.inputMode = 'prompt';
-
-      // The command must not run (or even queue) before the earlier prompt
-      // is dispatched.
-      await new Promise((r) => setTimeout(r, 20));
-      expect(runShellCommand).not.toHaveBeenCalled();
-      expect(driver.state.queuedMessages).toHaveLength(0);
-
-      releaseUpload();
-      await vi.waitFor(() => {
-        expect(driver.state.queuedMessages).toEqual([{ text: 'ls', agentId: 'main', mode: 'bash' }]);
-      });
-      // The video prompt owns the active turn, so the command holds in the
-      // queue instead of racing it.
-      expect(runShellCommand).not.toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('queues a skill activation behind a pending video upload', async () => {
-    const { driver, session } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-
-      (
-        driver as unknown as {
-          sendSkillActivation(s: unknown, skillName: string, args: string): void;
-        }
-      ).sendSkillActivation(session, 'review', 'src/tui');
-      await new Promise((r) => setTimeout(r, 20));
-      expect(session.activateSkill).not.toHaveBeenCalled();
-
-      releaseUpload();
-      await vi.waitFor(() => {
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-          'Cannot /review while streaming',
-        );
-      });
-      // The video turn is active by then, so the deferred skill is blocked
-      // with the same message the resolver shows while streaming.
-      expect(session.activateSkill).not.toHaveBeenCalled();
-      expect(session.prompt).toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('queues a plugin command behind a pending video upload', async () => {
-    const activatePluginCommand = vi.fn(async () => {});
-    const session = makeSession({ activatePluginCommand });
-    const { driver } = await makeDriver(session);
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-
-      (
-        driver as unknown as {
-          activatePluginCommand(s: unknown, pluginId: string, command: string, args: string): void;
-        }
-      ).activatePluginCommand(session, 'plug', 'cmd', 'args');
-      await new Promise((r) => setTimeout(r, 20));
-      expect(activatePluginCommand).not.toHaveBeenCalled();
-
-      releaseUpload();
-      await vi.waitFor(() => {
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-          'Cannot /plug:cmd while streaming',
-        );
-      });
-      expect(activatePluginCommand).not.toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('drops a queued bash submit when the session changes mid-upload', async () => {
-    const runShellCommand = vi.fn(async () => ({ stdout: '', stderr: '', isError: false }));
-    const session = makeSession({ runShellCommand });
-    const { driver } = await makeDriver(session);
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-
-      driver.state.appState.inputMode = 'bash';
-      driver.handleUserInput('ls');
-      driver.state.appState.inputMode = 'prompt';
-      (driver as unknown as { session: unknown }).session = makeSession();
-
-      releaseUpload();
-      await vi.waitFor(() => {
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-          'The session changed while the video was uploading',
-        );
-      });
-      // Never executed (nor queued) into the new session's workspace.
-      expect(runShellCommand).not.toHaveBeenCalled();
-      expect(driver.state.queuedMessages).toHaveLength(0);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('queues /compact behind a pending video upload', async () => {
-    const { driver, session } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-
-      driver.handleUserInput('/compact');
-      await new Promise((r) => setTimeout(r, 20));
-      expect(session.compact).not.toHaveBeenCalled();
-
-      releaseUpload();
-      await vi.waitFor(() => {
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-          'Cannot /compact while streaming',
-        );
-      });
-      // The video turn is active, so the deferred /compact is blocked like
-      // the resolver would block it while streaming.
-      expect(session.compact).not.toHaveBeenCalled();
-      expect(session.prompt).toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('queues /init behind a pending video upload', async () => {
-    const { driver, session } = await makeDriver();
-    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
-    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
-    try {
-      const srcVideo = join(dir, 'clip.mp4');
-      await writeFile(srcVideo, 'video-bytes');
-      const attachment = imageStore.addVideo('video/mp4', srcVideo);
-
-      let releaseUpload!: () => void;
-      vi.mocked(session.uploadVideo).mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseUpload = () =>
-              resolve({ type: 'video_url', videoUrl: { url: 'ms://slow', id: 'slow' } });
-          }),
-      );
-
-      driver.handleUserInput(`watch ${attachment.placeholder}`);
-      await vi.waitFor(() => {
-        expect(session.uploadVideo).toHaveBeenCalled();
-      });
-
-      driver.handleUserInput('/init');
-      await new Promise((r) => setTimeout(r, 20));
-      expect(session.init).not.toHaveBeenCalled();
-
-      releaseUpload();
-      await vi.waitFor(() => {
-        expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-          'Cannot /init while streaming',
-        );
-      });
-      expect(session.init).not.toHaveBeenCalled();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('queues a pasted-video message with uploaded parts while streaming', async () => {
+  it('queues a pasted video (file:// part) while a turn is streaming', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
@@ -2007,27 +1596,21 @@ command = "vim"
 
       driver.handleUserInput(`describe ${attachment.placeholder}`);
 
-      // The upload completes even while the turn is busy; the queued message
-      // carries the final parts by the time it is drained.
-      await vi.waitFor(() => {
-        expect(driver.state.queuedMessages).toHaveLength(1);
-      });
       expect(session.prompt).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toHaveLength(1);
       const queued = driver.state.queuedMessages[0];
-      expect(queued?.parts).toEqual([
-        { type: 'text', text: 'describe ' },
-        { type: 'video_url', videoUrl: { url: 'ms://stub-video', id: 'stub-video' } },
-      ]);
+      const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
+      expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
+      expect(parts?.[1]?.type).toBe('video_url');
+      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
 
       driver.sendQueuedMessage(session, queued!);
-      expect(session.prompt).toHaveBeenCalledWith([
-        { type: 'text', text: 'describe ' },
-        { type: 'video_url', videoUrl: { url: 'ms://stub-video', id: 'stub-video' } },
-      ]);
+      expect(session.prompt).toHaveBeenCalledWith(parts);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
 
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();

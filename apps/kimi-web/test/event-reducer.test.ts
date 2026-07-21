@@ -303,10 +303,10 @@ describe('reduceAppEvent messageCreated', () => {
     expect(msgs[0]?.promptId).toBe('p1');
   });
 
-  it('reconciles an inlined `[video:ms://…]` echo into the optimistic user message', () => {
-    // A video the server inlined as a provider reference echoes back as a
-    // `[video:ms://…]` text part, while the optimistic copy still carries the
-    // file-source video. They must collapse into one bubble, not duplicate.
+  it('reconciles a structured file-source video echo into the optimistic user message', () => {
+    // The server now echoes an uploaded video back as a structured
+    // `{video, source:{kind:'file'}}` part (mirroring images), not a text tag.
+    // It must collapse into the optimistic file-source copy, not duplicate.
     const optimistic: AppMessage = {
       id: 'msg_opt_2',
       sessionId: 's-vid',
@@ -324,7 +324,7 @@ describe('reduceAppEvent messageCreated', () => {
       role: 'user',
       content: [
         { type: 'text', text: 'look at this' },
-        { type: 'text', text: '[video:ms://file-abc123]' },
+        { type: 'video', source: { kind: 'file', fileId: 'f_abc' } },
       ],
       createdAt: '2026-06-01T12:00:00.000Z',
       promptId: 'p1',

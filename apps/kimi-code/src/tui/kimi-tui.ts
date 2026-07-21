@@ -136,9 +136,8 @@ import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
-import { extractMediaSegments, materializeMediaSegments, rewriteMediaPlaceholders, segmentsToPromptParts } from './utils/image-placeholder';
+import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
-import { slashBusyMessage, slashCommandBusyReason } from './commands/resolve';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -1001,31 +1000,6 @@ export class KimiTUI {
     const historyText = wasBashMode ? `!${text}` : text;
     void this.persistInputHistory(historyText);
     if (wasBashMode) {
-      // A pending video upload is busy time too: chain behind it so the
-      // command cannot record shell context before the earlier prompt is
-      // dispatched (which would reorder user actions).
-      if (this.pendingSubmits > 0) {
-        // Shell commands are session-scoped: capture the originating session
-        // and re-verify at dispatch, or a mid-upload switch would run the
-        // command in another session's workspace and record it there.
-        const sessionAtSubmit = this.session;
-        this.inputSubmitChain = this.inputSubmitChain.then(() => {
-          if (sessionAtSubmit === undefined || this.session !== sessionAtSubmit) {
-            this.showError(
-              'The session changed while the video was uploading — please resend the command.',
-            );
-            return;
-          }
-          if (this.state.appState.streamingPhase !== 'idle') {
-            this.enqueueMessage(text, undefined, 'bash');
-          } else {
-            this.runShellCommandFromInput(text);
-          }
-          this.updateQueueDisplay();
-          this.state.ui.requestRender();
-        });
-        return;
-      }
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
       if (this.state.appState.streamingPhase !== 'idle') {
@@ -1155,109 +1129,41 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  // Submits chained behind an in-flight video upload (see sendNormalUserInput).
-  private pendingSubmits = 0;
-  private inputSubmitChain: Promise<void> = Promise.resolve();
-
-  /**
-   * Run `dispatch` immediately, or chain it behind in-flight media uploads so
-   * a slow upload cannot be overtaken by a later action (slash commands,
-   * compaction, init, bash). A mid-upload session/model switch drops the
-   * deferred dispatch with a resend hint — the same fence pending prompt
-   * submits use.
-   */
-  queueBehindPendingUploads(dispatch: () => void): void {
-    if (this.pendingSubmits === 0) {
-      dispatch();
-      return;
-    }
-    const session = this.session;
-    const modelAtSubmit = this.state.appState.model;
-    this.inputSubmitChain = this.inputSubmitChain.then(() => {
-      if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
-        this.showError(
-          'The session or model changed while the video was uploading — please resend.',
-        );
-        return;
-      }
-      dispatch();
-    });
-  }
-
   sendNormalUserInput(text: string): void {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    const extraction = extractMediaSegments(text, this.imageStore);
+    let extraction: ReturnType<typeof extractMediaAttachments>;
+    try {
+      // Pasted videos are copied into the cache and expand to a `file://`
+      // `video_url` part; the engine resolves (uploads or degrades) them
+      // inside the turn, so submission stays fully synchronous.
+      extraction = extractMediaAttachments(text, this.imageStore);
+    } catch (error) {
+      // A video cache copy failed (unwritable cache dir, vanished source…);
+      // nothing was dispatched.
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
+    }
     if (!this.validateMediaCapabilities(extraction)) return;
     const session = this.session;
     if (session === undefined) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    const hasVideo = extraction.videoAttachmentIds.length > 0;
-    if (!hasVideo && this.pendingSubmits === 0) {
-      // Fully synchronous path: nothing to upload, nothing queued behind an
-      // upload, so ordering is trivially safe.
-      if (extraction.hasMedia) {
-        this.sendMessage(session, text, {
-          hasMedia: true,
-          parts: segmentsToPromptParts(extraction.segments),
-          imageAttachmentIds: extraction.imageAttachmentIds,
-        });
-      } else {
-        this.sendMessage(session, text);
-      }
-      this.updateQueueDisplay();
-      this.state.ui.requestRender();
-      return;
+    if (extraction.hasMedia) {
+      this.sendMessage(session, text, {
+        hasMedia: true,
+        parts: extraction.parts,
+        imageAttachmentIds: extraction.imageAttachmentIds,
+      });
+    } else {
+      this.sendMessage(session, text);
     }
-    // Video attachments upload asynchronously before the prompt goes out.
-    // Chain this submit (and any submitted while an upload is in flight) so
-    // a slow upload cannot be overtaken by a later message.
-    const modelAtSubmit = this.state.appState.model;
-    this.pendingSubmits += 1;
-    this.inputSubmitChain = this.inputSubmitChain.then(async () => {
-      try {
-        let parts: readonly PromptPart[] | undefined;
-        if (extraction.hasMedia) {
-          parts = hasVideo
-            ? await materializeMediaSegments(extraction.segments, (attachment) =>
-                session.uploadVideo(attachment.sourcePath),
-              )
-            : segmentsToPromptParts(extraction.segments);
-        }
-        // Re-checked at dispatch time: if the user switched the session or
-        // the model mid-upload, the provider-issued reference (or the upload
-        // itself) would now go to the wrong place. Drop the message and ask
-        // for a resend instead.
-        if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
-          this.showError(
-            'The session or model changed while the video was uploading — please resend.',
-          );
-          return;
-        }
-        if (parts !== undefined) {
-          this.sendMessage(session, text, {
-            hasMedia: true,
-            parts,
-            imageAttachmentIds: extraction.imageAttachmentIds,
-          });
-        } else {
-          this.sendMessage(session, text);
-        }
-      } catch (error) {
-        // The tag fallback itself could not be prepared (unwritable cache
-        // dir, vanished video source…); nothing was dispatched.
-        this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
-      } finally {
-        this.pendingSubmits -= 1;
-      }
-      this.updateQueueDisplay();
-      this.state.ui.requestRender();
-    });
+    this.updateQueueDisplay();
+    this.state.ui.requestRender();
   }
 
   validateMediaCapabilities(extraction: {
@@ -1424,37 +1330,11 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
-    const modelAtSubmit = this.state.appState.model;
-    const dispatch = (): void => {
-      if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
-        this.showError(
-          'The session or model changed while the video was uploading — please resend.',
-        );
-        return;
-      }
-      // The resolver blocks skill commands while busy; keep that behavior
-      // when the deferred callback lands on an already-running turn.
-      const busy = slashCommandBusyReason({
-        isStreaming: this.state.appState.streamingPhase !== 'idle',
-        isCompacting: this.state.appState.isCompacting,
-      });
-      if (busy !== undefined) {
-        this.showError(slashBusyMessage(skillName, busy));
-        return;
-      }
-      this.beginSessionRequest();
-      void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
-        const message = formatErrorMessage(error);
-        this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
-      });
-    };
-    // A pending video upload is busy time: chain behind it so the skill
-    // prompt cannot start a turn ahead of the earlier message.
-    if (this.pendingSubmits > 0) {
-      this.inputSubmitChain = this.inputSubmitChain.then(dispatch);
-      return;
-    }
-    dispatch();
+    this.beginSessionRequest();
+    void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
+      const message = formatErrorMessage(error);
+      this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
+    });
   }
 
   activatePluginCommand(
@@ -1474,39 +1354,13 @@ export class KimiTUI {
       return;
     }
     if (!this.validateMediaCapabilities(rewrite)) return;
-    const modelAtSubmit = this.state.appState.model;
-    const dispatch = (): void => {
-      if (this.session !== session || this.state.appState.model !== modelAtSubmit) {
-        this.showError(
-          'The session or model changed while the video was uploading — please resend.',
-        );
-        return;
-      }
-      // The resolver blocks plugin commands while busy; keep that behavior
-      // when the deferred callback lands on an already-running turn.
-      const busy = slashCommandBusyReason({
-        isStreaming: this.state.appState.streamingPhase !== 'idle',
-        isCompacting: this.state.appState.isCompacting,
+    this.beginSessionRequest();
+    void session
+      .activatePluginCommand(pluginId, commandName, rewrite.text)
+      .catch((error: unknown) => {
+        const message = formatErrorMessage(error);
+        this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
       });
-      if (busy !== undefined) {
-        this.showError(slashBusyMessage(`${pluginId}:${commandName}`, busy));
-        return;
-      }
-      this.beginSessionRequest();
-      void session
-        .activatePluginCommand(pluginId, commandName, rewrite.text)
-        .catch((error: unknown) => {
-          const message = formatErrorMessage(error);
-          this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
-        });
-    };
-    // A pending video upload is busy time: chain behind it so the command
-    // prompt cannot start a turn ahead of the earlier message.
-    if (this.pendingSubmits > 0) {
-      this.inputSubmitChain = this.inputSubmitChain.then(dispatch);
-      return;
-    }
-    dispatch();
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {

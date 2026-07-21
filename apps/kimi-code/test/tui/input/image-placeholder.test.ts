@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
@@ -8,8 +9,6 @@ import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
-  extractMediaSegments,
-  materializeMediaSegments,
   rewriteMediaPlaceholders,
 } from '#/tui/utils/image-placeholder';
 import { getCacheDir } from '#/utils/paths';
@@ -42,16 +41,17 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'kimi-src-'));
 }
 
-type TextPart = { type: 'text'; text: string };
+type VideoUrlPart = { type: 'video_url'; videoUrl: { url: string } };
 
+// Prompt-attached videos are emitted as a `video_url` part whose url is a
+// local `file://` reference to the cache copy; decode it back to a filesystem
+// path for assertions.
 function videoPathFromParts(parts: unknown[]): string {
-  const text = parts
-    .filter((p): p is TextPart => (p as TextPart).type === 'text')
-    .map((p) => p.text)
-    .join('');
-  const m = /<video path="([^"]+)"><\/video>/.exec(text);
-  if (!m) throw new Error(`no video tag found in: ${text}`);
-  return m[1]!;
+  const part = parts.find(
+    (p): p is VideoUrlPart => (p as VideoUrlPart).type === 'video_url',
+  );
+  if (!part) throw new Error(`no video_url part found in: ${JSON.stringify(parts)}`);
+  return fileURLToPath(part.videoUrl.url);
 }
 
 describe('extractMediaAttachments', () => {
@@ -137,26 +137,27 @@ describe('extractMediaAttachments', () => {
     });
   });
 
-  it('escapes media paths in generated tags', () => {
+  it('keeps the video label (including special chars) in the cache path', () => {
     const { cleanup } = setupTempCache();
     const srcDir = makeTempDir();
     try {
       const srcVideo = join(srcDir, 'source.mp4');
       writeFileSync(srcVideo, 'x');
       const store = new ImageAttachmentStore();
-      // The filename drives the cache label; `&` must be escaped in the attribute.
+      // The filename drives the cache label; `&` is a valid path char the cache
+      // copy keeps verbatim (the engine escapes it if it later renders a tag).
       const att = store.addVideo('video/mp4', srcVideo, 'a&b.mp4');
       const r = extractMediaAttachments(att.placeholder, store);
       expect(r.parts).toHaveLength(1);
-      const text = (r.parts[0] as TextPart).text;
-      expect(text).toMatch(/<video path="[^"]+a&amp;b\.mp4"><\/video>/);
+      expect((r.parts[0] as VideoUrlPart).type).toBe('video_url');
+      expect(videoPathFromParts(r.parts).endsWith('a&b.mp4')).toBe(true);
     } finally {
       cleanup();
       rmSync(srcDir, { recursive: true, force: true });
     }
   });
 
-  it('copies video placeholders into the cache and emits cache-path tags', () => {
+  it('copies video placeholders into the cache and emits a file:// video_url part', () => {
     const { cleanup } = setupTempCache();
     const srcDir = makeTempDir();
     try {
@@ -167,8 +168,11 @@ describe('extractMediaAttachments', () => {
       const r = extractMediaAttachments(att.placeholder, store);
       expect(r.hasMedia).toBe(true);
       expect(r.videoAttachmentIds).toEqual([1]);
+      const part = r.parts[0] as VideoUrlPart;
+      expect(part.type).toBe('video_url');
+      expect(part.videoUrl.url.startsWith('file:')).toBe(true);
       const cachePath = videoPathFromParts(r.parts);
-      // The tag points at the cache, not the original source path.
+      // The part points at the cache copy, not the original source path.
       expect(cachePath.startsWith(getCacheDir())).toBe(true);
       expect(cachePath).not.toBe(srcVideo);
       expect(readFileSync(cachePath, 'utf8')).toBe('video-data');
@@ -365,147 +369,6 @@ describe('rewriteMediaPlaceholders', () => {
       const m = /^Attached video file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
       if (!m) throw new Error(`no plain reference found in: ${r.text}`);
       expect(readFileSync(m[1]!, 'utf8')).toBe('video-bytes');
-    } finally {
-      cleanup();
-      rmSync(srcDir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('extractMediaSegments + materializeMediaSegments', () => {
-  it('returns no segments and hasMedia=false for plain text', () => {
-    const store = new ImageAttachmentStore();
-    const r = extractMediaSegments('hello world', store);
-    expect(r.hasMedia).toBe(false);
-    expect(r.segments).toEqual([]);
-    expect(r.imageAttachmentIds).toEqual([]);
-    expect(r.videoAttachmentIds).toEqual([]);
-  });
-
-  it('keeps a video as an unresolved reference and inlines it via the upload result', async () => {
-    const srcDir = makeTempDir();
-    try {
-      const srcVideo = join(srcDir, 'clip.mp4');
-      writeFileSync(srcVideo, 'video-bytes');
-      const store = new ImageAttachmentStore();
-      const vid = store.addVideo('video/mp4', srcVideo);
-      const r = extractMediaSegments(`look ${vid.placeholder} now`, store);
-      expect(r.hasMedia).toBe(true);
-      expect(r.videoAttachmentIds).toEqual([1]);
-      expect(r.segments.map((s) => s.kind)).toEqual(['part', 'video', 'part']);
-
-      const parts = await materializeMediaSegments(r.segments, async () => ({
-        type: 'video_url',
-        videoUrl: { url: 'ms://file-1', id: 'file-1' },
-      }));
-      expect(parts).toEqual([
-        { type: 'text', text: 'look ' },
-        { type: 'video_url', videoUrl: { url: 'ms://file-1', id: 'file-1' } },
-        { type: 'text', text: ' now' },
-      ]);
-    } finally {
-      rmSync(srcDir, { recursive: true, force: true });
-    }
-  });
-
-  it('inlines images directly while videos wait for the upload result', async () => {
-    const srcDir = makeTempDir();
-    try {
-      const srcVideo = join(srcDir, 'clip.mp4');
-      writeFileSync(srcVideo, 'video-bytes');
-      const store = new ImageAttachmentStore();
-      const img = store.addImage(new Uint8Array([1]), 'image/png', 10, 10);
-      const vid = store.addVideo('video/mp4', srcVideo);
-      const r = extractMediaSegments(`${img.placeholder} then ${vid.placeholder}`, store);
-      expect(r.imageAttachmentIds).toEqual([1]);
-      expect(r.videoAttachmentIds).toEqual([2]);
-
-      const parts = await materializeMediaSegments(r.segments, async () => ({
-        type: 'video_url',
-        videoUrl: { url: 'ms://file-2', id: 'file-2' },
-      }));
-      expect(parts.map((p) => p.type)).toEqual(['image_url', 'text', 'video_url']);
-    } finally {
-      rmSync(srcDir, { recursive: true, force: true });
-    }
-  });
-
-  it('preserves video order across concurrent uploads', async () => {
-    const srcDir = makeTempDir();
-    try {
-      const srcA = join(srcDir, 'a.mp4');
-      const srcB = join(srcDir, 'b.mp4');
-      writeFileSync(srcA, 'a');
-      writeFileSync(srcB, 'b');
-      const store = new ImageAttachmentStore();
-      const vidA = store.addVideo('video/mp4', srcA);
-      const vidB = store.addVideo('video/mp4', srcB);
-      const r = extractMediaSegments(`${vidA.placeholder} and ${vidB.placeholder}`, store);
-
-      const parts = await materializeMediaSegments(r.segments, async (att) => ({
-        type: 'video_url',
-        videoUrl: { url: `ms://${att.sourcePath}` },
-      }));
-
-      expect(parts.map((p) => p.type)).toEqual(['video_url', 'text', 'video_url']);
-      expect(parts[0]).toEqual({ type: 'video_url', videoUrl: { url: `ms://${srcA}` } });
-      expect(parts[2]).toEqual({ type: 'video_url', videoUrl: { url: `ms://${srcB}` } });
-    } finally {
-      rmSync(srcDir, { recursive: true, force: true });
-    }
-  });
-
-  it('falls back to a cache-path tag when the upload fails', async () => {
-    const { cleanup } = setupTempCache();
-    const srcDir = makeTempDir();
-    try {
-      const srcVideo = join(srcDir, 'clip.mp4');
-      writeFileSync(srcVideo, 'video-bytes');
-      const store = new ImageAttachmentStore();
-      const vid = store.addVideo('video/mp4', srcVideo);
-      const r = extractMediaSegments(vid.placeholder, store);
-
-      const parts = await materializeMediaSegments(r.segments, async () => {
-        throw new Error('upload failed');
-      });
-
-      const cachePath = videoPathFromParts(parts);
-      expect(cachePath.startsWith(getCacheDir())).toBe(true);
-      expect(readFileSync(cachePath, 'utf8')).toBe('video-bytes');
-    } finally {
-      cleanup();
-      rmSync(srcDir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('materializeMediaSegments failure mixing', () => {
-  it('inlines successful uploads and falls back per-video on individual failures', async () => {
-    const { cleanup } = setupTempCache();
-    const srcDir = makeTempDir();
-    try {
-      const srcA = join(srcDir, 'a.mp4');
-      const srcB = join(srcDir, 'b.mp4');
-      writeFileSync(srcA, 'a-bytes');
-      writeFileSync(srcB, 'b-bytes');
-      const store = new ImageAttachmentStore();
-      const vidA = store.addVideo('video/mp4', srcA);
-      const vidB = store.addVideo('video/mp4', srcB);
-      const r = extractMediaSegments(`${vidA.placeholder} then ${vidB.placeholder}`, store);
-
-      const parts = await materializeMediaSegments(r.segments, async (att) => {
-        if (att.sourcePath === srcB) throw new Error('upload failed');
-        return { type: 'video_url', videoUrl: { url: `ms://${att.sourcePath}` } };
-      });
-
-      // A inlined, B degraded to a cache tag — order and both contents kept.
-      expect(parts[0]).toEqual({ type: 'video_url', videoUrl: { url: `ms://${srcA}` } });
-      expect(parts[1]).toEqual({ type: 'text', text: ' then ' });
-      expect(parts[2]?.type).toBe('text');
-      const tag = (parts[2] as TextPart).text;
-      const m = /<video path="([^"]+)"><\/video>/.exec(tag);
-      expect(m).not.toBeNull();
-      expect(readFileSync(m![1]!, 'utf8')).toBe('b-bytes');
     } finally {
       cleanup();
       rmSync(srcDir, { recursive: true, force: true });

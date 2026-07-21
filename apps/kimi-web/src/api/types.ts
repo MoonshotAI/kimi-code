@@ -781,11 +781,6 @@ export interface KimiWebApi {
   getFileUrl(fileId: string): string;
   /** Fetch a file's bytes with auth — feed the resulting Blob to a blob URL for <video>/<img> src. */
   getFileBlob(fileId: string): Promise<Blob>;
-  /** URL of the daemon redirect that maps a provider-issued video file id
-   *  (`ms://<llmFileId>`) back to the local upload it was produced from. */
-  getLlmFileUrl(llmFileId: string): string;
-  /** Fetch a provider-referenced video's bytes with auth via the llm redirect. */
-  getLlmFileBlob(llmFileId: string): Promise<Blob>;
 
   // Config — REAL endpoints
   getConfig(): Promise<AppConfig>;

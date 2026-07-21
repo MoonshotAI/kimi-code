@@ -19,13 +19,11 @@ import {
   IAgentToolPolicyService,
   IAgentPromptService,
   IAuthSummaryService,
-  IBlobStore,
-  IConfigService,
   IEventService,
   IFileService,
-  IModelCatalog,
   ISessionMetadata,
-  createVideoUploader,
+  buildKimiFileUrl,
+  parseKimiFileUrl,
   promptMetadataTextFromContentParts,
   ProfileError,
   type ContentPart,
@@ -53,8 +51,6 @@ import {
   type ImageCompressionTelemetry,
   type ISessionScopeHandle,
   type Scope,
-  type VideoUploadInput,
-  type VideoURLPart,
 } from '@moonshot-ai/agent-core-v2';
 import { ErrorCode } from '../protocol/error-codes';
 import {
@@ -69,8 +65,6 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { recordLlmVideoRef } from '../lib/llmVideoRefs';
-import { detectFileType, MEDIA_SNIFF_BYTES } from '@moonshot-ai/agent-core-v2/agent/media/file-type';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
@@ -145,49 +139,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
-    // Agent-scoped view: agent identity is ambient for agent-level events
-    // (e.g. video_upload), unlike the Core-scoped view used for session-level
-    // events (e.g. image_compress).
-    telemetry: agent.accessor.get(ITelemetryService),
   };
-}
-
-/**
- * Build the prompt-time video uploader from the model the submission will
- * use, resolved TRANSIENTLY (no bind/setModel) with the same rules as
- * `AgentProfileService.bind`: an explicit body model wins; a profile bind
- * without one falls back to the configured global default model; otherwise
- * the agent's currently bound alias. `undefined` when no model is
- * determinable (unbound, no override, no configured default — that
- * submission fails on bind anyway), when the model cannot ingest video (no
- * `video_in` capability), or when the provider has no upload channel —
- * prompt videos then fall back to the file-tag form and the model opens
- * them with ReadMediaFile.
- */
-function promptVideoUploader(
-  body: { readonly model?: string | undefined; readonly profile?: string | undefined },
-  profile: IAgentProfileService,
-  modelCatalog: IModelCatalog,
-  config: IConfigService,
-  telemetry: ITelemetryService,
-): ((input: VideoUploadInput) => Promise<VideoURLPart>) | undefined {
-  const alias =
-    body.model ??
-    (body.profile !== undefined
-      ? config.get<string>('defaultModel')
-      : profile.getModel());
-  if (alias === undefined || alias === '') return undefined;
-  const model = modelCatalog.get(alias);
-  if (!model.capabilities.video_in) return undefined;
-  const requester = modelCatalog.getRequester(alias);
-  return createVideoUploader(requester, {
-    client: telemetry,
-    props: {
-      model: alias,
-      provider_type: model.providerType ?? model.protocol,
-      protocol: model.protocol,
-    },
-  });
 }
 
 /**
@@ -247,12 +199,6 @@ async function assertPromptFileRefs(body: PromptSubmission, store: IFileService)
   }
 }
 
-/**
- * Serializes prompt submissions per session: a slow media upload must not
- * let a later request reach the queue ahead of an earlier one.
- */
-const submitChains = new Map<string, Promise<void>>();
-
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
     {
@@ -291,7 +237,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
         [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: { detailsSchema: authModelDetailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.SESSION_BUSY]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
       description: 'Submit a prompt to a session',
@@ -300,8 +245,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      const invoke = async (): Promise<void> => {
-        try {
+      try {
         // Fail fast on stale file references before anything is resolved or
         // mutated: a bad `file_id` must not create the agent, register `main`
         // in session metadata, or touch the session's controls.
@@ -309,33 +253,19 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
         await resolved.auth.ensureReady();
 
-        // Media resolution runs BEFORE any control mutation: the uploader is
-        // resolved transiently from the requested (or currently bound) model,
-        // so a failed submission leaves the session's controls untouched.
+        // Media resolution runs BEFORE any control mutation, so a failed
+        // submission leaves the session's controls untouched. Prompt videos
+        // are materialized to a local copy and carried into context as an
+        // internal `kimi-file://` reference; the engine resolves them to a
+        // provider form (upload / inline / `<video path>` tag) at request
+        // time, so the edge no longer uploads.
         const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
-        const boundBeforeMedia = resolved.profile.getModel();
         const resolvedBody = await resolvePromptMediaFiles(
           req.body,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
           {
             telemetry,
-            videoUploader: promptVideoUploader(
-              req.body,
-              resolved.profile,
-              core.accessor.get(IModelCatalog),
-              core.accessor.get(IConfigService),
-              // Agent-level events (video_upload) need the target agent's
-              // ambient identity, not the Core-scoped session view above.
-              resolved.telemetry.withContext({ sessionId: session_id }),
-            ),
-            onVideoInlined: async (localFileId, llmFileId) => {
-              // Best effort — a lost mapping only means the web UI cannot
-              // play this prompt video back from daemon storage.
-              await recordLlmVideoRef(core.accessor.get(IBlobStore), llmFileId, localFileId).catch(
-                () => undefined,
-              );
-            },
             resolveOriginalsDir: async () => {
               const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
               if (session === undefined) return undefined;
@@ -348,16 +278,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             },
           },
         );
-
-        // A concurrent model switch during preparation must not receive a
-        // reference uploaded for the previous model — reject instead of
-        // enqueueing an account-scoped id against the wrong provider.
-        if (resolved.profile.getModel() !== boundBeforeMedia) {
-          throw new Error2(
-            'session.busy',
-            'the model changed while the prompt was being prepared; resubmit',
-          );
-        }
 
         // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
@@ -400,19 +320,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           origin: { kind: 'user' },
         } });
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
-        } catch (error) {
-          sendMappedError(reply, req, error);
-        }
-      };
-      const previous = submitChains.get(session_id) ?? Promise.resolve();
-      const run = previous.then(invoke);
-      // The chain must never reject, or later submissions would be skipped.
-      const stored = run.catch(() => undefined);
-      submitChains.set(session_id, stored);
-      try {
-        await run;
-      } finally {
-        if (submitChains.get(session_id) === stored) submitChains.delete(session_id);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -526,6 +435,14 @@ function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission[
         ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
         : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
     } else if (part.type === 'video_url') {
+      // An internal `kimi-file://<id>?path=…` reference projects back to the
+      // daemon upload it came from — the materialization path never leaks to
+      // the client.
+      const kimiFile = parseKimiFileUrl(part.videoUrl.url);
+      if (kimiFile !== undefined) {
+        parts.push({ type: 'video', source: { kind: 'file', file_id: kimiFile.fileId } });
+        continue;
+      }
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
       parts.push(match === null
         ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
@@ -564,18 +481,6 @@ interface ResolvePromptMediaOptions {
   readonly resolveAttachmentsDir?: () => Promise<string | undefined>;
   /** Report an `image_compress` event per compressed prompt image. */
   readonly telemetry?: ITelemetryService;
-  /**
-   * When set, uploaded video files are inlined into the prompt as the
-   * provider-issued reference. Undefined disables inlining — every video
-   * falls back to the file-tag form.
-   */
-  readonly videoUploader?: (input: VideoUploadInput) => Promise<VideoURLPart>;
-  /**
-   * Called after a video is inlined, with the local `/files` id and the
-   * provider-issued file id, so the daemon can map the reference back to
-   * local bytes for playback. Errors are swallowed by the caller.
-   */
-  readonly onVideoInlined?: (localFileId: string, llmFileId: string) => Promise<void>;
 }
 
 async function resolvePromptMediaFiles(
@@ -785,57 +690,19 @@ async function resolvePromptMediaFiles(
       continue;
     }
 
-    // Uploaded video: inline the provider-issued reference into the prompt
-    // so the model receives the video with the user message instead of having
-    // to open it with a tool call. Like the image gate above, the bytes are
-    // authoritative: a mislabeled upload (declared video/* but not actually
-    // one) never reaches the provider and falls back to the file-tag form,
-    // as does a model with no upload channel or a failed upload.
-    if (part.type === 'video' && options.videoUploader !== undefined) {
-      const data = await readFileOrStream(file);
-      const sniffed = detectFileType(
-        file.meta.name,
-        data.subarray(0, MEDIA_SNIFF_BYTES),
-        'media',
-      );
-      if (sniffed.kind === 'video') {
-        try {
-          const uploaded = await options.videoUploader({
-            data,
-            mimeType: sniffed.mimeType,
-            filename: file.meta.name,
-          });
-          content.push({
-            type: 'video',
-            source: { kind: 'url', url: uploaded.videoUrl.url, id: uploaded.videoUrl.id },
-          });
-          changed = true;
-          // Key the playback mapping by the id embedded in the reference URL
-          // — that's what projections and clients read back — falling back
-          // to the explicit id only for non-`ms://` shapes.
-          const refId = msFileIdFromUrl(uploaded.videoUrl.url) ?? uploaded.videoUrl.id;
-          if (refId !== undefined) {
-            await options.onVideoInlined?.(file.meta.id, refId);
-          }
-          continue;
-        } catch {
-          // Fall through to the file-tag form below.
-        }
-      }
-    }
-
+    // Uploaded video: materialize a local copy the model can open as a
+    // fallback, and carry the upload into context as an internal
+    // `kimi-file://<id>?path=<materialized path>` reference. The engine
+    // resolves it to a provider form (upload / inline / `<video path>` tag) at
+    // request time, so the edge never uploads and never blocks on the provider.
     const cachePath = await materializeVideoToCache(file, cacheDir);
-    content.push({ type: 'text', text: `<video path="${escapeAttribute(cachePath)}"></video>` });
+    content.push({
+      type: 'video',
+      source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, cachePath) },
+    });
     changed = true;
   }
   return changed ? { ...body, content } : body;
-}
-
-/** The provider file id behind an `ms://<id>` reference, when present. */
-function msFileIdFromUrl(url: string): string | undefined {
-  if (!url.startsWith('ms://')) return undefined;
-  const id = url.slice('ms://'.length);
-  return id.length > 0 ? id : undefined;
 }
 
 async function materializeVideoToCache(file: GetResult, cacheDir: string): Promise<string> {
@@ -928,14 +795,6 @@ function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
     'validation.failed',
     `file ${file.meta.id} is ${file.meta.media_type}, not ${expected === 'video' ? 'a video' : 'an image'}`,
   );
-}
-
-function escapeAttribute(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 function sendMappedError(

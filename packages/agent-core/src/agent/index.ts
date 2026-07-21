@@ -6,7 +6,7 @@ import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
-import { generate, type ChatProvider, type VideoURLPart } from '@moonshot-ai/kosong';
+import { generate, type ChatProvider } from '@moonshot-ai/kosong';
 
 import type { EnabledPluginSessionStart, PluginCommandDef } from '#/plugin';
 import { expandCommandArguments } from '../plugin/commands';
@@ -15,8 +15,6 @@ import type { PluginCommandOrigin } from './context';
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import { ImageLimits } from '../tools/support/image-limits';
-import { MAX_MEDIA_BYTES } from '../tools/builtin/file/read-media';
-import { MEDIA_SNIFF_BYTES, detectFileType } from '../tools/support/file-type';
 import {
   prepareSystemPromptContext,
   type PreparedSystemPromptContext,
@@ -498,61 +496,11 @@ export class Agent {
     return result;
   }
 
-  /**
-   * Upload a local video file through the bound provider's video upload
-   * channel and return the provider-issued `video_url` part. This is the
-   * transport for videos attached directly to a prompt; videos the model
-   * reads itself keep flowing through ReadMediaFile.
-   */
-  async uploadVideo(path: string): Promise<VideoURLPart> {
-    if (!this.config.modelCapabilities.video_in) {
-      throw new KimiError(
-        ErrorCodes.REQUEST_INVALID,
-        'The current model does not support video input.',
-      );
-    }
-    const uploader = this.tools.videoUploader();
-    if (uploader === undefined) {
-      throw new KimiError(
-        ErrorCodes.REQUEST_INVALID,
-        'The current model does not support video upload.',
-      );
-    }
-    // The trimmed copy is only the emptiness check — the path itself is used
-    // verbatim so a name that legitimately starts or ends with whitespace
-    // still resolves to the same file.
-    if (path.trim().length === 0) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Video path cannot be empty.');
-    }
-    const header = await this.kaos.readBytes(path, MEDIA_SNIFF_BYTES);
-    const fileType = detectFileType(path, header, 'media');
-    if (fileType.kind !== 'video') {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, `"${path}" is not a video file.`);
-    }
-    const stat = await this.kaos.stat(path);
-    if (stat.stSize === 0) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, `"${path}" is empty.`);
-    }
-    if (stat.stSize > MAX_MEDIA_BYTES) {
-      throw new KimiError(
-        ErrorCodes.REQUEST_INVALID,
-        `"${path}" is ${String(stat.stSize)} bytes, which exceeds the 100MB maximum for video uploads.`,
-      );
-    }
-    const data = await this.kaos.readBytes(path);
-    return uploader({
-      data,
-      mimeType: fileType.mimeType,
-      filename: path.split(/[\\/]/).at(-1),
-    });
-  }
-
   get rpcMethods(): PromisableMethods<AgentAPI> {
     return {
       prompt: (payload) => {
         this.turn.prompt(payload.input);
       },
-      uploadVideo: (payload) => this.uploadVideo(payload.path),
       runShellCommand: (payload) => this.tools.runShellCommand(payload.command, payload.commandId),
       cancelShellCommand: (payload) => this.tools.cancelShellCommand(payload.commandId),
       steer: (payload) => {

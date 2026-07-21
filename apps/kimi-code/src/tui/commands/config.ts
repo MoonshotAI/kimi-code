@@ -24,7 +24,6 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import { slashBusyMessage, slashCommandBusyReason } from './resolve';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -208,24 +207,8 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
-  // Compaction must see the pending video message: chain behind in-flight
-  // uploads so the context isn't summarized without it.
-  host.queueBehindPendingUploads(() => {
-    // The resolver blocks /compact while busy; keep that behavior when the
-    // deferred callback lands on an already-running turn.
-    const busy = slashCommandBusyReason({
-      isStreaming: host.state.appState.streamingPhase !== 'idle',
-      isCompacting: host.state.appState.isCompacting,
-    });
-    if (busy !== undefined) {
-      host.showError(slashBusyMessage('compact', busy));
-      return;
-    }
-    const customInstruction = args.trim() || undefined;
-    void session.compact({ instruction: customInstruction }).catch((error: unknown) => {
-      host.showError(formatErrorMessage(error));
-    });
-  });
+  const customInstruction = args.trim() || undefined;
+  await session.compact({ instruction: customInstruction });
 }
 
 export async function handleEditorCommand(host: SlashCommandHost, args: string): Promise<void> {

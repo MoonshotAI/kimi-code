@@ -158,11 +158,6 @@ function sameMessageContent(a: AppMessage, b: AppMessage): boolean {
 // A tag is its own text part, so anchoring keeps ordinary prose from matching.
 const MEDIA_PATH_TAG_SHAPE_RE = /^<(image|video|audio)\s+path="[^"]+"><\/\1>$/;
 
-// Matches the provider reference a prompt video was inlined as:
-// `[video:ms://<id>]`. Like the media path tag it is its own text part and
-// counts as media so the echo reconciles with the optimistic copy.
-const LLM_VIDEO_REF_SHAPE_RE = /^\[video:ms:\/\/[^\]]+\]$/;
-
 function userMessageShape(m: AppMessage): { text: string; media: number } {
   let text = '';
   let media = 0;
@@ -171,8 +166,7 @@ function userMessageShape(m: AppMessage): { text: string; media: number } {
       // A video/image upload reaches us (after the server resolves it) as a
       // `<video path=…></video>` text tag, not a media part — count it as media
       // and drop it from the text so the echo reconciles with our optimistic copy.
-      const trimmed = c.text.trim();
-      if (MEDIA_PATH_TAG_SHAPE_RE.test(trimmed) || LLM_VIDEO_REF_SHAPE_RE.test(trimmed)) media += 1;
+      if (MEDIA_PATH_TAG_SHAPE_RE.test(c.text.trim())) media += 1;
       else text += c.text;
     } else if (c.type === 'image' || c.type === 'video' || c.type === 'file') media += 1;
   }

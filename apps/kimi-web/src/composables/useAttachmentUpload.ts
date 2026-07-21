@@ -71,15 +71,6 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     try { URL.revokeObjectURL(att.previewUrl); } catch { /* ignore */ }
   }
 
-  /** Remove an attachment and release its preview blob URL first — an object
-   *  URL pins the (possibly large) blob in the browser store until revoked. */
-  function dropAttachment(sid: string, localId: string): void {
-    const current = attachmentsBySession.value[sid] ?? [];
-    const entry = current.find((a) => a.localId === localId);
-    if (entry !== undefined) revokeAttachment(entry);
-    setForSession(sid, current.filter((a) => a.localId !== localId));
-  }
-
   function attachmentKind(mime: string): 'image' | 'video' | 'file' {
     if (mime.startsWith('image/')) return 'image';
     if (mime.startsWith('video/')) return 'video';
@@ -308,7 +299,7 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
    *  fetch an authenticated blob URL so the thumbnail doesn't 401. Replaces any
    *  unsent draft attachments (mirroring loadForEdit(text), which overwrites) so
    *  a later submit sends exactly the edited message's files, not a mix. */
-  function loadAttachments(atts: { fileId?: string; llmFileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
+  function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
     const sid = sessionId() ?? '';
     for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
     setForSession(sid, []);
@@ -343,48 +334,6 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
             // Keep the fallback previewUrl (honest broken state if it 401s).
           });
         }
-      } else if (att.llmFileId) {
-        // A provider-referenced video recovered after a reload: not resendable
-        // as-is (the ms:// reference can't ride a new prompt), so re-upload the
-        // bytes — fetched WITH auth through the daemon's llm redirect, unlike
-        // the plain-URL branch below which would 401 for this URL.
-        if (!att.url) continue;
-        const upload = uploadImage();
-        if (!upload) continue;
-        const entry: Attachment = {
-          localId,
-          name,
-          kind: att.kind,
-          previewUrl: att.url,
-          uploading: true,
-        };
-        setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
-        void getKimiWebApi()
-          .getLlmFileBlob(att.llmFileId)
-          .then((blob) => {
-            // The same authenticated bytes drive the preview: the protected
-            // llm URL would 401 as a native <video src>, so swap previewUrl
-            // for this blob URL (mirroring the fileId branch above).
-            const blobUrl = URL.createObjectURL(blob);
-            const current = attachmentsBySession.value[sid] ?? [];
-            if (!current.some((a) => a.localId === localId)) {
-              URL.revokeObjectURL(blobUrl);
-              return null;
-            }
-            patchAttachment(sid, localId, { previewUrl: blobUrl });
-            const fname = name.includes('.') ? name : `${name}.${blob.type.split('/')[1] ?? 'bin'}`;
-            return upload(blob, fname);
-          })
-          .then((result) => {
-            if (result === null) {
-              dropAttachment(sid, localId);
-              return;
-            }
-            patchAttachment(sid, localId, { uploading: false, fileId: result.fileId });
-          })
-          .catch(() => {
-            dropAttachment(sid, localId);
-          });
       } else {
         // No fileId (e.g. a server-base64-inlined image, or a URL-backed source
         // from the wire/REST prompt path): re-upload the URL so the chip is

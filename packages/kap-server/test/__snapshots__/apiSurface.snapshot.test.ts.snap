@@ -66,10 +66,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/files/llm/{llm_id}",
-    ],
-    [
-      "GET",
       "/api/v1/fs:browse",
     ],
     [

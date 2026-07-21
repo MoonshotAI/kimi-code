@@ -78,8 +78,6 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       [],
       (fileId) => getKimiWebApi().getFileUrl(fileId),
       sideChatRunning.value,
-      undefined,
-      (llmFileId) => getKimiWebApi().getLlmFileUrl(llmFileId),
     );
   });
 

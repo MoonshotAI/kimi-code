@@ -28,12 +28,10 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type {
   ContentPart,
   ModelCapability,
-  VideoURLPart,
   VideoUploadInput as ProviderVideoUploadInput,
 } from '@moonshot-ai/kosong';
 import { z } from 'zod';
 
-import { ErrorCodes } from '../../../errors';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
@@ -41,6 +39,7 @@ import type { TelemetryClient } from '../../../telemetry';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType, sniffImageDimensions } from '../../support/file-type';
+import { deliverVideoContent, type VideoUploader } from '../../support/video-delivery';
 import {
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_DECODE_BYTES,
@@ -100,7 +99,7 @@ function buildFullResolutionLimitError(path: string, finalBytes: number): string
 
 export type VideoUploadInput = ProviderVideoUploadInput;
 
-export type VideoUploader = (input: VideoUploadInput) => Promise<VideoURLPart>;
+export type { VideoUploader };
 
 // ── Input schema ─────────────────────────────────────────────────────
 
@@ -253,19 +252,6 @@ function buildMediaNote(input: {
 
 // ── Implementation ───────────────────────────────────────────────────
 
-/**
- * Auth rejections from the upload channel that must surface (they drive
- * credential refresh and a clear auth error). The auth layer wraps provider
- * 401/403s as `provider.auth_error`; a raw status-coded error is matched
- * directly.
- */
-function isAuthUploadError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  if ((error as { code?: unknown }).code === ErrorCodes.PROVIDER_AUTH_ERROR) return true;
-  const statusCode = (error as { statusCode?: unknown }).statusCode;
-  return statusCode === 401 || statusCode === 403;
-}
-
 export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
@@ -300,28 +286,15 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
    * refresh and a clear auth error instead of masking a bad token behind
    * an inline payload the next request will also reject.
    */
-  private async videoContentPart(
+  private videoContentPart(
     data: Buffer,
     mimeType: string,
     safePath: string,
   ): Promise<ContentPart> {
-    if (this.videoUploader !== undefined) {
-      try {
-        return await this.videoUploader({
-          data,
-          mimeType,
-          filename: safePath.split(/[\\/]/).at(-1),
-        });
-      } catch (error) {
-        if (isAuthUploadError(error)) throw error;
-        // Fall through to the inline form.
-      }
-    }
-    const base64 = data.toString('base64');
-    return {
-      type: 'video_url',
-      videoUrl: { url: `data:${mimeType};base64,${base64}` },
-    };
+    return deliverVideoContent(
+      { data, mimeType, filename: safePath.split(/[\\/]/).at(-1) },
+      this.videoUploader,
+    );
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {

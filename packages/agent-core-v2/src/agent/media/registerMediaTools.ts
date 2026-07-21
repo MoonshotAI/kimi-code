@@ -62,9 +62,9 @@ export function createVideoUploader(
   const uploadVideo = requester?.uploadVideo;
   if (uploadVideo === undefined) return undefined;
   const bound = uploadVideo.bind(requester);
-  if (telemetry === undefined) return (input) => bound(input);
+  if (telemetry === undefined) return (input, options) => bound(input, options);
 
-  return async (input) => {
+  return async (input, options) => {
     const startedAt = Date.now();
     const base = {
       ...telemetry.props,
@@ -78,7 +78,7 @@ export function createVideoUploader(
       }
     };
     try {
-      const part = await bound(input);
+      const part = await bound(input, options);
       track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
       return part;
     } catch (error) {

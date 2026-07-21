@@ -49,7 +49,7 @@ import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart, VideoURLPart } from '#/kosong/contract/message';
 import type { VideoUploadInput as ProviderVideoUploadInput } from '#/kosong/contract/provider';
 import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
-import { ProtocolErrors } from '#/kosong/protocol/errors';
+import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { z } from 'zod';
 
@@ -93,7 +93,10 @@ const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
 
 export type VideoUploadInput = ProviderVideoUploadInput;
 
-export type VideoUploader = (input: VideoUploadInput) => Promise<VideoURLPart>;
+export type VideoUploader = (
+  input: VideoUploadInput,
+  options?: { readonly signal?: AbortSignal },
+) => Promise<VideoURLPart>;
 
 
 export const ReadMediaFileInputSchema = z.object({
@@ -257,10 +260,7 @@ function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boo
   // that convert video_url (kimi, anthropic, google-genai, …) take the
   // inline fallback instead.
   if (error instanceof VideoUploadUnsupportedError) return !inlineVideoSupported;
-  if (typeof error !== 'object' || error === null) return false;
-  if ((error as { code?: unknown }).code === ProtocolErrors.codes.PROVIDER_AUTH_ERROR) return true;
-  const statusCode = (error as { statusCode?: unknown }).statusCode;
-  return statusCode === 401 || statusCode === 403;
+  return isVideoUploadAuthError(error);
 }
 
 export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
@@ -301,11 +301,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
         // Fall through to the inline form.
       }
     }
-    const base64 = data.toString('base64');
-    return {
-      type: 'video_url',
-      videoUrl: { url: `data:${mimeType};base64,${base64}` },
-    };
+    return inlineVideoPart(data, mimeType);
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
