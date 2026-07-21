@@ -1345,6 +1345,37 @@ describe('SessionEventBroadcaster', () => {
     ).toHaveLength(2);
   });
 
+  it('does not retain an activation that is closed while its journal opens', async () => {
+    const first = new FakeLifecycle();
+    const firstMain = first.addAgent('main');
+    sessions.set('s1', first);
+    const view = collectingTarget();
+    bc.registerGlobalTarget(view.target);
+
+    // Do not await a cursor between create and close: this deliberately races
+    // onWillCloseSession against the async journal open in state activation.
+    core.fireSessionCreated('s1');
+    await core.fireSessionWillClose('s1');
+    sessions.delete('s1');
+    firstMain.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+
+    const restored = new FakeLifecycle();
+    const restoredMain = restored.addAgent('main');
+    sessions.set('s1', restored);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+    restoredMain.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    await bc.getCursor('s1');
+
+    expect(
+      view.envelopes.filter(
+        (event) =>
+          event.type === 'event.session.work_changed' &&
+          (event.payload as { busy?: boolean }).busy === true,
+      ),
+    ).toHaveLength(1);
+  });
+
   it('mounts a resumed producer from the create-event handle before lifecycle.get is ready', async () => {
     const resumed = new FakeLifecycle();
     const main = resumed.addAgent('main');

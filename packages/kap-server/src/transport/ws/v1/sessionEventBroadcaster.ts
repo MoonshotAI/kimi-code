@@ -305,6 +305,13 @@ export class SessionEventBroadcaster {
   }
 
   private async dropSessionState(sessionId: string): Promise<void> {
+    // A close can race the journal open started by onDidCreateSession. Wait
+    // for that activation to observe inactiveSessions and settle before
+    // disposing state, so a stale continuation cannot reinsert itself after
+    // this method returns and before a later restore.
+    // Activation owns its error reporting; a failed activation cannot leave a
+    // state behind and therefore must not block the session-close hook.
+    await this.pendingStates.get(sessionId)?.catch(() => undefined);
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
     this.sessions.delete(sessionId);
@@ -769,7 +776,7 @@ export class SessionEventBroadcaster {
       sessionJournalPath(this.opts.eventsDir, sessionId),
       this.opts.logger,
     );
-    if (this.closed) {
+    if (this.closed || this.inactiveSessions.has(sessionId)) {
       await journal.close();
       return undefined;
     }
