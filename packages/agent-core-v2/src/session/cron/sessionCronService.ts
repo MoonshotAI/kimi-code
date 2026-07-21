@@ -8,7 +8,7 @@
  * turn. Bound at Session scope.
  */
 
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Turn } from '#/agent/loop/loop';

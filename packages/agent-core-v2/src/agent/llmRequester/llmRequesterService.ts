@@ -1,20 +1,20 @@
 /**
  * `llmRequester` domain (L3) — `IAgentLLMRequesterService` implementation.
  *
- * Thin shell over the god-object `Model` (App scope). Assembles per-turn
- * `LLMRequestInput` from `profile` (system prompt), `contextMemory` +
- * `contextProjector` (history), `toolRegistry` (tools), and `toolSelect`
- * (progressive-disclosure shaping of the tool and history views), applies the
- * completion-token budget, then drives a bounded request chain: one primary
- * `model.request(input, signal)` attempt plus projection rebuilds for request
- * structure or media compatibility; general retry policy remains in the
- * loop's `stepRetry` plugin. When a model is configured, `prepareTurnConfig`
- * snapshots the model, effective thinking effort, and system prompt at the turn
- * boundary so loop telemetry and every request in that turn share one
- * configuration.
+ * Assembles per-turn `ModelRequestInput` from `profile` (system prompt),
+ * `contextMemory` + `contextProjector` (history), `toolRegistry` (tools), and
+ * `toolSelect` (progressive-disclosure shaping of the tool and history views),
+ * folds the completion-token budget into the profile's dialect-free intent
+ * params, then drives a bounded request chain through the `ModelRequester`
+ * resolved from `IModelCatalog`: one primary `requester.request(input, signal,
+ * params)` attempt plus projection rebuilds for request structure or media
+ * compatibility; general retry policy remains in the loop's `stepRetry`
+ * plugin. When a model is configured, `prepareTurnConfig` snapshots the
+ * model, effective thinking effort, and system prompt at the turn boundary
+ * so loop telemetry and every request in that turn share one configuration.
  * Forwards streamed `part` events to the caller's `onPart`
  * handler, records `usage` through `IAgentUsageService`, resolves to an
- * `LLMRequestFinish` on the `finish` event, logs the request lifecycle
+ * `AgentLLMRequestFinish` on the `finish` event, logs the request lifecycle
  * (config deduplicated by content, request/response/failure lines, plus
  * per-request fields) through `log`, publishes advisory model-capability
  * warnings through `eventBus`, records durable request-trace Ops
@@ -42,47 +42,47 @@ import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import {
-  APIConnectionError,
-  APIContextOverflowError,
-  APIEmptyResponseError,
-  APIProviderOverloadedError,
   APIRequestTooLargeError,
   APIStatusError,
-  APITimeoutError,
-  isContextOverflowStatusError,
+  classifyApiError,
   isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
-} from '#/app/llmProtocol/errors';
-import { type Message } from '#/app/llmProtocol/message';
-import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { type Tool } from '#/app/llmProtocol/tool';
-import { emptyUsage, inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
+} from '#/kosong/contract/errors';
+import { type Message } from '#/kosong/contract/message';
+import { type ThinkingEffort } from '#/kosong/contract/provider';
+import { type Tool } from '#/kosong/contract/tool';
+import { emptyUsage, inputTotal, type TokenUsage } from '#/kosong/contract/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
-import type { Model, LLMEvent as ModelRequestEvent } from '#/app/model/modelInstance';
-import type { KimiModelOverrides } from '#/app/model/modelOverrides';
-import { MODELS_SECTION, type ModelsSection } from '#/app/model/model';
-import { applyCompletionBudget, resolveCompletionBudget } from '#/app/model/completionBudget';
-import type { Protocol } from '#/app/protocol/protocol';
+import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import {
+  effectiveMaxCompletionTokens,
+  type ModelRequestEvent,
+  type ModelRequestParams,
+  type ModelRequester,
+  type ModelRequestTiming,
+} from '#/kosong/model/modelRequester';
+import type { ModelOverrides } from '#/kosong/model/model.types';
+import { MODELS_SECTION, type ModelsSection } from '#/kosong/model/model';
+import { completionBudgetParams, resolveCompletionBudget } from '#/kosong/model/completionBudget';
+import { resolveThinkingKeep, THINKING_SECTION, type ThinkingConfig } from '#/kosong/model/thinking';
+import type { Protocol } from '#/kosong/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
-import { THINKING_SECTION, type ThinkingConfig } from '#/agent/profile/configSection';
-import { resolveThinkingKeep } from '#/agent/profile/thinking';
 
 import {
   IAgentLLMRequesterService,
-  type LLMRequestFinish,
-  type LLMRequestLogFields,
-  type LLMRequestOverrides,
-  type LLMRequestPartHandler,
-  type LLMRequestSource,
-  type LLMRequestTask,
-  type LLMStreamTiming,
+  type AgentLLMRequestFinish,
+  type AgentLLMRequestLogFields,
+  type AgentLLMRequestOverrides,
+  type AgentLLMRequestPartHandler,
+  type AgentLLMRequestSource,
+  type AgentLLMRequestTask,
   type PreparedTurnRequestConfig,
 } from './llmRequester';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import {
   LlmRequestTraceModel,
   llmRequest,
@@ -98,23 +98,26 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   properties: {},
 };
 
-const noopOnPart: LLMRequestPartHandler = () => {};
+const noopOnPart: AgentLLMRequestPartHandler = () => {};
 
 interface ResolvedLLMRequest {
+  readonly requester: ModelRequester;
   readonly model: Model;
+  readonly params: ModelRequestParams;
   readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
   readonly messages: Message[];
-  readonly source: LLMRequestSource | undefined;
-  readonly logFields: LLMRequestLogFields;
+  readonly source: AgentLLMRequestSource | undefined;
+  readonly logFields: AgentLLMRequestLogFields;
 }
 
 type RequestProjection = 'normal' | 'strict' | 'media-degraded' | 'media-stripped';
 
 interface LLMRequestLogInput {
   readonly protocol: Protocol;
+  readonly providerType?: string;
   readonly modelName: string;
   readonly modelAlias?: string;
   readonly thinkingEffort?: ThinkingEffort | null;
@@ -122,12 +125,12 @@ interface LLMRequestLogInput {
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
   readonly messages: readonly Message[];
-  readonly fields?: LLMRequestLogFields;
+  readonly fields?: AgentLLMRequestLogFields;
 }
 
 interface TurnRequestConfig {
   readonly resolved: ProfileModelContext;
-  readonly model: Model;
+  readonly params: ModelRequestParams;
   readonly systemPrompt: string;
 }
 
@@ -149,6 +152,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentUsageService private readonly usage: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
+    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWireService private readonly wire: IWireService,
@@ -163,18 +167,18 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   }
 
   async request(
-    overrides: LLMRequestOverrides = {},
-    onPart: LLMRequestPartHandler = noopOnPart,
+    overrides: AgentLLMRequestOverrides = {},
+    onPart: AgentLLMRequestPartHandler = noopOnPart,
     signal?: AbortSignal,
-  ): Promise<LLMRequestFinish> {
+  ): Promise<AgentLLMRequestFinish> {
     return this.start(overrides, onPart, signal).result;
   }
 
   start(
-    overrides: LLMRequestOverrides = {},
-    onPart: LLMRequestPartHandler = noopOnPart,
+    overrides: AgentLLMRequestOverrides = {},
+    onPart: AgentLLMRequestPartHandler = noopOnPart,
     signal?: AbortSignal,
-  ): LLMRequestTask {
+  ): AgentLLMRequestTask {
     const trace = new MutableLLMRequestTrace();
     return {
       trace,
@@ -184,10 +188,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private async requestWithTrace(
     trace: MutableLLMRequestTrace,
-    overrides: LLMRequestOverrides,
-    onPart: LLMRequestPartHandler,
+    overrides: AgentLLMRequestOverrides,
+    onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
-  ): Promise<LLMRequestFinish> {
+  ): Promise<AgentLLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
     trace.set(undefined);
@@ -209,7 +213,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private logRequestFailure(
     error: unknown,
-    overrides: LLMRequestOverrides,
+    overrides: AgentLLMRequestOverrides,
     signal: AbortSignal | undefined,
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
@@ -225,18 +229,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     error: unknown,
     startedAt: number,
     signal: AbortSignal | undefined,
-    source?: LLMRequestSource,
+    source?: AgentLLMRequestSource,
     requestTraceId?: string,
   ): string | undefined {
     if (isAbortError(error) || signal?.aborted === true) return requestTraceId;
     const modelAlias = this.profile.data().modelAlias;
-    const model = this.tryGetProvider();
+    const model = this.tryGetModel();
     const traceId = requestTraceId ?? apiTraceId(error);
+    const classification = classifyApiError(unwrapErrorCause(error));
     const properties: ApiErrorEvent = {
-      error_type: apiErrorType(error),
+      error_type: classification.kind,
       model: model?.id ?? modelAlias ?? 'unknown',
       alias: modelAlias,
-      provider_type: model?.protocol,
+      provider_type: model?.providerType ?? model?.protocol,
       protocol: model?.protocol,
       retryable: isRetryableGenerateError(error),
       duration_ms: Math.max(0, Date.now() - startedAt),
@@ -254,9 +259,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     return traceId;
   }
 
-  private tryGetProvider(): Model | undefined {
+  private tryGetModel(): Model | undefined {
+    const modelAlias = this.profile.data().modelAlias;
+    if (modelAlias === undefined) return undefined;
     try {
-      return this.profile.getProvider();
+      return this.modelCatalog.get(modelAlias);
     } catch {
       return undefined;
     }
@@ -264,10 +271,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private async runRequest(
     request: ResolvedLLMRequest,
-    onPart: LLMRequestPartHandler,
+    onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
     onRequestTrace: (traceId: string | undefined) => void,
-  ): Promise<LLMRequestFinish> {
+  ): Promise<AgentLLMRequestFinish> {
     const shaped = this.toolSelect.shapeHistory(request.messages);
     let mediaStripSnapshot = this.mediaStripSnapshotForTurn(request.source);
     const requestInput = (projection: RequestProjection) => {
@@ -289,7 +296,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
     };
 
-    const run = async (projection: RequestProjection): Promise<LLMRequestFinish> => {
+    const run = async (projection: RequestProjection): Promise<AgentLLMRequestFinish> => {
       onRequestTrace(undefined);
       const input = requestInput(projection);
       const fields =
@@ -299,10 +306,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.warnAboutAnthropicThinkingEffort(request);
       const logInput: LLMRequestLogInput = {
         protocol: request.model.protocol,
+        providerType: request.model.providerType,
         modelName: request.model.name,
         modelAlias: request.modelAlias,
         thinkingEffort: request.thinkingEffort,
-        maxTokens: request.model.maxCompletionTokens,
+        maxTokens: effectiveMaxCompletionTokens(request.params),
         systemPrompt: input.systemPrompt,
         tools: input.tools,
         messages: input.messages,
@@ -318,7 +326,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
       let message: Message | undefined;
       let usage = emptyUsage();
-      let timing: LLMStreamTiming | undefined;
+      let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
 
       const setTraceId = (traceId: string | null | undefined): void => {
@@ -326,7 +334,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         onRequestTrace(normalized);
       };
 
-      for await (const event of request.model.request(input, signal, { onTraceId: setTraceId })) {
+      for await (const event of request.requester.request(input, signal, {
+        ...request.params,
+        onTraceId: setTraceId,
+      })) {
         switch (event.type) {
           case 'part':
             await onPart(event.part);
@@ -475,13 +486,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
   }
 
-  private isRecoveryTurn(set: ReadonlySet<number>, source: LLMRequestSource | undefined): boolean {
+  private isRecoveryTurn(set: ReadonlySet<number>, source: AgentLLMRequestSource | undefined): boolean {
     if (source?.type !== 'turn') return false;
     return set.has(source.turnId);
   }
 
   private mediaStripSnapshotForTurn(
-    source: LLMRequestSource | undefined,
+    source: AgentLLMRequestSource | undefined,
   ): MediaStripSnapshot | undefined {
     if (source?.type !== 'turn') return undefined;
     return this.mediaStrippedTurns.get(source.turnId);
@@ -489,7 +500,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private markMediaStrippedRecoveryTurn(
     snapshot: MediaStripSnapshot,
-    source: LLMRequestSource | undefined,
+    source: AgentLLMRequestSource | undefined,
   ): void {
     if (source?.type !== 'turn') return;
     for (const id of this.mediaStrippedTurns.keys()) {
@@ -498,7 +509,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     this.mediaStrippedTurns.set(source.turnId, snapshot);
   }
 
-  private markRecoveryTurn(set: Set<number>, source: LLMRequestSource | undefined): void {
+  private markRecoveryTurn(set: Set<number>, source: AgentLLMRequestSource | undefined): void {
     if (source?.type !== 'turn') return;
     for (const id of set) {
       if (id < source.turnId) set.delete(id);
@@ -506,16 +517,16 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     set.add(source.turnId);
   }
 
-  private resolveRequest(overrides: LLMRequestOverrides): ResolvedLLMRequest {
+  private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
-    const model = applyCompletionBudget({
-      model: turnConfig?.model ?? this.profile.getProvider(),
+    const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
+    const budgetParams = completionBudgetParams({
       budget: resolveCompletionBudget({
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
         reservedContextSize: resolved.reservedContextSize,
         maxCompletionTokensCap:
-          this.config.get<KimiModelOverrides>('modelOverrides')?.maxCompletionTokens,
+          this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
       }),
       capability: resolved.modelCapabilities,
       usedContextTokens:
@@ -523,10 +534,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           ? this.contextSize.get().measured
           : undefined,
     });
+    const requester = this.modelCatalog.getRequester(resolved.modelAlias);
 
     const messages = overrides.messages ?? this.context.get();
     return {
-      model,
+      requester,
+      model: requester.model,
+      params: { ...baseParams, ...budgetParams },
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
@@ -537,7 +551,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     };
   }
 
-  private resolveTurnConfig(source: LLMRequestSource | undefined): TurnRequestConfig | undefined {
+  private resolveTurnConfig(source: AgentLLMRequestSource | undefined): TurnRequestConfig | undefined {
     if (source?.type !== 'turn') return undefined;
     return this.getOrCreateTurnConfig(source.turnId);
   }
@@ -550,7 +564,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (snapshot === undefined) {
       snapshot = {
         resolved: this.profile.resolveModelContext(),
-        model: this.profile.getProvider(),
+        params: this.profile.resolveRequestParams(),
         systemPrompt: this.profile.getSystemPrompt(),
       };
       this.turnConfigs.set(turnId, snapshot);
@@ -559,7 +573,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   }
 
   private logRequest(input: LLMRequestLogInput): void {
-    const logFields: LLMRequestLogFields = input.fields ?? {};
+    const logFields: AgentLLMRequestLogFields = input.fields ?? {};
     const wireTools = providerVisibleTools(input.tools);
     const config = {
       provider: input.protocol,
@@ -595,7 +609,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
 
     const systemPromptHash = fingerprint(input.systemPrompt);
-    const overrides = this.config.get<KimiModelOverrides>('modelOverrides');
+    const overrides = this.config.get<ModelOverrides>('modelOverrides');
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
     const models = this.config.get<ModelsSection>(MODELS_SECTION);
     const modelConfig =
@@ -606,15 +620,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       model: input.modelName,
       modelAlias: input.modelAlias,
       thinkingEffort: input.thinkingEffort ?? undefined,
-      thinkingKeep: input.protocol === 'kimi'
-        ? resolveThinkingKeep(
-            overrides?.thinkingKeep,
-            thinkingConfig?.keep,
-            input.thinkingEffort ?? 'off',
-          )
-        : undefined,
-      temperature: input.protocol === 'kimi' ? overrides?.temperature : undefined,
-      topP: input.protocol === 'kimi' ? overrides?.topP : undefined,
+      thinkingKeep: resolveThinkingKeep(
+        overrides?.thinkingKeep,
+        thinkingConfig?.keep,
+        input.thinkingEffort ?? 'off',
+      ),
+      temperature: overrides?.temperature,
+      topP: overrides?.topP,
       maxTokens: input.maxTokens,
       betaApi: modelConfig?.betaApi,
       toolSelect: this.toolSelect.enabled(),
@@ -634,9 +646,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   }
 
   private logResponse(
-    fields: LLMRequestLogFields | undefined,
+    fields: AgentLLMRequestLogFields | undefined,
     usage: TokenUsage,
-    timing: LLMStreamTiming | undefined,
+    timing: ModelRequestTiming | undefined,
   ): void {
     if (timing === undefined) return;
     const payload: LogContext = {
@@ -674,7 +686,7 @@ class MutableLLMRequestTrace implements LLMRequestTrace {
   }
 }
 
-function logFieldsForSource(source: LLMRequestSource | undefined): LLMRequestLogFields {
+function logFieldsForSource(source: AgentLLMRequestSource | undefined): AgentLLMRequestLogFields {
   switch (source?.type) {
     case 'turn':
       return {
@@ -702,24 +714,24 @@ function toolSignature(tools: readonly Tool[]): readonly LlmRequestToolSchema[] 
   return tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 }
 
-function requestKindForRecord(fields: LLMRequestLogFields): PayloadOf<typeof llmRequest>['kind'] {
+function requestKindForRecord(fields: AgentLLMRequestLogFields): PayloadOf<typeof llmRequest>['kind'] {
   if (fields['kind'] === 'compaction') return 'compaction';
   if (fields['requestKind'] === 'full_compaction') return 'compaction';
   return 'loop';
 }
 
-function stringField(fields: LLMRequestLogFields, key: string): string | undefined {
+function stringField(fields: AgentLLMRequestLogFields, key: string): string | undefined {
   const value = fields[key];
   return typeof value === 'string' ? value : undefined;
 }
 
-function numberField(fields: LLMRequestLogFields, key: string): number | undefined {
+function numberField(fields: AgentLLMRequestLogFields, key: string): number | undefined {
   const value = fields[key];
   return typeof value === 'number' ? value : undefined;
 }
 
 function projectionField(
-  fields: LLMRequestLogFields,
+  fields: AgentLLMRequestLogFields,
 ): 'strict' | 'media-degraded' | 'media-stripped' | undefined {
   const value = fields['projection'];
   return value === 'strict' || value === 'media-degraded' || value === 'media-stripped'
@@ -735,24 +747,6 @@ function faultToError(kind: FaultKind): Error {
 
 function fingerprint(content: string): string {
   return createHash('sha256').update(content).digest('hex');
-}
-
-function apiErrorType(error: unknown): string {
-  const raw = unwrapErrorCause(error);
-  if (raw instanceof APIContextOverflowError) return 'context_overflow';
-  if (raw instanceof APIProviderOverloadedError) return 'overloaded';
-  if (raw instanceof APIStatusError) {
-    if (isContextOverflowStatusError(raw.statusCode, raw.message)) return 'context_overflow';
-    if (raw.statusCode === 429) return 'rate_limit';
-    if (raw.statusCode === 529) return 'overloaded';
-    if (raw.statusCode === 401 || raw.statusCode === 403) return 'auth';
-    if (raw.statusCode >= 500) return '5xx_server';
-    if (raw.statusCode >= 400) return '4xx_client';
-  }
-  if (raw instanceof APIConnectionError) return 'network';
-  if (raw instanceof APITimeoutError) return 'timeout';
-  if (raw instanceof APIEmptyResponseError) return 'empty_response';
-  return 'other';
 }
 
 function apiStatusCode(error: unknown): number | undefined {

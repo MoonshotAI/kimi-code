@@ -14,7 +14,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { APIProviderRateLimitError } from '#/app/llmProtocol/errors';
+import { APIProviderRateLimitError } from '#/kosong/contract/errors';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,

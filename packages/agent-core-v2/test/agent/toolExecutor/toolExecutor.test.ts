@@ -1,4 +1,4 @@
-import type { ToolCall } from '#/app/llmProtocol/message';
+import type { ToolCall } from '#/kosong/contract/message';
 import type { DomainEvent } from '#/app/event/eventBus';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -21,7 +21,7 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';

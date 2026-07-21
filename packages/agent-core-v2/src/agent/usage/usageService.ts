@@ -11,13 +11,13 @@
  * live record. Bound at Agent scope.
  */
 
-import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
+import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 
-import type { LLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import type { UsageRecordedContext, UsageStatus } from './usage';
@@ -46,7 +46,7 @@ export class AgentUsageService extends Disposable implements IAgentUsageService 
     super();
   }
 
-  record(model: string, usage: TokenUsage, source?: LLMRequestSource): void {
+  record(model: string, usage: TokenUsage, source?: AgentLLMRequestSource): void {
     const usageScope: UsageRecordScope = source?.type === 'turn' ? 'turn' : 'session';
     this.wire.dispatch(recordUsage({ model, usage, usageScope }));
 

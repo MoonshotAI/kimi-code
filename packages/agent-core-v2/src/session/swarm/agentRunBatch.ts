@@ -8,8 +8,8 @@
  * `SessionSwarmService` imports it.
  */
 
-import { isProviderRateLimitError } from '#/app/llmProtocol/errors';
-import { type TokenUsage } from '#/app/llmProtocol/usage';
+import { isProviderRateLimitError } from '#/kosong/contract/errors';
+import { type TokenUsage } from '#/kosong/contract/usage';
 import * as retry from 'retry';
 
 import { isUserCancellation } from '#/_base/utils/abort';

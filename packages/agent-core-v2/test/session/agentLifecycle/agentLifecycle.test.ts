@@ -51,7 +51,6 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { IModelResolver } from '#/app/model/modelResolver';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -291,13 +290,6 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       get: () => ({ mode: 'agent' }),
       set: () => {},
-    });
-    ix.stub(IModelResolver, {
-      _serviceBrand: undefined,
-      resolve: () => {
-        throw new Error('model resolution is not expected');
-      },
-      findByName: () => [],
     });
     ix.stub(IHostEnvironment, { _serviceBrand: undefined } as IHostEnvironment);
     ix.stub(IHostFileSystem, { _serviceBrand: undefined } as IHostFileSystem);

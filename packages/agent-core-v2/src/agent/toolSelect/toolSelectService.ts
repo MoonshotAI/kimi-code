@@ -14,7 +14,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import type { Tool } from '#/app/llmProtocol/tool';
+import type { Tool } from '#/kosong/contract/tool';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';

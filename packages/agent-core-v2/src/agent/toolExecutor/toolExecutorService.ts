@@ -10,7 +10,7 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
+import type { ContentPart, ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 import {

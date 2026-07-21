@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/transcript",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Isomorphic transcript rendering data layer: agent-granular L1 store, idempotent L2 operations, granularity-gated L3 subscriptions, framework-free L4 view registry.",
   "license": "MIT",

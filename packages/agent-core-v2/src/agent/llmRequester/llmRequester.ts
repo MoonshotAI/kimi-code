@@ -1,68 +1,52 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import type { Message, StreamedMessagePart } from '#/app/llmProtocol/message';
-import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import type { Tool } from '#/app/llmProtocol/tool';
-import type { TokenUsage } from '#/app/llmProtocol/usage';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { FinishReason, ThinkingEffort } from '#/kosong/contract/provider';
+import type { Message, StreamedMessagePart } from '#/kosong/contract/message';
+import type { Tool } from '#/kosong/contract/tool';
+import type { TokenUsage } from '#/kosong/contract/usage';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
+import type { ModelRequestTiming } from '#/kosong/model/modelRequester';
 import type { LogContext } from '#/_base/log/log';
 
-export type LLMRequestLogFields = Readonly<LogContext>;
+export type AgentLLMRequestLogFields = Readonly<LogContext>;
 
-export type LLMRequestSource =
+export type AgentLLMRequestSource =
   | {
       readonly type: 'turn';
       readonly turnId: number;
       readonly step?: number;
-      readonly logFields?: LLMRequestLogFields;
+      readonly logFields?: AgentLLMRequestLogFields;
     }
   | {
       readonly type: 'operation';
       readonly requestKind?: string;
-      readonly logFields?: LLMRequestLogFields;
+      readonly logFields?: AgentLLMRequestLogFields;
     };
 
-export interface LLMStreamTiming {
-  readonly firstTokenLatencyMs: number;
-  readonly streamDurationMs: number;
-  readonly requestBuildMs?: number;
-  readonly serverFirstTokenMs?: number;
-  readonly serverDecodeMs?: number;
-  readonly clientConsumeMs?: number;
-}
-
-export interface LLMRequestParams {
-  messages: Message[];
-  tools: readonly Tool[];
-  signal: AbortSignal;
-  source?: LLMRequestSource;
-}
-
-export interface LLMRequestFinish {
+export interface AgentLLMRequestFinish {
   message: Message;
   usage: TokenUsage;
   model?: string | undefined;
   providerFinishReason?: FinishReason;
   rawFinishReason?: string;
   providerMessageId?: string;
-  timing?: LLMStreamTiming;
+  timing?: ModelRequestTiming;
   /** Trace id of the request that produced this finish (Kimi `x-trace-id`). */
   traceId?: string;
 }
 
-export type LLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;
+export type AgentLLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;
 
-export interface LLMRequestOverrides {
+export interface AgentLLMRequestOverrides {
   messages?: readonly Message[];
   tools?: readonly Tool[];
   systemPrompt?: string;
-  source?: LLMRequestSource;
+  source?: AgentLLMRequestSource;
   maxOutputSize?: number;
 }
 
-export interface LLMRequestTask {
+export interface AgentLLMRequestTask {
   readonly trace: LLMRequestTrace;
-  readonly result: Promise<LLMRequestFinish>;
+  readonly result: Promise<AgentLLMRequestFinish>;
 }
 
 export interface PreparedTurnRequestConfig {
@@ -75,16 +59,16 @@ export interface IAgentLLMRequesterService {
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
 
   request(
-    overrides?: LLMRequestOverrides,
-    onPart?: LLMRequestPartHandler,
+    overrides?: AgentLLMRequestOverrides,
+    onPart?: AgentLLMRequestPartHandler,
     signal?: AbortSignal,
-  ): Promise<LLMRequestFinish>;
+  ): Promise<AgentLLMRequestFinish>;
 
   start(
-    overrides?: LLMRequestOverrides,
-    onPart?: LLMRequestPartHandler,
+    overrides?: AgentLLMRequestOverrides,
+    onPart?: AgentLLMRequestPartHandler,
     signal?: AbortSignal,
-  ): LLMRequestTask;
+  ): AgentLLMRequestTask;
 }
 
 export const IAgentLLMRequesterService = createDecorator<IAgentLLMRequesterService>(
