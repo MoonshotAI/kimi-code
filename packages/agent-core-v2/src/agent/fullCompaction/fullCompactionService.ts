@@ -184,11 +184,13 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
   private resolveModelContextWithEffectiveMax(): ProfileModelContext {
     const resolved = this.profile.resolveModelContext();
+    const effectiveMax = this.getEffectiveMaxContextTokens();
     return {
       ...resolved,
       modelCapabilities: {
         ...resolved.modelCapabilities,
-        max_context_tokens: this.getEffectiveMaxContextTokens(),
+        max_context_tokens: effectiveMax,
+        max_input_tokens: effectiveMax,
       },
     };
   }
