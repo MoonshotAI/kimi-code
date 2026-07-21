@@ -7,6 +7,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import { abortError } from '#/_base/utils/abort';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/agent/mcp/connection-manager';
@@ -61,6 +62,7 @@ class FakeMcpManager {
   }
 
   resolved(name: string): ResolvedServer | undefined {
+    if (this.entries.get(name)?.status !== 'connected') return undefined;
     return this.resolvedEntries.get(name);
   }
 
@@ -68,7 +70,11 @@ class FakeMcpManager {
     return name === 'needs-auth' ? 'https://example.com/mcp' : undefined;
   }
 
-  async reconnect(): Promise<void> {}
+  reconnectHandler: (name: string) => Promise<void> = async () => {};
+
+  async reconnect(name: string): Promise<void> {
+    await this.reconnectHandler(name);
+  }
 
   async waitForInitialLoad(): Promise<void> {}
 
@@ -358,6 +364,161 @@ describe('AgentMcpService', () => {
     });
     expect(result.isError).toBeUndefined();
     expect(result.output).toBe('hello world');
+  });
+
+  function throwingClient(base: MCPClient = fakeMcpClient()): MCPClient {
+    return {
+      listTools: () => base.listTools(),
+      async callTool() {
+        throw new Error('Connection closed');
+      },
+    };
+  }
+
+  function countingClient(base: MCPClient, counter: { calls: number }): MCPClient {
+    return {
+      listTools: () => base.listTools(),
+      callTool: (name, args, signal) => {
+        counter.calls += 1;
+        return base.callTool(name, args, signal);
+      },
+    };
+  }
+
+  it('reconnects the server and retries the call once when the transport dies', async () => {
+    const manager = new FakeMcpManager();
+    const deadClient = throwingClient();
+    const freshCounter = { calls: 0 };
+    const freshClient = countingClient(fakeMcpClient(), freshCounter);
+    let reconnects = 0;
+    manager.reconnectHandler = async (name) => {
+      reconnects += 1;
+      manager.setResolved(name, freshClient, await discoverTools(freshClient));
+      manager.connect(name);
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-reconnect',
+      args: { text: 'hello again' },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe('hello again');
+    expect(freshCounter.calls).toBe(1);
+    expect(reconnects).toBe(1);
+  });
+
+  it('rethrows the original error when the server does not come back', async () => {
+    const manager = new FakeMcpManager();
+    const deadClient = throwingClient();
+    manager.reconnectHandler = async (name) => {
+      manager.fail(name);
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    await expect(
+      executeTool(echo!, {
+        turnId: 1,
+        toolCallId: 'tc-still-dead',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('Connection closed');
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toEqual([]);
+  });
+
+  it('reports both errors when the reconnect attempt itself fails', async () => {
+    const manager = new FakeMcpManager();
+    const deadClient = throwingClient();
+    manager.reconnectHandler = async () => {
+      throw new Error('spawn failed');
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    await expect(
+      executeTool(echo!, {
+        turnId: 1,
+        toolCallId: 'tc-reconnect-fails',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/Connection closed .*spawn failed/);
+  });
+
+  it('does not reconnect when the call was aborted', async () => {
+    const manager = new FakeMcpManager();
+    const base = fakeMcpClient();
+    const abortingClient: MCPClient = {
+      listTools: () => base.listTools(),
+      async callTool() {
+        throw abortError('This operation was aborted');
+      },
+    };
+    let reconnects = 0;
+    manager.reconnectHandler = async () => {
+      reconnects += 1;
+    };
+    manager.setResolved('s', abortingClient, await discoverTools(abortingClient));
+    createService(manager);
+    manager.connect('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    await expect(
+      executeTool(echo!, {
+        turnId: 1,
+        toolCallId: 'tc-aborted',
+        args: { text: 'hi' },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('This operation was aborted');
+    expect(reconnects).toBe(0);
+  });
+
+  it('dedupes concurrent reconnects from parallel failing tool calls', async () => {
+    const manager = new FakeMcpManager();
+    const deadClient = throwingClient();
+    const freshClient = fakeMcpClient();
+    let reconnects = 0;
+    manager.reconnectHandler = async (name) => {
+      reconnects += 1;
+      manager.setResolved(name, freshClient, await discoverTools(freshClient));
+      manager.connect(name);
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    const registry = ix.get(IAgentToolRegistryService);
+    const [echoResult, noopResult] = await Promise.all([
+      executeTool(registry.resolve('mcp__s__echo')!, {
+        turnId: 1,
+        toolCallId: 'tc-par-1',
+        args: { text: 'one' },
+        signal: new AbortController().signal,
+      }),
+      executeTool(registry.resolve('mcp__s__noop')!, {
+        turnId: 1,
+        toolCallId: 'tc-par-2',
+        args: {},
+        signal: new AbortController().signal,
+      }),
+    ]);
+
+    expect(echoResult.output).toBe('one');
+    expect(noopResult.output).toBe('ok');
+    expect(reconnects).toBe(1);
   });
 
   it('truncates oversized MCP text output through the wrapped tool path', async () => {

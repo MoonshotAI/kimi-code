@@ -69,6 +69,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly mcpToolsByServer = new Map<string, string[]>();
+  private readonly reconnectingByServer = new Map<string, Promise<MCPClient | undefined>>();
   private readonly pendingDiscoveries: Array<() => void> = [];
   private discoveryWritesReady = false;
 
@@ -128,6 +129,26 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     signal?.throwIfAborted();
     await this.sessionMcp.connectionManager().reconnect(name);
     signal?.throwIfAborted();
+  }
+
+  /**
+   * Lazy reconnect behind a failing tool call: dedupes concurrent reconnects
+   * of the same server (parallel tool calls on a dead transport all fail at
+   * once) and resolves to the fresh client when the server came back.
+   */
+  private reconnectForToolCall(serverName: string, signal?: AbortSignal): Promise<MCPClient | undefined> {
+    const inFlight = this.reconnectingByServer.get(serverName);
+    if (inFlight !== undefined) return inFlight;
+    const work = (async () => {
+      try {
+        await this.reconnect(serverName, signal);
+        return this.resolved(serverName)?.client;
+      } finally {
+        this.reconnectingByServer.delete(serverName);
+      }
+    })();
+    this.reconnectingByServer.set(serverName, work);
+    return work;
   }
 
   onStatusChange(listener: Parameters<IAgentMcpService['onStatusChange']>[0]) {
@@ -267,6 +288,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
           createMcpTool(qualified, tool, client, {
             originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
             telemetry: this.telemetry,
+            reconnect: (signal) => this.reconnectForToolCall(serverName, signal),
           }),
           { source: 'mcp' },
         ),
