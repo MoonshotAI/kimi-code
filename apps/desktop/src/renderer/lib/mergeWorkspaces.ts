@@ -7,16 +7,6 @@
 import type { AppSession, AppWorkspace } from '../api/types';
 import { basename } from './pathBasename';
 
-/** The workspace id a session belongs to: prefer the registered workspace whose
- *  root matches the session cwd; otherwise the daemon-provided workspaceId;
- *  otherwise the cwd itself (derived/fallback mode). */
-function workspaceIdForSession(
-  workspaces: AppWorkspace[],
-  s: { workspaceId?: string; cwd: string },
-): string {
-  return workspaces.find((w) => w.root === s.cwd)?.id ?? s.workspaceId ?? s.cwd;
-}
-
 export interface MergeWorkspacesInput {
   /** Registered workspaces from the daemon (listWorkspaces). */
   workspaces: AppWorkspace[];
@@ -78,10 +68,20 @@ export function mergeWorkspaces(input: MergeWorkspacesInput): AppWorkspace[] {
       });
     }
   }
-  // Compute live session counts.
+  // Compute live session counts. The workspace id a session belongs to: prefer
+  // the registered workspace whose root matches the session cwd; otherwise the
+  // daemon-provided workspaceId; otherwise the cwd itself (derived/fallback
+  // mode). Resolved through a root→id map built ONCE here (FIRST entry per root
+  // wins, matching `byRoot` above and the sidebar's first-match assignment) —
+  // the per-session linear `workspaces.find` this replaces made the merge
+  // O(sessions × workspaces).
+  const idByRoot = new Map<string, string>();
+  for (const w of workspaces) {
+    if (!idByRoot.has(w.root)) idByRoot.set(w.root, w.id);
+  }
   const counts = new Map<string, number>();
   for (const s of sessions) {
-    const wid = workspaceIdForSession(workspaces, s);
+    const wid = idByRoot.get(s.cwd) ?? s.workspaceId ?? s.cwd;
     counts.set(wid, (counts.get(wid) ?? 0) + 1);
   }
 

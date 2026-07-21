@@ -24,6 +24,7 @@ export {
   type KimiClientState,
   type ReduceContext,
 } from './daemon/eventReducer';
+export { shallowEqualArray, shallowEqualRecord } from './daemon/sliceEquality';
 export { buildRestUrl, buildWsUrl } from './config';
 export {
   DaemonApiError,

@@ -81,6 +81,8 @@ import {
   reduceAppEvent,
   toAppEvent,
   isPlaceholderSessionUsage,
+  shallowEqualArray,
+  shallowEqualRecord,
   type CompactionStatus,
   type KimiClientState,
 } from '@moonshot-ai/web-core/api';
@@ -848,22 +850,56 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   const next = reduceAppEvent(snapshot, event, { sessionId, seq }, {
     t: (k, p) => (p === undefined ? i18n.global.t(k) : i18n.global.t(k, p)),
   });
-  // Assign back to the reactive proxy
-  setSessions(next.sessions);
-  setActiveSessionId(next.activeSessionId);
-  setMessagesBySession(next.messagesBySession);
-  rawState.approvalsBySession = next.approvalsBySession;
-  rawState.planReviewByToolCallId = next.planReviewByToolCallId;
-  rawState.questionsBySession = next.questionsBySession;
-  rawState.tasksBySession = next.tasksBySession;
-  rawState.goalBySession = next.goalBySession;
-  rawState.goalVersionBySession = next.goalVersionBySession;
-  rawState.lastSeqBySession = next.lastSeqBySession;
-  rawState.turnActiveBySession = next.turnActiveBySession;
-  rawState.turnEndedPromptIdBySession = next.turnEndedPromptIdBySession;
-  rawState.compactionBySession = next.compactionBySession;
-  rawState.config = next.config ?? null;
-  rawState.warnings = next.warnings;
+  // Assign back to the reactive proxy — but ONLY the slices the event actually
+  // changed. cloneState gives every slice a fresh identity per event, so the
+  // previous unconditional assignment dirtied every computed reading any of
+  // these slices on EVERY event: a single streaming delta invalidated the whole
+  // sidebar (sessionsForView / workspaceGroups read turnActiveBySession per
+  // row), which at ~1k sessions × ~100 workspaces turned each delta into a
+  // several-hundred-ms recompute storm. The reducer never mutates slice entries
+  // in place (entries are always replaced or deleted), so a shallow reference
+  // comparison is sufficient to tell "changed" from "merely cloned".
+  if (next.sessions !== snapshot.sessions) setSessions(next.sessions);
+  if (next.activeSessionId !== snapshot.activeSessionId) {
+    setActiveSessionId(next.activeSessionId);
+  }
+  if (!shallowEqualRecord(next.messagesBySession, snapshot.messagesBySession)) {
+    setMessagesBySession(next.messagesBySession);
+  }
+  if (!shallowEqualRecord(next.approvalsBySession, snapshot.approvalsBySession)) {
+    rawState.approvalsBySession = next.approvalsBySession;
+  }
+  if (!shallowEqualRecord(next.planReviewByToolCallId, snapshot.planReviewByToolCallId)) {
+    rawState.planReviewByToolCallId = next.planReviewByToolCallId;
+  }
+  if (!shallowEqualRecord(next.questionsBySession, snapshot.questionsBySession)) {
+    rawState.questionsBySession = next.questionsBySession;
+  }
+  if (!shallowEqualRecord(next.tasksBySession, snapshot.tasksBySession)) {
+    rawState.tasksBySession = next.tasksBySession;
+  }
+  if (!shallowEqualRecord(next.goalBySession, snapshot.goalBySession)) {
+    rawState.goalBySession = next.goalBySession;
+  }
+  if (!shallowEqualRecord(next.goalVersionBySession, snapshot.goalVersionBySession)) {
+    rawState.goalVersionBySession = next.goalVersionBySession;
+  }
+  if (!shallowEqualRecord(next.lastSeqBySession, snapshot.lastSeqBySession)) {
+    rawState.lastSeqBySession = next.lastSeqBySession;
+  }
+  if (!shallowEqualRecord(next.turnActiveBySession, snapshot.turnActiveBySession)) {
+    rawState.turnActiveBySession = next.turnActiveBySession;
+  }
+  if (!shallowEqualRecord(next.turnEndedPromptIdBySession, snapshot.turnEndedPromptIdBySession)) {
+    rawState.turnEndedPromptIdBySession = next.turnEndedPromptIdBySession;
+  }
+  if (!shallowEqualRecord(next.compactionBySession, snapshot.compactionBySession)) {
+    rawState.compactionBySession = next.compactionBySession;
+  }
+  if (next.config !== snapshot.config) rawState.config = next.config ?? null;
+  if (!shallowEqualArray(next.warnings, snapshot.warnings)) {
+    rawState.warnings = next.warnings;
+  }
 
   if (event.type === 'configChanged') {
     rawState.defaultModel = event.config.defaultModel ?? null;
@@ -2328,12 +2364,28 @@ const changesByPath = computed<Record<string, string>>(() => {
 // ---------------------------------------------------------------------------
 
 /**
+ * root → workspace id lookup, rebuilt only when the workspace registry changes
+ * (not on every session event). Keeps the FIRST entry per root — the daemon
+ * orders by last_opened_at desc — matching mergeWorkspaces' dedup so sessions
+ * land under the workspace the sidebar actually renders. The per-session
+ * linear `workspaces.find` this replaces made every sidebar recompute
+ * O(sessions × workspaces).
+ */
+const workspaceIdByRoot = computed(() => {
+  const map = new Map<string, string>();
+  for (const w of rawState.workspaces) {
+    if (!map.has(w.root)) map.set(w.root, w.id);
+  }
+  return map;
+});
+
+/**
  * The workspace id a session belongs to: prefer the daemon-provided
  * session.workspaceId; otherwise map by cwd (in derived/fallback mode the
  * workspace id IS the cwd).
  */
 function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
-  return rawState.workspaces.find((w) => w.root === s.cwd)?.id ?? s.workspaceId ?? s.cwd;
+  return workspaceIdByRoot.value.get(s.cwd) ?? s.workspaceId ?? s.cwd;
 }
 
 /**
