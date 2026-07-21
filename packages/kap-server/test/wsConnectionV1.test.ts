@@ -62,6 +62,8 @@ function makeBroadcaster(): SessionEventBroadcaster {
   return {
     subscribe: async () => true,
     unsubscribe: () => {},
+    registerGlobalTarget: () => {},
+    unregisterGlobalTarget: () => {},
     getCursor: async () => ({ seq: 0, epoch: '' }),
     getBufferedSince: async () => ({
       events: [],
@@ -226,6 +228,8 @@ describe('WsConnectionV1 transcript subscriptions', () => {
         return true;
       },
       unsubscribe: () => {},
+      registerGlobalTarget: () => {},
+      unregisterGlobalTarget: () => {},
       getCursor: async () => ({ seq: 0, epoch: '' }),
       getBufferedSince: async () => ({
         events: [],
@@ -315,6 +319,8 @@ describe('WsConnectionV1 transcript subscriptions', () => {
         target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
       },
       unsubscribe: () => {},
+      registerGlobalTarget: () => {},
+      unregisterGlobalTarget: () => {},
       getCursor: async () => ({ seq: 10, epoch: 'e1' }),
       getBufferedSince: async () => ({
         events: backlog.map((envelope) => ({ seq: envelope.seq, envelope })),
@@ -369,6 +375,64 @@ describe('WsConnectionV1 transcript subscriptions', () => {
       transcriptGrades: undefined,
     });
     conn.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WsConnectionV1 — global target registration
+// ---------------------------------------------------------------------------
+
+describe('WsConnectionV1 global target registration', () => {
+  function makeRegisteringBroadcaster(): {
+    broadcaster: SessionEventBroadcaster;
+    registered: unknown[];
+    unregistered: unknown[];
+  } {
+    const registered: unknown[] = [];
+    const unregistered: unknown[] = [];
+    const broadcaster = {
+      subscribe: async () => true,
+      unsubscribe: () => {},
+      registerGlobalTarget: (target: unknown) => registered.push(target),
+      unregisterGlobalTarget: (target: unknown) => unregistered.push(target),
+      getCursor: async () => ({ seq: 0, epoch: '' }),
+      getBufferedSince: async () => ({
+        events: [],
+        resyncRequired: false,
+        currentSeq: 0,
+        epoch: '',
+      }),
+    } as unknown as SessionEventBroadcaster;
+    return { broadcaster, registered, unregistered };
+  }
+
+  it('registers the connection as a global target on client_hello and unregisters on close', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, registered, unregistered } = makeRegisteringBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+    expect(registered).toHaveLength(0);
+
+    socket.emit(
+      'message',
+      JSON.stringify({ type: 'client_hello', id: 'h1', payload: { client_id: 'c1' } }),
+    );
+    await vi.waitFor(() => expect(registered).toHaveLength(1));
+    expect(registered[0]).toBe(conn);
+    expect(unregistered).toHaveLength(0);
+
+    socket.emit('close');
+    expect(unregistered).toEqual([conn]);
+  });
+
+  it('does not register without a client_hello', () => {
+    const socket = new FakeSocket();
+    const { broadcaster, registered, unregistered } = makeRegisteringBroadcaster();
+    makeConn(socket, { broadcaster });
+
+    socket.emit('close');
+    expect(registered).toHaveLength(0);
+    // Unregistering a never-registered connection is a harmless no-op.
+    expect(unregistered).toHaveLength(1);
   });
 });
 

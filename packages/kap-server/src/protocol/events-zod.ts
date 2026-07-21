@@ -577,6 +577,27 @@ export const sessionWorkChangedEventSchema = z.object({
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
+export const sessionInteractionRequestedEventSchema = z.object({
+  type: z.literal('event.session.interaction_requested'),
+  sessionId: z.string(),
+  interactionId: z.string(),
+  kind: z.enum(['approval', 'question']),
+  agentId: z.string(),
+  toolName: z.string().optional(),
+  questionPreview: z.string().optional(),
+});
+
+export const sessionInteractionResolvedEventSchema = z.object({
+  type: z.literal('event.session.interaction_resolved'),
+  sessionId: z.string(),
+  interactionId: z.string(),
+  kind: z.enum(['approval', 'question']),
+  agentId: z.string(),
+  toolName: z.string().optional(),
+  questionPreview: z.string().optional(),
+  state: z.enum(['approved', 'rejected', 'cancelled', 'answered', 'dismissed']),
+});
+
 const legacySessionStatusSchema = z.enum([
   'idle',
   'running',
@@ -920,6 +941,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
+  sessionInteractionRequestedEventSchema,
+  sessionInteractionResolvedEventSchema,
   sessionStatusChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,

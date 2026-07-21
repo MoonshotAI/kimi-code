@@ -12,6 +12,7 @@ import {
   type DomainEvent,
   IEventBus,
   IAgentLifecycleService,
+  ISessionInteractionService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -295,5 +296,80 @@ describe('server-v2 /api/v1/ws resync', () => {
 
     c.ws.close();
     await c.closed;
+  });
+
+  it('delivers global interaction events and work facts to a hello-only connection', async () => {
+    const sid = await createSession();
+
+    // c1 hellos with zero subscriptions — it still joins the global fan-out.
+    const c1 = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c1.next((f) => f.type === 'server_hello');
+    c1.send({
+      type: 'client_hello',
+      id: 'h1',
+      payload: withToken({ client_id: 'cli', subscriptions: [] }),
+    });
+    await c1.next((f) => f.type === 'ack' && f.id === 'h1');
+
+    // c2 subscribes — its ack also proves the session's producer is mounted
+    // (the runtime mounts it on session creation, ahead of any subscription).
+    const c2 = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c2.next((f) => f.type === 'server_hello');
+    c2.send({
+      type: 'client_hello',
+      id: 'h2',
+      payload: withToken({ client_id: 'cli', subscriptions: [sid] }),
+    });
+    await c2.next((f) => f.type === 'ack' && f.id === 'h2');
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(sid);
+    const interactions = session!.accessor.get(ISessionInteractionService);
+    interactions.enqueue({
+      id: 'a1',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'c1',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'ls' },
+      },
+    });
+
+    // The hello-only connection receives the volatile global notification and
+    // the pending work fact; the durable legacy event stays behind c2's
+    // subscription.
+    const workChanged = await c1.next(
+      (f) =>
+        f.type === 'event.session.work_changed' && f.payload?.['pending_interaction'] === 'approval',
+    );
+    expect(workChanged.session_id).toBe(sid);
+    const requested = await c1.next((f) => f.type === 'event.session.interaction_requested');
+    expect(requested.volatile).toBe(true);
+    expect(requested.session_id).toBe(sid);
+    expect(requested.payload).toMatchObject({
+      sessionId: sid,
+      interactionId: 'a1',
+      kind: 'approval',
+      agentId: 'main',
+      toolName: 'Bash',
+    });
+    await expect(
+      c1.next((f) => f.type === 'event.approval.requested', 300),
+    ).rejects.toThrow();
+    const legacyRequested = await c2.next((f) => f.type === 'event.approval.requested');
+    expect(legacyRequested.volatile).toBeUndefined();
+
+    interactions.respond('a1', { decision: 'approved' });
+    const resolved = await c1.next((f) => f.type === 'event.session.interaction_resolved');
+    expect(resolved.volatile).toBe(true);
+    expect(resolved.payload).toMatchObject({
+      interactionId: 'a1',
+      kind: 'approval',
+      state: 'approved',
+    });
+
+    c1.ws.close();
+    c2.ws.close();
+    await Promise.all([c1.closed, c2.closed]);
   });
 });

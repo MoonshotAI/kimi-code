@@ -9,6 +9,11 @@
  * `{seq, epoch}` cursor, or sends `resync_required` when the gap cannot be
  * served incrementally.
  *
+ * A successful `client_hello` also registers the connection as a global
+ * target on the broadcaster: global events (`event.session.*` and friends —
+ * work facts, interaction notifications) fan out to it regardless of any
+ * per-session subscription, until the socket closes.
+ *
  * The server never initiates a disconnect: unlike v1's `WsConnection`
  * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
  * a connection stays open until the client closes it or the process shuts
@@ -192,6 +197,9 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async onClientHello(frame: InboundFrame): Promise<void> {
     if (!(await this.authorize(frame))) return;
     this.gotClientHello = true;
+    // Global fan-out rides the handshake, not any subscription: from here on
+    // this connection receives global events even with zero subscriptions.
+    this.broadcaster.registerGlobalTarget(this);
 
     const payload = frame.payload ?? {};
     const subscriptions = asStringArray(payload['subscriptions']);
@@ -478,6 +486,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     this.outbound = [];
+    this.broadcaster.unregisterGlobalTarget(this);
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     this.fsWatchBridge?.detachConnection(this);
     // registry removal is handled by registerWsV1 on the socket 'close' event.
