@@ -215,12 +215,9 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
-  it('rejects a stale file reference without mutating the session model', async () => {
+  it('rejects a stale file reference without creating the agent or mutating the model', async () => {
     const id = await createSession(home as string);
     const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
-    const agent = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
-    const profile = agent.accessor.get(IAgentProfileService);
-    const modelBefore = profile.getModel();
 
     const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
       model: 'stub',
@@ -230,7 +227,9 @@ describe('server-v2 /api/v1 prompts', () => {
       ],
     });
     expect(body.code).toBe(40407);
-    expect(profile.getModel()).toBe(modelBefore);
+
+    // The failed request must not have materialized the main agent either.
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
   });
 
   it('falls back to cache path tags for uploaded videos when the model has no upload channel', async () => {

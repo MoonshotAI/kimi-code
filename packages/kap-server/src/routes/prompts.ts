@@ -213,9 +213,9 @@ async function applyProfileSelection(
 }
 
 /**
- * Fail fast on stale file references before any session control is mutated:
- * a bad `file_id` must reject the request with the session's
- * model/thinking/permission left untouched.
+ * Fail fast on stale file references before anything session-scoped happens:
+ * a bad `file_id` must reject the request without creating the prompt agent
+ * and without touching the session's model/thinking/permission.
  */
 async function assertPromptFileRefs(body: PromptSubmission, store: IFileService): Promise<void> {
   for (const part of body.content) {
@@ -282,11 +282,14 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       const { session_id } = req.params;
       const invoke = async (): Promise<void> => {
         try {
+        // Fail fast on stale file references before anything is resolved or
+        // mutated: a bad `file_id` must not create the agent, register `main`
+        // in session metadata, or touch the session's controls.
+        await assertPromptFileRefs(req.body, core.accessor.get(IFileService));
         // Resolve the agent and apply profile/model overrides first: prompt
         // media resolution (video upload) keys off the effective model.
         const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
         await resolved.auth.ensureReady();
-        await assertPromptFileRefs(req.body, core.accessor.get(IFileService));
         let thinkingConsumed = false;
         if (req.body.profile !== undefined) {
           thinkingConsumed =
