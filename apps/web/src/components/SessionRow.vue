@@ -1,4 +1,4 @@
-<!-- apps/kimi-web/src/components/SessionRow.vue -->
+<!-- apps/web/src/components/SessionRow.vue -->
 <!-- A single session row: status dot + title + time + attention pill + kebab. -->
 <!-- Inline rename (dblclick) and delete-confirm live here. -->
 <script setup lang="ts">
@@ -30,6 +30,7 @@ const emit = defineEmits<{
   archive: [id: string];
   fork: [id: string];
   export: [id: string];
+  pin: [id: string];
 }>();
 
 // Full, absolute timestamp shown on hover (the row's `time` is a short relative
@@ -228,6 +229,13 @@ function exportRow(): void {
   emit('export', props.session.id);
 }
 
+// Pin/unpin — moves the session into/out of the pinned sidebar section. The
+// state change + persistence live in the client; the row only emits the intent.
+function togglePinRow(): void {
+  closeMenu();
+  emit('pin', props.session.id);
+}
+
 // Archive — the modal confirm and the async work live in App.vue
 // (confirmArchiveSession); the row only emits the intent.
 function startArchive(): void {
@@ -303,23 +311,33 @@ defineExpose({ closeMenu });
         </Badge>
       </Tooltip>
 
-      <!-- Trailing action slot: the relative time and the kebab share one grid
-           cell and swap via `visibility` (never display:none), so the slot
-           width is identical in hover and rest. The badges and title therefore
-           don't reflow on hover — see design-system §07 "Session row". -->
+      <!-- Trailing action slot: the relative time and the hover actions (pin +
+           kebab) share one grid cell and swap via `visibility` (never
+           display:none), so the slot width is identical in hover and rest. The
+           badges and title therefore don't reflow on hover — see design-system
+           §07 "Session row". -->
       <span class="act">
         <span class="ts">{{ session.time }}</span>
-        <IconButton
-          ref="kebabRef"
-          v-if="!renaming"
-          class="kebab"
-          :class="{ open: menuOpen && menuAnchor === 'kebab' }"
-          size="sm"
-          :label="t('sidebar.options')"
-          @click.stop="toggleMenu($event)"
-        >
-          <Icon name="dots-horizontal" />
-        </IconButton>
+        <span v-if="!renaming" class="ha" :class="{ open: menuOpen && menuAnchor === 'kebab' }">
+          <IconButton
+            class="pin-btn"
+            size="sm"
+            :label="session.pinned ? t('sidebar.unpin') : t('sidebar.pin')"
+            @click.stop="togglePinRow"
+          >
+            <Icon :name="session.pinned ? 'unpin' : 'pin'" />
+          </IconButton>
+          <IconButton
+            ref="kebabRef"
+            class="kebab"
+            :class="{ open: menuOpen && menuAnchor === 'kebab' }"
+            size="sm"
+            :label="t('sidebar.options')"
+            @click.stop="toggleMenu($event)"
+          >
+            <Icon name="dots-horizontal" />
+          </IconButton>
+        </span>
       </span>
     </div>
 
@@ -350,6 +368,10 @@ defineExpose({ closeMenu });
         <MenuItem @click="exportRow">
           <Icon name="download" size="sm" />
           {{ t('sidebar.export') }}
+        </MenuItem>
+        <MenuItem @click="togglePinRow">
+          <Icon :name="session.pinned ? 'unpin' : 'pin'" size="sm" />
+          {{ session.pinned ? t('sidebar.unpin') : t('sidebar.pin') }}
         </MenuItem>
         <MenuItem danger @click="startArchive">
           <Icon name="archive" size="sm" />
@@ -445,30 +467,51 @@ defineExpose({ closeMenu });
 }
 
 /* Trailing action slot: the relative time (in flow) sets the slot size; the
-   kebab is absolutely positioned over it and swapped via `visibility`, so it
-   contributes neither height (the row stays font-driven) nor width changes
-   (min-width reserves the kebab's footprint, the title doesn't reflow). */
+   hover actions (pin + kebab) are absolutely positioned over it and swapped
+   via `visibility`, so they contribute neither height (the row stays
+   font-driven) nor width changes (min-width reserves a button footprint, the
+   title doesn't reflow). The cluster carries the row's own background because
+   two buttons are wider than the reserved slot and overlap the title. */
 .act {
   position: relative;
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  /* Reserve the kebab's width so the trailing slot (and thus the title) never
-     shifts between the time and the kebab, even for short times like "2m". */
+  /* Reserve one button's width so the trailing slot (and thus the title) never
+     shifts between the time and the actions, even for short times like "2m". */
   min-width: 26px;
 }
-.act .kebab {
+.act .ha {
   position: absolute;
-  right: 0;
+  /* Right inset 3px — matches the buttons' vertical inset ((32px row − 26px
+     button) / 2), so the cluster sits equidistant from the pill's right edge
+     and its top/bottom edges. The row's 8px right padding minus 5px lands it. */
+  right: -5px;
   top: 50%;
   transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   visibility: hidden;
+  border-radius: var(--radius-sm);
+  /* Opaque background: the hover/selected washes are translucent by design
+     (they sit on any surface), so on their own the title bleeds through the
+     cluster. Layer the wash over the sidebar's opaque base — same resulting
+     color as the row underneath, but solid. */
+  background:
+    linear-gradient(var(--sb-hover, var(--color-surface-sunken)), var(--sb-hover, var(--color-surface-sunken))),
+    var(--color-sidebar-bg);
 }
-.se:hover .act .kebab,
-.act:has(.kebab.open) .kebab { visibility: visible; }
+.se.on .ha {
+  background:
+    linear-gradient(var(--sb-selected, var(--color-selected)), var(--sb-selected, var(--color-selected))),
+    var(--color-sidebar-bg);
+}
+.se:hover .ha,
+.act:has(.ha.open) .ha { visibility: visible; }
 .se:hover .act .ts,
-.act:has(.kebab.open) .ts { visibility: hidden; }
+.act:has(.ha.open) .ts { visibility: hidden; }
 .kebab.open { color: var(--color-text); background: var(--sb-hover, var(--color-surface-sunken)); }
 
 /* Fixed + anchored to the ⋯ button via inline style (see positionMenu); the menu

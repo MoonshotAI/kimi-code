@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadCollapsedWorkspaces,
+  loadPinnedSessions,
   loadUnread,
   loadWorkspaceOrder,
   saveCollapsedWorkspaces,
+  savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
   STORAGE_KEYS,
@@ -220,5 +222,32 @@ describe('loadWorkspaceOrder / saveWorkspaceOrder', () => {
 
     safeSetString(STORAGE_KEYS.workspaceOrder, JSON.stringify({ ws: true }));
     expect(loadWorkspaceOrder()).toEqual([]);
+  });
+});
+
+describe('loadPinnedSessions / savePinnedSessions', () => {
+  it('returns an empty array when the key is missing', () => {
+    expect(loadPinnedSessions()).toEqual([]);
+  });
+
+  it('round-trips the manually ordered session ids', () => {
+    savePinnedSessions(['s-2', 's-1']);
+    expect(loadPinnedSessions()).toEqual(['s-2', 's-1']);
+  });
+
+  it('accepts any iterable of ids', () => {
+    savePinnedSessions(new Set(['s-3', 's-1']));
+    expect(loadPinnedSessions()).toEqual(['s-3', 's-1']);
+  });
+
+  it('drops non-string entries and returns [] for malformed values', () => {
+    safeSetString(STORAGE_KEYS.pinnedSessions, JSON.stringify(['s-1', 2, null]));
+    expect(loadPinnedSessions()).toEqual(['s-1']);
+
+    safeSetString(STORAGE_KEYS.pinnedSessions, JSON.stringify({ s: true }));
+    expect(loadPinnedSessions()).toEqual([]);
+
+    safeSetString(STORAGE_KEYS.pinnedSessions, '{not json');
+    expect(loadPinnedSessions()).toEqual([]);
   });
 });

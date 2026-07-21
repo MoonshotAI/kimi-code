@@ -41,6 +41,10 @@ export interface Session {
   workspaceId?: string;
   /** Workspace display name, joined from workspacesView. */
   workspaceName?: string;
+  /** True when the session is pinned to the top pinned section. */
+  pinned?: boolean;
+  /** Session working directory — shown in the pinned row's hover tooltip. */
+  cwd?: string;
 }
 
 export interface Workspace {
@@ -81,6 +85,10 @@ export interface WorkspaceGroup {
    *  of sessions loaded on first paint, floored at one full page so a workspace
    *  that was empty or sparse does not hide sessions created later. */
   initialCount: number;
+  /** How many of this workspace's sessions are pinned (they render in the
+   *  pinned section, not in this group) — the group shows a pinned-count note
+   *  instead of the plain empty state when every session it has is pinned. */
+  pinnedCount: number;
 }
 
 /** Sidebar session-list scope: only the active workspace, or all workspaces. */

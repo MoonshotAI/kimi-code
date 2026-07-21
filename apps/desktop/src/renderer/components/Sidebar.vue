@@ -29,6 +29,7 @@ import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } fro
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
+import PinnedSessionList from './PinnedSessionList.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
@@ -70,6 +71,9 @@ const props = withDefaults(
     activeWorkspaceId: string | null;
     sessions: Session[];
     groups: WorkspaceGroupType[];
+    /** Pinned sessions (across workspaces, manual order) — rendered in the
+     *  pinned section above all workspace groups; empty hides the section. */
+    pinnedSessions?: Session[];
     activeId: string;
     /** Current workspace sort mode — drives the section-header sort button. */
     workspaceSortMode: WorkspaceSortMode;
@@ -91,6 +95,7 @@ const props = withDefaults(
   {
     activeWorkspace: null,
     activeWorkspaceId: null,
+    pinnedSessions: () => [],
     backend: 'v1',
     attentionBySession: () => ({}),
     pendingBySession: () => ({}),
@@ -115,6 +120,10 @@ const emit = defineEmits<{
   archive: [id: string];
   fork: [id: string];
   export: [id: string];
+  pin: [id: string];
+  reorderPinned: [ids: string[]];
+  pinAt: [id: string, targetId: string | null, position: DropPosition];
+  unpin: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
@@ -305,6 +314,29 @@ function onGroupDrop(targetId: string): void {
     position,
   );
   emit('reorderWorkspaces', next);
+}
+
+// ---------------------------------------------------------------------------
+// Pinned-session drag-back (unpin)
+// ---------------------------------------------------------------------------
+// While a pinned row is dragged, the pinned list reports it here and every
+// workspace group reads the ref: only the session's home workspace accepts
+// the drop (which unpins); all other groups show the no-drop affordance. The
+// state clears on dragend AND on the drop itself — the row unmounts mid-drag
+// once the pin is removed, so dragend alone is not guaranteed to arrive.
+const pinnedDragSession = ref<{ id: string; workspaceId: string } | null>(null);
+
+function onPinnedSessionDragStart(id: string, workspaceId: string): void {
+  pinnedDragSession.value = { id, workspaceId };
+}
+
+function onPinnedSessionDragEnd(): void {
+  pinnedDragSession.value = null;
+}
+
+function onDropPinnedSession(id: string): void {
+  pinnedDragSession.value = null;
+  emit('unpin', id);
 }
 
 function handleGhClick(wsId: string, e: MouseEvent): void {
@@ -852,6 +884,25 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
+          <!-- Pinned section: above every workspace caption, listing pinned
+               sessions across all workspaces. Hidden when nothing is pinned. -->
+          <PinnedSessionList
+            v-if="pinnedSessions.length > 0"
+            :sessions="pinnedSessions"
+            :active-id="activeId"
+            :pending-by-session="pendingBySession"
+            :unread-by-session="unreadBySession"
+            @select-session="onSelectSession"
+            @rename-session="(id, title) => emit('rename', id, title)"
+            @archive-session="(id) => emit('archive', id)"
+            @fork-session="(id) => emit('fork', id)"
+            @export-session="(id) => emit('export', id)"
+            @pin-session="(id) => emit('pin', id)"
+            @pin-session-at="(id, targetId, position) => emit('pinAt', id, targetId, position)"
+            @session-drag-start="onPinnedSessionDragStart"
+            @session-drag-end="onPinnedSessionDragEnd"
+            @reorder="(ids) => emit('reorderPinned', ids)"
+          />
           <div class="side-section-label">
             <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
             <div class="side-section-actions">
@@ -900,6 +951,7 @@ onBeforeUnmount(() => {
               :dragging="draggingWsId === g.workspace.id"
               :is-collapsed="isCollapsed"
               :is-expanded="isExpanded"
+              :pinned-drag-session="pinnedDragSession"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
               @toggle-ws-menu="toggleWsMenu"
@@ -909,6 +961,8 @@ onBeforeUnmount(() => {
               @archive-session="(id) => emit('archive', id)"
               @fork-session="(id) => emit('fork', id)"
               @export-session="(id) => emit('export', id)"
+              @pin-session="(id) => emit('pin', id)"
+              @drop-pinned-session="onDropPinnedSession"
               @load-more="onLoadMore"
               @toggle-expand="toggleExpand"
               @confirm-rename="confirmRenameWorkspace"

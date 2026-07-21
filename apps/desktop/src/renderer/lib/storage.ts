@@ -21,6 +21,7 @@ export const STORAGE_KEYS = {
   hiddenWorkspaces: 'kimi-web.hidden-workspaces',
   collapsedWorkspaces: 'kimi-web.collapsed-workspaces',
   workspaceOrder: 'kimi-web.workspace-order',
+  pinnedSessions: 'kimi-web.pinned-sessions',
   workspaceNameOverrides: 'kimi-web.workspace-name-overrides',
   workspaceSort: 'kimi-web.workspace-sort',
   workspaceAddedAt: 'kimi-web.workspace-added-at',
@@ -168,6 +169,22 @@ export function loadWorkspaceOrder(): string[] {
 
 export function saveWorkspaceOrder(ids: Iterable<string>): void {
   safeSetJson(STORAGE_KEYS.workspaceOrder, Array.from(ids));
+}
+
+/**
+ * Pinned session ids in the user's manual order. Persisted as a JSON array so
+ * the pinned sidebar section and its drag order survive a page refresh. There
+ * is no server-side source of truth for pinning (per-device by design); ids
+ * whose sessions are archived or deleted are dropped by the client.
+ */
+export function loadPinnedSessions(): string[] {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.pinnedSessions);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((id): id is string => typeof id === 'string');
+}
+
+export function savePinnedSessions(ids: Iterable<string>): void {
+  safeSetJson(STORAGE_KEYS.pinnedSessions, Array.from(ids));
 }
 
 /**

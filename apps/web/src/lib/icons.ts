@@ -88,6 +88,7 @@ import RiNodeTree from '~icons/ri/node-tree';
 import RiPauseFill from '~icons/ri/pause-fill';
 import RiPencilLine from '~icons/ri/pencil-line';
 import RiPlayFill from '~icons/ri/play-fill';
+import RiPushpinLine from '~icons/ri/pushpin-line';
 import RiQuestionLine from '~icons/ri/question-line';
 import RiRobot2Line from '~icons/ri/robot-2-line';
 import RiSortDesc from '~icons/ri/sort-desc';
@@ -100,6 +101,7 @@ import RiTargetLine from '~icons/ri/target-line';
 import RiTerminalBoxLine from '~icons/ri/terminal-box-line';
 import RiTimeLine from '~icons/ri/time-line';
 import RiToolsLine from '~icons/ri/tools-line';
+import RiUnpinLine from '~icons/ri/unpin-line';
 import RiUserLine from '~icons/ri/user-line';
 
 // Raw SVG strings (Kimi collection) -----------------------------------------
@@ -165,6 +167,7 @@ import RawNodeTree from '~icons/ri/node-tree?raw';
 import RawPauseFill from '~icons/ri/pause-fill?raw';
 import RawPencilLine from '~icons/ri/pencil-line?raw';
 import RawPlayFill from '~icons/ri/play-fill?raw';
+import RawPushpinLine from '~icons/ri/pushpin-line?raw';
 import RawQuestionLine from '~icons/ri/question-line?raw';
 import RawRobot2Line from '~icons/ri/robot-2-line?raw';
 import RawSortDesc from '~icons/ri/sort-desc?raw';
@@ -177,6 +180,7 @@ import RawTargetLine from '~icons/ri/target-line?raw';
 import RawTerminalBoxLine from '~icons/ri/terminal-box-line?raw';
 import RawTimeLine from '~icons/ri/time-line?raw';
 import RawToolsLine from '~icons/ri/tools-line?raw';
+import RawUnpinLine from '~icons/ri/unpin-line?raw';
 import RawUserLine from '~icons/ri/user-line?raw';
 
 // Public types -------------------------------------------------------------
@@ -250,9 +254,11 @@ export type IconName =
   | 'target'
   | 'pause'
   | 'play'
+  | 'pin'
   | 'stop'
   | 'star'
   | 'star-outline'
+  | 'unpin'
   | 'dots-horizontal'
   | 'thinking';
 
@@ -341,9 +347,11 @@ export const ICONS: Record<IconName, IconEntry> = {
   target: entry(RiTargetLine, RawTargetLine),
   pause: entry(RiPauseFill, RawPauseFill),
   play: entry(RiPlayFill, RawPlayFill),
+  pin: entry(RiPushpinLine, RawPushpinLine),
   stop: entry(RiStopFill, RawStopFill),
   star: entry(RiStarFill, RawStarFill),
   'star-outline': entry(RiStarLine, RawStarLine),
+  unpin: entry(RiUnpinLine, RawUnpinLine),
   'dots-horizontal': entry(KimiMore, RawKimiMore),
   thinking: entry(KimiThinking, RawKimiThinking),
 };
@@ -438,6 +446,8 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'git-fork',
       'git-pull-request',
       'archive',
+      'pin',
+      'unpin',
       'target',
       'calendar-schedule',
       'calendar-todo',

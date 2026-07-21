@@ -26,6 +26,7 @@ import type {
   QuestionResponse,
 } from '../../api/types';
 import {
+  loadPinnedSessions,
   loadWorkspaceNameOverrides,
   safeRemove,
   saveWorkspaceAddedAt,
@@ -53,6 +54,7 @@ const MESSAGES_PAGE_SIZE = 50;
 // count at (number of workspaces) and each response small. Exported so the
 // sidebar can fall back to it when a workspace's first-page size is unknown.
 export const SESSIONS_INITIAL_PAGE_SIZE = 5;
+const SESSION_NOT_FOUND_CODE = 40401;
 const PROMPT_NOT_FOUND_CODE = 40402;
 const WORKSPACE_NOT_FOUND_CODE = 40410;
 // Shared "already resolved" conflict (40902). The daemon reuses it for both
@@ -224,6 +226,8 @@ export interface UseWorkspaceStateDeps {
   upsertSessionFront: (session: AppSession) => void;
   appendSession: (session: AppSession) => void;
   forgetSession: (id: string) => void;
+  /** Drop pins in bulk — the pinned backfill's stale-id cleanup (404/archived). */
+  unpinSessions: (ids: string[]) => void;
   setActiveSessionId: (id: string | undefined) => void;
   /** Update one session's message list via a function of the current list. */
   updateSessionMessages: (
@@ -282,6 +286,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     upsertSessionFront,
     appendSession,
     forgetSession,
+    unpinSessions,
     setActiveSessionId,
     updateSessionMessages,
     nextOptimisticMsgId,
@@ -878,6 +883,22 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const sessions = loadedSessions ?? rawState.sessions;
       if (loadedSessions !== undefined) setSessionsPreservingLiveUsage(loadedSessions);
 
+      // Pinned sessions can live outside the first pages (each workspace only
+      // loads a few sessions + a recency window): pull every pinned id that is
+      // missing from the list so the pinned section renders after a refresh.
+      // Ids the daemon has forgotten (404) or that come back archived are
+      // stale — drop their pins instead of retrying them on every load (and
+      // re-adding archived sessions to the list). Transient failures keep
+      // their pin; the next load retries.
+      const missingPinned = loadPinnedSessions().filter(
+        (id) => !rawState.sessions.some((s) => s.id === id),
+      );
+      if (missingPinned.length > 0) {
+        const outcomes = await Promise.all(missingPinned.map((id) => backfillPinnedSession(id)));
+        const stale = missingPinned.filter((_, i) => outcomes[i] === 'stale');
+        if (stale.length > 0) unpinSessions(stale);
+      }
+
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
       const mostRecent = sessions[0];
@@ -1344,6 +1365,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       return true;
     } catch {
       return false;
+    }
+  }
+
+  // Backfill one pinned id: fetch it into the list (deep-link semantics), and
+  // report the outcome so the caller can drop stale pins — a session-not-found
+  // response or an archived result means the pin should go; anything else is
+  // retried on the next load.
+  async function backfillPinnedSession(sessionId: string): Promise<'ok' | 'stale' | 'retry'> {
+    try {
+      const session = await getKimiWebApi().getSession(sessionId);
+      if (session.archived) return 'stale';
+      if (!rawState.sessions.some((s) => s.id === session.id)) appendSession(session);
+      return 'ok';
+    } catch (err) {
+      return isDaemonApiError(err) && err.code === SESSION_NOT_FOUND_CODE ? 'stale' : 'retry';
     }
   }
 

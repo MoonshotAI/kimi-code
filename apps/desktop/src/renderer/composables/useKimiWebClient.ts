@@ -11,6 +11,7 @@ import {
   sortByWorkspaceOrder,
   sortWorkspacesByRecent,
   workspaceRecentActivity,
+  type DropPosition,
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
@@ -20,6 +21,7 @@ import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import { detectShellDanger } from '../lib/shellDanger';
 import { buildDiffLines, buildVerbatimDiffLines } from '../lib/diffLines';
 import {
+  loadPinnedSessions,
   loadUnread,
   loadWorkspaceAddedAt,
   loadWorkspaceOrder,
@@ -27,11 +29,19 @@ import {
   safeGetString,
   safeRemove,
   safeSetString,
+  savePinnedSessions,
   saveUnread,
   saveWorkspaceOrder,
   saveWorkspaceSort,
   STORAGE_KEYS,
 } from '../lib/storage';
+import {
+  insertPinnedAt,
+  mergePinnedOrder,
+  partitionByPinned,
+  pinSessionId,
+  unpinSessionId,
+} from '../lib/pinnedSessions';
 import {
   coalesceAppRenderEvents,
   createEventBatcher,
@@ -649,6 +659,12 @@ function forgetSession(sessionId: string): void {
   savePlanModeToStorage();
   saveSwarmModeToStorage();
   saveGoalModeToStorage();
+  // A deleted/archived session also leaves the pinned section (and its
+  // persisted id list) — both removal entry points funnel through here.
+  if (pinnedSessionIds.value.includes(sessionId)) {
+    pinnedSessionIds.value = unpinSessionId(pinnedSessionIds.value, sessionId);
+    savePinnedSessions(pinnedSessionIds.value);
+  }
 }
 
 // Models + Providers reactive state and helpers live in
@@ -931,6 +947,13 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
         [event.sessionId]: event.thinking as ThinkingLevel,
       };
     }
+  }
+
+  // A session deleted anywhere (e.g. from another client) also loses its pin:
+  // the WS-driven deletion path bypasses forgetSession, so the pinned-id
+  // cleanup lives here too.
+  if (event.type === 'sessionDeleted') {
+    unpinSession(event.sessionId);
   }
 }
 
@@ -2453,6 +2476,70 @@ watch(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Pinned sessions (sidebar section above all workspace groups). The id list is
+// the single source of truth: persisted to localStorage, ordered by the user's
+// drag arrangement, per-device by design (no server sync). Pin state never
+// lives on the session objects — every view derives it from this list.
+// ---------------------------------------------------------------------------
+const pinnedSessionIds = ref<string[]>(loadPinnedSessions());
+
+/** Pin a session. New pins land at the END of the pinned section. */
+function pinSession(id: string): void {
+  const next = pinSessionId(pinnedSessionIds.value, id);
+  if (next === pinnedSessionIds.value) return;
+  pinnedSessionIds.value = next;
+  savePinnedSessions(next);
+}
+
+/** Unpin a session (no-op when it isn't pinned). */
+function unpinSession(id: string): void {
+  const next = unpinSessionId(pinnedSessionIds.value, id);
+  if (next === pinnedSessionIds.value) return;
+  pinnedSessionIds.value = next;
+  savePinnedSessions(next);
+}
+
+/** Unpin a batch of sessions (e.g. the backfill's stale-id cleanup). */
+function unpinSessions(ids: string[]): void {
+  const stale = new Set(ids);
+  const next = pinnedSessionIds.value.filter((id) => !stale.has(id));
+  if (next.length === pinnedSessionIds.value.length) return;
+  pinnedSessionIds.value = next;
+  savePinnedSessions(next);
+}
+
+/** Toggle entry point for the session-row menu (pin ↔ unpin). */
+function togglePinSession(id: string): void {
+  if (pinnedSessionIds.value.includes(id)) unpinSession(id);
+  else pinSession(id);
+}
+
+/**
+ * Replace the pinned order after a drag reorder in the sidebar. The UI only
+ * renders pinned sessions that are loaded, so ids it never saw (not yet
+ * fetched) keep their spots at the end instead of being silently unpinned.
+ */
+function reorderPinnedSessions(ids: string[]): void {
+  const next = mergePinnedOrder(ids, pinnedSessionIds.value);
+  pinnedSessionIds.value = next;
+  savePinnedSessions(next);
+}
+
+/**
+ * Pin a session dropped into the pinned section at a specific spot (drag from
+ * a workspace group). `targetId`/`position` name the landing row; like
+ * `reorderPinnedSessions`, stored ids the UI never rendered keep their tail
+ * spots instead of being dropped.
+ */
+function pinSessionAt(id: string, targetId: string | null, position: DropPosition): void {
+  const visible = pinnedSessions.value.map((s) => s.id);
+  const placed = insertPinnedAt(visible, id, targetId, position);
+  const next = mergePinnedOrder(placed, pinnedSessionIds.value);
+  pinnedSessionIds.value = next;
+  savePinnedSessions(next);
+}
+
 /** Sidebar-facing workspace list. Order follows `workspaceSortMode`: the
  *  persisted/dragged order in `manual` mode, or most-recent-session-first in
  *  `recent` mode. The recent map is only built (and `rawState.sessions` only
@@ -2540,15 +2627,31 @@ const sessionsForView = computed<Session[]>(() => {
     });
 });
 
-/** Per-workspace groups for the 'all workspaces' scope. */
-const workspaceGroups = computed<WorkspaceGroup[]>(() => {
+/**
+ * Per-workspace groups for the 'all workspaces' scope. With `excludePinned`,
+ * pinned sessions move OUT of their group into the pinned section above the
+ * groups (counted per workspace so the group can note them instead of the
+ * plain empty state). The mobile switcher sheet builds WITHOUT the filter —
+ * it has no pinned section, and filtering would make a session pinned on
+ * desktop unreachable (and un-unpinnable) on mobile.
+ */
+function buildWorkspaceGroups(excludePinned: boolean): WorkspaceGroup[] {
   void sessionTimeClock.value;
+  const pinnedSet = new Set(pinnedSessionIds.value);
   const byId = new Map<string, Session[]>();
+  const pinnedCountByWorkspace = new Map<string, number>();
   for (const s of rawState.sessions.toSorted(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   )) {
     if (s.parentSessionId) continue; // child sessions stay out of the list
     const wid = workspaceIdForSession(s);
+    if (excludePinned && pinnedSet.has(s.id)) {
+      // Pinned sessions live in the pinned section — counted per workspace so
+      // the group can say so when nothing unpinned remains (see the group
+      // empty state).
+      pinnedCountByWorkspace.set(wid, (pinnedCountByWorkspace.get(wid) ?? 0) + 1);
+      continue;
+    }
     const view: Session = {
       id: s.id,
       title: s.title,
@@ -2565,10 +2668,53 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
   return workspacesView.value.map((w) => ({
     workspace: w,
     sessions: byId.get(w.id) ?? [],
+    pinnedCount: pinnedCountByWorkspace.get(w.id) ?? 0,
     hasMore: rawState.sessionsHasMoreByWorkspace[w.id] ?? false,
     loadingMore: rawState.sessionsLoadingMoreByWorkspace[w.id] ?? false,
     initialCount: rawState.sessionsInitialCountByWorkspace[w.id] ?? SESSIONS_INITIAL_PAGE_SIZE,
   }));
+}
+
+/** Sidebar groups: pinned sessions render in the pinned section, never here. */
+const workspaceGroups = computed<WorkspaceGroup[]>(() => buildWorkspaceGroups(true));
+
+/** Mobile switcher sheet groups: pinned sessions stay in their home groups. */
+const mobileWorkspaceGroups = computed<WorkspaceGroup[]>(() => buildWorkspaceGroups(false));
+
+/**
+ * The pinned sidebar section: every pinned session across workspaces, in the
+ * user's manual order. Pinned sessions are filtered OUT of `workspaceGroups`
+ * above, so a session renders exactly once. Visibility matches
+ * `sessionsForView`: child sessions, archived sessions (archived elsewhere —
+ * a local archive already dropped the pin via forgetSession), and sessions
+ * under a removed (hidden) workspace stay out. A pinned id whose session is
+ * not loaded yet (the first page per workspace is small) is backfilled during
+ * `load()` — until then it simply does not render.
+ */
+const pinnedSessions = computed<Session[]>(() => {
+  void sessionTimeClock.value;
+  const visibleWorkspaceIds = new Set(workspacesView.value.map((w) => w.id));
+  const nameByWorkspaceId = new Map(workspacesView.value.map((w) => [w.id, w.name]));
+  const candidates = rawState.sessions.filter(
+    (s) =>
+      !s.parentSessionId && !s.archived && visibleWorkspaceIds.has(workspaceIdForSession(s)),
+  );
+  return partitionByPinned(candidates, pinnedSessionIds.value).pinned.map((s) => {
+    const workspaceId = workspaceIdForSession(s);
+    return {
+      id: s.id,
+      title: s.title,
+      time: formatTime(s.updatedAt),
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      pendingInteraction: s.pendingInteraction,
+      lastTurnReason: s.lastTurnReason,
+      updatedAt: s.updatedAt,
+      workspaceId,
+      workspaceName: nameByWorkspaceId.get(workspaceId),
+      pinned: true,
+      cwd: s.cwd,
+    };
+  });
 });
 
 /**
@@ -2682,6 +2828,7 @@ const workspaceState = useWorkspaceState(rawState, {
   upsertSessionFront,
   appendSession,
   forgetSession,
+  unpinSessions,
   setActiveSessionId,
   updateSessionMessages,
   nextOptimisticMsgId,
@@ -2845,6 +2992,8 @@ export function useKimiWebClient() {
     activeWorkspaceId,
     sessionsForView,
     workspaceGroups,
+    mobileWorkspaceGroups,
+    pinnedSessions,
     attentionBySession,
     pendingBySession,
     attentionByWorkspace,
@@ -2985,6 +3134,11 @@ export function useKimiWebClient() {
     deleteWorkspace: workspaceState.deleteWorkspace,
     reorderWorkspaces,
     setWorkspaceSortMode,
+    pinSession,
+    unpinSession,
+    togglePinSession,
+    reorderPinnedSessions,
+    pinSessionAt,
     archiveSession: workspaceState.archiveSession,
     exportSession: workspaceState.exportSession,
     restoreSession: workspaceState.restoreSession,

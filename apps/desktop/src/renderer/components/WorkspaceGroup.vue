@@ -5,10 +5,11 @@
      search and the header stay in Sidebar; this component renders a single
      group and forwards every interaction back up. -->
 <script setup lang="ts">
-import { computed, type ComponentPublicInstance, type Ref } from 'vue';
+import { computed, ref, type ComponentPublicInstance, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceGroup, WorkspaceView } from '../types';
 import SessionRow from './SessionRow.vue';
+import { SESSION_ROW_DRAG_MIME } from '../lib/pinnedSessions';
 import { Icon, IconButton, Tooltip, useImeComposition } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -29,6 +30,9 @@ const props = defineProps<{
   /** When true, render all loaded sessions; otherwise only the first page
    *  (`group.initialCount`). Drives the in-group show-more / show-less toggle. */
   isExpanded: (id: string) => boolean;
+  /** The pinned session currently being dragged back (null when idle). Only
+   *  its home workspace is a drop target; see the drag handlers below. */
+  pinnedDragSession?: { id: string; workspaceId: string } | null;
 }>();
 
 const emit = defineEmits<{
@@ -41,6 +45,8 @@ const emit = defineEmits<{
   archiveSession: [id: string];
   forkSession: [id: string];
   exportSession: [id: string];
+  pinSession: [id: string];
+  dropPinnedSession: [id: string];
   loadMore: [workspaceId: string];
   toggleExpand: [workspaceId: string];
   confirmRename: [];
@@ -57,6 +63,41 @@ const renameValueModel = computed<string>({
   get: () => props.renameValue,
   set: (value: string) => emit('updateRenameValue', value),
 });
+
+// Drag-back-to-unpin: while a pinned session is being dragged (tracked by the
+// Sidebar and passed down as `pinnedDragSession`), only its home workspace is
+// a drop target — dropping there unpins. Every other group refuses the drop:
+// its dragover is never prevented, so the browser shows the no-drop cursor on
+// top of the blocked styling below.
+const pinnedDropHover = ref(false);
+
+const isPinnedDragActive = computed(() => props.pinnedDragSession != null);
+const isPinnedDropTarget = computed(
+  () => props.pinnedDragSession?.workspaceId === props.group.workspace.id,
+);
+
+function onPinnedDragOver(event: DragEvent): void {
+  if (props.pinnedDragSession == null) return;
+  if (!isPinnedDropTarget.value) {
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+    return;
+  }
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  pinnedDropHover.value = true;
+}
+
+function onPinnedDrop(event: DragEvent): void {
+  if (props.pinnedDragSession == null || !isPinnedDropTarget.value) return;
+  event.preventDefault();
+  pinnedDropHover.value = false;
+  emit('dropPinnedSession', props.pinnedDragSession.id);
+}
+
+function onPinnedDragLeave(event: DragEvent): void {
+  if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) return;
+  pinnedDropHover.value = false;
+}
 
 // Sessions to render: all when expanded, otherwise only the first page. The
 // collapse is a pure view-layer trim — data, cursor and hasMore stay intact, so
@@ -107,10 +148,32 @@ function onHeaderDragStart(event: DragEvent): void {
   event.dataTransfer.setData('text/plain', props.group.workspace.id);
   emit('wsDragstart', props.group.workspace.id);
 }
+
+// Session rows double as drag sources for the pinned section: dropping a row
+// there pins the session at the drop spot (PinnedSessionList reads the id back
+// from the dataTransfer). The custom MIME type marks this as a session-row
+// drag — workspace-header and OS file drags never set it.
+function onSessionDragStart(id: string, event: DragEvent): void {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData(SESSION_ROW_DRAG_MIME, id);
+  event.dataTransfer.setData('text/plain', id);
+}
 </script>
 
 <template>
-  <div class="group" :class="{ dragging }">
+  <div
+    class="group"
+    :class="{
+      dragging,
+      'pinned-drag-active': isPinnedDragActive && isPinnedDropTarget,
+      'pinned-drop-hover': pinnedDropHover,
+      'pinned-drop-blocked': isPinnedDragActive && !isPinnedDropTarget,
+    }"
+    @dragover="onPinnedDragOver"
+    @drop="onPinnedDrop"
+    @dragleave="onPinnedDragLeave"
+  >
     <div
       class="gh"
       :class="{ on: group.workspace.id === activeWorkspaceId && activeId === '', collapsed: isCollapsed(group.workspace.id) }"
@@ -187,11 +250,14 @@ function onHeaderDragStart(event: DragEvent): void {
         :approval-count="pendingBySession[s.id]?.approvals ?? 0"
         :question-count="pendingBySession[s.id]?.questions ?? 0"
         :unread="unreadBySession[s.id] ?? false"
+        draggable="true"
+        @dragstart="onSessionDragStart(s.id, $event)"
         @select="emit('selectSession', $event)"
         @rename="(id, title) => emit('renameSession', id, title)"
         @archive="emit('archiveSession', $event)"
         @fork="emit('forkSession', $event)"
         @export="emit('exportSession', $event)"
+        @pin="emit('pinSession', $event)"
       />
       <button
         v-if="group.hasMore || group.loadingMore"
@@ -216,7 +282,11 @@ function onHeaderDragStart(event: DragEvent): void {
             : t('sidebar.showAll', { count: showAllCount() })
         }}</span>
       </button>
-      <div v-if="group.sessions.length === 0" class="group-empty">{{ t('sidebar.noSessions') }}</div>
+      <div v-if="group.sessions.length === 0" class="group-empty">{{
+        group.pinnedCount > 0
+          ? t('sidebar.allPinned', { count: group.pinnedCount })
+          : t('sidebar.noSessions')
+      }}</div>
     </div>
   </div>
 </template>
@@ -226,6 +296,21 @@ function onHeaderDragStart(event: DragEvent): void {
    Sidebar.vue, so they don't need to be redeclared here. Groups stack flush —
    no bottom gap. */
 .group.dragging { opacity: 0.45; }
+
+/* Drag-back-to-unpin affordance: while a pinned session is dragged, its home
+   workspace is the only drop target (accent frame, stronger on hover); every
+   other group shows the no-drop cursor — the browser's own 🚫 also applies
+   there, since their dragover is never prevented. */
+.group.pinned-drag-active,
+.group.pinned-drop-hover {
+  border-radius: var(--radius-sm);
+}
+.group.pinned-drag-active { box-shadow: inset 0 0 0 1px var(--color-accent); }
+.group.pinned-drop-hover { box-shadow: inset 0 0 0 2px var(--color-accent); }
+.group.pinned-drop-blocked,
+.group.pinned-drop-blocked :deep(*) {
+  cursor: no-drop;
+}
 
 /* Session list: collapses/expands via a height transition. `interpolate-size:
    allow-keywords` (set on :root) lets `height: auto` interpolate instead of
@@ -350,6 +435,9 @@ function onHeaderDragStart(event: DragEvent): void {
   font-size: var(--text-xs);
   color: var(--color-text-faint);
   font-family: var(--font-ui);
+  /* A status label, not content — like the section captions, it must not be
+     text-selectable. */
+  user-select: none;
 }
 /* Show-more / show-less — a session-row-shaped compact list control (§07). The
    empty lead slot mirrors a session row's status gutter, so the label text lands
