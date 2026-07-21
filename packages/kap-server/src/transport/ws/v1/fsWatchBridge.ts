@@ -87,7 +87,6 @@ interface SessionWatch {
   readonly fsWatch: ISessionFsWatchService;
   readonly workspace: ISessionWorkspaceContext;
   readonly conns: Map<string, ConnEntry>;
-  union: Set<string>;
   sub: IDisposable | undefined;
 }
 
@@ -179,7 +178,7 @@ export class FsWatchBridge implements IDisposable {
     this.connPathCount.set(conn.id, Math.max(0, this.countFor(conn.id) - removed));
     if (entry.paths.size === 0) sw.conns.delete(conn.id);
     this.recomputeAndApply(sw);
-    if (sw.conns.size === 0) this.teardownSession(sw);
+    if (sw.conns.size === 0) this.dropSession(sw, 'teardown');
 
     return this.ok(sw, conn);
   }
@@ -192,7 +191,7 @@ export class FsWatchBridge implements IDisposable {
       sw.conns.delete(conn.id);
       this.connPathCount.set(conn.id, Math.max(0, this.countFor(conn.id) - entry.paths.size));
       this.recomputeAndApply(sw);
-      if (sw.conns.size === 0) this.teardownSession(sw);
+      if (sw.conns.size === 0) this.dropSession(sw, 'teardown');
     }
     this.connPathCount.delete(conn.id);
   }
@@ -208,7 +207,6 @@ export class FsWatchBridge implements IDisposable {
       fsWatch: session.accessor.get(ISessionFsWatchService),
       workspace: session.accessor.get(ISessionWorkspaceContext),
       conns: new Map(),
-      union: new Set(),
       sub: undefined,
     };
     this.bySession.set(sessionId, sw);
@@ -220,15 +218,10 @@ export class FsWatchBridge implements IDisposable {
     for (const { paths } of sw.conns.values()) {
       for (const p of paths) union.add(p);
     }
-    sw.union = union;
     sw.fsWatch.setWatchedPaths([...union]);
     if (union.size > 0 && sw.sub === undefined) {
       sw.sub = sw.fsWatch.onDidChangeFiles((ev) => this.onSessionEvent(sw.id, ev));
     }
-  }
-
-  private teardownSession(sw: SessionWatch): void {
-    this.dropSession(sw, 'teardown');
   }
 
   private releaseSession(sessionId: string): void {

@@ -226,7 +226,6 @@ export class MiniDb<V = unknown> {
   private walTail: { dev: number; ino: number; size: number } | null = null;
   readOnly = false;
   private lock: LockFile | null = null;
-  private lockLossError: LockError | null = null;
 
   compactThresholdBytes = 64 * 1024 * 1024;
   autoCompact = true;
@@ -287,9 +286,7 @@ export class MiniDb<V = unknown> {
 
     db.readOnly = !!opts.readOnly;
     if (!db.readOnly) {
-      db.lock = new LockFile(path.join(db.dir, 'db.lock'), {
-        onLost: () => db.markLockLost(),
-      });
+      db.lock = new LockFile(path.join(db.dir, 'db.lock'));
       const got = await db.lock.acquire();
       if (!got) {
         if (opts.onLockFail === 'readonly') {
@@ -1661,11 +1658,5 @@ export class MiniDb<V = unknown> {
   private ensureWritable(): void {
     if (this.readOnly) throw new Error('MiniDb is open in read-only mode');
     this.lock?.assertHeld();
-    if (this.lockLossError !== null) throw this.lockLossError;
-  }
-
-  private markLockLost(): void {
-    if (this.lockLossError !== null) return;
-    this.lockLossError = new LockError(`database write lock was lost: ${this.dir}`);
   }
 }

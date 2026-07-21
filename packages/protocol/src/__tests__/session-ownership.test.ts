@@ -15,7 +15,7 @@ import {
 
 describe('sessionOwnershipPhaseSchema', () => {
   it('accepts every documented phase', () => {
-    for (const phase of ['creating', 'routable', 'holder-unresponsive', 'held-by-local-instance']) {
+    for (const phase of ['creating', 'routable', 'held-by-local-instance']) {
       expect(sessionOwnershipPhaseSchema.parse(phase)).toBe(phase);
     }
   });
@@ -37,7 +37,7 @@ describe('sessionOwnershipDetailsSchema', () => {
   });
 
   it('parses a retryable payload carrying retry_after_ms', () => {
-    const payload = { kind: 'held-by-peer', phase: 'holder-unresponsive', retry_after_ms: 1500 };
+    const payload = { kind: 'held-by-peer', phase: 'creating', retry_after_ms: 1500 };
     expect(sessionOwnershipDetailsSchema.parse(payload)).toEqual(payload);
   });
 

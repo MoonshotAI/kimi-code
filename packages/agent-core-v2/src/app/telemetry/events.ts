@@ -439,18 +439,9 @@ export interface SessionLeaseAcquiredEvent {
   session_id: string;
 }
 
-export interface SessionLeaseTakeoverEvent {
-  session_id: string;
-  previous: string;
-}
-
 export interface SessionHeldByPeerReturnedEvent {
   session_id: string;
-  phase: 'creating' | 'routable' | 'holder-unresponsive' | 'held-by-local-instance';
-}
-
-export interface SessionLeaseHolderUnresponsiveEvent {
-  session_id: string;
+  phase: 'creating' | 'routable' | 'held-by-local-instance';
 }
 
 export interface SessionDirtyAbortEvent {
@@ -952,14 +943,6 @@ export const telemetryEventDefinitions = {
     comment: "This instance takes a session's write lease.",
     properties: { session_id: 'Session the lease covers' },
   }),
-  session_lease_takeover: defineTelemetryEvent<SessionLeaseTakeoverEvent>({
-    owner: 'kimi-code',
-    comment: 'Legacy stale-lease takeover event retained for telemetry schema stability.',
-    properties: {
-      session_id: 'Session the lease covers',
-      previous: 'Stale reason observed before takeover (holder-dead, pid-reused, …)',
-    },
-  }),
   session_held_by_peer_returned: defineTelemetryEvent<SessionHeldByPeerReturnedEvent>({
     owner: 'kimi-code',
     comment: 'A session materialization is refused because a peer instance holds the lease.',
@@ -967,11 +950,6 @@ export const telemetryEventDefinitions = {
       session_id: 'Session that was refused',
       phase: 'Ownership phase reported to the client (routable, creating, …)',
     },
-  }),
-  session_lease_holder_unresponsive: defineTelemetryEvent<SessionLeaseHolderUnresponsiveEvent>({
-    owner: 'kimi-code',
-    comment: 'Legacy heartbeat-liveness event retained for telemetry schema stability.',
-    properties: { session_id: 'Session whose holder is unresponsive' },
   }),
   session_dirty_abort: defineTelemetryEvent<SessionDirtyAbortEvent>({
     owner: 'kimi-code',

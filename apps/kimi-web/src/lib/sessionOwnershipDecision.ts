@@ -10,7 +10,6 @@ import type { SessionOwnershipDetails } from '../api/daemon/sessionOwnership';
 /** Notice keys under `warnings.ownership.*` for terminal (non-action) outcomes. */
 export type OwnershipNotifyKey =
   | 'creatingTimeout'
-  | 'holderUnresponsive'
   | 'heldByLocalInstance'
   | 'unregisteredWriter'
   | 'redirectSameHost'
@@ -104,9 +103,6 @@ export function decideSessionOwnershipAction(
       }
       return { type: 'redirect', url: buildPeerTargetUrl(origin, ctx.currentPath), origin };
     }
-
-    case 'holder-unresponsive':
-      return { type: 'notify', key: 'holderUnresponsive' };
 
     case 'held-by-local-instance':
       return { type: 'notify', key: 'heldByLocalInstance' };

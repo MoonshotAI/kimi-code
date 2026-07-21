@@ -58,7 +58,6 @@ export default {
     redirecting: 'This session is held by another Kimi instance — redirecting to {origin}…',
     creating: 'This session is being created on another instance. Retrying shortly…',
     creatingTimeout: 'This session is still being created on another instance. Try again in a moment.',
-    holderUnresponsive: 'The instance holding this session is not responding (it may be stuck). Try again later, or continue on that instance.',
     heldByLocalInstance: 'This session is held by another local instance without a network address (e.g. a CLI/TUI). Continue there, or close it first.',
     unregisteredWriter: 'This session’s directory is being written by an unregistered external process. Refused to open it to protect your data.',
     redirectSameHost: 'This session is already held by the current instance. Reload the page and try again.',

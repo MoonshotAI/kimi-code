@@ -12,20 +12,14 @@ export class LockError extends Error {
   }
 }
 
-export interface LockFileDeps {
-  readonly onLost?: () => void;
-}
-
 export class LockFile {
   readonly path: string;
   held = false;
 
   private handle: KernelFileLockHandle | undefined;
-  private readonly onLost: (() => void) | undefined;
 
-  constructor(path: string, deps: LockFileDeps = {}) {
+  constructor(path: string) {
     this.path = path;
-    this.onLost = deps.onLost;
   }
 
   async acquire(): Promise<boolean> {
@@ -66,6 +60,5 @@ export class LockFile {
     const handle = this.handle;
     this.handle = undefined;
     handle?.release();
-    this.onLost?.();
   }
 }

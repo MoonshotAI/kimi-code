@@ -219,10 +219,7 @@ describe('decideSessionOwnershipAction', () => {
     ).toEqual({ type: 'notify', key: 'creatingTimeout' });
   });
 
-  it('holder-unresponsive and held-by-local-instance → terminal notices', () => {
-    expect(
-      decideSessionOwnershipAction({ kind: 'held-by-peer', phase: 'holder-unresponsive' }, makeCtx()),
-    ).toEqual({ type: 'notify', key: 'holderUnresponsive' });
+  it('held-by-local-instance → terminal notice', () => {
     expect(
       decideSessionOwnershipAction({ kind: 'held-by-peer', phase: 'held-by-local-instance' }, makeCtx()),
     ).toEqual({ type: 'notify', key: 'heldByLocalInstance' });

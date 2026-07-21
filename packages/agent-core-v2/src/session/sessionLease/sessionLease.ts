@@ -40,7 +40,6 @@ export const LEASE_CREATING_RETRY_AFTER_MS = 1000;
 export type SessionOwnershipPhase =
   | 'creating'
   | 'routable'
-  | 'holder-unresponsive'
   | 'held-by-local-instance';
 
 export type HeldByPeerDetails = {

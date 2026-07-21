@@ -10,19 +10,13 @@
  *
  *   - creating                kernel lock held before owner metadata is visible; retry shortly
  *   - routable                holder is live and registered an address; client may redirect
- *   - holder-unresponsive     legacy heartbeat-based server response; retry later
  *   - held-by-local-instance  holder has no address (local/embedded engine); terminal, do not retry
- *
- * Current kernel-lock servers emit `creating`, `routable`, or
- * `held-by-local-instance`. `holder-unresponsive` remains in the wire schema
- * so current clients can still understand older servers.
  */
 import { z } from 'zod';
 
 export const sessionOwnershipPhaseSchema = z.enum([
   'creating',
   'routable',
-  'holder-unresponsive',
   'held-by-local-instance',
 ]);
 export type SessionOwnershipPhase = z.infer<typeof sessionOwnershipPhaseSchema>;
@@ -32,7 +26,7 @@ export const heldByPeerDetailsSchema = z.object({
   phase: sessionOwnershipPhaseSchema,
   /** Present only when phase === 'routable'. */
   address: z.string().optional(),
-  /** Retry hint (ms) for `creating` or legacy `holder-unresponsive`. */
+  /** Retry hint (ms) for `creating`. */
   retry_after_ms: z.number().int().nonnegative().optional(),
 });
 export type HeldByPeerDetails = z.infer<typeof heldByPeerDetailsSchema>;

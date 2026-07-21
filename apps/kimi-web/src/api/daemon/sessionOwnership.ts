@@ -9,7 +9,6 @@
 // Wire semantics (from the protocol schema):
 //   - creating                lease file observed mid-creation; retry shortly
 //   - routable                holder is live and registered an address; redirect
-//   - holder-unresponsive     legacy heartbeat-based server response; retry later
 //   - held-by-local-instance  holder has no address (local/embedded); terminal
 //   - unregistered-writer     session dir written by an unregistered process
 
@@ -21,7 +20,6 @@ export const SESSION_HELD_BY_PEER_CODE = 40921;
 export type SessionOwnershipPhase =
   | 'creating'
   | 'routable'
-  | 'holder-unresponsive'
   | 'held-by-local-instance';
 
 export interface HeldByPeerDetails {
@@ -29,7 +27,7 @@ export interface HeldByPeerDetails {
   phase: SessionOwnershipPhase;
   /** Present only when phase === 'routable'. */
   address?: string;
-  /** Retry hint (ms) for 'creating' / 'holder-unresponsive'. */
+  /** Retry hint (ms) for 'creating'. */
   retry_after_ms?: number;
 }
 
@@ -42,7 +40,6 @@ export type SessionOwnershipDetails = HeldByPeerDetails | UnregisteredWriterDeta
 const PHASES: ReadonlySet<SessionOwnershipPhase> = new Set([
   'creating',
   'routable',
-  'holder-unresponsive',
   'held-by-local-instance',
 ]);
 
