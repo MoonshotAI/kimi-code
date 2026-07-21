@@ -169,7 +169,7 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       operationId: 'fsContent',
     },
     async (req, reply) => {
-      return await handleFsContent(core, req, reply as unknown as FsContentReply);
+      return handleFsContent(core, req, reply as unknown as FsContentReply);
     },
   );
   app.get(
@@ -197,7 +197,7 @@ async function handleFsContent(
   core: Scope,
   req: FsContentRequest,
   reply: FsContentReply,
-): Promise<unknown> {
+): Promise<void> {
   const requestId = req.id;
   const { path } = req.query;
   if (!isAbsolute(path)) {
@@ -268,13 +268,13 @@ async function handleFsContent(
       .header('content-range', `bytes ${range.start}-${range.end}/${st.size}`);
     const stream = createReadStream(abs, { start: range.start, end: range.end });
     stream.on('error', onStreamError(stream));
-    return reply.send(stream);
+    return reply.send(stream) as unknown as void;
   }
 
   reply.code(200).header('content-length', String(st.size));
   const stream = createReadStream(abs);
   stream.on('error', onStreamError(stream));
-  return reply.send(stream);
+  return reply.send(stream) as unknown as void;
 }
 
 /** Map a coded `os.fs.*` failure from `IHostFileSystem` onto the wire codes. */
