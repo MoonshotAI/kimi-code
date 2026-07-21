@@ -17,10 +17,12 @@ import {
   type DomainEvent,
   IAgentGoalService,
   IAgentLifecycleService,
+  ICrossProcessLockService,
   IEventBus,
   IEventService,
   ISessionLifecycleService,
   MAIN_AGENT_ID,
+  sessionLeasePath,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -365,14 +367,35 @@ describe('server-v2 /api/v1/sessions', () => {
       held_by: 'self',
     });
 
-    // Releasing the materialized scope drops the lease: the session is now
-    // owned by NO instance, and the join must show it.
     await (server as RunningServer).core.accessor.get(ISessionLifecycleService).close(id);
 
     const after = await getJson<PageWire>('/api/v1/sessions');
     expect(after.body.data.items.find((s) => s.id === id)?.ownership).toEqual({
       held_by: 'none',
     });
+  });
+
+  it('joins the lease into ownership: peer with address when another instance holds it', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    await (server as RunningServer).core.accessor.get(ISessionLifecycleService).close(id);
+
+    // Simulate a peer instance: with no local live scope, any held lease
+    // classifies as 'peer' and the owner metadata's address is joined in.
+    const locks = (server as RunningServer).core.accessor.get(ICrossProcessLockService);
+    const peer = await locks.acquire(sessionLeasePath(home as string, id), {
+      address: 'http://127.0.0.1:59999',
+    });
+    try {
+      const listed = await getJson<PageWire>('/api/v1/sessions');
+      expect(listed.body.data.items.find((s) => s.id === id)?.ownership).toEqual({
+        held_by: 'peer',
+        address: 'http://127.0.0.1:59999',
+      });
+    } finally {
+      peer.release();
+    }
   });
 
   it('supports exclude_empty when listing sessions', async () => {

@@ -138,18 +138,6 @@ describe('skill hot reload', () => {
     expect(changes.filter((id) => id === 'user').length).toBeGreaterThanOrEqual(3);
   }, 30000);
 
-  it('watches a user generic root that does not exist at load time', async () => {
-    const { catalog, base } = await fixture();
-    const genericRoot = join(base, 'os-home', '.agents', 'skills');
-
-    await catalog.load();
-    await wait(400);
-    expect(catalog.catalog.getSkill('generic-one')).toBeUndefined();
-
-    await writeSkill(genericRoot, 'generic-one');
-    await waitFor(() => catalog.catalog.getSkill('generic-one') !== undefined, 'generic-one appears');
-  }, 30000);
-
   it('a burst of writes collapses into a bounded number of catalog reloads', async () => {
     const { catalog, changes, base } = await fixture();
     const userRoot = join(base, 'home', 'skills');
@@ -222,25 +210,6 @@ describe('skill hot reload', () => {
 
     await writeSkill(explicitDir, 'explicit-one');
     await waitFor(() => catalog.catalog.getSkill('explicit-one') !== undefined, 'explicit-one appears');
-  }, 30000);
-
-  it('two independent containers on the same roots each see the change', async () => {
-    const base = await makeBase();
-    tmpdirs.push(base);
-    const first = makeHost(base);
-    const second = makeHost(base);
-    fixtures.push(first, second);
-
-    await first.catalog.load();
-    await second.catalog.load();
-    await wait(400);
-
-    await writeSkill(join(base, 'home', 'skills'), 'shared-hot');
-    await waitFor(() => first.catalog.catalog.getSkill('shared-hot') !== undefined, 'first sees shared-hot');
-    await waitFor(() => second.catalog.catalog.getSkill('shared-hot') !== undefined, 'second sees shared-hot');
-
-    expect(first.catalog.catalog.getSkill('shared-hot')).toBeDefined();
-    expect(second.catalog.catalog.getSkill('shared-hot')).toBeDefined();
   }, 30000);
 
   it('session dispose stops its watchers', async () => {

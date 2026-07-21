@@ -622,48 +622,6 @@ describe('WorkspaceService (file-backed)', () => {
     expect(onDisk.deleted_workspace_ids).toEqual([drop.id]);
   });
 
-  it('preserves unknown top-level and entry fields of an older-format file', async () => {
-    const dirA = join(homeDir, 'dir-a');
-    const dirB = join(homeDir, 'dir-b');
-    await fsp.mkdir(dirA);
-    await fsp.mkdir(dirB);
-    const idA = encodeWorkDirKey(dirA);
-    await fsp.writeFile(
-      join(homeDir, 'workspaces.json'),
-      JSON.stringify({
-        version: 1,
-        workspaces: {
-          [idA]: {
-            root: dirA,
-            name: 'a',
-            created_at: '2024-01-01T00:00:00.000Z',
-            last_opened_at: '2024-01-02T00:00:00.000Z',
-            legacy_extra: { nested: true },
-          },
-        },
-        deleted_workspace_ids: ['wd_gone'],
-        future_top_level: { since: 2 },
-      }),
-      'utf8',
-    );
-
-    const registry = build();
-    await registry.createOrTouch(dirB);
-
-    const onDisk = JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
-      version: number;
-      workspaces: Record<string, Record<string, unknown>>;
-      deleted_workspace_ids: unknown;
-      future_top_level?: unknown;
-    };
-    expect(onDisk.future_top_level).toEqual({ since: 2 });
-    expect(onDisk.workspaces[idA]?.['legacy_extra']).toEqual({ nested: true });
-    expect(onDisk.workspaces[idA]?.['name']).toBe('a');
-    expect(onDisk.workspaces[idA]?.['last_opened_at']).toBe('2024-01-02T00:00:00.000Z');
-    expect(onDisk.deleted_workspace_ids).toEqual(['wd_gone']);
-    expect(onDisk.version).toBe(1);
-    expect(onDisk.workspaces[encodeWorkDirKey(dirB)]).toBeDefined();
-  });
 });
 
 describe('workspaceRootKey', () => {

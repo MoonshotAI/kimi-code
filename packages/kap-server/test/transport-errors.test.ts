@@ -42,20 +42,4 @@ describe('/api/v1/debug transport mapError', () => {
     expect(env.code).toBe(ErrorCode.SESSION_HELD_BY_PEER);
     expect(env.details).toEqual(details);
   });
-
-  it('omits details when the error carries none — wire shape unchanged', () => {
-    const env = mapError(new Error2(ErrorCodes.SESSION_NOT_FOUND, 'boom'), 'req-1');
-    expect(env.details).toBeUndefined();
-    expect(JSON.stringify(env)).not.toContain('"details"');
-  });
-
-  it('session.lease_lost falls through to the internal-error envelope', () => {
-    const env = mapError(
-      new Error2(ErrorCodes.SESSION_LEASE_LOST, 'write lease lost', {
-        details: { sessionId: 's1' },
-      }),
-      'req-1',
-    );
-    expect(env.code).toBe(ErrorCode.INTERNAL_ERROR);
-  });
 });

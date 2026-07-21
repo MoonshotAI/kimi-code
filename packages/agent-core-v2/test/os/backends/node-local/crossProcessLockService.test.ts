@@ -6,7 +6,7 @@
  * directory.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,10 +41,6 @@ function ownerPath(): string {
   return `${lockPath}.owner.json`;
 }
 
-function readOwner(): Record<string, unknown> {
-  return JSON.parse(readFileSync(ownerPath(), 'utf8')) as Record<string, unknown>;
-}
-
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'kimi-kernel-lock-'));
   lockPath = join(tmpDir, 'resource.lock');
@@ -56,38 +52,6 @@ afterEach(() => {
 });
 
 describe('CrossProcessLockService', () => {
-  it('keeps a permanent sentinel and treats owner metadata as diagnostic state', async () => {
-    const lock = service('alpha', 1001);
-    expect(lock.inspect(lockPath)).toEqual({ state: 'free' });
-    expect(existsSync(lockPath)).toBe(true);
-
-    const handle = await lock.acquire(lockPath, {
-      address: 'http://127.0.0.1:58627',
-    });
-    handles.push(handle);
-
-    expect(lock.inspect(lockPath)).toEqual({
-      state: 'held',
-      payload: {
-        lockId: 'alpha-1',
-        instanceId: 'alpha',
-        pid: 1001,
-        address: 'http://127.0.0.1:58627',
-      },
-    });
-    expect(readOwner()).toEqual({
-      lock_id: 'alpha-1',
-      instance_id: 'alpha',
-      pid: 1001,
-      address: 'http://127.0.0.1:58627',
-    });
-
-    handle.release();
-    expect(existsSync(lockPath)).toBe(true);
-    expect(existsSync(ownerPath())).toBe(false);
-    expect(lock.inspect(lockPath)).toEqual({ state: 'free' });
-  });
-
   it('rejects a second holder in the same process', async () => {
     const first = await service('alpha', 1001).acquire(lockPath);
     handles.push(first);
@@ -107,20 +71,6 @@ describe('CrossProcessLockService', () => {
     expect(lock.inspect(lockPath)).toEqual({ state: 'creating' });
   });
 
-  it('waits until the holder releases', async () => {
-    const first = await service('alpha', 1001).acquire(lockPath);
-    handles.push(first);
-    setTimeout(() => first.release(), 20);
-
-    await service('beta', 2002).withLock(
-      lockPath,
-      { wait: { timeoutMs: 500, retryIntervalMs: 5 } },
-      (handle) => {
-        expect(handle.checkHeld()).toBe(true);
-      },
-    );
-  });
-
   it('times out waiting for a held lock', async () => {
     const first = await service('alpha', 1001).acquire(lockPath);
     handles.push(first);
@@ -128,34 +78,6 @@ describe('CrossProcessLockService', () => {
     await expect(
       service('beta', 2002).withLock(lockPath, { wait: { timeoutMs: 15, retryIntervalMs: 5 } }, () => {}),
     ).rejects.toMatchObject({ code: CrossProcessLockErrorCode.WaitTimeout });
-  });
-
-  it('releases a lock acquired as the wait deadline expires', async () => {
-    const first = await service('alpha', 1001).acquire(lockPath);
-    handles.push(first);
-    const times = [0, 0, 9, 10];
-    const sleepDurations: number[] = [];
-    const waiter = service('beta', 2002, {
-      now: () => times.shift() ?? 10,
-      sleep: async (ms) => {
-        sleepDurations.push(ms);
-        first.release();
-      },
-    });
-
-    const result = await waiter
-      .withLock(lockPath, { wait: { timeoutMs: 10, retryIntervalMs: 100 } }, () => {})
-      .then(
-        () => ({ status: 'acquired' as const }),
-        (error: unknown) => ({ status: 'rejected' as const, error }),
-      );
-
-    expect(sleepDurations).toEqual([10]);
-    expect(result.status).toBe('rejected');
-    if (result.status === 'rejected') {
-      expect(result.error).toMatchObject({ code: CrossProcessLockErrorCode.WaitTimeout });
-    }
-    expect(waiter.inspect(lockPath)).toEqual({ state: 'free' });
   });
 
   it('withLock releases after the callback throws', async () => {

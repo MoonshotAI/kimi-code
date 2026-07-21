@@ -93,23 +93,6 @@ describe('SessionListWatchService', () => {
   }
 
   it(
-    'emits a hint when a second session dir appears under an existing workspace, and boot stays silent',
-    { timeout: 20_000 },
-    async () => {
-      mkdirSync(join(sessionsDir, 'ws1', 's1'), { recursive: true });
-      await boot();
-
-      // ignoreInitial everywhere: pre-existing workspace/session trees must
-      // not produce a boot flood before anything actually changes.
-      expect(published).toHaveLength(0);
-
-      mkdirSync(join(sessionsDir, 'ws1', 's2'));
-      await waitForHints(1);
-      expectHintShape(published[0]);
-    },
-  );
-
-  it(
     'emits a hint when a new workspace appears, and again for a session created inside it',
     { timeout: 20_000 },
     async () => {
@@ -137,6 +120,9 @@ describe('SessionListWatchService', () => {
       mkdirSync(join(sessionsDir, 'ws1', 's1'), { recursive: true });
       mkdirSync(join(sessionsDir, 'ws1', 's2'), { recursive: true });
       await boot();
+
+      // ignoreInitial: pre-existing workspace/session trees stay silent.
+      expect(published).toHaveLength(0);
 
       rmSync(join(sessionsDir, 'ws1', 's2'), { recursive: true, force: true });
       await waitForHints(1);

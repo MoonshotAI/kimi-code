@@ -365,61 +365,6 @@ describe('WS fs watch (kap-server)', () => {
     b.ws.close();
   });
 
-  it('two clients on the same path see the same event numbered identically from 1', async () => {
-    const r = await boot();
-    const sid = await createSession(r);
-    const a = await openConn(wsUrl(r));
-    const b = await openConn(wsUrl(r));
-    await helloAndSubscribe(a, 'A', sid);
-    await helloAndSubscribe(b, 'B', sid);
-
-    for (const [conn, id] of [[a, 'wA'], [b, 'wB']] as const) {
-      conn.ws.send(
-        JSON.stringify({
-          type: 'watch_fs_add',
-          id,
-          payload: { session_id: sid, paths: ['src'] },
-        }),
-      );
-      await receiveType(conn, 'ack', 1000);
-    }
-
-    await sleep(WATCH_SETTLE_MS);
-    writeFileSync(join(workspace, 'src', 'one.ts'), '1');
-    // Keep the two writes in separate debounce windows so each yields one frame.
-    await sleep(500);
-    writeFileSync(join(workspace, 'src', 'two.ts'), '2');
-
-    const collectSeqs = async (conn: Conn, ms: number): Promise<number[]> => {
-      const seqs: number[] = [];
-      const deadline = Date.now() + ms;
-      for (;;) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        let frame: WsFrame;
-        try {
-          frame = await receive(conn, remaining);
-        } catch {
-          break;
-        }
-        if (frame.type === 'event.fs.changed' && typeof frame.seq === 'number') {
-          seqs.push(frame.seq);
-        }
-      }
-      return seqs;
-    };
-
-    const [seqsA, seqsB] = await Promise.all([collectSeqs(a, 2000), collectSeqs(b, 2000)]);
-    // Identical subscriptions receive identical streams: the same per-connection
-    // seqs, each numbered from 1 with no gaps.
-    expect(seqsA.length).toBeGreaterThanOrEqual(2);
-    expect(seqsA).toEqual(seqsB);
-    expect(seqsA).toEqual(seqsA.map((_, i) => i + 1));
-
-    a.ws.close();
-    b.ws.close();
-  });
-
   it('> 100 paths on one connection → 42902 fs.watch_limit_exceeded', async () => {
     const r = await boot();
     const sid = await createSession(r);

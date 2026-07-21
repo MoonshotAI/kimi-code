@@ -5,13 +5,9 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  setKernelFileLockBindingLoader,
-  tryAcquireKernelFileLock,
-  type KernelFileLockHandle,
-} from '../src/index.js';
+import { tryAcquireKernelFileLock, type KernelFileLockHandle } from '../src/index.js';
 
 let tmpDir: string;
 let lockPath: string;
@@ -36,8 +32,6 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const handle of handles.splice(0)) handle.release();
-  setKernelFileLockBindingLoader(undefined);
-  vi.restoreAllMocks();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -89,5 +83,29 @@ describe('kernel-file-lock', () => {
         }
       }
     }
+  });
+
+  it('releases the lock when the holder process is killed without releasing', async () => {
+    const holderPath = fileURLToPath(new URL('./holder.ts', import.meta.url));
+    const child = spawn(process.execPath, ['--import', 'tsx', holderPath, lockPath], {
+      stdio: ['pipe', 'pipe', 'inherit'],
+    });
+    const exit = once(child, 'exit');
+    void exit.catch(() => {});
+    const ready = Promise.race([
+      once(child.stdout!, 'data'),
+      exit.then(() => {
+        throw new Error('holder exited before becoming ready');
+      }),
+    ]);
+    await withTimeout(ready, 5_000, 'holder did not become ready');
+    expect(tryAcquireKernelFileLock(lockPath)).toBeUndefined();
+
+    // No clean release: the kernel must drop the lock with the dead process.
+    child.kill('SIGKILL');
+    await withTimeout(exit, 5_000, 'holder did not exit after SIGKILL');
+    const handle = tryAcquireKernelFileLock(lockPath);
+    expect(handle).toBeDefined();
+    handles.push(handle!);
   });
 });

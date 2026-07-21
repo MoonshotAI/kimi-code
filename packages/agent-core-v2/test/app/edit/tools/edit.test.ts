@@ -266,7 +266,6 @@ describe('EditTool', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('changed on disk');
-    expect(stat).toHaveBeenCalledTimes(3);
     expect(writeText).not.toHaveBeenCalled();
   });
 

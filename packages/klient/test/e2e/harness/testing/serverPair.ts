@@ -2,10 +2,6 @@
  * In-process dual-instance boot: two `kap-server` instances sharing ONE home
  * directory inside the current (test) process.
  *
- * Use this by default for multi-server e2e cases; reach for
- * `spawnServerProcess` instead only when the case is signal-sensitive
- * (SIGSTOP / SIGKILL need real, distinct pids).
- *
  * One hard requirement this helper encapsulates: both instances must bind
  * `port: 0` (OS-assigned) — a fixed busy port silently walks to `port + 1`,
  * which breaks assertions on the registry.
@@ -23,65 +19,34 @@ import { join } from 'node:path';
 import type { RunningServer } from '@moonshot-ai/kap-server';
 
 import { HttpClient } from '../http.js';
-import { RM_HOME_OPTIONS } from './serverProcess.js';
 
-export interface ServerPairOptions {
-  /** Shared home for both instances. Created via `mkdtemp` when omitted. */
-  readonly home?: string;
-  /**
-   * Boot both servers with `disableAuth` (no bearer-token hook). Default
-   * `true`; when `false`, `connectClient` attaches the per-instance token
-   * from `server.authTokenService.getToken()`.
-   */
-  readonly disableAuth?: boolean;
-  /** Extra env vars patched around both boots (restored afterwards). */
-  readonly env?: Record<string, string>;
-  /**
-   * The shared workspace cwd for sessions created against the pair. "Same
-   * cwd" is a session-level concept — pass this as `metadata.cwd` in
-   * `createSession` on both instances. Defaults to the pair home.
-   */
-  readonly cwd?: string;
-}
+// `recursive` rm can hit ENOTEMPTY on macOS while the closing server is still
+// flushing/unlinking its own files — retry briefly.
+const RM_HOME_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
 
 export interface ServerPair {
   readonly a: RunningServer;
   readonly b: RunningServer;
   readonly home: string;
-  /** Shared workspace cwd — see `ServerPairOptions.cwd`. */
+  /**
+   * The shared workspace cwd for sessions created against the pair (always
+   * the pair home). "Same cwd" is a session-level concept — pass this as
+   * `metadata.cwd` in `createSession` on both instances.
+   */
   readonly cwd: string;
   /** Base URL of instance `a` (`http://host:port`). */
   readonly urlA: string;
   /** Base URL of instance `b` (`http://host:port`). */
   readonly urlB: string;
-  baseUrl(server: RunningServer): string;
-  /**
-   * Authed REST client for one instance: bearer token attached unless the
-   * pair booted with `disableAuth`.
-   */
+  /** REST client for one instance (the pair always boots with `disableAuth`). */
   connectClient(server: RunningServer): HttpClient;
-  /**
-   * Close both instances (idempotent, best-effort), restore the pre-boot env,
-   * and remove the home directory if this helper created it.
-   */
+  /** Close both instances (idempotent, best-effort) and remove the home. */
   dispose(): Promise<void>;
 }
 
-export async function startServerPair(options: ServerPairOptions = {}): Promise<ServerPair> {
-  const home = options.home ?? (await mkdtemp(join(tmpdir(), 'kimi-e2e-pair-')));
-  const ownsHome = options.home === undefined;
-  const disableAuth = options.disableAuth ?? true;
-  const envPatch: Record<string, string> = { ...options.env };
-  const savedEnv = saveEnv(envPatch);
-  let envRestored = false;
-  const restoreEnv = (): void => {
-    if (envRestored) return;
-    envRestored = true;
-    restoreSavedEnv(savedEnv);
-  };
-
+export async function startServerPair(): Promise<ServerPair> {
+  const home = await mkdtemp(join(tmpdir(), 'kimi-e2e-pair-'));
   try {
-    applyEnv(envPatch);
     const { startServer } = await import('@moonshot-ai/kap-server');
     const boot = (): Promise<RunningServer> =>
       startServer({
@@ -89,7 +54,7 @@ export async function startServerPair(options: ServerPairOptions = {}): Promise<
         port: 0,
         homeDir: home,
         logLevel: 'silent',
-        disableAuth,
+        disableAuth: true,
       });
     const a = await boot();
     let b: RunningServer;
@@ -106,21 +71,18 @@ export async function startServerPair(options: ServerPairOptions = {}): Promise<
       a,
       b,
       home,
-      cwd: options.cwd ?? home,
+      cwd: home,
       urlA: baseUrl(a),
       urlB: baseUrl(b),
-      baseUrl,
       connectClient: (server) =>
         new HttpClient({
           baseUrl: baseUrl(server),
           apiPrefix: '/api/v1',
           fetchImpl: fetch,
-          token: disableAuth ? undefined : server.authTokenService.getToken(),
         }),
       dispose: async () => {
         if (disposed) return;
         disposed = true;
-        restoreEnv();
         // Best-effort: a failed close must not mask the other instance's
         // teardown, but it also must not disappear silently.
         const results = await Promise.allSettled([a.close(), b.close()]);
@@ -134,40 +96,11 @@ export async function startServerPair(options: ServerPairOptions = {}): Promise<
             );
           }
         }
-        if (ownsHome) {
-          await rm(home, RM_HOME_OPTIONS);
-        }
+        await rm(home, RM_HOME_OPTIONS);
       },
     };
   } catch (error) {
-    restoreEnv();
-    if (ownsHome) {
-      await rm(home, RM_HOME_OPTIONS);
-    }
+    await rm(home, RM_HOME_OPTIONS);
     throw error;
-  }
-}
-
-function saveEnv(patch: Record<string, string>): Map<string, string | undefined> {
-  const saved = new Map<string, string | undefined>();
-  for (const key of Object.keys(patch)) {
-    saved.set(key, process.env[key]);
-  }
-  return saved;
-}
-
-function applyEnv(patch: Record<string, string>): void {
-  for (const [key, value] of Object.entries(patch)) {
-    process.env[key] = value;
-  }
-}
-
-function restoreSavedEnv(saved: Map<string, string | undefined>): void {
-  for (const [key, value] of saved) {
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
   }
 }

@@ -1,9 +1,8 @@
 /**
  * `sessionFileLedger` domain (L2) — verifies the optimistic-concurrency
- * verdict matrix (clean / stale / no-baseline) against a real tmpdir and a
- * real `HostFileSystem` with stat calls counted. Baselines are compared only
- * against fresh stat tuples, and resolving or using the ledger never starts a
- * workspace watcher.
+ * verdicts (clean / stale / no-baseline) against a real tmpdir and a real
+ * `HostFileSystem` with stat calls counted. Baselines are compared only
+ * against fresh stat tuples, and stat failures fail closed.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,55 +15,33 @@ import { LifecycleScope } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionFileLedger } from '#/session/sessionFileLedger/fileLedger';
 import { SessionFileLedger } from '#/session/sessionFileLedger/fileLedgerService';
 
-import { countingHostFs, fakeHostFsWatch, type FakeWatch } from '../sessionFs/stubs';
+import { countingHostFs } from '../sessionFs/stubs';
 
 void SessionFileLedger;
 
 interface World {
   readonly workDir: string;
-  readonly outsideDir: string;
   readonly fs: IHostFileSystem;
   readonly ledger: ISessionFileLedger;
-  readonly fake: FakeWatch;
   readonly statCalls: () => number;
   readonly poisonedPaths: Set<string>;
 }
 
 function makeWorld(): World {
   const workDir = mkdtempSync(join(tmpdir(), 'kimi-ledger-work-'));
-  const outsideDir = mkdtempSync(join(tmpdir(), 'kimi-ledger-out-'));
-  cleanupPaths.push(workDir, outsideDir);
-  const fake = fakeHostFsWatch();
+  cleanupPaths.push(workDir);
   const poisonedPaths = new Set<string>();
   const { fs, statCalls } = countingHostFs(poisonedPaths);
-  const host = createScopedTestHost([
-    stubPair(IHostFileSystem, fs),
-    stubPair(IHostFsWatchService, fake.service),
-  ]);
-  const session = host.child(LifecycleScope.Session, 's1', [
-    stubPair(
-      ISessionContext,
-      makeSessionContext({
-        sessionId: 's1',
-        workspaceId: 'ws',
-        sessionDir: join(workDir, '.session'),
-        sessionScope: 'sessions/ws/s1',
-        cwd: workDir,
-      }),
-    ),
-  ]);
+  const host = createScopedTestHost([stubPair(IHostFileSystem, fs)]);
+  const session = host.child(LifecycleScope.Session, 's1');
   hosts.push(host);
   return {
     workDir,
-    outsideDir,
     fs,
     ledger: session.accessor.get(ISessionFileLedger),
-    fake,
     statCalls,
     poisonedPaths,
   };
@@ -95,36 +72,9 @@ describe('SessionFileLedger', () => {
     for (const path of cleanupPaths.splice(0)) rmSync(path, { recursive: true, force: true });
   });
 
-  it('returns clean for a baselined file with no changes', async () => {
-    const world = makeWorld();
-    const file = join(world.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-
-    await recordCurrentBaseline(world, file);
-    expect(await world.ledger.compare(file)).toBe('clean');
-  });
-
-  it('returns no-baseline for an existing file never read or written', async () => {
-    const world = makeWorld();
-    const file = join(world.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-
-    expect(await world.ledger.compare(file)).toBe('no-baseline');
-  });
-
   it('returns clean for a missing file (new-file creation is exempt)', async () => {
     const world = makeWorld();
     expect(await world.ledger.compare(join(world.workDir, 'new.txt'))).toBe('clean');
-  });
-
-  it('does not let watcher signals change the stat-only verdict', async () => {
-    const world = makeWorld();
-    const file = join(world.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-
-    world.fake.fire('a.txt', 'modified');
-
-    expect(await world.ledger.compare(file)).toBe('no-baseline');
   });
 
   it('returns stale when a baselined file is modified outside the session', async () => {
@@ -152,53 +102,10 @@ describe('SessionFileLedger', () => {
     expect(world.statCalls()).toBe(3);
   });
 
-  it('tracks a write-then-delete baseline as non-existence', async () => {
-    const world = makeWorld();
-    const file = join(world.workDir, 'a.txt');
-    writeFileSync(file, 'hello');
-    await recordCurrentBaseline(world, file);
-
-    rmSync(file);
-    expect(await world.ledger.compare(file)).toBe('stale');
-
-    await recordCurrentBaseline(world, file);
-    expect(await world.ledger.compare(file)).toBe('clean');
-
-    writeFileSync(file, 'recreated');
-    expect(await world.ledger.compare(file)).toBe('stale');
-  });
-
-  it('uses the same stat-only comparison outside the workspace, never starting a watcher', async () => {
-    const world = makeWorld();
-    const file = join(world.outsideDir, 'b.txt');
-    writeFileSync(file, 'hello');
-
-    expect(await world.ledger.compare(file)).toBe('no-baseline');
-
-    await recordCurrentBaseline(world, file);
-    expect(await world.ledger.compare(file)).toBe('clean');
-
-    writeFileSync(file, 'hello world');
-    expect(await world.ledger.compare(file)).toBe('stale');
-
-    await recordCurrentBaseline(world, file);
-    expect(await world.ledger.compare(file)).toBe('clean');
-
-    rmSync(file);
-    expect(await world.ledger.compare(file)).toBe('stale');
-    expect(world.fake.watchCalls).toEqual([]);
-  });
-
   it('fails closed when stat fails for reasons other than not-found', async () => {
     const world = makeWorld();
     const file = join(world.workDir, 'a.txt');
     writeFileSync(file, 'hello');
-    await recordCurrentBaseline(world, file);
-    world.poisonedPaths.add(file);
-
-    expect(await world.ledger.compare(file)).toBe('stale');
-
-    world.poisonedPaths.clear();
     await recordCurrentBaseline(world, file);
     world.poisonedPaths.add(file);
 

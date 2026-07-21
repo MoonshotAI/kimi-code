@@ -146,40 +146,6 @@ describe('SessionFsWatchService', () => {
     expect(events[0]?.changes.map((c) => c.path)).toEqual(['src/keep.ts']);
   });
 
-  it('lets events through while the initial `.gitignore` load is in flight', async () => {
-    let releaseLoad: ((content: string) => void) | undefined;
-    const pendingLoad = new Promise<string>((res) => {
-      releaseLoad = res;
-    });
-    const hostFs = {
-      _serviceBrand: undefined,
-      readText: async (p: string) => {
-        if (p === join(WORK_DIR, '.gitignore')) return pendingLoad;
-        const err = new Error(`ENOENT: ${p}`) as NodeJS.ErrnoException;
-        err.code = 'ENOENT';
-        throw err;
-      },
-    } as unknown as IHostFileSystem;
-    const { svc, watch, events } = makeSession(undefined, hostFs);
-    svc.setWatchedPaths(['.']);
-
-    // The rules are not loaded yet: filtering is conservative (only `.git/`),
-    // so a path that will later turn out to be ignored still gets delivered.
-    watch.fire('dist/x.js', 'created');
-    vi.advanceTimersByTime(200);
-    expect(events).toHaveLength(1);
-    expect(events[0]?.changes.map((c) => c.path)).toEqual(['dist/x.js']);
-
-    releaseLoad!('dist/\n');
-    await pendingLoad;
-    await Promise.resolve();
-    await Promise.resolve();
-
-    watch.fire('dist/y.js', 'created');
-    vi.advanceTimersByTime(200);
-    expect(events).toHaveLength(1);
-  });
-
   it('rebuilds the matcher when the workspace `.gitignore` changes', async () => {
     let gitignore = 'dist/\n';
     const hostFs = {

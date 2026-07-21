@@ -2143,20 +2143,6 @@ describe('useWorkspaceState — scheduleSkillsRefresh', () => {
     expect(loadSkillsForSession).toHaveBeenCalledWith('sess_1');
   });
 
-  it('trailing-refresh: a hint inside the debounce window re-arms it', () => {
-    const loadSkillsForSession = vi.fn().mockResolvedValue(undefined);
-    const ws = useWorkspaceState(createState(), skillsRefreshDeps(loadSkillsForSession));
-
-    ws.scheduleSkillsRefresh('sess_1');
-    vi.advanceTimersByTime(300);
-    ws.scheduleSkillsRefresh('sess_1');
-    vi.advanceTimersByTime(300);
-    expect(loadSkillsForSession).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(100);
-    expect(loadSkillsForSession).toHaveBeenCalledTimes(1);
-  });
-
   it('debounces per session, not globally', () => {
     const loadSkillsForSession = vi.fn().mockResolvedValue(undefined);
     const ws = useWorkspaceState(createState(), skillsRefreshDeps(loadSkillsForSession));

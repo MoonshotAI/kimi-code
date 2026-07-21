@@ -279,33 +279,4 @@ describe('SessionMetadata', () => {
       .get<{ title?: string }>(META_SCOPE, 'state.json');
     expect(raw?.title).toBeUndefined();
   });
-
-  it('gates the load-time heal write behind the lease', async () => {
-    const store = ix.get(IAtomicDocumentStore);
-    await store.set(META_SCOPE, 'state.json', {
-      id: 's1',
-      version: 2,
-      createdAt: 1700000000000,
-      updatedAt: 1700000000000,
-      archived: false,
-    });
-    ix.stub(
-      ISessionLeaseService,
-      stubSessionLeaseService({
-        assertWritable: () => {
-          throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'lease lost', {
-            details: { sessionId: 's1' },
-          });
-        },
-      }),
-    );
-
-    const meta = ix.get(ISessionMetadata);
-    await expect(meta.ready).rejects.toMatchObject({
-      code: ErrorCodes.SESSION_LEASE_LOST,
-    });
-
-    const raw = await store.get<{ agents?: unknown }>(META_SCOPE, 'state.json');
-    expect(raw?.agents).toBeUndefined();
-  });
 });

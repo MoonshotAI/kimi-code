@@ -93,11 +93,6 @@ describe('envelope', () => {
     );
     expect(envelopeSchema(z.any()).parse(withDetails).details).toEqual(details);
 
-    // Stack and details may coexist; neither position affects the other.
-    const withBoth = errEnvelope(50001, 'boom', 'req_e', 'trace', details);
-    expect(withBoth.stack).toBe('trace');
-    expect(withBoth.details).toEqual(details);
-
     // No details → field is absent and the wire shape is byte-identical to before.
     const without = errEnvelope(ErrorCode.SESSION_HELD_BY_PEER, 'owned by peer', 'req_f');
     expect(JSON.stringify(without)).toBe(

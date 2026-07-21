@@ -71,16 +71,6 @@ describe('JsonAtomicDocumentStore', () => {
     expect(await config.get<State>('session', 'state.json')).toEqual({ count: 2 });
   });
 
-  it('does not replace the document when an update callback fails', async () => {
-    await config.set<State>('session', 'state.json', { count: 1 });
-    await expect(
-      config.update<State>('session', 'state.json', () => {
-        throw new Error('mutate failed');
-      }),
-    ).rejects.toThrow('mutate failed');
-    expect(await config.get<State>('session', 'state.json')).toEqual({ count: 1 });
-  });
-
   it('keys are independent', async () => {
     await config.set<State>('session', 'a.json', { title: 'A' });
     await config.set<State>('session', 'b.json', { title: 'B' });

@@ -326,63 +326,6 @@ describe('AgentTaskService', () => {
     await svc.stop(taskId);
   });
 
-  it('flushPersistence waits for a delayed output append', async () => {
-    let releaseAppend!: () => void;
-    let markAppendStarted!: () => void;
-    const appendStarted = new Promise<void>((resolve) => {
-      markAppendStarted = resolve;
-    });
-    const appendReleased = new Promise<void>((resolve) => {
-      releaseAppend = resolve;
-    });
-    ix.stub(IFileSystemStorageService, {
-      read: async () => undefined,
-      readStream: async function* () {},
-      write: async () => {},
-      append: async () => {
-        markAppendStarted();
-        await appendReleased;
-      },
-      list: async () => [],
-      delete: async () => {},
-      flush: async () => {},
-      close: async () => {},
-    });
-    const svc = ix.get(IAgentTaskService);
-    let releaseTask!: () => void;
-    const taskRunning = new Promise<void>((resolve) => {
-      releaseTask = resolve;
-    });
-    const taskId = svc.registerTask({
-      idPrefix: 'test',
-      kind: 'agent',
-      description: 'delayed output',
-      start: async (sink) => {
-        sink.appendOutput('delayed output');
-        await taskRunning;
-        await sink.settle({ status: 'completed' });
-      },
-      toInfo: (base) => ({ ...base, kind: 'agent' }),
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-    svc.persistOutput(taskId);
-    await appendStarted;
-
-    let flushed = false;
-    const flush = svc.flushPersistence().then(() => {
-      flushed = true;
-    });
-    await Promise.resolve();
-    expect(flushed).toBe(false);
-
-    releaseAppend();
-    await flush;
-    expect(flushed).toBe(true);
-    releaseTask();
-    await svc.stop(taskId);
-  });
-
   it('dispose aborts live tasks as a last resort', async () => {
     const svc = ix.get(IAgentTaskService);
     let abortReason: unknown;

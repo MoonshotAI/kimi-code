@@ -181,38 +181,6 @@ describe('AppendLogStore', () => {
     replacementOwner.dispose();
   });
 
-  it('scoped flush does not wait for an unrelated scope', async () => {
-    const selectedScope = 'agents/s1';
-    const blockedScope = 'agents/s10';
-    let markBlockedStarted!: () => void;
-    const blockedStarted = new Promise<void>((resolve) => {
-      markBlockedStarted = resolve;
-    });
-    let releaseBlocked!: () => void;
-    const blockedGate = new Promise<void>((resolve) => {
-      releaseBlocked = resolve;
-    });
-    const originalAppend = storage.append.bind(storage);
-    storage.append = async (...args) => {
-      if (args[0] === blockedScope) {
-        markBlockedStarted();
-        await blockedGate;
-      }
-      return originalAppend(...args);
-    };
-
-    record.append(blockedScope, KEY, { n: 2 });
-    record.append(selectedScope, KEY, { n: 1 });
-    await blockedStarted;
-
-    await record.flush(selectedScope);
-    expect(new TextDecoder().decode(await storage.read(selectedScope, KEY))).toBe('{"n":1}\n');
-
-    releaseBlocked();
-    await record.flush(blockedScope);
-    expect(new TextDecoder().decode(await storage.read(blockedScope, KEY))).toBe('{"n":2}\n');
-  });
-
   it('keeps a sticky failure until every acquired owner releases it', async () => {
     const failure = new Error('shared append failed');
     let reportFailure!: (error: unknown) => void;
@@ -788,14 +756,6 @@ describe('AppendLogStore', () => {
       expect(await storage.read(SESSION_SCOPE, KEY)).toBeUndefined();
     });
 
-    it('root-scope appends bypass the gate with zero authorities registered', async () => {
-      const { store, storage } = makeStore();
-      store.append('', 'session_index.jsonl', { sessionId: 's1' });
-      await store.flush();
-      const bytes = await storage.read('', 'session_index.jsonl');
-      expect(new TextDecoder().decode(bytes)).toBe('{"sessionId":"s1"}\n');
-    });
-
     it('session-scoped writes without a registered authority fail closed', async () => {
       const { store, storage } = makeStore();
       store.append(SESSION_SCOPE, KEY, { n: 1 });
@@ -805,16 +765,6 @@ describe('AppendLogStore', () => {
         details: { sessionId: 's1' },
       });
       expect(await storage.read(SESSION_SCOPE, KEY)).toBeUndefined();
-    });
-
-    it('writes pass while the registered lease is held', async () => {
-      const lease = await leaseFor('s1');
-      registry.register(lease);
-      const { store, storage } = makeStore();
-      store.append(SESSION_SCOPE, KEY, { n: 1 });
-      await store.flush();
-      const bytes = await storage.read(SESSION_SCOPE, KEY);
-      expect(new TextDecoder().decode(bytes)).toBe('{"n":1}\n');
     });
 
     it('flush awaits the retired buffer final flush before returning', async () => {

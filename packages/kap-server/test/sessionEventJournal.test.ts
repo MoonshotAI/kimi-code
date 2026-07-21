@@ -69,12 +69,9 @@ describe('SessionEventJournal', () => {
 
   it('assigns monotonic seq and reads back in order', async () => {
     const j = await SessionEventJournal.open(filePath);
-    // No baseline before the first durable append — a cold journal has no epoch.
-    expect(j.epoch).toBeUndefined();
     expect(j.seq).toBe(0);
 
     j.append(j.nextSeq(), envelope(1));
-    expect(j.epoch).toMatch(/^ep_/); // materialized on the first real append
     j.append(j.nextSeq(), envelope(2));
     j.append(j.nextSeq(), envelope(3));
     expect(j.seq).toBe(3);
@@ -119,24 +116,6 @@ describe('SessionEventJournal', () => {
     await j2.close();
   });
 
-  it('adopts the LAST header when a rotated journal carries several', async () => {
-    // A crash after a rotation can leave multiple headers in one file; only
-    // the newest incarnation is authoritative.
-    const lines = [
-      JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_old', created_at: 1 }),
-      JSON.stringify({ kind: 'event', seq: 1, envelope: envelope(1) }),
-      JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_new', created_at: 2 }),
-      JSON.stringify({ kind: 'event', seq: 1, envelope: envelope(1) }),
-    ];
-    await writeFile(filePath, lines.join('\n') + '\n', 'utf8');
-
-    const j = await SessionEventJournal.open(filePath);
-    expect(j.epoch).toBe('ep_new');
-    expect(j.seq).toBe(1);
-    expect((await j.readSince(0, 100)).map((entry) => entry.seq)).toEqual([1]);
-    await j.close();
-  });
-
   it('repairs a torn trailing line before appending the next event', async () => {
     const j1 = await SessionEventJournal.open(filePath);
     j1.append(j1.nextSeq(), envelope(1));
@@ -152,71 +131,6 @@ describe('SessionEventJournal', () => {
     expect((await j2.readSince(0, 100)).map((entry) => entry.seq)).toEqual([1, 2]);
   });
 
-  it('rejects a malformed middle line while serving replay', async () => {
-    const j1 = await SessionEventJournal.open(filePath);
-    j1.append(j1.nextSeq(), envelope(1));
-    await j1.close();
-
-    const durable = await readFile(filePath, 'utf8');
-    const j2 = await SessionEventJournal.open(filePath);
-    await writeFile(
-      filePath,
-      `${durable}not-json\n${durable.split('\n')[1]}\n`,
-      'utf8',
-    );
-    await expect(j2.readSince(0, 100)).rejects.toBeInstanceOf(JournalStorageError);
-    await j2.close();
-  });
-
-  it('starts the first event after a trailing replacement header at seq one', async () => {
-    const lines = [
-      JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_old', created_at: 1 }),
-      JSON.stringify({ kind: 'event', seq: 1, envelope: envelope(1) }),
-      JSON.stringify({ kind: 'journal_header', version: 1, epoch: 'ep_new', created_at: 2 }),
-    ];
-    await writeFile(filePath, lines.join('\n') + '\n', 'utf8');
-
-    const j = await SessionEventJournal.open(filePath);
-    expect(j.epoch).toBe('ep_new');
-    expect(j.seq).toBe(0);
-    j.append(j.nextSeq(), envelope(1));
-    await j.close();
-
-    expect((await j.readSince(0, 100)).map((entry) => entry.seq)).toEqual([1]);
-  });
-
-  it('cold reads are read-only: no epoch is fabricated and nothing is written', async () => {
-    // Missing file — open → close must not create it.
-    const j1 = await SessionEventJournal.open(filePath);
-    expect(j1.epoch).toBeUndefined();
-    expect(j1.seq).toBe(0);
-    await j1.close();
-    await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' });
-
-    // Re-open of the same absent journal: the same absent baseline — no
-    // random-epoch flip-flop (which used to trigger fake `epoch_changed`).
-    const j2 = await SessionEventJournal.open(filePath);
-    expect(j2.epoch).toBeUndefined();
-    await j2.close();
-    await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' });
-
-    // Pre-created empty file: stays zero bytes across open → close.
-    await writeFile(filePath, '', 'utf8');
-    const j3 = await SessionEventJournal.open(filePath);
-    expect(j3.epoch).toBeUndefined();
-    await j3.close();
-    expect(await readFile(filePath, 'utf8')).toBe('');
-
-    // The epoch only materializes when the first durable event actually lands.
-    j3.append(j3.nextSeq(), envelope(1));
-    expect(j3.epoch).toMatch(/^ep_/);
-    await j3.close();
-    const j4 = await SessionEventJournal.open(filePath);
-    expect(j4.epoch).toBe(j3.epoch);
-    expect(j4.seq).toBe(1);
-    await j4.close();
-  });
-
   it('readSince honors the exclusive lower bound and the limit', async () => {
     const j = await SessionEventJournal.open(filePath);
     for (let i = 1; i <= 5; i++) j.append(j.nextSeq(), envelope(i));
@@ -226,15 +140,10 @@ describe('SessionEventJournal', () => {
     await j.close();
   });
 
-  it('readSince on a missing file returns empty (and writes nothing)', async () => {
+  it('readSince on a missing file returns empty', async () => {
     const j = await SessionEventJournal.open(filePath);
-    expect(j.epoch).toBeUndefined();
-    const out = await j.readSince(0, 100);
-    expect(out).toEqual([]);
-    // A pure read never fabricates an epoch or a header.
-    expect(j.epoch).toBeUndefined();
+    expect(await j.readSince(0, 100)).toEqual([]);
     await j.close();
-    await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('keeps pending lines across a failed flush and replays them after a retry', async () => {

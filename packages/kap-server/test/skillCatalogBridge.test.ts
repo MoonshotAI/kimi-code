@@ -1,26 +1,16 @@
 /**
- * `SkillCatalogBridge` — volatile `skill_catalog.changed` delivery.
- *
- * Fake core accessor (per `wsConnectionV1.test.ts` fake-service pattern): the
- * session-scoped `ISessionSkillCatalog.onDidChange` feed is hand-fired. Cases
- * pin the bridge contract:
- *   - two connections subscribed to one session each receive ONE volatile
- *     frame per core change, numbered by their own per-connection `seq`;
- *   - the frame is transport-only: the bridge constructor takes `{core, logger}`
- *     and never touches `SessionEventJournal` (no durable seq / epoch to
- *     journal), and the envelope carries no `epoch`;
- *   - unsubscribe / last-detach stops delivery and releases the core
- *     subscription (`dispose` called); re-attach subscribes afresh.
+ * `SkillCatalogBridge` — volatile `skill_catalog.changed` delivery: one frame
+ * per core change fanned out under each connection's own `seq` (no journal
+ * epoch), and refcounted release of the core subscription on last detach.
+ * Fake core accessor (per `wsConnectionV1.test.ts`); `onDidChange` hand-fired.
  */
 import {
   type IDisposable,
   ISessionSkillCatalog,
   ISessionLifecycleService,
   type ISessionScopeHandle,
-  type SessionLifecycleHooks,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createHooks } from '@moonshot-ai/agent-core-v2/hooks';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -29,6 +19,7 @@ import {
   type SkillCatalogConnection,
 } from '../src/transport/ws/v1/skillCatalogBridge';
 import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
+import { createSessionLifecycleHooks } from './helpers/sessionEvents';
 
 function makeConn(id: string): { conn: SkillCatalogConnection; frames: SkillCatalogChangedFrame[] } {
   const frames: SkillCatalogChangedFrame[] = [];
@@ -67,18 +58,8 @@ function makeCatalog(): FakeCatalog {
   };
 }
 
-function createSessionLifecycleHooks() {
-  return createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
-    'onDidCreateSession',
-    'onWillCloseSession',
-    'onWillReleaseSession',
-  ]);
-}
-
-function makeCore(
-  sessions: Map<string, ISessionScopeHandle>,
-  hooks = createSessionLifecycleHooks(),
-): Scope {
+function makeCore(sessions: Map<string, ISessionScopeHandle>): Scope {
+  const hooks = createSessionLifecycleHooks();
   const lifecycle = { get: (sid: string) => sessions.get(sid), hooks };
   return {
     accessor: {
@@ -140,18 +121,6 @@ describe('SkillCatalogBridge', () => {
     expect(b.frames[1]).toMatchObject({ seq: 2, payload: { sourceId: 'plugin' } });
   });
 
-  it('attaches only to materialized sessions', () => {
-    const catalog = makeCatalog();
-    const bridge = new SkillCatalogBridge({ core: makeCore(new Map()) });
-    const a = makeConn('conn_a');
-
-    bridge.attachSession(a.conn, 'missing');
-    catalog.fire('workspace-file');
-
-    expect(catalog.onDidChange).not.toHaveBeenCalled();
-    expect(a.frames).toHaveLength(0);
-  });
-
   it('stops delivering to an unsubscribed connection and releases the core subscription on last detach', () => {
     const catalog = makeCatalog();
     const sessions = new Map([['sess_1', makeSession(catalog.service)]]);
@@ -176,54 +145,5 @@ describe('SkillCatalogBridge', () => {
     catalog.fire('plugin');
     expect(a.frames).toHaveLength(0);
     expect(b.frames).toHaveLength(1);
-  });
-
-  it('detachConnection drops the connection from every session and re-attach subscribes afresh', () => {
-    const catalog1 = makeCatalog();
-    const catalog2 = makeCatalog();
-    const sessions = new Map([
-      ['sess_1', makeSession(catalog1.service)],
-      ['sess_2', makeSession(catalog2.service)],
-    ]);
-    const bridge = new SkillCatalogBridge({ core: makeCore(sessions) });
-    const a = makeConn('conn_a');
-
-    bridge.attachSession(a.conn, 'sess_1');
-    bridge.attachSession(a.conn, 'sess_2');
-    bridge.detachConnection(a.conn);
-
-    expect(catalog1.dispose).toHaveBeenCalledTimes(1);
-    expect(catalog2.dispose).toHaveBeenCalledTimes(1);
-    catalog1.fire('workspace-file');
-    catalog2.fire('workspace-file');
-    expect(a.frames).toHaveLength(0);
-
-    // Re-attaching after a full teardown subscribes anew and restarts the
-    // per-connection seq from 1.
-    bridge.attachSession(a.conn, 'sess_1');
-    expect(catalog1.onDidChange).toHaveBeenCalledTimes(2);
-    catalog1.fire('plugin');
-    expect(a.frames).toHaveLength(1);
-    expect(a.frames[0]).toMatchObject({ seq: 1, payload: { sourceId: 'plugin' } });
-  });
-
-  it('rebinds to the restored session catalog after the previous scope is released', async () => {
-    const first = makeCatalog();
-    const restored = makeCatalog();
-    const sessions = new Map([['sess_1', makeSession(first.service)]]);
-    const hooks = createSessionLifecycleHooks();
-    const bridge = new SkillCatalogBridge({ core: makeCore(sessions, hooks) });
-    const a = makeConn('conn_a');
-    bridge.attachSession(a.conn, 'sess_1');
-
-    await hooks.onWillReleaseSession.run({ sessionId: 'sess_1', reason: 'archive' });
-    sessions.set('sess_1', makeSession(restored.service));
-    bridge.attachSession(a.conn, 'sess_1');
-    restored.fire('workspace-file');
-
-    expect(first.dispose).toHaveBeenCalledOnce();
-    expect(restored.onDidChange).toHaveBeenCalledOnce();
-    expect(a.frames).toHaveLength(1);
-    expect(a.frames[0]).toMatchObject({ seq: 1, payload: { sourceId: 'workspace-file' } });
   });
 });

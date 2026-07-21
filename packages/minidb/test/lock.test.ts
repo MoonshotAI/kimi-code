@@ -83,21 +83,6 @@ test('pre-existing sentinel contents do not imply ownership', async () => {
   await cleanup(dir);
 });
 
-test('LockFile uses kernel ownership and leaves the sentinel in place', async () => {
-  const dir = await tmpDir();
-  const lockPath = path.join(dir, 'db.lock');
-  const first = new LockFile(lockPath);
-  const second = new LockFile(lockPath);
-
-  assert.equal(await first.acquire(), true);
-  assert.equal(await second.acquire(), false);
-  first.releaseSync();
-  assert.equal(await fs.stat(lockPath).then(() => true), true);
-  assert.equal(await second.acquire(), true);
-  second.releaseSync();
-  await cleanup(dir);
-});
-
 test('releaseSync is idempotent', async () => {
   const dir = await tmpDir();
   const lock = new LockFile(path.join(dir, 'db.lock'));

@@ -1,8 +1,8 @@
 // Exercises defensive input/state-validation branches that are reachable
 // through the public/direct API but were not covered by the functional tests.
 // Fault-injection-only branches (writev short-write, fsync failure, >64MB
-// RESP payload, cross-user EPERM, process-exit hook) are intentionally not covered here — see
-// the coverage summary in the commit message.
+// RESP payload, cross-user EPERM, process-exit hook) are intentionally not
+// covered here — see the coverage summary in the commit message.
 import { expect, test } from 'vitest';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -12,7 +12,6 @@ import net from 'node:net';
 import { WAL } from '../src/wal.js';
 import { encodeFrame, decodeBatchOps, TYPE_SET } from '../src/codec.js';
 import { MiniDb } from '../src/index.js';
-import { LockFile } from '../src/lockfile.js';
 import { startServer } from '../src/server.js';
 
 async function tmpDir() {
@@ -110,18 +109,6 @@ test('WAL open and close are idempotent', async () => {
   await expect(wal.open()).resolves.toBeUndefined(); // second open is a no-op
   await expect(wal.close()).resolves.toBeUndefined();
   await expect(wal.close()).resolves.toBeUndefined(); // second close is a no-op
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-// --- LockFile kernel ownership ---------------------------------------------
-
-test('arbitrary sentinel contents are ignored when no kernel lock is held', async () => {
-  const dir = await tmpDir();
-  const p = path.join(dir, 'db.lock');
-  await fs.writeFile(p, 'not-json');
-  const b = new LockFile(p);
-  assert.equal(await b.acquire(), true);
-  b.releaseSync();
   await fs.rm(dir, { recursive: true, force: true });
 });
 

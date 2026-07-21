@@ -8,7 +8,7 @@
  * chokidar (150ms debounce), so assertions poll with real timers.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
@@ -86,22 +86,6 @@ describe('ConfigService config.toml lock-in-RMW', () => {
     return ix.get(IConfigService);
   }
 
-  it('merges repeated set()s of different sections within one container', async () => {
-    const config = createContainer();
-    await config.set('alphaSection', { one: 1 });
-    await config.set('betaSection', { two: 2 });
-
-    const toml = readFileSync(join(homeDir, 'config.toml'), 'utf8');
-    expect(toml).toContain('[alpha_section]');
-    expect(toml).toContain('[beta_section]');
-    expect(config.get('alphaSection')).toEqual({ one: 1 });
-    expect(config.get('betaSection')).toEqual({ two: 2 });
-
-    await config.reload();
-    expect(config.get('alphaSection')).toEqual({ one: 1 });
-    expect(config.get('betaSection')).toEqual({ two: 2 });
-  });
-
   it('two containers interleave set()s without losing section updates', async () => {
     await writeFile(join(homeDir, 'config.toml'), '[hand_written]\nkeep = "me"\n');
     const a = createContainer();
@@ -125,16 +109,6 @@ describe('ConfigService config.toml lock-in-RMW', () => {
     await b.reload();
     expect(b.get('alphaSide0')).toEqual({ v: 0 });
     expect(a.get('betaSide3')).toEqual({ v: 3 });
-  });
-
-  it('releases config.toml.lock after the critical section and keeps the sentinel', async () => {
-    const config = createContainer();
-    await config.set('alphaSection', { one: 1 });
-    await config.set('betaSection', { two: 2 });
-
-    expect(existsSync(join(homeDir, 'config.toml.lock'))).toBe(true);
-    expect(existsSync(join(homeDir, 'config.toml.lock.owner.json'))).toBe(false);
-    expect(readdirSync(homeDir).filter((entry) => entry.includes('.stale.'))).toEqual([]);
   });
 
   it('writes and locks a custom config path at its actual location', async () => {

@@ -69,9 +69,7 @@ export type { ReverseRpcOptions } from './reverse-rpc.js';
 export { DEFAULT_FRAME_TIMEOUT_MS, waitForFrame, waitForSessionBusy } from './wait.js';
 
 // ── Dual-instance test helpers (additive) ─────────────────────────────────
-// Boot helpers for multi-server e2e cases: `startServerPair` (in-process) and
-// `spawnServerProcess` / `spawnServerProcessPair` (subprocess, for
-// signal-sensitive cases). The helpers import `@moonshot-ai/kap-server`
-// lazily at call time, so this barrel stays loadable under plain `tsx`
-// without the raw-text loader.
+// Boot helper for multi-server e2e cases: `startServerPair` (in-process). It
+// imports `@moonshot-ai/kap-server` lazily at call time, so this barrel stays
+// loadable under plain `tsx` without the raw-text loader.
 export * from './testing/index.js';

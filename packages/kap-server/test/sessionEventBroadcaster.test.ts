@@ -24,7 +24,6 @@ import {
   type SessionLifecycleHooks,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createHooks } from '@moonshot-ai/agent-core-v2/hooks';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,6 +36,7 @@ import {
   JournalStorageError,
 } from '../src/transport/ws/v1/sessionEventJournal';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
+import { createSessionLifecycleHooks } from './helpers/sessionEvents';
 
 /**
  * Controllable deferred-failure injection for the journal under test. The
@@ -248,14 +248,6 @@ function makeCore(
     },
   };
   return { accessor } as unknown as Scope;
-}
-
-function createSessionLifecycleHooks() {
-  return createHooks<SessionLifecycleHooks, keyof SessionLifecycleHooks>([
-    'onDidCreateSession',
-    'onWillCloseSession',
-    'onWillReleaseSession',
-  ]);
 }
 
 function agentEvent(type: string, extra: Record<string, unknown> = {}): AgentEvent {
@@ -707,64 +699,41 @@ describe('SessionEventBroadcaster', () => {
     expect(next.subagents).toEqual([]);
   });
 
-  it('fans core model-catalog changes out live without journaling __global__', async () => {
-    const lc = new FakeLifecycle();
-    lc.addAgent('main');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
-
-    eventBus.emit({
-      type: 'event.model_catalog.changed',
-      payload: {
-        changed: [{ provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 }],
-        unchanged: [],
-        failed: [],
-      },
-    });
-
-    await vi.waitFor(() => expect(envelopes).toHaveLength(1));
-    expect(envelopes[0]).toMatchObject({
-      type: 'event.model_catalog.changed',
-      session_id: '__global__',
-      volatile: true,
-      payload: {
+  it.each([
+    {
+      event: {
         type: 'event.model_catalog.changed',
-        agentId: 'main',
-        sessionId: '__global__',
+        payload: {
+          changed: [
+            { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 },
+          ],
+          unchanged: [],
+          failed: [],
+        },
       },
-    });
-    // Advisory-only now: fanned out live with a process-local seq and never
-    // journaled — no __global__.jsonl garbage file appears under the events
-    // dir (the old durable file was multi-writer by nature and had no reader).
-    await expect(stat(join(dir, '__global__.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('fans session.list_changed out live as a volatile payload-less global hint', async () => {
-    // The multi-instance sessions-tree watcher publishes this core event when
-    // a workspace/session directory appears or disappears (possibly created
-    // by a peer instance). It must reach every connection as a volatile,
-    // payload-less, unjournaled go-refetch hint — same delivery class as
-    // event.model_catalog.changed, with nothing to replay.
+    },
+    // The multi-instance sessions-tree watcher publishes session.list_changed
+    // when a workspace/session directory appears or disappears (possibly
+    // created by a peer instance) — same delivery class as model-catalog.
+    { event: { type: 'session.list_changed', payload: {} } },
+  ])('fans $event.type out live as a volatile __global__ hint without journaling', async ({ event }) => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    eventBus.emit({ type: 'session.list_changed', payload: {} });
+    eventBus.emit(event);
 
     await vi.waitFor(() => expect(envelopes).toHaveLength(1));
     expect(envelopes[0]).toMatchObject({
-      type: 'session.list_changed',
+      type: event.type,
       session_id: '__global__',
       volatile: true,
-      payload: {
-        type: 'session.list_changed',
-        agentId: 'main',
-        sessionId: '__global__',
-      },
+      payload: { type: event.type, agentId: 'main', sessionId: '__global__' },
     });
+    // Advisory-only: fanned out live with a process-local seq and never
+    // journaled — no __global__.jsonl garbage file under the events dir.
     await expect(stat(join(dir, '__global__.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

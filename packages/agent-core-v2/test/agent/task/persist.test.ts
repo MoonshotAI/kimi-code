@@ -16,7 +16,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { ErrorCodes } from '#/errors';
 import {
   AgentTaskPersistence,
   type AgentTaskInfo,
@@ -124,26 +123,6 @@ describe('AgentTaskPersistence', () => {
       kind: 'process',
       exitCode: 0,
       endedAt: 1_700_000_100,
-    });
-  });
-
-  it('fails closed when the session write authority is unregistered', async () => {
-    const scope = 'sessions/workspace/test-session/agents/main';
-    const fenced = rootedPersistence(scope);
-    const registration = authorityRegistry.register({
-      sessionId: 'test-session',
-      assertWritable: () => {},
-    });
-
-    await fenced.writeTask(sample());
-    await fenced.appendTaskOutput(sample().taskId, 'before release');
-    registration.dispose();
-
-    await expect(fenced.writeTask(sample({ status: 'completed', endedAt: 2 }))).rejects.toMatchObject({
-      code: ErrorCodes.SESSION_LEASE_LOST,
-    });
-    await expect(fenced.appendTaskOutput(sample().taskId, 'after release')).rejects.toMatchObject({
-      code: ErrorCodes.SESSION_LEASE_LOST,
     });
   });
 

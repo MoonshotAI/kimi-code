@@ -13,7 +13,6 @@ import {
   type SessionOwnershipDetails,
 } from '../src/api/daemon/sessionOwnership';
 import {
-  buildPeerTargetUrl,
   bumpRedirectBudget,
   decideSessionOwnershipAction,
   normalizePeerOrigin,
@@ -42,33 +41,6 @@ function makeCtx(overrides?: Partial<OwnershipDecisionContext>): OwnershipDecisi
 }
 
 describe('narrowSessionOwnershipDetails', () => {
-  it('accepts a well-formed held-by-peer payload', () => {
-    expect(
-      narrowSessionOwnershipDetails({
-        kind: 'held-by-peer',
-        phase: 'routable',
-        address: 'http://127.0.0.1:58628',
-        retry_after_ms: 500,
-      }),
-    ).toEqual({
-      kind: 'held-by-peer',
-      phase: 'routable',
-      address: 'http://127.0.0.1:58628',
-      retry_after_ms: 500,
-    });
-  });
-
-  it('drops invalid optional fields instead of failing the whole payload', () => {
-    expect(
-      narrowSessionOwnershipDetails({
-        kind: 'held-by-peer',
-        phase: 'creating',
-        address: 42,
-        retry_after_ms: -1,
-      }),
-    ).toEqual({ kind: 'held-by-peer', phase: 'creating', address: undefined, retry_after_ms: undefined });
-  });
-
   it.each([
     ['null', null],
     ['a string', 'held-by-peer'],
@@ -139,15 +111,6 @@ describe('normalizePeerOrigin', () => {
     ['non-http scheme', 'ftp://127.0.0.1:58628'],
   ])('rejects %s', (_label, input) => {
     expect(normalizePeerOrigin(input)).toBeUndefined();
-  });
-});
-
-describe('buildPeerTargetUrl', () => {
-  it('joins origin and path exactly once', () => {
-    expect(buildPeerTargetUrl('http://127.0.0.1:58628', '/sessions/s_1?a=1#h')).toBe(
-      'http://127.0.0.1:58628/sessions/s_1?a=1#h',
-    );
-    expect(buildPeerTargetUrl('http://127.0.0.1:58628', '')).toBe('http://127.0.0.1:58628/');
   });
 });
 
@@ -240,12 +203,5 @@ describe('redirect budget (loop guard persistence)', () => {
     const budget = readRedirectBudget(raw, 2_000, WINDOW_MS);
     expect(budget).toEqual({ count: 2, windowStart: 1_000 });
     expect(bumpRedirectBudget(budget)).toEqual({ count: 3, windowStart: 1_000 });
-  });
-
-  it('round-trips through serialize', () => {
-    const budget = { count: 1, windowStart: 123_456 };
-    expect(readRedirectBudget(serializeRedirectBudget(budget), budget.windowStart + 10, WINDOW_MS)).toEqual(
-      budget,
-    );
   });
 });

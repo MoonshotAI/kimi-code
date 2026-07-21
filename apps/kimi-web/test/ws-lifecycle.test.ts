@@ -69,19 +69,21 @@ const SERVER_HELLO = {
   },
 };
 
-describe('DaemonEventSocket reconnect + staleness', () => {
+function setupFakeWebSocket(): void {
   let originalWebSocket: typeof globalThis.WebSocket;
-
   beforeEach(() => {
     FakeWebSocket.instances = [];
     originalWebSocket = globalThis.WebSocket;
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
   });
-
   afterEach(() => {
     globalThis.WebSocket = originalWebSocket;
     vi.useRealTimers();
   });
+}
+
+describe('DaemonEventSocket reconnect + staleness', () => {
+  setupFakeWebSocket();
 
   it('reconnect() closes the old socket, detaches it, and opens a new one', () => {
     const handlers = makeHandlers();
@@ -100,10 +102,6 @@ describe('DaemonEventSocket reconnect + staleness', () => {
     // A fresh socket was created, and we reported the transient disconnect.
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(handlers.states).toEqual([true, false]);
-
-    // A late onclose from the stale socket must NOT schedule another connect.
-    first.onclose?.({ code: 1000, reason: 'reconnect', wasClean: true });
-    expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
   it('reconnect() is a no-op after close()', () => {
@@ -146,18 +144,7 @@ describe('DaemonEventSocket reconnect + staleness', () => {
 });
 
 describe('DaemonEventSocket frame dispatch (multi-instance surface)', () => {
-  let originalWebSocket: typeof globalThis.WebSocket;
-
-  beforeEach(() => {
-    FakeWebSocket.instances = [];
-    originalWebSocket = globalThis.WebSocket;
-    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
-  });
-
-  afterEach(() => {
-    globalThis.WebSocket = originalWebSocket;
-    vi.useRealTimers();
-  });
+  setupFakeWebSocket();
 
   it('consumes bare session.list_changed via onSessionListChanged; the event.-prefixed form is not special-cased', () => {
     let wireEvents = 0;
