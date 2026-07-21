@@ -188,16 +188,15 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       this.registerNeedsAuthMcpServer(entry);
       return;
     }
-    if (entry.status === 'failed') {
-      this.unregisterMcpServer(entry.name);
-      this.eventBus.publish({
-        type: 'tool.list.updated',
-        reason: 'mcp.failed',
-        serverName: entry.name,
-      });
+    if (entry.status === 'failed' || entry.status === 'pending') {
+      // Keep the server's tools registered while it is down or reconnecting.
+      // The captured client is closed, so the next call fails fast at the
+      // transport layer and the tool adapter's reconnect-and-retry path heals
+      // the connection — a dropped server surfaces as a slow call instead of
+      // "tool not found" for the rest of the session.
       return;
     }
-    if (entry.status === 'disabled' || entry.status === 'pending') {
+    if (entry.status === 'disabled') {
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
         this.eventBus.publish({

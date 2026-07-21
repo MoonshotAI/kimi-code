@@ -157,6 +157,14 @@ class FakeMcpManager {
     this.emit(entry);
   }
 
+  pending(name: string): void {
+    const current = this.entries.get(name);
+    if (current === undefined) return;
+    const entry: McpServerEntry = { ...current, status: 'pending', toolCount: 0 };
+    this.entries.set(name, entry);
+    this.emit(entry);
+  }
+
   disconnect(name: string): void {
     const current = this.entries.get(name);
     if (current === undefined) return;
@@ -449,6 +457,42 @@ describe('AgentMcpService', () => {
     expect(reconnects).toBe(1);
   });
 
+  it('heals a server that died between turns when its tool is called again', async () => {
+    const manager = new FakeMcpManager();
+    const deadClient = throwingClient(fakeMcpClient());
+    const freshCounter = { calls: 0 };
+    const freshClient = countingClient(fakeMcpClient(), freshCounter);
+    let reconnects = 0;
+    manager.reconnectHandler = async (name) => {
+      reconnects += 1;
+      manager.setResolved(name, freshClient, await discoverTools(freshClient));
+      manager.connect(name);
+    };
+    manager.setResolved('s', deadClient, await discoverTools(deadClient));
+    createService(manager);
+    manager.connect('s');
+
+    // The connection drops while no call is in flight: the manager marks the
+    // server failed. The tools must stay registered so the next call reaches
+    // the adapter and its reconnect-and-retry path instead of failing with
+    // "tool not found".
+    manager.fail('s');
+
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    expect(echo).toBeDefined();
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-between-turns',
+      args: { text: 'back from the dead' },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toBe('back from the dead');
+    expect(freshCounter.calls).toBe(1);
+    expect(reconnects).toBe(1);
+  });
+
   it('returns a non-transport MCP error without reconnecting the server', async () => {
     const manager = new FakeMcpManager();
     const base = fakeMcpClient();
@@ -498,7 +542,9 @@ describe('AgentMcpService', () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow('Connection closed');
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toEqual([]);
+    // The tools stay registered after the failed reconnect so a later call
+    // can try healing the server again instead of hitting "tool not found".
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
   });
 
   it('reports both errors when the reconnect attempt itself fails', async () => {
@@ -1031,7 +1077,7 @@ describe('AgentMcpService', () => {
     ]);
   });
 
-  it('emits tool.list.updated(mcp.failed) when a connected server fails', async () => {
+  it('keeps tools registered when a connected server fails so later calls can heal', async () => {
     const manager = new FakeMcpManager();
     const client = fakeMcpClient();
     manager.setResolved('s', client, await discoverTools(client));
@@ -1040,13 +1086,30 @@ describe('AgentMcpService', () => {
     manager.connect('s');
     manager.fail('s');
 
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toEqual([]);
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.failed' }),
+    );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: 'tool.list.updated',
-        reason: 'mcp.failed',
-        serverName: 's',
+        type: 'mcp.server.status',
+        server: expect.objectContaining({ name: 's', status: 'failed' }),
       }),
+    );
+  });
+
+  it('keeps tools registered while the server is reconnecting', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient();
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+
+    manager.connect('s');
+    manager.pending('s');
+
+    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.disconnected' }),
     );
   });
 
