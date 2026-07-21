@@ -114,7 +114,7 @@ describe('simple commands', () => {
   it('attaches comments as named children', () => {
     expectTree(
       '# a comment\necho hi # trailing',
-      `(program (comment "# a comment") "\\n" (command (command_name (word "echo")) (word "hi")) (comment "# trailing"))`,
+      `(program (comment "# a comment") (command (command_name (word "echo")) (word "hi")) (comment "# trailing"))`,
     );
   });
 
@@ -192,10 +192,10 @@ describe('expansions and substitutions', () => {
     );
   });
 
-  it('parses $((...)) as an arithmetic_expansion placeholder (TODO(M2))', () => {
+  it('parses $((...)) as a real arithmetic expression', () => {
     expectTree(
       'echo $((1<<2))',
-      `(program (command (command_name (word "echo")) (arithmetic_expansion "$((" (word "1<<2") "))")))`,
+      `(program (command (command_name (word "echo")) (arithmetic_expansion "$((" (binary_expression (number "1") "<<" (number "2")) "))")))`,
     );
   });
 });
@@ -321,7 +321,7 @@ describe('heredocs', () => {
   it('degrades a second heredoc on the same line to ERROR (matches tree-sitter-bash)', () => {
     expectTree(
       'cat <<A <<B\nba\nA\nbb\nB',
-      `(program (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "A") (ERROR "<<" (word "B")) (heredoc_body (heredoc_content "ba\\n")) (heredoc_end "A"))) "\\n" (command (command_name (word "bb"))) "\\n" (command (command_name (word "B"))))`,
+      `(program (redirected_statement (command (command_name (word "cat"))) (heredoc_redirect "<<" (heredoc_start "A") (ERROR "<<" (word "B")) (heredoc_body (heredoc_content "ba\\n")) (heredoc_end "A"))) (command (command_name (word "bb"))) (command (command_name (word "B"))))`,
       true,
     );
   });
@@ -339,7 +339,7 @@ describe('statement lists', () => {
   it('mixes semicolons and newlines as terminators', () => {
     expectTree(
       'ls; echo a\necho b',
-      `(program (command (command_name (word "ls"))) ";" (command (command_name (word "echo")) (word "a")) "\\n" (command (command_name (word "echo")) (word "b")))`,
+      `(program (command (command_name (word "ls"))) ";" (command (command_name (word "echo")) (word "a")) (command (command_name (word "echo")) (word "b")))`,
     );
   });
 
