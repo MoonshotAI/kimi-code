@@ -2,6 +2,7 @@ import {
   APIConnectionError,
   APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
@@ -9,6 +10,7 @@ import {
   ChatProviderError,
   isImageFormatError,
   isProviderRateLimitError,
+  isQuotaExhaustedStatusError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
@@ -676,5 +678,91 @@ describe('isImageFormatError', () => {
     expect(
       isRetryableGenerateError(new APIStatusError(400, 'unsupported image format')),
     ).toBe(false);
+  });
+});
+
+describe('APIProviderQuotaExhaustedError', () => {
+  it('extends APIStatusError and preserves HTTP details', () => {
+    const err = new APIProviderQuotaExhaustedError('quota exhausted', 'req-quota', 12_500);
+    expect(err).toBeInstanceOf(APIStatusError);
+    expect(err).toBeInstanceOf(ChatProviderError);
+    expect(err).not.toBeInstanceOf(APIProviderRateLimitError);
+    expect(err.name).toBe('APIProviderQuotaExhaustedError');
+    expect(err.statusCode).toBe(429);
+    expect(err.requestId).toBe('req-quota');
+    expect(err.retryAfterMs).toBe(12_500);
+  });
+});
+
+describe('normalizeAPIStatusError: quota-exhausted 429', () => {
+  // Both Moonshot wordings observed live from the same account (`error.type`
+  // "exceeded_current_quota_error"), plus OpenAI's insufficient_quota wording
+  // and the arrears synonym.
+  it.each([
+    'You exceeded your current token quota: <org-0123456789abcdef> 31275, please check your account balance',
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details',
+    'You exceeded your current quota, please check your plan and billing details.',
+    'Your account is in arrears, please top up',
+  ])('classifies 429 "%s" as quota-exhausted by message', (message) => {
+    const error = normalizeAPIStatusError(429, message, 'req-quota');
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(error.statusCode).toBe(429);
+    expect(error.requestId).toBe('req-quota');
+  });
+
+  it('classifies a neutral message as quota-exhausted by structured errorType', () => {
+    const error = normalizeAPIStatusError(429, 'Too many requests', null, null, null, {
+      errorType: 'exceeded_current_quota_error',
+    });
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+  });
+
+  it('classifies a neutral message as quota-exhausted by structured errorCode', () => {
+    const error = normalizeAPIStatusError(429, 'Too many requests', null, null, null, {
+      errorCode: 'insufficient_quota',
+    });
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+  });
+
+  it.each([
+    'Too many requests',
+    'request reached user+model max RPM: 50',
+    'your token quota per minute was exceeded',
+  ])('keeps transient 429 "%s" an APIProviderRateLimitError', (message) => {
+    const error = normalizeAPIStatusError(429, message);
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+  });
+
+  it('keeps a 429 with a transient structured type an APIProviderRateLimitError', () => {
+    const error = normalizeAPIStatusError(429, 'Too many requests', null, null, null, {
+      errorType: 'rate_limit_reached_error',
+    });
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+  });
+
+  it('is gated on status 429 — billing wording on other statuses stays generic', () => {
+    expect(isQuotaExhaustedStatusError(403, 'insufficient balance')).toBe(false);
+    const error = normalizeAPIStatusError(403, 'insufficient balance');
+    expect(error).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(error.constructor).toBe(APIStatusError);
+  });
+});
+
+describe('quota-exhausted retry and rate-limit semantics', () => {
+  it('is not retryable while a plain rate limit stays retryable', () => {
+    expect(isRetryableGenerateError(new APIProviderQuotaExhaustedError('quota exhausted'))).toBe(
+      false,
+    );
+    expect(isRetryableGenerateError(new APIProviderRateLimitError('rate limited'))).toBe(true);
+    expect(isRetryableGenerateError(new APIStatusError(429, 'rate limited'))).toBe(true);
+  });
+
+  it('is not a provider rate limit despite carrying status 429', () => {
+    expect(isProviderRateLimitError(new APIProviderQuotaExhaustedError('quota exhausted'))).toBe(
+      false,
+    );
+    expect(isProviderRateLimitError(new APIProviderRateLimitError('rate limited'))).toBe(true);
   });
 });

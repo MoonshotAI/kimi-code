@@ -7,7 +7,12 @@ import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
 import { APIError as OpenAIAPIError } from 'openai';
 import { describe, expect, it } from 'vitest';
 
-import { APIProviderRateLimitError, APIStatusError } from '#/app/llmProtocol/errors';
+import {
+  APIProviderQuotaExhaustedError,
+  APIProviderRateLimitError,
+  APIStatusError,
+  isRetryableGenerateError,
+} from '#/app/llmProtocol/errors';
 import { convertAnthropicError } from '#/app/llmProtocol/providers/anthropic';
 import { convertOpenAIError } from '#/app/llmProtocol/providers/openai-common';
 import { OpenAIResponsesStreamedMessage } from '#/app/llmProtocol/providers/openai-responses';
@@ -90,5 +95,54 @@ describe('OpenAI Responses rate-limit conversion', () => {
     );
 
     await expect(consume(stream)).rejects.toBeInstanceOf(APIProviderRateLimitError);
+  });
+
+  it('fails fast on a streamed insufficient_quota error event', async () => {
+    const stream = new OpenAIResponsesStreamedMessage(
+      streamEvents([
+        {
+          type: 'error',
+          code: 'insufficient_quota',
+          message: 'You exceeded your current quota, please check your plan and billing details.',
+          param: null,
+        },
+      ]),
+      true,
+    );
+
+    const caught = await consume(stream).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(caught).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(caught)).toBe(false);
+  });
+});
+
+describe('OpenAI quota-exhausted 429 conversion', () => {
+  const QUOTA_MESSAGE =
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details';
+
+  it('classifies a structured exceeded_current_quota_error body as quota-exhausted', () => {
+    const source = new OpenAIAPIError(
+      429,
+      { message: QUOTA_MESSAGE, type: 'exceeded_current_quota_error' },
+      `429 ${QUOTA_MESSAGE}`,
+      new Headers(),
+    );
+
+    const error = convertOpenAIError(source);
+
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
+  it('falls back to message wording when no structured body is present', () => {
+    const source = new OpenAIAPIError(429, undefined, QUOTA_MESSAGE, new Headers());
+
+    const error = convertOpenAIError(source);
+
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(error)).toBe(false);
   });
 });

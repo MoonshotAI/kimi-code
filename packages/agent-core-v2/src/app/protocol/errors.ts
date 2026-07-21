@@ -15,6 +15,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIProviderQuotaExhaustedError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -84,11 +85,13 @@ export function translateProviderError(error: unknown): Error2 {
         ? ProtocolErrors.codes.CONTEXT_OVERFLOW
         : error instanceof APIProviderOverloadedError || error.statusCode === 529
           ? ProtocolErrors.codes.PROVIDER_OVERLOADED
-          : error.statusCode === 429
-            ? ProtocolErrors.codes.PROVIDER_RATE_LIMIT
-            : error.statusCode === 401 || error.statusCode === 403
-              ? ProtocolErrors.codes.PROVIDER_AUTH_ERROR
-              : ProtocolErrors.codes.PROVIDER_API_ERROR;
+          : error instanceof APIProviderQuotaExhaustedError
+            ? ProtocolErrors.codes.PROVIDER_API_ERROR
+            : error.statusCode === 429
+              ? ProtocolErrors.codes.PROVIDER_RATE_LIMIT
+              : error.statusCode === 401 || error.statusCode === 403
+                ? ProtocolErrors.codes.PROVIDER_AUTH_ERROR
+                : ProtocolErrors.codes.PROVIDER_API_ERROR;
     return new Error2(code, sanitizeStatusErrorMessage(error.message), {
       name: error.name,
       cause: error,

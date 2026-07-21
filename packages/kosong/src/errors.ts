@@ -120,6 +120,33 @@ export class APIProviderRateLimitError extends APIStatusError {
 }
 
 /**
+ * HTTP 429 that specifically means the account's quota or balance is
+ * exhausted, as opposed to a transient rate limit. Deliberately NOT a
+ * subclass of `APIProviderRateLimitError`: a rate limit clears on its own
+ * (retry/requeue helps), while quota exhaustion is deterministic until the
+ * account is recharged — so this class is excluded from retry and from the
+ * rate-limit requeue/suspend paths.
+ *
+ * Observed shapes: Moonshot returns `error.type =
+ * "exceeded_current_quota_error"` with wording that varies by account state
+ * ("You exceeded your current token quota: ... please check your account
+ * balance" vs "Your account ... is suspended due to insufficient balance,
+ * please recharge your account ..."); OpenAI uses `insufficient_quota` as
+ * both `error.type` and `error.code`.
+ */
+export class APIProviderQuotaExhaustedError extends APIStatusError {
+  constructor(
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+    traceId?: string | null,
+  ) {
+    super(429, message, requestId, retryAfterMs, traceId);
+    this.name = 'APIProviderQuotaExhaustedError';
+  }
+}
+
+/**
  * The API returned an empty response (no content, no tool calls).
  */
 export class APIEmptyResponseError extends ChatProviderError {
@@ -148,6 +175,12 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
+    // Quota/balance exhaustion is a 429 but deterministic until the account
+    // is recharged — retrying can never succeed, so it fails fast instead of
+    // burning the whole retry budget (~2-3 minutes of backoff).
+    if (error instanceof APIProviderQuotaExhaustedError) {
+      return false;
+    }
     // Transient statuses worth retrying: 408 (request timeout), 409
     // (lock/conflict timeout), 429 (rate limit), 5xx (server errors) and 529
     // (provider overloaded — the "engine is currently overloaded" case).
@@ -290,6 +323,30 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /rate-limited/,
 ] as const;
 
+// Structured error `type`/`code` values that mean the account's quota or
+// balance is exhausted (as opposed to a transient rate limit). Moonshot sets
+// `exceeded_current_quota_error` as the body `error.type`; OpenAI uses
+// `insufficient_quota` as both `type` and `code`.
+const QUOTA_EXHAUSTED_ERROR_CODES = new Set(['exceeded_current_quota_error', 'insufficient_quota']);
+
+// Message fallback for providers/gateways that do not forward a structured
+// type/code, matched against the lowercased message of a 429. Every pattern
+// is anchored to billing wording — deliberately no bare /quota/ or /balance/,
+// which would also match transient throttle messages like "token quota per
+// minute". Grounded in observed bodies: Moonshot "You exceeded your current
+// token quota: ... please check your account balance" and "Your account ...
+// is suspended due to insufficient balance, please recharge your account or
+// check your plan and billing details"; OpenAI "You exceeded your current
+// quota, please check your plan and billing details".
+const QUOTA_EXHAUSTED_MESSAGE_PATTERNS = [
+  /exceeded your current (?:token )?quota/,
+  /check your account balance/,
+  /insufficient balance/,
+  /recharge your account|please recharge/,
+  /account (?:is )?in arrears/,
+  /insufficient_quota/,
+] as const;
+
 // Wordings that mean the serialized request BODY was too big, matched against
 // the lowercased message of a 413. Kept separate from the context-overflow
 // patterns above: those describe token counts, these describe bytes. A 413
@@ -346,8 +403,14 @@ export function normalizeAPIStatusError(
   requestId?: string | null,
   retryAfterMs?: number | null,
   traceId?: string | null,
+  options?: { readonly errorCode?: string | null; readonly errorType?: string | null },
 ): APIStatusError {
   if (statusCode === 429) {
+    // Quota/balance exhaustion first: same status as a rate limit, but it
+    // never clears on its own, so it must not classify as retryable.
+    if (isQuotaExhaustedStatusError(statusCode, message, options)) {
+      return new APIProviderQuotaExhaustedError(message, requestId, retryAfterMs, traceId);
+    }
     return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
   }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
@@ -416,6 +479,26 @@ export function isRequestTooLargeStatusError(statusCode: number, message: string
   if (statusCode !== 413) return false;
   const lowerMessage = message.toLowerCase();
   return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
+/**
+ * Whether a 429 means the account's quota/balance is exhausted rather than a
+ * transient rate limit. The structured body `error.type`/`error.code` is
+ * authoritative when the provider forwards one; the message patterns only
+ * backstop gateways that flatten the body to text.
+ */
+export function isQuotaExhaustedStatusError(
+  statusCode: number,
+  message: string,
+  options?: { readonly errorCode?: string | null; readonly errorType?: string | null },
+): boolean {
+  if (statusCode !== 429) return false;
+  const errorCode = options?.errorCode;
+  if (typeof errorCode === 'string' && QUOTA_EXHAUSTED_ERROR_CODES.has(errorCode)) return true;
+  const errorType = options?.errorType;
+  if (typeof errorType === 'string' && QUOTA_EXHAUSTED_ERROR_CODES.has(errorType)) return true;
+  const lowerMessage = message.toLowerCase();
+  return QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
 // Strict providers reject a request whose assistant `tool_use`/`tool_calls` and
@@ -508,6 +591,9 @@ export function isRecoverableRequestStructureError(error: unknown): boolean {
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {
+  // Quota exhaustion is a 429 but not a rate limit: the rate-limit reactions
+  // (retry, requeue, suspend) cannot help until the account is recharged.
+  if (error instanceof APIProviderQuotaExhaustedError) return false;
   if (error instanceof APIProviderRateLimitError) return true;
 
   const statusCode = getStatusCode(error);

@@ -98,6 +98,10 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
       reqId,
       parseRetryAfterMs(error.headers),
       parseTraceId(error.headers),
+      {
+        errorCode: typeof error.code === 'string' ? error.code : null,
+        errorType: typeof error.type === 'string' ? error.type : null,
+      },
     );
   }
   if (

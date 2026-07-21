@@ -111,6 +111,13 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
       reqId,
       parseRetryAfterMs(error.headers),
       parseTraceId(error.headers),
+      // The SDK parses the body's `error.code`/`error.type` onto the error;
+      // forward them so a quota-exhausted 429 classifies structurally rather
+      // than by message wording.
+      {
+        errorCode: typeof error.code === 'string' ? error.code : null,
+        errorType: typeof error.type === 'string' ? error.type : null,
+      },
     );
   }
   // Base APIError with no status and no body => transport-layer failure.

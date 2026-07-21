@@ -1,5 +1,6 @@
 import {
   APIConnectionError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   emptyUsage,
   isRetryableGenerateError,
@@ -207,6 +208,43 @@ describe('chatWithRetry: default retry budget', () => {
     expect(captured.filter((e) => e.type === 'step.retrying')).toHaveLength(
       DEFAULT_MAX_RETRY_ATTEMPTS - 1,
     );
+  });
+});
+
+describe('chatWithRetry: quota-exhausted 429 fails fast', () => {
+  it('does not retry a quota-exhausted 429 even when it carries retry-after', async () => {
+    // Same status as a rate limit, but exhausted quota/balance never clears
+    // on its own — the error must surface after a single attempt instead of
+    // burning the whole default budget. The 1ms retry-after proves a server
+    // backoff hint does not re-enable retries either.
+    let calls = 0;
+    const captured: Array<{ type: string }> = [];
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(): Promise<LLMChatResponse> {
+        calls += 1;
+        throw new APIProviderQuotaExhaustedError(
+          'Your account is suspended due to insufficient balance, please recharge your account',
+          null,
+          1,
+        );
+      },
+    };
+    const input = makeInput(llm, new AbortController().signal);
+
+    await expect(
+      chatWithRetry({
+        ...input,
+        dispatchEvent: async (event) => {
+          captured.push(event as { type: string });
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'APIProviderQuotaExhaustedError' });
+
+    expect(calls).toBe(1);
+    expect(captured.filter((e) => e.type === 'step.retrying')).toHaveLength(0);
   });
 });
 
