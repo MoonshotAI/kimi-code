@@ -1,30 +1,44 @@
 // src/grammar.ts
 //
-// Static grammar tables for bash. M0 only carries the two tables the lexer
-// will need first; later milestones extend this file (operator tables, node
-// type registry, etc.) as the real parser lands.
-
-/** Reserved words of POSIX bash (recognition is context-dependent: a word is
- *  only a keyword where a command name is expected). */
-export const SHELL_KEYWORDS = [
-  'if',
-  'then',
-  'else',
-  'elif',
-  'fi',
-  'for',
-  'while',
-  'until',
-  'do',
-  'done',
-  'case',
-  'esac',
-  'in',
-  'function',
-  'select',
-  'time',
-  'coproc',
-] as const;
+// Static grammar tables for bash: operator tables and variable-name sets
+// shared by the lexer and the parser.
 
 /** Single-character special parameters: $@ $* $# $? $- $$ $! $0 and $_. */
 export const SPECIAL_VARIABLES = ['@', '*', '#', '?', '-', '$', '!', '0', '_'] as const;
+
+/** Special parameter characters that may follow `$` directly, as a string
+ *  for `includes` checks. Derived from SPECIAL_VARIABLES by dropping `0`
+ *  and `_`, which are word characters matched by the `\w+` rule instead. */
+export const SPECIAL_VARIABLE_CHARS = SPECIAL_VARIABLES.filter((ch) => !/\w/.test(ch)).join('');
+
+/** Operators that open a `file_redirect` (heredoc and herestring operators
+ *  are handled separately). `<>` is included even though tree-sitter-bash
+ *  0.25.0 fails to parse it — it is a real bash operator (`exec 3<>file`). */
+export const FILE_REDIRECT_OPERATORS = ['<', '>', '>>', '>&', '<&', '&>', '&>>', '>|', '<>', '>&-', '<&-'] as const;
+
+/** Infix operators inside `${...}` expansions, longest first so the parser
+ *  can match them greedily (`##` before `#`, `:-` before `-`). */
+export const EXPANSION_OPERATORS = [
+  ':-',
+  ':=',
+  ':?',
+  ':+',
+  '##',
+  '%%',
+  '/#',
+  '/%',
+  '//',
+  '^^',
+  ',,',
+  '-',
+  '+',
+  '?',
+  '=',
+  '#',
+  '%',
+  '/',
+  '^',
+  ',',
+  '@',
+  ':',
+] as const;

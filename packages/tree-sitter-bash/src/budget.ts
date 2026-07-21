@@ -1,10 +1,12 @@
 // src/budget.ts
 //
 // Parse budget: a hard cap on wall-clock time and on the number of syntax
-// nodes a single parse may create. The parser calls `budget.tick()` every time
-// it creates a node; when either limit is exceeded `tick` throws `Aborted`,
-// which the `parse` entry point catches and reports as
-// `{ ok: false, reason: 'aborted' }`.
+// nodes a single parse may create. The parser calls `budget.tick()` every
+// time it creates a node; long scan loops (word runs, strings, heredoc
+// bodies) call `budget.progress()` periodically so a pathological single
+// token still hits the deadline without inflating the node count. When
+// either limit is exceeded the methods throw `Aborted`, which the `parse`
+// entry point catches and reports as `{ ok: false, reason: 'aborted' }`.
 
 export const DEFAULT_TIMEOUT_MS = 50;
 export const DEFAULT_MAX_NODES = 50_000;
@@ -49,6 +51,17 @@ export class ParseBudget {
     if (this.nodeCount > this.maxNodes) {
       throw new Aborted(`parse aborted: node budget exceeded (${this.nodeCount} > ${this.maxNodes})`);
     }
+    if (Date.now() >= this.deadline) {
+      throw new Aborted(`parse aborted: timeout`);
+    }
+  }
+
+  /**
+   * Re-check the deadline WITHOUT counting a node. For long scan loops that
+   * run many iterations per produced node (character-level scanning), called
+   * at intervals so the deadline is still enforced promptly.
+   */
+  progress(): void {
     if (Date.now() >= this.deadline) {
       throw new Aborted(`parse aborted: timeout`);
     }
