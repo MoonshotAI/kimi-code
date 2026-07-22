@@ -10,7 +10,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
-import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
+import { getCurrentMark, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { t } from '#/i18n';
 import { SearchableList } from '#/tui/utils/searchable-list';
@@ -342,7 +342,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
         line += (isSelected ? currentTheme.boldFg('primary', truncatedName) : currentTheme.fg('text', truncatedName)) + namePad;
         line += '  ' + currentTheme.fg('textMuted', choice.provider);
         if (isCurrent) {
-          line += ' ' + currentTheme.fg('success', CURRENT_MARK);
+          line += ' ' + currentTheme.fg('success', getCurrentMark());
         }
         lines.push(line);
       }

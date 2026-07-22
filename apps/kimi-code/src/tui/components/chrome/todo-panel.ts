@@ -216,14 +216,17 @@ function styleTitle(title: string, status: TodoStatus, colors: ColorPalette): st
   }
 }
 
-const STATUS_LABELS: readonly { status: TodoStatus; label: string }[] = [
-  { status: 'done', label: t('tui.chrome.todoPanel.statusDone') },
-  { status: 'in_progress', label: t('tui.chrome.todoPanel.statusInProgress') },
-  { status: 'pending', label: t('tui.chrome.todoPanel.statusPending') },
-];
+function getStatusLabels(): readonly { status: TodoStatus; label: string }[] {
+  return [
+    { status: 'done', label: t('tui.chrome.todoPanel.statusDone') },
+    { status: 'in_progress', label: t('tui.chrome.todoPanel.statusInProgress') },
+    { status: 'pending', label: t('tui.chrome.todoPanel.statusPending') },
+  ];
+}
 
 export function formatHiddenCounts(counts: Record<TodoStatus, number>): string {
-  return STATUS_LABELS.filter(({ status }) => counts[status] > 0)
+  return getStatusLabels()
+    .filter(({ status }) => counts[status] > 0)
     .map(({ status, label }) => `${counts[status]} ${label}`)
     .join(' · ');
 }

@@ -27,10 +27,18 @@ export type FeedbackInputDialogResult =
   | { readonly kind: 'ok'; readonly value: string }
   | { readonly kind: 'cancel' };
 
-const TITLE = t('tui.dialogs.feedbackInput.title');
-const SUBTITLE_DEFAULT = t('tui.dialogs.feedbackInput.subtitleDefault');
-const SUBTITLE_EMPTY = t('tui.dialogs.feedbackInput.subtitleEmpty');
-const FOOTER = t('tui.dialogs.feedbackInput.footer');
+function getTitle(): string {
+  return t('tui.dialogs.feedbackInput.title');
+}
+function getSubtitleDefault(): string {
+  return t('tui.dialogs.feedbackInput.subtitleDefault');
+}
+function getSubtitleEmpty(): string {
+  return t('tui.dialogs.feedbackInput.subtitleEmpty');
+}
+function getFooter(): string {
+  return t('tui.dialogs.feedbackInput.footer');
+}
 
 export class FeedbackInputDialogComponent extends Container implements Focusable {
   focused = false;
@@ -78,10 +86,10 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     const pad = '  ';
 
     const border = (s: string): string => currentTheme.fg('primary', s);
-    const titleStyled = currentTheme.boldFg('textStrong', TITLE);
-    const subtitleText = this.emptyHinted ? SUBTITLE_EMPTY : SUBTITLE_DEFAULT;
+    const titleStyled = currentTheme.boldFg('textStrong', getTitle());
+    const subtitleText = this.emptyHinted ? getSubtitleEmpty() : getSubtitleDefault();
     const subtitleStyled = currentTheme.fg('textDim', subtitleText);
-    const footerStyled = currentTheme.fg('textDim', FOOTER);
+    const footerStyled = currentTheme.fg('textDim', getFooter());
 
     const titleLine = truncateToWidth(titleStyled, innerWidth, '…');
     const subtitleLine = truncateToWidth(subtitleStyled, innerWidth, '…');

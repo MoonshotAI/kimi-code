@@ -15,7 +15,9 @@ export type ApiKeyInputResult =
   | { readonly kind: 'ok'; readonly value: string }
   | { readonly kind: 'cancel' };
 
-const FOOTER = t('tui.dialogs.apiKeyInput.footer');
+function getFooter(): string {
+  return t('tui.dialogs.apiKeyInput.footer');
+}
 
 function maskInputLine(raw: string): string {
   const prefix = '> ';
@@ -101,7 +103,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     const subtitleLines = subtitleSource.map((line) =>
       truncateToWidth(currentTheme.fg('textDim', line), innerWidth, '…'),
     );
-    const footerStyled = currentTheme.fg('textDim', FOOTER);
+    const footerStyled = currentTheme.fg('textDim', getFooter());
 
     const titleLine = truncateToWidth(titleStyled, innerWidth, '…');
     const footerLine = truncateToWidth(footerStyled, innerWidth, '…');

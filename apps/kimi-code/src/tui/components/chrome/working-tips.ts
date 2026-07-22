@@ -1,17 +1,28 @@
-import { WORKING_TIPS, type ToolbarTip } from '#/tui/constant/tips';
+import { getWorkingTips, type ToolbarTip } from '#/tui/constant/tips';
+import { getLocale } from '#/i18n';
 
 import { buildWeightedTips } from './footer';
 
-export { WORKING_TIPS };
+export { getWorkingTips };
 
 const TIP_ROTATE_INTERVAL_MS = 10_000;
 
-const WORKING_TIP_ROTATION = buildWeightedTips(WORKING_TIPS);
+// Rebuild the weighted rotation only when the locale changes, so working-tip
+// text follows the active language instead of freezing at module load.
+let rotationCache: { locale: string; rotation: readonly ToolbarTip[] } | null = null;
+function getWorkingTipRotation(): readonly ToolbarTip[] {
+  const locale = getLocale();
+  if (rotationCache === null || rotationCache.locale !== locale) {
+    rotationCache = { locale, rotation: buildWeightedTips(getWorkingTips()) };
+  }
+  return rotationCache.rotation;
+}
 
 export function currentWorkingTip(now = Date.now()): ToolbarTip | undefined {
-  if (WORKING_TIP_ROTATION.length === 0) return undefined;
-  const index = Math.floor(now / TIP_ROTATE_INTERVAL_MS) % WORKING_TIP_ROTATION.length;
-  return WORKING_TIP_ROTATION[index];
+  const rotation = getWorkingTipRotation();
+  if (rotation.length === 0) return undefined;
+  const index = Math.floor(now / TIP_ROTATE_INTERVAL_MS) % rotation.length;
+  return rotation[index];
 }
 
 /**
@@ -20,12 +31,13 @@ export function currentWorkingTip(now = Date.now()): ToolbarTip | undefined {
  * returning the same text twice in a row.
  */
 export function pickRandomWorkingTip(excludeText?: string): ToolbarTip | undefined {
-  if (WORKING_TIP_ROTATION.length === 0) return undefined;
+  const rotation = getWorkingTipRotation();
+  if (rotation.length === 0) return undefined;
   const candidates =
-    excludeText === undefined || WORKING_TIP_ROTATION.length === 1
-      ? WORKING_TIP_ROTATION
-      : WORKING_TIP_ROTATION.filter((t) => t.text !== excludeText);
-  const pool = candidates.length > 0 ? candidates : WORKING_TIP_ROTATION;
+    excludeText === undefined || rotation.length === 1
+      ? rotation
+      : rotation.filter((tip) => tip.text !== excludeText);
+  const pool = candidates.length > 0 ? candidates : rotation;
   const index = Math.floor(Math.random() * pool.length);
   return pool[index];
 }

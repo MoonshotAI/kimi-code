@@ -17,14 +17,30 @@ export {
   FEEDBACK_VERSION_PREFIX,
 } from '#/constant/app';
 
-export const FEEDBACK_STATUS_SUBMITTING = t('tui.messages.feedbackSubmitting');
-export const FEEDBACK_STATUS_UPLOADING = t('tui.messages.feedbackUploading');
-export const FEEDBACK_STATUS_SUCCESS = t('tui.messages.feedbackSubmitted');
-export const FEEDBACK_STATUS_CANCELLED = t('tui.messages.feedbackCancelled');
-export const FEEDBACK_STATUS_NETWORK_ERROR = t('tui.messages.feedbackNetworkError');
-export const FEEDBACK_STATUS_FALLBACK = t('tui.messages.feedbackOpeningGithub');
-export const FEEDBACK_STATUS_NOT_SIGNED_IN = t('tui.messages.feedbackNotSignedIn');
-export const FEEDBACK_STATUS_UPLOAD_FAILED = t('tui.messages.feedbackSentUploadFailed');
+export function getFeedbackStatusSubmitting(): string {
+  return t('tui.messages.feedbackSubmitting');
+}
+export function getFeedbackStatusUploading(): string {
+  return t('tui.messages.feedbackUploading');
+}
+export function getFeedbackStatusSuccess(): string {
+  return t('tui.messages.feedbackSubmitted');
+}
+export function getFeedbackStatusCancelled(): string {
+  return t('tui.messages.feedbackCancelled');
+}
+export function getFeedbackStatusNetworkError(): string {
+  return t('tui.messages.feedbackNetworkError');
+}
+export function getFeedbackStatusFallback(): string {
+  return t('tui.messages.feedbackOpeningGithub');
+}
+export function getFeedbackStatusNotSignedIn(): string {
+  return t('tui.messages.feedbackNotSignedIn');
+}
+export function getFeedbackStatusUploadFailed(): string {
+  return t('tui.messages.feedbackSentUploadFailed');
+}
 
 export function feedbackHttpErrorMessage(status: number): string {
   return t('tui.messages.feedbackHttpFailed', { status: String(status) });

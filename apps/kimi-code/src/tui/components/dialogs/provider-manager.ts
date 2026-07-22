@@ -46,7 +46,7 @@ import {
 
 import { t } from '#/i18n';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
-import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
+import { getCurrentMark, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { pageView, type PageView } from '#/tui/utils/paging';
@@ -430,7 +430,7 @@ function renderRow(
   // The active provider is flagged with a trailing "← current" (success),
   // matching the model selector's current-item marker — see .agents/skills/write-tui/DESIGN.md.
   const isActive = row.kind === 'source' && row.hasActive;
-  const marker = isActive ? ` ${CURRENT_MARK}` : '';
+  const marker = isActive ? ` ${getCurrentMark()}` : '';
 
   // Reserve 2 leading spaces + 2 for the pointer + room for the marker.
   const labelWidth = Math.max(0, width - 4 - visibleWidth(marker));

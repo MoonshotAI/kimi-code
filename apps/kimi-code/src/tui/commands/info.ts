@@ -8,16 +8,16 @@ import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
 import {
   FEEDBACK_ISSUE_URL,
-  FEEDBACK_STATUS_CANCELLED,
-  FEEDBACK_STATUS_FALLBACK,
-  FEEDBACK_STATUS_NETWORK_ERROR,
-  FEEDBACK_STATUS_NOT_SIGNED_IN,
-  FEEDBACK_STATUS_SUBMITTING,
-  FEEDBACK_STATUS_SUCCESS,
-  FEEDBACK_STATUS_UPLOAD_FAILED,
   FEEDBACK_TELEMETRY_EVENT,
   feedbackIdLine,
   feedbackSessionLine,
+  getFeedbackStatusCancelled,
+  getFeedbackStatusFallback,
+  getFeedbackStatusNetworkError,
+  getFeedbackStatusNotSignedIn,
+  getFeedbackStatusSubmitting,
+  getFeedbackStatusSuccess,
+  getFeedbackStatusUploadFailed,
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
 import { isManagedUsageProvider } from '../constant/kimi-tui';
@@ -40,26 +40,26 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 
   const providerKey = host.state.appState.availableModels[host.state.appState.model]?.provider;
   if (!isManagedUsageProvider(providerKey)) {
-    fallback(FEEDBACK_STATUS_NOT_SIGNED_IN);
+    fallback(getFeedbackStatusNotSignedIn());
     return;
   }
 
   // Stage 1: collect the free-form feedback text.
   const input = await promptFeedbackInput(host);
   if (input === undefined) {
-    host.showStatus(FEEDBACK_STATUS_CANCELLED);
+    host.showStatus(getFeedbackStatusCancelled());
     return;
   }
 
   // Stage 2: ask whether to attach diagnostics (logs / codebase).
   const level = await promptFeedbackAttachment(host);
   if (level === undefined) {
-    host.showStatus(FEEDBACK_STATUS_CANCELLED);
+    host.showStatus(getFeedbackStatusCancelled());
     return;
   }
 
   const version = withFeedbackVersionPrefix(host.state.appState.version);
-  const spinner = host.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
+  const spinner = host.showLoginProgressSpinner(getFeedbackStatusSubmitting());
   // Guarantee the spinner's underlying setInterval is always cleared, even when
   // submitFeedback or submitFeedbackWithAttachments throws — otherwise the
   // interval (and its per-frame requestRender) leaks for the rest of the session.
@@ -80,22 +80,22 @@ export async function handleFeedbackCommand(host: SlashCommandHost): Promise<voi
 
     if (res.kind !== 'ok') {
       stopSpinner({ ok: false, label: res.message });
-      fallback(FEEDBACK_STATUS_FALLBACK);
+      fallback(getFeedbackStatusFallback());
       return;
     }
 
     // Stage 3: prepare and upload each requested attachment independently.
     const attachmentFailed = await submitFeedbackWithAttachments(host, res.feedbackId, level);
 
-    stopSpinner({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
+    stopSpinner({ ok: true, label: getFeedbackStatusSuccess() });
     host.showStatus(feedbackSessionLine(host.state.appState.sessionId));
     host.showStatus(feedbackIdLine(res.feedbackId));
     host.track(FEEDBACK_TELEMETRY_EVENT);
     if (attachmentFailed) {
-      host.showStatus(FEEDBACK_STATUS_UPLOAD_FAILED);
+      host.showStatus(getFeedbackStatusUploadFailed());
     }
   } catch (error) {
-    stopSpinner({ ok: false, label: FEEDBACK_STATUS_NETWORK_ERROR });
+    stopSpinner({ ok: false, label: getFeedbackStatusNetworkError() });
     throw error;
   }
 }

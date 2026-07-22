@@ -75,21 +75,23 @@ export function promptFeedbackInput(host: SlashCommandHost): Promise<FeedbackPro
 
 export type FeedbackAttachmentLevel = 'none' | 'logs' | 'logs+codebase';
 
-const FEEDBACK_ATTACHMENT_OPTIONS: readonly ChoiceOption[] = [
-  { value: 'none', label: t('tui.statusMessages.feedbackNoAttachment'), description: t('tui.statusMessages.feedbackNoAttachmentDesc') },
-  {
-    value: 'logs',
-    label: t('tui.statusMessages.feedbackLogsOnly'),
-    description: t('tui.statusMessages.feedbackLogsOnlyDesc'),
-  },
-  {
-    value: 'logs+codebase',
-    label: t('tui.statusMessages.feedbackLogsAndCodebase'),
-    description:
-      t('tui.statusMessages.feedbackLogsAndCodebaseDesc'),
-    descriptionTone: 'warning',
-  },
-];
+function getFeedbackAttachmentOptions(): readonly ChoiceOption[] {
+  return [
+    { value: 'none', label: t('tui.statusMessages.feedbackNoAttachment'), description: t('tui.statusMessages.feedbackNoAttachmentDesc') },
+    {
+      value: 'logs',
+      label: t('tui.statusMessages.feedbackLogsOnly'),
+      description: t('tui.statusMessages.feedbackLogsOnlyDesc'),
+    },
+    {
+      value: 'logs+codebase',
+      label: t('tui.statusMessages.feedbackLogsAndCodebase'),
+      description:
+        t('tui.statusMessages.feedbackLogsAndCodebaseDesc'),
+      descriptionTone: 'warning',
+    },
+  ];
+}
 
 export function promptFeedbackAttachment(
   host: SlashCommandHost,
@@ -97,7 +99,7 @@ export function promptFeedbackAttachment(
   return new Promise((resolve) => {
     const picker = new ChoicePickerComponent({
       title: t('tui.statusMessages.shareDiagnosticInfo'),
-      options: FEEDBACK_ATTACHMENT_OPTIONS,
+      options: getFeedbackAttachmentOptions(),
       onSelect: (value) => {
         host.restoreEditor();
         resolve(value as FeedbackAttachmentLevel);

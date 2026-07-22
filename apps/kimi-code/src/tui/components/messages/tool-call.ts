@@ -52,7 +52,9 @@ const MAX_LIVE_OUTPUT_CHARS = 50_000;
 
 /** Delay before a long-running foreground Bash/Agent card advertises Ctrl+B. */
 const DETACH_HINT_DELAY_MS = 10_000;
-const DETACH_HINT_TEXT = t('tui.messages.toolCall.detachHint');
+function getDetachHintText(): string {
+  return t('tui.messages.toolCall.detachHint');
+}
 
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
@@ -1043,7 +1045,7 @@ export class ToolCallComponent extends Container {
   private buildDetachHintBlock(): void {
     if (!this.detachHintVisible) return;
     if (this.result !== undefined) return;
-    this.addChild(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0));
+    this.addChild(new Text(currentTheme.dim(getDetachHintText()), 2, 0));
   }
 
   private syncSubagentElapsedTimer(): void {

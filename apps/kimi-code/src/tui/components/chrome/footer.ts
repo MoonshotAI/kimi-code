@@ -11,10 +11,10 @@ import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
-import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
+import { getAllTips, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel, rainbowText, getDanceRainbowPalette } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
-import { t } from '#/i18n';
+import { getLocale, t } from '#/i18n';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 import {
@@ -46,8 +46,8 @@ const TIP_SEPARATOR = ' | ';
  * Expand tips into a rotation sequence using smooth weighted round-robin
  * (the nginx SWRR algorithm). Higher-`priority` tips appear more often while
  * staying evenly spread, so a tip generally does not land next to its own
- * duplicate. Deterministic and computed once at module load. Exported for
- * unit testing.
+ * duplicate. Deterministic for a given input; the footer memoizes the result
+ * per locale (see getRotation). Exported for unit testing.
  */
 export function buildWeightedTips(tips: readonly ToolbarTip[]): readonly ToolbarTip[] {
   const items = tips.map((t) => ({
@@ -69,7 +69,16 @@ export function buildWeightedTips(tips: readonly ToolbarTip[]): readonly Toolbar
   return seq;
 }
 
-const ROTATION: readonly ToolbarTip[] = buildWeightedTips(ALL_TIPS);
+// Weighted rotation is rebuilt only when the locale changes, so tip text
+// follows the active language instead of freezing at module load.
+let rotationCache: { locale: string; rotation: readonly ToolbarTip[] } | null = null;
+function getRotation(): readonly ToolbarTip[] {
+  const locale = getLocale();
+  if (rotationCache === null || rotationCache.locale !== locale) {
+    rotationCache = { locale, rotation: buildWeightedTips(getAllTips()) };
+  }
+  return rotationCache.rotation;
+}
 
 function currentTipIndex(): number {
   return Math.floor(Date.now() / TIP_ROTATE_INTERVAL_MS);
@@ -84,12 +93,13 @@ function currentTipIndex(): number {
  * tips on their own and avoiding "X | X".
  */
 function tipsForIndex(index: number): { primary: string; pair: string | null } {
-  const n = ROTATION.length;
+  const rotation = getRotation();
+  const n = rotation.length;
   if (n === 0) return { primary: '', pair: null };
   const offset = ((index % n) + n) % n;
-  const current = ROTATION[offset]!;
+  const current = rotation[offset]!;
   if (n === 1 || current.solo) return { primary: current.text, pair: null };
-  const next = ROTATION[(offset + 1) % n]!;
+  const next = rotation[(offset + 1) % n]!;
   if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }

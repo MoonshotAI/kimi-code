@@ -62,17 +62,21 @@ export function goalStartOptions(mode: 'manual' | 'yolo'): readonly StartPermiss
   return mode === 'yolo' ? goalStartYoloOptions() : goalStartManualOptions();
 }
 
-const MANUAL_NOTICE_LINES = [
-  t('tui.dialogs.goalStartPermissionPrompt.notice1'),
-  t('tui.dialogs.goalStartPermissionPrompt.notice2'),
-  t('tui.dialogs.goalStartPermissionPrompt.notice3'),
-] as const;
+function getManualNoticeLines() {
+  return [
+    t('tui.dialogs.goalStartPermissionPrompt.notice1'),
+    t('tui.dialogs.goalStartPermissionPrompt.notice2'),
+    t('tui.dialogs.goalStartPermissionPrompt.notice3'),
+  ] as const;
+}
 
-const YOLO_NOTICE_LINES = [
-  t('tui.dialogs.goalStartPermissionPrompt.yoloNotice1'),
-  t('tui.dialogs.goalStartPermissionPrompt.yoloNotice2'),
-  t('tui.dialogs.goalStartPermissionPrompt.yoloNotice3'),
-] as const;
+function getYoloNoticeLines() {
+  return [
+    t('tui.dialogs.goalStartPermissionPrompt.yoloNotice1'),
+    t('tui.dialogs.goalStartPermissionPrompt.yoloNotice2'),
+    t('tui.dialogs.goalStartPermissionPrompt.yoloNotice3'),
+  ] as const;
+}
 
 export class GoalStartPermissionPromptComponent extends StartPermissionPromptComponent {
   constructor(opts: GoalStartPermissionPromptOptions) {
@@ -81,7 +85,7 @@ export class GoalStartPermissionPromptComponent extends StartPermissionPromptCom
         opts.mode === 'yolo'
           ? t('tui.dialogs.goalStartPermissionPrompt.titleYolo')
           : t('tui.dialogs.goalStartPermissionPrompt.titleManual'),
-      noticeLines: opts.mode === 'yolo' ? YOLO_NOTICE_LINES : MANUAL_NOTICE_LINES,
+      noticeLines: opts.mode === 'yolo' ? getYoloNoticeLines() : getManualNoticeLines(),
       options: opts.mode === 'yolo' ? goalStartYoloOptions() : goalStartManualOptions(),
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,

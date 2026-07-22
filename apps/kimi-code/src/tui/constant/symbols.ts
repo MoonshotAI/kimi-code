@@ -10,7 +10,9 @@ export const SUCCESS_MARK = '✓ ';
 export const FAILURE_MARK = '✗ ';
 
 // Shared selector markers — keep every list picker visually consistent.
-// SELECT_POINTER marks the highlighted row; CURRENT_MARK is appended to the
+// SELECT_POINTER marks the highlighted row; getCurrentMark() is appended to the
 // row that is the currently-active value. See .agents/skills/write-tui/DESIGN.md.
 export const SELECT_POINTER = '❯';
-export const CURRENT_MARK = t('tui.labels.current');
+export function getCurrentMark(): string {
+  return t('tui.labels.current');
+}

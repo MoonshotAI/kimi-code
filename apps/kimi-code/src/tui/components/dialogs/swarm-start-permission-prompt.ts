@@ -31,17 +31,19 @@ function swarmOptions(): readonly StartPermissionOption<SwarmStartPermissionChoi
   ];
 }
 
-const NOTICE_LINES = [
-  t('tui.dialogs.swarmStartPermissionPrompt.notice1'),
-  t('tui.dialogs.swarmStartPermissionPrompt.notice2'),
-  t('tui.dialogs.swarmStartPermissionPrompt.notice3'),
-] as const;
+function getNoticeLines() {
+  return [
+    t('tui.dialogs.swarmStartPermissionPrompt.notice1'),
+    t('tui.dialogs.swarmStartPermissionPrompt.notice2'),
+    t('tui.dialogs.swarmStartPermissionPrompt.notice3'),
+  ] as const;
+}
 
 export class SwarmStartPermissionPromptComponent extends StartPermissionPromptComponent<SwarmStartPermissionChoice> {
   constructor(opts: SwarmStartPermissionPromptOptions) {
     super({
       title: t('tui.dialogs.swarmStartPermissionPrompt.title'),
-      noticeLines: NOTICE_LINES,
+      noticeLines: getNoticeLines(),
       options: swarmOptions(),
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,

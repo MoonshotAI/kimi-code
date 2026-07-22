@@ -17,7 +17,9 @@ import { getDataDir } from '#/utils/paths';
 import type { Locale } from '#/i18n';
 import { t } from '#/i18n';
 
-export const INVALID_TUI_CONFIG_MESSAGE = t('tui.statusMessages.invalidTuiConfig');
+export function getInvalidTuiConfigMessage(): string {
+  return t('tui.statusMessages.invalidTuiConfig');
+}
 
 export const TuiThemeSchema = z.string();
 
@@ -114,14 +116,14 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
 /**
  * Thrown by `loadTuiConfig` when the on-disk TOML cannot be parsed.
  * Carries `fallback` so the caller can recover without re-running the
- * I/O, and use `message` (== `INVALID_TUI_CONFIG_MESSAGE`) as a
+ * I/O, and use `message` (== `getInvalidTuiConfigMessage()`) as a
  * user-facing notice.
  */
 export class TuiConfigParseError extends Error {
   override readonly name = 'TuiConfigParseError';
   readonly fallback: TuiConfig;
   constructor(fallback: TuiConfig) {
-    super(INVALID_TUI_CONFIG_MESSAGE);
+    super(getInvalidTuiConfigMessage());
     this.fallback = fallback;
   }
 }

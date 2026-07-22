@@ -16,7 +16,7 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
+import { getCurrentMark, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
@@ -178,7 +178,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
       let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
       line += labelStyle(opt.label);
       if (isCurrent) {
-        line += ' ' + currentTheme.fg('success', CURRENT_MARK);
+        line += ' ' + currentTheme.fg('success', getCurrentMark());
       }
       lines.push(line);
       if (opt.description !== undefined && opt.description.length > 0) {

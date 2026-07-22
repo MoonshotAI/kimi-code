@@ -33,13 +33,17 @@ export interface InstallPromptOptions {
   readonly output?: NodeJS.WriteStream;
 }
 
-const INSTALL_HINT = t('tui.statusMessages.updatePromptInstallNow');
-const SKIP_HINT = t('tui.statusMessages.updatePromptContinue');
+function getInstallHint(): string {
+  return t('tui.statusMessages.updatePromptInstallNow');
+}
+function getSkipHint(): string {
+  return t('tui.statusMessages.updatePromptContinue');
+}
 
 export function createInstallPromptChoices(target: UpdateTarget): readonly InstallPromptChoice[] {
   return [
-    { value: 'install', label: `${INSTALL_HINT} (${target.version})` },
-    { value: 'skip', label: SKIP_HINT },
+    { value: 'install', label: `${getInstallHint()} (${target.version})` },
+    { value: 'skip', label: getSkipHint() },
   ];
 }
 

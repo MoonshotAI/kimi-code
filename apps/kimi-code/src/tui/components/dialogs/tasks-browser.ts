@@ -52,14 +52,16 @@ export interface TasksBrowserProps {
   readonly onStopIgnored?: (taskId: string, reason: 'terminal') => void;
 }
 
-const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
-  running: t('tui.dialogs.tasksBrowser.statusRunning'),
-  completed: t('tui.dialogs.tasksBrowser.statusCompleted'),
-  failed: t('tui.dialogs.tasksBrowser.statusFailed'),
-  timed_out: t('tui.dialogs.tasksBrowser.statusTimedOut'),
-  killed: t('tui.dialogs.tasksBrowser.statusKilled'),
-  lost: t('tui.dialogs.tasksBrowser.statusLost'),
-};
+function getStatusLabel(): Record<BackgroundTaskStatus, string> {
+  return {
+    running: t('tui.dialogs.tasksBrowser.statusRunning'),
+    completed: t('tui.dialogs.tasksBrowser.statusCompleted'),
+    failed: t('tui.dialogs.tasksBrowser.statusFailed'),
+    timed_out: t('tui.dialogs.tasksBrowser.statusTimedOut'),
+    killed: t('tui.dialogs.tasksBrowser.statusKilled'),
+    lost: t('tui.dialogs.tasksBrowser.statusLost'),
+  };
+}
 
 /** Auto-cancel the inline stop confirmation after this many ms. */
 const STOP_CONFIRM_TIMEOUT_MS = 5_000;
@@ -483,7 +485,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       : currentTheme.fg(idColor, task.taskId);
     const idPad = ' '.repeat(Math.max(0, 17 - task.taskId.length));
 
-    const status = STATUS_LABEL[task.status];
+    const status = getStatusLabel()[task.status];
     const statusBadge = currentTheme.fg(statusColor(task.status), status);
 
     const prefix = `${pointerStyled}${idText}${idPad} ${statusBadge}`;
@@ -542,7 +544,7 @@ export class TasksBrowserApp extends Container implements Focusable {
 
     const lines: string[] = [
       `${label(t('tui.dialogs.tasksBrowser.taskIdLabel'))}${value(task.taskId)}`,
-      `${label(t('tui.dialogs.tasksBrowser.statusLabel'))}${currentTheme.fg(statusColor(task.status), STATUS_LABEL[task.status])}`,
+      `${label(t('tui.dialogs.tasksBrowser.statusLabel'))}${currentTheme.fg(statusColor(task.status), getStatusLabel()[task.status])}`,
       `${label(t('tui.dialogs.tasksBrowser.descriptionLabel'))}${value(singleLine(task.description) || '—')}`,
     ];
     if (task.kind === 'process' && task.command && task.command !== task.description) {

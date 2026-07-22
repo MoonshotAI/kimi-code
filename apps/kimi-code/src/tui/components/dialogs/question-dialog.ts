@@ -27,12 +27,24 @@ import type {
 
 const NUMBER_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const MAX_BODY_LINES = 12;
-const DEFAULT_OTHER_LABEL = t('tui.dialogs.questionDialog.defaultOtherLabel');
-const NOT_ANSWERED_LABEL = t('tui.dialogs.questionDialog.notAnswered');
-const REVIEW_TITLE = t('tui.dialogs.questionDialog.reviewTitle');
-const SUBMIT_PROMPT = t('tui.dialogs.questionDialog.submitPrompt');
-const UNANSWERED_WARNING = t('tui.dialogs.questionDialog.unansweredWarning');
-const SUBMIT_ACTIONS = [t('common.submit'), t('common.cancel')] as const;
+function getDefaultOtherLabel(): string {
+  return t('tui.dialogs.questionDialog.defaultOtherLabel');
+}
+function getNotAnsweredLabel(): string {
+  return t('tui.dialogs.questionDialog.notAnswered');
+}
+function getReviewTitle(): string {
+  return t('tui.dialogs.questionDialog.reviewTitle');
+}
+function getSubmitPrompt(): string {
+  return t('tui.dialogs.questionDialog.submitPrompt');
+}
+function getUnansweredWarning(): string {
+  return t('tui.dialogs.questionDialog.unansweredWarning');
+}
+function getSubmitActions() {
+  return [t('common.submit'), t('common.cancel')] as const;
+}
 
 interface DisplayOption {
   readonly label: string;
@@ -224,14 +236,15 @@ export class QuestionDialogComponent extends Container implements Focusable {
   }
 
   private handleSubmitInput(data: string): void {
+    const submitActions = getSubmitActions();
     if (matchesKey(data, Key.up)) {
       this.submitActionIdx =
-        (this.submitActionIdx - 1 + SUBMIT_ACTIONS.length) % SUBMIT_ACTIONS.length;
+        (this.submitActionIdx - 1 + submitActions.length) % submitActions.length;
       this.reviewMessage = undefined;
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.submitActionIdx = (this.submitActionIdx + 1) % SUBMIT_ACTIONS.length;
+      this.submitActionIdx = (this.submitActionIdx + 1) % submitActions.length;
       this.reviewMessage = undefined;
       return;
     }
@@ -566,9 +579,9 @@ export class QuestionDialogComponent extends Container implements Focusable {
     ];
     this.pushTabs(lines);
     lines.push('');
-    lines.push(currentTheme.boldFg('text', ` ${REVIEW_TITLE}`));
+    lines.push(currentTheme.boldFg('text', ` ${getReviewTitle()}`));
     const reviewWarning =
-      this.reviewMessage ?? (this.hasUnansweredQuestions() ? UNANSWERED_WARNING : undefined);
+      this.reviewMessage ?? (this.hasUnansweredQuestions() ? getUnansweredWarning() : undefined);
     if (reviewWarning !== undefined) {
       lines.push(warning(`  ${reviewWarning}`));
     }
@@ -594,16 +607,17 @@ export class QuestionDialogComponent extends Container implements Focusable {
           renderWidth,
         );
       } else {
-        lines.push(`  ${dim('→')}  ${dim(NOT_ANSWERED_LABEL)}`);
+        lines.push(`  ${dim('→')}  ${dim(getNotAnsweredLabel())}`);
       }
     }
 
     lines.push('');
-    lines.push(text(` ${SUBMIT_PROMPT}`));
+    lines.push(text(` ${getSubmitPrompt()}`));
     lines.push('');
 
-    for (let i = 0; i < SUBMIT_ACTIONS.length; i++) {
-      const label = SUBMIT_ACTIONS[i];
+    const submitActions = getSubmitActions();
+    for (let i = 0; i < submitActions.length; i++) {
+      const label = submitActions[i];
       if (label === undefined) continue;
       const num = i + 1;
       if (i === this.submitActionIdx) {
@@ -730,7 +744,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
         kind: 'preset' as const,
       })),
       {
-        label: question.other_label?.length ? question.other_label : DEFAULT_OTHER_LABEL,
+        label: question.other_label?.length ? question.other_label : getDefaultOtherLabel(),
         description: question.other_description?.length ? question.other_description : undefined,
         kind: 'other' as const,
       },

@@ -31,12 +31,24 @@ export type CustomRegistryImportResult =
   | { readonly kind: 'ok'; readonly value: CustomRegistryImportValue }
   | { readonly kind: 'cancel' };
 
-const TITLE = t('tui.dialogs.customRegistryImport.title');
-const SUBTITLE_DEFAULT = t('tui.dialogs.customRegistryImport.subtitleDefault');
-const SUBTITLE_URL_EMPTY = t('tui.dialogs.customRegistryImport.subtitleUrlEmpty');
-const SUBTITLE_TOKEN_EMPTY = t('tui.dialogs.customRegistryImport.subtitleTokenEmpty');
-const FOOTER_NOT_LAST = t('tui.dialogs.customRegistryImport.footerNotLast');
-const FOOTER_LAST = t('tui.dialogs.customRegistryImport.footerLast');
+function getTitle(): string {
+  return t('tui.dialogs.customRegistryImport.title');
+}
+function getSubtitleDefault(): string {
+  return t('tui.dialogs.customRegistryImport.subtitleDefault');
+}
+function getSubtitleUrlEmpty(): string {
+  return t('tui.dialogs.customRegistryImport.subtitleUrlEmpty');
+}
+function getSubtitleTokenEmpty(): string {
+  return t('tui.dialogs.customRegistryImport.subtitleTokenEmpty');
+}
+function getFooterNotLast(): string {
+  return t('tui.dialogs.customRegistryImport.footerNotLast');
+}
+function getFooterLast(): string {
+  return t('tui.dialogs.customRegistryImport.footerLast');
+}
 
 type FieldId = 'url' | 'token';
 
@@ -144,17 +156,17 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     const pad = '  ';
 
     const border = (s: string): string => currentTheme.fg('primary', s);
-    const titleStyled = currentTheme.boldFg('textStrong', TITLE);
+    const titleStyled = currentTheme.boldFg('textStrong', getTitle());
     const subtitleText =
       this.hint === 'url-empty'
-        ? SUBTITLE_URL_EMPTY
+        ? getSubtitleUrlEmpty()
         : this.hint === 'token-empty'
-          ? SUBTITLE_TOKEN_EMPTY
-          : SUBTITLE_DEFAULT;
+          ? getSubtitleTokenEmpty()
+          : getSubtitleDefault();
     const subtitleStyled = currentTheme.fg('textDim', subtitleText);
     const footerStyled = currentTheme.fg(
       'textDim',
-      this.activeField === 'url' ? FOOTER_NOT_LAST : FOOTER_LAST,
+      this.activeField === 'url' ? getFooterNotLast() : getFooterLast(),
     );
 
     const urlLabelText = t('tui.dialogs.customRegistryImport.urlLabel');

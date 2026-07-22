@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  WORKING_TIPS,
+  getWorkingTips,
   currentWorkingTip,
   pickRandomWorkingTip,
 } from '#/tui/components/chrome/working-tips';
 
 describe('currentWorkingTip', () => {
-  it('returns a tip from WORKING_TIPS', () => {
+  it('returns a tip from getWorkingTips()', () => {
     const now = Date.now();
     const tip = currentWorkingTip(now);
     expect(tip).toBeDefined();
-    expect(WORKING_TIPS.some((t) => t.text === tip!.text)).toBe(true);
+    expect(getWorkingTips().some((t) => t.text === tip!.text)).toBe(true);
   });
 
   it('returns the same tip for the same timestamp', () => {
@@ -26,7 +26,7 @@ describe('currentWorkingTip', () => {
     const tip2 = currentWorkingTip(10_000);
     // The timestamp-based rotation should produce a deterministic
     // but different result when the input changes significantly.
-    if (WORKING_TIPS.length > 1) {
+    if (getWorkingTips().length > 1) {
       expect(tip1).not.toBe(tip2);
     }
   });
@@ -43,10 +43,10 @@ describe('currentWorkingTip', () => {
 });
 
 describe('pickRandomWorkingTip', () => {
-  it('returns a tip from WORKING_TIPS', () => {
+  it('returns a tip from getWorkingTips()', () => {
     const tip = pickRandomWorkingTip();
     expect(tip).toBeDefined();
-    expect(WORKING_TIPS.some((t) => t.text === tip!.text)).toBe(true);
+    expect(getWorkingTips().some((t) => t.text === tip!.text)).toBe(true);
   });
 
   it('avoids the excluded text when possible', () => {
@@ -59,15 +59,16 @@ describe('pickRandomWorkingTip', () => {
         break;
       }
     }
-    if (WORKING_TIPS.length > 1) {
+    if (getWorkingTips().length > 1) {
       expect(different).toBe(true);
     }
   });
 
   it('falls back to the rotation when every tip would be excluded', () => {
     // If all working tips share the same text, exclusion cannot be satisfied.
-    const onlyTip = WORKING_TIPS[0];
-    if (onlyTip !== undefined && WORKING_TIPS.every((t) => t.text === onlyTip.text)) {
+    const workingTips = getWorkingTips();
+    const onlyTip = workingTips[0];
+    if (onlyTip !== undefined && workingTips.every((t) => t.text === onlyTip.text)) {
       expect(pickRandomWorkingTip(onlyTip.text)).toBeDefined();
     }
   });

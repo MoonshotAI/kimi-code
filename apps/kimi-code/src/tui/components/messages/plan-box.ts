@@ -15,7 +15,9 @@ import { t } from '#/i18n';
 
 const LEFT_MARGIN = 2; // two-space indent matching other tool call children
 const SIDE_PADDING = 1; // space between the │ and the content on each side
-const TITLE_PREFIX = t('tui.messages.planBox.titlePrefix');
+function getTitlePrefix(): string {
+  return t('tui.messages.planBox.titlePrefix');
+}
 const TITLE_SUFFIX = ' ';
 
 export interface PlanBoxOptions {
@@ -112,7 +114,7 @@ export class PlanBoxComponent implements Component {
     const linked = path.isAbsolute(planPath)
       ? toTerminalHyperlink(basename, pathToFileURL(planPath).href)
       : basename;
-    const title = TITLE_PREFIX + linked + statusSuffix + TITLE_SUFFIX;
+    const title = getTitlePrefix() + linked + statusSuffix + TITLE_SUFFIX;
     if (visibleWidth(title) > budget) return fallbackTitle;
     return title;
   }

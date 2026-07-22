@@ -225,19 +225,21 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
   }
 }
 
-const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: t('tui.dangerPatterns.recursiveDelete') },
-  { pattern: /\bsudo\b/i, label: t('tui.dangerPatterns.sudo') },
-  { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: t('tui.dangerPatterns.pipeToShell') },
-  { pattern: /\bdd\b[^|]*\bof=/i, label: t('tui.dangerPatterns.ddWrite') },
-  { pattern: /\bmkfs\b/i, label: t('tui.dangerPatterns.mkfs') },
-  { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, label: t('tui.dangerPatterns.writeToRawDevice') },
-  { pattern: /\bchmod\s+-R?\s*777\b/i, label: t('tui.dangerPatterns.chmod777') },
-  { pattern: /:\(\)\s*\{\s*:\|:&\s*\}/i, label: t('tui.dangerPatterns.forkBomb') },
-];
+function getDangerPatterns(): Array<{ pattern: RegExp; label: string }> {
+  return [
+    { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: t('tui.dangerPatterns.recursiveDelete') },
+    { pattern: /\bsudo\b/i, label: t('tui.dangerPatterns.sudo') },
+    { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: t('tui.dangerPatterns.pipeToShell') },
+    { pattern: /\bdd\b[^|]*\bof=/i, label: t('tui.dangerPatterns.ddWrite') },
+    { pattern: /\bmkfs\b/i, label: t('tui.dangerPatterns.mkfs') },
+    { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, label: t('tui.dangerPatterns.writeToRawDevice') },
+    { pattern: /\bchmod\s+-R?\s*777\b/i, label: t('tui.dangerPatterns.chmod777') },
+    { pattern: /:\(\)\s*\{\s*:\|:&\s*\}/i, label: t('tui.dangerPatterns.forkBomb') },
+  ];
+}
 
 function detectDanger(command: string): string | undefined {
-  for (const { pattern, label } of DANGER_PATTERNS) {
+  for (const { pattern, label } of getDangerPatterns()) {
     if (pattern.test(command)) return label;
   }
   return undefined;

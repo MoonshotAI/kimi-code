@@ -34,7 +34,9 @@ import {
 } from './model-selector';
 
 const ALL_TAB_ID = 'all';
-const ALL_TAB_LABEL = t('tui.dialogs.tabbedModelSelector.allTab');
+function getAllTabLabel(): string {
+  return t('tui.dialogs.tabbedModelSelector.allTab');
+}
 
 export interface TabbedModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
@@ -152,7 +154,7 @@ function buildTabs(opts: TabbedModelSelectorOptions): readonly ModelTab[] {
   const tabs: ModelTab[] = [
     {
       id: ALL_TAB_ID,
-      label: ALL_TAB_LABEL,
+      label: getAllTabLabel(),
       selector: makeSelector(opts, opts.models),
     },
   ];

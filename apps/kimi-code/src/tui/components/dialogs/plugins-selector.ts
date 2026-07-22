@@ -34,20 +34,15 @@ const ELLIPSIS = '…';
 // Official tab, even when the marketplace catalog is unavailable. Selecting it
 // opens the install page in the browser rather than installing from a source,
 // because Web Bridge is a browser extension + daemon, not a plugin package.
-const WEB_BRIDGE_ENTRY: PluginMarketplaceEntry = {
-  id: 'kimi-webbridge',
-  displayName: 'Kimi WebBridge',
-  source: WEB_BRIDGE_URL,
-  tier: 'official',
-  homepage: WEB_BRIDGE_URL,
-  description: t('tui.dialogs.pluginsSelector.webBridgeDescription'),
-};
-
-// Only the hardcoded pinned row should open the WebBridge install page. Match
-// by reference (not id) so a catalog entry on another tab that happens to
-// reuse the same id still installs normally instead of being hijacked.
-function isPinnedWebBridgeEntry(entry: PluginMarketplaceEntry): boolean {
-  return entry === WEB_BRIDGE_ENTRY;
+function getWebBridgeEntry(): PluginMarketplaceEntry {
+  return {
+    id: 'kimi-webbridge',
+    displayName: 'Kimi WebBridge',
+    source: WEB_BRIDGE_URL,
+    tier: 'official',
+    homepage: WEB_BRIDGE_URL,
+    description: t('tui.dialogs.pluginsSelector.webBridgeDescription'),
+  };
 }
 
 interface PluginsOverviewItem {
@@ -380,18 +375,24 @@ type MarketState =
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'loaded'; readonly entries: readonly PluginMarketplaceEntry[]; readonly source: string };
 
-const PLUGINS_PANEL_TABS: readonly { id: PluginsPanelTabId; label: string }[] = [
-  { id: 'installed', label: t('tui.dialogs.pluginsSelector.tabInstalled') },
-  { id: 'official', label: t('tui.dialogs.pluginsSelector.tabOfficial') },
-  { id: 'third-party', label: t('tui.dialogs.pluginsSelector.tabThirdParty') },
-  { id: 'custom', label: t('tui.dialogs.pluginsSelector.tabCustom') },
-];
+function getPluginsPanelTabs(): readonly { id: PluginsPanelTabId; label: string }[] {
+  return [
+    { id: 'installed', label: t('tui.dialogs.pluginsSelector.tabInstalled') },
+    { id: 'official', label: t('tui.dialogs.pluginsSelector.tabOfficial') },
+    { id: 'third-party', label: t('tui.dialogs.pluginsSelector.tabThirdParty') },
+    { id: 'custom', label: t('tui.dialogs.pluginsSelector.tabCustom') },
+  ];
+}
 
 export class PluginsPanelComponent extends Container implements Focusable {
   focused = false;
 
   private readonly opts: PluginsPanelOptions;
   private readonly customInput = new Input();
+  // Computed once per instance (runtime) so the reference stays stable for
+  // pinned-row identity checks and the resolved locale is captured on open.
+  private readonly webBridgeEntry: PluginMarketplaceEntry = getWebBridgeEntry();
+  private readonly tabs: readonly { id: PluginsPanelTabId; label: string }[] = getPluginsPanelTabs();
   private activeTabIndex: number;
   private selectedIndex = 0;
   private market: MarketState = { status: 'idle' };
@@ -402,7 +403,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     this.opts = opts;
     this.activeTabIndex = Math.max(
       0,
-      PLUGINS_PANEL_TABS.findIndex((tab) => tab.id === (opts.initialTab ?? 'installed')),
+      this.tabs.findIndex((tab) => tab.id === (opts.initialTab ?? 'installed')),
     );
     if (opts.selectedId !== undefined && this.activeTab.id === 'installed') {
       const idx = opts.installed.findIndex((p) => p.id === opts.selectedId);
@@ -440,8 +441,8 @@ export class PluginsPanelComponent extends Container implements Focusable {
     this.invalidate();
   }
 
-  private get activeTab(): (typeof PLUGINS_PANEL_TABS)[number] {
-    return PLUGINS_PANEL_TABS[this.activeTabIndex]!;
+  private get activeTab(): { id: PluginsPanelTabId; label: string } {
+    return this.tabs[this.activeTabIndex]!;
   }
 
   private get marketplaceEntries(): readonly PluginMarketplaceEntry[] {
@@ -456,11 +457,18 @@ export class PluginsPanelComponent extends Container implements Focusable {
     return new Map(this.opts.installed.map((plugin) => [plugin.id, plugin.version]));
   }
 
+  // Only the hardcoded pinned row should open the WebBridge install page. Match
+  // by reference (not id) so a catalog entry on another tab that happens to
+  // reuse the same id still installs normally instead of being hijacked.
+  private isPinnedWebBridgeEntry(entry: PluginMarketplaceEntry): boolean {
+    return entry === this.webBridgeEntry;
+  }
+
   private get officialEntries(): readonly PluginMarketplaceEntry[] {
     // The hardcoded Web Bridge entry always leads the Official tab, even when
     // the catalog is loading or unreachable. Dedupe by id so a catalog that
     // also lists it does not render a second row.
-    return [WEB_BRIDGE_ENTRY, ...this.officialCatalogEntries];
+    return [this.webBridgeEntry, ...this.officialCatalogEntries];
   }
 
   private get officialCatalogEntries(): readonly PluginMarketplaceEntry[] {
@@ -468,7 +476,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     // kimi-webbridge, the pinned row already represents it, so suppress the
     // catalog copy to avoid a duplicate row on the Official tab.
     return this.marketplaceEntries.filter(
-      (entry) => entry.tier === 'official' && entry.id !== WEB_BRIDGE_ENTRY.id,
+      (entry) => entry.tier === 'official' && entry.id !== this.webBridgeEntry.id,
     );
   }
 
@@ -494,14 +502,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.tab)) {
-      this.activeTabIndex = (this.activeTabIndex + 1) % PLUGINS_PANEL_TABS.length;
+      this.activeTabIndex = (this.activeTabIndex + 1) % this.tabs.length;
       this.selectedIndex = 0;
       this.requestMarketplaceIfNeeded();
       return;
     }
     if (matchesKey(data, Key.shift('tab'))) {
       this.activeTabIndex =
-        (this.activeTabIndex - 1 + PLUGINS_PANEL_TABS.length) % PLUGINS_PANEL_TABS.length;
+        (this.activeTabIndex - 1 + this.tabs.length) % this.tabs.length;
       this.selectedIndex = 0;
       this.requestMarketplaceIfNeeded();
       return;
@@ -583,7 +591,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     if (matchesKey(data, Key.enter)) {
       const entry = entries[this.selectedIndex];
       if (entry === undefined) return;
-      if (isPinnedWebBridgeEntry(entry)) {
+      if (this.isPinnedWebBridgeEntry(entry)) {
         this.opts.onSelect({ kind: 'open-url', url: WEB_BRIDGE_URL, label: entry.displayName });
         return;
       }
@@ -614,7 +622,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
       mutedHintLine(hint, colors),
       '',
       renderTabStrip({
-        labels: PLUGINS_PANEL_TABS.map((t) => t.label),
+        labels: this.tabs.map((t) => t.label),
         activeIndex: this.activeTabIndex,
         width,
         colors,
@@ -752,7 +760,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     // Web Bridge is pinned above the catalog and stays visible while the
     // catalog loads or errors, since it's built into the TUI rather than
     // fetched. Catalog rows shift down by one index to match.
-    lines.push(...this.renderMarketplaceRow(WEB_BRIDGE_ENTRY, 0, width));
+    lines.push(...this.renderMarketplaceRow(this.webBridgeEntry, 0, width));
     this.renderMarketplaceTab(lines, width, this.officialCatalogEntries, 1);
   }
 
@@ -766,7 +774,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
-    const status = isPinnedWebBridgeEntry(entry)
+    const status = this.isPinnedWebBridgeEntry(entry)
       ? 'open-in-browser'
       : marketplaceEntryStatus(entry, this.installedVersions);
     const statusLabel = marketplaceStatusLabel(status);
