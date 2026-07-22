@@ -361,6 +361,16 @@ export class Session {
       additionalDirs,
     );
     await this.setBaseAdditionalDirs(this.additionalDirs);
+    // Preserve the standing prompt persisted with the session when this
+    // resume/reload didn't supply a `roleAdditional`. `/reload` and plain
+    // `resumeSession({ id })` have no way to pass the value, so without this an
+    // omitted value would compare unequal to the persisted one below, clear the
+    // {{ROLE_ADDITIONAL}} slot, and drop the standing prompt (and newly-spawned
+    // agents would inherit `undefined`). An explicit value — including `""` to
+    // clear it — is left untouched and still overrides.
+    if (this.roleAdditional === undefined) {
+      this.roleAdditional = agents.main?.roleAdditional;
+    }
     this.agents.clear();
     // Only the main agent is needed to reopen the session; subagents replay
     // lazily when an RPC or Agent(resume=...) call asks for their state.

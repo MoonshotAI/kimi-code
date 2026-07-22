@@ -119,6 +119,51 @@ describe('Session.resume with roleAdditional', () => {
     }
   });
 
+  it('preserves the persisted roleAdditional when resume/reload omits it', async () => {
+    const sessionDir = await makeTempDir();
+    const workDir = await makeTempDir();
+
+    // Launch 1: create and persist a session with roleAdditional "W1".
+    const session1 = new Session({
+      id: 'test-resume-roleadditional-omitted',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      providerManager: testProviderManager(),
+      roleAdditional: 'role-additional-marker-W1',
+    });
+
+    const { agent: mainAgent1 } = await session1.createAgent(
+      { type: 'main' },
+      { profile: DEFAULT_AGENT_PROFILES['agent'] },
+    );
+
+    expect(mainAgent1.config.systemPrompt).toContain('role-additional-marker-W1');
+    await session1.close();
+
+    // Launch 2: resume WITHOUT a roleAdditional, exactly as `/reload` and a plain
+    // resumeSession({ id }) do — neither has a way to pass the value. The standing
+    // prompt persisted with the session must be preserved, not cleared.
+    const session2 = new Session({
+      id: 'test-resume-roleadditional-omitted',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      providerManager: testProviderManager(),
+      // roleAdditional intentionally omitted.
+    });
+
+    try {
+      await session2.resume();
+      const mainAgent2 = await session2.ensureAgentResumed('main');
+
+      // The standing prompt survives the omitted resume/reload.
+      expect(mainAgent2.config.systemPrompt).toContain('role-additional-marker-W1');
+    } finally {
+      await session2.close();
+    }
+  });
+
   it('does not re-render the system prompt when roleAdditional is unchanged', async () => {
     const sessionDir = await makeTempDir();
     const workDir = await makeTempDir();
