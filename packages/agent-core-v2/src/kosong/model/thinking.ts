@@ -95,23 +95,19 @@ export function usesTraitDrivenThinking(
 }
 
 /**
- * ⚠ PHASE 6 PARITY PATCH — v1 `provider.type === 'kimi'` gate restored.
- *
  * Whether client-side thinking-effort validation must be STRICT for the
  * (protocol, providerType) pair: the resolved traits take thinking over and
  * the last `withThinking` declarer marks `strictThinkingValidation`.
  *
- * This is the gate for client-side effort strictness (validation, the
- * always-on clamp, and the `'on'` projection). The strict flag is declared
- * by `kimiOpenAITrait` — Kimi's native API rejects unlisted efforts — and
- * deliberately NOT by `kimiAnthropicTrait`: over the Anthropic
- * transport the backend may accept efforts the local catalog metadata does
- * not list, so the profile must stay lenient there (warn-and-send, with the
- * `anthropic-thinking-*` warnings) instead of rejecting or rewriting the
- * effort. Gating on plain `usesTraitDrivenThinking` (true for the
- * anthropic pair registration too) made `setThinking` throw for Kimi-managed
- * Anthropic models and left the warning path unreachable — a v1 behavioral
- * regression.
+ * Strict now gates only listed-effort validation and the `'on'` projection.
+ * The always-on clamp is UNCONDITIONAL — a model that declares
+ * `always_thinking` never resolves to `'off'` on any wire (a claimed off
+ * state would be a lie, since upstream keeps reasoning at its default when
+ * no off encoding exists). Unlisted concrete efforts stay lenient on
+ * compatible transports (warn-and-send, `anthropic-thinking-effort-not-listed`)
+ * because the backend may accept values the local catalog does not list. The
+ * strict flag is declared by `kimiOpenAITrait` — Kimi's native API rejects
+ * unlisted efforts — and deliberately NOT by `kimiAnthropicTrait`.
  */
 export function requiresStrictThinkingValidation(
   registry: IProtocolAdapterRegistry,

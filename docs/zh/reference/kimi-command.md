@@ -359,7 +359,7 @@ kimi provider catalog list anthropic
 
 #### `kimi provider catalog add <providerId>`
 
-按 id 从 catalog 直接导入一个已知供应商，协议类型、base URL、模型信息均由 catalog 提供，只需提供 API key。catalog 未声明协议的供应商（如 xai、openrouter 这类专有 SDK）按 OpenAI 兼容协议导入，并在输出中标注 "guessed"；catalog 未提供可用端点时需用 `--base-url` 显式指定。专有协议（如 Amazon Bedrock）无法导入。
+按 id 从 catalog 直接导入一个已知供应商，协议类型、base URL、模型信息均由 catalog 提供，只需提供 API key。catalog 未声明协议的供应商（如 xai、openrouter 这类厂商专用 SDK）按 OpenAI 兼容协议导入，并在输出中标注 "guessed"；catalog 未提供可用端点时需用 `--base-url` 显式指定。专有协议（如 Amazon Bedrock）无法导入。
 
 | 参数 / 选项 | 说明 |
 | --- | --- |

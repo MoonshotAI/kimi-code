@@ -109,9 +109,12 @@ export function resolveThinkingEffort(
   // reads as absent.
   const configuredRaw = config?.effort?.trim().toLowerCase();
   const configured = configuredRaw === undefined || configuredRaw === '' ? undefined : configuredRaw;
+  const requestedRaw = requested?.trim().toLowerCase();
+  const requestedNormalized =
+    requestedRaw === undefined || requestedRaw === '' ? undefined : (requestedRaw as ThinkingEffort);
   let effort: ThinkingEffort;
-  if (requested !== undefined) {
-    effort = requested;
+  if (requestedNormalized !== undefined) {
+    effort = requestedNormalized;
   } else if (config?.enabled === false) {
     effort = 'off';
   } else {
