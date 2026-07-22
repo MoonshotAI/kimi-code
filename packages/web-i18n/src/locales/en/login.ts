@@ -17,8 +17,8 @@ export default {
   expiredHint: 'Please restart the authorization flow',
   retry: 'Retry',
   closeBtn: 'Close',
-  errorTitle: 'The current daemon does not support login yet',
+  errorTitle: 'The current version does not support login yet',
   errorHint: 'Please upgrade kimi-code and try again',
-  pollErrorTitle: 'Lost connection to the daemon',
+  pollErrorTitle: 'Lost connection',
   pollErrorHint: 'Authorization polling failed repeatedly. Check the kimi-code process and try again.',
 } as const;

@@ -689,8 +689,8 @@ function archiveTime(iso: string): string {
             </div>
             <div class="row">
               <span class="rlabel">
-                {{ t('sidebar.daemon') }}
-                <span class="hint">{{ t('settings.daemonHint') }}</span>
+                {{ t('settings.serverAddress') }}
+                <span class="hint">{{ t('settings.serverAddressHint') }}</span>
               </span>
               <span class="rvalue">{{ daemonEndpoint }}</span>
             </div>

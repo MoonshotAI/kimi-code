@@ -5,7 +5,7 @@ export default {
   behindTitle: '落后远程',
   fileCountOne: '{number}个文件',
   fileCountOther: '{number}个文件',
-  empty: '无 git 改动 / daemon 未提供',
+  empty: '无 git 改动',
   clean: '工作区干净，无改动',
   back: '返回',
   loading: '正在加载 diff…',

@@ -33,7 +33,6 @@ export default {
   notSignedIn: '未登录',
   signIn: '登录',
   language: '语言',
-  daemon: '后台',
   backendTitle: '后端 {backend} · {endpoint} — 点击切换',
   noSessions: '暂无对话',
   allPinned: '有 {count} 条对话被置顶',

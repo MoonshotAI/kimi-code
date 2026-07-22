@@ -3,7 +3,7 @@ export default {
   title: '提供商管理',
   close: '关闭 (Esc)',
   loading: '加载提供商中…',
-  unavailable: 'daemon 暂不支持提供商管理',
+  unavailable: '暂不支持提供商管理',
   empty: '暂无提供商',
   status: {
     connected: '已连接',

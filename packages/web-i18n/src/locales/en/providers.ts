@@ -3,7 +3,7 @@ export default {
   title: 'Provider management',
   close: 'Close (Esc)',
   loading: 'Loading providers…',
-  unavailable: 'The daemon does not support provider management yet',
+  unavailable: 'Provider management is not available yet',
   empty: 'No providers yet',
   status: {
     connected: 'Connected',
