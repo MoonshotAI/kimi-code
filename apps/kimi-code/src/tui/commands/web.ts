@@ -6,7 +6,7 @@ import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/web/shared'
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { getLlmNotSetMessage, getNoActiveSessionMessage, MAIN_AGENT_ID, PRODUCT_NAME } from '../constant/kimi-tui';
 import { darkColors } from '../theme/colors';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
@@ -22,7 +22,7 @@ import type { SlashCommandHost } from './dispatch';
 export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 

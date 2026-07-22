@@ -30,7 +30,7 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import type { Locale } from '#/i18n';
 import { getLocale, setLocale, t } from '#/i18n';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { getLlmNotSetMessage, getNoActiveSessionMessage } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
@@ -77,7 +77,7 @@ export function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias)
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
@@ -122,7 +122,7 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
 export async function handleYoloCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
@@ -166,7 +166,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
@@ -210,7 +210,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
 export async function handleCompactCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
   const customInstruction = args.trim() || undefined;
