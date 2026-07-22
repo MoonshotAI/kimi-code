@@ -373,7 +373,7 @@ onUnmounted(() => {
             <p>High-density navigation lists like the sidebar share one rhythm, all on the 4px grid: <b>in-row vertical padding</b> <code>--space-1</code> (4px), <b>no margin between rows</b> (the hover pill provides the separation); <b>section gap</b> (between logo / search / action buttons / group title / list) uniformly <code>--space-2</code> (8px); <b>between groups</b> <code>--space-2</code>; the brand header is slightly looser at the top (<code>--space-3</code>). When building similar lists, reuse this scale — do not hand-write 1/6/7/10px.</p>
 
             <h3 class="sub">Radius</h3>
-            <p>Merge the existing 14 values <b>into the nearest</b> of 7 scale steps. Rule: the component type determines the radius, not the author's feel.</p>
+            <p>Merge the existing 14 values <b>into the nearest</b> of 7 scale steps. Rule: the component type determines the radius, not the author's feel. The Composer shell is the sole product-specific exception: its 32px radius pairs with <code>superellipse(1.5)</code> so the flatter curve stays visually concentric with its controls.</p>
             <div class="radius-grid">
               <div class="radius-item"><div class="radius-box" style="border-radius:4px"></div><span class="rl">xs · 4</span></div>
               <div class="radius-item"><div class="radius-box" style="border-radius:6px"></div><span class="rl">sm · 6</span></div>
@@ -381,6 +381,7 @@ onUnmounted(() => {
               <div class="radius-item"><div class="radius-box" style="border-radius:12px"></div><span class="rl">lg · 12</span></div>
               <div class="radius-item"><div class="radius-box" style="border-radius:16px"></div><span class="rl">xl · 16</span></div>
               <div class="radius-item"><div class="radius-box" style="border-radius:20px"></div><span class="rl">2xl · 20</span></div>
+              <div class="radius-item"><div class="radius-box" style="border-radius:32px;corner-shape:superellipse(1.5)"></div><span class="rl">composer · 32 / 1.5</span></div>
               <div class="radius-item"><div class="radius-box" style="border-radius:999px"></div><span class="rl">full · 999</span></div>
             </div>
             <table class="dt">
@@ -390,8 +391,9 @@ onUnmounted(() => {
                 <tr><td class="tk">--radius-sm</td><td class="val">6px</td><td>small button, icon button, menu item</td><td class="val">5/6px →</td></tr>
                 <tr><td class="tk">--radius-md</td><td class="val">8px</td><td>button, input, badge, card</td><td class="val">7/8/9px →</td></tr>
                 <tr><td class="tk">--radius-lg</td><td class="val">12px</td><td>dropdown panel</td><td class="val">10/12px →</td></tr>
-                <tr><td class="tk">--radius-xl</td><td class="val">16px</td><td>dialog, bottom Sheet, Composer</td><td class="val">14/16px →</td></tr>
+                <tr><td class="tk">--radius-xl</td><td class="val">16px</td><td>dialog, bottom Sheet</td><td class="val">14/16px →</td></tr>
                 <tr><td class="tk">--radius-2xl</td><td class="val">20px</td><td>accent container / large panel</td><td class="val">20px</td></tr>
+                <tr><td class="tk">--radius-composer</td><td class="val">32px</td><td>Composer shell, with <code>--corner-shape-composer</code></td><td class="val">product-specific</td></tr>
                 <tr><td class="tk">--radius-full</td><td class="val">999px</td><td>pill badge, avatar, send button</td><td class="val">999px / 50%</td></tr>
               </tbody>
             </table>
@@ -1271,7 +1273,8 @@ onUnmounted(() => {
             </ul>
 
             <h3 class="sub">Composer</h3>
-            <p>Unified into a single rounded container: <code>--radius-xl</code> with a stable 0.5px border; focus changes it to blue and adds a hairline-scale 0.5px accent ring by <code>box-shadow</code> — border and ring read as one uniform 1px edge — plus a soft halo, so the emphasis never changes the container size. The textarea uses <code>text-autospace: normal</code> for mixed CJK and Latin input. Toolbar controls all use the Pill / IconButton primitives; the context ring drops horizontal inset so it sits close to the model switcher, and the send button is a 32px circle.</p>
+            <p>Unified into a single raised container: <code>--radius-composer</code> (32px) with <code>--corner-shape-composer: superellipse(1.5)</code> and a stable 0.5px edge. Focus crossfades a low-chroma line-and-accent edge over <code>--duration-slow</code> with <code>--ease-in-out</code>, while the neutral shadow stays unchanged — there is no added halo and no layout shift. The textarea uses <code>text-autospace: normal</code> for mixed CJK and Latin input. Toolbar controls use a quiet 32px full-round geometry with 8px edge inset; the send button remains a standard 32px circle.</p>
+            <p><b>Layering, anchors, and motion</b>: the dock normally stays at <code>--z-sticky</code> so the Latest Messages pill can remain visible above its veil. While any Composer popup is open, the dock temporarily joins <code>--z-dropdown</code>, ensuring permission, work-mode, and model menus always paint above that pill. The permission menu's left edge and the model menu's right edge each follow their own trigger pill. All three menus use <code>--shadow-menu</code> and the same trigger-corner pop motion as Session Row menus: 0.97 scale with a 2px shift toward the trigger, <code>--duration-base</code> on entry, and <code>--duration-fast</code> on exit.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Composer</span></div>
               <div class="stage p col" style="align-items:center;background:#fff">
@@ -1293,9 +1296,9 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="callout info"><span class="ico">i</span><div>
-              <b>Site-wide consistency</b>: the composer has only one radius (<code>--radius-xl</code> · 16px) and one height; toolbar controls all use the Pill / IconButton primitives, and the send button is a 32px circle — it no longer drifts with the theme. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair an icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room. The dock's workbar above the composer carries one compact pill vocabulary — stadium-shaped (<code>--radius-full</code>) with a <code>--color-surface</code> fill (one rung above the page in both schemes — sunken is degenerate in dark — the same material as the popover it opens) and the system hairline edge (0.5px at <code>--color-line-strong</code>, one rung up for presence; no shadow), icon + label + a count or status — for background bash tasks, background sub-agents, todos, and the goal alike, matching the composer's big-radius family (xl container, circle send button, stadium model pill); a pill toggles the shared work panel (itself at <code>--radius-xl</code> with the same 0.5px <code>--color-line-strong</code> edge outside — inner separators stay <code>--color-line</code> — and the menu panel's <code>--shadow-menu</code>), and the goal's detail (full objective, completion criterion) fills the panel body while its pause / resume / cancel controls ride the panel head (the decision cards' action vocabulary — exactly one accent primary, resume while paused; secondary pause while active; danger-soft cancel) and the meta counts (turns / tokens / time / budget) sit in a hairline footer — never a separate full-width strip.
+              <b>Site-wide consistency</b>: the composer uses one 32px superellipse shell and one 32px desktop control height. Attachment, permission, modes, compact, and model controls are all full-round and transparent at rest; hover reveals a neutral wash, open/active may use accent-soft, and Send remains the sole persistent filled control. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair the existing icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room. The dock's workbar above the composer carries one pill vocabulary — 32px high with <code>--space-4</code> inline padding and stadium-shaped (<code>--radius-full</code>) corners, a <code>--color-surface</code> fill (one rung above the page in both schemes — sunken is degenerate in dark — the same material as the popover it opens), and the system hairline edge (0.5px at <code>--color-line-strong</code>, one rung up for presence; no shadow), icon + label + a count or status — for background bash tasks, background sub-agents, todos, and the goal alike; a pill toggles the shared work panel (itself at <code>--radius-xl</code> with the same 0.5px <code>--color-line-strong</code> edge outside — inner separators stay <code>--color-line</code> — and the menu panel's <code>--shadow-menu</code>), and the goal's detail (full objective, completion criterion) fills the panel body while its pause / resume / cancel controls ride the panel head (the decision cards' action vocabulary — exactly one accent primary, resume while paused; secondary pause while active; danger-soft cancel) and the meta counts (turns / tokens / time / budget) sit in a hairline footer — never a separate full-width strip.
             </div></div>
-            <p><b>Workspace attachment card</b>: on the empty session, the workspace picker is a <b>separate attachment card</b> tucked under the composer — and the composer card itself stays complete (its own 0.5px border, <code>--radius-2xl</code> corners and shadow are never altered). The attachment lives inside the composer's padding box as the card's sibling, so its width always matches; its top <code>--space-4</code> slides behind the card (the card is raised to <code>--z-sticky</code>), its square top edge stays hidden, and only the rounded bottom (<code>0 0 --radius-2xl --radius-2xl</code>) shows. Background <code>--color-hover</code> at 60% via <code>color-mix</code> (≈0.03 black in light, self-adapting in dark), no border, no shadow. Inside sits one quiet capsule trigger: transparent, <code>--radius-full</code>, 16px leading icon and 12px label at weight 475 in <code>--color-text-muted</code>; hover deepens to <code>--color-selected</code> and the label turns <code>--color-text</code>. The dropdown follows the §03 menu spec and is viewport-aware (flips above when more room, clamps max-height to the scrollport); at <code>--z-dropdown</code> it outranks both the card and the fixed click-outside backdrop (<code>--z-sticky</code>), which renders outside the composer because the card's <code>container-type</code> captures <code>position: fixed</code> descendants.</p>
+            <p><b>Workspace attachment card</b>: on the empty session, the workspace picker is a <b>separate attachment card</b> tucked under the composer — and the composer card itself stays complete (its own 0.5px border, <code>--radius-composer</code> corners with <code>--corner-shape-composer</code>, and shadow are never altered). The attachment lives inside the composer's padding box as the card's sibling, so its width always matches; its top <code>--space-4</code> slides behind the card (the card is raised to <code>--z-sticky</code>), its square top edge stays hidden, and only the rounded bottom (<code>0 0 --radius-2xl --radius-2xl</code>) shows. Background <code>--color-hover</code> at 60% via <code>color-mix</code> (≈0.03 black in light, self-adapting in dark), no border, no shadow. Inside sits one quiet capsule trigger: transparent, <code>--radius-full</code>, 16px leading icon and 12px label at weight 475 in <code>--color-text-muted</code>; hover deepens to <code>--color-selected</code> and the label turns <code>--color-text</code>. The dropdown follows the §03 menu spec and is viewport-aware (flips above when more room, clamps max-height to the scrollport); at <code>--z-dropdown</code> it outranks both the card and the fixed click-outside backdrop (<code>--z-sticky</code>), which renders outside the composer because the card's <code>container-type</code> captures <code>position: fixed</code> descendants.</p>
 
             <h3 class="sub">Responsive</h3>
             <p>See §02 <code>--p-bp-sm</code> for the breakpoint. This section only gives mobile-adaptation pointers for the chat interface; a full mobile mockup is out of scope for this spec.</p>
@@ -1992,11 +1995,13 @@ onUnmounted(() => {
     --p-danger: var(--color-danger); --p-danger-soft: var(--color-danger-soft); --p-danger-bd: var(--color-danger-bd);
     --p-info: var(--color-info);
     --p-sp-1: var(--space-1); --p-sp-2: var(--space-2); --p-sp-3: var(--space-3); --p-sp-4: var(--space-4); --p-sp-5: var(--space-5); --p-sp-6: var(--space-6); --p-sp-8: var(--space-8);
-    --p-r-xs: var(--radius-xs); --p-r-sm: var(--radius-sm); --p-r-md: var(--radius-md); --p-r-lg: var(--radius-lg); --p-r-xl: var(--radius-xl); --p-r-2xl: var(--radius-2xl); --p-r-full: var(--radius-full);
+    --p-r-xs: var(--radius-xs); --p-r-sm: var(--radius-sm); --p-r-md: var(--radius-md); --p-r-lg: var(--radius-lg); --p-r-xl: var(--radius-xl); --p-r-2xl: var(--radius-2xl); --p-r-composer: var(--radius-composer); --p-r-full: var(--radius-full);
+    --p-corner-composer: var(--corner-shape-composer);
     --p-sh-xs: var(--shadow-xs);
     --p-sh-sm: var(--shadow-sm);
     --p-sh-menu: var(--shadow-menu);
     --p-sh-md: var(--shadow-md);
+    --p-sh-input: var(--shadow-input);
     --p-sh-lg: var(--shadow-lg);
     --p-sh-xl: var(--shadow-xl);
     --p-font-size-xs: var(--text-xs); --p-font-size-sm: var(--text-sm); --p-font-size-base: var(--text-base); --p-font-size-md: var(--text-base); --p-font-size-lg: var(--text-lg); --p-font-size-xl: var(--text-xl); --p-font-size-2xl: var(--text-2xl);
@@ -2004,6 +2009,7 @@ onUnmounted(() => {
     --p-ease: var(--ease-out);
     --p-ease-inout: var(--ease-in-out);
     --p-dur-fast: var(--duration-fast); --p-dur: var(--duration-base); --p-dur-slow: var(--duration-slow);
+    --p-composer-focus-line: var(--color-composer-focus-line);
     font-family: var(--font-ui); color: var(--color-text); font-size: var(--text-base);
   }
   /* ---- Dark skin overrides ---- */
@@ -2016,7 +2022,7 @@ onUnmounted(() => {
     --p-success: #3fb950; --p-success-soft: rgba(63,185,80,.14); --p-success-bd: rgba(63,185,80,.28);
     --p-warning: #d29922; --p-warning-soft: rgba(210,153,34,.14); --p-warning-bd: rgba(210,153,34,.28);
     --p-danger: #f85149;  --p-danger-soft: rgba(248,81,73,.14);  --p-danger-bd: rgba(248,81,73,.28);
-    --p-sh-sm: 0 1px 2px rgba(0,0,0,.4); --p-sh-md: 0 4px 12px rgba(0,0,0,.45); --p-sh-lg: 0 12px 32px rgba(0,0,0,.55);
+    --p-sh-sm: 0 1px 2px rgba(0,0,0,.4); --p-sh-md: 0 4px 12px rgba(0,0,0,.45); --p-sh-lg: 0 12px 32px rgba(0,0,0,.55); --p-sh-input: var(--shadow-input);
     --p-selection: rgba(88,166,255,.32);
   }
 
@@ -2093,8 +2099,8 @@ onUnmounted(() => {
 
   /* model / mode pill (composer toolbar) */
   .p-pill {
-    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
-    border-radius: var(--p-r-md); border: 1px solid transparent; background: transparent;
+    display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px;
+    border-radius: var(--p-r-full); border: 1px solid transparent; background: transparent;
     font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); font-weight: 500; color: var(--p-text); cursor: pointer;
     transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
@@ -2264,15 +2270,17 @@ onUnmounted(() => {
   .p-tool-detail .p-code { margin-top: 4px; }
 
   /* ===== Chat: Composer ===== */
-  .p-composer { background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-xl); box-shadow: var(--p-sh-md); overflow: hidden; position: relative; z-index: 1; }
-  .p-composer:focus-within { border-color: var(--p-accent); box-shadow: var(--p-sh-md), 0 0 0 3px var(--p-accent-soft); }
+  .p-composer { background: var(--p-surface-raised); border: 0.5px solid var(--p-line-strong); border-radius: var(--p-r-composer); corner-shape: var(--p-corner-composer); box-shadow: var(--p-sh-input); overflow: hidden; position: relative; z-index: 1; }
+  .p-composer::after { content: ''; position: absolute; inset: 0; border: inherit; border-color: var(--p-composer-focus-line); border-radius: var(--p-r-composer); corner-shape: var(--p-corner-composer); opacity: 0; pointer-events: none; transition: opacity var(--p-dur-slow) var(--p-ease-inout); }
+  .p-composer:focus-within::after { opacity: 1; }
   .p-composer-ta { padding: 14px 16px 8px; font-family: var(--p-font-sans); font-size: var(--p-font-size-md); color: var(--p-text); line-height: var(--p-leading-normal); text-autospace: normal; }
   .p-composer-ta.ph { color: var(--p-text-faint); }
-  .p-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 8px; }
+  .p-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 8px; }
   .p-composer-strip { width: 100%; max-width: 620px; margin-top: calc(-1 * var(--space-4)); display: flex; align-items: center; gap: var(--space-2); padding: calc(var(--space-4) + var(--space-2)) var(--space-2) var(--space-2); background: color-mix(in srgb, var(--color-hover) 60%, transparent); border-radius: 0 0 var(--radius-2xl) var(--radius-2xl); font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); color: var(--p-text-faint); cursor: pointer; }
   .p-composer-strip .p-ic { width: 16px; height: 16px; color: var(--p-text-faint); }
-  .p-composer-left, .p-composer-right { display: flex; align-items: center; gap: 2px; }
-  .p-send { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--p-accent); color: #fff; border: none; cursor: pointer; box-shadow: var(--p-sh-xs); transition: transform var(--p-dur-fast) var(--p-ease), background var(--p-dur) var(--p-ease); }
+  .p-composer-left, .p-composer-right { display: flex; align-items: center; gap: 4px; }
+  .p-composer .p-icon-btn { border-radius: var(--p-r-full); }
+  .p-send { width: 32px; height: 32px; border-radius: var(--p-r-full); display: grid; place-items: center; background: var(--p-accent); color: #fff; border: none; cursor: pointer; box-shadow: var(--p-sh-xs); transition: transform var(--p-dur-fast) var(--p-ease), background var(--p-dur) var(--p-ease); }
   .p-send:hover { background: var(--p-accent-hover); }
   .p-send:active { transform: scale(.92); }
   .p-send .p-ic { width: 16px; height: 16px; }

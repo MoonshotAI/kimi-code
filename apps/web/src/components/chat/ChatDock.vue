@@ -134,7 +134,9 @@ const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
   loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
+  anyPopupOpen?: boolean;
 } | null>(null);
+const anyPopupOpen = computed(() => composerRef.value?.anyPopupOpen === true);
 const workPanelRef = ref<HTMLElement | null>(null);
 const dockRef = ref<HTMLElement | null>(null);
 
@@ -243,11 +245,16 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
 </script>
 
 <template>
-  <div ref="dockRef" class="chat-dock" :class="[mobile ? 'align-mobile' : 'align-center']" @click.stop>
+  <div
+    ref="dockRef"
+    class="chat-dock"
+    :class="[mobile ? 'align-mobile' : 'align-center', { 'has-popup': anyPopupOpen }]"
+    @click.stop
+  >
     <Transition name="dock-panel">
       <div
         ref="workPanelRef"
@@ -462,6 +469,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   background: transparent;
   z-index: var(--z-sticky);
 }
+.chat-dock.has-popup { z-index: var(--z-dropdown); }
 .chat-dock.align-center { margin-left: auto; margin-right: auto; }
 .chat-dock.align-left { margin-left: 0; margin-right: auto; }
 .chat-dock.align-mobile { max-width: none; }
@@ -627,14 +635,13 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   gap: var(--space-1) 6px;
   padding: 4px var(--dock-inline-right) 2px var(--dock-inline-left);
 }
-/* Work pills ride the composer family's round vocabulary (big-radius
-   container, circle send button, stadium model pill): stadium-shaped with a
-   soft sunken fill and the system hairline edge (0.5px, like the composer
-   container) — no shadow. Hover takes the global hover wash; while its
-   panel is open the primitive's accent-soft active state shows through. */
+/* Work pills ride the Composer's 32px control rhythm. Their roomier inline
+   padding gives icon + label + status the same visual breathing room as the
+   full-round controls below, while retaining the raised fill and hairline. */
 .dock-workbar :deep(.ui-pill) {
   position: relative;
-  padding: 0 12px;
+  height: var(--space-8);
+  padding: 0 var(--space-4);
   border: 0.5px solid var(--color-line-strong);
   border-radius: var(--radius-full);
   /* One rung above the page in BOTH schemes: --color-surface-sunken is

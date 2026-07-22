@@ -264,6 +264,10 @@ html[data-color-scheme="dark"] {
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-2xl: 20px;
+  /* Composer shell: the larger numerical radius compensates for the flatter
+     superellipse shoulder so its corner reads concentric with 32px controls. */
+  --radius-composer: 32px;
+  --corner-shape-composer: superellipse(1.5);
   --radius-full: 999px;
 
   /* -- elevation / z-index ------------------------------------------------- */
@@ -284,9 +288,9 @@ html[data-color-scheme="dark"] {
     0 6px 18px lch(0% 0 0 / 0.02),
     0 3px 9px lch(0% 0 0 / 0.04),
     0 1px 1px lch(0% 0 0 / 0.04);
-  /* Chat-input elevation (Kimi tokens `effect.shadow.inputDefault`): single
-     layer, negative spread — sits closer to the page than --shadow-md. */
-  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
+  /* Chat-input elevation: a close contact shadow plus one restrained ambient
+     layer. Focus changes the edge only, so the card never acquires a glow. */
+  --shadow-input: 0 1px 2px rgba(0, 0, 0, 0.04), 0 3px 12px rgba(0, 0, 0, 0.045);
   --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
   --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
@@ -297,6 +301,10 @@ html[data-color-scheme="dark"] {
   --duration-fast: 120ms;
   --duration-base: 160ms;
   --duration-slow: 260ms;
+
+  /* Low-chroma focus edge for the Composer. Its neutral shadow deliberately
+     remains unchanged between rest and focus. */
+  --color-composer-focus-line: color-mix(in srgb, var(--color-line-strong) 68%, var(--color-accent) 32%);
 
   /* -- type families ------------------------------------------------------- */
   /* UI/body use self-hosted Schibsted Grotesk for Latin and Noto Sans SC for
@@ -408,8 +416,7 @@ html[data-color-scheme="dark"] {
     0 6px 18px rgba(0, 0, 0, 0.2),
     0 3px 9px rgba(0, 0, 0, 0.24),
     0 1px 1px rgba(0, 0, 0, 0.24);
-  /* Dark value is a local fill-in — the Kimi token only defines light. */
-  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.4);
+  --shadow-input: 0 1px 2px rgba(0, 0, 0, 0.22), 0 3px 12px rgba(0, 0, 0, 0.18);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
   --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
@@ -465,8 +472,7 @@ html[data-color-scheme="dark"] {
       0 6px 18px rgba(0, 0, 0, 0.2),
       0 3px 9px rgba(0, 0, 0, 0.24),
       0 1px 1px rgba(0, 0, 0, 0.24);
-    /* Dark value is a local fill-in — the Kimi token only defines light. */
-    --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.4);
+    --shadow-input: 0 1px 2px rgba(0, 0, 0, 0.22), 0 3px 12px rgba(0, 0, 0, 0.18);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
     --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);

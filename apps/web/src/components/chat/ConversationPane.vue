@@ -1989,10 +1989,10 @@ defineExpose({ loadComposerForEdit, focusComposer });
   font-weight: var(--weight-ui-strong);
   cursor: pointer;
   box-shadow: var(--shadow-sm);
-  /* Sits just above the dock, which now owns a veil over the transcript — so
-     the pill joins the dock's sticky layer and, coming after the dock in DOM
-     order, paints above the veil. Trade-off: an open composer dropdown stacks
-     below the pill too, but a dropdown closes on the next interaction anyway. */
+  /* Sits just above the dock, which owns a veil over the transcript. The pill
+     joins the dock's sticky layer and, coming after the dock in DOM order,
+     paints above the veil. ChatDock temporarily moves to --z-dropdown while
+     a composer popup is open, so menus still paint above this pill. */
   z-index: var(--z-sticky);
 }
 .newmsg-pill:hover { background: var(--panel2); }

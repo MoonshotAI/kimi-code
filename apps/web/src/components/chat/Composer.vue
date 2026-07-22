@@ -554,14 +554,23 @@ const hasUpload = computed(() => !!props.uploadImage);
 
 const dropdownOpen = ref(false);
 const permDropdownOpen = ref(false);
+const modesOpen = ref(false);
 const toolbarRef = ref<HTMLElement | null>(null);
+const permPillRef = ref<HTMLElement | null>(null);
+const modelPillRef = ref<HTMLElement | null>(null);
+const modelMenuRight = ref('');
+const modelMenuStyle = computed<Record<string, string>>(() => {
+  const style: Record<string, string> = {};
+  if (modelMenuRight.value) style.right = modelMenuRight.value;
+  return style;
+});
 
-// Any transient popup above the composer (model / permission dropdown, slash
-// or mention menu). ConversationPane reads this to keep its Esc-to-interrupt
+// Any transient popup above the composer (model / permission / work-mode
+// dropdown, slash or mention menu). ConversationPane reads this to keep its Esc-to-interrupt
 // quiet while a popup owns Escape — e.g. a dropdown opened from the toolbar,
 // where focus is outside the textarea and its Esc never reaches handleKeydown.
 const anyPopupOpen = computed(
-  () => dropdownOpen.value || permDropdownOpen.value || slashOpen.value || mentionOpen.value,
+  () => dropdownOpen.value || permDropdownOpen.value || modesOpen.value || slashOpen.value || mentionOpen.value,
 );
 
 defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
@@ -569,6 +578,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
 function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;
   if (dropdownOpen.value) {
+    updateModelMenuPosition();
     permDropdownOpen.value = false;
     closeModes();
     document.addEventListener('click', onDocClick, true);
@@ -587,6 +597,7 @@ function closeDropdown(): void {
 function togglePermDropdown(): void {
   permDropdownOpen.value = !permDropdownOpen.value;
   if (permDropdownOpen.value) {
+    updatePermissionMenuPosition();
     dropdownOpen.value = false;
     closeModes();
     document.addEventListener('click', onDocClick, true);
@@ -687,7 +698,6 @@ const goalCanResume = computed(() => goalStatus.value === 'paused' || goalStatus
 // Modes selector (plan / goal / swarm) — the popover that replaces the bare
 // "plan" pill. Plan/Swarm are real client toggles; goal reflects agent-driven
 // state and focuses its card when active.
-const modesOpen = ref(false);
 const modesRef = ref<HTMLElement | null>(null);
 const modesMenuRef = ref<HTMLElement | null>(null);
 // The menu is position:fixed (so no composer stacking context can paint over
@@ -731,18 +741,42 @@ const MODE_DESC_KEYS = ['status.planDesc', 'status.swarmDesc', 'status.goalDesc'
 
 const menuMeasureRef = ref<HTMLElement | null>(null);
 const permissionDescriptionWidth = ref('');
+const permissionMenuLeft = ref('');
 const modeDescriptionWidth = ref('');
 function menuDescStyle(width: string): Record<string, string> {
   const style: Record<string, string> = {};
   if (width) style['--composer-menu-desc-width'] = width;
   return style;
 }
-const permissionMenuStyle = computed<Record<string, string>>(() => menuDescStyle(permissionDescriptionWidth.value));
+const permissionMenuStyle = computed<Record<string, string>>(() => ({
+  ...menuDescStyle(permissionDescriptionWidth.value),
+  ...(permissionMenuLeft.value ? { left: permissionMenuLeft.value } : {}),
+}));
 const modeMenuMeasureStyle = computed<Record<string, string>>(() => menuDescStyle(modeDescriptionWidth.value));
 const modesMenuInlineStyle = computed<Record<string, string>>(() => ({
   ...modesMenuStyle.value,
   ...modeMenuMeasureStyle.value,
 }));
+
+function updatePermissionMenuPosition(): void {
+  const anchor = permPillRef.value;
+  const toolbar = toolbarRef.value;
+  if (!anchor || !toolbar) {
+    permissionMenuLeft.value = '';
+    return;
+  }
+  permissionMenuLeft.value = `${Math.round(anchor.getBoundingClientRect().left - toolbar.getBoundingClientRect().left)}px`;
+}
+
+function updateModelMenuPosition(): void {
+  const anchor = modelPillRef.value;
+  const toolbar = toolbarRef.value;
+  if (!anchor || !toolbar) {
+    modelMenuRight.value = '';
+    return;
+  }
+  modelMenuRight.value = `${Math.round(toolbar.getBoundingClientRect().right - anchor.getBoundingClientRect().right)}px`;
+}
 let menuMeasureFrame: number | null = null;
 
 function cssPx(value: string): number {
@@ -994,6 +1028,7 @@ function selectModel(modelId: string): void {
         <div class="toolbar-left">
           <IconButton
             v-if="hasUpload"
+            class="composer-attach"
             size="md"
             :label="t('composer.attachFile')"
             @click="openFilePicker"
@@ -1004,6 +1039,7 @@ function selectModel(modelId: string): void {
           <!-- Permission pill — click to open dropdown -->
           <span
             v-if="status"
+            ref="permPillRef"
             class="perm-pill"
             :class="['perm-' + status.permission, { open: permDropdownOpen }]"
             role="button"
@@ -1017,29 +1053,31 @@ function selectModel(modelId: string): void {
             <span class="perm-pill-label">{{ permLabel }}</span>
           </span>
 
-          <!-- Permission dropdown — anchored to the toolbar left side -->
-          <div
-            v-if="permDropdownOpen && status"
-            class="perm-dropdown"
-            :style="permissionMenuStyle"
-            role="menu"
-            @click.stop
-          >
-            <button
-              v-for="opt in PERM_MODES"
-              :key="opt.mode"
-              class="pd-row"
-              :class="{ 'is-current': opt.mode === status.permission }"
-              role="menuitem"
-              @click="choosePermission(opt.mode)"
+          <!-- Permission dropdown — left-aligned to its trigger pill. -->
+          <Transition name="composer-menu-pop">
+            <div
+              v-if="permDropdownOpen && status"
+              class="perm-dropdown"
+              :style="permissionMenuStyle"
+              role="menu"
+              @click.stop
             >
-              <span class="pd-check"><Icon v-if="opt.mode === status.permission" name="check" size="sm" /></span>
-              <span class="pd-info">
-                <span class="pd-name" :style="{ color: opt.color }">{{ t(opt.labelKey) }}</span>
-                <span class="pd-desc">{{ t(opt.descKey) }}</span>
-              </span>
-            </button>
-          </div>
+              <button
+                v-for="opt in PERM_MODES"
+                :key="opt.mode"
+                class="pd-row"
+                :class="{ 'is-current': opt.mode === status.permission }"
+                role="menuitem"
+                @click="choosePermission(opt.mode)"
+              >
+                <span class="pd-check"><Icon v-if="opt.mode === status.permission" name="check" size="sm" /></span>
+                <span class="pd-info">
+                  <span class="pd-name" :style="{ color: opt.color }">{{ t(opt.labelKey) }}</span>
+                  <span class="pd-desc">{{ t(opt.descKey) }}</span>
+                </span>
+              </button>
+            </div>
+          </Transition>
 
           <!-- Modes selector (plan / goal / swarm) — replaces the plan pill. -->
           <div v-if="status" ref="modesRef" class="modes">
@@ -1055,7 +1093,8 @@ function selectModel(modelId: string): void {
               <span v-if="goalArmed" class="mode-tag">{{ t('status.goalLabel') }}</span>
             </button>
 
-            <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuInlineStyle" role="menu">
+            <Transition name="composer-menu-pop">
+              <div v-if="modesOpen" ref="modesMenuRef" class="modes-menu" :style="modesMenuInlineStyle" role="menu">
               <!-- Plan — functional client toggle -->
               <button type="button" class="mode-row" :class="{ on: planOn }" role="menuitem" @click="emit('togglePlan')">
                 <span class="mode-row-icon"><Icon name="file-edit" size="sm" /></span>
@@ -1121,7 +1160,8 @@ function selectModel(modelId: string): void {
                   </Button>
                 </div>
               </div>
-            </div>
+              </div>
+            </Transition>
           </div>
 
         </div>
@@ -1150,6 +1190,7 @@ function selectModel(modelId: string): void {
           <!-- Model pill — click to open quick-switch dropdown -->
           <button
             v-if="status"
+            ref="modelPillRef"
             type="button"
             class="model-pill"
             :class="{ open: dropdownOpen }"
@@ -1183,11 +1224,12 @@ function selectModel(modelId: string): void {
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->
-        <Transition name="md-pop">
+        <Transition name="composer-menu-pop">
         <div
           v-if="dropdownOpen && status"
           ref="modelDropdownRef"
           class="model-dropdown"
+          :style="modelMenuStyle"
           role="menu"
           @click.stop
           @keydown="onModelDropdownKeydown"
@@ -1328,27 +1370,32 @@ function selectModel(modelId: string): void {
 
 /* Main composer card */
 .composer-card {
-  --composer-send-size: 32px;
-  --composer-send-inset: var(--space-2);
+  --composer-control-size: var(--space-8);
+  --composer-send-size: var(--composer-control-size);
+  --composer-control-inset: var(--space-2);
   position: relative;
-  border: 0.5px solid var(--line);
-  border-radius: var(--radius-2xl);
+  border: 0.5px solid var(--color-line-strong);
+  border-radius: var(--radius-composer);
+  corner-shape: var(--corner-shape-composer);
   background: var(--color-surface-raised);
   box-shadow: var(--shadow-input);
-  transition: border-color 0.15s, box-shadow 0.15s;
   user-select: none;
   container-type: inline-size;
 }
-.composer-card:focus-within {
-  border-color: var(--color-accent);
-  /* A 0.5px hairline can't get visibly bluer, and widening the border would
-     shift layout — so the focus edge adds a hairline-scale 0.5px accent
-     ring by shadow (border + ring read as one uniform 1px edge) under the
-     soft halo. */
-  box-shadow:
-    var(--shadow-input),
-    0 0 0 0.5px var(--color-accent),
-    0 0 0 3px var(--color-accent-soft);
+.composer-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: inherit;
+  border-color: var(--color-composer-focus-line);
+  border-radius: var(--radius-composer);
+  corner-shape: var(--corner-shape-composer);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-slow) var(--ease-in-out);
+}
+.composer-card:focus-within::after {
+  opacity: 1;
 }
 
 
@@ -1496,19 +1543,28 @@ function selectModel(modelId: string): void {
 
 /* /compact chip */
 .compact-chip {
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
+  height: var(--composer-control-size);
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
   color: var(--color-warning);
   font-family: var(--mono);
   font-size: var(--ui-font-size);
-  padding: 0 4px;
   cursor: pointer;
-  height: 19px;
-  line-height: 17px;
+  line-height: 1;
   flex: none;
+  transition: background var(--duration-base) var(--ease-out);
 }
-.compact-chip:hover { background: var(--panel2); }
+.compact-chip:hover { background: var(--color-hover); }
+
+/* Keep the shared attachment icon and behavior; only its Composer-local
+   geometry joins the full-round 32px control family. */
+.composer-attach {
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
+  border-radius: var(--radius-full);
+}
 
 /* Send button — circular accent icon. Always "send"; while running it enqueues
    (handled upstream). Interrupt is a separate Stop button so the two are never
@@ -1516,7 +1572,7 @@ function selectModel(modelId: string): void {
 .send {
   width: var(--composer-send-size);
   height: var(--composer-send-size);
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--color-accent);
   color: var(--color-text-on-accent); /* white on accent — readable in light and dark */
   border: none;
@@ -1527,7 +1583,6 @@ function selectModel(modelId: string): void {
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  margin-left: var(--space-2);
   transition: background 0.25s ease, transform 0.12s ease;
   position: relative;
 }
@@ -1571,7 +1626,7 @@ function selectModel(modelId: string): void {
 .stop {
   width: var(--composer-send-size);
   height: var(--composer-send-size);
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--color-danger-soft);
   color: var(--color-danger);
   border: 1px solid var(--color-danger-bd);
@@ -1582,7 +1637,6 @@ function selectModel(modelId: string): void {
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  margin-left: var(--space-2);
   transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
 }
 .stop:hover {
@@ -1604,7 +1658,7 @@ function selectModel(modelId: string): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px var(--composer-send-inset) var(--composer-send-inset);
+  padding: var(--space-1) var(--composer-control-inset) var(--composer-control-inset);
   position: relative;
 }
 
@@ -1621,7 +1675,7 @@ function selectModel(modelId: string): void {
 .toolbar-right {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   overflow: hidden;
 }
@@ -1631,27 +1685,58 @@ function selectModel(modelId: string): void {
   justify-content: flex-end;
 }
 
-/* Permission pill */
-.perm-pill {
+/* Quiet, full-round 32px controls. Their chrome appears only on hover/open,
+   leaving the circular Send as the toolbar's sole persistent filled action. */
+.perm-pill,
+.mode-pill,
+.model-pill {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  font-size: var(--ui-font-size);
+  gap: var(--space-1);
+  height: var(--composer-control-size);
+  padding: 0 var(--space-3);
+  border: 0.5px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
   color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   user-select: none;
-  transition: background 0.1s, color 0.15s;
-  font-family: var(--font-ui);
-  font-weight: var(--weight-medium);
+  transition: background var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
 }
-.perm-pill:hover {
-  background: var(--color-surface-sunken);
+/* The hover wash floats over the fill as its own layer so it can fade in and
+   out (the dock work pills' recipe — background gradients can't transition). */
+.perm-pill::after,
+.mode-pill::after,
+.model-pill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-hover);
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+  pointer-events: none;
 }
-.perm-pill.open {
+.perm-pill:hover::after,
+.mode-pill:hover::after,
+.model-pill:hover::after {
+  opacity: 1;
+}
+.perm-pill.open,
+.mode-pill.open,
+.mode-pill.on,
+.model-pill.open {
   background: var(--color-accent-soft);
 }
+
+/* Permission pill — per-state label colors. */
 .perm-pill.perm-manual {
   color: var(--dim);
 }
@@ -1670,8 +1755,8 @@ function selectModel(modelId: string): void {
   .perm-pill-icon { display: block; }
 
   .perm-pill {
-    width: 28px;
-    height: 28px;
+    width: var(--composer-control-size);
+    height: var(--composer-control-size);
     padding: 0;
     justify-content: center;
     flex: none;
@@ -1694,41 +1779,20 @@ function selectModel(modelId: string): void {
   outline-offset: 2px;
 }
 
-/* Model pill — quiet text-style trigger: transparent at rest, a neutral wash
-   on hover, and the selected fill while open; the rotating chevron carries
-   the open state. */
+/* Model pill — shares the toolbar-pill base above; these are its extras:
+   shrink-wrap with internal truncation, press scale, and the rotating
+   chevron that carries the open state. */
 .model-pill {
-  display: inline-flex;
-  align-items: center;
   gap: var(--space-1);
-  height: 26px;
-  padding: 0 var(--space-2);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--ui-font-size);
   line-height: var(--leading-normal);
-  color: var(--dim);
-  font-family: var(--font-ui);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  user-select: none;
-  transition:
-    background var(--duration-base) var(--ease-out),
-    color var(--duration-base) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
-  position: relative;
   overflow: hidden;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 320px;
-}
-.model-pill:hover {
-  background: var(--color-surface-sunken);
-  color: var(--color-text);
-}
-.model-pill.open {
-  background: var(--color-selected);
+  transition:
+    background var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 .model-pill:active {
   transform: scale(0.97);
@@ -1766,17 +1830,17 @@ function selectModel(modelId: string): void {
   transform: rotate(180deg);
 }
 
-/* Model dropdown — anchored to the toolbar right edge */
+/* Model dropdown — runtime positioning aligns it to the trigger pill. */
 .model-dropdown {
   position: absolute;
   bottom: calc(100% + 4px);
-  right: calc(var(--composer-send-inset) + var(--composer-send-size) + var(--space-2) + 2px);
+  right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
   z-index: var(--z-dropdown);
   min-width: 200px;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-menu);
   padding: var(--space-1);
   display: flex;
   flex-direction: column;
@@ -1785,19 +1849,20 @@ function selectModel(modelId: string): void {
   transform-origin: bottom right;
 }
 
-/* Popover enter/exit — grows out of the trigger corner; exit slightly faster. */
-.md-pop-enter-active {
+/* Match SessionRow context menus: grow from the trigger corner and exit faster. */
+.composer-menu-pop-enter-active {
   transition:
     opacity var(--duration-base) var(--ease-out),
     transform var(--duration-base) var(--ease-out);
 }
-.md-pop-leave-active {
+.composer-menu-pop-leave-active {
   transition:
     opacity var(--duration-fast) var(--ease-out),
     transform var(--duration-fast) var(--ease-out);
+  pointer-events: none;
 }
-.md-pop-enter-from,
-.md-pop-leave-to {
+.composer-menu-pop-enter-from,
+.composer-menu-pop-leave-to {
   opacity: 0;
   transform: scale(0.97) translateY(2px);
 }
@@ -1918,11 +1983,11 @@ function selectModel(modelId: string): void {
   line-height: 1.4;
 }
 
-/* Permission dropdown — anchored to the toolbar left side */
+/* Permission dropdown — runtime positioning aligns it to the trigger pill. */
 .perm-dropdown {
   position: absolute;
   bottom: calc(100% + 4px);
-  left: 10px;
+  left: var(--composer-control-inset);
   z-index: var(--z-dropdown);
   min-width: 220px;
   width: max-content;
@@ -1930,11 +1995,12 @@ function selectModel(modelId: string): void {
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-menu);
   padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 1px;
+  transform-origin: bottom left;
 }
 
 .pd-row {
@@ -1992,30 +2058,12 @@ function selectModel(modelId: string): void {
   line-height: var(--leading-normal);
 }
 
-/* Toggle pills (Thinking / Plan) */
 /* Modes selector (plan / goal / swarm) — replaces the old plan pill + badges.
    z-index lifts the whole control (incl. its upward-opening menu) above the
-   composer input row, which otherwise paints over the menu. */
+   composer input row, which otherwise paints over the menu. The pill itself
+   shares the toolbar-pill base above. */
 .modes { position: relative; display: inline-flex; z-index: var(--z-sticky); }
-.mode-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 9px;
-  border: none;
-  background: none;
-  border-radius: 6px;
-  font-size: var(--ui-font-size);
-  font-family: var(--font-ui);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.1s, color 0.15s;
-}
-.mode-pill:hover { background: var(--color-surface-sunken); }
-.mode-pill.on { background: var(--color-accent-soft); color: var(--color-accent-hover); }
-.mode-pill.open { background: var(--color-accent-soft); }
+.mode-pill.on { color: var(--color-accent-hover); }
 .mode-label { flex: none; }
 .mode-tag {
   flex: none;
@@ -2039,11 +2087,12 @@ function selectModel(modelId: string): void {
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-menu);
   padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 1px;
+  transform-origin: bottom left;
 }
 .mode-row {
   display: grid;
@@ -2221,7 +2270,7 @@ function selectModel(modelId: string): void {
       var(--dock-inline-left, max(12px, var(--safe-left)));
   }
   .composer-card {
-    --composer-send-size: 36px;
+    --composer-control-size: 36px;
     max-width: 100%;
   }
   .input-row {
@@ -2234,7 +2283,7 @@ function selectModel(modelId: string): void {
     height: var(--composer-send-size);
     min-width: var(--composer-send-size);
     padding: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     font-size: 0;
     align-self: flex-end;
     position: relative;
@@ -2255,7 +2304,7 @@ function selectModel(modelId: string): void {
     height: var(--composer-send-size);
     min-width: var(--composer-send-size);
     padding: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-full);
     font-size: 0;
     align-self: flex-end;
     position: relative;
@@ -2283,7 +2332,7 @@ function selectModel(modelId: string): void {
 
   /* Model dropdown on mobile → anchored right with padding */
   .model-dropdown {
-    right: calc(var(--composer-send-inset) + var(--composer-send-size) + var(--space-2) + 2px);
+    right: calc(var(--composer-control-inset) + var(--composer-send-size) + var(--space-1));
     left: auto;
     min-width: 180px;
     max-width: calc(100vw - 24px);
