@@ -703,6 +703,11 @@ describe('parseMaxTokensLimit', () => {
     ).toBe(4096);
   });
 
+  it('parses the "less than or equal to" and bare "<=" wordings', () => {
+    expect(parseMaxTokensLimit('400 Bad Request: max_tokens must be less than or equal to 4096')).toBe(4096);
+    expect(parseMaxTokensLimit('400 Bad Request: max_tokens <= 2048')).toBe(2048);
+  });
+
   it('returns null for messages without a max_tokens limit', () => {
     expect(parseMaxTokensLimit('400 Bad Request: invalid api key')).toBeNull();
     // A context-overflow message must not be mistaken for a max_tokens ceiling.

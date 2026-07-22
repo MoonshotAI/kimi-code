@@ -200,6 +200,11 @@ describe('parseMaxTokensLimit', () => {
     expect(parseMaxTokensLimit('Max_Tokens: 99999 but max output tokens is 12000')).toBe(12000);
   });
 
+  it('parses the "less than or equal to" and bare "<=" forms', () => {
+    expect(parseMaxTokensLimit('max_tokens must be less than or equal to 4096')).toBe(4096);
+    expect(parseMaxTokensLimit('max_tokens <= 2048')).toBe(2048);
+  });
+
   it('returns null when no recognizable positive limit is present', () => {
     expect(parseMaxTokensLimit('max_tokens must be positive')).toBeNull();
     expect(parseMaxTokensLimit('some unrelated validation problem')).toBeNull();

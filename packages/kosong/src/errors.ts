@@ -334,6 +334,8 @@ const MAX_TOKENS_LIMIT_MESSAGE_PATTERNS: readonly RegExp[] = [
   /max_tokens[\s\S]{0,200}expected a value\s*<=\s*(\d+)/i,
   // generic: "max_tokens must be at most N" / "max_tokens cannot exceed N"
   /max_tokens[\s\S]{0,200}(?:must be at most|cannot exceed|maximum value[^\d]*)\s*(\d+)/i,
+  // "must be less than or equal to N" / bare "<= N" form
+  /max_tokens[\s\S]{0,200}(?:less than or equal to|<=)\s*(\d+)/i,
   // anthropic native: "max_tokens: <model> max output tokens is N"
   /max_tokens[\s\S]{0,200}max output tokens is\s*(\d+)/i,
 ];
