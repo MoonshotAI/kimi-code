@@ -892,7 +892,24 @@ describe('Agent turn flow', () => {
     expect(ctx.newEvents()).toMatchInlineSnapshot(
       `[emit] error   { "code": "internal", "message": "Unexpected generate call #1", "name": "Error", "retryable": false, "details": { "turnId": 0 } }`,
     );
-    await ctx.expectResumeMatches();
+    // The failed turn leaves an empty assistant message at the tail of live
+    // history (step.begin with no content/tool calls). finishResume repairs it
+    // at replay time (#1404), so the resumed history legitimately lacks the
+    // empty tail the pre-fix verbatim match used to require.
+    await ctx.expectResumeMatches((snapshot) => ({
+      ...snapshot,
+      context: {
+        ...snapshot.context,
+        history: snapshot.context.history.filter(
+          (message) =>
+            !(
+              message.role === 'assistant' &&
+              message.content.length === 0 &&
+              message.toolCalls.length === 0
+            ),
+        ),
+      },
+    }));
   });
 
   it('keeps manual swarm mode active after a turn completes normally', async () => {

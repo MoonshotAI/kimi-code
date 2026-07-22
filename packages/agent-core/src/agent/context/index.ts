@@ -605,6 +605,39 @@ export class ContextMemory {
         toolCallIds: closed.slice(0, 5),
       });
     }
+    // A `step.begin` that never produced content or tool calls (e.g. the
+    // process was killed before the first `content.part`) leaves an empty
+    // assistant message in the replayed history — at the tail on the resume
+    // right after the crash, and MID-history once later turns appended new
+    // records (the torn record stays in wire.jsonl forever). Providers reject
+    // empty assistant messages (400), so any such residue strands the
+    // session. An assistant message with neither content nor tool calls can
+    // only be a dead step's residue, so drop it wherever it appears. Repair
+    // at replay time so the record write path stays untouched; torn records
+    // are re-dropped idempotently on every resume. #1404
+    let droppedEmpty = 0;
+    let coveredDropped = 0;
+    const coveredBefore = this.tokenCountCoveredMessageCount;
+    this._history = this._history.filter((message, index) => {
+      const isEmptyAssistant =
+        message.role === 'assistant' &&
+        message.content.length === 0 &&
+        message.toolCalls.length === 0;
+      if (isEmptyAssistant) {
+        droppedEmpty += 1;
+        if (index < coveredBefore) coveredDropped += 1;
+      }
+      return !isEmptyAssistant;
+    });
+    if (droppedEmpty > 0) {
+      // tokenCountCoveredMessageCount counts a prefix of `_history`; subtract
+      // the dropped messages that were inside that prefix so the
+      // covered/pending split stays exact.
+      this.tokenCountCoveredMessageCount -= coveredDropped;
+      this.agent.log.warn('dropped empty assistant messages left by interrupted turns', {
+        droppedEmpty,
+      });
+    }
   }
 
   // Synthesize interrupted tool results for any still-open tool calls, closing

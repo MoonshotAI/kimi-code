@@ -735,7 +735,9 @@ export class AgentTestContext {
     }));
   }
 
-  async expectResumeMatches(): Promise<void> {
+  async expectResumeMatches(
+    mutateExpected?: (snapshot: ResumeStateSnapshot) => ResumeStateSnapshot,
+  ): Promise<void> {
     const resumed = testAgent({
       kaos: createResumeNoSideEffectKaos(this.agent.config.cwd, this.agent.kaos.pathClass()),
       runtime: {
@@ -757,8 +759,10 @@ export class AgentTestContext {
 
     await resumed.agent.resume();
 
+    let expected = resumeStateSnapshot(this.agent);
+    if (mutateExpected !== undefined) expected = mutateExpected(expected);
     // oxlint-disable-next-line jest/no-standalone-expect
-    expect(resumeStateSnapshot(resumed.agent)).toEqual(resumeStateSnapshot(this.agent));
+    expect(resumeStateSnapshot(resumed.agent)).toEqual(expected);
   }
 
   private takeUntilRpc(method: string): Promise<{
