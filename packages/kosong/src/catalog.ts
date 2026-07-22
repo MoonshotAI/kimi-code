@@ -411,7 +411,27 @@ export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel
   const providerWire = resolveCatalogWire(entry);
   return Object.values(entry.models ?? {})
     .map((raw) => applyModelProviderOverride(catalogModelToCapability(raw), raw, entry, providerWire))
-    .filter((model): model is CatalogModel => model !== undefined);
+    .filter((model): model is CatalogModel => model !== undefined)
+    .map((model) => {
+      // The always-thinking inference ("effort levels, no toggle, no 'none'
+      // — reasoning cannot be turned off") only holds on the OpenAI wires,
+      // where off is just an omitted field and the provider default decides.
+      // Every other wire encodes off natively (Anthropic's
+      // `thinking: {type: 'disabled'}`, Kimi's toggle, Gemini's zero budget),
+      // so there the marker never applies — a Claude labeled always-on would
+      // be a lie: off works there. The OpenAI default of a gpt-5-class model
+      // is to reason, which is exactly what the marker exists for.
+      const protocol = model.protocol ?? providerWire;
+      if (
+        model.alwaysThinking === true &&
+        protocol !== 'openai' &&
+        protocol !== 'openai_responses'
+      ) {
+        const { alwaysThinking: _dropped, ...rest } = model;
+        return rest as CatalogModel;
+      }
+      return model;
+    });
 }
 
 /**

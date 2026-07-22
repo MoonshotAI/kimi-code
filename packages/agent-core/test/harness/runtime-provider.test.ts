@@ -383,6 +383,56 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     );
   });
 
+  it('prefers alias.baseUrl over the provider base URL on the kimi, google-genai, and openai_responses wires', () => {
+    const config = {
+      ...BASE_CONFIG,
+      providers: {
+        ...BASE_CONFIG.providers,
+        kimi: { type: 'kimi', apiKey: 'sk-kimi', baseUrl: 'https://kimi.example.test/v1' } as const,
+        google: {
+          type: 'google-genai',
+          apiKey: 'sk-google',
+          baseUrl: 'https://google.example.test',
+        } as const,
+        responses: { type: 'openai_responses', apiKey: 'sk-responses' } as const,
+      },
+      models: {
+        ...BASE_CONFIG.models!,
+        'kimi/tenant': {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 1000,
+          baseUrl: 'https://tenant.example.test/v1',
+        },
+        'google/tenant': {
+          provider: 'google',
+          model: 'gemini-2.5-flash',
+          maxContextSize: 1000,
+          baseUrl: 'https://tenant.example.test/v1',
+        },
+        'responses/tenant': {
+          provider: 'responses',
+          model: 'gpt-5.5',
+          maxContextSize: 1000,
+          baseUrl: 'https://tenant.example.test/v1',
+        },
+      },
+    } as KimiConfig;
+
+    expect(resolveRuntimeProvider({ config, model: 'kimi/tenant' }).provider).toMatchObject({
+      type: 'kimi',
+      baseUrl: 'https://tenant.example.test/v1',
+    });
+    expect(resolveRuntimeProvider({ config, model: 'google/tenant' }).provider).toMatchObject({
+      type: 'google-genai',
+      baseUrl: 'https://tenant.example.test/v1',
+    });
+    expect(resolveRuntimeProvider({ config, model: 'responses/tenant' }).provider).toMatchObject({
+      type: 'openai_responses',
+      baseUrl: 'https://tenant.example.test/v1',
+    });
+  });
+
   it('prefers alias.baseUrl over the provider base URL for the anthropic wire', () => {
     // Catalog gateway shape: provider default is the OpenAI wire, one model
     // carries an Anthropic protocol + endpoint override.
@@ -1009,14 +1059,17 @@ describe('resolveThinkingEffort', () => {
     capabilities: ['thinking', 'always_thinking'],
   };
 
-  it('returns the requested effort verbatim when one is provided', () => {
+  it('returns the requested effort (normalized) when one is provided', () => {
     expect(resolveThinkingEffort('on', { effort: 'medium' }, booleanModel)).toBe('on');
     expect(resolveThinkingEffort('off', { effort: 'medium' }, booleanModel)).toBe('off');
     expect(resolveThinkingEffort('low', { effort: 'medium' }, booleanModel)).toBe('low');
-    // No normalization: empty / whitespace strings are returned as-is.
-    expect(resolveThinkingEffort('', { enabled: false, effort: 'medium' }, booleanModel)).toBe('');
+    expect(resolveThinkingEffort(' Off ', { effort: 'medium' }, booleanModel)).toBe('off');
+    // Empty / whitespace requests read as absent and fall through to config.
+    expect(resolveThinkingEffort('', { enabled: false, effort: 'medium' }, booleanModel)).toBe(
+      'off',
+    );
     expect(resolveThinkingEffort('   ', { enabled: false, effort: 'medium' }, booleanModel)).toBe(
-      '   ',
+      'off',
     );
   });
 

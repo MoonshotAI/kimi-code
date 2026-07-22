@@ -329,7 +329,7 @@ function toKosongProviderConfig(
       return {
         type: 'kimi',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
+        baseUrl: modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
         generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
@@ -342,7 +342,8 @@ function toKosongProviderConfig(
       return {
         type: 'google-genai',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
+        baseUrl:
+          modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
         apiKey: providerApiKey(provider),
         ...defaultHeadersField({
           ...envCustomHeaders,
@@ -373,7 +374,8 @@ function toKosongProviderConfig(
       // location detection, so the env fallback behaves exactly like
       // `base_url` — including deriving the region from an
       // `*-aiplatform.googleapis.com` host for the service-account path.
-      const baseUrl = providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
+      const baseUrl =
+        modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
       const useServiceAccount = hasVertexAIServiceEnv(provider, baseUrl);
       return {
         type: 'vertexai',

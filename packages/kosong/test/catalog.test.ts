@@ -425,6 +425,62 @@ describe('catalogModelToCapability', () => {
     expect(toggleable?.offEffort).toBeUndefined();
   });
 
+  it('applies the always-thinking inference only on the OpenAI wires', () => {
+    // Claude on the Anthropic wire: off is natively encodable
+    // (`thinking: {type: 'disabled'}`), so the no-toggle/no-none inference
+    // must NOT mark it always-on even though models.dev declares levels only.
+    const anthropic = catalogProviderModels({
+      id: 'anthropic',
+      npm: '@ai-sdk/anthropic',
+      api: 'https://api.anthropic.com',
+      models: {
+        'claude-opus-4-6': {
+          id: 'claude-opus-4-6',
+          reasoning: true,
+          reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high', 'max'] }],
+          limit: { context: 200000 },
+        },
+      },
+    });
+    expect(anthropic[0]?.alwaysThinking).toBeUndefined();
+    expect(anthropic[0]?.supportEfforts).toEqual(['low', 'medium', 'high', 'max']);
+
+    // The same shape on the OpenAI wire keeps the marker (gpt-5-class
+    // models really cannot be turned off).
+    const openai = catalogProviderModels({
+      id: 'openai',
+      npm: '@ai-sdk/openai',
+      models: {
+        'gpt-5': {
+          id: 'gpt-5',
+          reasoning: true,
+          reasoning_options: [{ type: 'effort', values: ['minimal', 'low', 'medium', 'high'] }],
+          limit: { context: 400000, input: 272000 },
+        },
+      },
+    });
+    expect(openai[0]?.alwaysThinking).toBe(true);
+
+    // A Claude model materialized onto the Anthropic wire through a gateway
+    // override loses the marker with the protocol change.
+    const gateway = catalogProviderModels({
+      id: 'gateway',
+      npm: '@ai-sdk/openai-compatible',
+      api: 'https://gateway.example.test/v1',
+      models: {
+        'vendor/claude-model': {
+          id: 'vendor/claude-model',
+          reasoning: true,
+          reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high'] }],
+          limit: { context: 200000 },
+          provider: { npm: '@ai-sdk/anthropic', api: 'https://gateway.example.test/anthropic/v1' },
+        },
+      },
+    });
+    expect(gateway[0]?.protocol).toBe('anthropic');
+    expect(gateway[0]?.alwaysThinking).toBeUndefined();
+  });
+
   it('yields no effort list for toggle-only, budget_tokens, or empty reasoning_options', () => {
     for (const reasoning_options of [
       [{ type: 'toggle' }],

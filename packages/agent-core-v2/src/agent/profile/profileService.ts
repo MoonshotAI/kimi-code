@@ -546,22 +546,16 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       const model = this.tryResolveRawModel();
       if (model?.protocol !== 'anthropic') return;
       const effort = this.getEffectiveThinkingLevel();
-      if (effort === 'on') return;
+      if (effort === 'on' || effort === 'off') return;
 
       let code: string;
       let message: string;
       let knownEfforts = '';
-      if (effort === 'off') {
-        if (!model.alwaysThinking) return;
-        code = 'anthropic-thinking-cannot-disable';
-        message = `Model "${model.name}" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.`;
-      } else {
-        const efforts = model.supportEfforts?.filter((value) => value.length > 0);
-        if (efforts === undefined || efforts.length === 0 || efforts.includes(effort)) return;
-        knownEfforts = efforts.join(',');
-        code = 'anthropic-thinking-effort-not-listed';
-        message = `Thinking effort "${effort}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
-      }
+      const efforts = model.supportEfforts?.filter((value) => value.length > 0);
+      if (efforts === undefined || efforts.length === 0 || efforts.includes(effort)) return;
+      knownEfforts = efforts.join(',');
+      code = 'anthropic-thinking-effort-not-listed';
+      message = `Thinking effort "${effort}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
 
       const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
       if (this.emittedThinkingEffortWarnings.has(key)) return;
