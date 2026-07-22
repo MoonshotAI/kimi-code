@@ -88,6 +88,40 @@ describe('LocalFetchURLProvider content kind', () => {
     expect(result.kind).toBe('extracted');
     expect(result.content).toContain('quick brown fox');
   });
+
+  it('reports image/* bodies as image kind with base64 data', async () => {
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(pngBytes, {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    const result = await provider.fetch('https://example.com/image.png');
+
+    expect(result.kind).toBe('image');
+    expect(result.imageData).toBeDefined();
+    expect(result.imageData!.mimeType).toBe('image/png');
+    expect(result.imageData!.base64).toBe(pngBytes.toString('base64'));
+    expect(result.content).toContain('Image fetched');
+  });
+
+  it('rejects oversized image responses', async () => {
+    const bigBuffer = Buffer.alloc(11 * 1024 * 1024, 0xff);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(bigBuffer, {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('https://example.com/huge.png')).rejects.toThrow(
+      'Response body too large',
+    );
+  });
 });
 
 describe('LocalFetchURLProvider SSRF guard', () => {
