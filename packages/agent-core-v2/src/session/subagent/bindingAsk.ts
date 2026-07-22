@@ -20,9 +20,9 @@
 
 import { isAbortError } from '#/_base/utils/abort';
 import {
-  type IWorkspaceLocalConfigService,
+  type IProjectLocalConfigService,
   type SubagentBinding,
-} from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+} from '#/app/projectLocalConfig/projectLocalConfig';
 import { type IModelCatalog } from '#/kosong/model/catalog';
 import {
   type ISessionQuestionService,
@@ -40,7 +40,7 @@ let bindingAskSeq = 0;
 
 export interface SubagentBindingAskerDeps {
   readonly question: ISessionQuestionService;
-  readonly workspaceLocalConfig: IWorkspaceLocalConfigService;
+  readonly projectLocalConfig: IProjectLocalConfigService;
   readonly modelCatalog: IModelCatalog;
   readonly workDir: string;
   readonly agentId: string;
@@ -75,9 +75,9 @@ export function createSubagentBindingAsker(
 
     const persist = async (binding: SubagentBinding): Promise<void> => {
       if (slot === undefined) {
-        await deps.workspaceLocalConfig.writeSubagentBinding(deps.workDir, profileName, binding);
+        await deps.projectLocalConfig.writeSubagentBinding(deps.workDir, profileName, binding);
       } else {
-        await deps.workspaceLocalConfig.writeSubagentSlotBinding(deps.workDir, slot, binding);
+        await deps.projectLocalConfig.writeSubagentSlotBinding(deps.workDir, slot, binding);
       }
     };
     if (chosen === INHERIT_LABEL) {

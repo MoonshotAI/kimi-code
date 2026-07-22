@@ -29,7 +29,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IModelCatalog } from '#/kosong/model/catalog';
@@ -94,7 +94,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
     @IFlagService private readonly flags: IFlagService,
-    @IWorkspaceLocalConfigService private readonly workspaceLocalConfig: IWorkspaceLocalConfigService,
+    @IProjectLocalConfigService private readonly projectLocalConfig: IProjectLocalConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
 
@@ -158,7 +158,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const bindingResolution = await resolveSubagentSpawnBinding(
       {
         flags: this.flags,
-        workspaceLocalConfig: this.workspaceLocalConfig,
+        projectLocalConfig: this.projectLocalConfig,
         modelCatalog: this.modelCatalog,
       },
       {

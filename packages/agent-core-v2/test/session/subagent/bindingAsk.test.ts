@@ -7,7 +7,7 @@ import { type IModelCatalog, type ModelCatalogItem } from '#/kosong/model/catalo
 import { type QuestionRequest, type QuestionResult } from '#/session/question/question';
 import { createSubagentBindingAsker } from '#/session/subagent/bindingAsk';
 
-import { stubWorkspaceLocalConfig } from '../../app/workspaceLocalConfig/stubs';
+import { stubProjectLocalConfig } from '../../app/projectLocalConfig/stubs';
 import { stubQuestionService } from '../question/stubs';
 
 const WORK_DIR = '/repo/work';
@@ -36,10 +36,10 @@ function answer(req: QuestionRequest, label: string): QuestionResult {
 describe('createSubagentBindingAsker', () => {
   it('offers inherit first, then every catalog model, under the Subagent header', async () => {
     const question = stubQuestionService({ respond: (req) => answer(req, 'kimi-k2') });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2'), modelItem('gpt-x')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -65,11 +65,11 @@ describe('createSubagentBindingAsker', () => {
 
   it('persists the chosen model under the type section and returns the binding', async () => {
     const question = stubQuestionService({ respond: (req) => answer(req, 'kimi-k2') });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -87,12 +87,12 @@ describe('createSubagentBindingAsker', () => {
 
   it('persists under the slot section and names the slot when the ask carries a slot context', async () => {
     const question = stubQuestionService({ respond: (req) => answer(req, 'kimi-k2') });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const writeSlot = vi.spyOn(config, 'writeSubagentSlotBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -114,7 +114,7 @@ describe('createSubagentBindingAsker', () => {
     const question = stubQuestionService({ respond: (req) => answer(req, INHERIT_LABEL) });
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: stubWorkspaceLocalConfig(),
+      projectLocalConfig: stubProjectLocalConfig(),
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -129,11 +129,11 @@ describe('createSubagentBindingAsker', () => {
 
   it('persists inherit:true when the user keeps inheriting and skips the effort question', async () => {
     const question = stubQuestionService({ respond: (req) => answer(req, INHERIT_LABEL) });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2', ['low', 'high'])]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -151,11 +151,11 @@ describe('createSubagentBindingAsker', () => {
           ? answer(req, 'high')
           : answer(req, 'kimi-k2'),
     });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2', ['low', 'high'])]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -183,11 +183,11 @@ describe('createSubagentBindingAsker', () => {
           ? answer(req, INHERIT_LABEL)
           : answer(req, 'kimi-k2'),
     });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2', ['low', 'high'])]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -207,11 +207,11 @@ describe('createSubagentBindingAsker', () => {
     const question = stubQuestionService({
       error: new Error2(CoreErrors.codes.NOT_IMPLEMENTED, 'questions are not supported'),
     });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -223,11 +223,11 @@ describe('createSubagentBindingAsker', () => {
 
   it('returns undefined without persisting when the user dismisses the question', async () => {
     const question = stubQuestionService();
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -242,7 +242,7 @@ describe('createSubagentBindingAsker', () => {
     const question = stubQuestionService();
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: stubWorkspaceLocalConfig(),
+      projectLocalConfig: stubProjectLocalConfig(),
       modelCatalog: stubCatalog([]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -257,7 +257,7 @@ describe('createSubagentBindingAsker', () => {
     const question = stubQuestionService({ respond: (req) => answer(req, INHERIT_LABEL) });
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: stubWorkspaceLocalConfig(),
+      projectLocalConfig: stubProjectLocalConfig(),
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -274,11 +274,11 @@ describe('createSubagentBindingAsker', () => {
 
   it('propagates abort errors without persisting', async () => {
     const question = stubQuestionService({ error: abortError() });
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -291,11 +291,11 @@ describe('createSubagentBindingAsker', () => {
   it('throws when the spawn signal is already aborted instead of inheriting', async () => {
     const controller = new AbortController();
     controller.abort(abortError());
-    const config = stubWorkspaceLocalConfig();
+    const config = stubProjectLocalConfig();
     const writeType = vi.spyOn(config, 'writeSubagentBinding');
     const asker = createSubagentBindingAsker({
       question: stubQuestionService(),
-      workspaceLocalConfig: config,
+      projectLocalConfig: config,
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',
@@ -310,7 +310,7 @@ describe('createSubagentBindingAsker', () => {
     const question = stubQuestionService({ respond: (req) => answer(req, 'kimi-k2') });
     const asker = createSubagentBindingAsker({
       question,
-      workspaceLocalConfig: stubWorkspaceLocalConfig(),
+      projectLocalConfig: stubProjectLocalConfig(),
       modelCatalog: stubCatalog([modelItem('kimi-k2')]),
       workDir: WORK_DIR,
       agentId: 'agent-caller',

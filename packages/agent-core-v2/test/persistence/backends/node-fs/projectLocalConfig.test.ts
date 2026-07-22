@@ -7,13 +7,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { FileWorkspaceLocalConfigService } from '#/persistence/backends/node-fs/workspaceLocalConfigService';
+import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 
-describe('FileWorkspaceLocalConfigService — subagent bindings', () => {
+describe('FileProjectLocalConfigService — subagent bindings', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let root: string;
@@ -31,7 +31,7 @@ describe('FileWorkspaceLocalConfigService — subagent bindings', () => {
           osHomeDir: '/users/test',
         } as IBootstrapService);
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
-        reg.define(IWorkspaceLocalConfigService, FileWorkspaceLocalConfigService);
+        reg.define(IProjectLocalConfigService, FileProjectLocalConfigService);
       },
     });
   });
@@ -41,8 +41,8 @@ describe('FileWorkspaceLocalConfigService — subagent bindings', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  function svc(): IWorkspaceLocalConfigService {
-    return ix.get(IWorkspaceLocalConfigService);
+  function svc(): IProjectLocalConfigService {
+    return ix.get(IProjectLocalConfigService);
   }
 
   function configPath(): string {

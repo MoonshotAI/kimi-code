@@ -1,22 +1,22 @@
 /**
- * `workspaceLocalConfig` test stubs — in-memory `IWorkspaceLocalConfigService`.
+ * `projectLocalConfig` test stubs — in-memory `IProjectLocalConfigService`.
  *
  * Lives under `test/` (not `src/`). Import from a relative path.
  */
 
 import {
-  IWorkspaceLocalConfigService,
+  IProjectLocalConfigService,
   type SubagentBinding,
-} from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+} from '#/app/projectLocalConfig/projectLocalConfig';
 
-export interface StubWorkspaceLocalConfigOptions {
+export interface StubProjectLocalConfigOptions {
   readonly bindings?: Readonly<Record<string, SubagentBinding>>;
   readonly slotBindings?: Readonly<Record<string, SubagentBinding>>;
 }
 
-export function stubWorkspaceLocalConfig(
-  options: StubWorkspaceLocalConfigOptions = {},
-): IWorkspaceLocalConfigService {
+export function stubProjectLocalConfig(
+  options: StubProjectLocalConfigOptions = {},
+): IProjectLocalConfigService {
   const bindings = new Map(Object.entries(options.bindings ?? {}));
   const slotBindings = new Map(Object.entries(options.slotBindings ?? {}));
   return {

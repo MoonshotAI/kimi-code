@@ -40,7 +40,7 @@ import {
   type SubagentSpawnedEvent,
 } from '#/session/subagent/mirrorAgentRun';
 import { IFlagService } from '#/app/flag/flag';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
@@ -66,7 +66,7 @@ import type { IProcess, ISessionProcessRunner } from '#/session/process/processR
 import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import { stubFlag } from '../app/flag/stubs';
-import { stubWorkspaceLocalConfig } from '../app/workspaceLocalConfig/stubs';
+import { stubProjectLocalConfig } from '../app/projectLocalConfig/stubs';
 import { stubQuestionService } from '../session/question/stubs';
 import {
   appService,
@@ -1677,8 +1677,8 @@ describe('Agent tool execution contract', () => {
         lifecycle,
         appService(IFlagService, stubFlag(false)),
         appService(
-          IWorkspaceLocalConfigService,
-          stubWorkspaceLocalConfig({
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
             bindings: { explore: { model: 'mock-model', thinkingEffort: 'high' } },
           }),
         ),
@@ -1725,8 +1725,8 @@ describe('Agent tool execution contract', () => {
         lifecycle,
         appService(IFlagService, stubFlag(true)),
         appService(
-          IWorkspaceLocalConfigService,
-          stubWorkspaceLocalConfig({
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
             bindings: { explore: { model: 'mock-model', thinkingEffort: 'high' } },
           }),
         ),
@@ -1774,8 +1774,8 @@ describe('Agent tool execution contract', () => {
         lifecycle,
         appService(IFlagService, stubFlag(true)),
         appService(
-          IWorkspaceLocalConfigService,
-          stubWorkspaceLocalConfig({
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
             bindings: { explore: { model: 'mock-model', thinkingEffort: 'high' } },
             slotBindings: { fast: { model: 'mock-model', thinkingEffort: 'low' } },
           }),
@@ -1820,7 +1820,7 @@ describe('Agent tool execution contract', () => {
         createAgentIds: ['agent-child'],
         handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
       });
-      const localConfig = stubWorkspaceLocalConfig();
+      const localConfig = stubProjectLocalConfig();
       const writeType = vi.spyOn(localConfig, 'writeSubagentBinding');
       const question = stubQuestionService({
         respond: (req) => ({ answers: { [req.questions[0]?.question ?? '']: 'mock-model' } }),
@@ -1828,7 +1828,7 @@ describe('Agent tool execution contract', () => {
       const context = createAgentToolContext(
         lifecycle,
         appService(IFlagService, stubFlag(true)),
-        appService(IWorkspaceLocalConfigService, localConfig),
+        appService(IProjectLocalConfigService, localConfig),
         sessionService(ISessionQuestionService, question),
       );
 
@@ -1872,13 +1872,13 @@ describe('Agent tool execution contract', () => {
         createAgentIds: ['agent-child'],
         handleServices: new Map([['main', new Map([[IEventBus, eventBus]])]]),
       });
-      const localConfig = stubWorkspaceLocalConfig();
+      const localConfig = stubProjectLocalConfig();
       const writeType = vi.spyOn(localConfig, 'writeSubagentBinding');
       const question = stubQuestionService();
       const context = createAgentToolContext(
         lifecycle,
         appService(IFlagService, stubFlag(true)),
-        appService(IWorkspaceLocalConfigService, localConfig),
+        appService(IProjectLocalConfigService, localConfig),
         sessionService(ISessionQuestionService, question),
       );
       const own = context.get(IAgentProfileService).data();
@@ -1936,8 +1936,8 @@ describe('Agent tool execution contract', () => {
         appService(IFlagService, stubFlag(true)),
         appService(IModelCatalog, modelCatalogStub(['mock-model', 'sub/model'])),
         appService(
-          IWorkspaceLocalConfigService,
-          stubWorkspaceLocalConfig({
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
             bindings: { explore: { model: 'sub/model', thinkingEffort: 'high' } },
           }),
         ),
@@ -2119,8 +2119,8 @@ describe('Agent tool execution contract', () => {
         ),
         appService(IFlagService, stubFlag(false)),
         appService(
-          IWorkspaceLocalConfigService,
-          stubWorkspaceLocalConfig({
+          IProjectLocalConfigService,
+          stubProjectLocalConfig({
             bindings: { explore: { model: 'sub/model', thinkingEffort: 'high' } },
           }),
         ),

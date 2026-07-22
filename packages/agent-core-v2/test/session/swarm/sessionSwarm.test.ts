@@ -14,7 +14,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { type SubagentSpawnedEvent } from '#/session/subagent/mirrorAgentRun';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -54,7 +54,7 @@ import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubFlag } from '../../app/flag/stubs';
-import { stubWorkspaceLocalConfig } from '../../app/workspaceLocalConfig/stubs';
+import { stubProjectLocalConfig } from '../../app/projectLocalConfig/stubs';
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -910,7 +910,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     });
     ix.stub(ILogService, stubLog());
     ix.stub(IFlagService, stubFlag(false));
-    ix.stub(IWorkspaceLocalConfigService, stubWorkspaceLocalConfig());
+    ix.stub(IProjectLocalConfigService, stubProjectLocalConfig());
     ix.stub(IModelCatalog, modelCatalogStub(['kimi-test']));
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
@@ -1015,8 +1015,8 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('keeps inheriting the caller model when the binding flag is disabled', async () => {
     ix.stub(
-      IWorkspaceLocalConfigService,
-      stubWorkspaceLocalConfig({
+      IProjectLocalConfigService,
+      stubProjectLocalConfig({
         bindings: { coder: { model: 'sub/model', thinkingEffort: 'high' } },
       }),
     );
@@ -1049,8 +1049,8 @@ describe('SessionSwarmService metadata compatibility', () => {
   it('applies the workspace type binding to swarm spawns when the flag is enabled', async () => {
     ix.stub(IFlagService, stubFlag(true));
     ix.stub(
-      IWorkspaceLocalConfigService,
-      stubWorkspaceLocalConfig({
+      IProjectLocalConfigService,
+      stubProjectLocalConfig({
         bindings: { coder: { model: 'sub/model', thinkingEffort: 'high' } },
       }),
     );
@@ -1085,8 +1085,8 @@ describe('SessionSwarmService metadata compatibility', () => {
   it('falls back to the caller model when the bound alias is not configured', async () => {
     ix.stub(IFlagService, stubFlag(true));
     ix.stub(
-      IWorkspaceLocalConfigService,
-      stubWorkspaceLocalConfig({
+      IProjectLocalConfigService,
+      stubProjectLocalConfig({
         bindings: { coder: { model: 'gone/model', thinkingEffort: 'high' } },
       }),
     );
@@ -1109,8 +1109,8 @@ describe('SessionSwarmService metadata compatibility', () => {
   it('applies the named binding slot to every item spawn when the flag is enabled', async () => {
     ix.stub(IFlagService, stubFlag(true));
     ix.stub(
-      IWorkspaceLocalConfigService,
-      stubWorkspaceLocalConfig({
+      IProjectLocalConfigService,
+      stubProjectLocalConfig({
         bindings: { coder: { model: 'sub/model', thinkingEffort: 'high' } },
         slotBindings: { fast: { model: 'slot/model', thinkingEffort: 'low' } },
       }),
@@ -1154,8 +1154,8 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('ignores the binding slot when the binding flag is disabled', async () => {
     ix.stub(
-      IWorkspaceLocalConfigService,
-      stubWorkspaceLocalConfig({
+      IProjectLocalConfigService,
+      stubProjectLocalConfig({
         slotBindings: { fast: { model: 'slot/model', thinkingEffort: 'low' } },
       }),
     );

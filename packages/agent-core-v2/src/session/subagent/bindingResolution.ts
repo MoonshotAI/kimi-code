@@ -29,9 +29,9 @@
 
 import { IFlagService } from '#/app/flag/flag';
 import {
-  type IWorkspaceLocalConfigService,
+  type IProjectLocalConfigService,
   type SubagentBinding,
-} from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+} from '#/app/projectLocalConfig/projectLocalConfig';
 import { type IModelCatalog } from '#/kosong/model/catalog';
 
 import { SUBAGENT_MODEL_SELECTION_FLAG_ID } from './flag';
@@ -54,7 +54,7 @@ export type AskSubagentSpawnBindingCallback = (
 
 export interface ResolveSubagentSpawnBindingDeps {
   readonly flags: IFlagService;
-  readonly workspaceLocalConfig: IWorkspaceLocalConfigService;
+  readonly projectLocalConfig: IProjectLocalConfigService;
   readonly modelCatalog: IModelCatalog;
   readonly ask?: AskSubagentSpawnBindingCallback;
 }
@@ -75,7 +75,7 @@ export async function resolveSubagentSpawnBinding(
   const slot = input.bindingSlot?.trim();
   const explicitSlot = slot !== undefined && slot.length > 0;
   if (explicitSlot) {
-    const slotEntry = await deps.workspaceLocalConfig.readSubagentSlotBinding(
+    const slotEntry = await deps.projectLocalConfig.readSubagentSlotBinding(
       input.workDir,
       slot,
     );
@@ -99,7 +99,7 @@ export async function resolveSubagentSpawnBinding(
     }
   }
 
-  const typeEntry = await deps.workspaceLocalConfig.readSubagentBinding(
+  const typeEntry = await deps.projectLocalConfig.readSubagentBinding(
     input.workDir,
     input.profileName,
   );

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { IWorkspaceLocalConfigService, type SubagentBinding } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService, type SubagentBinding } from '#/app/projectLocalConfig/projectLocalConfig';
 import { type IModelCatalog, type Model } from '#/kosong/model/catalog';
 import {
   type AskSubagentSpawnBindingCallback,
@@ -24,7 +24,7 @@ function makeDeps(options: {
 } = {}) {
   const bindings = new Map(Object.entries(options.tables?.bindings ?? {}));
   const slotBindings = new Map(Object.entries(options.tables?.slotBindings ?? {}));
-  const workspaceLocalConfig = {
+  const projectLocalConfig = {
     _serviceBrand: undefined,
     readSubagentBinding: vi.fn(async (_workDir: string, agentType: string) =>
       bindings.get(agentType),
@@ -44,18 +44,18 @@ function makeDeps(options: {
   return {
     deps: {
       flags: stubFlag(options.flagEnabled ?? true),
-      workspaceLocalConfig: workspaceLocalConfig as unknown as IWorkspaceLocalConfigService,
+      projectLocalConfig: projectLocalConfig as unknown as IProjectLocalConfigService,
       modelCatalog: modelCatalog as unknown as IModelCatalog,
       ask: options.ask,
     },
-    workspaceLocalConfig,
+    projectLocalConfig,
     modelCatalog,
   };
 }
 
 describe('resolveSubagentSpawnBinding', () => {
   it('returns an empty resolution when the experimental flag is disabled', async () => {
-    const { deps, workspaceLocalConfig } = makeDeps({
+    const { deps, projectLocalConfig } = makeDeps({
       flagEnabled: false,
       tables: { bindings: { coder: { model: 'sub/model' } } },
       validAliases: ['sub/model'],
@@ -68,8 +68,8 @@ describe('resolveSubagentSpawnBinding', () => {
         bindingSlot: 'fast',
       }),
     ).resolves.toEqual({});
-    expect(workspaceLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
-    expect(workspaceLocalConfig.readSubagentSlotBinding).not.toHaveBeenCalled();
+    expect(projectLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
+    expect(projectLocalConfig.readSubagentSlotBinding).not.toHaveBeenCalled();
   });
 
   it('prefers the slot binding over the type binding', async () => {
@@ -117,7 +117,7 @@ describe('resolveSubagentSpawnBinding', () => {
   });
 
   it('treats inherit as an explicit choice and never falls back', async () => {
-    const { deps, workspaceLocalConfig } = makeDeps({
+    const { deps, projectLocalConfig } = makeDeps({
       tables: {
         bindings: { coder: { model: 'type/model' } },
         slotBindings: { fast: { inherit: true } },
@@ -133,11 +133,11 @@ describe('resolveSubagentSpawnBinding', () => {
 
     expect(resolution).toEqual({});
     expect(resolution.warning).toBeUndefined();
-    expect(workspaceLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
+    expect(projectLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
   });
 
   it('warns and keeps inheriting when an inherit slot entry also sets model or thinking_effort', async () => {
-    const { deps, workspaceLocalConfig, modelCatalog } = makeDeps({
+    const { deps, projectLocalConfig, modelCatalog } = makeDeps({
       tables: {
         bindings: { coder: { model: 'type/model' } },
         slotBindings: { fast: { inherit: true, model: 'slot/model', thinkingEffort: 'high' } },
@@ -157,7 +157,7 @@ describe('resolveSubagentSpawnBinding', () => {
     expect(resolution.warning).toContain('subagent-slot.fast');
     expect(resolution.warning).toContain('model and thinking_effort');
     expect(modelCatalog.get).not.toHaveBeenCalled();
-    expect(workspaceLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
+    expect(projectLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
   });
 
   it('warns about the ignored model when an inherit type entry also sets model', async () => {
@@ -244,7 +244,7 @@ describe('resolveSubagentSpawnBinding', () => {
   });
 
   it('never asks and inherits when nothing is bound and no ask callback is supplied', async () => {
-    const { deps, workspaceLocalConfig } = makeDeps({ validAliases: [] });
+    const { deps, projectLocalConfig } = makeDeps({ validAliases: [] });
 
     await expect(
       resolveSubagentSpawnBinding(deps, {
@@ -253,8 +253,8 @@ describe('resolveSubagentSpawnBinding', () => {
         bindingSlot: 'fast',
       }),
     ).resolves.toEqual({});
-    expect(workspaceLocalConfig.readSubagentSlotBinding).toHaveBeenCalledOnce();
-    expect(workspaceLocalConfig.readSubagentBinding).toHaveBeenCalledOnce();
+    expect(projectLocalConfig.readSubagentSlotBinding).toHaveBeenCalledOnce();
+    expect(projectLocalConfig.readSubagentBinding).toHaveBeenCalledOnce();
   });
 
   describe('interactive ask-once', () => {
@@ -274,7 +274,7 @@ describe('resolveSubagentSpawnBinding', () => {
 
     it('adopts an inherit answer for a slot as terminal without reading the type binding', async () => {
       const ask = vi.fn<AskSubagentSpawnBindingCallback>(async () => ({ inherit: true }));
-      const { deps, workspaceLocalConfig } = makeDeps({
+      const { deps, projectLocalConfig } = makeDeps({
         ask,
         tables: { bindings: { coder: { model: 'type/model' } } },
         validAliases: ['type/model'],
@@ -288,7 +288,7 @@ describe('resolveSubagentSpawnBinding', () => {
         }),
       ).resolves.toEqual({});
       expect(ask).toHaveBeenCalledWith('coder', { slot: 'fast' });
-      expect(workspaceLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
+      expect(projectLocalConfig.readSubagentBinding).not.toHaveBeenCalled();
     });
 
     it('asks for a missing slot with the slot context and adopts the answer', async () => {

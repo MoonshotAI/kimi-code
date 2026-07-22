@@ -61,7 +61,7 @@ import {
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IModelCatalog } from '#/kosong/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
@@ -188,7 +188,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
     @IFlagService private readonly flags: IFlagService,
-    @IWorkspaceLocalConfigService private readonly workspaceLocalConfig: IWorkspaceLocalConfigService,
+    @IProjectLocalConfigService private readonly projectLocalConfig: IProjectLocalConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionQuestionService private readonly question: ISessionQuestionService,
   ) {
@@ -316,11 +316,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       const bindingResolution = await resolveSubagentSpawnBinding(
         {
           flags: this.flags,
-          workspaceLocalConfig: this.workspaceLocalConfig,
+          projectLocalConfig: this.projectLocalConfig,
           modelCatalog: this.modelCatalog,
           ask: createSubagentBindingAsker({
             question: this.question,
-            workspaceLocalConfig: this.workspaceLocalConfig,
+            projectLocalConfig: this.projectLocalConfig,
             modelCatalog: this.modelCatalog,
             workDir: this.workspace.workDir,
             agentId: this.callerAgentId,
