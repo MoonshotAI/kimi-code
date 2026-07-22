@@ -272,3 +272,48 @@ describe('KosongConfigService default-provider deletion', () => {
     }
   });
 });
+
+describe('KosongConfigService env-pinned default pointer', () => {
+  /**
+   * Emulates an effective-overlay pin (e.g. `KIMI_MODEL_NAME` →
+   * `defaultModel`): user-layer writes are accepted, but the effective read
+   * (`get`) keeps returning the pinned value and no change event fires.
+   */
+  class PinnedConfigService extends StubConfigService {
+    constructor(
+      private readonly pinnedDomain: string,
+      pinnedValue: unknown,
+      sections: Record<string, unknown>,
+    ) {
+      super({ ...sections, [pinnedDomain]: pinnedValue });
+    }
+
+    override replace(domain: string, value: unknown): Promise<void> {
+      if (domain === this.pinnedDomain) return Promise.resolve();
+      return super.replace(domain, value);
+    }
+  }
+
+  it('re-asserts the pinned effective default model into the registry after a registry-originated write', async () => {
+    const config = new PinnedConfigService(DEFAULT_MODEL_SECTION, 'env-model', seededSections);
+    const providers = new ProviderService();
+    const models = new ModelService();
+    const bridge = new KosongConfigService(config, providers, models, stubLogService());
+    await bridge.ready;
+    try {
+      // Hydration reads the effective view: the pinned value, not the seeded one.
+      expect(models.getDefaultModel()).toBe('env-model');
+      const replaceSpy = vi.spyOn(config, 'replace');
+
+      await models.setDefaultModel('k1');
+      await flush();
+
+      // The write landed in the user layer, but the pinned effective view
+      // did not move, and the bridge reconciled the registry back to the pin.
+      expect(replaceSpy).toHaveBeenCalledWith(DEFAULT_MODEL_SECTION, 'k1');
+      expect(models.getDefaultModel()).toBe('env-model');
+    } finally {
+      bridge.dispose();
+    }
+  });
+});

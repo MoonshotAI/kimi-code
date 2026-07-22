@@ -13,6 +13,11 @@
  *  - kosong → config: the persist handlers skip the write when the config
  *    value already matches the registry state (the case for every
  *    config-originated push), so a persist never echoes back as a sync.
+ *  - env-pinned pointers: a registry-originated default-pointer write lands
+ *    in the user layer even when an effective overlay pins the section
+ *    (`KIMI_MODEL_NAME` → `defaultModel`); the bridge then re-asserts the
+ *    pinned effective value into the registry, so a registry read can never
+ *    diverge from the effective config view.
  *
  * Persists are serialized through a promise chain so rapid mutation bursts
  * reach the disk in event order.
@@ -149,6 +154,20 @@ export class KosongConfigService extends Disposable implements IKosongConfigServ
     this.enqueue(async () => {
       if (this.config.get<string>(domain) === value) return;
       await this.config.replace(domain, value);
+      // An effective overlay may pin the section (e.g. `KIMI_MODEL_NAME`
+      // pins `defaultModel` to the reserved env model): the write then lands
+      // only in the user layer — the effective value does not move and no
+      // change event fires — while the registry keeps the unpinned value.
+      // Re-assert the effective value so a registry read can never diverge
+      // from the pinned view; the re-assert's own change event no-ops back
+      // into this persist through the equality guard above.
+      const effective = this.config.get<string>(domain);
+      if (effective === value) return;
+      if (domain === DEFAULT_PROVIDER_SECTION) {
+        await this.providers.setDefaultProvider(effective);
+      } else if (domain === DEFAULT_MODEL_SECTION) {
+        await this.models.setDefaultModel(effective);
+      }
     });
   }
 
