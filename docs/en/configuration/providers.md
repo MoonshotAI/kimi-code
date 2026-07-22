@@ -27,10 +27,11 @@ The manager displays providers as a list of entries grouped by source. Navigatio
 
 - ↑/↓ to move the cursor, ←/→ to page
 - `d` to delete the current provider (with `[y/N]` confirmation)
-- Press Enter on the `[ Add New Platform ]` row to add a new provider
+- Press Enter on a single-provider row to edit it, or on the `[ Add New Platform ]` row to add a new provider
 
-Two paths when adding:
+Three paths when adding:
 
+- **OpenAI-compatible provider**: enter a provider ID, base URL, and API key; Kimi Code fetches `${baseUrl}/models`, creates model aliases automatically, and then opens `/model` so you can select one
 - **Known third-party provider**: fetches the model catalog from [models.dev](https://models.dev/), select a provider → enter an API key → select a default model
 - **Custom registry (api.json)**: paste a custom registry URL and Bearer token; the CLI automatically creates the `providers` / `models` entries. On later startup, providers from the same registry URL are refreshed together, so upstream provider additions, removals, and model metadata changes are synced.
 

@@ -12,6 +12,8 @@ import {
   fetchCatalog,
   resolveCatalogImport,
   type Catalog,
+  type ModelAlias,
+  type ProviderConfig,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -21,6 +23,11 @@ import {
   CustomRegistryImportDialogComponent,
   type CustomRegistryImportResult,
 } from '../components/dialogs/custom-registry-import';
+import {
+  OpenAIProviderImportDialogComponent,
+  type OpenAIProviderImportResult,
+  type OpenAIProviderImportValue,
+} from '../components/dialogs/openai-provider-import';
 import {
   ProviderManagerComponent,
   type ProviderManagerOptions,
@@ -41,6 +48,10 @@ import type { SlashCommandHost } from './dispatch';
 // /provider command
 // ---------------------------------------------------------------------------
 
+const DEFAULT_OPENAI_CONTEXT_TOKENS = 131_072;
+const OPENAI_THINKING_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+const DEFAULT_OPENAI_THINKING_EFFORT = 'medium';
+
 export async function handleProviderCommand(host: SlashCommandHost): Promise<void> {
   const options = buildProviderManagerOptions(host);
   const component = new ProviderManagerComponent(options);
@@ -56,6 +67,12 @@ function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOpt
     onAdd: () => {
       void handleProviderAdd(host).catch((error: unknown) => {
         host.showError(`Add provider failed: ${formatErrorMessage(error)}`);
+      });
+    },
+    onEditProvider: (providerId) => {
+      void handleOpenAIProviderAddOrEditViaDialog(host, providerId).catch((error: unknown) => {
+        host.showError(`Edit provider failed: ${formatErrorMessage(error)}`);
+        reopenProviderManager(host);
       });
     },
     onDeleteSource: (providerIds) => {
@@ -113,6 +130,12 @@ async function handleProviderAdd(host: SlashCommandHost): Promise<void> {
     return;
   }
 
+  if (source === 'openai') {
+    const handled = await handleOpenAIProviderAddOrEditViaDialog(host);
+    if (!handled) reopenProviderManager(host);
+    return;
+  }
+
   if (source === 'known') {
     await handleCatalogProviderAdd(host);
     return;
@@ -129,19 +152,26 @@ function reopenProviderManager(host: SlashCommandHost): void {
   host.mountEditorReplacement(component);
 }
 
+type ProviderAddSource = 'openai' | 'known' | 'custom';
+
 function promptProviderAddSource(
   host: SlashCommandHost,
-): Promise<'known' | 'custom' | undefined> {
+): Promise<ProviderAddSource | undefined> {
   return new Promise((resolve) => {
     const picker = new ChoicePickerComponent({
       title: 'Add provider',
       options: [
+        { value: 'openai', label: 'OpenAI-compatible provider' },
         { value: 'known', label: 'Known third-party provider' },
         { value: 'custom', label: 'Custom registry (api.json)' },
       ],
       onSelect: (value) => {
         host.restoreEditor();
-        resolve(value === 'known' || value === 'custom' ? value : undefined);
+        resolve(
+          value === 'openai' || value === 'known' || value === 'custom'
+            ? value
+            : undefined,
+        );
       },
       onCancel: () => {
         host.restoreEditor();
@@ -150,6 +180,217 @@ function promptProviderAddSource(
     });
     host.mountEditorReplacement(picker);
   });
+}
+
+async function handleOpenAIProviderAddOrEditViaDialog(
+  host: SlashCommandHost,
+  providerId?: string,
+): Promise<boolean> {
+  const existingProvider = providerId
+    ? host.state.appState.availableProviders[providerId]
+    : undefined;
+  if (providerId !== undefined && existingProvider !== undefined && existingProvider.type !== 'openai') {
+    host.showError(`Provider "${providerId}" is not OpenAI-compatible.`);
+    return false;
+  }
+
+  const value = await promptOpenAIProviderImport(host, providerId, existingProvider);
+  if (value === undefined) return false;
+
+  const baseUrl = normalizeOpenAIBaseUrl(value.baseUrl);
+  const spinner = host.showProgressSpinner(`Fetching models from ${baseUrl}/models`);
+  let modelIds: readonly string[];
+  try {
+    modelIds = await fetchOpenAICompatibleModels(baseUrl, value.apiKey);
+    spinner.stop({ ok: true, label: `Loaded ${String(modelIds.length)} models.` });
+  } catch (error) {
+    spinner.stop({ ok: false, label: 'Failed to load models.' });
+    host.showError(`Failed to fetch models: ${formatErrorMessage(error)}`);
+    return false;
+  }
+
+  if (modelIds.length === 0) {
+    host.showError('The provider returned no usable models.');
+    return false;
+  }
+
+  const config = await host.harness.getConfig();
+  const isRenaming = providerId !== undefined && providerId !== value.providerId;
+  if (isRenaming && config.providers[value.providerId] !== undefined) {
+    host.showError(`Provider "${value.providerId}" already exists.`);
+    return false;
+  }
+
+  if (providerId !== undefined && config.providers[providerId] !== undefined) {
+    await host.harness.removeProvider(providerId);
+  } else if (config.providers[value.providerId] !== undefined) {
+    await host.harness.removeProvider(value.providerId);
+  }
+
+  const nextConfig = await host.harness.getConfig();
+  applyOpenAICompatibleProvider(nextConfig, {
+    providerId: value.providerId,
+    baseUrl,
+    apiKey: value.apiKey,
+    modelIds,
+  });
+
+  await host.harness.setConfig({
+    providers: nextConfig.providers,
+    models: nextConfig.models,
+  });
+  await host.authFlow.refreshConfigAfterLogin();
+  host.track('connect', { provider: value.providerId, method: 'openai-compatible' });
+  host.showStatus(
+    `${providerId === undefined ? 'Provider added' : 'Provider updated'}: ${value.providerId} (${String(modelIds.length)} models)`,
+    'success',
+  );
+
+  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
+  const firstAlias = Object.keys(stateModels).find((alias) =>
+    alias.startsWith(`${value.providerId}/`),
+  );
+  const selector = new TabbedModelSelectorComponent({
+    models: stateModels,
+    currentValue: host.state.appState.model,
+    selectedValue: firstAlias,
+    currentThinkingEffort: host.state.appState.thinkingEffort,
+    initialTabId: value.providerId,
+    onSelect: ({ alias, thinking }) => {
+      host.restoreEditor();
+      void setDefaultModel(host, alias, thinking).catch((error: unknown) => {
+        host.showError(`Set default model failed: ${formatErrorMessage(error)}`);
+      });
+    },
+    onCancel: () => {
+      host.restoreEditor();
+    },
+  });
+  host.mountEditorReplacement(selector);
+  return true;
+}
+
+function promptOpenAIProviderImport(
+  host: SlashCommandHost,
+  providerId: string | undefined,
+  provider: ProviderConfig | undefined,
+): Promise<OpenAIProviderImportValue | undefined> {
+  return new Promise((resolve) => {
+    const dialog = new OpenAIProviderImportDialogComponent(
+      (result: OpenAIProviderImportResult) => {
+        host.restoreEditor();
+        resolve(result.kind === 'ok' ? result.value : undefined);
+      },
+      {
+        providerId,
+        baseUrl: provider?.baseUrl,
+        apiKey: provider?.apiKey,
+      },
+    );
+    host.mountEditorReplacement(dialog);
+  });
+}
+
+function normalizeOpenAIBaseUrl(raw: string): string {
+  try {
+    return new URL(raw.trim()).toString().replace(/\/+$/, '');
+  } catch {
+    throw new Error('Base URL must be a valid URL.');
+  }
+}
+
+async function fetchOpenAICompatibleModels(
+  baseUrl: string,
+  apiKey: string,
+): Promise<readonly string[]> {
+  const response = await fetch(`${baseUrl}/models`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${String(response.status)} ${response.statusText}`.trim());
+  }
+
+  const payload: unknown = await response.json();
+  if (typeof payload !== 'object' || payload === null || !('data' in payload)) {
+    throw new Error('Unexpected /models response: missing data array.');
+  }
+  const data = (payload as { readonly data?: unknown }).data;
+  if (!Array.isArray(data)) {
+    throw new Error('Unexpected /models response: data is not an array.');
+  }
+
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const item of data) {
+    const id =
+      typeof item === 'object' && item !== null && 'id' in item
+        ? (item as { readonly id?: unknown }).id
+        : undefined;
+    if (typeof id !== 'string') continue;
+    const trimmed = id.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ids.push(trimmed);
+  }
+  return ids;
+}
+
+function applyOpenAICompatibleProvider(
+  config: { providers: Record<string, ProviderConfig>; models?: Record<string, ModelAlias> },
+  opts: {
+    readonly providerId: string;
+    readonly baseUrl: string;
+    readonly apiKey: string;
+    readonly modelIds: readonly string[];
+  },
+): void {
+  config.providers[opts.providerId] = {
+    type: 'openai',
+    baseUrl: opts.baseUrl,
+    apiKey: opts.apiKey,
+    source: { kind: 'openaiModels', baseUrl: opts.baseUrl },
+  };
+
+  const models = config.models ?? {};
+  for (const modelId of opts.modelIds) {
+    models[`${opts.providerId}/${modelId}`] = openAICompatibleModelAlias(
+      opts.providerId,
+      modelId,
+    );
+  }
+  config.models = models;
+}
+
+function openAICompatibleModelAlias(providerId: string, modelId: string): ModelAlias {
+  const thinking = isLikelyOpenAIThinkingModel(modelId);
+  return {
+    provider: providerId,
+    model: modelId,
+    maxContextSize: DEFAULT_OPENAI_CONTEXT_TOKENS,
+    capabilities: thinking ? ['tool_use', 'thinking'] : ['tool_use'],
+    displayName: modelId,
+    ...(thinking
+      ? {
+          supportEfforts: [...OPENAI_THINKING_EFFORTS],
+          defaultEffort: DEFAULT_OPENAI_THINKING_EFFORT,
+        }
+      : {}),
+  };
+}
+
+function isLikelyOpenAIThinkingModel(modelId: string): boolean {
+  const normalized = modelId.toLowerCase();
+  const finalSegment = normalized.split('/').at(-1) ?? normalized;
+  return (
+    normalized.includes('openai/') ||
+    normalized.includes('/gpt-') ||
+    finalSegment.startsWith('gpt-') ||
+    finalSegment.startsWith('chatgpt-') ||
+    /^o[134](?:-|$)/.test(finalSegment)
+  );
 }
 
 async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
