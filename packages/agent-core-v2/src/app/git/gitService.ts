@@ -2,7 +2,9 @@
  * `git` domain (L1) — `IGitService` implementation.
  *
  * Runs `git status` / `git diff` (and `gh pr view`) against a repository on
- * the local disk. Process spawning goes through the App-scope
+ * the local disk; status passes `--untracked-files=all` so files inside
+ * untracked directories surface individually instead of collapsing into the
+ * directory entry. Process spawning goes through the App-scope
  * `IHostProcessService` from `os/interface`, and the single path-existence
  * probe in `diff` goes through `IHostFileSystem`; no Node platform API is
  * imported directly. Bound at App scope — it owns no Session dependency, so
@@ -45,7 +47,7 @@ export class GitService implements IGitService {
       throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
     }
 
-    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch'], cwd);
+    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch', '--untracked-files=all'], cwd);
     if (porc.exitCode !== 0) {
       throw this.gitUnavailable(cwd, porc.stderr.trim() || `git status exit ${porc.exitCode}`);
     }
