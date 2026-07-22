@@ -90,6 +90,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      awaitPendingReloads: async () => {},
     };
     ix.set(ISessionSkillCatalog, skillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
@@ -115,8 +116,8 @@ describe('AgentSkillService', () => {
   });
 
   it('activate throws for skills listed in disabled_skills config', async () => {
-    const disabledCatalog = new InMemorySkillCatalog({ disabledSkills: ['grok-delegation'] });
-    disabledCatalog.register(stubSkill('grok-delegation'));
+    const disabledCatalog = new InMemorySkillCatalog({ disabledSkills: ['review-helper'] });
+    disabledCatalog.register(stubSkill('review-helper'));
     ix.set(ISessionSkillCatalog, {
       _serviceBrand: undefined,
       catalog: disabledCatalog,
@@ -124,11 +125,12 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      awaitPendingReloads: async () => {},
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
 
     const svc = ix.get(IAgentSkillService);
-    await expect(svc.activate({ name: 'grok-delegation' })).rejects.toThrow(
+    await expect(svc.activate({ name: 'review-helper' })).rejects.toThrow(
       /disabled in configuration \(disabled_skills\)/i,
     );
   });
@@ -147,6 +149,7 @@ describe('AgentSkillService', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      awaitPendingReloads: async () => {},
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
 
@@ -202,6 +205,7 @@ describe('SkillTool', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      awaitPendingReloads: async () => {},
     } satisfies ISessionSkillCatalog);
     ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
   });
@@ -287,8 +291,8 @@ describe('SkillTool', () => {
   });
 
   it('rejects skills listed in disabled_skills config', async () => {
-    const disabledCatalog = new InMemorySkillCatalog({ disabledSkills: ['grok-delegation'] });
-    disabledCatalog.register(stubSkill('grok-delegation'));
+    const disabledCatalog = new InMemorySkillCatalog({ disabledSkills: ['review-helper'] });
+    disabledCatalog.register(stubSkill('review-helper'));
     ix.set(ISessionSkillCatalog, {
       _serviceBrand: undefined,
       catalog: disabledCatalog,
@@ -296,16 +300,17 @@ describe('SkillTool', () => {
       onDidChange: () => ({ dispose: () => {} }),
       load: async () => {},
       reload: async () => {},
+      awaitPendingReloads: async () => {},
     } satisfies ISessionSkillCatalog);
 
     const result = await executeTool(
       makeTool(ix),
-      toolContext({ skill: 'grok-delegation' }),
+      toolContext({ skill: 'review-helper' }),
     );
 
     expect(result).toMatchObject({
       isError: true,
-      output: 'Skill "grok-delegation" is disabled in configuration (disabled_skills).',
+      output: 'Skill "review-helper" is disabled in configuration (disabled_skills).',
     });
   });
 

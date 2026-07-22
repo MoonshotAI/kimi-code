@@ -844,6 +844,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
 
   if (event.type === 'configChanged') {
     rawState.defaultModel = event.config.defaultModel ?? null;
+    void modelProvider.refreshLoadedSkills();
   }
 
   if (event.type === 'modelCatalogChanged') {

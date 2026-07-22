@@ -197,7 +197,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         return;
       }
       const catalog = resolved.handle.accessor.get(ISessionSkillCatalog);
-      await catalog.ready;
+      await catalog.awaitPendingReloads();
       const skills = catalog.catalog.listSkills().map(toProtocolSkill);
       reply.send(okEnvelope({ skills }, req.id));
     },

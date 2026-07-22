@@ -258,26 +258,87 @@ export function useModelProviderState(
       .catch((error: unknown) => pushOperationFailure('setConfig', error));
   }
 
-  async function loadSkillsForSession(sessionId: string): Promise<void> {
+  const sessionSkillRequestSeq = new Map<string, number>();
+  const workspaceSkillRequestSeq = new Map<string, number>();
+  const activeSessionSkillRequests = new Map<string, number>();
+  const activeWorkspaceSkillRequests = new Map<string, number>();
+
+  async function loadSkillsForSession(
+    sessionId: string,
+    source: 'direct' | 'config-refresh' = 'direct',
+  ): Promise<void> {
+    const requestSeq = (sessionSkillRequestSeq.get(sessionId) ?? 0) + 1;
+    sessionSkillRequestSeq.set(sessionId, requestSeq);
+    activeSessionSkillRequests.set(sessionId, (activeSessionSkillRequests.get(sessionId) ?? 0) + 1);
     try {
       const api = getKimiWebApi();
       const list = await api.listSkills(sessionId);
+      if (sessionSkillRequestSeq.get(sessionId) !== requestSeq) return;
       skillsBySession.value = { ...skillsBySession.value, [sessionId]: list };
     } catch {
-      // Skills are side data; an older daemon without /skills just yields no
-      // slash-skills, the built-in commands still work.
+      if (source === 'config-refresh' && sessionSkillRequestSeq.get(sessionId) === requestSeq) {
+        const next = { ...skillsBySession.value };
+        delete next[sessionId];
+        skillsBySession.value = next;
+      }
+    } finally {
+      const remaining = (activeSessionSkillRequests.get(sessionId) ?? 1) - 1;
+      if (remaining === 0) {
+        activeSessionSkillRequests.delete(sessionId);
+        sessionSkillRequestSeq.delete(sessionId);
+      } else {
+        activeSessionSkillRequests.set(sessionId, remaining);
+      }
     }
   }
 
-  async function loadSkillsForWorkspace(workspaceId: string): Promise<void> {
+  async function loadSkillsForWorkspace(
+    workspaceId: string,
+    source: 'direct' | 'config-refresh' = 'direct',
+  ): Promise<void> {
+    const requestSeq = (workspaceSkillRequestSeq.get(workspaceId) ?? 0) + 1;
+    workspaceSkillRequestSeq.set(workspaceId, requestSeq);
+    activeWorkspaceSkillRequests.set(
+      workspaceId,
+      (activeWorkspaceSkillRequests.get(workspaceId) ?? 0) + 1,
+    );
     try {
       const api = getKimiWebApi();
       const list = await api.listSkillsForWorkspace(workspaceId);
+      if (workspaceSkillRequestSeq.get(workspaceId) !== requestSeq) return;
       skillsByWorkspace.value = { ...skillsByWorkspace.value, [workspaceId]: list };
     } catch {
-      // Side data; an older daemon without /workspaces/{id}/skills just yields
-      // no slash-skills for the onboarding composer.
+      if (source === 'config-refresh' && workspaceSkillRequestSeq.get(workspaceId) === requestSeq) {
+        const next = { ...skillsByWorkspace.value };
+        delete next[workspaceId];
+        skillsByWorkspace.value = next;
+      }
+    } finally {
+      const remaining = (activeWorkspaceSkillRequests.get(workspaceId) ?? 1) - 1;
+      if (remaining === 0) {
+        activeWorkspaceSkillRequests.delete(workspaceId);
+        workspaceSkillRequestSeq.delete(workspaceId);
+      } else {
+        activeWorkspaceSkillRequests.set(workspaceId, remaining);
+      }
     }
+  }
+
+  async function refreshLoadedSkills(): Promise<void> {
+    const sessionIds = new Set([
+      ...Object.keys(skillsBySession.value),
+      ...activeSessionSkillRequests.keys(),
+    ]);
+    const workspaceIds = new Set([
+      ...Object.keys(skillsByWorkspace.value),
+      ...activeWorkspaceSkillRequests.keys(),
+    ]);
+    await Promise.all([
+      ...[...sessionIds].map((sessionId) => loadSkillsForSession(sessionId, 'config-refresh')),
+      ...[...workspaceIds].map((workspaceId) =>
+        loadSkillsForWorkspace(workspaceId, 'config-refresh'),
+      ),
+    ]);
   }
 
   /** Load models (cached — call again to force refresh) */
@@ -583,6 +644,7 @@ export function useModelProviderState(
     // actions
     loadSkillsForSession,
     loadSkillsForWorkspace,
+    refreshLoadedSkills,
     loadModels,
     loadProviders,
     setModel,

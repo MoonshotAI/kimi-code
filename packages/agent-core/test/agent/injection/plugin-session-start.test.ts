@@ -16,6 +16,7 @@ interface StubSessionStartAgent {
       getSkill: (name: string) => SkillDefinition | undefined;
       getPluginSkill: (pluginId: string, name: string) => SkillDefinition | undefined;
       renderSkillPrompt: (skill: SkillDefinition, args: string) => string;
+      isSkillDisabled: (name: string) => boolean;
     };
   };
   log: {
@@ -55,9 +56,11 @@ interface CapturedWarn {
 function sessionStartAgent(input: {
   sessionStarts: readonly EnabledPluginSessionStart[];
   skills: readonly SkillDefinition[];
+  disabledSkills?: readonly string[];
   history?: unknown[];
 }): { agent: Agent; warnings: readonly CapturedWarn[] } {
   const byName = new Map(input.skills.map((s) => [s.name.toLowerCase(), s]));
+  const disabledSkills = new Set(input.disabledSkills?.map((name) => name.toLowerCase()));
   const byPluginAndName = new Map(
     input.skills.flatMap((s) =>
       s.plugin === undefined ? [] : [[`${s.plugin.id}\0${s.name.toLowerCase()}`, s] as const],
@@ -79,6 +82,7 @@ function sessionStartAgent(input: {
           if (instructions === undefined) return skill.content;
           return `<kimi-plugin-instructions plugin="${plugin.id}">\n${instructions}\n</kimi-plugin-instructions>\n\n${skill.content}`;
         },
+        isSkillDisabled: (name) => disabledSkills.has(name.toLowerCase()),
       },
     },
     log: {
@@ -123,6 +127,19 @@ describe('PluginSessionStartInjector', () => {
     expect(text).toContain('TodoList');
     expect(text).toContain('body of skill');
     expect(text).toContain('</plugin_session_start>');
+  });
+
+  it('does not inject a disabled plugin sessionStart skill', async () => {
+    const { agent } = sessionStartAgent({
+      sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
+      skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
+      disabledSkills: ['using-superpowers'],
+    });
+
+    const injector = new PluginSessionStartInjector(agent);
+    await injector.inject();
+
+    expect((agent.context as unknown as { history: unknown[] }).history).toEqual([]);
   });
 
   it('does not hard-code Superpowers guidance when the skill has no plugin instructions', async () => {
@@ -225,6 +242,7 @@ describe('renderPluginSessionStartReminder', () => {
       getPluginSkill: (pluginId: string, name: string) =>
         byPluginAndName.get(`${pluginId}\0${name.toLowerCase()}`),
       renderSkillPrompt: (s: SkillDefinition) => s.content,
+      isSkillDisabled: () => false,
     };
   }
 

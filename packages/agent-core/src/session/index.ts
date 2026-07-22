@@ -760,7 +760,6 @@ export class Session {
    * persisted and visible on the wire. Used by the explicit `/reload` flow after
    * the session has been re-resumed with reloaded plugin state.
    *
-   * When no plugin session start is currently resolvable but an earlier
    * When no plugin session start is currently resolvable but the context may still
    * carry stale plugin guidance — either an earlier `<plugin_session_start>`
    * reminder, or a compaction summary that may have folded one in — appends a

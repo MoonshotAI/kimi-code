@@ -146,10 +146,10 @@ describe('SkillTool execution', () => {
 
   it('rejects skills listed in disabled_skills config', async () => {
     const tool = skillTool(
-      registry([skill('grok-delegation')], { disabledSkills: ['grok-delegation'] }),
+      registry([skill('review-helper')], { disabledSkills: ['review-helper'] }),
     );
 
-    const result = await execute(tool, { skill: 'grok-delegation' });
+    const result = await execute(tool, { skill: 'review-helper' });
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('disabled in configuration (disabled_skills)');
