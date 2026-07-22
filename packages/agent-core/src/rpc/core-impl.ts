@@ -380,6 +380,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       pluginCommands,
       appVersion: this.appVersion,
       additionalDirs,
+      roleAdditional: options.roleAdditional,
       drainAgentTasksOnStop: options.drainAgentTasksOnStop,
     });
     try {
@@ -532,6 +533,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       pluginCommands,
       appVersion: this.appVersion,
       additionalDirs,
+      roleAdditional: input.roleAdditional,
     });
     let warning: string | undefined;
     try {

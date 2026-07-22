@@ -61,6 +61,8 @@ export interface CreateSessionPayload {
   readonly metadata?: JsonObject | undefined;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
+  /** Standing prompt rendered into the profile's {{ROLE_ADDITIONAL}} slot. */
+  readonly roleAdditional?: string;
   readonly client?: ClientTelemetryInfo | undefined;
   readonly drainAgentTasksOnStop?: boolean;
 }
@@ -81,6 +83,8 @@ export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly additionalDirs?: readonly string[];
+  /** Standing prompt rendered into the profile's {{ROLE_ADDITIONAL}} slot, preserved across resume. */
+  readonly roleAdditional?: string;
   /** Include persisted subagent states in the returned replay snapshot. */
   readonly includeSubagents?: boolean;
   /**
