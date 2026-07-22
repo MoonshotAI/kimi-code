@@ -249,7 +249,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  private async materializeSession(opts: MaterializeSessionOptions): Promise<SessionEntry> {
+  private async materializeSession(
+    opts: MaterializeSessionOptions,
+    beforeReady?: (handle: ISessionScopeHandle) => Promise<void>,
+  ): Promise<SessionEntry> {
     const workspace = await this.workspaces.createOrTouch(opts.workDir);
     const workspaceId = opts.workspaceId ?? workspace.id;
     const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
@@ -302,6 +305,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         disposed: false,
       };
       this.entries.set(opts.sessionId, entry);
+      // Fork's session-file copy lands here: the lease is already held (so no
+      // peer can materialize the target underneath the copy) and the readiness
+      // awaits below still see the copied state (tool policy, agent files).
+      await beforeReady?.(handle);
       handle.accessor.get(ISessionExternalHooksService);
       handle.accessor.get(ISessionCronService);
       await handle.accessor.get(ISessionMetadata).ready;
@@ -698,19 +705,23 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
-      targetEntry = await this.materializeSession({
-        sessionId: targetId,
-        workDir: workspace.root,
-      });
+      targetEntry = await this.materializeSession(
+        {
+          sessionId: targetId,
+          workDir: workspace.root,
+        },
+        async (handle) => {
+          const dir = handle.accessor.get(ISessionContext).sessionDir;
+          // Reached only under our own lease (post-acquisition), so a later
+          // failure may safely attribute the directory to us and remove it.
+          targetSessionDir = dir;
+          await this.copySessionFiles(this.bootstrap.sessionDir(workspaceId, sourceId), dir);
+        },
+      );
       target = targetEntry.handle;
       const targetCtx = target.accessor.get(ISessionContext);
       targetSessionDir = targetCtx.sessionDir;
       const targetMeta = target.accessor.get(ISessionMetadata);
-
-      await this.copySessionFiles(
-        this.bootstrap.sessionDir(workspaceId, sourceId),
-        targetCtx.sessionDir,
-      );
 
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);

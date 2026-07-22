@@ -123,7 +123,9 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     expect(body.code).toBe(0);
     expect(body.data.path).toBe(await realpath(root));
     const names = body.data.entries.map((e) => e.name).sort();
-    expect(names).toEqual(['alpha', 'beta']);
+    // `sessions/` is created by the server itself at boot (the always-on
+    // session-list watch mkdirs `<home>/sessions` before watching it).
+    expect(names).toEqual(['alpha', 'beta', 'sessions']);
     for (const entry of body.data.entries) {
       expect(entry.is_dir).toBe(true);
       expect(entry.path).toBe(join(await realpath(root), entry.name));
@@ -139,7 +141,9 @@ describe('server-v2 /api/v1 fs folder picker', () => {
       `/api/v1/fs:browse?path=${encodeURIComponent(root)}`,
     );
     expect(body.code).toBe(0);
-    expect(body.data.entries.map((e) => e.name)).toEqual(['alpha', '.zeta']);
+    // `sessions/` sits between regular and dot-directories: the always-on
+    // session-list watch creates `<home>/sessions` at boot.
+    expect(body.data.entries.map((e) => e.name)).toEqual(['alpha', 'sessions', '.zeta']);
   });
 
   it('returns parent=null for the filesystem root', async () => {

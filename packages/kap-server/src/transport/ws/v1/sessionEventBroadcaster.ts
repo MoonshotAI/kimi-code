@@ -1726,7 +1726,7 @@ function sessionCreatedPayload(
 
 /**
  * Validate the `event.model_catalog.changed` payload published on the core
- * `IEventService` (`IModelCatalogService` refresh / auth change): the three
+ * `IEventService` (`IProviderDiscoveryService` refresh / auth change): the three
  * per-provider diff arrays are all the v1 frame carries.
  */
 function modelCatalogChangedPayload(

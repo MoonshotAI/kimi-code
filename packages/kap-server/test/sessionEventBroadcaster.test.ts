@@ -1561,6 +1561,7 @@ describe('SessionEventBroadcaster', () => {
       const core = makeCore(sessions, eventBus, metaAgents);
       return new SessionEventBroadcaster({
         eventsDir: dir,
+        homeDir: dir,
         core,
         maxBufferSize: 3,
         transcriptService: new TranscriptService({ homeDir: dir, core }),
@@ -1818,6 +1819,7 @@ describe('SessionEventBroadcaster', () => {
         });
       bc = new SessionEventBroadcaster({
         eventsDir: dir,
+        homeDir: dir,
         core,
         maxBufferSize: 3,
         transcriptService: service,
@@ -1844,6 +1846,7 @@ describe('SessionEventBroadcaster', () => {
       const service = new TranscriptService({ homeDir: dir, core });
       bc = new SessionEventBroadcaster({
         eventsDir: dir,
+        homeDir: dir,
         core,
         maxBufferSize: 3,
         transcriptService: service,

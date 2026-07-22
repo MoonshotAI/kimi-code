@@ -1,10 +1,10 @@
 /**
  * `fileFencing` domain (L4) — verifies the write/read-first gate end to end
  * through the real DI scope tree: a real tmpdir, the real `HostFileSystem`,
- * and the registered `writeFencing` hook participant over a real
- * `OrderedHookSlot`. Covers the hard-block verdicts (stale outside change /
- * never-read existing file), stat-only checks, and baseline isolation between
- * two Agent scopes in one Session.
+ * and the registered `writeFencing` veto listener over a real
+ * `BeforeToolExecuteEmitter`. Covers the hard-block verdicts (stale outside
+ * change / never-read existing file), stat-only checks, and baseline
+ * isolation between two Agent scopes in one Session.
  */
 
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -18,8 +18,9 @@ import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/
 import { IAgentFileFencingService } from '#/agent/fileFencing/fileFencing';
 import { AgentFileFencingService } from '#/agent/fileFencing/fileFencingService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { BeforeToolExecuteEmitter } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import type {
-  ToolBeforeExecuteContext,
+  ResolvedToolExecutionHookContext,
   ToolDidExecuteContext,
 } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -61,15 +62,17 @@ function makeEnv(): Env {
 interface AgentWorld {
   readonly env: Env;
   readonly executor: IAgentToolExecutorService;
+  readonly beforeEmitter: BeforeToolExecuteEmitter;
 }
 
 function makeAgent(env: Env, session: Scope, agentId = 'main'): AgentWorld {
-  const executor = stubToolExecutor();
+  const beforeEmitter = new BeforeToolExecuteEmitter();
+  const executor = { ...stubToolExecutor(), onBeforeExecuteTool: beforeEmitter.event };
   const agent = env.host.childOf(session, LifecycleScope.Agent, agentId, [
     stubPair(IAgentToolExecutorService, executor),
   ]);
   agent.accessor.get(IAgentFileFencingService);
-  return { env, executor };
+  return { env, executor, beforeEmitter };
 }
 
 function setup(): AgentWorld {
@@ -81,7 +84,7 @@ function beforeCtx(
   toolName: string,
   path: string,
   opts: { args?: Record<string, unknown> } = {},
-): ToolBeforeExecuteContext {
+): ResolvedToolExecutionHookContext {
   const args =
     opts.args ??
     (toolName === 'Edit'
@@ -112,28 +115,15 @@ function beforeCtx(
 
 async function runBefore(
   world: AgentWorld,
-  ctx: ToolBeforeExecuteContext,
-): Promise<ToolBeforeExecuteContext> {
-  await world.executor.hooks.onBeforeExecuteTool.run(ctx);
-  await runPrepared(ctx);
+  ctx: ResolvedToolExecutionHookContext,
+): Promise<ResolvedToolExecutionHookContext> {
+  await world.beforeEmitter.fireBeforeExecute(ctx);
   return ctx;
-}
-
-async function runPrepared(
-  ctx: ToolBeforeExecuteContext,
-): Promise<ExecutableToolResult | undefined> {
-  if (ctx.decision?.execute === undefined) return undefined;
-  return ctx.decision.execute({
-    turnId: ctx.turnId,
-    toolCallId: ctx.toolCall.id,
-    trace: ctx.trace,
-    signal: ctx.signal,
-  });
 }
 
 async function runDid(
   world: AgentWorld,
-  ctx: ToolBeforeExecuteContext,
+  ctx: ResolvedToolExecutionHookContext,
   result?: ExecutableToolResult,
 ): Promise<ToolDidExecuteContext> {
   let effectiveResult = result;
@@ -174,9 +164,8 @@ async function runOk(
   opts: { args?: Record<string, unknown> } = {},
 ): Promise<ToolDidExecuteContext> {
   const ctx = beforeCtx(toolName, path, opts);
-  await world.executor.hooks.onBeforeExecuteTool.run(ctx);
-  const prepared = await runPrepared(ctx);
-  expect(prepared?.isError).not.toBe(true);
+  const decision = await world.beforeEmitter.fireBeforeExecute(ctx);
+  expect(decision?.veto?.isError).not.toBe(true);
   if (toolName === 'Write') {
     const args = ctx.args as { readonly content: string; readonly mode?: 'overwrite' | 'append' };
     writeFileSync(path, args.content, { flag: args.mode === 'append' ? 'a' : 'w' });
@@ -190,12 +179,14 @@ async function runBlocked(
   path: string,
 ): Promise<ExecutableToolResult> {
   const ctx = beforeCtx(toolName, path);
-  await world.executor.hooks.onBeforeExecuteTool.run(ctx);
-  const result = await runPrepared(ctx);
-  if (result?.isError !== true) {
-    throw new Error(`expected ${toolName} on ${path} to be blocked, got: ${JSON.stringify(result)}`);
+  const decision = await world.beforeEmitter.fireBeforeExecute(ctx);
+  const veto = decision?.veto;
+  if (veto?.isError !== true) {
+    throw new Error(
+      `expected ${toolName} on ${path} to be blocked, got: ${JSON.stringify(decision)}`,
+    );
   }
-  return result;
+  return veto;
 }
 
 const hosts: ScopedTestHost[] = [];
@@ -252,19 +243,18 @@ describe('AgentFileFencingService', () => {
     await runOk(world, 'Edit', file);
   });
 
-  it('checks the file at execution time rather than during preflight', async () => {
+  it('probes the current revision when the fenced call is adjudicated', async () => {
     const world = setup();
     const file = join(world.env.workDir, 'a.txt');
     writeFileSync(file, 'hello');
     await runOk(world, 'Read', file);
 
-    const ctx = beforeCtx('Edit', file);
-    await world.executor.hooks.onBeforeExecuteTool.run(ctx);
+    // The staleness probe is a cold waitUntil factory: a change that landed
+    // after the read baseline but before adjudication is caught.
     writeFileSync(file, 'changed while queued');
 
-    const blocked = await runPrepared(ctx);
-    expect(blocked?.isError).toBe(true);
-    expect(blocked?.output).toContain('changed on disk since');
+    const blocked = await runBlocked(world, 'Edit', file);
+    expect(blocked.output).toContain('changed on disk since');
   });
 
   it('fails closed when the current file revision cannot be read', async () => {
@@ -388,13 +378,12 @@ describe('AgentFileFencingService', () => {
 
     writeFileSync(file, 'hello world');
 
-    // The stale verdict blocks the Edit; the wrapper's error result must not
-    // be baselined by the did-hook, so the file stays stale until re-read.
+    // The stale verdict vetoes the Edit; the veto's error result must not be
+    // baselined by the did-hook, so the file stays stale until re-read.
     const failed = beforeCtx('Edit', file);
-    await world.executor.hooks.onBeforeExecuteTool.run(failed);
-    const failedResult = await runPrepared(failed);
-    expect(failedResult?.isError).toBe(true);
-    await runDid(world, failed, { output: 'boom', isError: true });
+    const decision = await world.beforeEmitter.fireBeforeExecute(failed);
+    expect(decision?.veto?.isError).toBe(true);
+    await runDid(world, failed, decision!.veto!);
 
     const retry = await runBlocked(world, 'Edit', file);
     expect(retry.output).toContain('changed on disk since');

@@ -178,6 +178,7 @@ describe('AgentPlanService plan-guard listener', () => {
             readText: vi.fn(async (path: string) => files.get(path) ?? ''),
             writeText: vi.fn(async (path: string, content: string) => {
               files.set(path, content);
+              return { isFile: true, isDirectory: false, size: Buffer.byteLength(content) };
             }),
           }),
         );

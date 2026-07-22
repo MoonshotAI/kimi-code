@@ -2,10 +2,13 @@
  * `fileFencing` domain (L4) — `IAgentFileFencingService` implementation.
  *
  * Owns one Agent's in-memory file revision baselines and participates in the
- * `toolExecutor` hooks to enforce read-before-write and stale-write blocking
- * for `Write`/`Edit`. Reads current revisions through the os host filesystem
- * and keys paths with the normalization owned by `sessionFs`. Bound at Agent
- * scope.
+ * `toolExecutor` surfaces to enforce read-before-write and stale-write
+ * blocking for `Write`/`Edit`: a `waitUntil` adjudication on the
+ * `onBeforeExecuteTool` veto event (registered after the permission gate, so
+ * an approval round-trip always precedes the staleness check), and baseline
+ * capture on `hooks.onDidExecuteTool`. Reads current revisions through the os
+ * host filesystem and keys paths with the normalization owned by `sessionFs`.
+ * Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -15,7 +18,7 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { fileStatTuplesEqual } from '#/_base/utils/fs';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
-  ToolBeforeExecuteContext,
+  BeforeToolExecuteEvent,
   ToolDidExecuteContext,
   ToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
@@ -41,10 +44,6 @@ type FileFencingVerdict = 'clean' | 'stale' | 'no-baseline';
 
 function isFenced(ctx: ToolExecutionHookContext): boolean {
   return ctx.toolCall.name === READ_TOOL || WRITE_TOOLS.has(ctx.toolCall.name);
-}
-
-function targetPathOf(ctx: ToolBeforeExecuteContext): string | undefined {
-  return fileAccessPath(ctx.execution.accesses);
 }
 
 function fileAccessPath(accesses: ToolAccesses | undefined): string | undefined {
@@ -97,35 +96,27 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
-    toolExecutor.hooks.onBeforeExecuteTool.register('writeFencing', async (ctx, next) => {
-      this.onBefore(ctx);
-      if (ctx.decision?.block === true) return;
-      await next();
-    });
+    this._register(toolExecutor.onBeforeExecuteTool((event) => this.adjudicate(event)));
     toolExecutor.hooks.onDidExecuteTool.register('writeFencing', async (ctx, next) => {
       this.onDid(ctx);
       await next();
     });
   }
 
-  private onBefore(ctx: ToolBeforeExecuteContext): void {
-    if (!isFenced(ctx)) return;
-    const path = targetPathOf(ctx);
+  private adjudicate(event: BeforeToolExecuteEvent): void {
+    if (!isFenced(event)) return;
+    if (!WRITE_TOOLS.has(event.toolCall.name)) return;
+    if (isAppendWrite(event)) return;
+    const path = fileAccessPath(event.execution.accesses);
     if (path === undefined) return;
-    if (!WRITE_TOOLS.has(ctx.toolCall.name)) return;
-    if (isAppendWrite(ctx)) return;
-    const execute = ctx.decision?.execute ?? ctx.execution.execute;
-    ctx.decision = {
-      ...ctx.decision,
-      execute: async (executeCtx) => {
-        const verdict = await this.compareRevision(path);
-        if (verdict !== 'clean') {
-          const reason = blockReason(ctx.toolCall.name, path, verdict);
-          return { output: reason, isError: true };
-        }
-        return execute(executeCtx);
-      },
-    };
+    const toolName = event.toolCall.name;
+    // Cold adjudication: the staleness probe runs only after every listener
+    // passed without a veto, so it always follows the approval round-trip.
+    event.waitUntil(async () => {
+      const verdict = await this.compareRevision(path);
+      if (verdict === 'clean') return undefined;
+      return { veto: { output: blockReason(toolName, path, verdict), isError: true } };
+    });
   }
 
   private onDid(ctx: ToolDidExecuteContext): void {
