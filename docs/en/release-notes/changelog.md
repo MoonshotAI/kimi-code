@@ -6,6 +6,37 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.29.0 (2026-07-22)
+
+### Features
+
+- web: Support defining agents in Markdown files, declaring system prompt, name, description, and tool permissions. [Details](https://moonshotai.github.io/kimi-code/en/customization/agents.html#agent-file-format)
+- web: Permanently override the main agent's system prompt with SYSTEM.md. [Details](https://moonshotai.github.io/kimi-code/en/customization/agents.html#overriding-the-main-agent-s-system-prompt-with-system-md)
+- web: Globally enable or disable tools across all sessions via config.toml. [Details](https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#tools)
+- Videos attached to a prompt now reach the model together with the prompt, with no extra tool round trip.
+- Support selecting a thinking effort level from ACP clients.
+- Add environment variable overrides for agent loop and background task limits.
+
+### Polish
+
+- Import many more providers from the models.dev catalog.
+- Improve TUI performance and resume speed for long-running sessions.
+- Reconnect a dropped MCP server connection automatically when one of its tools is called, and retry the call once.
+- Remove red coloring from syntax highlighting in code previews and markdown code blocks.
+- Add a reminder for third-party install sources to use the official installer in the update prompt.
+
+### Bug Fixes
+
+- Fix sessions getting stuck with a provider "message must not be empty" error after a content-filtered response.
+- Fix cancelled model requests being wrapped as retryable provider errors.
+- Fix thinking levels being offered for models that do not support them.
+- Fix config environment overrides being persisted into config.toml while the env var is set.
+- Send the session prompt cache key to OpenAI and OpenAI Responses providers.
+- Fix ReadMediaFile failing on videos when the provider has no file upload channel.
+- Fix goal mode continuation prompts leaking into the transcript when resuming a session.
+- web: Show transparent images over a checkerboard canvas.
+- Remove references to the non-existent `kimi resume` command from the scheduled-task tool descriptions.
+
 ## 0.28.1 (2026-07-20)
 
 ### Features
