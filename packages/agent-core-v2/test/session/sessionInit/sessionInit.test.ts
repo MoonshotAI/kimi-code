@@ -12,7 +12,7 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -29,7 +29,7 @@ describe('SessionInitService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let events: unknown[];
-  let appendSystemReminder: ReturnType<typeof vi.fn>;
+  let appendTagged: ReturnType<typeof vi.fn>;
   let flush: ReturnType<typeof vi.fn>;
   let create: ReturnType<typeof vi.fn>;
   let run: ReturnType<typeof vi.fn>;
@@ -39,7 +39,7 @@ describe('SessionInitService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     events = [];
-    appendSystemReminder = vi.fn();
+    appendTagged = vi.fn();
     flush = vi.fn(async () => {});
     runCompletion = Promise.resolve({ summary: 'Explored and wrote AGENTS.md', usage: undefined });
 
@@ -76,7 +76,7 @@ describe('SessionInitService', () => {
           if (id === ISessionSubagentService) return lifecycle;
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
-          if (id === IAgentSystemReminderService) return { appendSystemReminder };
+          if (id === IAgentContextMemoryService) return { appendTagged };
           if (id === IWireService) return { flush };
           if (id === IEventBus) return eventBus;
           if (id === ITelemetryService) return telemetry;
@@ -137,8 +137,9 @@ describe('SessionInitService', () => {
     expect(runArgs[1]).toMatchObject({ kind: 'prompt' });
     expect((runArgs[1] as { prompt: string }).prompt).toContain('Task requirements:');
 
-    expect(appendSystemReminder).toHaveBeenCalledTimes(1);
-    const [reminder, origin] = appendSystemReminder.mock.calls[0] as [string, unknown];
+    expect(appendTagged).toHaveBeenCalledTimes(1);
+    const [reminder, tag, origin] = appendTagged.mock.calls[0] as [string, string, unknown];
+    expect(tag).toBe('system-reminder');
     expect(origin).toEqual({ kind: 'injection', variant: 'init' });
     expect(reminder).toContain('The user just ran `/init` slash command.');
     expect(reminder).toContain('Latest AGENTS.md file content:');

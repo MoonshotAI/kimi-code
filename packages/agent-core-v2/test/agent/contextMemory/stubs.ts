@@ -16,7 +16,7 @@ import {
 } from '#/agent/contextMemory/contextMemory';
 import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IWireService } from '#/wire/wire';
@@ -51,6 +51,19 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       const start = messages.length;
       messages.push(...inserted);
       publishSplice(eventBus, { start, deleteCount: 0, messages: [...inserted] });
+    },
+    appendTagged(content: string, tag: string, origin: PromptOrigin): ContextMessage {
+      const message: ContextMessage = {
+        role: 'user',
+        content: [{ type: 'text', text: content.trim() }],
+        toolCalls: [],
+        origin,
+        tag,
+      };
+      const start = messages.length;
+      messages.push(message);
+      publishSplice(eventBus, { start, deleteCount: 0, messages: [message] });
+      return message;
     },
     appendLoopEvent: () => {},
     clear: () => {
@@ -102,6 +115,9 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
   clear(): void {
     this.impl.clear();
+  }
+  appendTagged(content: string, tag: string, origin: PromptOrigin): ContextMessage {
+    return this.impl.appendTagged(content, tag, origin);
   }
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.impl.appendLoopEvent(event);

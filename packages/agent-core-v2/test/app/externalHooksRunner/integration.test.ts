@@ -20,7 +20,7 @@ import {
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
 import { computeUndoCut } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import {
   HookDefSchema,
   HOOKS_SECTION,
@@ -100,6 +100,17 @@ function stubContextMemory(): IAgentContextMemoryService & {
       messages.push(...inserted);
     },
     appendLoopEvent: () => {},
+    appendTagged(content: string, _tag: string, origin: PromptOrigin): ContextMessage {
+      const message: ContextMessage = {
+        role: 'user',
+        content: [{ type: 'text', text: content.trim() }],
+        toolCalls: [],
+        origin,
+        tag: _tag,
+      };
+      this.append(message);
+      return message;
+    },
     clear: () => {
       messages.splice(0);
     },

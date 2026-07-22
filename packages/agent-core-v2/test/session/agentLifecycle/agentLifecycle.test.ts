@@ -21,6 +21,10 @@ import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import '#/agent/permissionMode/permissionModeOps';
+import '#/agent/permissionGate/permissionGateService';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -331,6 +335,18 @@ describe('AgentLifecycleService', () => {
       setMode: permissionModeSetMode,
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
+    // Constructor-signature stubs for the real `AgentPermissionGate` (imported
+    // above): only their presence matters — the gate stores them without
+    // calling them during instantiation.
+    ix.stub(IAgentPermissionRulesService, {
+      _serviceBrand: undefined,
+    } as unknown as IAgentPermissionRulesService);
+    ix.stub(IAgentPermissionPolicyService, {
+      _serviceBrand: undefined,
+    } as unknown as IAgentPermissionPolicyService);
+    ix.stub(IAgentToolApprovalService, {
+      _serviceBrand: undefined,
+    } as unknown as IAgentToolApprovalService);
     ix.set(ISessionMcpService, new SyncDescriptor(SessionMcpService));
     stopAllOnExit = vi.fn(async () => []);
     ix.stub(IAgentTaskService, {
@@ -424,6 +440,15 @@ describe('AgentLifecycleService', () => {
     await svc.create({ agentId: 'main' });
     expect(beforeExecuteListeners).toBeGreaterThan(0);
     expect(didExecuteHookIds).toContain('toolDedupe');
+  });
+
+  it('ignites the permission gate so its veto listener exists before the first turn', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    // One `onBeforeExecuteTool` listener from toolDedupe, one from the real
+    // `AgentPermissionGate` — without the ignite entry nothing injects the
+    // gate, so it would never subscribe and tools would run unadjudicated.
+    expect(beforeExecuteListeners).toBeGreaterThanOrEqual(2);
   });
 
   it('create skips auto ids that collide with agents persisted by a previous run', async () => {

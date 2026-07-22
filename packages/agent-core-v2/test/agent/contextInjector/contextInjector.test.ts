@@ -20,8 +20,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
@@ -72,7 +70,6 @@ describe('AgentContextInjectorService', () => {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
         reg.defineInstance(IWireService, stubWire());
-        reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
       },
     });
@@ -109,8 +106,8 @@ describe('AgentContextInjectorService', () => {
     await injector(ix).inject();
 
     expect(seen).toEqual([null]);
-    expect(lastText(context)).toContain('<system-reminder>');
-    expect(lastText(context)).toContain('recorded reminder');
+    expect(lastText(context)).toBe('recorded reminder');
+    expect(context.get().at(-1)?.tag).toBe('system-reminder');
     expect(context.get().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'recording_test',

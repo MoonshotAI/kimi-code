@@ -22,33 +22,40 @@ import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/kosong/contract/message';
+import { wrapTag } from '#/agent/contextMemory/tag';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
 
 const REMINDER_TEXT_1 =
-  '\n\n<system-reminder>\n' +
-  'The same tool call has been repeated several times in a row. ' +
-  'Before making your next call, write one sentence stating what new information you expect it to produce. ' +
-  'Then act on that sentence: if it names something this result does not already give you, choose the action that best provides it; otherwise, continue with the evidence you already have.' +
-  '\n</system-reminder>';
+  '\n\n' +
+  wrapTag(
+    'The same tool call has been repeated several times in a row. ' +
+      'Before making your next call, write one sentence stating what new information you expect it to produce. ' +
+      'Then act on that sentence: if it names something this result does not already give you, choose the action that best provides it; otherwise, continue with the evidence you already have.',
+    'system-reminder',
+  );
 
 function makeReminderText2(repeatCount: number): string {
   return (
-    '\n\n<system-reminder>\n' +
-    `The same tool call has now been issued ${String(repeatCount)} times in a row. ` +
-    'Choose exactly one of the following and state your choice before acting:\n' +
-    '(1) Falsification check: run the cheapest test that could conclusively disprove your current approach, if such a test exists.\n' +
-    '(2) Missing input: tell the user precisely what information or decision you need to proceed, and ask for it.\n' +
-    '(3) Conclude: deliver your best result based on the evidence already gathered, listing anything that remains uncertain.' +
-    '\n</system-reminder>'
+    '\n\n' +
+    wrapTag(
+      `The same tool call has now been issued ${String(repeatCount)} times in a row. ` +
+        'Choose exactly one of the following and state your choice before acting:\n' +
+        '(1) Falsification check: run the cheapest test that could conclusively disprove your current approach, if such a test exists.\n' +
+        '(2) Missing input: tell the user precisely what information or decision you need to proceed, and ask for it.\n' +
+        '(3) Conclude: deliver your best result based on the evidence already gathered, listing anything that remains uncertain.',
+      'system-reminder',
+    )
   );
 }
 
 const REMINDER_TEXT_3 =
-  '\n\n<system-reminder>\n' +
-  'Write your final response now, without any further tool calls. ' +
-  'Cover: the current blocker, each approach you have tried and what it established, and the specific information or decision you need from the user to unblock progress. ' +
-  'Text only.' +
-  '\n</system-reminder>';
+  '\n\n' +
+  wrapTag(
+    'Write your final response now, without any further tool calls. ' +
+      'Cover: the current blocker, each approach you have tried and what it established, and the specific information or decision you need from the user to unblock progress. ' +
+      'Text only.',
+    'system-reminder',
+  );
 
 const REPEAT_REMINDER_1_START = 3;
 const REPEAT_REMINDER_2_START = 5;

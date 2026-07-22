@@ -20,7 +20,7 @@ import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { UndoCut } from '#/agent/contextMemory/contextOps';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import {
   IAgentLoopService,
@@ -35,8 +35,6 @@ import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
@@ -264,6 +262,18 @@ class FakeContextMemory implements IAgentContextMemoryService {
     throw new Error('unused in this suite');
   }
 
+  appendTagged(content: string, tag: string, origin: PromptOrigin): ContextMessage {
+    const message: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: content.trim() }],
+      toolCalls: [],
+      origin,
+      tag,
+    };
+    this.append(message);
+    return message;
+  }
+
   landAppended(): void {
     this.history.push(...this.appended);
     this.appended.length = 0;
@@ -272,9 +282,10 @@ class FakeContextMemory implements IAgentContextMemoryService {
   landAnnouncement(content: string): void {
     this.history.push({
       role: 'user',
-      content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
+      content: [{ type: 'text', text: content.trim() }],
       toolCalls: [],
       origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_TRIGGER },
+      tag: 'system-reminder',
     });
   }
 }
@@ -310,7 +321,6 @@ function registerSharedServices(
   reg.define(IAgentToolRegistryService, AgentToolRegistryService);
   reg.define(IAgentToolSelectService, AgentToolSelectService);
   reg.define(IAgentToolSelectAnnouncementsService, AgentToolSelectAnnouncementsService);
-  reg.define(IAgentSystemReminderService, AgentSystemReminderService);
   registerLogServices(reg);
 }
 

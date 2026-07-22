@@ -2,7 +2,7 @@ import { createDecorator } from "#/_base/di/instantiation";
 
 import type { UndoCut } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { ContextMessage, PromptOrigin } from './types';
 
 export interface ContextCompactionInput {
   readonly summary: string;
@@ -32,6 +32,9 @@ export interface IAgentContextMemoryService {
   get(): readonly ContextMessage[];
 
   append(...messages: readonly ContextMessage[]): void;
+
+  /** Append a tagged user message. Content is stored pure; the tag is applied at projection time. */
+  appendTagged(content: string, tag: string, origin: PromptOrigin): ContextMessage;
 
   appendLoopEvent(event: LoopRecordedEvent): void;
 

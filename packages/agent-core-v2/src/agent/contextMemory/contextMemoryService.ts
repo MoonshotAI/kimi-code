@@ -48,7 +48,7 @@ import {
   type UndoCut,
 } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { ContextMessage, PromptOrigin } from './types';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -80,6 +80,18 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     const start = this.get().length;
     this.wire.dispatch(...messages.map((message) => contextAppendMessage({ message })));
     this.publishSplice({ start, deleteCount: 0, messages: [...messages] });
+  }
+
+  appendTagged(content: string, tag: string, origin: PromptOrigin): ContextMessage {
+    const message: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: content.trim() }],
+      toolCalls: [],
+      origin,
+      tag,
+    };
+    this.append(message);
+    return message;
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {

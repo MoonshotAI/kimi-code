@@ -13,7 +13,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';
 
 import { LOADABLE_TOOLS_TRIGGER } from './dynamicTools';
@@ -26,7 +26,7 @@ export class AgentToolSelectAnnouncementsService extends Disposable implements I
 
   constructor(
     @IAgentToolSelectService toolSelect: IAgentToolSelectService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IEventBus eventBus: IEventBus,
     @IAgentLoopService loopService: IAgentLoopService,
   ) {
@@ -49,7 +49,7 @@ export class AgentToolSelectAnnouncementsService extends Disposable implements I
   private inject(toolSelect: IAgentToolSelectService): void {
     const announcement = toolSelect.loadableToolsAnnouncement();
     if (announcement === undefined) return;
-    this.reminders.appendSystemReminder(announcement, {
+    this.context.appendTagged(announcement, 'system-reminder', {
       kind: 'system_trigger',
       name: LOADABLE_TOOLS_TRIGGER,
     });

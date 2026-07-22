@@ -104,6 +104,8 @@ export type ContextMessage = Message & {
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
   readonly note?: string;
+  /** XML tag applied at projection time: content is stored pure, wrapped as `<tag>...\n</tag>` when sent to the model. */
+  readonly tag?: string;
 };
 
 export interface UserMessageRecord {

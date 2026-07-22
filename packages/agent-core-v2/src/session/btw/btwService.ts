@@ -14,7 +14,7 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -32,8 +32,8 @@ export class SessionBtwService implements ISessionBtwService {
   async start(): Promise<string> {
     const child = await this.lifecycle.fork('main');
     child.accessor
-      .get(IAgentSystemReminderService)
-      ?.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER, {
+      .get(IAgentContextMemoryService)
+      ?.appendTagged(SIDE_QUESTION_SYSTEM_REMINDER, 'system-reminder', {
         kind: 'system_trigger',
         name: 'btw',
       });

@@ -3,7 +3,7 @@
  *
  * Tracks swarm-mode enter/exit in the `wire` `SwarmModel` (mutated only through
  * the `swarm_mode.enter` / `swarm_mode.exit` Ops, read through `wire.getModel`),
- * mirrors it into `systemReminder` as live-only side effects, derives
+ * mirrors it into `contextMemory` as live-only side effects, derives
  * `agent.status.updated` from the Ops' `toEvent`, and auto-exits on turn end via
  * `turn`. The enter-reminder removal on exit is a cross-model fold on
  * `ContextModel` (see `contextOps.ts`): dispatching `swarm_mode.exit` pops the
@@ -23,7 +23,6 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -39,7 +38,6 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
 
   constructor(
     @IWireService private readonly wire: IWireService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
@@ -78,7 +76,7 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
     if (this.wire.getModel(SwarmModel) !== null) return;
     this.wire.dispatch(swarmEnter({ trigger }));
     if (trigger !== 'tool') {
-      this.reminders.appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
+      this.context.appendTagged(SWARM_MODE_ENTER_REMINDER, 'system-reminder', {
         kind: 'injection',
         variant: 'swarm_mode',
       });
@@ -103,7 +101,7 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
       });
       return;
     }
-    this.reminders.appendSystemReminder(SWARM_MODE_EXIT_REMINDER, {
+    this.context.appendTagged(SWARM_MODE_EXIT_REMINDER, 'system-reminder', {
       kind: 'injection',
       variant: 'swarm_mode_exit',
     });

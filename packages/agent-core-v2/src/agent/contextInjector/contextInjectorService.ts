@@ -1,7 +1,7 @@
 /**
  * `contextInjector` domain (L4) — `IAgentContextInjectorService` implementation.
  *
- * Injects registered context providers through `loop` and `systemReminder`,
+ * Injects registered context providers through `loop` and `contextMemory`,
  * tracks their positions in `contextMemory` through `eventBus`, and reconciles
  * those positions after `wire` restoration. Bound at Agent scope.
  */
@@ -12,7 +12,6 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IWireService } from '#/wire/wire';
@@ -35,7 +34,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLoopService loopService: IAgentLoopService,
-    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
     @IWireService wire: IWireService,
   ) {
@@ -100,7 +98,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
       const origin = { kind: 'injection' as const, variant: entry.name };
       if (typeof content === 'string') {
         if (content.trim().length === 0) continue;
-        this.reminders.appendSystemReminder(content, origin);
+        this.context.appendTagged(content, 'system-reminder', origin);
         continue;
       }
       if (content.length === 0) continue;

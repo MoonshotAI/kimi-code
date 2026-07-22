@@ -1522,7 +1522,7 @@ describe('FullCompaction', () => {
   it('cancels when a droppable user-role tail is appended during the summary request', async () => {
     let ctx!: TestAgentContext;
     const generate: GenerateFn = async () => {
-      ctx.appendSystemReminder('RACE-NOTIFY-OUTPUT', {
+      ctx.context.appendTagged('RACE-NOTIFY-OUTPUT', 'system-reminder', {
         kind: 'injection',
         variant: 'race-notification',
       });
@@ -1683,7 +1683,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendUnresolvedToolExchange(0);
-    ctx.appendSystemReminder('host note', {
+    ctx.context.appendTagged('host note', 'system-reminder', {
       kind: 'injection',
       variant: 'host',
     });
@@ -1750,7 +1750,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendUnresolvedToolExchange(1);
-    ctx.appendSystemReminder('host note', {
+    ctx.context.appendTagged('host note', 'system-reminder', {
       kind: 'injection',
       variant: 'host',
     });
