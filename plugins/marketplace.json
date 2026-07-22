@@ -11,6 +11,24 @@
       "source": "./official/kimi-datasource"
     },
     {
+      "id": "image_generation",
+      "tier": "official",
+      "displayName": "Image Generation",
+      "version": "0.1.10",
+      "description": "Create images from text prompts with AI image generation.",
+      "keywords": ["image", "image generation", "text to image", "transparent background"],
+      "source": "./official/image_generation"
+    },
+    {
+      "id": "audio_generation",
+      "tier": "official",
+      "displayName": "Audio Generation",
+      "version": "0.1.9",
+      "description": "Generate speech and custom sound effects from text with AI audio generation.",
+      "keywords": ["audio", "audio generation", "text to speech", "speech", "sound effects"],
+      "source": "./official/audio_generation"
+    },
+    {
       "id": "superpowers",
       "tier": "curated",
       "displayName": "Superpowers",

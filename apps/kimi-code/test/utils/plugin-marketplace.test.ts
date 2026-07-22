@@ -159,6 +159,20 @@ describe('loadPluginMarketplace', () => {
         source: join(REPO_ROOT, 'plugins/official/kimi-datasource'),
       }),
     );
+    expect(marketplace.plugins).toContainEqual(
+      expect.objectContaining({
+        id: 'image_generation',
+        tier: 'official',
+        source: join(REPO_ROOT, 'plugins/official/image_generation'),
+      }),
+    );
+    expect(marketplace.plugins).toContainEqual(
+      expect.objectContaining({
+        id: 'audio_generation',
+        tier: 'official',
+        source: join(REPO_ROOT, 'plugins/official/audio_generation'),
+      }),
+    );
   });
 
   it('loads the default CDN marketplace with injectable fetch', async () => {

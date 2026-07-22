@@ -1,0 +1,31 @@
+{
+  "$schema": "https://catalog.msh.team/schemas/kimi.plugin.schema.json",
+  "name": "image_generation",
+  "version": "0.1.10",
+  "description": "Create an image based on a text description using AI image generation through agent-gw, with supported ratio/resolution combinations, optional transparent background, and reference image guidance.",
+  "keywords": [
+    "image generation",
+    "text to image",
+    "ai image",
+    "image",
+    "generate image",
+    "picture",
+    "illustration",
+    "transparent background",
+    "reference image"
+  ],
+  "author": "Moonshot AI",
+  "homepage": "https://kimi.com/",
+  "license": "UNLICENSED",
+  "skills": "./skills/",
+  "skillInstructions": "Use the image_generation skill when the user wants to create or generate an image from a text description, optionally with a specific aspect ratio, resolution, transparent or opaque background, or reference images. Build a detailed, descriptive prompt; pick a supported ratio/resolution combination: for opaque images, 1K supports 1:1, 3:2, 2:3; 2K supports 1:1, 16:9; 4K supports 16:9, 9:16. Respect transparent-background constraints (only 1:1, 3:2, 2:3 ratios, 1K resolution, PNG output). Convert any local reference image to a public URL through agent-gw first; call generate_image; download the returned media URL to the requested local file; then ask the model to display it with the readFile tool. Do not fabricate an image or a local path when the call fails.",
+  "interface": {
+    "displayName": "Image Generation",
+    "shortDescription": "Generate high-quality images from text prompts with AI",
+    "longDescription": "Create an image based on a text description using AI image generation. Opaque output supports these ratio/resolution combinations: 1K supports 1:1 (1024x1024), 3:2 (1536x1024), 2:3 (1024x1536); 2K supports 1:1 (2048x2048), 16:9 (2048x1152); 4K supports 16:9 (3840x2160), 9:16 (2160x3840). Also supports transparent backgrounds, JPG/JPEG/PNG output, and reference images to guide generation. Transparent background only supports 1:1, 3:2, 2:3 ratios at 1K resolution and PNG output.",
+    "developerName": "Moonshot AI",
+    "websiteURL": "https://kimi.com/",
+    "iconUrl": "https://avatar.moonshot.cn/avatar/plugin/image_generation.png",
+    "category": "PRODUCTIVITY"
+  }
+}

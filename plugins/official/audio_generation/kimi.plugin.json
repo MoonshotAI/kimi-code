@@ -1,0 +1,31 @@
+{
+  "$schema": "https://catalog.msh.team/schemas/kimi.plugin.schema.json",
+  "name": "audio_generation",
+  "version": "0.1.9",
+  "description": "Generate audio through agent-gw: convert text to speech with a chosen voice, or create custom sound effects from an English description and a duration. Output is saved locally as mp3.",
+  "keywords": [
+    "audio generation",
+    "text to speech",
+    "tts",
+    "speech",
+    "voice",
+    "sound effects",
+    "sfx",
+    "audio",
+    "mp3"
+  ],
+  "author": "Moonshot AI",
+  "homepage": "https://kimi.com/",
+  "license": "UNLICENSED",
+  "skills": "./skills/",
+  "skillInstructions": "Use the audio_generation skill when the user wants to generate audio. It has two flows: (1) text-to-speech — convert text to spoken audio using one of the supported voice IDs; and (2) sound effects — create a custom sound effect from an English description and a duration between 0.5 and 22 seconds. Pick the right flow from the user's intent, build the parameters, call the matching gateway API (generate_speech or generate_sound_effects), download the returned media URL to a local mp3, then surface the saved audio to the user. Do not fabricate audio or a local path when the call fails.",
+  "interface": {
+    "displayName": "Audio Generation",
+    "shortDescription": "Text-to-speech and AI sound effect generation",
+    "longDescription": "Generate audio in two ways: convert text to high-quality speech using a selected voice, or create custom sound effects from an English description and a duration (0.5 to 22 seconds). Speech supports several Mandarin voices; sound effects cover ambient, action, musical, foley, emotional, and abstract sounds. Results are saved locally as mp3 files.",
+    "developerName": "Moonshot AI",
+    "websiteURL": "https://kimi.com/",
+    "iconUrl": "https://avatar.moonshot.cn/avatar/plugin/audio_generation.png",
+    "category": "PRODUCTIVITY"
+  }
+}
