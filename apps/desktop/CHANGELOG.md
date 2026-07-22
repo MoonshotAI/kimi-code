@@ -1,5 +1,31 @@
 # kimi-code-app
 
+## 0.0.8
+
+### Patch Changes
+
+- [#68](https://github.com/MoonshotAI/kimi-code-app/pull/68) [`cddc1e3`](https://github.com/MoonshotAI/kimi-code-app/commit/cddc1e355202f6ff4081038ad557cb247382d725) Thanks [@liruifengv](https://github.com/liruifengv)! - 设置的账户页改版：登录状态以卡片展示，未登录时可直接点击登录。
+
+- [#65](https://github.com/MoonshotAI/kimi-code-app/pull/65) [`ae7a176`](https://github.com/MoonshotAI/kimi-code-app/commit/ae7a176157448e258e327f1229c4c7463af69cb5) Thanks [@liruifengv](https://github.com/liruifengv)! - 新增自定义键盘快捷键：为打开设置（⌘,）、收起侧边栏（⌘B）、归档当前会话、侧边聊天、打开文件夹、在默认应用中打开等操作加了默认快捷键，发送和换行也可在设置 → 键盘快捷键中自由重绑。
+
+- [#69](https://github.com/MoonshotAI/kimi-code-app/pull/69) [`9c0169d`](https://github.com/MoonshotAI/kimi-code-app/commit/9c0169d784fab2e2ce13e12c6cc4ecef1232cf89) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复发送图片后缩略图先闪一下裂图再加载出来的问题。
+
+- [#59](https://github.com/MoonshotAI/kimi-code-app/pull/59) [`8b718fd`](https://github.com/MoonshotAI/kimi-code-app/commit/8b718fd57ededde0e029d8321ef187ae29c9add8) Thanks [@chengluyu](https://github.com/chengluyu)! - 目标状态从全宽横条改为与待办、子 Agent 一致的小 pill，点击在停靠面板中查看目标详情并进行暂停、继续、取消操作。
+
+- [#66](https://github.com/MoonshotAI/kimi-code-app/pull/66) [`261cd20`](https://github.com/MoonshotAI/kimi-code-app/commit/261cd203b608f72091a507f38811cd88356d3ab0) Thanks [@liruifengv](https://github.com/liruifengv)! - 设置里的三个通知开关合并为一个「系统通知」总开关（默认开启），「提示音」开关改为控制通知是否随附系统提示音。
+
+- [#71](https://github.com/MoonshotAI/kimi-code-app/pull/71) [`eb28f92`](https://github.com/MoonshotAI/kimi-code-app/commit/eb28f92b714dacbeecae9e31fff173f999cb0f53) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复桌面宠物更新后默认开启的问题，现在默认保持隐藏，可从菜单 View → Kimi Pet 手动开启。
+
+- [#64](https://github.com/MoonshotAI/kimi-code-app/pull/64) [`c2d2470`](https://github.com/MoonshotAI/kimi-code-app/commit/c2d2470e97116013ba44015aad34451464f53118) Thanks [@chengluyu](https://github.com/chengluyu)! - 支持置顶会话：悬停会话行点图钉按钮、从会话菜单置顶，或直接把会话拖进侧栏顶部「置顶」区，拖回原工作区即可取消置顶。置顶区内可拖拽调整顺序，悬停可查看会话所属的工作区和路径。
+
+- [#68](https://github.com/MoonshotAI/kimi-code-app/pull/68) [`cddc1e3`](https://github.com/MoonshotAI/kimi-code-app/commit/cddc1e355202f6ff4081038ad557cb247382d725) Thanks [@liruifengv](https://github.com/liruifengv)! - 设置中移除了「显示对话目录」和「合并所有可用 Skills」开关以及账户页的引导入口，对话目录改为始终显示。
+
+- [#68](https://github.com/MoonshotAI/kimi-code-app/pull/68) [`cddc1e3`](https://github.com/MoonshotAI/kimi-code-app/commit/cddc1e355202f6ff4081038ad557cb247382d725) Thanks [@liruifengv](https://github.com/liruifengv)! - 设置弹窗的标题移到左侧栏顶部，各区块标题字号与卡片对齐更统一。
+
+- [#71](https://github.com/MoonshotAI/kimi-code-app/pull/71) [`eb28f92`](https://github.com/MoonshotAI/kimi-code-app/commit/eb28f92b714dacbeecae9e31fff173f999cb0f53) Thanks [@liruifengv](https://github.com/liruifengv)! - 支持系统级全局快捷键唤起应用窗口，默认 Cmd+Shift+Space（macOS）/ Ctrl+Shift+Space（其他系统），可在设置的键盘快捷键中自定义。
+
+- [#70](https://github.com/MoonshotAI/kimi-code-app/pull/70) [`3d6b2d6`](https://github.com/MoonshotAI/kimi-code-app/commit/3d6b2d6f60e737ce0af29edc495195d2a20e2ffa) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 修复透明背景的图片在聊天和文件预览中看不见的问题，白色、黑色内容在亮色和暗色主题下都清晰可见。
+
 ## 0.0.7
 
 ### Patch Changes
