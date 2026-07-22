@@ -313,7 +313,7 @@ export interface AgentAPI {
   prompt: (payload: PromptPayload) => PromptLaunchResult | undefined;
   steer: (payload: SteerPayload) => PromptLaunchResult | undefined;
   cancel: (payload: CancelPayload) => void;
-  undoHistory: (payload: UndoHistoryPayload) => number;
+  undoHistory: (payload: UndoHistoryPayload) => Promise<number>;
   setPermission: (payload: SetPermissionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;

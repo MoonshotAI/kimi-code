@@ -9,16 +9,16 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { newMessageId } from '#/agent/contextMemory/messageId';
-import { formatUndoUnavailableMessage, precheckUndo } from '#/agent/contextMemory/contextOps';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
-import { steerTurn } from '#/agent/loop/turnOps';
+import { promptTurn, steerTurn } from '#/agent/loop/turnOps';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -63,6 +63,7 @@ export class AgentPromptService implements IAgentPromptService {
   private readonly pending: Record[] = [];
   private readonly steered = new Map<string, Record[]>();
   private launching = false;
+  private pauseCount = 0;
   private fullCompactionService: IAgentFullCompactionService | undefined;
   readonly hooks = { onBeforeSubmitPrompt: new OrderedHookSlot<PromptSubmitContext>() };
 
@@ -157,27 +158,36 @@ export class AgentPromptService implements IAgentPromptService {
 
   async retry(): Promise<Turn | undefined> { return (await this.loop.enqueue(new RetryStepRequest()).assigned).turn; }
 
-  undo(count: number): number {
-    if (count <= 0) return 0;
-    const check = precheckUndo(this.context.get(), count);
-    if (!check.ok) throw new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, formatUndoUnavailableMessage(check), { details: { reason: check.reason, requestedCount: count, undoableCount: check.undoable } });
-    return this.context.undo(count).removedCount;
-  }
-
   clear(): void {
     for (const item of this.pending.slice()) this.abort(item.id);
     if (this.active !== undefined) this.abort(this.active.id);
     this.context.clear();
   }
 
+  pauseLaunching(): IDisposable {
+    this.pauseCount++;
+    let released = false;
+    return toDisposable(() => {
+      if (released) return;
+      released = true;
+      this.pauseCount--;
+      if (this.pauseCount === 0) void this.startNext();
+    });
+  }
+
   private async startNext(): Promise<void> {
-    if (this.active !== undefined || this.launching) return;
+    if (this.active !== undefined || this.launching || this.pauseCount > 0) return;
     const item = this.pending.shift(); if (item === undefined) return;
     this.launching = true;
     try {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
       if (await this.blockedByHook(message, false)) {
+        // A hook-blocked prompt never starts a turn, but it IS a user prompt
+        // boundary in the journal — record `turn.prompt` so the rewind index
+        // sees it as an undo anchor (and `TurnModel` stays a faithful count
+        // of submitted prompts).
+        this.wire.dispatch(promptTurn({ input: message.content, origin: message.origin ?? USER_PROMPT_ORIGIN }));
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;

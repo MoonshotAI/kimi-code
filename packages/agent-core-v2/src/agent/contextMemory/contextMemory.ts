@@ -1,6 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
 
-import type { UndoCut } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
@@ -36,8 +35,6 @@ export interface IAgentContextMemoryService {
   appendLoopEvent(event: LoopRecordedEvent): void;
 
   clear(): void;
-
-  undo(count: number): UndoCut;
 
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult;
 }

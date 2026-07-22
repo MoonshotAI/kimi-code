@@ -101,6 +101,7 @@ async function dehydrateRecord(
 }
 
 export const ContextModel = defineModel<ContextMessage[]>('contextMemory', () => [], {
+  rewindable: true,
   blobs: {
     dehydrate: dehydrateRecord,
     rehydrate: async (state, transform) => {
@@ -319,36 +320,18 @@ export function isFullyUndoable(cut: UndoCut, count: number): boolean {
 
 export type UndoUnavailableReason = 'empty' | 'compaction_boundary' | 'insufficient';
 
-export type UndoPrecheck =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly reason: UndoUnavailableReason;
-      readonly requested: number;
-      readonly undoable: number;
-    };
-
-export function precheckUndo(history: readonly ContextMessage[], count: number): UndoPrecheck {
-  const cut = computeUndoCut(history, count);
-  if (isFullyUndoable(cut, count)) return { ok: true };
-  const reason: UndoUnavailableReason = cut.stoppedAtCompaction
-    ? 'compaction_boundary'
-    : cut.removedCount === 0
-      ? 'empty'
-      : 'insufficient';
-  return { ok: false, reason, requested: count, undoable: cut.removedCount };
-}
-
-export function formatUndoUnavailableMessage(
-  precheck: Extract<UndoPrecheck, { ok: false }>,
-): string {
-  switch (precheck.reason) {
+export function formatUndoUnavailableMessage(input: {
+  readonly reason: UndoUnavailableReason;
+  readonly requested: number;
+  readonly undoable: number;
+}): string {
+  switch (input.reason) {
     case 'empty':
       return 'Nothing to undo: no user message to undo';
     case 'compaction_boundary':
       return 'Nothing to undo: would cross a compaction boundary';
     case 'insufficient':
-      return `Nothing to undo: only ${precheck.undoable} of ${precheck.requested} requested turn(s) available`;
+      return `Nothing to undo: only ${input.undoable} of ${input.requested} requested turn(s) available`;
   }
 }
 

@@ -270,6 +270,20 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     return true;
   }
 
+  async cancel(): Promise<void> {
+    const active = this._compacting;
+    if (active === null) return;
+    if (!active.abortController.signal.aborted) {
+      active.abortController.abort();
+    }
+    try {
+      await active.promise;
+    } catch {
+      // The abort path already routed through `cancelActive` (state cleanup +
+      // `compaction.cancelled`); worker rejections settle here by design.
+    }
+  }
+
   private reserveCompactionSlot(source: CompactionBeginData['source']): boolean {
     if (source === 'manual') {
       this.compactionCountInTurn = 0;

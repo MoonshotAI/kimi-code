@@ -25,7 +25,10 @@ import { readTodoItems, type TodoItem } from './todoItem';
 
 export type TodoModelState = readonly TodoItem[];
 
-export const TodoModel = defineModel<TodoModelState>('todo', () => []);
+export const TodoModel = defineModel<TodoModelState>('todo', () => [], {
+  // Rewindable: todos written by an undone turn disappear with it.
+  rewindable: true,
+});
 
 declare module '#/wire/types' {
   interface PersistedOpMap {

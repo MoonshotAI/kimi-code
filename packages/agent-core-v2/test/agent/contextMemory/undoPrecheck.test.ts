@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { precheckUndo } from '#/agent/contextMemory/contextOps';
+import {
+  computeUndoCut,
+  contextUndo,
+  isFullyUndoable,
+} from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
 function text(value: string): { type: 'text'; text: string } {
@@ -40,63 +44,83 @@ function compaction(): ContextMessage {
 
 const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 
-describe('precheckUndo', () => {
-  it('returns ok when enough real user prompts exist', () => {
-    expect(precheckUndo([user(USER_ORIGIN), assistant()], 1)).toEqual({ ok: true });
+// `computeUndoCut` / `isFullyUndoable` / `contextUndo` are the LEGACY undo
+// semantics, kept only so journals with historical `context.undo` records
+// still replay. Live undos go through `rewind` (`log.cut`); see
+// `test/agent/rewind/`.
+describe('computeUndoCut (legacy context.undo replay semantics)', () => {
+  it('finds the cut for the last real user prompt', () => {
+    const cut = computeUndoCut([user(USER_ORIGIN), assistant()], 1);
+    expect(cut).toEqual({ cutIndex: 0, removedCount: 1, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(true);
   });
 
   it('skips trailing non-user messages while scanning', () => {
-    expect(precheckUndo([user(USER_ORIGIN), assistant(), assistant()], 1)).toEqual({ ok: true });
+    const cut = computeUndoCut([user(USER_ORIGIN), assistant(), assistant()], 1);
+    expect(cut.cutIndex).toBe(0);
+    expect(isFullyUndoable(cut, 1)).toBe(true);
   });
 
   it('treats a user message without origin as a real prompt (legacy)', () => {
-    expect(precheckUndo([user(), assistant()], 1)).toEqual({ ok: true });
+    const cut = computeUndoCut([user(), assistant()], 1);
+    expect(cut.cutIndex).toBe(0);
+    expect(isFullyUndoable(cut, 1)).toBe(true);
   });
 
-  it('returns empty when the history has no real user prompt', () => {
-    expect(precheckUndo([], 1)).toEqual({
-      ok: false,
-      reason: 'empty',
-      requested: 1,
-      undoable: 0,
-    });
+  it('finds nothing when the history has no real user prompt', () => {
+    const cut = computeUndoCut([], 1);
+    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: false });
+    expect(isFullyUndoable(cut, 1)).toBe(false);
   });
 
-  it('returns empty when only injections are present', () => {
-    expect(precheckUndo([injection(), assistant()], 1)).toEqual({
-      ok: false,
-      reason: 'empty',
-      requested: 1,
-      undoable: 0,
-    });
+  it('skips injections without counting them', () => {
+    const cut = computeUndoCut([injection(), assistant()], 1);
+    expect(cut.cutIndex).toBe(-1);
+    expect(isFullyUndoable(cut, 1)).toBe(false);
   });
 
-  it('returns insufficient when some but fewer than count prompts exist', () => {
+  it('counts fewer prompts than requested as not fully undoable', () => {
     const history = [user(USER_ORIGIN), assistant(), user(USER_ORIGIN), assistant()];
-    expect(precheckUndo(history, 3)).toEqual({
-      ok: false,
-      reason: 'insufficient',
-      requested: 3,
-      undoable: 2,
-    });
+    const cut = computeUndoCut(history, 3);
+    expect(cut.removedCount).toBe(2);
+    expect(isFullyUndoable(cut, 3)).toBe(false);
   });
 
-  it('returns compaction_boundary when a summary is hit before count is met', () => {
-    expect(precheckUndo([user(USER_ORIGIN), compaction(), assistant()], 1)).toEqual({
-      ok: false,
-      reason: 'compaction_boundary',
-      requested: 1,
-      undoable: 0,
-    });
+  it('stops at a compaction summary', () => {
+    const cut = computeUndoCut([user(USER_ORIGIN), compaction(), assistant()], 1);
+    expect(cut).toEqual({ cutIndex: -1, removedCount: 0, stoppedAtCompaction: true });
+    expect(isFullyUndoable(cut, 1)).toBe(false);
   });
 
-  it('reports compaction_boundary over insufficient when the boundary stops the scan', () => {
+  it('stops at a compaction summary even after counting some prompts', () => {
     const history = [user(USER_ORIGIN), compaction(), user(USER_ORIGIN), assistant()];
-    expect(precheckUndo(history, 2)).toEqual({
-      ok: false,
-      reason: 'compaction_boundary',
-      requested: 2,
-      undoable: 1,
-    });
+    const cut = computeUndoCut(history, 2);
+    expect(cut.removedCount).toBe(1);
+    expect(cut.stoppedAtCompaction).toBe(true);
+    expect(isFullyUndoable(cut, 2)).toBe(false);
+  });
+});
+
+describe('contextUndo op (legacy record apply)', () => {
+  it('slices the history at the cut point, dropping post-cut injections too', () => {
+    const state = [
+      user(USER_ORIGIN),
+      assistant(),
+      user(USER_ORIGIN),
+      injection(),
+      assistant(),
+    ];
+    const next = contextUndo.apply(state, { count: 1 });
+    expect(next).toEqual([user(USER_ORIGIN), assistant()]);
+  });
+
+  it('returns the same reference when not fully undoable', () => {
+    const state = [user(USER_ORIGIN), compaction(), assistant()];
+    expect(contextUndo.apply(state, { count: 1 })).toBe(state);
+  });
+
+  it('returns the same reference for a non-positive count', () => {
+    const state = [user(USER_ORIGIN), assistant()];
+    expect(contextUndo.apply(state, { count: 0 })).toBe(state);
   });
 });

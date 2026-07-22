@@ -19,6 +19,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { ProfileError } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentRewindService } from '#/agent/rewind/rewind';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentSkillService } from '#/agent/skill/skill';
@@ -64,6 +65,7 @@ export class AgentRPCService implements IAgentRPCService {
 
   constructor(
     @IAgentPromptService private readonly promptService: IAgentPromptService,
+    @IAgentRewindService private readonly rewind: IAgentRewindService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
@@ -127,10 +129,10 @@ export class AgentRPCService implements IAgentRPCService {
     this.loop.cancel(turnId);
   }
 
-  undoHistory(payload: UndoHistoryPayload): number {
-    const undone = this.promptService.undo(payload.count);
-    this.telemetry.track2('conversation_undo', { count: payload.count });
-    return undone;
+  async undoHistory(payload: UndoHistoryPayload): Promise<number> {
+    // The rewind service owns the operation end-to-end (quiesce, cut,
+    // reconcile, telemetry) — this is a thin pass-through.
+    return this.rewind.rewind(payload.count);
   }
 
   setPermission(payload: SetPermissionPayload): void {

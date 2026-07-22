@@ -57,6 +57,14 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
       }),
     );
     this._register(
+      this.eventBus.subscribe('context.rewound', () => {
+        // A rewind rebuilds the context wholesale; live positions are
+        // re-derived from the surviving history, so reminders cut by the
+        // rewind are re-announced on the next inject (same as post-restore).
+        this.resyncPositions();
+      }),
+    );
+    this._register(
       wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
         this.resyncPositions();
         await next();

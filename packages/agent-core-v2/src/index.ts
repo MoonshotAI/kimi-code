@@ -454,6 +454,8 @@ import '#/app/messageLegacy/errors';
 export * from '#/app/messageLegacy/messageLegacy';
 export * from '#/app/messageLegacy/messageLegacyService';
 export * from '#/agent/replayBuilder/types';
+export * from '#/agent/rewind/rewind';
+export * from '#/agent/rewind/rewindService';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
 export * from '#/agent/rpc/rpc';

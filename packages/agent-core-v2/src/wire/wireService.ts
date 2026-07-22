@@ -36,11 +36,13 @@ import {
 } from './migration/migration';
 import type { DeepReadonly, ModelDef, PartsTransformer } from './model';
 import { MODEL_CROSS_REDUCERS } from './model';
-import type { Op } from './op';
+import type { Op, OpApplyContext } from './op';
 import { OP_REGISTRY } from './op';
 import {
   AGENT_WIRE_RECORD_KEY,
+  createLogCutRecord,
   createWireMetadataRecord,
+  isLogCutRecord,
   isWireRecord,
   isWireMetadataRecord,
   opToWireRecord,
@@ -84,9 +86,18 @@ export class WireService extends Disposable implements IWireService {
 
   private restorePhase: RestorePhase = 'new';
   private dispatching = false;
+  private rewinding = false;
   private queue: Op[] = [];
   private drainDepth = 0;
   private persistQueue: Promise<void> | undefined;
+  /**
+   * Cursor over NON-metadata journal records (0-based): the index the next
+   * appended data record will occupy in the metadata-free record coordinate
+   * system shared by `log.cut` targets and `OpApplyContext.recordIndex`.
+   * The metadata envelope line never consumes an index, so adding or
+   * removing it (seal / migration rewrite) never shifts record positions.
+   */
+  private nextRecordIndex = 0;
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -105,6 +116,9 @@ export class WireService extends Disposable implements IWireService {
 
   dispatch(...ops: Op[]): void {
     if (ops.length === 0) return;
+    if (this.rewinding) {
+      throw new BugIndicatingError('Wire dispatch during an in-flight rewind is not allowed');
+    }
     if (this.dispatching) {
       this.queue.push(...ops);
       return;
@@ -147,6 +161,8 @@ export class WireService extends Disposable implements IWireService {
       let migrations: readonly WireMigration[] = [];
       let rewrittenRecords: WireRecord[] | undefined;
       let newerWireVersion = false;
+      // Cursor over NON-metadata records — the metadata-free coordinate
+      // system `log.cut` targets and `OpApplyContext.recordIndex` share.
       let recordIndex = 0;
       let hasRecords = false;
 
@@ -185,6 +201,17 @@ export class WireService extends Disposable implements IWireService {
             : migratedRecord;
         rewrittenRecords?.push(record);
         if (record.type === 'metadata') continue;
+        if (record.type === 'log.cut') {
+          // Wire-layer control record: rewind every rewindable model to the
+          // fold of records [0, target), then continue replay after it.
+          if (isLogCutRecord(record)) {
+            await this.rebuildRewindableModels(Math.min(record.target, recordIndex), migrations);
+          } else {
+            this.reportSkippedRecord(record.type, recordIndex, true);
+          }
+          recordIndex++;
+          continue;
+        }
 
         this.replayRecord(record, recordIndex);
         recordIndex++;
@@ -193,6 +220,7 @@ export class WireService extends Disposable implements IWireService {
       if (!hasRecords) {
         rewrittenRecords = [createWireMetadataRecord()];
       }
+      this.nextRecordIndex = recordIndex;
       if (rewrittenRecords !== undefined) {
         await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
       }
@@ -211,6 +239,111 @@ export class WireService extends Disposable implements IWireService {
     await this.log.flush();
   }
 
+  /**
+   * Rewind every `rewindable` model to the fold of journal records
+   * `[0, target)`, then append a `log.cut` control record marking the rewind.
+   * Non-rewindable (world-time) models keep their current state. Live and
+   * restore share the same rebuild path (`rebuildRewindableModels`), so the
+   * post-rewind state is by construction identical to a fresh replay of the
+   * journal up to the cut. Dispatches must not interleave with a rewind —
+   * callers quiesce producers (loop, compaction) first; any dispatch arriving
+   * while a rewind is in flight throws.
+   */
+  async rewind(target: number, reason?: string): Promise<void> {
+    if (this.restorePhase === 'restoring' || this.restorePhase === 'failed') {
+      throw new BugIndicatingError(`Wire rewind called while phase is ${this.restorePhase}`);
+    }
+    if (this.dispatching || this.rewinding) {
+      throw new BugIndicatingError('Wire rewind re-entered while dispatching or rewinding');
+    }
+    if (!Number.isInteger(target) || target < 0 || target > this.nextRecordIndex) {
+      throw new WireError(WireErrors.codes.WIRE_INVALID_REWIND_TARGET, `Invalid rewind target ${String(target)}`, {
+        details: { target, nextRecordIndex: this.nextRecordIndex },
+      });
+    }
+    this.rewinding = true;
+    try {
+      // Drain the persist queue so every record below `target` is durable
+      // before the rebuild reads the journal back.
+      await this.flush();
+      await this.rebuildRewindableModels(target, []);
+      this.appendRecord(createLogCutRecord(target, reason));
+      this.nextRecordIndex++;
+    } finally {
+      this.rewinding = false;
+    }
+  }
+
+  /**
+   * Reset all rewindable models to their initial state and re-apply journal
+   * records `[0, target)` to them only (cross-model reducers included; records
+   * routing to non-rewindable models contribute cross effects but no state).
+   * Nested `log.cut` records inside the range recurse — the cut's own
+   * semantics is "rewindable models := fold([0, cut.target))", and replay
+   * continues after the cut record, exactly like the restore main loop.
+   * `migrations` lets the restore-time rebuild see the same record view as
+   * the main replay when the on-disk file predates the current protocol.
+   */
+  private async rebuildRewindableModels(
+    target: number,
+    migrations: readonly WireMigration[],
+  ): Promise<void> {
+    for (const [def, inst] of this.models) {
+      if (def.rewindable === true) {
+        inst.state = Object.freeze(def.initial());
+      }
+    }
+    let index = 0;
+    const source = this.log.read<unknown>(this.wireScope, AGENT_WIRE_RECORD_KEY);
+    for await (const candidate of source) {
+      if (index >= target) break;
+      if (!isWireRecord(candidate)) {
+        index++;
+        continue;
+      }
+      // The metadata envelope never consumes a record index (see
+      // `nextRecordIndex`), so metadata-less and metadata-ful journals index
+      // identically.
+      if (candidate.type === 'metadata') continue;
+      const record = migrateWireRecord(candidate, migrations);
+      if (record.type === 'log.cut') {
+        if (isLogCutRecord(record)) {
+          await this.rebuildRewindableModels(Math.min(record.target, index), migrations);
+        }
+        index++;
+        continue;
+      }
+      this.replayRewindableRecord(record, index);
+      index++;
+    }
+    await this.rehydrateModels();
+  }
+
+  /**
+   * Re-apply one record during a rewind rebuild: the owning model is updated
+   * only when rewindable; cross-model reducers run only for rewindable
+   * targets, so non-rewindable (world-time) models are never double-applied.
+   */
+  private replayRewindableRecord(record: WireRecord, index: number): void {
+    const descriptor = OP_REGISTRY.get(record.type);
+    if (descriptor === undefined) return;
+    const payload = descriptor.schema.safeParse(wireRecordToPayload(record));
+    if (!payload.success) return;
+    const ctx: OpApplyContext = { recordIndex: index };
+    if (descriptor.model.rewindable === true) {
+      const inst = this.ensureModel(descriptor.model);
+      inst.state = Object.freeze(descriptor.apply(inst.state, payload.data, ctx));
+    }
+    const crossReducers = MODEL_CROSS_REDUCERS.get(record.type);
+    if (crossReducers !== undefined) {
+      for (const entry of crossReducers) {
+        if (entry.model.rewindable !== true) continue;
+        const crossInst = this.ensureModel(entry.model);
+        crossInst.state = Object.freeze(entry.reducer(crossInst.state, payload.data, ctx));
+      }
+    }
+  }
+
   private replayRecord(record: WireRecord, index: number): void {
     const descriptor = OP_REGISTRY.get(record.type);
     if (descriptor === undefined) {
@@ -223,7 +356,7 @@ export class WireService extends Disposable implements IWireService {
       return;
     }
     this.execute({
-      ops: [{ type: record.type, payload: payload.data, descriptor }],
+      ops: [{ type: record.type, payload: payload.data, descriptor, recordIndex: index }],
       silent: true,
     });
   }
@@ -246,7 +379,15 @@ export class WireService extends Disposable implements IWireService {
     for (const op of group.ops) {
       const inst = this.ensureModel(op.descriptor.model);
       const prev = inst.state;
-      inst.state = Object.freeze(op.descriptor.apply(prev, op.payload));
+      // Journal position of this op's record: replay supplies it; live
+      // dispatch assigns the next line index for persisted ops. Transient ops
+      // never occupy a journal line and keep `undefined`.
+      let recordIndex = op.recordIndex;
+      if (!group.silent && recordIndex === undefined && op.descriptor.persist !== false) {
+        recordIndex = this.nextRecordIndex++;
+      }
+      const ctx: OpApplyContext = { recordIndex };
+      inst.state = Object.freeze(op.descriptor.apply(prev, op.payload, ctx));
       if (!group.silent) {
         if (op.descriptor.persist !== false) {
           const record = opToWireRecord(op);
@@ -262,7 +403,7 @@ export class WireService extends Disposable implements IWireService {
         for (const entry of crossReducers) {
           if (entry.model === op.descriptor.model) continue;
           const crossInst = this.ensureModel(entry.model);
-          crossInst.state = Object.freeze(entry.reducer(crossInst.state, op.payload));
+          crossInst.state = Object.freeze(entry.reducer(crossInst.state, op.payload, ctx));
         }
       }
     }

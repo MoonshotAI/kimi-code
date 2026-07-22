@@ -17,6 +17,7 @@ export const WireErrors = {
     WIRE_DUPLICATE_OP: 'wire.duplicate_op',
     WIRE_CYCLE: 'wire.cycle',
     WIRE_UNKNOWN_RECORD: 'wire.unknown_record',
+    WIRE_INVALID_REWIND_TARGET: 'wire.invalid_rewind_target',
     RECORDS_WRITE_FAILED: 'records.write_failed',
   },
   info: {
@@ -37,6 +38,12 @@ export const WireErrors = {
       retryable: false,
       public: true,
       action: 'The record was written by a newer version; upgrade or drop it.',
+    },
+    'wire.invalid_rewind_target': {
+      title: 'Invalid wire rewind target',
+      retryable: false,
+      public: true,
+      action: 'The log.cut target is outside the journal bounds; recompute it from the current journal length.',
     },
     'records.write_failed': {
       title: 'Wire journal write failed',

@@ -28,6 +28,13 @@ export interface IWireService {
   seal(): Promise<void>;
   restore(): Promise<void>;
   flush(): Promise<void>;
+  /**
+   * Rewind every `rewindable` model to the fold of journal records
+   * `[0, target)` and append a `log.cut` control record. `target` is a
+   * journal line index (0-based, metadata line included). Callers must
+   * quiesce record producers (loop, compaction) before rewinding.
+   */
+  rewind(target: number, reason?: string): Promise<void>;
 
   getModel<S>(model: ModelDef<S>): DeepReadonly<S>;
 }

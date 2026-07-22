@@ -69,7 +69,6 @@ describe('AgentSkillService', () => {
         reg.definePartialInstance(IAgentPromptService, {
           enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
           retry: () => Promise.resolve(undefined),
-          undo: () => 0,
           clear: () => {},
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');
@@ -162,7 +161,6 @@ describe('SkillTool', () => {
         reg.definePartialInstance(IAgentPromptService, {
           enqueue: ({ message }: { message: ContextMessage }) => { prompted.push(message); return Promise.resolve({ launched: Promise.resolve(fakeTurn()) } as never); },
           retry: () => Promise.resolve(undefined),
-          undo: () => 0,
           clear: () => {},
         });
         registerTestAgentWireServices(reg, 'wire/skill-test');

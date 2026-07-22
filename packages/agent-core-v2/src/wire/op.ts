@@ -42,11 +42,25 @@ export class DuplicateOpError extends WireError {
   }
 }
 
+/**
+ * Context handed to `apply` / cross-model reducers alongside the payload.
+ * `recordIndex` is the Op's own position in the journal (0-based over
+ * NON-metadata records): assigned by `WireService` on live dispatch for
+ * persisted Ops, and supplied from the replay cursor during restore. It is
+ * `undefined` for transient (`persist: false`) Ops on the live path — they
+ * never occupy a journal line. Ops that only transform state ignore it; Ops
+ * that index journal positions (e.g. turn-boundary indexes feeding `log.cut`
+ * targets) require it.
+ */
+export interface OpApplyContext {
+  readonly recordIndex?: number;
+}
+
 export interface OpDescriptor<K extends string, S, P> {
   readonly type: K;
   readonly model: ModelDef<S>;
   readonly schema: z.ZodType<P>;
-  readonly apply: (state: S, payload: P) => S;
+  readonly apply: (state: S, payload: P, ctx?: OpApplyContext) => S;
   readonly toEvent?: (payload: P, state: S) => unknown;
   readonly persist?: boolean;
 }
@@ -54,6 +68,12 @@ export interface OpDescriptor<K extends string, S, P> {
 export interface Op<K extends string = string, P = unknown> {
   readonly type: K;
   readonly payload: P;
+  /**
+   * Journal position of this Op's record, set only by `WireService` internals
+   * (restore replay and, for persisted Ops, live dispatch). Never set by
+   * callers of `dispatch`.
+   */
+  readonly recordIndex?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly descriptor: OpDescriptor<any, any, any>;
 }
@@ -63,7 +83,7 @@ export const OP_REGISTRY = new Map<string, OpDescriptor<any, any, any>>();
 
 interface OpBehaviorOptions<S, P> {
   readonly schema: z.ZodType<P>;
-  readonly apply: (state: S, payload: P) => S;
+  readonly apply: (state: S, payload: P, ctx?: OpApplyContext) => S;
   readonly toEvent?: (payload: P, state: S) => unknown;
 }
 

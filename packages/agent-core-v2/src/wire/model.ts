@@ -39,7 +39,7 @@
  * applied by `WireService` after every `apply`. Scope-agnostic.
  */
 
-import { bindDefineOp, type DefineOpFn } from '#/wire/op';
+import { bindDefineOp, type DefineOpFn, type OpApplyContext } from '#/wire/op';
 import type { ModelReducers } from '#/wire/types';
 import type { WireRecord } from '#/wire/record';
 
@@ -54,14 +54,27 @@ export interface ModelDef<S> {
   readonly name: string;
   readonly initial: () => S;
   readonly blobs?: ModelBlobCodec<S>;
+  /**
+   * Temporal classification of the model's state: `true` marks state that
+   * belongs to conversation time and is rebuilt by `log.cut` rewinds
+   * (`IWireService.rewind`); absent/`false` marks world-time state (usage,
+   * task registries, turn counters) that survives rewinds untouched.
+   */
+  readonly rewindable?: boolean;
   readonly defineOp: DefineOpFn<S>;
 }
 
 export interface ModelCrossReducerEntry {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly model: ModelDef<any>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly reducer: (state: any, payload: any) => any;
+  readonly reducer: (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    state: any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    payload: any,
+    ctx?: OpApplyContext,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ) => any;
 }
 
 export const MODEL_CROSS_REDUCERS = new Map<string, ModelCrossReducerEntry[]>();
@@ -72,12 +85,14 @@ export function defineModel<S>(
   opts?: {
     blobs?: ModelBlobCodec<S>;
     reducers?: ModelReducers<S>;
+    rewindable?: boolean;
   },
 ): ModelDef<S> {
   const def: ModelDef<S> = {
     name,
     initial,
     blobs: opts?.blobs,
+    rewindable: opts?.rewindable,
     defineOp: bindDefineOp(() => def),
   };
   if (opts?.reducers !== undefined) {

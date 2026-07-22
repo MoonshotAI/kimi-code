@@ -21,7 +21,7 @@
  * the native v2 services directly (`ISessionLifecycleService.fork` / `archive` / `restore`,
  * `IAgentFullCompactionService.begin`, `IAgentRPCService.cancel`); there is no
  * v1-only projection to centralize, so no adapter is involved. `undo` likewise
- * calls `IAgentPromptService.undo` directly (it now throws
+ * calls `IAgentRewindService.rewind` directly (it throws
  * `session.undo_unavailable` with a structured reason) and only borrows
  * `ISessionLegacyService.status` for the cross-domain status rollup. The
  * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
@@ -75,7 +75,7 @@ import {
   ErrorCodes,
   IAgentContextMemoryService,
   IAgentProfileService,
-  IAgentPromptService,
+  IAgentRewindService,
   IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentRPCService,
@@ -689,12 +689,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (parsed.action === 'undo') {
           const body = undoSessionRequestSchema.parse(req.body);
           const agent = await resolveMainAgent(core, parsed.id);
-          // `prompt.undo` throws `session.undo_unavailable` (with a structured
-          // `reason`) when the history cannot satisfy `count`; it is a no-op
-          // until the precheck passes, so the post-undo read below always sees
-          // the cut applied. The status rollup stays in the legacy adapter
-          // (cross-domain) and is reused here verbatim.
-          agent.accessor.get(IAgentPromptService).undo(body.count);
+          // `rewind.rewind` throws `session.undo_unavailable` (with a
+          // structured `reason`) when fewer than `count` turns may be cut;
+          // it quiesces the loop/compaction first, so the post-undo read
+          // below always sees the cut applied.
+          await agent.accessor.get(IAgentRewindService).rewind(body.count);
           const history = agent.accessor.get(IAgentContextMemoryService).get();
           requestLog(req)?.info({ session_id: parsed.id, action: 'undo' }, 'session action completed');
           const [summary, status] = await Promise.all([

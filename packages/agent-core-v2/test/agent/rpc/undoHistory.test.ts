@@ -22,7 +22,7 @@ describe('undoHistory RPC', () => {
   it('tracks conversation_undo after undoing history', async () => {
     records = [];
     ctx = createTestAgent(telemetryServices(recordingTelemetry(records)));
-    ctx.appendUserMessage([{ type: 'text', text: 'undo me' }]);
+    ctx.appendUserTurn('undo me');
 
     const undone = await ctx.rpc.undoHistory({ count: 1 });
 

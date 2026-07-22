@@ -752,11 +752,11 @@ describe('Plan service', () => {
     it('keeps the preserved injection index aligned after undo removes earlier messages', async () => {
       await plan.enter('test-plan', false);
 
-      ctx.appendUserMessage([{ type: 'text', text: 'draft the plan' }]);
+      ctx.appendUserTurn('draft the plan');
       await injectDynamic();
       ctx.appendAssistantTurn(1, 'Plan drafted.');
 
-      ctx.undoHistory(1);
+      await ctx.undoHistory(1);
       ctx.appendUserMessage([{ type: 'text', text: 'new plan request' }]);
       await injectDynamic();
 

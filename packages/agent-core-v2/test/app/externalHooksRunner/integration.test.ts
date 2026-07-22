@@ -19,7 +19,6 @@ import {
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
-import { computeUndoCut } from '#/agent/contextMemory/contextOps';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   HookDefSchema,
@@ -102,13 +101,6 @@ function stubContextMemory(): IAgentContextMemoryService & {
     appendLoopEvent: () => {},
     clear: () => {
       messages.splice(0);
-    },
-    undo: (count) => {
-      const cut = computeUndoCut(messages, count);
-      if (cut.cutIndex >= 0 && cut.removedCount >= count) {
-        messages.splice(cut.cutIndex, messages.length - cut.cutIndex);
-      }
-      return cut;
     },
     applyCompaction: (input: ContextCompactionInput): ContextCompactionResult => {
       const shape = buildContextCompactionShape(messages, input);

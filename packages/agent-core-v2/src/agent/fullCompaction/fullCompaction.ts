@@ -24,6 +24,12 @@ export interface IAgentFullCompactionService {
 
   readonly compacting: FullCompactionTask | null;
   begin(input: FullCompactionInput): boolean;
+  /**
+   * Abort the in-flight compaction (if any) and wait for it to settle.
+   * A no-op when idle. Used by the rewind pipeline's quiesce step so a
+   * compaction can never apply a pre-rewind summary onto post-rewind context.
+   */
+  cancel(): Promise<void>;
 
   readonly hooks: Hooks<{
     onWillCompact: FullCompactionTask;

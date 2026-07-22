@@ -14,7 +14,6 @@ import {
   type ContextCompactionInput,
   type ContextCompactionResult,
 } from '#/agent/contextMemory/contextMemory';
-import { computeUndoCut, type UndoCut } from '#/agent/contextMemory/contextOps';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
@@ -59,15 +58,6 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       messages.splice(0, deleteCount);
       publishSplice(eventBus, { start: 0, deleteCount, messages: [] });
     },
-    undo: (count) => {
-      const cut = computeUndoCut(messages, count);
-      if (cut.cutIndex >= 0 && cut.removedCount >= count) {
-        const deleteCount = messages.length - cut.cutIndex;
-        messages.splice(cut.cutIndex, deleteCount);
-        publishSplice(eventBus, { start: cut.cutIndex, deleteCount, messages: [] });
-      }
-      return cut;
-    },
     applyCompaction: (input: ContextCompactionInput): ContextCompactionResult => {
       const shape = buildContextCompactionShape(messages, input);
       const previousLength = messages.length;
@@ -105,9 +95,6 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.impl.appendLoopEvent(event);
-  }
-  undo(count: number): UndoCut {
-    return this.impl.undo(count);
   }
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
     return this.impl.applyCompaction(input);

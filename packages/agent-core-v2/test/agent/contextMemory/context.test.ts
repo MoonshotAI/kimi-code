@@ -579,12 +579,12 @@ describe('Agent context', () => {
     expect(contextSize.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
   });
 
-  it('rebases the measured prefix to an estimate when undo truncates it', () => {
-    ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
-    ctx.appendAssistantTextWithUsage(2, 'a2', 2_000);
+  it('rebases the measured prefix to an estimate when undo truncates it', async () => {
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    ctx.appendTurnExchange('u2', 'a2', 2_000);
     expect(contextSize.get().measured).toBe(2_000);
 
-    ctx.undoHistory(1);
+    await ctx.undoHistory(1);
 
     const surviving = context.get();
     expect(surviving.map((m) => m.role)).toEqual(['user', 'assistant']);
@@ -592,20 +592,20 @@ describe('Agent context', () => {
     expect(contextSize.get()).toEqual({ size: estimate, measured: estimate, estimated: 0 });
   });
 
-  it('keeps the measured prefix when undo removes only the unmeasured tail', () => {
-    ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
-    ctx.appendUserMessage([{ type: 'text', text: 'unmeasured follow up' }]);
+  it('keeps the measured prefix when undo removes only the unmeasured tail', async () => {
+    ctx.appendTurnExchange('u1', 'a1', 1_000);
+    ctx.appendTurnExchange('u2', 'a2');
     expect(contextSize.get().measured).toBe(1_000);
 
-    ctx.undoHistory(1);
+    await ctx.undoHistory(1);
 
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
     expect(contextSize.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
   });
 
-  it('undo only counts real user prompts, skipping task notifications', () => {
-    ctx.appendAssistantText(1, 'first response');
-    ctx.appendAssistantText(2, 'second response');
+  it('undo only counts real user prompts, skipping task notifications', async () => {
+    ctx.appendTurnExchange('u1', 'first response');
+    ctx.appendTurnExchange('u2', 'second response');
 
     context.append(
       {
@@ -629,14 +629,14 @@ describe('Agent context', () => {
       'user',
     ]);
 
-    ctx.undoHistory(1);
+    await ctx.undoHistory(1);
 
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
-  it('removes injection messages inside the undone turn', () => {
-    context.append(userMessage('earlier question', { kind: 'user' }));
-    context.append(userMessage('do the work', { kind: 'user' }));
+  it('removes injection messages inside the undone turn', async () => {
+    ctx.appendUserTurn('earlier question');
+    ctx.appendUserTurn('do the work');
     context.append(
       userMessage('Plan mode is active', {
         kind: 'injection',
@@ -652,7 +652,7 @@ describe('Agent context', () => {
       },
     );
 
-    ctx.undoHistory(1);
+    await ctx.undoHistory(1);
 
     expect(context.get()).toEqual([
       expect.objectContaining({

@@ -111,6 +111,9 @@ const TaskNotificationDeliveryModel = defineModel<readonly string[]>(
   'task.notificationDelivery',
   () => [],
   {
+    // Rewindable: a rewind drops the delivery marks of notifications the cut
+    // removed from the context, so they re-deliver on the next inject.
+    rewindable: true,
     reducers: {
       'context.append_message': (state, payload: { message?: unknown }) => {
         const origin = taskOriginFromMessage(payload.message);
@@ -263,6 +266,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           if (isTaskOrigin(message.origin)) {
             this.markDeliveredNotification(message.origin);
           }
+        }
+      }),
+    );
+    this._register(
+      this.eventBus.subscribe('context.rewound', () => {
+        // The delivery model was rebuilt by the rewind; re-sync the live
+        // mirror so notifications cut from the context re-deliver.
+        this.deliveredNotificationKeys.clear();
+        for (const key of this.wire.getModel(TaskNotificationDeliveryModel)) {
+          this.deliveredNotificationKeys.add(key);
         }
       }),
     );

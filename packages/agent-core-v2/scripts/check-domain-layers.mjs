@@ -214,6 +214,11 @@ const DOMAIN_LAYER = new Map([
   ['sessionExport', 6],
   ['interaction', 6],
   ['sessionMetadata', 6],
+  // `rewind` owns the undo pipeline (quiesce → log.cut → reconcile): it
+  // coordinates L4 agent domains (loop / prompt / contextMemory /
+  // fullCompaction) plus `sessionMetadata` for the `lastPrompt` reconcile,
+  // so it sits in L6 beside the other cross-agent coordinators.
+  ['rewind', 6],
   ['sessionActivity', 6],
   ['session', 6],
   ['terminal', 6],

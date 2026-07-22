@@ -28,7 +28,9 @@ export interface PlanState {
   readonly id?: string;
 }
 
-export const PlanModel = defineModel<PlanState>('plan', () => ({ active: false }));
+export const PlanModel = defineModel<PlanState>('plan', () => ({ active: false }), {
+  rewindable: true,
+});
 
 export const planModeEnter = PlanModel.defineOp('plan_mode.enter', {
   schema: z.object({ id: z.string() }),

@@ -1,4 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { Turn, TurnResult } from '#/agent/loop/loop';
 import type { Hooks } from '#/hooks';
@@ -55,8 +56,15 @@ export interface IAgentPromptService {
   abort(promptId: string, reason?: Error): boolean;
   inject(message: ContextMessage): Promise<Turn | undefined>;
   retry(): Promise<Turn | undefined>;
-  undo(count: number): number;
   clear(): void;
+  /**
+   * Suspend launching queued prompts until the returned handle is disposed
+   * (launching resumes, draining the queue, on the last release). The rewind
+   * pipeline holds this across its quiesce→cut window so an aborted active
+   * turn cannot auto-start the next queued prompt mid-rewind. Pending prompts
+   * stay queued.
+   */
+  pauseLaunching(): IDisposable;
   readonly hooks: Hooks<{ onBeforeSubmitPrompt: PromptSubmitContext }>;
 }
 

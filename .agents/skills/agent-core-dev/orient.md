@@ -64,7 +64,7 @@ So a Session-scoped service is not "L1" — e.g. `session` is Session-scoped but
 | L3 | registries & capabilities | `tool`, `toolRegistry`, `permission*`, `flag`, `skill`, `plugin` |
 | L4 | agent behaviour | `turn`, `loop`, `prompt`, `profile`, `contextMemory`, `goal`, `plan`, `swarm` |
 | L5 | async lifecycle | `background`, `mcp`, `cron`, `agentTool` |
-| L6 | coordination | `session`, `agentLifecycle`, `sessionMetadata`, `interaction`, `terminal` |
+| L6 | coordination | `session`, `agentLifecycle`, `sessionMetadata`, `interaction`, `terminal`, `rewind` |
 | L7 | boundary / edge | `gateway`, `rpc`, `approval`, `question`, `*Legacy` |
 
 ## File-header comment convention
