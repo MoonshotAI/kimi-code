@@ -31,6 +31,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
 import { createInstanceRegistry, type InstanceRegistration } from './instanceRegistry';
+import { formatServerOrigin } from './serverOrigin';
 import { transformOpenApiDocument } from './openapi/transforms';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
@@ -590,7 +591,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // Wildcard binds (`0.0.0.0` / `::`) advertise loopback: session-lease
   // contacts are only ever dialed by sibling instances on this host.
   const advertiseHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
-  leaseContact.current = { type: 'address', address: `http://${advertiseHost}:${boundPort}` };
+  leaseContact.current = { type: 'address', address: formatServerOrigin(advertiseHost, boundPort) };
 
   void modelCatalogRefreshScheduler.start().catch((error) => {
     logger.warn(

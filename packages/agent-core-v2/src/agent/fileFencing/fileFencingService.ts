@@ -4,13 +4,14 @@
  * Registers the `writeFencing` participant on the `toolExecutor`
  * `onBeforeExecuteTool` / `onDidExecuteTool` hook slots, matching
  * `Read`/`Write`/`Edit` by tool name and letting every other tool pass
- * through. For Write/Edit the before hook injects an execution wrapper; the
+ * through. For Edit and overwrite Write the before hook injects an execution
+ * wrapper; append Write remains non-destructive and bypasses read-first. The
  * wrapper re-checks the ledger only after the scheduler grants the declared
  * file access, so a queued write cannot rely on a stale preflight verdict. The
  * target path comes from the resolved execution's file accesses
  * — the exact canonical path the tool itself computed. `stale` blocks with an
  * outside-modification conflict and `no-baseline` blocks with a read-first
- * reason (Edit-over-existing, or Write over an already existing file). The
+ * reason (Edit-over-existing, or overwrite Write over an existing file). The
  * did-hook baselines the ledger from the revision the successful call captured
  * on its own result (ranged Reads excepted — per the ledger contract they
  * never count as full reads); direct creation of a new file is verdict-`clean`,
@@ -60,6 +61,13 @@ function isRangedRead(args: unknown): boolean {
   return input.line_offset !== undefined || input.n_lines !== undefined;
 }
 
+function isAppendWrite(ctx: ToolExecutionHookContext): boolean {
+  if (ctx.toolCall.name !== 'Write' || typeof ctx.args !== 'object' || ctx.args === null) {
+    return false;
+  }
+  return (ctx.args as { readonly mode?: unknown }).mode === 'append';
+}
+
 function blockReason(toolName: string, path: string, verdict: FileLedgerVerdict): string {
   if (verdict === 'no-baseline') {
     return toolName === 'Edit'
@@ -97,6 +105,7 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     const path = targetPathOf(ctx);
     if (path === undefined) return;
     if (!WRITE_TOOLS.has(ctx.toolCall.name)) return;
+    if (isAppendWrite(ctx)) return;
     const execute = ctx.decision?.execute ?? ctx.execution.execute;
     ctx.decision = {
       ...ctx.decision,

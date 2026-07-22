@@ -7,7 +7,7 @@
  * two Session scopes sharing one workspace.
  */
 
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -285,6 +285,18 @@ describe('AgentFileFencingService', () => {
     const blocked = await runBlocked(world, 'Write', file);
     expect(blocked.output).toContain('already exists');
     expect(blocked.output).toContain('has not been read in this session');
+  });
+
+  it('allows Write append on an existing file without a read baseline', async () => {
+    const world = setup();
+    const file = join(world.env.workDir, 'a.txt');
+    writeFileSync(file, 'before');
+
+    await runOk(world, 'Write', file, {
+      args: { path: file, content: ' after', mode: 'append' },
+    });
+
+    expect(readFileSync(file, 'utf8')).toBe('before after');
   });
 
   it('allows Write creating a new file and baselines it', async () => {

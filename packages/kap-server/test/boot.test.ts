@@ -17,6 +17,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
+import { formatServerOrigin } from '../src/serverOrigin';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
 import { getServerVersion } from '../src/version';
 import { authedFetch } from './helpers/auth';
@@ -256,6 +257,13 @@ describe('server-v2 boot', () => {
     const journal = await readFile(join(home, 'server', 'events', `${sid}.jsonl`), 'utf8');
     expect(journal).toContain('journal_header');
     expect(journal).toContain('turn.started');
+  });
+});
+
+describe('server origin formatting', () => {
+  it('bracket-wraps IPv6 hosts and keeps IPv4 hosts unchanged', () => {
+    expect(formatServerOrigin('::1', 58627)).toBe('http://[::1]:58627');
+    expect(formatServerOrigin('127.0.0.1', 58627)).toBe('http://127.0.0.1:58627');
   });
 });
 

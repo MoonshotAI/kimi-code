@@ -598,7 +598,7 @@ describe('ReadTool', () => {
     expect(output).not.toContain('encoded data was not valid');
   });
 
-  it('marks long-line truncation as an incomplete read', async () => {
+  it('returns a revision when a default read truncates long lines', async () => {
     const long = 'x'.repeat(MAX_LINE_LENGTH + 10);
     const tool = toolWithContent([long, 'short', long].join('\n'));
 
@@ -606,10 +606,10 @@ describe('ReadTool', () => {
 
     expect(result.note).toContain('Lines [1, 3] were truncated.');
     expect(result.output).toContain('...');
-    expect(result[toolFileRevision]).toBeUndefined();
+    expect(result[toolFileRevision]).toBeDefined();
   });
 
-  it('marks byte-capped output as an incomplete read', async () => {
+  it('returns a revision when default output reaches the byte cap', async () => {
     const line = 'x'.repeat(MAX_LINE_LENGTH);
     const content = Array.from({ length: 80 }, () => line).join('\n');
     const tool = toolWithContent(content);
@@ -619,7 +619,7 @@ describe('ReadTool', () => {
 
     expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(MAX_BYTES);
     expect(result.note).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
-    expect(result[toolFileRevision]).toBeUndefined();
+    expect(result[toolFileRevision]).toBeDefined();
   });
 
   it('reads through bounded byte preflight and streams line iteration without full readText', async () => {
@@ -657,7 +657,7 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
-  it('marks line-capped default reads as incomplete', async () => {
+  it('returns a revision when default output reaches the line cap', async () => {
     const content = Array.from({ length: MAX_LINES + 1 }, (_, i) => `line ${String(i + 1)}`).join(
       '\n',
     );
@@ -668,7 +668,7 @@ describe('ReadTool', () => {
     expect(result.note).toContain(`Max ${String(MAX_LINES)} lines reached.`);
     expect(result.output).toContain(`${String(MAX_LINES)}\tline ${String(MAX_LINES)}`);
     expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
-    expect(result[toolFileRevision]).toBeUndefined();
+    expect(result[toolFileRevision]).toBeDefined();
   });
 
   it('tail byte truncation keeps the newest lines closest to EOF', async () => {

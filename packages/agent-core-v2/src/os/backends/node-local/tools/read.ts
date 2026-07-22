@@ -116,11 +116,6 @@ interface FinishReadResultInput {
   readonly requestedLines: number;
 }
 
-interface ReadAttempt {
-  readonly result: ExecutableToolResult;
-  readonly coversEntireFile: boolean;
-}
-
 function truncateLine(line: string, maxLength: number): string {
   if (line.length <= maxLength) return line;
   const marker = '...';
@@ -322,7 +317,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
         observedStat = value;
       };
 
-      const read =
+      const result =
         lineOffset < 0
           ? await this.readTail(
               safePath,
@@ -340,7 +335,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
               requestedLines,
               onFileStat,
             );
-      if (read.result.isError === true) return read.result;
+      if (result.isError === true) return result;
       observedStat ??= await this.fs.stat(safePath);
       if (!fileStatTuplesEqual(stat, observedStat)) {
         return {
@@ -348,15 +343,11 @@ export class ReadTool implements BuiltinTool<ReadInput> {
           output: `"${args.path}" changed while it was being read. Retry the read.`,
         };
       }
-      if (
-        args.line_offset !== undefined ||
-        args.n_lines !== undefined ||
-        !read.coversEntireFile
-      ) {
-        return read.result;
+      if (args.line_offset !== undefined || args.n_lines !== undefined) {
+        return result;
       }
       return attachToolFileRevision(
-        read.result,
+        result,
         makeToolFileRevision(safePath, observedStat),
       );
     } catch (error) {
@@ -377,7 +368,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     effectiveLimit: number,
     requestedLines: number,
     onFileStat: (stat: Awaited<ReturnType<IHostFileSystem['stat']>>) => void,
-  ): Promise<ReadAttempt> {
+  ): Promise<ExecutableToolResult> {
     const selectedEntries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
     let currentLineNo = 0;
@@ -386,10 +377,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
 
     for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict', onFileStat })) {
       if (containsNulByte(rawLine)) {
-        return {
-          result: { isError: true, output: notReadableFileOutput(displayPath) },
-          coversEntireFile: false,
-        };
+        return { isError: true, output: notReadableFileOutput(displayPath) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
@@ -438,7 +426,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     effectiveLimit: number,
     requestedLines: number,
     onFileStat: (stat: Awaited<ReturnType<IHostFileSystem['stat']>>) => void,
-  ): Promise<ReadAttempt> {
+  ): Promise<ExecutableToolResult> {
     const tailCount = Math.abs(lineOffset);
     const entries: ReadLineEntry[] = [];
     const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
@@ -446,10 +434,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
 
     for await (const rawLine of this.fs.readLines(safePath, { errors: 'strict', onFileStat })) {
       if (containsNulByte(rawLine)) {
-        return {
-          result: { isError: true, output: notReadableFileOutput(displayPath) },
-          coversEntireFile: false,
-        };
+        return { isError: true, output: notReadableFileOutput(displayPath) };
       }
       currentLineNo += 1;
       updateLineEndingFlags(flags, rawLine);
@@ -477,7 +462,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     effectiveLimit: number;
     totalLines: number;
     requestedLines: number;
-  }): ReadAttempt {
+  }): ExecutableToolResult {
     const lineEndingStyle = lineEndingStyleFromFlags(input.lineEndingFlags);
     let renderedCandidates = input.entries.slice(0, input.effectiveLimit).map((entry) => {
       return { entry, rendered: renderLine(entry, lineEndingStyle) };
@@ -525,15 +510,10 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     });
   }
 
-  private finishReadResult(input: FinishReadResultInput): ReadAttempt {
+  private finishReadResult(input: FinishReadResultInput): ExecutableToolResult {
     return {
-      result: {
-        output: input.renderedLines.join('\n'),
-        note: `<system>${this.finishMessage(input)}</system>`,
-      },
-      coversEntireFile:
-        input.renderedLines.length === input.totalLines &&
-        input.truncatedLineNumbers.length === 0,
+      output: input.renderedLines.join('\n'),
+      note: `<system>${this.finishMessage(input)}</system>`,
     };
   }
 

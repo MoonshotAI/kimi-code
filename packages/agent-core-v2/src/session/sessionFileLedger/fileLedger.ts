@@ -17,10 +17,11 @@
  * The ledger is in-memory only: never persisted, never journaled, never part
  * of diagnostics. `resume` and `fork` therefore start from an empty ledger
  * and conservatively require a fresh read before editing existing files.
- * Baselines refresh only on successful Read/Write/Edit executions, and only
- * full reads of the target file count. Keys are lexical
- * `normalizeFsWatchKey`s — no `realpath`, so symlink aliases to the same
- * inode are an accepted residual gap. Session-scoped.
+ * Baselines refresh only on successful Read/Write/Edit executions. A default
+ * Read counts after it scans a stable file even when its model-facing output
+ * is capped; explicit ranged Reads do not. Keys are lexical
+ * `normalizeFsWatchKey`s — no `realpath`, so symlink aliases to the same inode
+ * are an accepted residual gap. Session-scoped.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
