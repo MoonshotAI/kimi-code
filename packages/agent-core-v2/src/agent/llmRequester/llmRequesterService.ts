@@ -113,7 +113,13 @@ interface ResolvedLLMRequest {
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
+  /** Request body sent to the model (baseline + conversation history). */
   readonly messages: Message[];
+  /**
+   * Conversation history only — used for context-size accounting so request-only
+   * baseline fragments do not break the `matchesContext` prefix check.
+   */
+  readonly historyMessages: readonly Message[];
   readonly source: AgentLLMRequestSource | undefined;
   readonly logFields: AgentLLMRequestLogFields;
 }
@@ -379,7 +385,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
 
       this.usage.record(request.modelAlias, usage, request.source);
-      this.contextSize.measured(request.messages, [message], usage);
+      this.contextSize.measured(request.historyMessages, [message], usage);
       this.logResponse(request.logFields, usage, timing);
 
       return {
@@ -560,6 +566,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
       tools: [...(overrides.tools ?? this.defaultTools())],
       messages,
+      historyMessages: history,
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };

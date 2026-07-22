@@ -224,7 +224,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
     this.activeProfile = undefined;
     this.activeToolNamesOverlay = undefined;
-    this.baselineContextMessages = [];
+    this.baselineContextMessages = snapshot.baselineContextMessages ?? [];
     this.wire.dispatch(
       profileBind({
         cwd: snapshot.cwd,
@@ -429,6 +429,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       disallowedTools: [...(this.profileState.disallowedTools ?? [])],
       subagents:
         this.profileState.subagents === undefined ? undefined : [...this.profileState.subagents],
+      baselineContextMessages: this.baselineContextMessages,
     };
   }
 

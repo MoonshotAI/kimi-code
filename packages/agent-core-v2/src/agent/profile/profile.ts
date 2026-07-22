@@ -63,6 +63,8 @@ export interface ProfileData extends AgentConfigData {
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  /** Request-time baseline fragments; not persisted on the wire. */
+  readonly baselineContextMessages?: readonly Message[];
 }
 
 export type ProfileUpdateData = Partial<{
@@ -84,6 +86,8 @@ export interface ProfileBindingSnapshot {
   readonly activeToolNames?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];
+  /** Request-time baseline fragments copied on fork (not wire-persisted). */
+  readonly baselineContextMessages?: readonly Message[];
 }
 
 export interface ProfileServiceOptions {

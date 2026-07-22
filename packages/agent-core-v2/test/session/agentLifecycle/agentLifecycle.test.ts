@@ -762,6 +762,13 @@ describe('AgentLifecycleService', () => {
   it('fork copies the bound profile snapshot without catalog resolution', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const source = await svc.create({ agentId: 'main' });
+    const baseline = [
+      {
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text: 'BASELINE_PARENT' }],
+        toolCalls: [],
+      },
+    ];
     source.accessor.get(IAgentProfileService).applyBindingSnapshot({
       cwd: '/work',
       profileName: 'deleted-profile',
@@ -770,6 +777,7 @@ describe('AgentLifecycleService', () => {
       activeToolNames: ['Read'],
       disallowedTools: ['Bash'],
       subagents: ['explore'],
+      baselineContextMessages: baseline,
     });
 
     const child = await svc.fork('main', { agentId: 'forked' });
@@ -783,6 +791,19 @@ describe('AgentLifecycleService', () => {
       disallowedTools: ['Bash'],
       subagents: ['explore'],
     });
+    expect(child.accessor.get(IAgentProfileService).getBaselineContextMessages()).toEqual(baseline);
+  });
+
+  it('rebuilds baseline context after restore when create has no binding', async () => {
+    const { AgentProfileService } = await import('#/agent/profile/profileService');
+    const refreshSpy = vi.spyOn(AgentProfileService.prototype, 'refreshSystemPrompt');
+    try {
+      const svc = ix.get(IAgentLifecycleService);
+      await svc.create({ agentId: 'main' });
+      expect(refreshSpy).toHaveBeenCalled();
+    } finally {
+      refreshSpy.mockRestore();
+    }
   });
 
   it('run throws when the agent does not exist', () => {
