@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
+import { DEFAULT_STATUSLINE_CONFIG } from '#/tui/config';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -55,6 +56,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  statusLine: DEFAULT_STATUSLINE_CONFIG,
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,

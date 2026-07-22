@@ -350,6 +350,9 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
 | `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+| `[statusline].command` | `string` | `""` | 可脚本化的状态栏命令：其 stdout 第一行（支持 ANSI SGR 颜色）渲染为 footer 第三行；留空关闭 |
+| `[statusline].interval_ms` | `integer` | `2000` | 状态栏命令的执行周期；最小钳制到 300 |
+| `[statusline].timeout_ms` | `integer` | `5000` | 状态栏命令单次执行超时；超时进程会被杀掉，并保留上一次成功的输出 |
 
 ```toml
 # ~/.kimi-code/tui.toml
@@ -365,7 +368,14 @@ notification_condition = "unfocused" # "unfocused" | "always"
 
 [upgrade]
 auto_install = true
+
+[statusline]
+command = "" # 留空关闭状态栏
+interval_ms = 2000
+timeout_ms = 5000
 ```
+
+每次执行时，状态栏命令会通过 stdin 收到当前会话上下文的 JSON——`session_id`、`version`、`model`（`id` 与 `display_name`）、`workspace.current_dir`、`permission_mode`、`plan_mode`，以及 `context` token 用量（`used_tokens`、`max_tokens`、`percent`）——脚本无需额外调用即可渲染这些信息。输出只取第一行；执行失败或超时保留上一次的输出，首次成功之前不显示额外行。
 
 修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import chalk from 'chalk';
 
 import { FooterComponent, formatFooterGitBadge, buildWeightedTips } from '#/tui/components/chrome/footer';
+import { DEFAULT_STATUSLINE_CONFIG } from '#/tui/config';
 import { darkColors } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 
@@ -38,6 +39,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     version: 'test',
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
+    statusLine: DEFAULT_STATUSLINE_CONFIG,
     availableModels: {},
     ...overrides,
   } as AppState;

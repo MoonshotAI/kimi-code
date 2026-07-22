@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AgentSwarmProgressComponent } from '#/tui/components/messages/agent-swarm-progress';
+import { DEFAULT_STATUSLINE_CONFIG } from '#/tui/config';
 import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 
@@ -35,6 +36,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      statusLine: DEFAULT_STATUSLINE_CONFIG,
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
