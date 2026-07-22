@@ -47,8 +47,6 @@ import {
   THINKING_SECTION,
   type ThinkingConfig,
 } from '#/kosong/model/thinking';
-import '#/agent/loop/configSection';
-import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
   MAX_RUNNING_TASKS_ENV,
