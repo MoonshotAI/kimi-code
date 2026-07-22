@@ -21,7 +21,10 @@
  * missing slot/type binding or a stale stored alias asks the user once and
  * adopts the (already persisted) answer as terminal; a dismissed ask falls
  * through exactly like a missing entry, keeping the stale-alias warning on
- * the repair case.
+ * the repair case. One spawn asks at most once: when a slot was explicitly
+ * requested, its (dismissed) ask never escalates into a second, type-level
+ * question — the type binding still applies when configured, it just stays
+ * silent.
  */
 
 import { IFlagService } from '#/app/flag/flag';
@@ -86,7 +89,8 @@ export async function resolveSubagentSpawnBinding(
 
   const warnings: string[] = [];
   const slot = input.bindingSlot?.trim();
-  if (slot !== undefined && slot.length > 0) {
+  const explicitSlot = slot !== undefined && slot.length > 0;
+  if (explicitSlot) {
     const slotEntry = await deps.workspaceLocalConfig.readSubagentSlotBinding(
       input.workDir,
       slot,
@@ -115,6 +119,10 @@ export async function resolveSubagentSpawnBinding(
     input.workDir,
     input.profileName,
   );
+  // An explicit slot request that reaches here already had its one ask (or
+  // resolves read-only on the swarm path): apply the type binding when
+  // configured, but never escalate into a second question for this spawn.
+  const mayAsk = !explicitSlot;
   if (typeEntry !== undefined) {
     const resolved = resolveBindingEntry(
       deps,
@@ -123,13 +131,15 @@ export async function resolveSubagentSpawnBinding(
       'the caller model',
     );
     if (resolved.terminal) return withWarnings(resolved.resolution, warnings);
-    const asked = await askOnce(deps, input.profileName, {
-      missingModel: resolved.missingModel,
-    });
+    const asked = mayAsk
+      ? await askOnce(deps, input.profileName, {
+          missingModel: resolved.missingModel,
+        })
+      : undefined;
     if (asked !== undefined) return withWarnings(asked, warnings);
     warnings.push(resolved.warning);
   } else {
-    const asked = await askOnce(deps, input.profileName, undefined);
+    const asked = mayAsk ? await askOnce(deps, input.profileName, undefined) : undefined;
     if (asked !== undefined) return withWarnings(asked, warnings);
   }
 

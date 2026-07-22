@@ -324,23 +324,45 @@ describe('resolveSubagentSpawnBinding', () => {
       expect(ask).toHaveBeenCalledWith('coder', { slot: 'fast' });
     });
 
-    it('asks again for the type when the slot ask is dismissed and no type binding exists', async () => {
-      const ask = vi.fn<AskSubagentSpawnBindingCallback>(async (_profileName, context) =>
-        context?.slot !== undefined ? undefined : { model: 'asked/model' },
-      );
+    it('never asks twice in one spawn: a dismissed slot ask suppresses the type ask', async () => {
+      const ask = vi.fn<AskSubagentSpawnBindingCallback>(async () => undefined);
       const { deps } = makeDeps({ ask, validAliases: [] });
 
-      await expect(
-        resolveSubagentSpawnBinding(deps, {
-          workDir: WORK_DIR,
-          profileName: 'coder',
-          bindingSlot: 'fast',
-        }),
-      ).resolves.toEqual({ model: 'asked/model' });
-      expect(ask.mock.calls).toEqual([
-        ['coder', { slot: 'fast' }],
-        ['coder', undefined],
-      ]);
+      const resolution = await resolveSubagentSpawnBinding(deps, {
+        workDir: WORK_DIR,
+        profileName: 'coder',
+        bindingSlot: 'fast',
+      });
+
+      expect(resolution).toEqual({});
+      expect(ask).toHaveBeenCalledOnce();
+      expect(ask).toHaveBeenCalledWith('coder', { slot: 'fast' });
+    });
+
+    it('keeps the stale-slot warning and skips the type ask after a dismissed repair ask', async () => {
+      const ask = vi.fn<AskSubagentSpawnBindingCallback>(async () => undefined);
+      const { deps } = makeDeps({
+        ask,
+        tables: {
+          bindings: { coder: { model: 'gone/type' } },
+          slotBindings: { fast: { model: 'gone/slot' } },
+        },
+        validAliases: [],
+      });
+
+      const resolution = await resolveSubagentSpawnBinding(deps, {
+        workDir: WORK_DIR,
+        profileName: 'coder',
+        bindingSlot: 'fast',
+      });
+
+      expect(resolution.model).toBeUndefined();
+      expect(resolution.warning).toContain('subagent-slot.fast');
+      expect(resolution.warning).toContain('gone/slot');
+      expect(resolution.warning).toContain('subagent.coder');
+      expect(resolution.warning).toContain('gone/type');
+      expect(ask).toHaveBeenCalledOnce();
+      expect(ask).toHaveBeenCalledWith('coder', { slot: 'fast', missingModel: 'gone/slot' });
     });
 
     it('inherits silently when the type ask is dismissed', async () => {
