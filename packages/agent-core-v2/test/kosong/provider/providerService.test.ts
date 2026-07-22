@@ -2,8 +2,8 @@
  * `kosong/provider` config-surface tests — the providers config contract and
  * `IProviderService`:
  *
- *  - `ProviderTypeSchema` is an enum: only known provider types parse
- *    (unknown vendor names are rejected at parse time);
+ *  - `ProviderTypeSchema` is free-form text: unregistered vendor names parse
+ *    (validation happens at resolve time, not parse time);
  *  - the section TOML transforms round-trip snake_case ↔ camelCase;
  *  - `ProviderService` CRUD persists through config, diffs section changes
  *    into `onDidChangeProviders` (added/changed/removed), and clears
@@ -86,27 +86,12 @@ class StubConfigService implements IConfigService {
   }
 }
 
-describe("ProviderTypeSchema (enum validation)", () => {
-  it("parses known provider types", () => {
+describe('ProviderTypeSchema (enum validation)', () => {
+  it('parses unregistered vendor names — resolve-time validation, not parse-time', () => {
     const parsed = ProvidersSectionSchema.parse({
-      "moonshot": { type: "kimi", baseUrl: "https://example.com/v1" },
+      'my-vendor': { type: 'a-vendor-registered-elsewhere', baseUrl: 'https://example.com/v1' },
     });
-    expect(parsed["moonshot"]?.type).toBe("kimi");
-  });
-
-  it("rejects unknown vendor names at parse time", () => {
-    expect(() =>
-      ProvidersSectionSchema.parse({
-        "my-vendor": { type: "a-vendor-registered-elsewhere", baseUrl: "https://example.com/v1" },
-      }),
-    ).toThrow();
-  });
-
-  it("accepts providers without a type (optional)", () => {
-    const parsed = ProvidersSectionSchema.parse({
-      "no-type": { baseUrl: "https://example.com/v1" },
-    });
-    expect(parsed["no-type"]?.type).toBeUndefined();
+    expect(parsed['my-vendor']?.type).toBe('a-vendor-registered-elsewhere');
   });
 });
 

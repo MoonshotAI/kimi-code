@@ -103,9 +103,10 @@ export async function runShell(
     configWarning = combineStartupNotice(configWarning, warning);
   }
   const configMs = Date.now() - configStartedAt;
-  // Propagate locale from tui.toml to i18n engine and agent-core
-  setLocale(tuiConfig.locale);
-  setAgentCoreLocale(tuiConfig.locale);
+  // Propagate locale to agent-core for i18n
+  const locale = getLocale();
+  setLocale(locale);
+  setAgentCoreLocale(locale);
 
   const tui = new KimiTUI(harness, {
     cliOptions: opts,
