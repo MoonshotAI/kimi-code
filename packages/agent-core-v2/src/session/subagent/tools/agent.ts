@@ -10,6 +10,11 @@
  * under TaskList/TaskOutput/TaskStop when `run_in_background=true` or after
  * detach), and terminal text formatting.
  *
+ * Spawn bindings come from `resolveSubagentBinding` (secondary model when
+ * configured, otherwise the caller's); a resumed agent keeps the model
+ * recorded in its own wire journal — with per-subagent models there is no
+ * "child follows the parent's current model" invariant to enforce.
+ *
  * Registered via the module-level `registerTool(AgentTool)` at the bottom of
  * this file — the same "import = register" pattern used by every builtin tool.
  */
@@ -65,8 +70,11 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { emitAgentRunSpawned, mirrorAgentRun } from '../mirrorAgentRun';
 import { ISessionSubagentService } from '../subagent';
 import {
+  buildSubagentModelDescriptions,
   formatSubagentTimeoutDescription,
+  resolveSubagentBinding,
   resolveSubagentTimeoutMs,
+  wrapSubagentModelError,
 } from '../configSection';
 import { SubagentTask, type SubagentHandle } from './subagent-task';
 
@@ -115,6 +123,12 @@ export const AgentToolInputSchema = z.preprocess(
       .optional()
       .describe(
         'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
+      ),
+    model: z
+      .enum(['subagent', 'primary'])
+      .optional()
+      .describe(
+        'Which model to run the subagent on: "subagent" = the configured secondary model (cheaper, the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
       ),
   }),
 );
@@ -179,7 +193,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     const backgroundDescription = this.canRunInBackground()
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
-    const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
+    let description = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
     const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
     const profiles =
       allowlist === undefined
@@ -191,9 +205,14 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       (profile, name, source) =>
         this.toolPolicy.isToolActiveForProfile(profile, name, source),
     );
-    return typeLines
-      ? `${baseDescription}\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`
-      : baseDescription;
+    if (typeLines) {
+      description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
+    }
+    const modelLines = buildSubagentModelDescriptions(this.config, this.profile.data().modelAlias);
+    if (modelLines !== undefined) {
+      description += `\n\n${modelLines}`;
+    }
+    return description;
   }
 
   async resolveExecution(args: AgentToolInput): Promise<ToolExecution> {
@@ -256,7 +275,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         throw new Error(`Agent instance "${resumeAgentId}" does not exist`);
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
-      this.realignChildModel(target);
       agentId = target.id;
       profileName =
         target.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_LABEL;
@@ -277,15 +295,25 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       if (own.modelAlias === undefined) {
         throw new Error('Caller agent has no model bound');
       }
-      const created = await this.lifecycle.create({
-        binding: {
-          profile: profile.name,
-          model: own.modelAlias,
-          thinking: own.thinkingLevel,
-          cwd: own.cwd,
-        },
-        labels: subagentLabels(this.callerAgentId),
-      });
+      const binding = resolveSubagentBinding(
+        this.config,
+        { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+        args.model,
+      );
+      let created: IAgentScopeHandle;
+      try {
+        created = await this.lifecycle.create({
+          binding: {
+            profile: profile.name,
+            model: binding.model,
+            thinking: binding.thinking,
+            cwd: own.cwd,
+          },
+          labels: subagentLabels(this.callerAgentId),
+        });
+      } catch (error) {
+        throw wrapSubagentModelError(error, binding.model, own.modelAlias);
+      }
       created.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
       created.accessor
         .get(IAgentUserToolService)
@@ -341,14 +369,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     if (target.accessor.get(IAgentLoopService).status().state === 'running') {
       throw new Error(`Agent instance "${agentId}" is already running and cannot run concurrently`);
     }
-  }
-
-  private realignChildModel(target: IAgentScopeHandle): void {
-    const modelAlias = this.profile.data().modelAlias;
-    if (modelAlias === undefined) {
-      throw new Error('Caller agent has no model bound');
-    }
-    target.accessor.get(IAgentProfileService).update({ modelAlias });
   }
 
   private async execution(

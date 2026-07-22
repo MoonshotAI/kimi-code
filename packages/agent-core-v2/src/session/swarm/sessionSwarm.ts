@@ -28,6 +28,12 @@ type SessionSwarmTaskBase<T> = {
 export type SessionSwarmSpawnTask<T = unknown> = SessionSwarmTaskBase<T> & {
   readonly kind: 'spawn';
   readonly resumeAgentId?: undefined;
+  /**
+   * Concrete model/thinking the spawned subagent should bind to, resolved by
+   * the caller (e.g. the `AgentSwarm` tool via `resolveSubagentBinding`). When
+   * omitted, the spawn inherits the caller agent's model and thinking level.
+   */
+  readonly binding?: { readonly model: string; readonly thinking: string };
 };
 
 export type SessionSwarmResumeTask<T = unknown> = SessionSwarmTaskBase<T> & {

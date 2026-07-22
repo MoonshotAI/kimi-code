@@ -56,7 +56,11 @@ import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
+  resolveSubagentBinding,
+  resolveSubagentModel,
   resolveSubagentTimeoutMs,
+  SUBAGENT_EFFORT_ENV,
+  SUBAGENT_MODEL_ENV,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
   type SubagentConfig,
@@ -1403,6 +1407,86 @@ describe('subagent config section', () => {
     });
 
     disposables.dispose();
+  });
+
+  it('reads model/effort from config.toml and lets the env vars win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(
+      env,
+      '[subagent]\nmodel = "provider/secondary"\neffort = "low"\n',
+    );
+    expect(resolveSubagentModel(config)).toBe('provider/secondary');
+    expect(config.get<SubagentConfig>(SUBAGENT_SECTION)?.effort).toBe('low');
+
+    env[SUBAGENT_MODEL_ENV] = 'provider/env-secondary';
+    env[SUBAGENT_EFFORT_ENV] = 'high';
+    expect(resolveSubagentModel(config)).toBe('provider/env-secondary');
+    expect(config.get<SubagentConfig>(SUBAGENT_SECTION)?.effort).toBe('high');
+
+    // Blank env values are ignored.
+    env[SUBAGENT_MODEL_ENV] = '  ';
+    expect(resolveSubagentModel(config)).toBe('provider/secondary');
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned model to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [SUBAGENT_MODEL_ENV]: 'provider/env-secondary' };
+    const { config, disposables } = await createConfig(
+      env,
+      '[subagent]\nmodel = "provider/raw-secondary"\n',
+    );
+
+    // A client echoing the env-overlaid section back.
+    await config.set(SUBAGENT_SECTION, { model: 'provider/env-secondary' });
+
+    expect(resolveSubagentModel(config)).toBe('provider/env-secondary');
+    expect(config.inspect<SubagentConfig>(SUBAGENT_SECTION).userValue).toEqual({
+      model: 'provider/raw-secondary',
+    });
+
+    disposables.dispose();
+  });
+
+  it('resolves the spawn binding: secondary by default, primary on request, inherit otherwise', async () => {
+    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
+
+    const noModel = await createConfig({});
+    expect(resolveSubagentBinding(noModel.config, own)).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    expect(resolveSubagentBinding(noModel.config, own, 'subagent')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    noModel.disposables.dispose();
+
+    const withModel = await createConfig({}, '[subagent]\nmodel = "provider/secondary"\n');
+    expect(resolveSubagentBinding(withModel.config, own)).toEqual({
+      model: 'provider/secondary',
+      thinking: 'medium',
+    });
+    expect(resolveSubagentBinding(withModel.config, own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    withModel.disposables.dispose();
+
+    const withEffort = await createConfig(
+      {},
+      '[subagent]\nmodel = "provider/secondary"\neffort = "low"\n',
+    );
+    expect(resolveSubagentBinding(withEffort.config, own)).toEqual({
+      model: 'provider/secondary',
+      thinking: 'low',
+    });
+    // effort only applies together with the secondary model.
+    expect(resolveSubagentBinding(withEffort.config, own, 'primary')).toEqual({
+      model: 'provider/main',
+      thinking: 'medium',
+    });
+    withEffort.disposables.dispose();
   });
 });
 

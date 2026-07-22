@@ -4,8 +4,11 @@
  * Launches a batch of child agents (an ordinary Agent scope each) through the
  * session swarm coordinator and renders the per-subagent XML result. Reads
  * persisted swarm item labels through the Session-scoped coordinator so later
- * `resume_agent_ids` calls relabel resumed subagents like v1. Pure tool —
- * owns no scoped state.
+ * `resume_agent_ids` calls relabel resumed subagents like v1. When the caller
+ * has a model bound, the tool resolves the spawn binding up front via
+ * `resolveSubagentBinding` and threads it through the swarm tasks; otherwise
+ * binding is left to the service, which keeps its own "no model bound" check
+ * and inherit-caller fallback. Pure tool — owns no scoped state.
  */
 
 import { z } from 'zod';
@@ -29,7 +32,11 @@ import {
 } from '#/app/agentProfileCatalog/profile-shared';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
-import { resolveSubagentTimeoutMs } from '#/session/subagent/configSection';
+import {
+  buildSubagentModelDescriptions,
+  resolveSubagentBinding,
+  resolveSubagentTimeoutMs,
+} from '#/session/subagent/configSection';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
@@ -72,6 +79,12 @@ export const AgentSwarmToolInputSchema = z
       .describe(
         'Map of existing subagent agent_id to the prompt used to resume that subagent. These resumed subagents are launched before new item-based subagents.',
       ),
+    model: z
+      .enum(['subagent', 'primary'])
+      .optional()
+      .describe(
+        'Which model to run the item-spawned subagents on: "subagent" = the configured secondary model (cheaper, the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise subagents inherit your model. Resumed subagents always keep their own model.',
+      ),
   })
   .strict();
 
@@ -105,7 +118,6 @@ interface SwarmRunResult {
 
 export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   readonly name = 'AgentSwarm' as const;
-  readonly description = AGENT_SWARM_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
 
   private readonly callerAgentId: string;
@@ -119,6 +131,16 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     @IAgentProfileService private readonly profile: IAgentProfileService,
   ) {
     this.callerAgentId = scopeContext.agentId;
+  }
+
+  get description(): string {
+    const modelLines = buildSubagentModelDescriptions(
+      this.config,
+      this.profile.data().modelAlias,
+    );
+    return modelLines === undefined
+      ? AGENT_SWARM_DESCRIPTION
+      : `${AGENT_SWARM_DESCRIPTION}\n\n${modelLines}`;
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
@@ -160,11 +182,20 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
+    let binding: { model: string; thinking: string } | undefined;
     if ((args.items?.length ?? 0) > 0) {
       await this.catalog.ready;
-      const allowlist = subagentAllowlistFor(this.catalog, this.profile.data());
+      const own = this.profile.data();
+      const allowlist = subagentAllowlistFor(this.catalog, own);
       if (allowlist !== undefined && !allowlist.includes(profileName)) {
         throw new Error(subagentTypeNotAllowedMessage(profileName, allowlist));
+      }
+      if (own.modelAlias !== undefined) {
+        binding = resolveSubagentBinding(
+          this.config,
+          { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+          args.model,
+        );
       }
     }
     const timeoutMs = resolveSubagentTimeoutMs(this.config);
@@ -195,6 +226,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       return {
         ...common,
         kind: 'spawn' as const,
+        binding,
       };
     });
     const results = await this.swarmService.run({
