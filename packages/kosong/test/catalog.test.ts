@@ -425,7 +425,7 @@ describe('catalogModelToCapability', () => {
     expect(toggleable?.offEffort).toBeUndefined();
   });
 
-  it('applies the always-thinking inference only on the OpenAI wires', () => {
+  it('strips the always-thinking inference only where the wire encodes a true off', () => {
     // Claude on the Anthropic wire: off is natively encodable
     // (`thinking: {type: 'disabled'}`), so the no-toggle/no-none inference
     // must NOT mark it always-on even though models.dev declares levels only.
@@ -445,6 +445,22 @@ describe('catalogModelToCapability', () => {
     expect(anthropic[0]?.alwaysThinking).toBeUndefined();
     expect(anthropic[0]?.supportEfforts).toEqual(['low', 'medium', 'high', 'max']);
 
+    // The Kimi wire shares the same protocol-level disable
+    // (`thinking: {type: 'disabled'}`), so the marker is stripped there too.
+    const kimi = catalogProviderModels({
+      id: 'kimi-entry',
+      type: 'kimi',
+      models: {
+        'kimi-model': {
+          id: 'kimi-model',
+          reasoning: true,
+          reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+          limit: { context: 262144 },
+        },
+      },
+    });
+    expect(kimi[0]?.alwaysThinking).toBeUndefined();
+
     // The same shape on the OpenAI wire keeps the marker (gpt-5-class
     // models really cannot be turned off).
     const openai = catalogProviderModels({
@@ -460,6 +476,25 @@ describe('catalogModelToCapability', () => {
       },
     });
     expect(openai[0]?.alwaysThinking).toBe(true);
+
+    // Gemini 3 on the Google wires also keeps the marker: its floor is
+    // `thinkingLevel: 'MINIMAL'` with suppressed thoughts — still reasoning,
+    // so an "off" option would be a lie.
+    for (const type of ['google-genai', 'vertexai'] as const) {
+      const google = catalogProviderModels({
+        id: `google-${type}`,
+        type,
+        models: {
+          'gemini-3-pro-preview': {
+            id: 'gemini-3-pro-preview',
+            reasoning: true,
+            reasoning_options: [{ type: 'effort', values: ['low', 'high'] }],
+            limit: { context: 1048576 },
+          },
+        },
+      });
+      expect(google[0]?.alwaysThinking).toBe(true);
+    }
 
     // A Claude model materialized onto the Anthropic wire through a gateway
     // override loses the marker with the protocol change.
