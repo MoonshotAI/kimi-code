@@ -12,6 +12,8 @@ import {
   clearMermaidWorker,
 } from 'markstream-vue';
 import type { MarkdownIt } from 'markstream-vue';
+import { useKimiWebClient } from '../../composables/useKimiWebClient';
+import { configureMathRules } from '../../lib/markdownMath';
 import { useIsDark } from '../../composables/useIsDark';
 import type { FilePreviewRequest } from '../../types';
 import { collectFilePathAliases, findFilePathLinks } from '../../lib/filePathLinks';
@@ -64,13 +66,15 @@ clearMermaidWorker();
 setKaTeXWorker(new katexWorkerModule.default());
 setMermaidWorker(new mermaidWorkerModule.default());
 
-// Only `$$…$$` display math is rendered; single `$` inline math is disabled so
-// prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`) stay literal
-// without any escaping or code-detection gymnastics. `math_block` (the $$ rule)
-// is left enabled.
-function disableInlineMath(md: MarkdownIt): MarkdownIt {
-  md.inline.ruler.disable('math');
-  return md;
+// Only `$$…$$` display math (the `math_block` rule) is always rendered.
+// Single-`$` inline math is OPT-IN (Settings → inline math): the rule can
+// misdetect prices, env vars, and shell paths (`$5`, `$PATH`, `$HOME/bin`)
+// as math and swallow them into a broken formula, so it stays disabled
+// unless the user turns it on. The MarkdownRender instances are keyed on the
+// preference below so toggling it re-parses the message.
+const client = useKimiWebClient();
+function applyMathRules(md: MarkdownIt): MarkdownIt {
+  return configureMathRules(md, { inline: client.inlineMath.value });
 }
 
 const { t } = useI18n();
@@ -433,8 +437,9 @@ function copyDiff(code: string, idx: number) {
       <!-- Non-diff markdown → markstream (smooth streaming + shiki) -->
       <MarkdownRender
         v-if="seg.kind === 'md'"
+        :key="`${i}:${client.inlineMath.value ? 1 : 0}`"
         :content="seg.text"
-        :custom-markdown-it="disableInlineMath"
+        :custom-markdown-it="applyMathRules"
         mode="chat"
         :code-renderer="renderPlan.codeRenderer"
         :is-dark="isDark"

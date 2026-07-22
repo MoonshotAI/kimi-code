@@ -54,6 +54,8 @@ export default {
   exportLogBtn: 'Export log',
   conversationToc: 'Show conversation outline',
   conversationTocHint: 'Show a clickable outline in the right margin to jump between messages',
+  inlineMath: 'Inline math rendering',
+  inlineMathHint: 'Render $…$ as inline LaTeX in messages; may misfire on prices or variables like $PATH',
   archivedTitle: 'Archived sessions',
   archivedDesc: 'Browse archived sessions, see their workspace path, name, and archive time, and restore them to the session list.',
   archivedSearch: 'Search archived sessions',

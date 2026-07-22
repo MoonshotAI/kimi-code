@@ -39,6 +39,9 @@ const props = withDefaults(
     uiFontSize?: number;
     authReady?: boolean;
     conversationToc?: boolean;
+    /** Inline `$…$` LaTeX rendering in chat markdown (opt-in; can misdetect
+        prices / env vars / shell paths as math). */
+    inlineMath?: boolean;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
     /** Available models — used to derive the current model's thinking segments. */
@@ -63,6 +66,7 @@ const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
   setConversationToc: [on: boolean];
+  setInlineMath: [on: boolean];
   login: [];
   logout: [];
 }>();
@@ -374,6 +378,14 @@ watch(
         <span class="srow-sub">{{ t('settings.conversationTocHint') }}</span>
       </span>
       <span class="toggle" :class="{ on: conversationToc }" role="switch" :aria-checked="conversationToc" />
+    </button>
+
+    <button type="button" class="srow" @click="emit('setInlineMath', !inlineMath)">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('settings.inlineMath') }}</span>
+        <span class="srow-sub">{{ t('settings.inlineMathHint') }}</span>
+      </span>
+      <span class="toggle" :class="{ on: inlineMath }" role="switch" :aria-checked="inlineMath" />
     </button>
 
     <!-- Account: sign in / out -->

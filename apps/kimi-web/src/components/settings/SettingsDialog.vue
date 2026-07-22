@@ -40,6 +40,9 @@ const props = defineProps<{
   sound: boolean;
   /** Conversation outline (proportional bubbles, viewport indicator, hover tooltip). */
   conversationToc?: boolean;
+  /** Inline `$…$` LaTeX rendering in chat markdown (opt-in; can misdetect
+      prices / env vars / shell paths as math). */
+  inlineMath?: boolean;
   /** Global daemon config from GET /api/v1/config. Secrets are redacted server-side. */
   config?: AppConfig | null;
   /** Models from the daemon catalog, used to label default-model choices. */
@@ -61,6 +64,7 @@ const emit = defineEmits<{
   setNotifyApproval: [on: boolean];
   setSound: [on: boolean];
   setConversationToc: [on: boolean];
+  setInlineMath: [on: boolean];
   login: [];
   logout: [];
   openOnboarding: [];
@@ -395,6 +399,17 @@ function archiveTime(iso: string): string {
                 :model-value="conversationToc ?? true"
                 :label="t('settings.conversationToc')"
                 @update:model-value="emit('setConversationToc', $event)"
+              />
+            </div>
+            <div class="row">
+              <span class="rlabel">
+                {{ t('settings.inlineMath') }}
+                <span class="hint">{{ t('settings.inlineMathHint') }}</span>
+              </span>
+              <Switch
+                :model-value="inlineMath ?? false"
+                :label="t('settings.inlineMath')"
+                @update:model-value="emit('setInlineMath', $event)"
               />
             </div>
           </section>

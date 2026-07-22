@@ -772,6 +772,32 @@ function setConversationToc(v: boolean): void {
 }
 
 // ---------------------------------------------------------------------------
+// Inline `$…$` LaTeX rendering in chat markdown. Off by default: the single-`$`
+// inline rule can misdetect prices / env vars / shell paths ($5, $PATH,
+// $HOME/bin) as math, so users opt in via Settings. Persisted per browser.
+// ---------------------------------------------------------------------------
+const INLINE_MATH_STORAGE_KEY = STORAGE_KEYS.inlineMath;
+function loadInlineMathFromStorage(): boolean {
+  try {
+    return safeGetString(INLINE_MATH_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+function saveInlineMathToStorage(v: boolean): void {
+  try {
+    safeSetString(INLINE_MATH_STORAGE_KEY, v ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+const inlineMath = ref<boolean>(loadInlineMathFromStorage());
+function setInlineMath(v: boolean): void {
+  inlineMath.value = v;
+  saveInlineMathToStorage(v);
+}
+
+// ---------------------------------------------------------------------------
 // Onboarding: a "has the user been onboarded" flag that gates the first-run
 // onboarding screen (preference: language). Persisted; can be reset to re-open
 // the screen from the settings popover.
@@ -2832,6 +2858,10 @@ export function useKimiWebClient() {
     // Conversation outline (TOC)
     conversationToc,
     setConversationToc,
+
+    // Inline `$…$` LaTeX rendering (opt-in)
+    inlineMath,
+    setInlineMath,
 
     // Color scheme
     colorScheme: appearance.colorScheme,

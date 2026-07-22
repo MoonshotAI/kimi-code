@@ -54,6 +54,8 @@ export default {
   exportLogBtn: '导出日志',
   conversationToc: '显示对话目录',
   conversationTocHint: '在右侧显示可点击跳转的对话目录',
+  inlineMath: '行内公式渲染',
+  inlineMathHint: '将消息中的 $…$ 渲染为行内 LaTeX 公式，价格或 $PATH 等变量可能被误识别',
   archivedTitle: '已归档会话',
   archivedDesc: '查看已归档会话，确认其所属工作区路径、会话名称和归档时间，并可恢复到会话列表。',
   archivedSearch: '搜索已归档会话',
