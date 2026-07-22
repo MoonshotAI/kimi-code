@@ -86,7 +86,7 @@ class StubConfigService implements IConfigService {
   }
 }
 
-describe('ProviderTypeSchema (free-form vendor identity)', () => {
+describe('ProviderTypeSchema (enum validation)', () => {
   it('parses unregistered vendor names — resolve-time validation, not parse-time', () => {
     const parsed = ProvidersSectionSchema.parse({
       'my-vendor': { type: 'a-vendor-registered-elsewhere', baseUrl: 'https://example.com/v1' },
