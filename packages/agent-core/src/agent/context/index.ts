@@ -1,4 +1,9 @@
-import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/kosong';
+import {
+  createToolMessage,
+  getModelInputTokenLimit,
+  type ContentPart,
+  type Message,
+} from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
@@ -220,7 +225,7 @@ export class ContextMemory {
     const importTokenCount = estimateTokensForMessages([message]);
     const totalTokenCount = currentTokenCount + importTokenCount;
     const capability = this.agent.config.modelCapabilities;
-    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
+    const maxContextTokens = getModelInputTokenLimit(capability);
     if (maxContextTokens > 0 && totalTokenCount > maxContextTokens) {
       throw new KimiError(
         ErrorCodes.CONTEXT_OVERFLOW,

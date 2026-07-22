@@ -33,6 +33,7 @@ import {
   isRetryableGenerateError,
 } from '#/kosong/contract/errors';
 import { createUserMessage, type Message } from '#/kosong/contract/message';
+import { getModelInputTokenLimit } from '#/kosong/contract/capability';
 import type { Tool } from '#/kosong/contract/tool';
 import { inputTotal, type TokenUsage } from '#/kosong/contract/usage';
 import { IEventBus } from '#/app/event/eventBus';
@@ -173,7 +174,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
   private getEffectiveMaxContextTokens(): number {
     const capability = this.profile.data().modelCapabilities;
-    const configured = capability.max_input_tokens ?? capability.max_context_tokens;
+    const configured = getModelInputTokenLimit(capability);
     const modelAlias = this.profile.data().modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);

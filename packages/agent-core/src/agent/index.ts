@@ -6,7 +6,7 @@ import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
-import { generate, type ChatProvider } from '@moonshot-ai/kosong';
+import { generate, getModelInputTokenLimit, type ChatProvider } from '@moonshot-ai/kosong';
 
 import type { EnabledPluginSessionStart, PluginCommandDef } from '#/plugin';
 import { expandCommandArguments } from '../plugin/commands';
@@ -674,7 +674,7 @@ export class Agent {
 
     const contextTokens = this.context.tokenCount;
     const capability = this.config.modelCapabilities;
-    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
+    const maxContextTokens = getModelInputTokenLimit(capability);
     const contextUsage =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? contextTokens / maxContextTokens

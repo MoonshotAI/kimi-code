@@ -16,6 +16,7 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
   createUserMessage,
+  getModelInputTokenLimit,
   isImageFormatError,
 } from '@moonshot-ai/kosong';
 
@@ -125,7 +126,7 @@ export class FullCompaction {
 
   getEffectiveMaxContextTokens(): number {
     const capability = this.agent.config.modelCapabilities;
-    const configured = capability.max_input_tokens ?? capability.max_context_tokens;
+    const configured = getModelInputTokenLimit(capability);
     const modelAlias = this.agent.config.modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);

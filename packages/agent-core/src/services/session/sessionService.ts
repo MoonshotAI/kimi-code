@@ -23,6 +23,7 @@ import {
   type UndoSessionRequest,
   type UndoSessionResponse,
 } from '@moonshot-ai/protocol';
+import { getModelInputTokenLimit } from '@moonshot-ai/kosong';
 
 import { IApprovalService } from '../approval/approval';
 import { ICoreProcessService } from '../coreProcess/coreProcess';
@@ -473,7 +474,7 @@ export class SessionService extends Disposable implements ISessionService {
     ]);
 
     const capability = config.modelCapabilities;
-    const maxContextTokens = capability?.max_input_tokens ?? capability?.max_context_tokens ?? 0;
+    const maxContextTokens = getModelInputTokenLimit(capability);
     const contextTokens = context.tokenCount;
     const contextUsage = maxContextTokens > 0 ? Math.min(1, contextTokens / maxContextTokens) : 0;
 
