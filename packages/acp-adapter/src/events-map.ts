@@ -49,33 +49,22 @@ export function assistantDeltaToSessionUpdate(
  *
  * `completed` → `end_turn`: the model finished a clean turn.
  * `cancelled` → `cancelled`: the client/agent cancelled mid-turn.
- * `failed`    → `end_turn` *with* an out-of-band log: the SDK reports a
- *   step-level error via `TurnEndedEvent.error`. ACP's `StopReason` does
- *   not have a dedicated `failed` variant in this protocol version, and
- *   the spec discourages signaling errors through `stopReason` (errors
- *   belong on the JSON-RPC error channel). Returning `end_turn` keeps the
- *   client unblocked; the caller is expected to log the `error` payload
- *   separately so the failure is observable in the agent logs.
- * `failed` + `provider.filtered` → `refusal`: the provider's safety policy
- *   blocked the response. ACP's `refusal` stop reason is the native signal
- *   for a model/provider decline, so the client can render the block instead
- *   of mistaking it for a clean `end_turn`.
  * `blocked`   → `refusal`: a prompt hook blocked the turn before the model
  *   ran. ACP has no separate hook-blocked terminal state, so reuse the
  *   refusal channel instead of reporting a clean `end_turn`.
+ *
+ * Failed turns are deliberately excluded from this function's input. The
+ * caller must settle those through the JSON-RPC error channel, except for
+ * provider filtering, which has the native ACP `refusal` stop reason.
  */
 export function turnEndReasonToStopReason(
-  reason: TurnEndReason,
-  error?: { readonly code: string },
+  reason: Exclude<TurnEndReason, 'failed'>,
 ): AcpStopReason {
   switch (reason) {
     case 'completed':
       return 'end_turn';
     case 'cancelled':
       return 'cancelled';
-    case 'failed':
-      if (error?.code === 'provider.filtered') return 'refusal';
-      return 'end_turn';
     case 'blocked':
       return 'refusal';
   }

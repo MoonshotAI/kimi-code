@@ -14,7 +14,13 @@ import {
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  ApprovalHandler,
+  ApprovalRequest,
+  Event,
+  KimiHarness,
+  Session,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
@@ -47,6 +53,17 @@ class CollectingClient implements Client {
   }
   async readTextFile(_p: ReadTextFileRequest): Promise<ReadTextFileResponse> {
     throw new Error('CollectingClient.readTextFile should not be called in prompt test');
+  }
+}
+
+class PermissionCollectingClient extends CollectingClient {
+  readonly permissionRequests: RequestPermissionRequest[] = [];
+
+  override async requestPermission(
+    request: RequestPermissionRequest,
+  ): Promise<RequestPermissionResponse> {
+    this.permissionRequests.push(request);
+    return { outcome: { outcome: 'cancelled' } };
   }
 }
 
@@ -263,6 +280,7 @@ describe('AcpServer session/prompt', () => {
     let unsubCount = 0;
     let promptCall = 0;
     let firstError: unknown;
+    let approvalHandler: ApprovalHandler | undefined;
     let resolveFirstTurn: (() => void) | undefined;
     const firstTurn = new Promise<void>((resolve) => {
       resolveFirstTurn = () => {
@@ -312,6 +330,9 @@ describe('AcpServer session/prompt', () => {
           listeners.delete(fn);
         };
       },
+      setApprovalHandler: (handler: ApprovalHandler | undefined) => {
+        approvalHandler = handler;
+      },
     } as unknown as Session;
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
@@ -320,7 +341,8 @@ describe('AcpServer session/prompt', () => {
 
     const { agentStream, clientStream } = makeInMemoryStreamPair();
     new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
-    const client = new ClientSideConnection(() => new CollectingClient(), clientStream);
+    const collecting = new PermissionCollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
 
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
@@ -340,9 +362,126 @@ describe('AcpServer session/prompt', () => {
     ).rejects.toMatchObject({ code: -32600 });
     expect(firstError).toBeUndefined();
 
+    if (approvalHandler === undefined) {
+      throw new Error('approval handler was not registered');
+    }
+    const approvalRequest: ApprovalRequest = {
+      toolCallId: 'active-tool',
+      toolName: 'Bash',
+      action: 'run command',
+      display: { kind: 'command', command: 'echo active' },
+    };
+    await approvalHandler(approvalRequest);
+    expect(collecting.permissionRequests[0]?.toolCall.toolCallId).toBe('1:active-tool');
+
     resolveFirstTurn?.();
     await expect(firstPrompt).resolves.toMatchObject({ stopReason: 'end_turn' });
     expect(unsubCount).toBe(2);
+  });
+
+  it('waits for its own turn when an earlier main-agent turn ends before the prompt launch arrives', async () => {
+    const sessionId = 'sess-terminal-ownership';
+    const listeners = new Set<(event: Event) => void>();
+    let promptCall = 0;
+    let approvalHandler: ApprovalHandler | undefined;
+    let releaseSecondLaunch: (() => void) | undefined;
+    let notifySecondLaunchWaiting: (() => void) | undefined;
+    const secondLaunchWaiting = new Promise<void>((resolve) => {
+      notifySecondLaunchWaiting = resolve;
+    });
+    const secondLaunchGate = new Promise<void>((resolve) => {
+      releaseSecondLaunch = resolve;
+    });
+    const emit = (event: Event): void => {
+      for (const listener of listeners) listener(event);
+    };
+    const session = {
+      id: sessionId,
+      prompt: async (_input: unknown) => {
+        promptCall += 1;
+        if (promptCall === 1) {
+          emit({
+            type: 'turn.started',
+            sessionId,
+            agentId: 'main',
+            turnId: 1,
+            origin: { kind: 'user' },
+          } as Event);
+          return;
+        }
+        notifySecondLaunchWaiting?.();
+        await secondLaunchGate;
+        emit({
+          type: 'turn.started',
+          sessionId,
+          agentId: 'main',
+          turnId: 2,
+          origin: { kind: 'user' },
+        } as Event);
+        emit({
+          type: 'turn.ended',
+          sessionId,
+          agentId: 'main',
+          turnId: 2,
+          reason: 'completed',
+        } as Event);
+      },
+      cancel: async () => undefined,
+      onEvent: (listener: (event: Event) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      setApprovalHandler: (handler: ApprovalHandler | undefined) => {
+        approvalHandler = handler;
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((connection) => new AcpServer(harness, connection), agentStream);
+    const collecting = new PermissionCollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+
+    const firstPrompt = client.prompt({ sessionId, prompt: [textBlock('first')] });
+    await Promise.resolve();
+    let secondSettled = false;
+    const secondPrompt = client
+      .prompt({ sessionId, prompt: [textBlock('second')] })
+      .then((response) => {
+        secondSettled = true;
+        return response;
+      });
+    await secondLaunchWaiting;
+
+    emit({
+      type: 'turn.ended',
+      sessionId,
+      agentId: 'main',
+      turnId: 1,
+      reason: 'cancelled',
+    } as Event);
+    await expect(firstPrompt).resolves.toMatchObject({ stopReason: 'cancelled' });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+    if (approvalHandler === undefined) {
+      throw new Error('approval handler was not registered');
+    }
+    await approvalHandler({
+      toolCallId: 'late-tool',
+      toolName: 'Bash',
+      action: 'run command',
+      display: { kind: 'command', command: 'echo late' },
+    });
+    expect(collecting.permissionRequests[0]?.toolCall.toolCallId).toBe('late-tool');
+
+    releaseSecondLaunch?.();
+    await expect(secondPrompt).resolves.toMatchObject({ stopReason: 'end_turn' });
   });
 
   it('ignores a subagent turn.ended and resolves on the main agent turn.ended', async () => {

@@ -49,6 +49,8 @@ kimi acp
 | `session/close` | 否 | |
 | `logout` | 否 | |
 
+`session/prompt` 不会把失败的 turn 报告为 `end_turn`。认证失败返回不含错误数据的 `authRequired (-32000)`，供应商过滤和提示词 hook 拦截返回 `refusal`，其余失败返回 `internalError (-32603)`。对于以 `internalError` 返回的公开 Kimi 错误码，`error.data` 仅包含 `code`、规范的 `retryable` 值和可选的合法 HTTP `statusCode`；私有错误码、供应商原始消息与其他详细信息不会通过 ACP 发送。
+
 ### 稳定面 client-side reverse-RPC — agent → IDE（4 / 9）
 
 | 方法 | 状态 | 说明 |
