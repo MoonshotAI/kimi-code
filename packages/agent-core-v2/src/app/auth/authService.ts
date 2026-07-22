@@ -27,6 +27,7 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
   type ManagedKimiConfigShape,
@@ -258,6 +259,21 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined> {
     return this.toolkit.getCachedAccessToken(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
+  }
+
+  getManagedUsage(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUsageResult> {
+    // Same resolution path as the managed model refresh: env-aware base url +
+    // oauth ref, so a self-hosted/proxied login environment reports its own
+    // usage endpoint. The toolkit handles token freshness and error mapping.
+    const configured = this.providerService.get(provider);
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: configured?.baseUrl,
+      configuredOAuthRef: configured?.oauth,
+    });
+    return this.toolkit.getManagedUsage(provider, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
   }
 
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {

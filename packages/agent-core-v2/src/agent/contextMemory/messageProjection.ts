@@ -13,10 +13,18 @@
  * (image/video/audio — e.g. ReadMediaFile) passes the raw kosong content-part
  * array through, the same shape the live `tool.result` event stream carries,
  * so REST consumers can still render the media after reload/resume.
+ *
+ * A user `video_url` part projects to a structured `video` content part so
+ * REST consumers can render it: an internal `kimi-file://<id>?path=…`
+ * reference becomes `{ kind: 'file', file_id }` (the materialization path is
+ * stripped, never leaked to clients); any other url becomes `{ kind: 'url' }`
+ * carrying the provider id. An `audio_url` part still flattens to a text
+ * marker.
  */
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from './protocolMessage';
 
+import { parseKimiFileUrl } from '#/agent/media/kimiFileUrl';
 import type { ContextMessage } from './types';
 
 function deriveMessageId(sessionId: string, index: number): string {
@@ -41,12 +49,16 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
     case 'image_url':
       return {
         type: 'image',
-        source: { kind: 'url', url: part.imageUrl.url },
+        source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id },
       };
     case 'audio_url':
       return { type: 'text', text: `[audio:${part.audioUrl.url}]` };
-    case 'video_url':
-      return { type: 'text', text: `[video:${part.videoUrl.url}]` };
+    case 'video_url': {
+      const ref = parseKimiFileUrl(part.videoUrl.url);
+      return ref !== undefined
+        ? { type: 'video', source: { kind: 'file', file_id: ref.fileId } }
+        : { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } };
+    }
   }
 }
 

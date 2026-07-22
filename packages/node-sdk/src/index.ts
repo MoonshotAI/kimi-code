@@ -26,10 +26,13 @@ export {
   fetchCatalog,
   inferWireType,
   loadBuiltInCatalog,
+  resolveCatalogImport,
 } from '#/catalog';
 export type {
   ApplyCatalogProviderOptions,
   Catalog,
+  CatalogImportInvalidReason,
+  CatalogImportResolution,
   CatalogModel,
   CatalogProviderEntry,
   FetchCatalogOptions,

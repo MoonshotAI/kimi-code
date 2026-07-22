@@ -77,6 +77,7 @@ interface FakeToolkit {
   readonly logout: ReturnType<typeof vi.fn>;
   readonly getCachedAccessToken: ReturnType<typeof vi.fn>;
   readonly tokenProvider: ReturnType<typeof vi.fn>;
+  readonly getManagedUsage: ReturnType<typeof vi.fn>;
 }
 
 describe('OAuthService', () => {
@@ -152,6 +153,7 @@ describe('OAuthService', () => {
       logout: vi.fn().mockResolvedValue({ providerName: OAUTH_PROVIDER, ok: true }),
       getCachedAccessToken: vi.fn().mockResolvedValue(undefined),
       tokenProvider: vi.fn().mockReturnValue({ getAccessToken: async () => 'access-token' }),
+      getManagedUsage: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
     };
     ix = createServices(disposables, {
       base: [registerBootstrapServices, registerTelemetryServices],
@@ -676,6 +678,18 @@ describe('OAuthService', () => {
       configuredOAuthRef: { storage: 'file', key: 'stale-key' },
     }).oauthRef;
     expect(toolkit.tokenProvider).toHaveBeenCalledWith(OAUTH_PROVIDER, expectedRef);
+  });
+
+  it('getManagedUsage resolves the managed runtime auth and delegates to the toolkit', async () => {
+    const usage = { kind: 'ok' as const, summary: null, limits: [], extraUsage: null };
+    toolkit.getManagedUsage.mockResolvedValue(usage);
+    const svc = createService();
+
+    await expect(svc.getManagedUsage(OAUTH_PROVIDER)).resolves.toBe(usage);
+    expect(toolkit.getManagedUsage).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+      oauthRef: EXAMPLE_COM_SCOPED_REF,
+      baseUrl: 'https://api.example.com',
+    });
   });
 
   it('refreshOAuthProviderModels returns an empty result when no Kimi Code provider is configured', async () => {

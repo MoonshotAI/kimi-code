@@ -107,3 +107,47 @@ export const refreshOAuthProviderModelsResponseSchema = z.object({
 export type RefreshOAuthProviderModelsResponse = z.infer<
   typeof refreshOAuthProviderModelsResponseSchema
 >;
+
+// ---------------------------------------------------------------------------
+// Managed-account usage (`GET /v1/oauth/usage`) — mirrors the toolkit's
+// `AuthManagedUsageResult` (camelCase domain model → snake_case wire DTO).
+// ---------------------------------------------------------------------------
+
+export const usageRowSchema = z.object({
+  label: z.string(),
+  used: z.number().int(),
+  limit: z.number().int(),
+  reset_hint: z.string().optional(),
+});
+export type UsageRow = z.infer<typeof usageRowSchema>;
+
+export const boosterWalletSchema = z.object({
+  balance_cents: z.number().int(),
+  total_cents: z.number().int(),
+  monthly_charge_limit_enabled: z.boolean(),
+  monthly_charge_limit_cents: z.number().int(),
+  monthly_used_cents: z.number().int(),
+  currency: z.string(),
+});
+export type BoosterWallet = z.infer<typeof boosterWalletSchema>;
+
+export const managedUsageOkSchema = z.object({
+  kind: z.literal('ok'),
+  summary: usageRowSchema.nullable(),
+  limits: z.array(usageRowSchema),
+  extra_usage: boosterWalletSchema.nullable(),
+});
+export type ManagedUsageOk = z.infer<typeof managedUsageOkSchema>;
+
+export const managedUsageErrorSchema = z.object({
+  kind: z.literal('error'),
+  message: z.string(),
+  status: z.number().int().optional(),
+});
+export type ManagedUsageError = z.infer<typeof managedUsageErrorSchema>;
+
+export const managedUsageResultSchema = z.discriminatedUnion('kind', [
+  managedUsageOkSchema,
+  managedUsageErrorSchema,
+]);
+export type ManagedUsageResult = z.infer<typeof managedUsageResultSchema>;

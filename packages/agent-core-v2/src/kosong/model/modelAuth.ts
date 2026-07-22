@@ -14,6 +14,10 @@
  *    managed models routed through protocol `anthropic` — keep only
  *    catalog-declared effort metadata. The verdict comes from the registry
  *    (`drivesThinkingThroughTraits`), not from a vendor string compare.
+ *    The unknown-name fallback within that inference only applies to names
+ *    that still carry a Claude marker (a `claude` substring or a bare family
+ *    word like `sonnet-latest`); clearly non-Claude names served over the
+ *    Anthropic protocol get no synthesized effort metadata.
  */
 
 import { Error2 } from '#/_base/errors/errors';
@@ -22,8 +26,8 @@ import type { ResolutionTrace } from '#/kosong/contract/inspection';
 import { ConfigErrors } from '../../app/config/errors';
 import {
   BUDGET_THINKING_EFFORTS,
-  inferAnthropicModelProfile,
   matchKnownAnthropicModelProfile,
+  matchUnknownClaudeProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
 import type { ProviderConfig } from '../provider/provider';
 import { explainProviderEndpoint } from '../provider/providerDefinition';
@@ -115,7 +119,13 @@ export function effectiveModelConfig(
   ) {
     delete effective.defaultEffort;
   }
-  return withAnthropicProfile(effective, providerType);
+  const clamped =
+    effective.maxInputSize !== undefined &&
+    effective.maxContextSize !== undefined &&
+    effective.maxInputSize > effective.maxContextSize
+      ? { ...effective, maxInputSize: effective.maxContextSize }
+      : effective;
+  return withAnthropicProfile(clamped, providerType);
 }
 
 function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelRecord {
@@ -125,7 +135,7 @@ function withAnthropicProfile(model: ModelRecord, providerType?: string): ModelR
     wireName === undefined
       ? undefined
       : providerType !== undefined && !drivesThinkingThroughTraits(providerType) && protocol === 'anthropic'
-        ? inferAnthropicModelProfile(wireName)
+        ? (matchKnownAnthropicModelProfile(wireName) ?? matchUnknownClaudeProfile(wireName))
         : matchKnownAnthropicModelProfile(wireName);
   if (profile === undefined) return model;
   const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';

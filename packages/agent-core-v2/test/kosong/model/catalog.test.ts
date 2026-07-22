@@ -216,6 +216,38 @@ describe('Model assembly (pure data)', () => {
     }
   });
 
+  it('passes a declared offEffort through providerOptions for the OpenAI wires', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        gateway: { type: 'openai', apiKey: 'sk-gw', baseUrl: 'https://gateway.example.test/v1' },
+        responses: { type: 'openai_responses', apiKey: 'sk-r' },
+      },
+      models: {
+        grok: {
+          provider: 'gateway',
+          model: 'grok-4',
+          maxContextSize: 256000,
+          supportEfforts: ['low', 'medium', 'high'],
+          offEffort: 'none',
+        },
+        grokResponses: {
+          provider: 'responses',
+          model: 'grok-4',
+          maxContextSize: 256000,
+          offEffort: 'none',
+        },
+        plain: { provider: 'gateway', model: 'gpt-4.1', maxContextSize: 1000 },
+      },
+    });
+    try {
+      expect(catalog.get('grok').providerOptions).toEqual({ offEffort: 'none' });
+      expect(catalog.get('grokResponses').providerOptions).toEqual({ offEffort: 'none' });
+      expect(catalog.get('plain').providerOptions).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('enables google-genai vertex mode through providerOptions when project and location resolve', () => {
     const { host, catalog } = createHost({
       providers: {
@@ -476,6 +508,9 @@ describe('ModelCatalog inspect', () => {
       expect(view.sources['resolved.capabilities.max_context_tokens']).toMatchObject({
         kind: 'synthesized',
       });
+      expect(view.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'none',
+      });
       expect(view.sources['resolved']).toMatchObject({ kind: 'synthesized' });
       // Kimi's definition capability is UNKNOWN — nothing is detected.
       expect(view.sources['resolved.capabilities.tool_use']).toMatchObject({ kind: 'none' });
@@ -549,6 +584,74 @@ describe('ModelCatalog inspect', () => {
       expect(view.sources['model.effective.maxContextSize']).toMatchObject({ kind: 'override' });
       expect(view.sources['resolved.maxContextSize']).toMatchObject({ kind: 'override' });
       expect(view.sources['model.effective.model']).toMatchObject({ kind: 'config' });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('attributes the input cap to config, its clamp, and its absence', () => {
+    const { host, catalog } = createHost({
+      providers: {
+        kimi: { type: 'kimi', apiKey: 'sk', baseUrl: 'https://api.example.test/v1' },
+      },
+      models: {
+        declared: {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 400000,
+          maxInputSize: 272000,
+        },
+        clamped: {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 400000,
+          maxInputSize: 272000,
+          overrides: { maxContextSize: 128000 },
+        },
+        clampedOverride: {
+          provider: 'kimi',
+          model: 'kimi-k2',
+          maxContextSize: 400000,
+          overrides: { maxContextSize: 128000, maxInputSize: 272000 },
+        },
+        plain: { provider: 'kimi', model: 'kimi-k2', maxContextSize: 100 },
+      },
+    });
+    try {
+      const declaredView = catalog.inspect('declared');
+      expect(declaredView.resolved.maxInputSize).toBe(272000);
+      expect(declaredView.sources['model.effective.maxInputSize']).toMatchObject({ kind: 'config' });
+      expect(declaredView.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'config',
+      });
+
+      const clampedView = catalog.inspect('clamped');
+      expect(clampedView.resolved.maxInputSize).toBe(128000);
+      expect(clampedView.sources['model.effective.maxInputSize']).toMatchObject({
+        kind: 'synthesized',
+        detail: expect.stringContaining('clamped'),
+      });
+      expect(clampedView.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'synthesized',
+      });
+
+      const clampedOverrideView = catalog.inspect('clampedOverride');
+      expect(clampedOverrideView.resolved.maxInputSize).toBe(128000);
+      expect(clampedOverrideView.sources['model.effective.maxInputSize']).toMatchObject({
+        kind: 'synthesized',
+        detail: expect.stringContaining('clamped'),
+      });
+      expect(clampedOverrideView.sources['model.effective.maxInputSize']).not.toMatchObject({
+        kind: 'override',
+      });
+      expect(clampedOverrideView.sources['resolved.maxInputSize']).toMatchObject({
+        kind: 'synthesized',
+      });
+
+      const plainView = catalog.inspect('plain');
+      expect(plainView.sources['resolved.capabilities.max_input_tokens']).toMatchObject({
+        kind: 'none',
+      });
     } finally {
       host.dispose();
     }
@@ -898,12 +1001,12 @@ describe('ModelCatalog enumeration', () => {
     }
   });
 
-  it('projects latest Opus efforts for unknown Anthropic-compatible models', async () => {
+  it('projects latest Opus efforts for unknown Claude-marked Anthropic-compatible models', async () => {
     const sections = structuredClone(catalogSections);
     (sections['providers'] as Record<string, ProviderConfig>)['custom'] = { type: 'anthropic' };
     (sections['models'] as Record<string, ModelRecord>)['compatible'] = {
       provider: 'custom',
-      model: 'compatible-model',
+      model: 'custom-claude-model',
       maxContextSize: 128000,
     };
     const { host, catalog } = createHost(sections);
@@ -919,12 +1022,31 @@ describe('ModelCatalog enumeration', () => {
     }
   });
 
-  it('projects latest Opus efforts for a flat providerless Anthropic model', async () => {
+  it('does not project fallback efforts for clearly non-Claude Anthropic-compatible models', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['providers'] as Record<string, ProviderConfig>)['custom'] = { type: 'anthropic' };
+    (sections['models'] as Record<string, ModelRecord>)['compatible'] = {
+      provider: 'custom',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const compatible = (await catalog.listModels()).find((model) => model.model === 'compatible');
+      expect(compatible?.capabilities).toBeUndefined();
+      expect(compatible?.support_efforts).toBeUndefined();
+      expect(compatible?.default_effort).toBeUndefined();
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects latest Opus efforts for a flat providerless Claude-marked Anthropic model', async () => {
     const { host, catalog } = createHost({
       providers: {},
       models: {
         compatible: {
-          model: 'compatible-model',
+          model: 'custom-claude-model',
           baseUrl: 'https://anthropic.example.test',
           protocol: 'anthropic',
           maxContextSize: 128000,
@@ -938,6 +1060,28 @@ describe('ModelCatalog enumeration', () => {
         support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         default_effort: 'high',
       });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('does not project fallback efforts for a flat providerless non-Claude Anthropic model', async () => {
+    const { host, catalog } = createHost({
+      providers: {},
+      models: {
+        compatible: {
+          model: 'compatible-model',
+          baseUrl: 'https://anthropic.example.test',
+          protocol: 'anthropic',
+          maxContextSize: 128000,
+        },
+      },
+    });
+    try {
+      const compatible = (await catalog.listModels()).find((model) => model.model === 'compatible');
+      expect(compatible?.capabilities).toBeUndefined();
+      expect(compatible?.support_efforts).toBeUndefined();
+      expect(compatible?.default_effort).toBeUndefined();
     } finally {
       host.dispose();
     }

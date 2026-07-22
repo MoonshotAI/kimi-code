@@ -29,6 +29,18 @@
  * Path safety: goes through the shared path access resolver used by
  * Read/Write/Edit.
  *
+ * Videos are delivered through the provider's upload channel when one is
+ * bound, falling back to an inline base64 part when the channel exists but
+ * fails at runtime (no files endpoint, network/server failure) — a failed
+ * upload must not turn the whole read into an error. The same fallback
+ * covers providers with no upload hook at all, as long as their protocol
+ * converts `video_url` (`inlineVideoSupported`, computed from the model's
+ * protocol at registration); when the wire would drop the inline payload
+ * anyway (the OpenAI family), the by-design no-hook error
+ * (`VideoUploadUnsupportedError`) surfaces instead. Auth rejections
+ * (`provider.auth_error` / 401 / 403) always surface, because they drive
+ * credential refresh rather than mask a bad token.
+ *
  * Registration is capability-gated by `registerMediaTools`: this tool is
  * only registered when the active model supports image or video input.
  */
@@ -36,6 +48,8 @@
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart, VideoURLPart } from '#/kosong/contract/message';
 import type { VideoUploadInput as ProviderVideoUploadInput } from '#/kosong/contract/provider';
+import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
+import { inlineVideoPart, isVideoUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { z } from 'zod';
 
@@ -79,7 +93,10 @@ const MAX_MEDIA_BYTES = MAX_MEDIA_MEGABYTES * 1024 * 1024;
 
 export type VideoUploadInput = ProviderVideoUploadInput;
 
-export type VideoUploader = (input: VideoUploadInput) => Promise<VideoURLPart>;
+export type VideoUploader = (
+  input: VideoUploadInput,
+  options?: { readonly signal?: AbortSignal },
+) => Promise<VideoURLPart>;
 
 
 export const ReadMediaFileInputSchema = z.object({
@@ -237,11 +254,21 @@ function buildFullResolutionLimitError(path: string, finalBytes: number): string
   );
 }
 
+function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boolean): boolean {
+  // No upload hook by design: surfacing the honest error only pays when the
+  // wire would drop an inline payload anyway (the OpenAI family). Protocols
+  // that convert video_url (kimi, anthropic, google-genai, …) take the
+  // inline fallback instead.
+  if (error instanceof VideoUploadUnsupportedError) return !inlineVideoSupported;
+  return isVideoUploadAuthError(error);
+}
+
 export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly compressTelemetry: ImageCompressionTelemetry | undefined;
+  private readonly inlineVideoSupported: boolean;
   constructor(
     private readonly fs: IHostFileSystem,
     private readonly env: IHostEnvironment,
@@ -249,10 +276,32 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
     private readonly capabilities: ModelCapability,
     private readonly videoUploader?: VideoUploader,
     telemetry?: ITelemetryService,
+    inlineVideoSupported?: boolean,
   ) {
     this.description = buildDescription(capabilities);
     this.compressTelemetry =
       telemetry === undefined ? undefined : { client: telemetry, source: 'read_media' };
+    this.inlineVideoSupported = inlineVideoSupported ?? false;
+  }
+
+  private async videoContentPart(
+    data: Buffer,
+    mimeType: string,
+    safePath: string,
+  ): Promise<ContentPart> {
+    if (this.videoUploader !== undefined) {
+      try {
+        return await this.videoUploader({
+          data,
+          mimeType,
+          filename: safePath.split(/[\\/]/).at(-1),
+        });
+      } catch (error) {
+        if (shouldSurfaceVideoUploadError(error, this.inlineVideoSupported)) throw error;
+        // Fall through to the inline form.
+      }
+    }
+    return inlineVideoPart(data, mimeType);
   }
 
   resolveExecution(args: ReadMediaFileInput): ToolExecution {
@@ -475,18 +524,8 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             dimensions = { width: compressed.originalWidth, height: compressed.originalHeight };
           }
         }
-      } else if (this.videoUploader !== undefined) {
-        mediaPart = await this.videoUploader({
-          data,
-          mimeType: fileType.mimeType,
-          filename: safePath.split(/[\\/]/).at(-1),
-        });
       } else {
-        const base64 = data.toString('base64');
-        mediaPart = {
-          type: 'video_url',
-          videoUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
-        };
+        mediaPart = await this.videoContentPart(data, fileType.mimeType, safePath);
       }
 
       const tag = fileType.kind === 'image' ? 'image' : 'video';

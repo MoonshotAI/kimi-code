@@ -23,7 +23,7 @@
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import type { VideoURLPart } from '#/kosong/contract/message';
-import { APIStatusError, isAbortError } from '#/kosong/contract/errors';
+import { APIStatusError, isAbortError, VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { generate, type GenerateResult } from '#/kosong/contract/generate';
 import type {
   ChatProvider,
@@ -85,7 +85,7 @@ export class ModelRequesterImpl implements ModelRequester {
   ): Promise<VideoURLPart> {
     const provider = this.resolveChatProvider();
     if (provider.uploadVideo === undefined) {
-      throw new Error(
+      throw new VideoUploadUnsupportedError(
         `Model "${this.model.id}" (protocol=${this.model.protocol}) does not support video upload`,
       );
     }

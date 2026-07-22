@@ -157,7 +157,8 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     id: 'ses-1',
     model: 'k2',
     summary: { title: null },
-    prompt: vi.fn(async () => {}),
+    prompt: vi.fn(async (_input: unknown) => {}),
+    compact: vi.fn(async () => {}),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
     startBtw: vi.fn(async () => 'agent-btw'),
@@ -1553,6 +1554,63 @@ command = "vim"
     expect(transcript).toContain('hello');
     expect(transcript).not.toContain('review');
   });
+
+  it('sends a pasted video as a file:// video_url part', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      // Submission is fully synchronous: the paste is copied to the cache and
+      // referenced by a `file://` video_url the engine resolves in-turn.
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+
+      const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
+        | Array<{
+            type: string;
+            text?: string;
+            videoUrl?: { url: string };
+          }>
+        | undefined;
+      expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
+      expect(parts?.[1]?.type).toBe('video_url');
+      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('queues a pasted video (file:// part) while a turn is streaming', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput(`describe ${attachment.placeholder}`);
+
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toHaveLength(1);
+      const queued = driver.state.queuedMessages[0];
+      const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
+      expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
+      expect(parts?.[1]?.type).toBe('video_url');
+      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
+
+      driver.sendQueuedMessage(session, queued!);
+      expect(session.prompt).toHaveBeenCalledWith(parts);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
 
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
@@ -5381,7 +5439,33 @@ describe('/effort support_efforts override', () => {
     expect(transcript).toContain('Thinking set to max.');
   });
 
-  it('offers the latest Opus efforts for an unknown Anthropic-compatible model', async () => {
+  it('offers the latest Opus efforts for an unknown Claude-marked Anthropic-compatible model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-claude-model',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('offers no fallback efforts for a clearly non-Claude Anthropic-compatible model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {
@@ -5404,7 +5488,7 @@ describe('/effort support_efforts override', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
     });
     const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).toContain('Max');
+    expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
   it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
@@ -5434,14 +5518,14 @@ describe('/effort support_efforts override', () => {
     expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
-  it('offers the latest Opus efforts for a flat providerless Anthropic model', async () => {
+  it('offers the latest Opus efforts for a flat providerless Claude-marked Anthropic model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {},
         models: {
           // v2 flat model shape: no named provider, inline endpoint + protocol.
           k2: {
-            model: 'compatible-model',
+            model: 'compatible-claude-model',
             baseUrl: 'https://anthropic.example.test',
             protocol: 'anthropic',
             maxContextSize: 100,

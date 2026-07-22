@@ -149,10 +149,13 @@ KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 | `provider` | `string` | 是 | 使用的供应商名称，必须在 `providers` 中定义 |
 | `model` | `string` | 是 | 调用 API 时实际传给服务端的模型 ID |
 | `max_context_size` | `integer` | 是 | 最大上下文长度（token 数），必须 ≥ 1 |
+| `max_input_size` | `integer` | 否 | 模型声明的单次请求输入上限（当低于总窗口时，如 gpt-5 的 400k 窗口 / 272k 输入）。压缩、上下文溢出检查和用量比率优先使用它；补全预算仍使用总窗口。解析时会被钳制到不超过 `max_context_size` |
 | `max_output_size` | `integer` | 否 | 单次请求的输出 token 上限（对应 `max_tokens`）。目前仅 `anthropic` 供应商读取。为 Claude 模型设置后，这个显式值会覆盖内置的服务端最大值 |
 | `capabilities` | `array<string>` | 否 | 显式追加的能力标签：`thinking`、`always_thinking`、`image_in`、`video_in`、`audio_in`、`tool_use`。与供应商自动识别的能力取并集，只能追加不能移除 |
 | `support_efforts` | `array<string>` | 否 | 模型接受的 Thinking 档位。对 `kimi` 而言，在运行时选择列表外的值会报错；模型解析时若配置值或之前的值不受目标模型支持，会回落到目标模型的 `default_effort`，并将该有效值同步给 UI。支持 Thinking 但没有此字段的 Kimi 模型使用布尔 `on` / `off`。其他 provider 在协议提供原生 effort 字段时会原样传递具体值；协议仅提供等级或 token budget 时，只做必要的格式转换。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] support_efforts` |
 | `default_effort` | `string` | 否 | 模型的默认 Thinking 档位。managed 和 open-platform 刷新可能会改写该字段；如需手动固定，请改用 `[models."<alias>".overrides] default_effort` |
+| `off_effort` | `string` | 否 | 关闭 Thinking 时在线上传输的 effort 编码（如 xai grok 的 `none`）。仅对声明了该编码的模型（catalog 会导入）有意义：设置后选择 Off 会发送这个值而不是省略 effort 字段——对默认就会推理的模型，这是真正关闭推理的唯一方式 |
+| `base_url` | `string` | 否 | 模型级端点覆盖（catalog 导入网关模型时写入，这些模型与供应商默认端点不同）。解析时优先于供应商的 `base_url`；仅在与 `protocol` 配合时生效 |
 | `display_name` | `string` | 否 | UI 中显示的名称，未设时回退到 `model` |
 | `reasoning_key` | `string` | 否 | 仅 `openai` 供应商。当网关用非标准字段名返回推理内容时才需要设置；默认自动识别 `reasoning_content` / `reasoning_details` / `reasoning` |
 | `adaptive_thinking` | `boolean` | 否 | 仅 `anthropic` 供应商。强制开启或关闭 adaptive thinking，覆盖按模型名推断的逻辑。省略时自动推断（Claude ≥ 4.6 使用 adaptive） |
@@ -181,7 +184,7 @@ max_context_size = 131072
 display_name = "Kimi for Coding (custom)"
 ```
 
-`[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts` 和 `default_effort`。不接受身份 / 路由字段：`provider`、`model`、`protocol` 和 `beta_api`。
+`[models."<alias>".overrides]` 接受普通模型字段，例如 `max_context_size`、`max_input_size`、`max_output_size`、`capabilities`、`display_name`、`reasoning_key`、`adaptive_thinking`、`support_efforts`、`default_effort` 和 `off_effort`。不接受身份 / 路由字段：`provider`、`model`、`protocol`、`beta_api` 和 `base_url`。
 
 无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 

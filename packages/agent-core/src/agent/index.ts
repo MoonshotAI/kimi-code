@@ -319,7 +319,7 @@ export class Agent {
   ): void {
     if (provider.name !== 'anthropic') return;
     const effort = provider.thinkingEffort;
-    if (effort === null || effort === 'on') return;
+    if (effort === null || effort === 'on' || effort === 'off') return;
 
     let warning:
       | { readonly code: string; readonly message: string; readonly knownEfforts?: string }
@@ -331,22 +331,14 @@ export class Agent {
           : this.modelProvider?.resolveProviderConfig(modelAlias);
       if (resolved === undefined) return;
 
-      if (effort === 'off') {
-        if (resolved.alwaysThinking !== true) return;
-        warning = {
-          code: 'anthropic-thinking-cannot-disable',
-          message: `Model "${provider.modelName}" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.`,
-        };
-      } else {
-        const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
-        if (supportEfforts === undefined || supportEfforts.length === 0) return;
-        if (supportEfforts.includes(effort)) return;
-        warning = {
-          code: 'anthropic-thinking-effort-not-listed',
-          message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`,
-          knownEfforts: supportEfforts.join(','),
-        };
-      }
+      const supportEfforts = resolved.supportEfforts?.filter((value) => value.length > 0);
+      if (supportEfforts === undefined || supportEfforts.length === 0) return;
+      if (supportEfforts.includes(effort)) return;
+      warning = {
+        code: 'anthropic-thinking-effort-not-listed',
+        message: `Thinking effort "${effort}" is not listed for model "${provider.modelName}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`,
+        knownEfforts: supportEfforts.join(','),
+      };
     } catch {
       // Capability diagnostics must never turn an otherwise sendable request
       // into a client-side failure.
@@ -681,7 +673,8 @@ export class Agent {
     if (!this.config.hasModel) return;
 
     const contextTokens = this.context.tokenCount;
-    const maxContextTokens = this.config.modelCapabilities.max_context_tokens;
+    const capability = this.config.modelCapabilities;
+    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     const contextUsage =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? contextTokens / maxContextTokens

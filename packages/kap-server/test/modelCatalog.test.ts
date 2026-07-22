@@ -304,6 +304,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       },
       status: async () => ({ loggedIn: false }),
       refreshOAuthProviderModels,
+      getManagedUsage: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
     };

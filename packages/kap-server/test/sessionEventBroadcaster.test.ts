@@ -419,6 +419,40 @@ describe('SessionEventBroadcaster', () => {
     ]);
   });
 
+  it('publishes the input cap as the status context limit when declared', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const usage = {
+      byModel: {
+        'example-model': { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+      },
+      total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+    };
+    main.set(IAgentContextSizeService, { get: () => ({ size: 10 }) });
+    main.set(IAgentProfileService, {
+      getModel: () => 'example-model',
+      getModelCapabilities: () => ({ max_context_tokens: 128_000, max_input_tokens: 64_000 }),
+    });
+    main.set(IAgentUsageService, { status: () => usage });
+    main.set(IWireService, {
+      getModel: (model: unknown) => {
+        expect(model).toBe(ContextSizeModel);
+        return { length: 0, tokens: 8 };
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', { usage }));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      { type: 'agent.status.updated', maxContextTokens: 64_000 },
+    ]);
+  });
+
   it('projects agent activity state into legacy running and ended phases', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');

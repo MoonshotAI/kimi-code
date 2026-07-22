@@ -9,7 +9,7 @@ import { toDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { PromisifyMethods } from '#/_base/utils/types';
+import type { Promisable, PromisifyMethods } from '#/_base/utils/types';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import type { AgentTaskInfo } from '#/agent/task/task';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -25,13 +25,36 @@ import { IAgentGoalService } from '#/agent/goal/goal';
 import { AgentGoalService } from '#/agent/goal/goalService';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
-import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
-import { IAgentPlanService } from '#/agent/plan/plan';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
+import { IAgentProfileService, type AgentConfigData } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import type { AgentAPI } from '#/agent/rpc/core-api';
+import type {
+  AgentAPI,
+  BeginCompactionPayload,
+  CancelPlanPayload,
+  CancelShellCommandPayload,
+  CreateGoalPayload,
+  DetachTaskPayload,
+  EmptyPayload,
+  EnterSwarmPayload,
+  GetTaskOutputPayload,
+  GetTasksPayload,
+  GoalSnapshot,
+  GoalToolResult,
+  RegisterToolPayload,
+  RunShellCommandPayload,
+  SetActiveToolsPayload,
+  SetModelPayload,
+  SetModelResult,
+  SetThinkingPayload,
+  ShellCommandResult,
+  StopTaskPayload,
+  UnregisterToolPayload,
+} from '#/agent/rpc/core-api';
+import { type UsageStatus } from '#/agent/usage/usage';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { AgentSkillService } from '#/agent/skill/skillService';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
@@ -85,9 +108,11 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IHostFileSystem,
+  ISessionBtwService,
   ISessionContext,
   ISessionProcessRunner,
   IAgentScopeContext,
+  IAgentShellCommandService,
   IAgentStepRetryService,
   IAgentLoopContinuationService,
   IAgentSwarmService,
@@ -258,7 +283,46 @@ type RpcPromise<T> = Promise<T> & {
   reject(reason?: unknown): void;
 };
 
-type PromiseAgentAPI = PromisifyMethods<AgentAPI>;
+/**
+ * Wire signatures of the methods removed from `AgentAPI` for being pure
+ * forwards to domain services. The harness keeps `ctx.rpc` backward
+ * compatible by re-declaring them here and adapting each onto the
+ * corresponding domain service in `createPromiseAgentApi`.
+ */
+interface AgentRpcPassthroughAPI {
+  runShellCommand: (payload: RunShellCommandPayload) => Promisable<ShellCommandResult>;
+  cancelShellCommand: (payload: CancelShellCommandPayload) => void;
+  setThinking: (payload: SetThinkingPayload) => void;
+  setModel: (payload: SetModelPayload) => Promisable<SetModelResult>;
+  getModel: (payload: EmptyPayload) => string;
+  enterPlan: (payload: EmptyPayload) => Promisable<void>;
+  cancelPlan: (payload: CancelPlanPayload) => void;
+  clearPlan: (payload: EmptyPayload) => Promisable<void>;
+  enterSwarm: (payload: EnterSwarmPayload) => void;
+  exitSwarm: (payload: EmptyPayload) => void;
+  getSwarmMode: (payload: EmptyPayload) => boolean;
+  startBtw: (payload: EmptyPayload) => Promisable<string>;
+  beginCompaction: (payload: BeginCompactionPayload) => void;
+  registerTool: (payload: RegisterToolPayload) => void;
+  unregisterTool: (payload: UnregisterToolPayload) => void;
+  setActiveTools: (payload: SetActiveToolsPayload) => void;
+  stopTask: (payload: StopTaskPayload) => void;
+  detachTask: (payload: DetachTaskPayload) => AgentTaskInfo | undefined;
+  clearContext: (payload: EmptyPayload) => void;
+  createGoal: (payload: CreateGoalPayload) => Promisable<GoalSnapshot>;
+  getGoal: (payload: EmptyPayload) => GoalToolResult;
+  pauseGoal: (payload: EmptyPayload) => Promisable<GoalSnapshot>;
+  resumeGoal: (payload: EmptyPayload) => Promisable<GoalSnapshot>;
+  cancelGoal: (payload: EmptyPayload) => Promisable<GoalSnapshot>;
+  getTaskOutput: (payload: GetTaskOutputPayload) => Promisable<string>;
+  getConfig: (payload: EmptyPayload) => AgentConfigData;
+  getPermission: (payload: EmptyPayload) => PermissionData;
+  getPlan: (payload: EmptyPayload) => Promisable<PlanData>;
+  getUsage: (payload: EmptyPayload) => UsageStatus;
+  getTasks: (payload: GetTasksPayload) => readonly AgentTaskInfo[];
+}
+
+type PromiseAgentAPI = PromisifyMethods<AgentAPI & AgentRpcPassthroughAPI>;
 type GenerateFn = typeof kosongGenerate;
 
 type TestToolResult = ExecutableToolResult & {
@@ -1346,8 +1410,7 @@ export class AgentTestContext {
   }
 
   clearContext(): void {
-    const rpcMethods = this.get(IAgentRPCService);
-    void rpcMethods.clearContext({});
+    this.get(IAgentPromptService).clear();
   }
 
   undoHistory(count: number): number {
@@ -1812,9 +1875,11 @@ export class AgentTestContext {
   }
 
   private createPromiseAgentApi(agent: IAgentRPCService): PromiseAgentAPI {
+    const passthrough = this.createRpcPassthroughAdapters();
     return new Proxy(agent, {
       get(proxyTarget, property, receiver) {
-        const value = Reflect.get(proxyTarget, property, receiver);
+        const override = Reflect.get(passthrough, property) as unknown;
+        const value = override ?? Reflect.get(proxyTarget, property, receiver);
         if (typeof value !== 'function') return value;
         return (payload: unknown) => {
           try {
@@ -1825,6 +1890,62 @@ export class AgentTestContext {
         };
       },
     }) as unknown as PromiseAgentAPI;
+  }
+
+  /**
+   * Adapters for the wire methods removed from `AgentRPCService` as pure
+   * forwards. Each mirrors the forward the RPC service used to implement
+   * (including the `beginCompaction` manual source, the `stopTask` reason
+   * branch, and the `setActiveTools` profile mapping).
+   */
+  private createRpcPassthroughAdapters(): AgentRpcPassthroughAPI {
+    return {
+      runShellCommand: (payload) => this.get(IAgentShellCommandService).run(payload),
+      cancelShellCommand: (payload) =>
+        this.get(IAgentShellCommandService).cancel(payload.commandId),
+      setThinking: (payload) => this.get(IAgentProfileService).setThinking(payload.level),
+      setModel: (payload) => this.get(IAgentProfileService).setModel(payload.model),
+      getModel: () => this.get(IAgentProfileService).getModel(),
+      enterPlan: () => this.get(IAgentPlanService).enter(),
+      cancelPlan: (payload) => this.get(IAgentPlanService).cancel(payload.id),
+      clearPlan: () => this.get(IAgentPlanService).clear(),
+      enterSwarm: (payload) => this.get(IAgentSwarmService).enter(payload.trigger),
+      exitSwarm: () => this.get(IAgentSwarmService).exit(),
+      getSwarmMode: () => this.get(IAgentSwarmService).isActive,
+      startBtw: () => this.get(ISessionBtwService).start(),
+      beginCompaction: (payload) =>
+        this.get(IAgentFullCompactionService).begin({
+          source: 'manual',
+          instruction: payload.instruction,
+        }),
+      registerTool: (payload) => this.get(IAgentUserToolService).register(payload),
+      unregisterTool: (payload) => this.get(IAgentUserToolService).unregister(payload.name),
+      setActiveTools: (payload) =>
+        this.get(IAgentProfileService).update({ activeToolNames: payload.names }),
+      stopTask: (payload) => {
+        const tasks = this.get(IAgentTaskService);
+        if (payload.reason === undefined) {
+          void tasks.stopByUser(payload.taskId);
+          return;
+        }
+        void tasks.stop(payload.taskId, payload.reason);
+      },
+      detachTask: (payload) => this.get(IAgentTaskService).detach(payload.taskId),
+      clearContext: () => this.get(IAgentPromptService).clear(),
+      createGoal: (payload) => this.get(IAgentGoalService).createGoal(payload),
+      getGoal: () => this.get(IAgentGoalService).getGoal(),
+      pauseGoal: () => this.get(IAgentGoalService).pauseGoal(),
+      resumeGoal: () => this.get(IAgentGoalService).resumeGoal(),
+      cancelGoal: () => this.get(IAgentGoalService).cancelGoal(),
+      getTaskOutput: (payload) =>
+        this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
+      getConfig: () => this.get(IAgentProfileService).data(),
+      getPermission: () => this.get(IAgentPermissionGate).data(),
+      getPlan: () => this.get(IAgentPlanService).status(),
+      getUsage: () => this.get(IAgentUsageService).status(),
+      getTasks: (payload) =>
+        this.get(IAgentTaskService).list(payload.activeOnly ?? false, payload.limit),
+    };
   }
 
   private appendUserText(text: string): void {
