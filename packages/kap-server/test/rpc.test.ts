@@ -7,6 +7,7 @@ import {
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentRPCService,
+  IAgentShellCommandService,
   IAppendLogStore,
   IEventService,
   IPluginService,
@@ -380,13 +381,13 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(meta.body.data.lastPrompt).toBe('should not become the title');
   });
 
-  it('runs a shell command through the RPC facade', async () => {
+  it('runs a shell command through the shell command service', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
 
     const { body } = await call<{ stdout: string; stderr: string; isError?: boolean }>(
       'POST',
-      rpc('agent', IAgentRPCService, 'runShellCommand', { sid: id, aid: 'main' }),
+      rpc('agent', IAgentShellCommandService, 'run', { sid: id, aid: 'main' }),
       { command: 'printf hello' },
     );
     expect(body.code).toBe(0);
