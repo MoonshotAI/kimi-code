@@ -9,16 +9,20 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { Emitter, type Event } from '#/_base/event';
+import { AsyncEmitter, type Event, type IWaitUntil } from '#/_base/event';
 
 import { deepEqual, diffRecords, isEmptyDiff } from '../recordDiff';
 
 import {
+  type DefaultModelChangedEvent,
   IModelService,
   type ModelRecord,
   type ModelsChangedEvent,
   type ModelsSection,
 } from './model';
+
+/** Registry mutations are not abortable; `fireAsync` still requires a signal. */
+const NO_ABORT = new AbortController().signal;
 
 export class ModelService extends Disposable implements IModelService {
   declare readonly _serviceBrand: undefined;
@@ -31,10 +35,15 @@ export class ModelService extends Disposable implements IModelService {
     this.resolveReady = resolve;
   });
 
-  private readonly _onDidChangeModels = this._register(new Emitter<ModelsChangedEvent>());
-  readonly onDidChangeModels: Event<ModelsChangedEvent> = this._onDidChangeModels.event;
-  private readonly _onDidChangeDefaultModel = this._register(new Emitter<string | undefined>());
-  readonly onDidChangeDefaultModel: Event<string | undefined> =
+  private readonly _onDidChangeModels = this._register(
+    new AsyncEmitter<ModelsChangedEvent & IWaitUntil>(),
+  );
+  readonly onDidChangeModels: Event<ModelsChangedEvent & IWaitUntil> =
+    this._onDidChangeModels.event;
+  private readonly _onDidChangeDefaultModel = this._register(
+    new AsyncEmitter<DefaultModelChangedEvent & IWaitUntil>(),
+  );
+  readonly onDidChangeDefaultModel: Event<DefaultModelChangedEvent & IWaitUntil> =
     this._onDidChangeDefaultModel.event;
 
   get(id: string): ModelRecord | undefined {
@@ -50,8 +59,11 @@ export class ModelService extends Disposable implements IModelService {
   }
 
   loadAll(models: ModelsSection, defaultModel: string | undefined): void {
-    this.applyRecords(models);
-    this.applyDefaultModel(defaultModel);
+    // Fire-and-forget on purpose: hydration has no persistence participant
+    // yet, and `fireAsync` still invokes every listener synchronously up to
+    // its own first await, so config-originated syncs keep their timing.
+    void this.applyRecords(models);
+    void this.applyDefaultModel(defaultModel);
     if (!this.hydrated) {
       this.hydrated = true;
       this.resolveReady();
@@ -60,40 +72,41 @@ export class ModelService extends Disposable implements IModelService {
 
   async replaceAll(models: ModelsSection): Promise<void> {
     await this.ready;
-    this.applyRecords(models);
+    await this.applyRecords(models);
   }
 
   async set(id: string, model: ModelRecord): Promise<void> {
     await this.ready;
     if (deepEqual(this.models[id], model)) return;
-    const previous = this.models;
-    this.models = { ...this.models, [id]: model };
-    this._onDidChangeModels.fire(diffRecords(previous, this.models));
+    await this.applyRecords({ ...this.models, [id]: model });
   }
 
   async delete(id: string): Promise<void> {
     await this.ready;
     if (!(id in this.models)) return;
     const { [id]: _removed, ...rest } = this.models;
-    this.applyRecords(rest);
+    await this.applyRecords(rest);
   }
 
   async setDefaultModel(id: string | undefined): Promise<void> {
     await this.ready;
-    this.applyDefaultModel(id);
+    await this.applyDefaultModel(id);
   }
 
-  private applyRecords(next: Readonly<Record<string, ModelRecord>>): void {
+  private async applyRecords(next: Readonly<Record<string, ModelRecord>>): Promise<void> {
     const diff = diffRecords(this.models, next);
     if (isEmptyDiff(diff)) return;
     this.models = { ...next };
-    this._onDidChangeModels.fire(diff);
+    // Awaiting delivery is what lets a mutation's caller rely on the
+    // persistence bridge's `waitUntil` participation: the returned promise
+    // only settles once the write has reached the config layer.
+    await this._onDidChangeModels.fireAsync(diff, NO_ABORT);
   }
 
-  private applyDefaultModel(id: string | undefined): void {
+  private async applyDefaultModel(id: string | undefined): Promise<void> {
     if (this.defaultModel === id) return;
     this.defaultModel = id;
-    this._onDidChangeDefaultModel.fire(id);
+    await this._onDidChangeDefaultModel.fireAsync({ id }, NO_ABORT);
   }
 }
 

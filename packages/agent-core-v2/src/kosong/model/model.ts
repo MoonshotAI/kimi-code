@@ -30,7 +30,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { Event } from '#/_base/event';
+import type { Event, IWaitUntil } from '#/_base/event';
 import type { Protocol } from '#/kosong/protocol/protocol';
 
 import type { OAuthRef } from '../provider/provider';
@@ -100,6 +100,10 @@ export interface ModelsChangedEvent {
   readonly changed: readonly string[];
 }
 
+export interface DefaultModelChangedEvent {
+  readonly id: string | undefined;
+}
+
 /**
  * The in-memory model registry. Kosong owns the state and the change events;
  * persistence is the upper layer's concern (a bridge service hydrates the
@@ -107,18 +111,21 @@ export interface ModelsChangedEvent {
  * them), so this domain never touches config storage itself.
  *
  * Mutations (`set` / `delete` / `replaceAll` / `setDefaultModel`) wait for
- * hydration (`ready`) so a caller can never race the initial load. Writes
- * that land an equal value are silent — no event fires — which is what makes
- * the persistence bridge's two-way sync terminate.
+ * hydration (`ready`) so a caller can never race the initial load, and resolve
+ * only after every change listener has finished the work it registered through
+ * `waitUntil` — the persistence bridge participates this way, so an awaited
+ * mutation means the write has also been persisted. Writes that land an equal
+ * value are silent — no event fires — which is what makes the persistence
+ * bridge's two-way sync terminate.
  */
 export interface IModelService {
   readonly _serviceBrand: undefined;
 
   /** Resolves when the registry has been hydrated (the first `loadAll`). */
   readonly ready: Promise<void>;
-  readonly onDidChangeModels: Event<ModelsChangedEvent>;
+  readonly onDidChangeModels: Event<ModelsChangedEvent & IWaitUntil>;
   /** Fires when the default-model pointer changes value (incl. clearing). */
-  readonly onDidChangeDefaultModel: Event<string | undefined>;
+  readonly onDidChangeDefaultModel: Event<DefaultModelChangedEvent & IWaitUntil>;
   get(id: string): ModelRecord | undefined;
   list(): Readonly<Record<string, ModelRecord>>;
   getDefaultModel(): string | undefined;

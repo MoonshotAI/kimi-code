@@ -9,16 +9,20 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { Emitter, type Event } from '#/_base/event';
+import { AsyncEmitter, type Event, type IWaitUntil } from '#/_base/event';
 
 import { deepEqual, diffRecords, isEmptyDiff } from '../recordDiff';
 
 import {
+  type DefaultProviderChangedEvent,
   type ProviderConfig,
   type ProvidersChangedEvent,
   type ProvidersSection,
   IProviderService,
 } from './provider';
+
+/** Registry mutations are not abortable; `fireAsync` still requires a signal. */
+const NO_ABORT = new AbortController().signal;
 
 export class ProviderService extends Disposable implements IProviderService {
   declare readonly _serviceBrand: undefined;
@@ -31,10 +35,15 @@ export class ProviderService extends Disposable implements IProviderService {
     this.resolveReady = resolve;
   });
 
-  private readonly _onDidChangeProviders = this._register(new Emitter<ProvidersChangedEvent>());
-  readonly onDidChangeProviders: Event<ProvidersChangedEvent> = this._onDidChangeProviders.event;
-  private readonly _onDidChangeDefaultProvider = this._register(new Emitter<string | undefined>());
-  readonly onDidChangeDefaultProvider: Event<string | undefined> =
+  private readonly _onDidChangeProviders = this._register(
+    new AsyncEmitter<ProvidersChangedEvent & IWaitUntil>(),
+  );
+  readonly onDidChangeProviders: Event<ProvidersChangedEvent & IWaitUntil> =
+    this._onDidChangeProviders.event;
+  private readonly _onDidChangeDefaultProvider = this._register(
+    new AsyncEmitter<DefaultProviderChangedEvent & IWaitUntil>(),
+  );
+  readonly onDidChangeDefaultProvider: Event<DefaultProviderChangedEvent & IWaitUntil> =
     this._onDidChangeDefaultProvider.event;
 
   get(name: string): ProviderConfig | undefined {
@@ -50,8 +59,11 @@ export class ProviderService extends Disposable implements IProviderService {
   }
 
   loadAll(providers: ProvidersSection, defaultProvider: string | undefined): void {
-    this.applyRecords(providers);
-    this.applyDefaultProvider(defaultProvider);
+    // Fire-and-forget on purpose: hydration has no persistence participant
+    // yet, and `fireAsync` still invokes every listener synchronously up to
+    // its own first await, so config-originated syncs keep their timing.
+    void this.applyRecords(providers);
+    void this.applyDefaultProvider(defaultProvider);
     if (!this.hydrated) {
       this.hydrated = true;
       this.resolveReady();
@@ -60,45 +72,46 @@ export class ProviderService extends Disposable implements IProviderService {
 
   async replaceAll(providers: ProvidersSection): Promise<void> {
     await this.ready;
-    this.applyRecords(providers);
+    await this.applyRecords(providers);
   }
 
   async set(name: string, config: ProviderConfig): Promise<void> {
     await this.ready;
     if (deepEqual(this.providers[name], config)) return;
-    const previous = this.providers;
-    this.providers = { ...this.providers, [name]: config };
-    this._onDidChangeProviders.fire(diffRecords(previous, this.providers));
+    await this.applyRecords({ ...this.providers, [name]: config });
   }
 
   async delete(name: string): Promise<void> {
     await this.ready;
     if (!(name in this.providers)) return;
     const { [name]: _removed, ...rest } = this.providers;
-    this.applyRecords(rest);
+    await this.applyRecords(rest);
     // Deleting the provider the default pointer targets must clear the
     // pointer too, otherwise it dangles to a deleted provider.
     if (this.defaultProvider === name) {
-      this.applyDefaultProvider(undefined);
+      await this.applyDefaultProvider(undefined);
     }
   }
 
   async setDefaultProvider(id: string | undefined): Promise<void> {
     await this.ready;
-    this.applyDefaultProvider(id);
+    await this.applyDefaultProvider(id);
   }
 
-  private applyRecords(next: Readonly<Record<string, ProviderConfig>>): void {
+  private async applyRecords(next: Readonly<Record<string, ProviderConfig>>): Promise<void> {
     const diff = diffRecords(this.providers, next);
     if (isEmptyDiff(diff)) return;
     this.providers = { ...next };
-    this._onDidChangeProviders.fire(diff);
+    // Awaiting delivery is what lets a mutation's caller rely on the
+    // persistence bridge's `waitUntil` participation: the returned promise
+    // only settles once the write has reached the config layer.
+    await this._onDidChangeProviders.fireAsync(diff, NO_ABORT);
   }
 
-  private applyDefaultProvider(id: string | undefined): void {
+  private async applyDefaultProvider(id: string | undefined): Promise<void> {
     if (this.defaultProvider === id) return;
     this.defaultProvider = id;
-    this._onDidChangeDefaultProvider.fire(id);
+    await this._onDidChangeDefaultProvider.fireAsync({ id }, NO_ABORT);
   }
 }
 

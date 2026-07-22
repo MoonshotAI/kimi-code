@@ -92,7 +92,9 @@ describe('ModelService', () => {
       removed: readonly string[];
       changed: readonly string[];
     }> = [];
-    service.onDidChangeModels((e) => events.push(e));
+    service.onDidChangeModels((e) =>
+      events.push({ added: e.added, removed: e.removed, changed: e.changed }),
+    );
 
     const k1: ModelRecord = { provider: 'moonshot', model: 'kimi-k2', maxContextSize: 262144 };
     await service.set('k1', k1);
@@ -125,7 +127,7 @@ describe('ModelService', () => {
   it('fires the pointer event only on real pointer changes', async () => {
     const service = createService({ k1: { model: 'kimi-k2' } });
     const pointerEvents: Array<string | undefined> = [];
-    service.onDidChangeDefaultModel((id) => pointerEvents.push(id));
+    service.onDidChangeDefaultModel((e) => pointerEvents.push(e.id));
 
     await service.setDefaultModel('k1');
     await service.setDefaultModel('k1');

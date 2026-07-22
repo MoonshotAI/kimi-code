@@ -7,7 +7,9 @@
  *    the effective config view (records + default pointers) and become
  *    `ready` themselves;
  *  - kosong → config: registry mutations (`set` / `setDefaultModel` / ...)
- *    persist through `config.replace`, serialized in event order;
+ *    persist through `config.replace`, serialized in event order; an awaited
+ *    mutation only resolves after the persist has landed, and a failed
+ *    persist is retried with backoff before being logged;
  *  - config → kosong: section writes (`config.set` / `config.replace`) land
  *    in the registries;
  *  - loop termination: equal writes are silent on the registry side and the
@@ -167,6 +169,94 @@ describe('KosongConfigService kosong → config persistence', () => {
       await flush();
 
       expect(config.get<string>(DEFAULT_PROVIDER_SECTION)).toBe('openai');
+    } finally {
+      bridge.dispose();
+    }
+  });
+});
+
+describe('KosongConfigService awaited-mutation semantics', () => {
+  it('an awaited registry mutation resolves only after the write has landed in config', async () => {
+    const { config, providers, models, bridge } = await createBridge(seededSections);
+    try {
+      // No flush(): the mutation's own await already covers persistence.
+      await providers.set('openai', { type: 'openai', apiKey: 'sk-o' });
+      expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
+        kimi: KIMI_PROVIDER,
+        openai: { type: 'openai', apiKey: 'sk-o' },
+      });
+
+      await models.setDefaultModel('k1');
+      expect(config.get<string>(DEFAULT_MODEL_SECTION)).toBe('k1');
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it('retries a failed persist instead of surfacing it to the caller', async () => {
+    const { config, providers, log, bridge } = await createBridge(seededSections);
+    try {
+      let failuresLeft = 1;
+      const original = config.replace.bind(config);
+      vi.spyOn(config, 'replace').mockImplementation(async (domain: string, value: unknown) => {
+        if (domain === PROVIDERS_SECTION && failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw new Error('disk busy');
+        }
+        return original(domain, value);
+      });
+
+      vi.useFakeTimers();
+      try {
+        const pending = providers.set('openai', { type: 'openai' });
+        // The first backoff is ~500ms; advancing past it lets the retry run.
+        await vi.advanceTimersByTimeAsync(1000);
+        await pending;
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
+        kimi: KIMI_PROVIDER,
+        openai: { type: 'openai' },
+      });
+      expect(log.warnings).toHaveLength(0);
+    } finally {
+      bridge.dispose();
+    }
+  });
+
+  it('logs and resolves after the retry budget is spent, and the chain stays alive', async () => {
+    const { config, providers, log, bridge } = await createBridge(seededSections);
+    try {
+      const replaceSpy = vi.spyOn(config, 'replace').mockRejectedValue(new Error('disk gone'));
+
+      vi.useFakeTimers();
+      try {
+        const pending = providers.set('openai', { type: 'openai' });
+        // Two backoffs (~500ms + ~1000ms, plus jitter) before the budget is spent.
+        await vi.advanceTimersByTimeAsync(2500);
+        // The caller is never rejected: the in-memory change stands.
+        await pending;
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(providers.get('openai')).toEqual({ type: 'openai' });
+      expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
+        kimi: KIMI_PROVIDER,
+      });
+      expect(log.warnings).toHaveLength(1);
+      expect(log.warnings[0]?.message).toBe('kosong config persist failed');
+
+      // A poisoned task must not stall the persists queued behind it.
+      replaceSpy.mockRestore();
+      await providers.set('mistral', { type: 'mistral' });
+      expect(config.get<Record<string, ProviderConfig>>(PROVIDERS_SECTION)).toEqual({
+        kimi: KIMI_PROVIDER,
+        openai: { type: 'openai' },
+        mistral: { type: 'mistral' },
+      });
     } finally {
       bridge.dispose();
     }

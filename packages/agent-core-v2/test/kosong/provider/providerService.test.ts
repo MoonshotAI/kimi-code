@@ -90,7 +90,9 @@ describe('ProviderService', () => {
       removed: readonly string[];
       changed: readonly string[];
     }> = [];
-    service.onDidChangeProviders((e) => events.push(e));
+    service.onDidChangeProviders((e) =>
+      events.push({ added: e.added, removed: e.removed, changed: e.changed }),
+    );
 
     const moonshot: ProviderConfig = { type: 'kimi', baseUrl: 'https://api.moonshot.ai/v1' };
     await service.set('moonshot', moonshot);
@@ -114,7 +116,9 @@ describe('ProviderService', () => {
   it('loadAll fires only for real diffs on re-sync', async () => {
     const service = createService({ moonshot: { type: 'kimi' } });
     const events: unknown[] = [];
-    service.onDidChangeProviders((e) => events.push(e));
+    service.onDidChangeProviders((e) =>
+      events.push({ added: e.added, removed: e.removed, changed: e.changed }),
+    );
 
     service.loadAll({ moonshot: { type: 'kimi' } }, undefined);
     expect(events).toHaveLength(0);
@@ -135,7 +139,7 @@ describe('ProviderService', () => {
   it('clears the defaultProvider pointer when the default provider is deleted', async () => {
     const service = createService({ moonshot: { type: 'kimi' } });
     const pointerEvents: Array<string | undefined> = [];
-    service.onDidChangeDefaultProvider((id) => pointerEvents.push(id));
+    service.onDidChangeDefaultProvider((e) => pointerEvents.push(e.id));
 
     await service.setDefaultProvider('moonshot');
     expect(service.getDefaultProvider()).toBe('moonshot');
@@ -143,5 +147,20 @@ describe('ProviderService', () => {
     await service.delete('moonshot');
     expect(service.getDefaultProvider()).toBeUndefined();
     expect(pointerEvents).toEqual(['moonshot', undefined]);
+  });
+
+  it('a mutation resolves only after the listeners’ waitUntil work completes', async () => {
+    const service = createService();
+    let persistDone = false;
+    service.onDidChangeProviders((e) => {
+      e.waitUntil(
+        new Promise<void>((resolve) => setTimeout(resolve, 50)).then(() => {
+          persistDone = true;
+        }),
+      );
+    });
+
+    await service.set('moonshot', { type: 'kimi' });
+    expect(persistDone).toBe(true);
   });
 });

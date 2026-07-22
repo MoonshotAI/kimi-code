@@ -24,7 +24,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { Event } from '#/_base/event';
+import type { Event, IWaitUntil } from '#/_base/event';
 
 /**
  * Free-form vendor identity (e.g. `'kimi'`). Not an enum, by design — see the
@@ -62,6 +62,10 @@ export interface ProvidersChangedEvent {
   readonly changed: readonly string[];
 }
 
+export interface DefaultProviderChangedEvent {
+  readonly id: string | undefined;
+}
+
 /**
  * The in-memory provider registry. Kosong owns the state and the change
  * events; persistence is the upper layer's concern (a bridge service hydrates
@@ -69,18 +73,21 @@ export interface ProvidersChangedEvent {
  * them), so this domain never touches config storage itself.
  *
  * Mutations (`set` / `delete` / `replaceAll` / `setDefaultProvider`) wait for
- * hydration (`ready`) so a caller can never race the initial load. Writes
- * that land an equal value are silent — no event fires — which is what makes
- * the persistence bridge's two-way sync terminate.
+ * hydration (`ready`) so a caller can never race the initial load, and resolve
+ * only after every change listener has finished the work it registered through
+ * `waitUntil` — the persistence bridge participates this way, so an awaited
+ * mutation means the write has also been persisted. Writes that land an equal
+ * value are silent — no event fires — which is what makes the persistence
+ * bridge's two-way sync terminate.
  */
 export interface IProviderService {
   readonly _serviceBrand: undefined;
 
   /** Resolves when the registry has been hydrated (the first `loadAll`). */
   readonly ready: Promise<void>;
-  readonly onDidChangeProviders: Event<ProvidersChangedEvent>;
+  readonly onDidChangeProviders: Event<ProvidersChangedEvent & IWaitUntil>;
   /** Fires when the default-provider pointer changes value (incl. clearing). */
-  readonly onDidChangeDefaultProvider: Event<string | undefined>;
+  readonly onDidChangeDefaultProvider: Event<DefaultProviderChangedEvent & IWaitUntil>;
   get(name: string): ProviderConfig | undefined;
   list(): Readonly<Record<string, ProviderConfig>>;
   getDefaultProvider(): string | undefined;

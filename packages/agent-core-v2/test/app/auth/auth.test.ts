@@ -163,7 +163,7 @@ describe('OAuthService', () => {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
           set: providerSet as unknown as IProviderService['set'],
-          onDidChangeProviders: providerChangedEmitter.event,
+          onDidChangeProviders: providerChangedEmitter.event as IProviderService['onDidChangeProviders'],
         });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) => configBacking()[domain]) as IConfigService['get'],
