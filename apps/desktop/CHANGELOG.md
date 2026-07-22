@@ -1,5 +1,63 @@
 # kimi-code-app
 
+## 0.0.9
+
+### Patch Changes
+
+- [#74](https://github.com/MoonshotAI/kimi-code-app/pull/74) [`3adc4c5`](https://github.com/MoonshotAI/kimi-code-app/commit/3adc4c544f6294541cd9c9f09a28c1b29181ad7a) Thanks [@chengluyu](https://github.com/chengluyu)! - 设置弹窗的导航栏与内容区之间补上细分隔线，浅色模式下两侧不再难以区分。
+
+- [#74](https://github.com/MoonshotAI/kimi-code-app/pull/74) [`3adc4c5`](https://github.com/MoonshotAI/kimi-code-app/commit/3adc4c544f6294541cd9c9f09a28c1b29181ad7a) Thanks [@chengluyu](https://github.com/chengluyu)! - 深色模式下设置页的下拉框、字号步进器等字段控件现在比卡片背景再浅一级，控件更清晰可辨。
+
+- [#76](https://github.com/MoonshotAI/kimi-code-app/pull/76) [`14c197a`](https://github.com/MoonshotAI/kimi-code-app/commit/14c197ae20b32331e216b9a2876b0a699e5837d1) Thanks [@liruifengv](https://github.com/liruifengv)! - App 菜单移除「打开服务日志」项，并为「重试连接」项补充英文文案。
+
+- [#77](https://github.com/MoonshotAI/kimi-code-app/pull/77) [`a24ac7b`](https://github.com/MoonshotAI/kimi-code-app/commit/a24ac7b644498b0becca002b881c525feda4e134) Thanks [@liruifengv](https://github.com/liruifengv)! - 回答提问后，转录中会以回执卡展示你选中的选项；跳过的问题显示为一行简洁的未作答记录。
+
+- [#80](https://github.com/MoonshotAI/kimi-code-app/pull/80) [`44d5398`](https://github.com/MoonshotAI/kimi-code-app/commit/44d539830d304a0c61573d7fce000bcbede4ca7b) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复流式输出中展开或收起思考、工具调用等内容时对话视图抖动的问题：展开或收起时当前行保持原位，内容离开底部后会显示「新消息」提示，收起后按位置自动恢复；展开正在输出中的思考或工具时会跟随输出继续滚动。修复写入、编辑工具展开的代码高亮在流式过程中持续闪烁的问题，以及已完成的思考块在其他内容流式时错误播放呼吸动画的问题。点击目录或「新消息」按钮的定位也更准确。等待回复的月亮动画保持恒定速度。
+
+- [#78](https://github.com/MoonshotAI/kimi-code-app/pull/78) [`a3fab4d`](https://github.com/MoonshotAI/kimi-code-app/commit/a3fab4d9ed88f308993a9928819754bed2c481a8) Thanks [@chengluyu](https://github.com/chengluyu)! - 输入区域与上方任务胶囊采用更协调的圆角、尺寸与轻量焦点反馈，操作区域更整洁。
+
+- [#55](https://github.com/MoonshotAI/kimi-code-app/pull/55) [`189e780`](https://github.com/MoonshotAI/kimi-code-app/commit/189e780091151cb65c2d2ce90b3c57031c8d6473) Thanks [@wbxl2000](https://github.com/wbxl2000)! - 新会话页的工作区选择器改为附着在输入框卡片下方的浅灰卡片，输入框边框保持完整；选择面板按「最近的文件夹」分组展示，下方空间不足时自动向上展开。
+
+- [#81](https://github.com/MoonshotAI/kimi-code-app/pull/81) [`fcbb4e8`](https://github.com/MoonshotAI/kimi-code-app/commit/fcbb4e83eba32e96ce7bc30c8062887f8be6ef02) Thanks [@liruifengv](https://github.com/liruifengv)! - 界面提示中的“daemon”统一改为“服务器”，空列表等场景改为直接提示暂无内容。
+
+- [#77](https://github.com/MoonshotAI/kimi-code-app/pull/77) [`a24ac7b`](https://github.com/MoonshotAI/kimi-code-app/commit/a24ac7b644498b0becca002b881c525feda4e134) Thanks [@liruifengv](https://github.com/liruifengv)! - 计划、审批与提问卡片的视觉更收敛：圆角与阴影减小，提问选项的勾选标记改为与首行文字对齐，卡片操作按钮统一靠左，多步提问的「返回」更名为「上一题」，问题前的分类标签不再显示。计划内容滚动时，顶部会出现柔和的阴影分隔。
+
+- [#76](https://github.com/MoonshotAI/kimi-code-app/pull/76) [`14c197a`](https://github.com/MoonshotAI/kimi-code-app/commit/14c197ae20b32331e216b9a2876b0a699e5837d1) Thanks [@liruifengv](https://github.com/liruifengv)! - 桌面端窗口标题保持静态 Kimi Code，避免运行中的 spinner 符号进入 Dock 菜单。
+
+- [#79](https://github.com/MoonshotAI/kimi-code-app/pull/79) [`e8024fb`](https://github.com/MoonshotAI/kimi-code-app/commit/e8024fb5f14b36f5dc9a1ff9e359c53df9bf6239) Thanks [@chengluyu](https://github.com/chengluyu)! - 拖拽面板宽度到极限时，光标会变为仅剩可拖方向的样式，提示更明确。
+
+- [#76](https://github.com/MoonshotAI/kimi-code-app/pull/76) [`14c197a`](https://github.com/MoonshotAI/kimi-code-app/commit/14c197ae20b32331e216b9a2876b0a699e5837d1) Thanks [@liruifengv](https://github.com/liruifengv)! - 桌面端 Dock 图标根据未读/待处理消息总数显示数字 badge。
+
+- [#74](https://github.com/MoonshotAI/kimi-code-app/pull/74) [`3adc4c5`](https://github.com/MoonshotAI/kimi-code-app/commit/3adc4c544f6294541cd9c9f09a28c1b29181ad7a) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复深色模式下差异视图的中性标记与空状态图标、文件预览的下载按钮悬停几乎不可见的问题。
+
+- [#74](https://github.com/MoonshotAI/kimi-code-app/pull/74) [`3adc4c5`](https://github.com/MoonshotAI/kimi-code-app/commit/3adc4c544f6294541cd9c9f09a28c1b29181ad7a) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复深色模式下界面层次颠倒的问题：代码块、工具输出、输入框等重要内容现在比侧边栏等界面元素更亮，主次更分明。
+
+- [#72](https://github.com/MoonshotAI/kimi-code-app/pull/72) [`bae2c0a`](https://github.com/MoonshotAI/kimi-code-app/commit/bae2c0ae9011d5b9bfb4f4df609cda7a7818914b) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复在设置中退出登录后界面仍显示已登录的问题，现在退出后账号状态会立即刷新。
+
+- [#74](https://github.com/MoonshotAI/kimi-code-app/pull/74) [`3adc4c5`](https://github.com/MoonshotAI/kimi-code-app/commit/3adc4c544f6294541cd9c9f09a28c1b29181ad7a) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复设置页外观选项（Moon Bright / Moon Dark）在空间不足时文字折行、分段控件被撑高的问题。
+
+- [#74](https://github.com/MoonshotAI/kimi-code-app/pull/74) [`3adc4c5`](https://github.com/MoonshotAI/kimi-code-app/commit/3adc4c544f6294541cd9c9f09a28c1b29181ad7a) Thanks [@chengluyu](https://github.com/chengluyu)! - 修复深色模式下设置弹窗的层次问题：设置分组现在比窗口背景浅一级，内容更突出。
+
+- [#81](https://github.com/MoonshotAI/kimi-code-app/pull/81) [`fcbb4e8`](https://github.com/MoonshotAI/kimi-code-app/commit/fcbb4e83eba32e96ce7bc30c8062887f8be6ef02) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复部分模型上下文容量显示不准确的问题。
+
+- [#72](https://github.com/MoonshotAI/kimi-code-app/pull/72) [`bae2c0a`](https://github.com/MoonshotAI/kimi-code-app/commit/bae2c0ae9011d5b9bfb4f4df609cda7a7818914b) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复首次启动引导在开发环境反复弹出的问题：引导完成状态改为主进程持久化存储，开发版与正式版共享，不再受 dev 端口变化影响。
+
+- [#76](https://github.com/MoonshotAI/kimi-code-app/pull/76) [`14c197a`](https://github.com/MoonshotAI/kimi-code-app/commit/14c197ae20b32331e216b9a2876b0a699e5837d1) Thanks [@liruifengv](https://github.com/liruifengv)! - 统一 onboarding 欢迎页品牌文案大小写为 Kimi Code。
+
+- [#72](https://github.com/MoonshotAI/kimi-code-app/pull/72) [`bae2c0a`](https://github.com/MoonshotAI/kimi-code-app/commit/bae2c0ae9011d5b9bfb4f4df609cda7a7818914b) Thanks [@liruifengv](https://github.com/liruifengv)! - 重做首次启动引导：语言与外观偏好、Kimi 账号登录合并为两步向导，未登录不再拦截主界面，之后可在设置中随时登录。
+
+- [#72](https://github.com/MoonshotAI/kimi-code-app/pull/72) [`bae2c0a`](https://github.com/MoonshotAI/kimi-code-app/commit/bae2c0ae9011d5b9bfb4f4df609cda7a7818914b) Thanks [@liruifengv](https://github.com/liruifengv)! - 设置页的账户区新增「套餐用量」，登录 Kimi 账号后可查看额度使用情况和加油包余额。
+
+- [#81](https://github.com/MoonshotAI/kimi-code-app/pull/81) [`fcbb4e8`](https://github.com/MoonshotAI/kimi-code-app/commit/fcbb4e83eba32e96ce7bc30c8062887f8be6ef02) Thanks [@liruifengv](https://github.com/liruifengv)! - 发送消息时附带的视频现在会直接以视频形式传给模型，内容理解更准确。
+
+- [#76](https://github.com/MoonshotAI/kimi-code-app/pull/76) [`14c197a`](https://github.com/MoonshotAI/kimi-code-app/commit/14c197ae20b32331e216b9a2876b0a699e5837d1) Thanks [@liruifengv](https://github.com/liruifengv)! - 在侧边栏设置入口旁添加「内部测试」标识。
+
+- [#79](https://github.com/MoonshotAI/kimi-code-app/pull/79) [`e8024fb`](https://github.com/MoonshotAI/kimi-code-app/commit/e8024fb5f14b36f5dc9a1ff9e359c53df9bf6239) Thanks [@chengluyu](https://github.com/chengluyu)! - 拖拽调整左右侧面板宽度时更流畅，不再出现明显卡顿。
+
+- [#74](https://github.com/MoonshotAI/kimi-code-app/pull/74) [`3adc4c5`](https://github.com/MoonshotAI/kimi-code-app/commit/3adc4c544f6294541cd9c9f09a28c1b29181ad7a) Thanks [@chengluyu](https://github.com/chengluyu)! - 统一了界面分隔线的颜色与粗细，代码块、图片缩略图等内容卡片的边框更纤细。
+
+- [#72](https://github.com/MoonshotAI/kimi-code-app/pull/72) [`bae2c0a`](https://github.com/MoonshotAI/kimi-code-app/commit/bae2c0ae9011d5b9bfb4f4df609cda7a7818914b) Thanks [@liruifengv](https://github.com/liruifengv)! - 修复窗口在最大化或全屏状态下关闭后、下次启动仍以全屏大小打开的问题，现在会恢复上次的正常窗口尺寸。
+
 ## 0.0.8
 
 ### Patch Changes
