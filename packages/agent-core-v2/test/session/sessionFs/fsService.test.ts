@@ -74,6 +74,24 @@ function fakeFs(
     err.code = 'ENOENT';
     return err;
   };
+  const lstatImpl = async (p: string) => {
+    if (fileMap.has(p)) {
+      return {
+        isFile: true,
+        isDirectory: false,
+        size: fileMap.get(p)!.length,
+        mtimeMs: 1000,
+        ino: 1,
+      };
+    }
+    if (symlinkSet.has(p)) {
+      return { isFile: false, isDirectory: false, isSymbolicLink: true, size: 0, mtimeMs: 1000, ino: 1 };
+    }
+    if (isDir(p)) {
+      return { isFile: false, isDirectory: true, size: 0, mtimeMs: 1000, ino: 1 };
+    }
+    throw enoent(p);
+  };
   return {
     _serviceBrand: undefined,
     readText: async (p) => {
@@ -93,23 +111,15 @@ function fakeFs(
     },
     writeBytes: async () => {},
     createExclusive: async () => false,
+    lstat: lstatImpl,
     stat: async (p) => {
-      if (fileMap.has(p)) {
-        return {
-          isFile: true,
-          isDirectory: false,
-          size: fileMap.get(p)!.length,
-          mtimeMs: 1000,
-          ino: 1,
-        };
+      let cur = p;
+      for (let hops = 0; hops < 10 && symlinkSet.has(cur); hops += 1) {
+        const target = symlinkTargetMap.get(cur);
+        if (target === undefined) break;
+        cur = isAbsolute(target) ? target : join(cur, '..', target);
       }
-      if (symlinkSet.has(p)) {
-        return { isFile: false, isDirectory: false, isSymbolicLink: true, size: 0, mtimeMs: 1000, ino: 1 };
-      }
-      if (isDir(p)) {
-        return { isFile: false, isDirectory: true, size: 0, mtimeMs: 1000, ino: 1 };
-      }
-      throw enoent(p);
+      return lstatImpl(cur);
     },
     readdir: async (p) => {
       if (!isDir(p)) throw enoent(p);

@@ -1,6 +1,6 @@
 /**
- * Live-server invariant for the v1 terminal surface (REST + WS controls — no
- * `/api/v2` equivalent): create/list/get a terminal, attach + input over WS,
+ * Live-server invariant for the v1 terminal surface (REST + WS controls):
+ * create/list/get a terminal, attach + input over WS,
  * observe `terminal_output`, resize, close with `terminal_exit`.
  *
  * Converted from the retired scenario `11-terminal.ts`. Skips when no server

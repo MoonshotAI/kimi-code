@@ -13,10 +13,13 @@
 
 import { IOAuthService, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
+  managedUsageResultSchema,
   oauthFlowSnapshotSchema,
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
   oauthLogoutResponseSchema,
+  type ManagedUsageResult,
+  type UsageRow,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { z } from 'zod';
 
@@ -151,4 +154,55 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     logoutRoute.options,
     logoutRoute.handler as Parameters<RouteHost['post']>[2],
   );
+
+  // GET /oauth/usage — managed-account plan usage (limits + booster wallet) ---
+  const usageRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/oauth/usage',
+      querystring: oauthLoginQuerySchema,
+      success: { data: managedUsageResultSchema },
+      description: 'Get the managed account usage summary',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const result = await core.accessor.get(IOAuthService).getManagedUsage(req.query.provider);
+      reply.send(okEnvelope(toWireUsage(result), req.id));
+    },
+  );
+  app.get(
+    usageRoute.path,
+    usageRoute.options,
+    usageRoute.handler as Parameters<RouteHost['get']>[2],
+  );
+}
+
+/** Domain (camelCase) → wire (snake_case) mapping for the usage payload. */
+function toWireUsage(result: ManagedUsageDomainResult): ManagedUsageResult {
+  if (result.kind === 'error') {
+    return { kind: 'error', message: result.message, status: result.status };
+  }
+  return {
+    kind: 'ok',
+    summary: result.summary === null ? null : toWireUsageRow(result.summary),
+    limits: result.limits.map(toWireUsageRow),
+    extra_usage:
+      result.extraUsage === null
+        ? null
+        : {
+            balance_cents: result.extraUsage.balanceCents,
+            total_cents: result.extraUsage.totalCents,
+            monthly_charge_limit_enabled: result.extraUsage.monthlyChargeLimitEnabled,
+            monthly_charge_limit_cents: result.extraUsage.monthlyChargeLimitCents,
+            monthly_used_cents: result.extraUsage.monthlyUsedCents,
+            currency: result.extraUsage.currency,
+          },
+  };
+}
+
+type ManagedUsageDomainResult = Awaited<ReturnType<IOAuthService['getManagedUsage']>>;
+type DomainUsageRow = { label: string; used: number; limit: number; resetHint?: string };
+
+function toWireUsageRow(row: DomainUsageRow): UsageRow {
+  return { label: row.label, used: row.used, limit: row.limit, reset_hint: row.resetHint };
 }

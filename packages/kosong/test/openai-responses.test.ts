@@ -919,6 +919,22 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['max_output_tokens']).toBe(2048);
     });
 
+    it('passes constructor generationKwargs into the request body', async () => {
+      // The construction-time channel (session affinity): kwargs seeded via
+      // the options land on every request, no morph required.
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        generationKwargs: { prompt_cache_key: 'session-test' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['prompt_cache_key']).toBe('session-test');
+    });
+
     it('withMaxCompletionTokens sets max_output_tokens on the cloned provider', async () => {
       const original = createProvider();
       const provider = original.withMaxCompletionTokens(1024);
@@ -1023,6 +1039,22 @@ describe('OpenAIResponsesChatProvider', () => {
 
       expect(body['reasoning']).toBeUndefined();
       expect(body['include']).toBeUndefined();
+    });
+
+    it('with_thinking("off") sends the configured offEffort for models that reason by default', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'grok-4',
+        apiKey: 'test-key',
+        offEffort: 'none',
+      }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning']).toEqual({ effort: 'none', summary: 'auto' });
+      expect(body['include']).toEqual(['reasoning.encrypted_content']);
+      expect(provider.thinkingEffort).toBe('off');
     });
 
     it('with_thinking("low") sends reasoning with effort=low', async () => {

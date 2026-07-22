@@ -19,6 +19,14 @@ import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
 } from '#/tui/components/messages/agent-swarm-progress';
+import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import {
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT,
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
+  TRANSCRIPT_KEEP_RECENT_STEPS,
+} from '#/tui/utils/transcript-window';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
@@ -127,6 +135,8 @@ function makeStartupInput(): KimiTUIStartupInput {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      agent: undefined,
+      agentFiles: [],
     },
     tuiConfig: {
       theme: 'dark',
@@ -4713,6 +4723,116 @@ command = "vim"
     expect(session.setThinking).not.toHaveBeenCalled();
   });
 
+  it('does not write config when re-confirming the current effort in the picker', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'k2',
+        // No persisted effort: re-confirming the shown level must not turn the
+        // runtime default into a stored preference.
+        thinking: { enabled: true },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as EffortSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Already using Kimi K2 with thinking high.');
+    });
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('persists only the model when a switch keeps the same effort', async () => {
+    let switched = false;
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: switched ? 'turbo' : 'k2',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+      setModel: vi.fn(async () => {
+        switched = true;
+      }),
+    });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            defaultEffort: 'high',
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            displayName: 'Turbo',
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'max'],
+            defaultEffort: 'high',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'high' },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    // The effort matches the value shown when the picker opened, so the patch
+    // carries no effort key; the stored preference stays as-is via the merge.
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true },
+      });
+    });
+  });
+
   it('refreshes only OAuth provider models before opening /model picker', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
@@ -5261,7 +5381,33 @@ describe('/effort support_efforts override', () => {
     expect(transcript).toContain('Thinking set to max.');
   });
 
-  it('offers the latest Opus efforts for an unknown Anthropic-compatible model', async () => {
+  it('offers the latest Opus efforts for an unknown Claude-marked Anthropic-compatible model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-claude-model',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('offers no fallback efforts for a clearly non-Claude Anthropic-compatible model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {
@@ -5284,7 +5430,7 @@ describe('/effort support_efforts override', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
     });
     const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).toContain('Max');
+    expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
   it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
@@ -5314,14 +5460,14 @@ describe('/effort support_efforts override', () => {
     expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
-  it('offers the latest Opus efforts for a flat providerless Anthropic model', async () => {
+  it('offers the latest Opus efforts for a flat providerless Claude-marked Anthropic model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {},
         models: {
           // v2 flat model shape: no named provider, inline endpoint + protocol.
           k2: {
-            model: 'compatible-model',
+            model: 'compatible-claude-model',
             baseUrl: 'https://anthropic.example.test',
             protocol: 'anthropic',
             maxContextSize: 100,
@@ -5369,5 +5515,125 @@ describe('/effort support_efforts override', () => {
       );
     });
     expect(session.setThinking).not.toHaveBeenCalled();
+  });
+});
+
+describe('transcript step and assistant folding', () => {
+  function driveSteps(driver: MessageDriver, cycles: number): void {
+    for (let i = 0; i < cycles; i++) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: `msg-${i} `,
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: `call_${i}`,
+          name: 'Bash',
+          args: { command: 'ls' },
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: `call_${i}`,
+          output: 'ok',
+          isError: undefined,
+        } as Event,
+        vi.fn(),
+      );
+    }
+  }
+
+  it('folds the oldest assistant messages and steps beyond their per-turn caps', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('fold me');
+
+    const cycles = Math.max(TRANSCRIPT_KEEP_RECENT_ASSISTANT, TRANSCRIPT_KEEP_RECENT_STEPS) + 7;
+    driveSteps(driver, cycles);
+
+    const children = driver.state.transcriptContainer.children;
+    const assistantCount = children.filter(
+      (child) => child instanceof AssistantMessageComponent,
+    ).length;
+    const toolCount = children.filter((child) => child instanceof ToolCallComponent).length;
+    expect(assistantCount).toBe(TRANSCRIPT_KEEP_RECENT_ASSISTANT);
+    expect(toolCount).toBe(TRANSCRIPT_KEEP_RECENT_STEPS);
+
+    const summaries = children.filter((child) => child instanceof StepSummaryComponent);
+    expect(summaries).toHaveLength(1);
+    const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
+    expect(summaryText).toContain(`call ${cycles - TRANSCRIPT_KEEP_RECENT_STEPS} tools`);
+    expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT} messages`);
+
+    // Folding drops mounted components only; every transcript entry is kept.
+    const assistantEntries = driver.state.transcriptEntries.filter(
+      (entry) => entry.kind === 'assistant',
+    );
+    expect(assistantEntries).toHaveLength(cycles);
+  });
+
+  it('does not fold a turn within the caps', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('small turn');
+    driveSteps(driver, 3);
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof AssistantMessageComponent)).toHaveLength(3);
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(3);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('folds a completed turn down to its conclusion tail on turn end', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('round one');
+    const cycles = 10;
+    driveSteps(driver, cycles);
+
+    // Below the active-turn caps, nothing folds while the turn is live.
+    let children = driver.state.transcriptContainer.children;
+    expect(
+      children.filter((child) => child instanceof AssistantMessageComponent),
+    ).toHaveLength(cycles);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    children = driver.state.transcriptContainer.children;
+    const assistants = children.filter((child) => child instanceof AssistantMessageComponent);
+    expect(assistants).toHaveLength(TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED);
+
+    const summaries = children.filter((child) => child instanceof StepSummaryComponent);
+    expect(summaries).toHaveLength(1);
+    const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
+    expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
+
+    // Steps below the step cap are untouched by the completed-turn fold.
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(cycles);
+
+    // The conclusion stays mounted.
+    const lastAssistant = assistants.at(-1)!;
+    expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
   });
 });

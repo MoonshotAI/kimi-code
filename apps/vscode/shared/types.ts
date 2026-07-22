@@ -4,6 +4,13 @@ export interface SessionConfig {
   model: string;
   thinking?: boolean;
   effort?: string;
+  /**
+   * Whether the user explicitly changed the effort. Re-confirming the effort
+   * already shown is not an explicit choice: the model is persisted but the
+   * stored effort preference is left alone (mirrors the TUI's
+   * persistModelSelection). Treated as true when omitted.
+   */
+  effortChanged?: boolean;
 }
 
 export interface ProjectFile {

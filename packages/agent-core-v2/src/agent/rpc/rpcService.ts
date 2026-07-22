@@ -13,10 +13,16 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import {
+  IAgentLifecycleService,
+  MAIN_AGENT_ID,
+} from '#/session/agentLifecycle/agentLifecycle';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentProfileService, ProfileError } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentShellCommandService } from '#/agent/shellCommand/shellCommand';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -87,6 +93,7 @@ export class AgentRPCService implements IAgentRPCService {
     @IAgentShellCommandService private readonly shellCommand: IAgentShellCommandService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentPermissionGate private readonly permission: IAgentPermissionGate,
     @IAgentPlanService private readonly planMode: IAgentPlanService,
@@ -108,9 +115,21 @@ export class AgentRPCService implements IAgentRPCService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionBtwService private readonly btw: ISessionBtwService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
+    if (payload.disabledTools !== undefined) {
+      try {
+        await this.toolPolicy.setSessionDisabledTools(payload.disabledTools);
+      } catch (error) {
+        if (error instanceof ProfileError) {
+          throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+        }
+        throw error;
+      }
+    }
     await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     const handle = await this.promptService.enqueue({ message: {
       role: 'user',
@@ -167,6 +186,9 @@ export class AgentRPCService implements IAgentRPCService {
     const wasYolo = this.permissionMode.mode === 'yolo';
     const wasAuto = this.permissionMode.mode === 'auto';
     this.permissionMode.setMode(payload.mode);
+    if (this.scopeContext.agentId === MAIN_AGENT_ID) {
+      this.agentLifecycle.broadcastPermissionMode(payload.mode);
+    }
     const enabled = this.permissionMode.mode === 'yolo';
     if (enabled !== wasYolo) {
       this.telemetry.track2('yolo_toggle', { enabled });
@@ -361,7 +383,7 @@ export class AgentRPCService implements IAgentRPCService {
     return this.toolRegistry.list().map((tool) => ({
       name: tool.name,
       description: tool.description,
-      active: this.profile.isToolActive(tool.name, tool.source),
+      active: this.toolPolicy.isToolActive(tool.name, tool.source),
       source: tool.source,
     }));
   }

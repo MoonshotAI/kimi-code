@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/transcript": "workspace:^",
     "@tanstack/react-query": "^5.74.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

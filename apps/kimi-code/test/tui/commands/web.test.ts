@@ -5,20 +5,23 @@ import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { handleWebCommand, webSessionUrl } from '#/tui/commands/web';
 
 const mocks = vi.hoisted(() => ({
-  ensureDaemon: vi.fn(),
+  startServerForeground: vi.fn(),
   tryResolveServerToken: vi.fn(),
   getDataDir: vi.fn(() => '/tmp/kimi-home'),
   openUrl: vi.fn(),
 }));
 
-vi.mock('#/cli/sub/server/daemon', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('#/cli/sub/server/daemon')>();
-  return { ...actual, ensureDaemon: mocks.ensureDaemon };
+vi.mock('#/cli/sub/web/run', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/cli/sub/web/run')>();
+  return { ...actual, startServerForeground: mocks.startServerForeground };
 });
 
-vi.mock('#/cli/sub/server/shared', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('#/cli/sub/server/shared')>();
-  return { ...actual, tryResolveServerToken: mocks.tryResolveServerToken };
+vi.mock('#/cli/sub/web/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/cli/sub/web/shared')>();
+  return {
+    ...actual,
+    tryResolveServerToken: mocks.tryResolveServerToken,
+  };
 });
 
 vi.mock('#/utils/open-url', async (importOriginal) => {
@@ -31,22 +34,15 @@ vi.mock('#/utils/paths', async (importOriginal) => {
   return { ...actual, getDataDir: mocks.getDataDir };
 });
 
-type MountedPanel = {
-  handleInput: (data: string) => void;
-  render: (width: number) => string[];
-};
-
 function makeHost() {
-  let mountedPanel: MountedPanel | null = null;
   const host = {
     session: { id: 'ses-1' },
     showStatus: vi.fn(),
     showError: vi.fn(),
-    mountEditorReplacement: vi.fn((panel: MountedPanel) => {
-      mountedPanel = panel;
-    }),
+    mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     setExitOpenUrl: vi.fn(),
+    setExitForegroundTask: vi.fn(),
     stop: vi.fn(async () => {}),
   } as unknown as SlashCommandHost & {
     showStatus: ReturnType<typeof vi.fn>;
@@ -54,9 +50,10 @@ function makeHost() {
     mountEditorReplacement: ReturnType<typeof vi.fn>;
     restoreEditor: ReturnType<typeof vi.fn>;
     setExitOpenUrl: ReturnType<typeof vi.fn>;
+    setExitForegroundTask: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
   };
-  return { host, getMountedPanel: () => mountedPanel };
+  return host;
 }
 
 describe('web slash command', () => {
@@ -71,53 +68,55 @@ describe('handleWebCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getDataDir.mockReturnValue('/tmp/kimi-home');
-    mocks.ensureDaemon.mockResolvedValue({
-      origin: 'http://127.0.0.1:58627',
-      reused: false,
-      host: '127.0.0.1',
-      port: 58627,
-    });
   });
 
-  it('shows the token in green and opens the deep link carrying the token fragment', async () => {
+  it('shows an error and does nothing when there is no active session', async () => {
+    const host = makeHost();
+    host.session = undefined;
+
+    await handleWebCommand(host);
+
+    expect(host.showError).toHaveBeenCalledOnce();
+    expect(host.setExitForegroundTask).not.toHaveBeenCalled();
+    expect(host.stop).not.toHaveBeenCalled();
+  });
+
+  it('registers a foreground takeover and stops the TUI without opening a URL yet', async () => {
+    const host = makeHost();
+
+    await handleWebCommand(host);
+
+    expect(host.setExitForegroundTask).toHaveBeenCalledOnce();
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    expect(mocks.openUrl).not.toHaveBeenCalled();
+  });
+
+  it('starts the new server on takeover, printing the banner and opening the deep link', async () => {
     mocks.tryResolveServerToken.mockReturnValue('tok-1');
-    const { host, getMountedPanel } = makeHost();
-
-    const pending = handleWebCommand(host);
-    getMountedPanel()?.handleInput('\r');
-    await pending;
-
-    expect(host.showStatus).toHaveBeenCalledWith('Starting Kimi server and opening web UI…');
-    expect(host.showStatus).toHaveBeenCalledWith(
-      'open http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-      'success',
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    mocks.startServerForeground.mockImplementation(
+      async (_options: unknown, hooks: { onReady?: (origin: string) => void }) => {
+        hooks.onReady?.('http://127.0.0.1:58627');
+      },
     );
-    expect(host.showStatus).toHaveBeenCalledWith('Token:    tok-1', 'success');
+    const host = makeHost();
+
+    await handleWebCommand(host);
+    const task = host.setExitForegroundTask.mock.calls[0]![0] as (
+      exitCode: number,
+    ) => Promise<void>;
+    await task(0);
+
+    expect(mocks.startServerForeground).toHaveBeenCalledOnce();
     expect(mocks.openUrl).toHaveBeenCalledWith(
       'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
     );
-    expect(host.setExitOpenUrl).toHaveBeenCalledWith(
-      'http://127.0.0.1:58627/sessions/ses-1#token=tok-1',
-    );
-    expect(host.stop).toHaveBeenCalledOnce();
-  });
-
-  it('skips the token line and fragment when no token is available', async () => {
-    mocks.tryResolveServerToken.mockReturnValue(undefined);
-    const { host, getMountedPanel } = makeHost();
-
-    const pending = handleWebCommand(host);
-    getMountedPanel()?.handleInput('\r');
-    await pending;
-
-    expect(host.showStatus).toHaveBeenCalledWith('Starting Kimi server and opening web UI…');
-    expect(host.showStatus).toHaveBeenCalledWith(
-      'open http://127.0.0.1:58627/sessions/ses-1',
-      'success',
-    );
-    expect(host.showStatus).not.toHaveBeenCalledWith(expect.stringContaining('Token:'), 'success');
-    expect(mocks.openUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/sessions/ses-1');
-    expect(host.setExitOpenUrl).toHaveBeenCalledWith('http://127.0.0.1:58627/sessions/ses-1');
+    const written = writeSpy.mock.calls.map((call) => String(call[0])).join('');
+    expect(written).toContain('Kimi server ready');
+    expect(written).toContain('Ctrl+C');
+    expect(written).toContain('/sessions/ses-1');
+    writeSpy.mockRestore();
   });
 });
 

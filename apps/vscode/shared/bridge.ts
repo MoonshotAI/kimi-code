@@ -156,7 +156,8 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
       return isPlainObject(params)
         && typeof params["model"] === "string"
         && isOptionalType(params["thinking"], "boolean")
-        && isOptionalType(params["effort"], "string");
+        && isOptionalType(params["effort"], "string")
+        && isOptionalType(params["effortChanged"], "boolean");
     case Methods.AddMCPServer:
       return isMcpServerConfig(params);
     case Methods.UpdateMCPServer:

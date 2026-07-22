@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code",
-  "version": "0.27.0",
+  "version": "0.28.1",
   "description": "The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -37,8 +37,8 @@
   "imports": {
     "#/tui/theme": "./src/tui/theme/index.ts",
     "#/tui/commands": "./src/tui/commands/index.ts",
-    "#/cli/sub/server": "./src/cli/sub/server/index.ts",
-    "#/cli/sub/server/*": "./src/cli/sub/server/*.ts",
+    "#/cli/sub/web": "./src/cli/sub/web/index.ts",
+    "#/cli/sub/web/*": "./src/cli/sub/web/*.ts",
     "#/generated/vis-web-asset": [
       "./src/generated/vis-web-asset.ts",
       "./src/generated/vis-web-asset.d.ts"
@@ -63,9 +63,9 @@
     "test:native:smoke": "node scripts/native/smoke.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:cli-only": "tsx --import ../../build/register-raw-text-loader.mjs ./src/main.ts",
-    "dev:server": "tsx --tsconfig ./tsconfig.dev.json --import ../../build/register-raw-text-loader.mjs ./src/main.ts server run --foreground --debug-endpoints",
-    "dev:kap-server": "tsx --tsconfig ./tsconfig.dev.json --import ../../build/register-raw-text-loader.mjs ./src/main.ts server run --foreground --debug-endpoints",
-    "dev:kap-server:multi": "KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1 tsx --tsconfig ./tsconfig.dev.json --import ../../build/register-raw-text-loader.mjs ./src/main.ts server run --foreground --debug-endpoints",
+    "dev:server": "tsx --tsconfig ./tsconfig.dev.json --import ../../build/register-raw-text-loader.mjs ./src/main.ts web --no-open --debug-endpoints",
+    "dev:kap-server": "tsx --tsconfig ./tsconfig.dev.json --import ../../build/register-raw-text-loader.mjs ./src/main.ts web --no-open --debug-endpoints",
+    "dev:kap-server:multi": "tsx --tsconfig ./tsconfig.dev.json --import ../../build/register-raw-text-loader.mjs ./src/main.ts web --no-open --debug-endpoints",
     "dev:server:restart": "node scripts/dev-server-restart.mjs",
     "dev:plugin-marketplace": "node scripts/dev-plugin-marketplace-server.mjs",
     "build:plugin-marketplace": "node scripts/build-plugin-marketplace-cdn.mjs",

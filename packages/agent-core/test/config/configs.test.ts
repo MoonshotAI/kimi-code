@@ -14,6 +14,7 @@ import {
   loadRuntimeConfig,
   loadRuntimeConfigSafe,
   mergeConfigPatch,
+  migrateThinkingEffortMaxToHigh,
   parseConfigString,
   parseBooleanEnv,
   readConfigFile,
@@ -958,5 +959,65 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(config.background?.bashTaskTimeoutS).toBe(30);
     expect(config.background?.keepAliveOnExit).toBe(true);
     expect(config.subagent?.timeoutMs).toBe(5000);
+  });
+});
+
+describe('migrateThinkingEffortMaxToHigh', () => {
+  const BASE =
+    'default_model = "x"\n[providers.x]\ntype = "kimi"\napi_key = "k"\n[models.x]\nprovider = "x"\nmodel = "x"\nmax_context_size = 1000\n';
+
+  async function readMarkers(home: string): Promise<Record<string, string>> {
+    return JSON.parse(await readFile(join(home, 'migrations-effort.json'), 'utf-8')) as Record<
+      string,
+      string
+    >;
+  }
+
+  it('rewrites a persisted max to high once and records the marker', async () => {
+    const home = makeTempDir();
+    const configPath = join(home, 'config.toml');
+    await writeFile(configPath, `${BASE}[thinking]\nenabled = true\neffort = "max"\n`);
+
+    migrateThinkingEffortMaxToHigh(configPath, home);
+
+    expect(readConfigFile(configPath).thinking).toEqual({ enabled: true, effort: 'high' });
+    const markers = await readMarkers(home);
+    expect(markers['thinking-effort-max-to-high']).toBeDefined();
+
+    // A max the user writes by hand AFTER the migration is honored — the
+    // marker makes every later run a no-op.
+    await writeFile(configPath, `${BASE}[thinking]\neffort = "max"\n`);
+    migrateThinkingEffortMaxToHigh(configPath, home);
+    expect(readConfigFile(configPath).thinking?.effort).toBe('max');
+  });
+
+  it('leaves non-max values untouched and still records the marker', async () => {
+    const home = makeTempDir();
+    const configPath = join(home, 'config.toml');
+    await writeFile(configPath, `${BASE}[thinking]\neffort = "low"\n`);
+
+    migrateThinkingEffortMaxToHigh(configPath, home);
+
+    expect(readConfigFile(configPath).thinking?.effort).toBe('low');
+    const markers = await readMarkers(home);
+    expect(markers['thinking-effort-max-to-high']).toBeDefined();
+  });
+
+  it('marks a home without a config file as migrated', async () => {
+    const home = makeTempDir();
+    migrateThinkingEffortMaxToHigh(join(home, 'config.toml'), home);
+
+    const markers = await readMarkers(home);
+    expect(markers['thinking-effort-max-to-high']).toBeDefined();
+  });
+
+  it('skips an unparsable config without writing the marker', async () => {
+    const home = makeTempDir();
+    const configPath = join(home, 'config.toml');
+    await writeFile(configPath, 'not = [valid = toml\n');
+
+    migrateThinkingEffortMaxToHigh(configPath, home);
+
+    await expect(readFile(join(home, 'migrations-effort.json'), 'utf-8')).rejects.toThrow();
   });
 });

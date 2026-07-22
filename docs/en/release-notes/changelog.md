@@ -6,6 +6,38 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.28.1 (2026-07-20)
+
+### Features
+
+- Allow ACP sessions to start with configured non-OAuth model credentials instead of requiring terminal login.
+
+### Polish
+
+- Run web servers foreground-only end to end: the /web slash command now always starts a new server, and the `kimi web kill` / `kimi web ps` subcommands are removed — foreground servers stop with Ctrl+C. `kimi server kill` remains as a deprecated fallback that only stops servers started by a version before 0.28.0.
+
+### Bug Fixes
+
+- Fix running subagents not observing permission mode switches made after they started.
+
+## 0.28.0 (2026-07-20)
+
+### Features
+
+- **Breaking:**
+  - The `kimi server` command tree is deprecated; use `kimi web` instead.
+  - `kimi web` now runs in the foreground of the current terminal and opens the browser; stop it with Ctrl+C.
+
+### Polish
+
+- Thinking effort persists only levels below the model's top tier (max).
+- web: Add a note in the model switcher that switching models or thinking effort invalidates the existing prompt cache.
+
+### Bug Fixes
+
+- Correct the YOLO and Auto permission mode descriptions: YOLO auto-approves tool actions but the agent may still ask questions, while Auto is fully autonomous and never asks.
+- Fix the web backend ignoring symbolic links when loading AGENTS.md files and reading files.
+
 ## 0.27.0 (2026-07-17)
 
 ### Features

@@ -1846,6 +1846,65 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('honors the observed provider window over a declared input cap', async () => {
+    let callCount = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-observed-window');
+      }
+      if (callCount === 2) {
+        return textResult('Observed recovery summary.');
+      }
+      if (callCount === 3) {
+        await callbacks?.onMessagePart?.({
+          type: 'text',
+          text: 'Recovered after observed overflow.',
+        });
+        return textResult('Recovered after observed overflow.');
+      }
+      if (callCount === 4) {
+        return textResult('Observed preemptive summary.');
+      }
+      if (callCount === 5) {
+        await callbacks?.onMessagePart?.({
+          type: 'text',
+          text: 'Answered after observed-window precompaction.',
+        });
+        return textResult('Answered after observed-window precompaction.');
+      }
+      throw new Error(`Unexpected generate call ${String(callCount)}`);
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 200_000,
+        max_input_tokens: 150_000,
+      },
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'learn observed window' }] });
+    await ctx.untilTurnEnd();
+    expect(callCount).toBe(3);
+
+    ctx.appendExchange(2, 'near observed user', 'near observed assistant', 120_000);
+    ctx.newEvents();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use observed window' }] });
+    const events = await ctx.untilTurnEnd();
+
+    // The strategy must size against the provider-learned window (~108k),
+    // not the raw 150k declared input cap — otherwise it never preemptively
+    // compacts the 120k context the provider already rejected.
+    expect(callCount).toBe(5);
+    expect(events).toContainEqual(
+      expect.objectContaining({ event: 'compaction.started' }),
+    );
+  });
+
   it('stops repeated provider-overflow compactions when the compacted context still overflows', async () => {
     let callCount = 0;
     const generate: GenerateFn = async (_provider, _system, _tools, history) => {

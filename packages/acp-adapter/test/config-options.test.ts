@@ -18,6 +18,8 @@ function makeHarnessWithModels(
     capabilities?: readonly string[];
     protocol?: 'anthropic';
     providerType?: 'anthropic' | 'kimi' | 'openai';
+    supportEfforts?: readonly string[];
+    defaultEffort?: string;
   }>,
 ): { harness: KimiHarness; getConfig: ReturnType<typeof vi.fn> } {
   // Mirror the `listAvailableModels` derivation: `id` is the config map
@@ -32,6 +34,8 @@ function makeHarnessWithModels(
     displayName?: string;
     capabilities?: readonly string[];
     protocol?: 'anthropic';
+    supportEfforts?: readonly string[];
+    defaultEffort?: string;
   }> = {};
   const providers: Record<string, { type: string }> = {};
   for (const entry of entries) {
@@ -42,6 +46,8 @@ function makeHarnessWithModels(
       ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
       protocol: entry.protocol,
+      ...(entry.supportEfforts !== undefined ? { supportEfforts: entry.supportEfforts } : {}),
+      ...(entry.defaultEffort !== undefined ? { defaultEffort: entry.defaultEffort } : {}),
     };
     if (entry.providerType !== undefined) {
       providers[providerName] = { type: entry.providerType };
@@ -54,8 +60,8 @@ function makeHarnessWithModels(
 describe('buildModelOption', () => {
   it('emits exactly one option per catalog row (Phase 15: no inlined `,thinking` variant rows)', () => {
     const models: readonly AcpModelEntry[] = [
-      { id: 'alpha', name: 'Alpha', thinkingSupported: true, defaultThinkingEffort: 'on' },
-      { id: 'beta', name: 'Beta', thinkingSupported: false, defaultThinkingEffort: 'on' },
+      { id: 'alpha', name: 'Alpha', thinkingSupported: true, supportEfforts: [], defaultThinkingEffort: 'on' },
+      { id: 'beta', name: 'Beta', thinkingSupported: false, supportEfforts: [], defaultThinkingEffort: 'on' },
     ];
 
     const option = buildModelOption(models, 'alpha');
@@ -79,7 +85,7 @@ describe('buildModelOption', () => {
 
   it('treats `currentValue` as the bare base model id — Phase 15 keeps the snapshot suffix-free', () => {
     const models: readonly AcpModelEntry[] = [
-      { id: 'kimi-v2', name: 'Kimi v2', thinkingSupported: true, defaultThinkingEffort: 'on' },
+      { id: 'kimi-v2', name: 'Kimi v2', thinkingSupported: true, supportEfforts: [], defaultThinkingEffort: 'on' },
     ];
 
     const option = buildModelOption(models, 'kimi-v2');
@@ -101,8 +107,8 @@ describe('buildModelOption', () => {
 });
 
 describe('buildThinkingOption', () => {
-  it('produces a `type:"select"` `category:"thought_level"` option with `off`/`on` entries carrying the toggle value', () => {
-    const on = buildThinkingOption(true);
+  it('boolean models keep the legacy `off`/`on` select with the toggle value carried through', () => {
+    const on = buildThinkingOption('on', [], 'on');
     expect(on.type).toBe('select');
     expect(on.id).toBe('thinking');
     expect(on.category).toBe('thought_level');
@@ -110,19 +116,72 @@ describe('buildThinkingOption', () => {
     if (on.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(on.currentValue).toBe('on');
     expect(on.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['off', 'on']);
-    expect(on.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Thinking Off', 'Thinking On']);
+    expect(on.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Off', 'On']);
 
-    const off = buildThinkingOption(false);
+    const off = buildThinkingOption('off', [], 'on');
+    if (off.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(off.currentValue).toBe('off');
+
+    // Boolean models render any non-'off' effort (e.g. a status-reported
+    // concrete level) as `on` — the engine speaks the binary pair here.
+    const high = buildThinkingOption('high', [], 'on');
+    if (high.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(high.currentValue).toBe('on');
+  });
+
+  it('collapses to a single locked "on" entry for always-thinking boolean models', () => {
+    const locked = buildThinkingOption('on', [], 'on', true);
+    if (locked.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(locked.currentValue).toBe('on');
+    expect(locked.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['on']);
+    expect(locked.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['On']);
+  });
+
+  it('emits one row per declared effort level, preceded by `off`', () => {
+    const option = buildThinkingOption('high', ['low', 'medium', 'high'], 'medium');
+    if (option.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(option.currentValue).toBe('high');
+    expect(option.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'off',
+      'low',
+      'medium',
+      'high',
+    ]);
+    expect(option.options.map((o) => ('name' in o ? o.name : ''))).toEqual([
+      'Off',
+      'Low',
+      'Medium',
+      'High',
+    ]);
+
+    const off = buildThinkingOption('off', ['low', 'medium', 'high'], 'medium');
     if (off.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(off.currentValue).toBe('off');
   });
 
-  it('collapses to a single locked "on" entry for always-thinking models', () => {
-    const locked = buildThinkingOption(true, true);
+  it('projects the legacy `on` alias and undeclared levels onto the model default effort', () => {
+    const legacyOn = buildThinkingOption('on', ['low', 'medium', 'high'], 'medium');
+    if (legacyOn.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(legacyOn.currentValue).toBe('medium');
+
+    const stale = buildThinkingOption('xhigh', ['low', 'medium', 'high'], 'medium');
+    if (stale.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(stale.currentValue).toBe('medium');
+  });
+
+  it('drops the `off` row for always-thinking effort models and renders a recorded off as the default level', () => {
+    const locked = buildThinkingOption('off', ['low', 'medium', 'high'], 'medium', true);
     if (locked.type !== 'select') throw new Error('expected SessionConfigSelect');
-    expect(locked.currentValue).toBe('on');
-    expect(locked.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['on']);
-    expect(locked.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Thinking On']);
+    expect(locked.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'low',
+      'medium',
+      'high',
+    ]);
+    expect(locked.currentValue).toBe('medium');
+
+    const on = buildThinkingOption('high', ['low', 'medium', 'high'], 'medium', true);
+    if (on.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(on.currentValue).toBe('high');
   });
 });
 
@@ -159,7 +218,7 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-coder', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-coder', 'off', 'default');
 
     expect(getConfig).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(3);
@@ -179,7 +238,22 @@ describe('buildSessionConfigOptions', () => {
     }
   });
 
-  it('shows the thinking control for an unknown model using the Anthropic protocol', async () => {
+  it('shows the thinking control for an unknown Claude-marked model using the Anthropic protocol', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'custom',
+        model: 'custom-claude-model',
+        protocol: 'anthropic',
+        providerType: 'anthropic',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'custom', 'off', 'default');
+
+    expect(result.map((option) => option.id)).toEqual(['model', 'thinking', 'mode']);
+  });
+
+  it('hides the thinking control for a clearly non-Claude model using the Anthropic protocol', async () => {
     const { harness } = makeHarnessWithModels([
       {
         id: 'custom',
@@ -189,9 +263,9 @@ describe('buildSessionConfigOptions', () => {
       },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'custom', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'custom', 'off', 'default');
 
-    expect(result.map((option) => option.id)).toEqual(['model', 'thinking', 'mode']);
+    expect(result.map((option) => option.id)).toEqual(['model', 'mode']);
   });
 
   it('hides the thinking control for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
@@ -204,7 +278,7 @@ describe('buildSessionConfigOptions', () => {
       },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'custom', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'custom', 'off', 'default');
 
     expect(result.map((option) => option.id)).toEqual(['model', 'mode']);
   });
@@ -215,7 +289,7 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-plain', model: 'qwen-2.5-coder', displayName: 'Kimi Plain' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-plain', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-plain', 'off', 'default');
 
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });
@@ -225,10 +299,42 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-coder', true, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-coder', 'on', 'default');
     const toggle = result.find((o) => o.id === 'thinking');
     if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
     expect(toggle.currentValue).toBe('on');
+  });
+
+  it('advertises one row per declared effort level for effort-capable models', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'kimi-k2',
+        model: 'kimi-k2-thinking',
+        displayName: 'Kimi K2',
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'medium', 'high'],
+        defaultEffort: 'medium',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'kimi-k2', 'high', 'default');
+    const picker = result.find((o) => o.id === 'thinking');
+    if (!picker || picker.type !== 'select') throw new Error('expected thinking select picker');
+    expect(picker.currentValue).toBe('high');
+    expect(picker.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'off',
+      'low',
+      'medium',
+      'high',
+    ]);
+
+    // The legacy `on` value projects onto the declared default level.
+    const defaulted = await buildSessionConfigOptions(harness, 'kimi-k2', 'on', 'default');
+    const defaultedPicker = defaulted.find((o) => o.id === 'thinking');
+    if (!defaultedPicker || defaultedPicker.type !== 'select') {
+      throw new Error('expected thinking select picker');
+    }
+    expect(defaultedPicker.currentValue).toBe('medium');
   });
 
   it('locks the thinking toggle to on for always-thinking models even when the session state says off', async () => {
@@ -241,7 +347,7 @@ describe('buildSessionConfigOptions', () => {
       },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-deep', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-deep', 'off', 'default');
 
     const toggle = result.find((o) => o.id === 'thinking');
     if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
@@ -254,14 +360,14 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'unknown-model', true, 'default');
+    const result = await buildSessionConfigOptions(harness, 'unknown-model', 'on', 'default');
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });
 
   it('handles missing getConfig (partial-stub harness) by suppressing the toggle and shipping an empty model picker', async () => {
     const harness = {} as unknown as KimiHarness;
 
-    const result = await buildSessionConfigOptions(harness, '', false, 'default');
+    const result = await buildSessionConfigOptions(harness, '', 'off', 'default');
 
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
     const modelOpt = result.find((o) => o.id === 'model');

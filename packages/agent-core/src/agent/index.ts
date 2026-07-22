@@ -681,7 +681,8 @@ export class Agent {
     if (!this.config.hasModel) return;
 
     const contextTokens = this.context.tokenCount;
-    const maxContextTokens = this.config.modelCapabilities.max_context_tokens;
+    const capability = this.config.modelCapabilities;
+    const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     const contextUsage =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? contextTokens / maxContextTokens

@@ -29,7 +29,7 @@ describe('undoHistory RPC', () => {
     expect(undone).toBe(1);
     expect(records).toContainEqual({
       event: 'conversation_undo',
-      properties: { count: 1 },
+      properties: { agent_id: 'main', count: 1 },
     });
   });
 });

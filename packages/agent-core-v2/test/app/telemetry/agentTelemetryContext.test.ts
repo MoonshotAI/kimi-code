@@ -14,7 +14,10 @@ describe('AgentTelemetryContextService', () => {
     const ctx = new AgentTelemetryContextService();
 
     telemetry.withContext(ctx.get()).track('turn_started');
-    expect(records).toContainEqual({ event: 'turn_started', properties: { mode: 'agent' } });
+    expect(records).toContainEqual({
+      event: 'turn_started',
+      properties: { mode: 'agent' },
+    });
 
     ctx.set({ mode: 'plan' });
     telemetry.withContext(ctx.get()).track('turn_interrupted', { at_step: 2 });

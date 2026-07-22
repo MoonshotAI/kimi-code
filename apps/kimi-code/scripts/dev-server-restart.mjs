@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Press-Enter-to-restart wrapper for the local server. No file watcher.
 //
-// Spawns `tsx ./src/main.ts server run …extraArgs` once, then on each newline
-// read from stdin SIGTERMs the child and respawns after it has cleanly exited.
-// SIGTERM triggers the server's own `shutdown()` handler
-// (apps/kimi-code/src/cli/sub/server/run.ts) which releases the port lock and
-// closes WS conns before exit, so a fresh start can re-acquire 58627 without a
-// stale-lock fight.
+// Spawns `tsx ./src/main.ts web --no-open …extraArgs` once, then on each
+// newline read from stdin SIGTERMs the child and respawns after it has
+// cleanly exited. SIGTERM triggers the server's own `shutdown()` handler
+// (apps/kimi-code/src/cli/sub/web/run.ts) which releases the instance
+// registration and closes WS conns before exit, so a fresh start can
+// re-acquire 58627 without a stale-entry fight.
 //
 // CLI args after `--` (or any extras) are passed straight through, so:
 //   pnpm dev:server:restart -- --host 0.0.0.0 --port 58627 --log-level debug
@@ -31,8 +31,8 @@ const tsxArgs = [
   '--import',
   '../../build/register-raw-text-loader.mjs',
   './src/main.ts',
-  'server',
-  'run',
+  'web',
+  '--no-open',
   ...cliArgs,
 ];
 

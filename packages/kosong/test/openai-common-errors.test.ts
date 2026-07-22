@@ -201,16 +201,44 @@ describe('convertOpenAIError: APIError with body skips heuristic', () => {
     expect(result.constructor).toBe(ChatProviderError);
   });
 });
-describe('convertOpenAIError: subclass errors fall through', () => {
-  it('APIUserAbortError is not heuristically reclassified', () => {
-    // APIUserAbortError is a subclass of APIError (not exact APIError),
-    // so the heuristic branch should not apply even with network keywords.
+describe('convertOpenAIError: abort guard', () => {
+  it('APIUserAbortError throws the standard abort DOMException instead of being classified', () => {
+    // A user cancellation must never be converted into (or returned as) a
+    // retryable provider error: the guard at the very front of the
+    // classification chain throws the standard abort shape.
     const err = new OpenAIUserAbortError({ message: 'connection aborted by user' });
-    const result = convertOpenAIError(err);
-    // Should fall through to generic handling, not become APIConnectionError
-    expect(result.constructor).toBe(ChatProviderError);
+    const thrown = catchThrown(() => convertOpenAIError(err));
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
+  });
+
+  it('bare AbortError DOMException throws the standard abort DOMException', () => {
+    const err = new DOMException('The operation was aborted.', 'AbortError');
+    const thrown = catchThrown(() => convertOpenAIError(err));
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
+  });
+
+  it('bare Error named AbortError throws the standard abort DOMException', () => {
+    const err = new Error('The operation was aborted.');
+    err.name = 'AbortError';
+    const thrown = catchThrown(() => convertOpenAIError(err));
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect((thrown as DOMException).name).toBe('AbortError');
+    expect(isRetryableGenerateError(thrown)).toBe(false);
   });
 });
+
+function catchThrown(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('Expected the function to throw');
+}
 describe('OpenAI streaming error propagation', () => {
   it('base APIError("Network connection lost.") during streaming becomes APIConnectionError', async () => {
     // Simulates: streaming for ~33 minutes, then SSE connection drops

@@ -96,7 +96,7 @@ web UI of the `kimi` CLI (`apps/kimi-code`).
 4. **Publish** — the root `.github/workflows/release.yml` publishes
    `@moonshot-ai/kimi-code` to npm; `dist-web` is listed in the package `files`
    array, so the built web assets travel with the CLI package.
-5. **Serve** — `kimi server run` / `kimi web` serves `dist-web` from the
+5. **Serve** — `kimi web` serves `dist-web` from the
    installed package.
 
 The web UI does not display its own package version or build commit. It is

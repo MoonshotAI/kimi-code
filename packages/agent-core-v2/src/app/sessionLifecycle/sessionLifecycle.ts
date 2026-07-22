@@ -18,6 +18,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
+import type { BindAgentInput } from '#/agent/profile/profile';
 import type { Hooks } from '#/hooks';
 
 export interface CreateSessionOptions {
@@ -25,6 +26,7 @@ export interface CreateSessionOptions {
   readonly workDir: string;
   readonly additionalDirs?: readonly string[];
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly mainAgentBinding?: BindAgentInput;
 }
 
 export interface ForkSessionOptions {

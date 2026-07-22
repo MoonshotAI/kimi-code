@@ -118,7 +118,10 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       agent.tools.unregisterUserTool(input.name);
       return;
     case 'tools.set_active_tools':
-      agent.tools.setActiveTools(input.names);
+      // v2-engine wires may omit `names` (= every tool active); there is no
+      // state to restore in that case, and calling setActiveTools(undefined)
+      // would throw and wedge the whole resume.
+      if (Array.isArray(input.names)) agent.tools.setActiveTools(input.names);
       return;
     case 'tools.update_store':
       agent.tools.updateStore(input.key, input.value);

@@ -35,7 +35,7 @@ import {
   type TestAgentContext,
   type TestAgentServiceOverride,
 } from '../../harness';
-import { recordingTelemetry } from '../../app/telemetry/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 import {
   createAgentTaskPersistence,
@@ -147,7 +147,6 @@ interface FakeTaskAgent {
   emitEvent: ReturnType<typeof vi.fn>;
   emittedEvents: Array<{ type: string; info?: unknown }>;
   kimiConfig?: { task?: { maxRunningTasks?: number } };
-  telemetry: { track2: ReturnType<typeof vi.fn> };
   context: { appendUserMessage: ReturnType<typeof vi.fn> };
   hooks?: { fireAndForgetTrigger: FireAndForgetTrigger };
 }
@@ -156,6 +155,7 @@ interface TaskServiceFixture {
   ctx: TestAgentContext;
   agent: FakeTaskAgent;
   manager: TaskServiceTestManager;
+  records: TelemetryRecord[];
   persistence?: ReturnType<typeof createAgentTaskPersistence>;
 }
 
@@ -174,9 +174,8 @@ function createAgentTaskService(options: {
   maxRunningTasks?: number;
   hooks?: FakeTaskAgent['hooks'];
 } = {}): TaskServiceFixture {
-  const track = vi.fn();
-  const telemetry = recordingTelemetry([]);
-  vi.spyOn(telemetry, 'track2').mockImplementation(track);
+  const records: TelemetryRecord[] = [];
+  const telemetry = recordingTelemetry(records);
   const hookEngine: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined = options.hooks === undefined
     ? undefined
     : {
@@ -218,7 +217,6 @@ function createAgentTaskService(options: {
       options.maxRunningTasks === undefined
         ? undefined
         : { task: { maxRunningTasks: options.maxRunningTasks } },
-    telemetry: { track2: track },
     context: { appendUserMessage: appendHistorySpy },
     hooks: options.hooks,
   };
@@ -232,6 +230,7 @@ function createAgentTaskService(options: {
     ctx,
     agent,
     manager: ctx.get(IAgentTaskService) as TaskServiceTestManager,
+    records,
     persistence,
   };
 }
@@ -307,7 +306,7 @@ describe('AgentTaskService — event emission', () => {
   });
 
   it('emits task.started for process tasks', () => {
-    const { agent, manager } = createAgentTaskService();
+    const { agent, manager, records } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'demo');
 
     expect(agent.emittedEvents).toContainEqual({
@@ -318,13 +317,14 @@ describe('AgentTaskService — event emission', () => {
         status: 'running',
       }),
     });
-    expect(agent.telemetry.track2).toHaveBeenCalledWith('background_task_created', {
-      kind: 'bash',
+    expect(records).toContainEqual({
+      event: 'background_task_created',
+      properties: { agent_id: 'main', task_id: taskId, kind: 'bash' },
     });
   });
 
   it('emits task.started for agent tasks', () => {
-    const { agent, manager } = createAgentTaskService();
+    const { agent, manager, records } = createAgentTaskService();
     const taskId = manager.registerTask(
       agentTask(new Promise(() => {}), 'agent task'),
     );
@@ -337,15 +337,16 @@ describe('AgentTaskService — event emission', () => {
         status: 'running',
       }),
     });
-    expect(agent.telemetry.track2).toHaveBeenCalledWith('background_task_created', {
-      kind: 'agent',
+    expect(records).toContainEqual({
+      event: 'background_task_created',
+      properties: { agent_id: 'main', task_id: taskId, kind: 'agent' },
     });
   });
 
   it('emits task.terminated and telemetry on natural exit', async () => {
-    const { agent, manager } = createAgentTaskService();
+    const { agent, manager, records } = createAgentTaskService();
     const taskId = registerProcess(manager, immediateProcess(0), 'echo', 'done');
-    agent.telemetry.track2.mockClear();
+    records.length = 0;
 
     await manager.wait(taskId);
 
@@ -356,38 +357,40 @@ describe('AgentTaskService — event emission', () => {
         status: 'completed',
       }),
     });
-    expect(agent.telemetry.track2).toHaveBeenCalledWith(
-      'background_task_completed',
-      expect.objectContaining({
+    expect(records).toContainEqual({
+      event: 'background_task_completed',
+      properties: expect.objectContaining({
+        agent_id: 'main',
+        task_id: taskId,
         kind: 'process',
         duration_ms: expect.any(Number),
         status: 'completed',
       }),
-    );
+    });
   });
 
   it('tracks failed and timed-out terminal statuses', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const { agent, manager } = createAgentTaskService();
+    const { manager, records } = createAgentTaskService();
     const failedId = registerProcess(manager, immediateProcess(1), 'false', 'failed');
     const timedOutId = manager.registerTask(
       agentTask(new Promise(() => {}), 'slow agent', { timeoutMs: 1 }),
     );
-    agent.telemetry.track2.mockClear();
+    records.length = 0;
 
     await manager.wait(failedId);
     const timedOut = manager.wait(timedOutId);
     await vi.advanceTimersByTimeAsync(5_010);
     await timedOut;
 
-    expect(agent.telemetry.track2).toHaveBeenCalledWith(
-      'background_task_completed',
-      expect.objectContaining({ kind: 'process', status: 'failed' }),
-    );
-    expect(agent.telemetry.track2).toHaveBeenCalledWith(
-      'background_task_completed',
-      expect.objectContaining({ kind: 'agent', status: 'timed_out' }),
-    );
+    expect(records).toContainEqual({
+      event: 'background_task_completed',
+      properties: expect.objectContaining({ agent_id: 'main', kind: 'process', status: 'failed' }),
+    });
+    expect(records).toContainEqual({
+      event: 'background_task_completed',
+      properties: expect.objectContaining({ agent_id: 'main', kind: 'agent', status: 'timed_out' }),
+    });
   });
 
   it('emits task.terminated on stop', async () => {
