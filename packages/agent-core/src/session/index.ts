@@ -1034,7 +1034,7 @@ export class Session {
         parentAgentId,
       );
       const result = await agent.resume();
-      this.restoreAgentProfileHandle(agent, meta, parent?.agent);
+      await this.restoreAgentProfileHandle(agent, meta, parent?.agent);
       this.agents.set(id, agent);
       return { agent, warning: parent?.warning ?? result.warning };
     } catch (error) {
@@ -1046,15 +1046,18 @@ export class Session {
     }
   }
 
-  private restoreAgentProfileHandle(
+  private async restoreAgentProfileHandle(
     agent: Agent,
     meta: AgentMeta,
     parentAgent: Agent | undefined,
-  ): void {
+  ): Promise<void> {
     if (agent.config.systemPrompt === '') return;
     const profile = this.resolvePersistedProfile(agent, meta, parentAgent);
     if (profile === undefined) return;
     agent.setActiveProfile(profile, this.options.kimiHomeDir);
+    // Baseline fragments are request-time only and are not on the wire. Rebuild
+    // AGENTS.md / listings / skills / time fringe before the next prompt.
+    await agent.refreshSystemPrompt();
   }
 
   private resolvePersistedProfile(

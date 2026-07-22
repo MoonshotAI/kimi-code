@@ -143,6 +143,7 @@ function createService(
   options: {
     readonly flagEnabled?: boolean;
     readonly thinkingLevel?: ThinkingEffort;
+    readonly baselineMessages?: readonly Message[];
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -159,6 +160,7 @@ function createService(
     }),
     resolveRequestParams: () => ({}),
     getSystemPrompt: () => 'system',
+    getBaselineContextMessages: () => options.baselineMessages ?? [],
     data: () => ({
       cwd: '',
       modelAlias: 'm',
@@ -167,9 +169,15 @@ function createService(
       systemPrompt: 'system',
     }),
   };
+  const measuredCalls: Array<{
+    input: readonly Message[];
+    output: readonly Message[];
+  }> = [];
   const contextSize = {
     get: () => ({ size: 0, measured: 0, estimated: 0 }),
-    measured: () => undefined,
+    measured: (input: readonly Message[], output: readonly Message[]) => {
+      measuredCalls.push({ input, output });
+    },
   };
   const usage = { record: () => undefined, status: () => ({}) };
   const context = { get: () => history };
@@ -239,6 +247,7 @@ function createService(
     service: ix.get(IAgentLLMRequesterService),
     faultInjection: ix.get(IFaultInjectionService),
     wire: ix.get(IWireService),
+    measuredCalls,
     records,
     events,
     telemetryRecords,
@@ -839,5 +848,62 @@ describe('AgentLLMRequesterService trace id', () => {
     expect(
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();
+  });
+});
+
+describe('AgentLLMRequesterService baseline context', () => {
+  it('prefixes baselineContextMessages ahead of conversation history', async () => {
+    const calls = { value: 0 };
+    const captured: ModelRequestInput[] = [];
+    const baseline: Message[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'BASELINE_FRINGE' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'BASELINE_AGENTS' }],
+        toolCalls: [],
+      },
+    ];
+    const { service } = createService(createRequester(calls, null, [], captured), undefined, {
+      baselineMessages: baseline,
+    });
+
+    await service.request();
+
+    expect(calls.value).toBe(1);
+    const texts = (captured[0]?.messages ?? []).map((message) =>
+      message.content
+        .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+        .map((part) => part.text)
+        .join(''),
+    );
+    expect(texts).toEqual(['BASELINE_FRINGE', 'BASELINE_AGENTS', 'hello']);
+    expect(captured[0]?.systemPrompt).toBe('system');
+  });
+
+  it('records context size against conversation history without the baseline prefix', async () => {
+    const calls = { value: 0 };
+    const baseline: Message[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'BASELINE_FRINGE' }],
+        toolCalls: [],
+      },
+    ];
+    const { service, measuredCalls } = createService(
+      createRequester(calls, null),
+      undefined,
+      { baselineMessages: baseline },
+    );
+
+    await service.request();
+
+    expect(measuredCalls).toHaveLength(1);
+    expect(measuredCalls[0]?.input).toBe(history);
+    expect(measuredCalls[0]?.input).toHaveLength(1);
+    expect(measuredCalls[0]?.input[0]).toBe(history[0]);
   });
 });

@@ -490,3 +490,77 @@ describe('downgradeUnsupportedMedia', () => {
     ]);
   });
 });
+
+describe('KosongLLM baseline context', () => {
+  it('prefixes baselineContextMessages ahead of conversation history', async () => {
+    let captured: readonly Message[] | undefined;
+    const generate: GenerateFn = async (_p, systemPrompt, _t, messages) => {
+      expect(systemPrompt).toBe('trusted-system');
+      captured = messages;
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const baseline: Message[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'It is 2026-01-01T00:00:00.000Z.' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<untrusted_agents_md>\nAGENTS\n</untrusted_agents_md>' }],
+        toolCalls: [],
+      },
+    ];
+    const llm = new KosongLLM({
+      provider,
+      systemPrompt: 'trusted-system',
+      baselineContextMessages: baseline,
+      generate,
+    });
+
+    await llm.chat({
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+      ],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(captured).toHaveLength(3);
+    expect(captured?.[0]).toEqual(baseline[0]);
+    expect(captured?.[1]).toEqual(baseline[1]);
+    expect(captured?.[2]?.content).toEqual([{ type: 'text', text: 'hello' }]);
+  });
+
+  it('sends history alone when baseline is empty', async () => {
+    let captured: readonly Message[] | undefined;
+    const generate: GenerateFn = async (_p, _s, _t, messages) => {
+      captured = messages;
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'only-history' }], toolCalls: [] },
+    ];
+
+    await llm.chat({
+      messages: history,
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(captured).toEqual(history);
+  });
+});

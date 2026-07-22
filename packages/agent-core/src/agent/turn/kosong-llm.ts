@@ -46,6 +46,11 @@ export type GenerateFn = typeof kosongGenerate;
 export interface KosongLLMConfig {
   readonly provider: ChatProvider;
   readonly systemPrompt: string;
+  /**
+   * Request-time user fragments (time fringe, AGENTS.md, listings, skills).
+   * Prefixed onto history; not persisted in context memory.
+   */
+  readonly baselineContextMessages?: readonly Message[] | undefined;
   readonly capability?: ModelCapability | undefined;
   /**
    * Optional override for the kosong `generate()` entry point. Lets the
@@ -75,11 +80,13 @@ export class KosongLLM implements LLM {
   private readonly generate: GenerateFn;
   private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
   private readonly usedContextTokens: (() => number) | undefined;
+  private readonly baselineContextMessages: readonly Message[];
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
     this.modelName = config.provider.modelName;
     this.systemPrompt = config.systemPrompt;
+    this.baselineContextMessages = config.baselineContextMessages ?? [];
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
     this.completionBudgetConfig = config.completionBudgetConfig;
@@ -126,11 +133,16 @@ export class KosongLLM implements LLM {
       requestLogFields: params.requestLogFields,
     };
 
+    const history = downgradeUnsupportedMedia(params.messages, this.capability);
+    const messages =
+      this.baselineContextMessages.length === 0
+        ? history
+        : [...this.baselineContextMessages, ...history];
     const result = await this.generate(
       effectiveProvider,
       this.systemPrompt,
       [...params.tools],
-      downgradeUnsupportedMedia(params.messages, this.capability),
+      messages,
       callbacks,
       options,
     );

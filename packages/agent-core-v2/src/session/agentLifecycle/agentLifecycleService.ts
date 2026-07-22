@@ -267,8 +267,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle: IAgentScopeHandle,
     opts: CreateAgentOptions,
   ): Promise<void> {
+    const profile = handle.accessor.get(IAgentProfileService);
     if (opts.binding !== undefined) {
-      await handle.accessor.get(IAgentProfileService).bind(opts.binding);
+      await profile.bind(opts.binding);
+    } else {
+      // Resume / create-without-bind: wire restored a trusted-only system
+      // prompt, but request-time baseline fragments are in-memory only.
+      // Rebuild AGENTS.md / listings / skills / time fringe before the next
+      // model request.
+      await profile.refreshSystemPrompt();
     }
     // Apply the configured default only when restore found no persisted mode.
     // A resumed Agent's journal owns its permission posture; callers that need

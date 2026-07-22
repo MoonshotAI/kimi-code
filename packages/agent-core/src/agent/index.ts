@@ -16,6 +16,7 @@ import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import { ImageLimits } from '../tools/support/image-limits';
 import {
+  buildBaselineContextMessages,
   prepareSystemPromptContext,
   type PreparedSystemPromptContext,
   type ResolvedAgentProfile,
@@ -59,6 +60,7 @@ import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
 import { LlmRequestRecorder } from './llm-request-recorder';
 import { resolveCompletionBudget } from '../utils/completion-budget';
 import type { Kaos } from '@moonshot-ai/kaos';
+import type { Message } from '@moonshot-ai/kosong';
 import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
@@ -162,6 +164,8 @@ export class Agent {
   private additionalDirs: readonly string[];
   private activeProfile?: ResolvedAgentProfile;
   private brandHome?: string;
+  /** Request-time workspace baseline (not part of conversation history). */
+  private baselineContextMessages: readonly Message[] = [];
   private readonly emittedThinkingEffortWarnings = new Set<string>();
   private readonly pendingThinkingEffortWarnings: Array<{
     readonly code: string;
@@ -418,11 +422,24 @@ export class Agent {
     return new KosongLLM({
       provider,
       systemPrompt: this.config.systemPrompt,
+      baselineContextMessages: this.baselineContextMessages,
       capability: this.config.modelCapabilities,
       generate: this.generate,
       completionBudgetConfig,
       usedContextTokens: () => this.context.tokenCount,
     });
+  }
+
+  getBaselineContextMessages(): readonly Message[] {
+    return this.baselineContextMessages;
+  }
+
+  /**
+   * Copy request-time baseline fragments (used by BTW / side-question spawns
+   * that inherit the parent system prompt without re-running profile bind).
+   */
+  copyBaselineContextFrom(parent: Agent): void {
+    this.baselineContextMessages = parent.baselineContextMessages;
   }
 
   useProfile(
@@ -460,6 +477,7 @@ export class Agent {
     profile: ResolvedAgentProfile,
     context?: PreparedSystemPromptContext,
   ): void {
+    const skillsListing = this.skills?.registry.getModelSkillListing() ?? '';
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
@@ -469,6 +487,14 @@ export class Agent {
       additionalDirsInfo: context?.additionalDirsInfo,
     });
     this.config.update({ profileName: profile.name, systemPrompt });
+    this.baselineContextMessages = buildBaselineContextMessages({
+      now: new Date().toISOString(),
+      cwdListing: context?.cwdListing,
+      agentsMd: context?.agentsMd,
+      additionalDirsInfo: context?.additionalDirsInfo,
+      skills: skillsListing,
+      includeSkills: profile.tools.includes('Skill'),
+    });
   }
 
   async resume(options?: AgentRecordsReplayOptions): Promise<{ warning?: string }> {
