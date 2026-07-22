@@ -3,12 +3,11 @@
  *
  * Three kinds of knowledge live here, and nowhere else:
  *
- *  1. The `thinking` config section (`[thinking]`: enabled / effort / keep,
- *     plus the env-only `KIMI_MODEL_THINKING_EFFORT` force override). The
- *     section self-registers at module load — a side effect; production gets
- *     it from the `src/index.ts` side-effect block and tests import this
- *     module on demand. This module is the sole owner of the section — the
- *     legacy `agent/profile/configSection` is gone.
+ *  1. The `thinking` config-section type (`[thinking]`: enabled / effort /
+ *     keep, plus the env-only `forcedEffort` field). Kosong owns only the
+ *     type; the section constant, zod schema (compile-time pinned to the
+ *     type), registration, env binding, and write-path strip all live in the
+ *     persistence wrapper (`app/kosongConfig/configSection`).
  *  2. Effort/keep resolution: pure helpers that fold a requested effort, the
  *     config defaults, and the model's declared thinking metadata into the
  *     effective `ThinkingEffort`, and that resolve the thinking-keep value.
@@ -32,46 +31,23 @@
  *     `kimiAnthropicTrait`.
  */
 
-import { z } from 'zod';
-
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { IProtocolAdapterRegistry, Protocol } from '#/kosong/protocol/protocol';
 
-import { type ConfigStripEnv, envBindings } from '../../app/config/config';
-import { registerConfigSection } from '../../app/config/configSectionContributions';
 import { getProviderDefinitions } from '../provider/providerDefinition';
 
 import type { ModelThinkingMetadata, ThinkingDefaults } from './model.types';
 
 // ---------------------------------------------------------------------------
-// `thinking` config section (side-effect registration)
+// `thinking` config-section type (constant + schema live in `app/kosongConfig`)
 // ---------------------------------------------------------------------------
 
-export const THINKING_SECTION = 'thinking';
-
-export const ThinkingConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  effort: z.string().optional(),
-  forcedEffort: z.string().optional(),
-  keep: z.string().optional(),
-});
-
-export type ThinkingConfig = z.infer<typeof ThinkingConfigSchema>;
-
-export const thinkingEnvBindings = envBindings(ThinkingConfigSchema, {
-  forcedEffort: 'KIMI_MODEL_THINKING_EFFORT',
-});
-
-export const stripThinkingEnv: ConfigStripEnv<ThinkingConfig> = (value) => {
-  const result = { ...value };
-  delete result.forcedEffort;
-  return result;
-};
-
-registerConfigSection(THINKING_SECTION, ThinkingConfigSchema, {
-  env: thinkingEnvBindings,
-  stripEnv: stripThinkingEnv,
-});
+export interface ThinkingConfig {
+  enabled?: boolean;
+  effort?: string;
+  forcedEffort?: string;
+  keep?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Registry-driven vendor verdicts

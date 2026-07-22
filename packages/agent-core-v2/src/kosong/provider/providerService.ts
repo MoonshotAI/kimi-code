@@ -1,14 +1,9 @@
 /**
  * `kosong/provider` domain (L2) — `IProviderService` implementation.
  *
- * Owns the in-memory view of the `providers` config section, persists changes
- * through `config`, and forwards section changes as `onDidChangeProviders`
- * (computed with the shared `sectionDiff.diffRecords`). The section schema
- * self-registers at module load via `configSection.ts`. Bound at App scope.
- *
- * Note: the `app/config` imports below are deliberately RELATIVE paths — this
- * L2 domain may depend on the L2 config domain, and keeping the dependency
- * off the `#/` alias makes it visible at a glance.
+ * The in-memory provider registry plus the default-provider pointer. Holds no
+ * config dependency: the persistence bridge hydrates it via `loadAll` and
+ * persists the change events it fires. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -16,63 +11,94 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 
-import { IConfigService } from '../../app/config/config';
-import { diffRecords } from '../../app/config/sectionDiff';
+import { deepEqual, diffRecords, isEmptyDiff } from '../recordDiff';
+
 import {
-  DEFAULT_PROVIDER_SECTION,
   type ProviderConfig,
   type ProvidersChangedEvent,
   type ProvidersSection,
   IProviderService,
-  PROVIDERS_SECTION,
 } from './provider';
 
 export class ProviderService extends Disposable implements IProviderService {
   declare readonly _serviceBrand: undefined;
-  readonly ready: Promise<void>;
+
+  private providers: Readonly<Record<string, ProviderConfig>> = {};
+  private defaultProvider: string | undefined;
+  private hydrated = false;
+  private resolveReady!: () => void;
+  readonly ready: Promise<void> = new Promise<void>((resolve) => {
+    this.resolveReady = resolve;
+  });
+
   private readonly _onDidChangeProviders = this._register(new Emitter<ProvidersChangedEvent>());
   readonly onDidChangeProviders: Event<ProvidersChangedEvent> = this._onDidChangeProviders.event;
-
-  constructor(@IConfigService private readonly config: IConfigService) {
-    super();
-    this.ready = config.ready;
-    this._register(
-      config.onDidChangeConfiguration((e) => {
-        if (e.domain === PROVIDERS_SECTION) {
-          this._onDidChangeProviders.fire(
-            diffRecords<ProviderConfig>(
-              e.previousValue as ProvidersSection | undefined,
-              e.value as ProvidersSection | undefined,
-            ),
-          );
-        }
-      }),
-    );
-  }
+  private readonly _onDidChangeDefaultProvider = this._register(new Emitter<string | undefined>());
+  readonly onDidChangeDefaultProvider: Event<string | undefined> =
+    this._onDidChangeDefaultProvider.event;
 
   get(name: string): ProviderConfig | undefined {
-    return this.config.get<ProvidersSection>(PROVIDERS_SECTION)?.[name];
+    return this.providers[name];
   }
 
   list(): Readonly<Record<string, ProviderConfig>> {
-    return this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {};
+    return this.providers;
+  }
+
+  getDefaultProvider(): string | undefined {
+    return this.defaultProvider;
+  }
+
+  loadAll(providers: ProvidersSection, defaultProvider: string | undefined): void {
+    this.applyRecords(providers);
+    this.applyDefaultProvider(defaultProvider);
+    if (!this.hydrated) {
+      this.hydrated = true;
+      this.resolveReady();
+    }
+  }
+
+  async replaceAll(providers: ProvidersSection): Promise<void> {
+    await this.ready;
+    this.applyRecords(providers);
   }
 
   async set(name: string, config: ProviderConfig): Promise<void> {
-    await this.config.set(PROVIDERS_SECTION, { [name]: config });
+    await this.ready;
+    if (deepEqual(this.providers[name], config)) return;
+    const previous = this.providers;
+    this.providers = { ...this.providers, [name]: config };
+    this._onDidChangeProviders.fire(diffRecords(previous, this.providers));
   }
 
   async delete(name: string): Promise<void> {
-    const current = this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {};
-    if (!(name in current)) return;
-    const { [name]: _removed, ...rest } = current;
-    await this.config.replace(PROVIDERS_SECTION, rest);
-    if (this.config.get<string>(DEFAULT_PROVIDER_SECTION) === name) {
-      // Delete, not merge: `set(domain, undefined)` resolves back to the base
-      // value by design — only `replace(domain, undefined)` removes the key,
-      // otherwise the default-provider id dangles to a deleted provider.
-      await this.config.replace(DEFAULT_PROVIDER_SECTION, undefined);
+    await this.ready;
+    if (!(name in this.providers)) return;
+    const { [name]: _removed, ...rest } = this.providers;
+    this.applyRecords(rest);
+    // Deleting the provider the default pointer targets must clear the
+    // pointer too, otherwise it dangles to a deleted provider.
+    if (this.defaultProvider === name) {
+      this.applyDefaultProvider(undefined);
     }
+  }
+
+  async setDefaultProvider(id: string | undefined): Promise<void> {
+    await this.ready;
+    this.applyDefaultProvider(id);
+  }
+
+  private applyRecords(next: Readonly<Record<string, ProviderConfig>>): void {
+    const diff = diffRecords(this.providers, next);
+    if (isEmptyDiff(diff)) return;
+    this.providers = { ...next };
+    this._onDidChangeProviders.fire(diff);
+  }
+
+  private applyDefaultProvider(id: string | undefined): void {
+    if (this.defaultProvider === id) return;
+    this.defaultProvider = id;
+    this._onDidChangeDefaultProvider.fire(id);
   }
 }
 

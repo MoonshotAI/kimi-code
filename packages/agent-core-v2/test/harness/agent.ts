@@ -64,7 +64,6 @@ import type {
 } from '#/tool/toolContract';
 import { AGENT_WIRE_RECORD_KEY, wireRecordToPayload, type WireRecord } from '#/wire/record';
 import { OP_REGISTRY } from '#/wire/op';
-import { IOAuthService } from '#/app/auth/auth';
 import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/kosong/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/kosong/provider/protocolAdapterRegistry';
 import { hasProviderDefinition } from '#/kosong/provider/providerDefinition';
@@ -145,12 +144,23 @@ import {
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
-import { IModelService } from '#/kosong/model/model';
+import { IModelService, type ModelsSection } from '#/kosong/model/model';
+import {
+  DEFAULT_MODEL_SECTION,
+  DEFAULT_PROVIDER_SECTION,
+  MODELS_SECTION,
+  PROVIDERS_SECTION,
+} from '#/app/kosongConfig/configSection';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
 import { ModelCatalog } from '#/kosong/model/catalogService';
+import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
 import type { ModelRequestParams, ModelRequester } from '#/kosong/model/modelRequester';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
-import { IProviderService, type ProviderConfig } from '#/kosong/provider/provider';
+import {
+  IProviderService,
+  type ProviderConfig,
+  type ProvidersSection,
+} from '#/kosong/provider/provider';
 import type { ApprovalResponse } from '#/session/approval/approval';
 import {
   ISessionInteractionService,
@@ -895,17 +905,43 @@ class PersistenceAppendLogStore implements IAppendLogStore {
 class ConfigBackedModelCatalog extends ModelCatalog {
   constructor(
     private readonly options: TestModelProviderOptions = {},
-    @IConfigService config: IConfigService,
-    @IProviderService providers: IProviderService,
-    @IModelService models: IModelService,
-    @IOAuthService oauth: IOAuthService,
+    @IConfigService private readonly config: IConfigService,
+    @IProviderService private readonly providerRegistry: IProviderService,
+    @IModelService private readonly modelRegistry: IModelService,
+    @IModelOAuthTokens oauthTokens: IModelOAuthTokens,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
   ) {
-    super(config, providers, models, oauth, protocolRegistry, hostRequestHeaders);
+    super(providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
+  }
+
+  /**
+   * The harness mutates `kimiConfig` BEHIND the config services' backs (no
+   * section-change events fire), so nothing pushes the new values into the
+   * kosong registries. Re-hydrate them from the live config view before every
+   * read: `loadAll` is deep-equal-aware, so an unchanged config is a no-op
+   * and a changed one fires the diff events that drop the assembled-Model
+   * cache — preserving the old read-config-live semantics through the new
+   * in-memory registries.
+   */
+  private syncRegistriesFromConfig(): void {
+    this.providerRegistry.loadAll(
+      this.config.get<ProvidersSection>(PROVIDERS_SECTION) ?? {},
+      this.config.get<string>(DEFAULT_PROVIDER_SECTION),
+    );
+    this.modelRegistry.loadAll(
+      this.config.get<ModelsSection>(MODELS_SECTION) ?? {},
+      this.config.get<string>(DEFAULT_MODEL_SECTION),
+    );
+  }
+
+  override get(id: string): Model {
+    this.syncRegistriesFromConfig();
+    return super.get(id);
   }
 
   override getRequester(id: string): ModelRequester {
+    this.syncRegistriesFromConfig();
     const requester = super.getRequester(id);
     const cacheKey = this.options.promptCacheKey;
     if (cacheKey === undefined) return requester;
@@ -917,6 +953,11 @@ class ConfigBackedModelCatalog extends ModelCatalog {
         params?: ModelRequestParams,
       ) => requester.request(input, signal, { cacheKey, ...params }),
     };
+  }
+
+  override findByName(name: string): readonly string[] {
+    this.syncRegistriesFromConfig();
+    return super.findByName(name);
   }
 }
 
@@ -1024,6 +1065,19 @@ export class AgentTestContext {
               options.generate ?? this.scriptedGenerate.generate,
             ),
           );
+          reg.defineInstance(
+            IModelOAuthTokens,
+            {
+              _serviceBrand: undefined,
+              hasCachedAccessToken: () => Promise.resolve(false),
+              getAccessToken: () =>
+                Promise.reject(
+                  new Error(
+                    'IModelOAuthTokens.getAccessToken is not supported in the test harness',
+                  ),
+                ),
+            } satisfies IModelOAuthTokens,
+          );
           reg.defineDescriptor(
             IModelCatalog,
             new SyncDescriptor(ConfigBackedModelCatalog, [{}]),
@@ -1059,6 +1113,24 @@ export class AgentTestContext {
       'app',
     );
     this.root = createAppScope({ extra: appSeeds });
+
+    // Hydrate the kosong registries from the (possibly overridden) config so
+    // direct IProviderService/IModelService reads work before the first
+    // catalog access; ConfigBackedModelCatalog re-syncs on every read after
+    // that (the harness mutates kimiConfig behind the config events' backs).
+    const initialConfig = this.root.accessor.get(IConfigService);
+    this.root.accessor
+      .get(IProviderService)
+      .loadAll(
+        initialConfig.get<ProvidersSection>(PROVIDERS_SECTION) ?? {},
+        initialConfig.get<string>(DEFAULT_PROVIDER_SECTION),
+      );
+    this.root.accessor
+      .get(IModelService)
+      .loadAll(
+        initialConfig.get<ModelsSection>(MODELS_SECTION) ?? {},
+        initialConfig.get<string>(DEFAULT_MODEL_SECTION),
+      );
 
     const bootstrap = this.root.accessor.get(IBootstrapService);
     const workspaceId = 'test-workspace';

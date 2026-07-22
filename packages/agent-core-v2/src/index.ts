@@ -83,7 +83,7 @@ export * from '#/session/sessionToolPolicy/sessionToolPolicy';
 export * from '#/session/sessionToolPolicy/sessionToolPolicyService';
 export * from '#/app/config/config';
 export * from '#/app/config/configService';
-import '#/kosong/provider/configSection';
+import '#/app/kosongConfig/configSection';
 export * from '#/kosong/provider/provider';
 export * from '#/kosong/provider/providerService';
 export * from '#/kosong/provider/providerDefinition';
@@ -94,9 +94,7 @@ export * from '#/kosong/protocol/errors';
 export * from '#/kosong/protocol/protocol';
 export * from '#/kosong/protocol/protocolBase';
 export * from '#/kosong/protocol/protocolTrait';
-import '#/kosong/model/configSection';
-import '#/kosong/model/envOverlay';
-import '#/kosong/model/thinking';
+import '#/app/kosongConfig/envOverlay';
 export * from '#/kosong/model/completionBudget';
 export * from '#/kosong/model/hostRequestHeaders';
 export * from '#/kosong/model/model';
@@ -107,13 +105,20 @@ export * from '#/kosong/model/catalog';
 export * from '#/kosong/model/catalogService';
 export * from '#/kosong/model/modelRequester';
 import '#/kosong/model/errors';
-import '#/kosong/model/discoveryConfigSection';
 // `ModelCatalogConfig` / `MODEL_CATALOG_SECTION` live in the configSection
 // side-effect module but the edge (kap-server's refresh scheduler) consumes
 // them from the package root — re-export here.
-export * from '#/kosong/model/discoveryConfigSection';
-export * from '#/kosong/model/discovery';
-export * from '#/kosong/model/discoveryService';
+export {
+  MODEL_CATALOG_SECTION,
+  ModelCatalogConfigSchema,
+  type ModelCatalogConfig,
+} from '#/app/kosongConfig/configSection';
+export * from '#/app/kosongConfig/kosongConfig';
+export * from '#/app/kosongConfig/kosongConfigService';
+export * from '#/kosong/model/modelOAuth';
+export * from '#/app/kosongConfig/oauthTokenAdapter';
+export * from '#/app/kosongConfig/discovery';
+export * from '#/app/kosongConfig/discoveryService';
 // kosong wire composition roots — importing these modules registers the four
 // protocol bases and every provider definition (kimi + the canonical vendor
 // endpoints); without them the adapter registry stays empty.

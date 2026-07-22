@@ -39,7 +39,7 @@ import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } fro
 import { appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, sessionServices, testAgent } from '../../harness';
 import {
   IAgentFullCompactionService,
-  IOAuthService,
+  IModelOAuthTokens,
   IAgentProfileService,
   IAgentToolRegistryService,
   ISessionTodoService,
@@ -2935,9 +2935,15 @@ function oauthTestAgentOptions(
       },
     },
     services: appServices((reg) => {
-      reg.definePartialInstance(IOAuthService, {
-        resolveTokenProvider: () => ({ getAccessToken }),
-      });
+      // The catalog's OAuth port is `IModelOAuthTokens` (the app/kosongConfig
+      // adapter delegates it to IOAuthService in production); stub the port
+      // directly, mirroring the adapter's force-flag normalization.
+      reg.defineInstance(IModelOAuthTokens, {
+        _serviceBrand: undefined,
+        hasCachedAccessToken: () => Promise.resolve(true),
+        getAccessToken: (_provider, _oauthRef, options) =>
+          getAccessToken(options?.force === true ? { force: true } : undefined),
+      } satisfies IModelOAuthTokens);
     }),
   };
 }

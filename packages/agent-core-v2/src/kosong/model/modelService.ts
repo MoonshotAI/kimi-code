@@ -1,15 +1,9 @@
 /**
  * `kosong/model` domain (L2) — `IModelService` implementation.
  *
- * Owns the in-memory view of the `models` config section, persists changes
- * through `config`, and forwards section changes as `onDidChangeModels`
- * (computed with the shared `sectionDiff.diffRecords`). The section schema
- * self-registers at module load via `configSection.ts`, and the `KIMI_MODEL_*`
- * effective overlay self-registers via `envOverlay.ts`. Bound at App scope.
- *
- * Note: the `app/config` imports below are deliberately RELATIVE paths — this
- * L2 domain may depend on the L2 config domain, and keeping the dependency
- * off the `#/` alias makes it visible at a glance.
+ * The in-memory model registry plus the default-model pointer. Holds no
+ * config dependency: the persistence bridge hydrates it via `loadAll` and
+ * persists the change events it fires. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -17,11 +11,10 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 
-import { IConfigService } from '../../app/config/config';
-import { diffRecords } from '../../app/config/sectionDiff';
+import { deepEqual, diffRecords, isEmptyDiff } from '../recordDiff';
+
 import {
   IModelService,
-  MODELS_SECTION,
   type ModelRecord,
   type ModelsChangedEvent,
   type ModelsSection,
@@ -29,42 +22,78 @@ import {
 
 export class ModelService extends Disposable implements IModelService {
   declare readonly _serviceBrand: undefined;
+
+  private models: Readonly<Record<string, ModelRecord>> = {};
+  private defaultModel: string | undefined;
+  private hydrated = false;
+  private resolveReady!: () => void;
+  readonly ready: Promise<void> = new Promise<void>((resolve) => {
+    this.resolveReady = resolve;
+  });
+
   private readonly _onDidChangeModels = this._register(new Emitter<ModelsChangedEvent>());
   readonly onDidChangeModels: Event<ModelsChangedEvent> = this._onDidChangeModels.event;
-
-  constructor(@IConfigService private readonly config: IConfigService) {
-    super();
-    this._register(
-      config.onDidChangeConfiguration((e) => {
-        if (e.domain === MODELS_SECTION) {
-          this._onDidChangeModels.fire(
-            diffRecords<ModelRecord>(
-              e.previousValue as ModelsSection | undefined,
-              e.value as ModelsSection | undefined,
-            ),
-          );
-        }
-      }),
-    );
-  }
+  private readonly _onDidChangeDefaultModel = this._register(new Emitter<string | undefined>());
+  readonly onDidChangeDefaultModel: Event<string | undefined> =
+    this._onDidChangeDefaultModel.event;
 
   get(id: string): ModelRecord | undefined {
-    return this.config.get<ModelsSection>(MODELS_SECTION)?.[id];
+    return this.models[id];
   }
 
   list(): Readonly<Record<string, ModelRecord>> {
-    return this.config.get<ModelsSection>(MODELS_SECTION) ?? {};
+    return this.models;
+  }
+
+  getDefaultModel(): string | undefined {
+    return this.defaultModel;
+  }
+
+  loadAll(models: ModelsSection, defaultModel: string | undefined): void {
+    this.applyRecords(models);
+    this.applyDefaultModel(defaultModel);
+    if (!this.hydrated) {
+      this.hydrated = true;
+      this.resolveReady();
+    }
+  }
+
+  async replaceAll(models: ModelsSection): Promise<void> {
+    await this.ready;
+    this.applyRecords(models);
   }
 
   async set(id: string, model: ModelRecord): Promise<void> {
-    await this.config.set(MODELS_SECTION, { [id]: model });
+    await this.ready;
+    if (deepEqual(this.models[id], model)) return;
+    const previous = this.models;
+    this.models = { ...this.models, [id]: model };
+    this._onDidChangeModels.fire(diffRecords(previous, this.models));
   }
 
   async delete(id: string): Promise<void> {
-    const current = this.config.get<ModelsSection>(MODELS_SECTION) ?? {};
-    if (!(id in current)) return;
-    const { [id]: _removed, ...rest } = current;
-    await this.config.replace(MODELS_SECTION, rest);
+    await this.ready;
+    if (!(id in this.models)) return;
+    const { [id]: _removed, ...rest } = this.models;
+    this.applyRecords(rest);
+  }
+
+  async setDefaultModel(id: string | undefined): Promise<void> {
+    await this.ready;
+    this.applyDefaultModel(id);
+  }
+
+  private applyRecords(next: Readonly<Record<string, ModelRecord>>): void {
+    const diff = diffRecords(this.models, next);
+    if (isEmptyDiff(diff)) return;
+    this.models = { ...next };
+    this._onDidChangeModels.fire(diff);
+  }
+
+  private applyDefaultModel(id: string | undefined): void {
+    if (this.defaultModel === id) return;
+    this.defaultModel = id;
+    this._onDidChangeDefaultModel.fire(id);
   }
 }
 

@@ -92,7 +92,7 @@ pass `ConfigTarget.Memory` for a per-run override that is never written to disk.
 - `src/profile/thinking.ts` (owner domain, not `config`) — the `resolveThinkingEffort` helper; uses the authoritative `ThinkingConfig` from `configSection.ts`.
 - `src/config/configPure.ts` — `isPlainObject`, `deepMerge`, `omitUndefined`, `describeUnknownError`.
 
-A domain that owns a section keeps the schema in its own `configSection.ts` (e.g. `src/flag/flag.ts` for `experimental`, `src/profile/configSection.ts` for `thinking`, `src/loop/configSection.ts` for `loopControl`). A cross-section env overlay (e.g. the `KIMI_MODEL_*` synthesis) lives in the owning domain too (`src/provider/envOverlay.ts`) and is registered via `IConfigRegistry.registerEffectiveOverlay`.
+A domain that owns a section keeps the schema in its own `configSection.ts` (e.g. `src/flag/flag.ts` for `experimental`, `src/loop/configSection.ts` for `loopControl`). Exception: kosong-owned sections (`providers`, `models`, `thinking`) — kosong is a pure, persistence-free abstraction layer that defines only the types (`src/kosong/{provider,model}`); the section constants, the zod schemas (re-derived from those types and compile-time pinned via `AssertExact<Equal<z.infer<typeof Schema>, Type>>`, see `_base/utils/typeEquality.ts`), the registrations, env bindings, and TOML transforms all live in the persistence wrapper `src/app/kosongConfig/configSection.ts`. (`modelCatalog` has no kosong-side type at all — its section is fully self-contained in `app/kosongConfig`.) A cross-section env overlay (e.g. the `KIMI_MODEL_*` synthesis) lives in the wrapper too (`src/app/kosongConfig/envOverlay.ts`) and is registered via `IConfigRegistry.registerEffectiveOverlay`. The two-way sync between config sections and kosong's in-memory registries is owned by `IKosongConfigService` (`src/app/kosongConfig/kosongConfigService.ts`).
 
 ## Scope
 
@@ -236,7 +236,7 @@ This means registration order is never a correctness concern — you do not need
 
 ### `KIMI_MODEL_*` env overlay
 
-When `KIMI_MODEL_NAME` is set, the `provider` domain's `kimiModelEnvOverlay` (`src/provider/envOverlay.ts`) injects a reserved model alias (`__kimi_env_model__`) into `effective`, points `defaultModel` at it, and merges the request `modelOverrides`; the reserved provider (`__kimi_env__`) comes from the `providers` section env bindings. The overlay is registered via `IConfigRegistry.registerEffectiveOverlay` and applied **only to `effective`**, never to `rawSnake`, so it is never persisted. Its `strip` (plus the providers section `stripEnv`) is the final guard so a caller that read `effective` (with the overlay) cannot write the reserved entries or the shell API key back to disk. `config` itself only runs registered overlays — it does not know the `KIMI_MODEL_*` semantics.
+When `KIMI_MODEL_NAME` is set, the `kosongConfig` wrapper's `kimiModelEnvOverlay` (`src/app/kosongConfig/envOverlay.ts`) injects a reserved model alias (`__kimi_env_model__`) into `effective`, points `defaultModel` at it, and merges the request `modelOverrides`; the reserved provider (`__kimi_env__`) comes from the `providers` section env bindings. The overlay is registered via `IConfigRegistry.registerEffectiveOverlay` and applied **only to `effective`**, never to `rawSnake`, so it is never persisted. Its `strip` (plus the providers section `stripEnv`) is the final guard so a caller that read `effective` (with the overlay) cannot write the reserved entries or the shell API key back to disk. `config` itself only runs registered overlays — it does not know the `KIMI_MODEL_*` semantics.
 
 ## Owner-owned sections
 
@@ -246,13 +246,13 @@ When `KIMI_MODEL_NAME` is set, the `provider` domain's `kimiModelEnvOverlay` (`s
 
 | Section | Owner | Layer | Status |
 |---|---|---|---|
-| `providers` | `provider` | L2 | owner-owned (`IProviderService` CRUD) |
+| `providers` / `defaultProvider` | `kosongConfig` (types: `kosong/provider`) | L3/L2 | owner-owned (`IProviderService` CRUD) |
 | `experimental` | `flag` | L3 | owner-owned |
-| `thinking` | `profile` | L4 | owner-owned |
+| `thinking` | `kosongConfig` (type: `kosong/model/thinking`) | L3/L2 | owner-owned |
 | `loopControl` | `loop` | L4 | owner-owned (read by `loop` + `profile`) |
 | `McpServerConfig` (type) | `mcp` | L5 | owner-owned (type only; not a registered section) |
 | `session` | `config` | L2 | in config |
-| `models` / `defaultModel` / `defaultProvider` | `kosong` | L1 | owner-owned (read by `ProviderManager`) |
+| `models` / `defaultModel` | `kosongConfig` (types: `kosong/model`) | L3/L2 | owner-owned (`IModelService` CRUD) |
 | `hooks` | `externalHooks` | L4 | owner-owned |
 | `permission` | `permissionRules` | L3 | owner-owned |
 | `background` | `background` | L5 | owner-owned |

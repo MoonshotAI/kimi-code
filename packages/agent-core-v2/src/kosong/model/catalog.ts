@@ -21,10 +21,9 @@
  * Enumeration (`listModels` / `listProviders` / `getProvider`) projects the
  * SAME materialization `get` serves into the wire catalog shapes below, so
  * the management surface can never drift from what the runtime resolves.
- * `setDefaultModel` writes the global default-model pointer
- * (`DEFAULT_MODEL_SECTION`); it is the catalog's only write, validated
- * against materialization so an unresolvable model can never become the
- * default.
+ * `setDefaultModel` writes the global default-model pointer (through
+ * `IModelService`); it is the catalog's only write, validated against
+ * materialization so an unresolvable model can never become the default.
  *
  * The catalog caches assembled Models by id and invalidates on the
  * model/provider config-change events. Tests that mutate config
@@ -272,8 +271,8 @@ export interface IModelCatalog {
   /** One provider by id; throws `provider.not_found` when unconfigured. */
   getProvider(providerId: string): Promise<ProviderCatalogItem>;
   /**
-   * The catalog's only write: point the global default (`DEFAULT_MODEL_SECTION`)
-   * at `modelId`. Unknown ids throw `model.not_found`; ids that fail
+   * The catalog's only write: point the global default-model pointer at
+   * `modelId`. Unknown ids throw `model.not_found`; ids that fail
    * materialization are rejected with the materialization error.
    */
   setDefaultModel(modelId: string): Promise<SetDefaultModelResponse>;

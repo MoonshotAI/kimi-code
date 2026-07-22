@@ -27,6 +27,7 @@ import {
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { FileSkillDiscovery } from '#/app/skillCatalog/fileSkillDiscovery';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
+import { IKosongConfigService } from '#/app/kosongConfig/kosongConfig';
 
 export interface IBootstrapOptions {
   readonly homeDir: string;
@@ -120,6 +121,10 @@ export function bootstrap(input: BootstrapInput = {}, extraSeeds: ScopeSeed = []
   const app = createAppScope({
     extra: [...bootstrapSeed(input), ...storageSeed(options), ...skillSeed(), ...extraSeeds],
   });
+  // Instantiate the kosong persistence bridge eagerly: kosong's registries
+  // only become `ready` once the bridge has hydrated them from config, and
+  // Eager registration alone never constructs a service.
+  app.accessor.get(IKosongConfigService);
   return { app };
 }
 

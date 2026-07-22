@@ -33,7 +33,8 @@ import { ConfigRegistry } from '#/app/config/configService';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
 import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
-import { MODELS_SECTION, type ModelRecord } from '#/kosong/model/model';
+import { IModelService, type ModelRecord } from '#/kosong/model/model';
+import { MODELS_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/kosong/provider/provider';
 
 // Side-effect registration: the OAuth-catalog verdict
@@ -1141,6 +1142,11 @@ describe('AuthSummaryService', () => {
           get: ((name: string) => providers[name]) as IProviderService['get'],
           list: (() => providers) as IProviderService['list'],
         });
+        reg.definePartialInstance(IModelService, {
+          get: ((id: string) => models[id]) as IModelService['get'],
+          list: (() => models) as IModelService['list'],
+          getDefaultModel: (() => defaultModel) as IModelService['getDefaultModel'],
+        });
         reg.definePartialInstance(IConfigService, {
           get: ((domain: string) => {
             if (domain === MODELS_SECTION) return models;
@@ -1277,6 +1283,10 @@ describe('AuthLegacyService', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IProviderService, {
           list: (() => providers) as IProviderService['list'],
+        });
+        reg.definePartialInstance(IModelService, {
+          ready: Promise.resolve(),
+          getDefaultModel: (() => defaultModel) as IModelService['getDefaultModel'],
         });
         reg.definePartialInstance(IConfigService, {
           ready: Promise.resolve(),

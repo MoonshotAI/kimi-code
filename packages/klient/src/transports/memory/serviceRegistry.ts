@@ -11,7 +11,7 @@ import { IWorkspaceService } from '@moonshot-ai/agent-core-v2/app/workspace/work
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { IModelService } from '@moonshot-ai/agent-core-v2/kosong/model/model';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
+import { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import { IProviderService } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import {
   IAuthSummaryService,

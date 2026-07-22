@@ -21,9 +21,9 @@
  */
 
 import { Error2 } from '#/_base/errors/errors';
+import { CONFIG_INVALID_ERROR_CODE } from '#/kosong/contract/errors';
 import type { ResolutionTrace } from '#/kosong/contract/inspection';
 
-import { ConfigErrors } from '../../app/config/errors';
 import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
@@ -171,7 +171,7 @@ export function nonEmpty(value: string | undefined): string | undefined {
 
 function authConflictError(kind: string, name: string): Error2 {
   return new Error2(
-    ConfigErrors.codes.CONFIG_INVALID,
+    CONFIG_INVALID_ERROR_CODE,
     `${kind} "${name}" has both apiKey and oauth set in config.toml - they are mutually exclusive. Remove one.`,
   );
 }
