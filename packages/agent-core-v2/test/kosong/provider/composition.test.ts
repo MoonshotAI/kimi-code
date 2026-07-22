@@ -949,6 +949,28 @@ describe('Anthropic max-tokens profile', () => {
     expect(resolveDefaultMaxTokens('totally-unknown-model')).toBe(128000);
   });
 
+  it('defaults unknown models on custom endpoints to a conservative ceiling', () => {
+    expect(
+      resolveDefaultMaxTokens('totally-unknown-model', undefined, 'https://proxy.example.test/v1'),
+    ).toBe(32768);
+  });
+
+  it('keeps the 128000 fallback for unknown models on the official endpoint or no endpoint', () => {
+    expect(
+      resolveDefaultMaxTokens('totally-unknown-model', undefined, 'https://api.anthropic.com'),
+    ).toBe(128000);
+    expect(resolveDefaultMaxTokens('totally-unknown-model', undefined, '')).toBe(128000);
+  });
+
+  it('does not let a custom endpoint displace an explicit override or a known ceiling', () => {
+    expect(resolveDefaultMaxTokens('unknown-model', 12345, 'https://proxy.example.test/v1')).toBe(
+      12345,
+    );
+    expect(
+      resolveDefaultMaxTokens('claude-opus-4-7', undefined, 'https://proxy.example.test/v1'),
+    ).toBe(128000);
+  });
+
   it('sends the profile default as max_tokens when no explicit defaultMaxTokens is set', async () => {
     const provider = new AnthropicChatProvider({
       model: 'claude-opus-4-7',
@@ -998,6 +1020,19 @@ describe('Anthropic max-tokens profile', () => {
     const { params } = await captureAnthropicBody(provider, { maxCompletionTokens: 5000 });
 
     expect(params['max_tokens']).toBe(999999);
+  });
+
+  it('seeds the conservative fallback for unknown models on custom endpoints', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'totally-unknown-model',
+      apiKey: 'sk-probe',
+      baseUrl: 'https://proxy.example.test/v1',
+      stream: false,
+    });
+
+    const { params } = await captureAnthropicBody(provider);
+
+    expect(params['max_tokens']).toBe(32768);
   });
 });
 
