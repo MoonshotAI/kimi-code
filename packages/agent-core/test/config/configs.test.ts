@@ -1,3 +1,11 @@
+/**
+ * Scenario: public config parsing, validation, TOML round-trips, and runtime overrides.
+ *
+ * Exercises the real config API with temporary files as the persistence
+ * boundary. Run with `pnpm --filter @moonshot-ai/agent-core exec vitest run
+ * test/config/configs.test.ts`.
+ */
+
 import { mkdtempSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   KimiConfigSchema,
+  McpServerConfigSchema,
   applyPrintModeConfigDefaults,
   configToTomlData,
   ensureConfigFile,
@@ -503,6 +512,44 @@ describe('harness config schema and patch merge', () => {
         },
       }),
     ).toThrow(/max_context_size/);
+  });
+
+  it('accepts the Node.js timer upper boundary for MCP timeouts', () => {
+    expect(
+      KimiConfigSchema.safeParse({
+        mcp: {
+          startupTimeoutMs: 2_147_483_647,
+          toolTimeoutMs: 2_147_483_647,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      McpServerConfigSchema.safeParse({
+        transport: 'stdio',
+        command: 'node',
+        startupTimeoutMs: 2_147_483_647,
+        toolTimeoutMs: 2_147_483_647,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects MCP timeouts above the Node.js timer limit across config surfaces', () => {
+    expect(
+      KimiConfigSchema.safeParse({
+        mcp: {
+          startupTimeoutMs: 2_147_483_648,
+          toolTimeoutMs: 2_147_483_648,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      McpServerConfigSchema.safeParse({
+        transport: 'stdio',
+        command: 'node',
+        startupTimeoutMs: 2_147_483_648,
+        toolTimeoutMs: 2_147_483_648,
+      }).success,
+    ).toBe(false);
   });
 
   it('deep-merges validated patches while preserving existing typed and raw data', () => {

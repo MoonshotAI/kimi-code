@@ -1,3 +1,11 @@
+/**
+ * Scenario: MCP connection lifecycle, timeout defaults, and Session wiring.
+ *
+ * Exercises the real connection manager and Session while stdio/HTTP MCP
+ * processes provide the external boundary. Run with `pnpm --filter
+ * @moonshot-ai/agent-core exec vitest run test/mcp/connection-manager.test.ts`.
+ */
+
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -41,6 +49,7 @@ import { createScriptedGenerate } from '../agent/harness';
 const here = import.meta.dirname;
 const stdioFixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
 const cwdStdioFixture = join(here, 'fixtures', 'cwd-stdio-server.mjs');
+const slowToolStdioFixture = join(here, 'fixtures', 'slow-tool-stdio-server.mjs');
 const crashAfterConnectFixture = join(here, 'fixtures', 'crash-after-connect-stdio-server.mjs');
 const stderrThenExitFixture = join(here, 'fixtures', 'stderr-then-exit-stdio-server.mjs');
 const MOCK_PROVIDER: ProviderConfig = {
@@ -930,6 +939,37 @@ describe('Session MCP startup', () => {
     }
   }, 7000);
 
+  it("times out tool calls using the Session's global MCP config", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-global-timeout-'));
+    const session = new Session({
+      id: 'test-mcp-global-timeout',
+      kaos: testKaos.withCwd(tmp),
+      homedir: join(tmp, 'session'),
+      rpc: sessionRpc(),
+      config: { providers: {}, mcp: { toolTimeoutMs: 1 } },
+      mcpConfig: {
+        servers: {
+          slowTool: {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [slowToolStdioFixture],
+            env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
+          },
+        },
+      },
+    });
+
+    try {
+      await session.mcp.waitForInitialLoad();
+      const client = session.mcp.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
+    } finally {
+      await session.close();
+      await rm(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  }, 15000);
+
   it('waits for initial MCP startup before the first prompt reaches the model', async () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-prompt-'));
     const events: SessionRpcEvent[] = [];
@@ -1093,6 +1133,9 @@ describe('MCP timeout env resolution', () => {
     vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, '7000');
     expect(resolveMcpStartupTimeoutMs(5_000)).toBe(7_000);
     expect(resolveMcpStartupTimeoutMs()).toBe(7_000);
+
+    vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, '2147483648');
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(5_000);
   });
 
   it('resolves the tool timeout as env > config > undefined', () => {
@@ -1104,5 +1147,8 @@ describe('MCP timeout env resolution', () => {
 
     vi.stubEnv(MCP_TOOL_TIMEOUT_ENV, '90000');
     expect(resolveMcpToolTimeoutMs(60_000)).toBe(90_000);
+
+    vi.stubEnv(MCP_TOOL_TIMEOUT_ENV, '2147483648');
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(60_000);
   });
 });

@@ -68,6 +68,7 @@ import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
   MCP_TOOL_TIMEOUT_ENV,
+  McpSectionSchema,
   type McpSection,
 } from '#/agent/mcp/configSection';
 import { ILogService } from '#/_base/log/log';
@@ -1279,6 +1280,43 @@ describe('mcp config section', () => {
     expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(60000);
 
     disposables.dispose();
+  });
+
+  it('accepts the Node.js timer upper boundary', () => {
+    expect(
+      McpSectionSchema.safeParse({
+        startupTimeoutMs: 2_147_483_647,
+        toolTimeoutMs: 2_147_483_647,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects config timeouts above the Node.js timer limit', () => {
+    expect(
+      McpSectionSchema.safeParse({
+        startupTimeoutMs: 2_147_483_648,
+        toolTimeoutMs: 2_147_483_648,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('falls back to config when env timeouts exceed the Node.js timer limit', async () => {
+    const env: Record<string, string> = {
+      [MCP_STARTUP_TIMEOUT_ENV]: '2147483648',
+      [MCP_TOOL_TIMEOUT_ENV]: '2147483648',
+    };
+    const { config, disposables } = await createConfig(
+      env,
+      '[mcp]\nstartup_timeout_ms = 5000\ntool_timeout_ms = 60000\n',
+    );
+    try {
+      expect(config.get<McpSection | undefined>(MCP_SECTION)).toEqual({
+        startupTimeoutMs: 5000,
+        toolTimeoutMs: 60000,
+      });
+    } finally {
+      disposables.dispose();
+    }
   });
 
   it('reads startup_timeout_ms from config.toml and lets the env var win', async () => {

@@ -1,5 +1,5 @@
 import { ErrorCodes, KimiError } from '#/errors';
-import type { McpServerConfig } from '#/config/schema';
+import { MAX_MCP_TIMEOUT_MS, type McpServerConfig } from '#/config/schema';
 import { log as defaultLog } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { Tool } from '@moonshot-ai/kosong';
@@ -46,7 +46,9 @@ export const MCP_TOOL_TIMEOUT_ENV = 'KIMI_MCP_TOOL_TIMEOUT_MS';
 /** Parse an env override; anything but a positive integer is ignored. */
 function parseTimeoutMsEnv(raw: string): number | undefined {
   const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 1 ? parsed : undefined;
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_MCP_TIMEOUT_MS
+    ? parsed
+    : undefined;
 }
 
 /**

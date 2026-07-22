@@ -6,7 +6,8 @@
  * (stdio / SSE / HTTP), discovers and registers tools, attaches the OAuth
  * provider through `mcp/oauth` when tokens are present, flips failing
  * servers into `needs-auth` on 401, and reconnects after authentication.
- * Emits server status changes to subscribers. Constructed by `AgentMcpService`.
+ * Applies per-server settings over session defaults and emits status changes
+ * to subscribers. Constructed by `SessionMcpService`.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -63,17 +64,7 @@ export interface McpConnectionManagerOptions {
   readonly stdioCwd?: string;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
-  /**
-   * Global default startup (connect + tool discovery) timeout applied when a
-   * server entry does not set its own `startupTimeoutMs`. Falls back to the
-   * built-in default when unset.
-   */
   readonly defaultStartupTimeoutMs?: number;
-  /**
-   * Global default single tool-call timeout applied when a server entry does
-   * not set its own `toolTimeoutMs`. Falls back to the client built-in when
-   * unset.
-   */
   readonly defaultToolTimeoutMs?: number;
 }
 

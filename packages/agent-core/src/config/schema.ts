@@ -172,6 +172,9 @@ export const SubagentConfigSchema = z.object({
 
 export type SubagentConfig = z.infer<typeof SubagentConfigSchema>;
 
+export const MAX_MCP_TIMEOUT_MS = 2_147_483_647;
+const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS);
+
 export const McpConfigSchema = z.object({
   /**
    * Global default MCP server startup (connect + tool discovery) timeout in
@@ -179,14 +182,14 @@ export const McpConfigSchema = z.object({
    * KIMI_MCP_STARTUP_TIMEOUT_MS env var both win over this value. Defaults
    * to 30s when unset.
    */
-  startupTimeoutMs: z.number().int().min(1).optional(),
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
   /**
    * Global default single MCP tool-call timeout in milliseconds. A
    * per-server `toolTimeoutMs` in `mcp.json` and the
    * KIMI_MCP_TOOL_TIMEOUT_MS env var both win over this value. Falls back to
    * the client built-in default when unset.
    */
-  toolTimeoutMs: z.number().int().min(1).optional(),
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
 });
 
 export type McpConfig = z.infer<typeof McpConfigSchema>;
@@ -252,8 +255,8 @@ export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
 
 const McpServerCommonFields = {
   enabled: z.boolean().optional(),
-  startupTimeoutMs: z.number().int().min(1).optional(),
-  toolTimeoutMs: z.number().int().min(1).optional(),
+  startupTimeoutMs: McpTimeoutMsSchema.optional(),
+  toolTimeoutMs: McpTimeoutMsSchema.optional(),
   enabledTools: z.array(z.string()).optional(),
   disabledTools: z.array(z.string()).optional(),
 } as const;

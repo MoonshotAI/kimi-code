@@ -1,3 +1,12 @@
+/**
+ * Scenario: MCP connection lifecycle, timeout defaults, and session config readiness.
+ *
+ * Exercises the real connection manager and resolves the real session MCP
+ * service through DI. Stdio MCP processes are the only external boundary.
+ * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/agent/mcp/connection-manager.test.ts`.
+ */
+
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -15,12 +24,25 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { z } from 'zod';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { createServices } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { Error2 } from '#/errors';
 import { McpConnectionManager, type McpServerEntry } from '#/agent/mcp/connection-manager';
+import { MCP_SECTION, type McpSection } from '#/agent/mcp/configSection';
 import { McpOAuthService } from '#/agent/mcp/oauth/service';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
+import { IPluginService } from '#/app/plugin/plugin';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
+import { stubLog } from '../../_base/log/stubs';
 import {
   closeServer,
   crashAfterConnectFixture,
@@ -753,5 +775,88 @@ describe('McpConnectionManager', () => {
       await cm.shutdown();
       await closeServer(server);
     }
+  }, 15000);
+});
+
+describe('Session MCP initialization', () => {
+  let cwd: string;
+  let homeDir: string;
+  let disposables: DisposableStore;
+  let manager: McpConnectionManager | undefined;
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-cwd-'));
+    homeDir = mkdtempSync(join(tmpdir(), 'kimi-session-mcp-home-'));
+    disposables = new DisposableStore();
+    manager = undefined;
+  });
+
+  afterEach(async () => {
+    await manager?.shutdown();
+    disposables.dispose();
+    await Promise.all([
+      rm(cwd, { recursive: true, force: true }),
+      rm(homeDir, { recursive: true, force: true }),
+    ]);
+  });
+
+  function createSessionMcpService(ready: Promise<void>, mcpSection?: McpSection) {
+    const ix = createServices(disposables, {
+      strict: true,
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IBootstrapService, { homeDir });
+        reg.definePartialInstance(ISessionWorkspaceContext, { workDir: cwd });
+        reg.definePartialInstance(IPluginService, {
+          enabledMcpServers: async () => ({}),
+        });
+        reg.definePartialInstance(IAtomicDocumentStore, {});
+        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(ITelemetryService, noopTelemetryService);
+        reg.definePartialInstance(IConfigService, {
+          ready,
+          get: (<T = unknown>(domain: string): T =>
+            (domain === MCP_SECTION ? mcpSection : undefined) as T),
+        });
+        reg.define(ISessionMcpService, SessionMcpService);
+      },
+    });
+    return ix.get(ISessionMcpService);
+  }
+
+  it('keeps the connection manager unavailable while config remains unready', async () => {
+    let resolveConfigReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveConfigReady = resolve;
+    });
+    const service = createSessionMcpService(ready);
+    const initialLoad = service.ensureMcpReady();
+    try {
+      await Promise.resolve();
+      expect(() => service.connectionManager()).toThrow(/not ready/i);
+
+      resolveConfigReady();
+      await initialLoad;
+      manager = service.connectionManager();
+      expect(manager.list()).toEqual([]);
+    } finally {
+      resolveConfigReady();
+      await initialLoad;
+    }
+  });
+
+  it('times out tool calls using the session MCP timeout preference', async () => {
+    const service = createSessionMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
+    await service.ensureMcpReady({
+      slowTool: {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [slowToolStdioFixture],
+        env: { KIMI_TEST_MCP_TOOL_DELAY_MS: '300' },
+      },
+    });
+    manager = service.connectionManager();
+    const client = manager.resolved('slowTool')?.client;
+    if (client === undefined) throw new Error('expected a connected client');
+    await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
   }, 15000);
 });
