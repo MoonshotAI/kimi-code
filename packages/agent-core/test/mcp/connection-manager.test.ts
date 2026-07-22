@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig } from '@moonshot-ai/kosong';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { randomUUID } from 'node:crypto';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -23,7 +23,14 @@ import { z } from 'zod';
 
 import { KimiError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
-import { McpConnectionManager, type McpServerEntry } from '../../src/mcp/connection-manager';
+import {
+  MCP_STARTUP_TIMEOUT_ENV,
+  MCP_TOOL_TIMEOUT_ENV,
+  McpConnectionManager,
+  resolveMcpStartupTimeoutMs,
+  resolveMcpToolTimeoutMs,
+  type McpServerEntry,
+} from '../../src/mcp/connection-manager';
 import { JsonFileStore, McpOAuthService } from '../../src/mcp/oauth';
 import type { AgentEvent, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -366,6 +373,83 @@ describe('McpConnectionManager', () => {
       await Promise.race([connectPromise.catch(() => {}), sleep(1_000)]);
     }
   }, 7000);
+
+  it('applies defaultStartupTimeoutMs when the server entry omits startupTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 100 });
+    try {
+      const slowFixture = join(here, 'fixtures', 'slow-stdio-server.mjs');
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowFixture],
+        },
+      });
+      const entry = cm.get('slow');
+      expect(entry?.status).toBe('failed');
+      expect(entry?.error?.toLowerCase()).toContain('timed out');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('lets a per-server startupTimeoutMs override defaultStartupTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 100 });
+    try {
+      const slowFixture = join(here, 'fixtures', 'slow-stdio-server.mjs');
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowFixture],
+          startupTimeoutMs: 10_000,
+        },
+      });
+      expect(cm.get('slow')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('applies defaultToolTimeoutMs when the server entry omits toolTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+    try {
+      const slowToolFixture = join(here, 'fixtures', 'slow-tool-stdio-server.mjs');
+      await cm.connectAll({
+        slowTool: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowToolFixture],
+        },
+      });
+      const client = cm.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('lets a per-server toolTimeoutMs override defaultToolTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+    try {
+      const slowToolFixture = join(here, 'fixtures', 'slow-tool-stdio-server.mjs');
+      await cm.connectAll({
+        slowTool: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowToolFixture],
+          toolTimeoutMs: 10_000,
+        },
+      });
+      const client = cm.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const result = await client.callTool('slow_echo', { text: 'hi' });
+      expect(result.content).toEqual([{ type: 'text', text: 'hi' }]);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
 
   it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
     const server: HttpServer = createHttpServer((_req, res) => {
@@ -993,3 +1077,32 @@ function testProviderManager(): ProviderManager {
     },
   });
 }
+
+describe('MCP timeout env resolution', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves the startup timeout as env > config > undefined', () => {
+    expect(resolveMcpStartupTimeoutMs()).toBeUndefined();
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(5_000);
+
+    vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, 'abc');
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(5_000);
+
+    vi.stubEnv(MCP_STARTUP_TIMEOUT_ENV, '7000');
+    expect(resolveMcpStartupTimeoutMs(5_000)).toBe(7_000);
+    expect(resolveMcpStartupTimeoutMs()).toBe(7_000);
+  });
+
+  it('resolves the tool timeout as env > config > undefined', () => {
+    expect(resolveMcpToolTimeoutMs()).toBeUndefined();
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(60_000);
+
+    vi.stubEnv(MCP_TOOL_TIMEOUT_ENV, '0');
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(60_000);
+
+    vi.stubEnv(MCP_TOOL_TIMEOUT_ENV, '90000');
+    expect(resolveMcpToolTimeoutMs(60_000)).toBe(90_000);
+  });
+});

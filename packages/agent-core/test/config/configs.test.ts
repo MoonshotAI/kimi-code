@@ -110,6 +110,10 @@ print_wait_ceiling_s = 3600
 [subagent]
 timeout_ms = 600000
 
+[mcp]
+startup_timeout_ms = 45000
+tool_timeout_ms = 120000
+
 [image]
 max_edge_px = 1500
 read_byte_budget = 131072
@@ -193,6 +197,7 @@ describe('harness config TOML loader', () => {
       printWaitCeilingS: 3600,
     });
     expect(config.subagent).toMatchObject({ timeoutMs: 600000 });
+    expect(config.mcp).toEqual({ startupTimeoutMs: 45000, toolTimeoutMs: 120000 });
     expect(config.image).toEqual({ maxEdgePx: 1500, readByteBudget: 131072 });
     expect(config.hooks).toEqual([
       {
