@@ -16,7 +16,11 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import { resolve } from 'pathe';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
+import {
+  CLI_SHUTDOWN_TIMEOUT_MS,
+  HEADLESS_STDIO_DRAIN_TIMEOUT_MS,
+  PROMPT_CLEANUP_TIMEOUT_MS,
+} from '#/constant/app';
 
 import { isKimiV2Enabled } from './experimental-v2';
 import { resolveOutputFormat } from './options';
@@ -152,10 +156,10 @@ export async function runPrompt(
   let restorePromptSessionPermission = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
+  let outputDrainAttempted = false;
   const cleanupPromptRun = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
-      await drainPromptOutput(stdout);
       setCrashPhase('shutdown');
       try {
         await restorePromptSessionPermission();
@@ -164,7 +168,7 @@ export async function runPrompt(
           await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
           await harness.close();
         } finally {
-          await drainPromptOutput(stdout);
+          if (!outputDrainAttempted) await drainPromptOutput(stdout);
         }
       }
     })());
@@ -224,7 +228,8 @@ export async function runPrompt(
       );
     }
     writeResumeHint(session.id, outputFormat, stdout, stderr);
-    await drainPromptOutput(stdout);
+    outputDrainAttempted = true;
+    await raceWithTimeout(drainPromptOutput(stdout), HEADLESS_STDIO_DRAIN_TIMEOUT_MS);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
       duration_ms: Date.now() - startedAt,

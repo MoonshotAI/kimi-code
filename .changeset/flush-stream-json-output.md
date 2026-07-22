@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Wait for backpressured stream JSON output before completing or shutting down.
+Respect stream JSON backpressure without allowing a stalled consumer to block cleanup or exit indefinitely.

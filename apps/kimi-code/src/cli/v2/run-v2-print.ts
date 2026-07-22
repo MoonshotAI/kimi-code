@@ -63,6 +63,7 @@ import { resolve } from 'pathe';
 import {
   CLI_SHUTDOWN_TIMEOUT_MS,
   CLI_USER_AGENT_PRODUCT,
+  HEADLESS_STDIO_DRAIN_TIMEOUT_MS,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
 
@@ -167,10 +168,10 @@ export async function runV2Print(
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let telemetryService: ITelemetryService | undefined;
+  let outputDrainAttempted = false;
   const cleanup = async (): Promise<void> => {
     const pending = (cleanupPromise ??= (async () => {
       removeTerminationCleanup?.();
-      await drainPromptOutput(stdout);
       try {
         await restorePermission();
       } finally {
@@ -180,7 +181,7 @@ export async function runV2Print(
           }
           app.dispose();
         } finally {
-          await drainPromptOutput(stdout);
+          if (!outputDrainAttempted) await drainPromptOutput(stdout);
         }
       }
     })());
@@ -239,7 +240,8 @@ export async function runV2Print(
       );
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
-    await drainPromptOutput(stdout);
+    outputDrainAttempted = true;
+    await raceWithTimeout(drainPromptOutput(stdout), HEADLESS_STDIO_DRAIN_TIMEOUT_MS);
 
     telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
