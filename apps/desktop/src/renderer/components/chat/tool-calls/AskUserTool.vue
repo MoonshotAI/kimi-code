@@ -181,7 +181,7 @@ watch(
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-muted);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-sm);
   padding: 0 6px;

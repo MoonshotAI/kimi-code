@@ -114,7 +114,7 @@ function glyphStatus(item: TodoItem): StatusGlyphStatus {
   gap: 1px;
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   padding: var(--space-2) var(--space-3);
   max-height: calc(12 * 1.6 * var(--content-font-size));
   overflow-y: auto;

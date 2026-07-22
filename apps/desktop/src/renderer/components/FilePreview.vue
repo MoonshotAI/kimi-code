@@ -762,7 +762,7 @@ function truncatePath(path: string, maxLen = 55): string {
   color: var(--color-text-muted);
 }
 .fp-download:hover {
-  background: var(--color-surface-sunken);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: var(--color-text);
 }
 .fp-download:focus-visible {

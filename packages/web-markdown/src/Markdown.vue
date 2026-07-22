@@ -661,9 +661,9 @@ function copyDiff(code: string, idx: number) {
 --------------------------------------------------------------------------- */
 .md :deep(.code-block-container) {
   margin: 0.6em 0;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   box-shadow: var(--shadow-xs);
   overflow: hidden;
   --vscode-editor-font-size: var(--text-sm);
@@ -671,7 +671,7 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(.code-block-header) {
   background: var(--color-surface);
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
   padding: 4px 6px 4px 12px;
   color: var(--color-text-muted);
   font: var(--text-xs) var(--font-ui);
@@ -712,7 +712,7 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(.code-block-content),
 .md :deep(.markstream-pre) {
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
 }
 .md :deep(.code-block-container pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)),
 .md :deep(.markstream-pre:not(.code-pre-fallback):not(.markstream-pre--line-numbers)) {

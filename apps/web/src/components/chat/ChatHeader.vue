@@ -464,7 +464,7 @@ const isDev = import.meta.env.DEV;
    sunken highlight while the menu is showing. */
 .chat-header .ch-act-more { width: 24px; height: 24px; border-radius: var(--radius-sm); }
 .chat-header .ch-act-more :deep(svg) { width: 14px; height: 14px; }
-.ch-act-more.open { background: var(--color-surface-sunken); color: var(--color-text); }
+.ch-act-more.open { background: var(--color-well); color: var(--color-text); }
 
 /* Dev-environment badge — same pill language as the PR badge, in the warning
    hue so a dev window is recognizable at a glance. Not interactive. */
@@ -493,7 +493,7 @@ const isDev = import.meta.env.DEV;
   flex: none;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-full);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   color: var(--color-text-muted);
   font-size: var(--text-xs);
   font-weight: 500;
@@ -503,8 +503,8 @@ const isDev = import.meta.env.DEV;
 .ch-pr.pr-open { color: var(--color-success); border-color: var(--color-success-bd); background: var(--color-success-soft); }
 .ch-pr.pr-merged { color: var(--color-done); border-color: var(--color-done-bd); background: var(--color-done-soft); }
 .ch-pr.pr-closed { color: var(--color-danger); border-color: var(--color-danger-bd); background: var(--color-danger-soft); }
-.ch-pr.pr-draft { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-surface-sunken); }
-.ch-pr.pr-unknown { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-surface-sunken); }
+.ch-pr.pr-draft { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-well); }
+.ch-pr.pr-unknown { color: var(--color-text-muted); border-color: var(--color-line-strong); background: var(--color-well); }
 .ch-pr:hover { border-color: var(--color-line-strong); }
 
 /* Fixed more-menu, anchored to the kebab trigger. Surface / items come from

@@ -1193,7 +1193,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
    painted once per line box — a striped band on every line. */
 .a-msg :deep(:not(pre) > code) {
   font: .9em var(--font-mono);
-  background: var(--color-surface-sunken);
+  background: var(--color-inline-code-bg);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);
   padding: 1px 6px;
@@ -1256,9 +1256,9 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   position: relative;
   display: block;
   padding: 0;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   overflow: hidden;
   cursor: pointer;
   transition: border-color var(--duration-fast) ease;

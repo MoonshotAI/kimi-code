@@ -55,7 +55,7 @@ defineEmits<{ close: [] }>();
   box-sizing: border-box;
   min-width: 0;
   border-bottom: 0.5px solid var(--color-line);
-  background: var(--color-surface);
+  background: var(--color-surface-deep);
 }
 .ui-panel-header__title {
   flex: none;

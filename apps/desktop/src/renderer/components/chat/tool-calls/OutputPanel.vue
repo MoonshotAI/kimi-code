@@ -31,7 +31,7 @@ const outputLines = computed(() => props.lines ?? []);
   font-feature-settings: "liga" 0, "calt" 0;
   font-variant-ligatures: none;
   color: var(--color-text);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);

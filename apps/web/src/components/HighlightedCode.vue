@@ -155,14 +155,15 @@ function sign(line: DiffViewLine): string {
 </template>
 
 <style scoped>
-/* Same panel language as the shared OutputPanel: sunken surface, 0.5px
-   hairline edge (needed in dark, where sunken == page bg), radius-md. The
-   panel owns the scroll viewport — caps long content vertically and scrolls
-   horizontally for wide lines. */
+/* Same panel language as the shared OutputPanel: content-well fill, 0.5px
+   hairline edge, radius-md. The well lifts the panel off the page in dark
+   (where the sunken surface == page bg and would vanish); light is unchanged.
+   The panel owns the scroll viewport — caps long content vertically and
+   scrolls horizontally for wide lines. */
 .hl-code {
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   overflow: auto;
   max-height: calc(24 * 1.5 * var(--ui-font-size));
   overscroll-behavior: contain;

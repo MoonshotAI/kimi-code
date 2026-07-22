@@ -28,8 +28,11 @@
   --dim: #595959;
   --muted: #8a8a8a;
   --faint: #b5b5b5;
-  --line: #e9edf3;
-  --line2: #f1f4f8;
+  /* Legacy hairline aliases — kept for one version cycle; new work references
+     --color-line / --color-subtle directly. Declared only here so they follow
+     the dark overrides of their targets automatically. */
+  --line: var(--color-line);
+  --line2: var(--color-subtle);
   /* Soft neutral canvas the white cards/bubbles lift off, plus the soft
      elevation shadows shared by the per-element card rules. */
   --canvas: #f4f6fa;
@@ -95,10 +98,8 @@ html[data-color-scheme="dark"] {
   --dim: #9aa0a8;
   --muted: #727983;
   --faint: #525960;
-  --line: #2d333b;
-  --line2: #22272e;
   --panel: #1c2128;
-  --panel2: #161b22;
+  --panel2: #13181e;
   --bg: #0d1117;
   --blue: #58a6ff;
   --blue2: #79b8ff;
@@ -112,7 +113,7 @@ html[data-color-scheme="dark"] {
   --star: #facc15;
   --err: #f85149;
   --hover: rgba(255, 255, 255, 0.07);
-  --canvas: #161b22;
+  --canvas: #13181e;
   --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
   --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
@@ -122,10 +123,8 @@ html[data-color-scheme="dark"] {
     --dim: #9aa0a8;
     --muted: #727983;
     --faint: #525960;
-    --line: #2d333b;
-    --line2: #22272e;
     --panel: #1c2128;
-    --panel2: #161b22;
+    --panel2: #13181e;
     --bg: #0d1117;
     --blue: #58a6ff;
     --blue2: #79b8ff;
@@ -139,7 +138,7 @@ html[data-color-scheme="dark"] {
     --star: #facc15;
     --err: #f85149;
     --hover: rgba(255, 255, 255, 0.07);
-    --canvas: #161b22;
+    --canvas: #13181e;
     --sh: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
     --shc: 0 1px 2px rgba(0, 0, 0, 0.35);
   }
@@ -161,10 +160,28 @@ html[data-color-scheme="dark"] {
   --color-bg: #ffffff;
   --color-surface: #fafbfc;
   --color-surface-raised: #ffffff;
+  /* Field-control fill on raised cards (selects, steppers) — the top rung of
+     the ladder. Light tops out at white (the level is expressed by the
+     control's border there); dark steps one rung above raised so a field
+     reads lighter than the card it sits on. Floating layers (dialog / menu /
+     toast) stay at --color-surface-raised: their elevation is carried by
+     shadow + hairline, not by a lighter fill. */
+  --color-surface-overlay: #ffffff;
   --color-surface-sunken: #f3f5f8;
   /* Inline-code chip fill — light reuses the sunken surface; dark needs a
      translucent lift because sunken == --color-bg there (the chip vanishes). */
   --color-inline-code-bg: var(--color-surface-sunken);
+  /* Content well — the primary content carriers that sit directly on the page
+     (code blocks, tool-output panels, match/file lists, media thumbnails).
+     Light reuses the sunken recess; dark lifts one rung ABOVE the page (the
+     --color-surface rung): a true recess (#0d1117) vanishes into the page
+     there, and in dark the content must read lighter than the canvas, never
+     deeper (elevation = lighter). */
+  --color-well: #f3f5f8;
+  /* Deep chrome plane one step BELOW --color-bg (panel headers, diff gutters).
+     Light stays on the flat-surface rung; dark drops under the page so the
+     chrome framing a pane is darker than the content inside it. */
+  --color-surface-deep: #fafbfc;
   /* Checkerboard canvas behind <img> so transparent PNGs keep white/black
      content visible and read as transparent. Squares are mixed from the
      theme's bg/text (≈#858585/#6b6b6b light, ≈#76797e/#8c8f93 dark), each
@@ -185,6 +202,9 @@ html[data-color-scheme="dark"] {
   --color-text-faint: #9aa3af;
   --color-text-on-accent: #ffffff;
   --color-line: #e7eaee;
+  /* Subtle hairline — tertiary separators (diff-gutter column rules, quiet
+     dividers inside wells) that must read below --color-line. */
+  --color-subtle: #f1f4f8;
   --color-line-strong: #d4d9e0;
   /* Modal scrim — the dark veil behind dialogs/lightboxes. Shared by both
      themes (a scrim is inherently dark); the v2 Dialog overlay, BottomSheet
@@ -198,8 +218,10 @@ html[data-color-scheme="dark"] {
   /* Row hover wash — lighter than the selected fill (hover < selected); both
      are translucent black so they sit naturally on any light surface. */
   --color-hover: #0000000d;
-  /* Sidebar surface — one step off --color-bg (warm off-white / dark blue-gray)
-     so the session column reads as its own plane. */
+  /* Sidebar surface — one step off --color-bg so the session column reads as
+     its own plane. Light: warm off-white just under white; dark: one step
+     BELOW the page — elevation = lighter in dark, so the chrome plane sits
+     under the reading surface, never above it. */
   --color-sidebar-bg: #fbfaf9;
   /* Brand accent = Kimi KMBlue (#1783ff), the single accent for the app. */
   --color-accent: #1783ff;
@@ -340,18 +362,22 @@ html[data-color-scheme="dark"] {
 /* Design tokens v2 — dark values (explicit choice). */
 html[data-color-scheme="dark"] {
   --color-bg: #0d1117;
-  --color-surface: #161b22;
+  --color-surface: #13181e;
   --color-surface-raised: #1c2128;
+  --color-surface-overlay: #22272e;
   --color-surface-sunken: #0d1117;
   --color-inline-code-bg: #ffffff1a;
+  --color-well: #13181e;
+  --color-surface-deep: #0a0d12;
   --color-text: #e8eaed;
   --color-text-muted: #9aa0a8;
   --color-text-faint: #6b7280;
   --color-line: #2d333b;
+  --color-subtle: #22272e;
   --color-line-strong: #3d444d;
   --color-selected: #ffffff14;
   --color-hover: #ffffff0d;
-  --color-sidebar-bg: #13181e;
+  --color-sidebar-bg: #0a0d12;
   --color-accent: #58a6ff;
   --color-accent-hover: #79b8ff;
   --color-accent-soft: rgba(88, 166, 255, 0.14);
@@ -393,18 +419,22 @@ html[data-color-scheme="dark"] {
 @media (prefers-color-scheme: dark) {
   html[data-color-scheme="system"] {
     --color-bg: #0d1117;
-    --color-surface: #161b22;
+    --color-surface: #13181e;
     --color-surface-raised: #1c2128;
+    --color-surface-overlay: #22272e;
     --color-surface-sunken: #0d1117;
     --color-inline-code-bg: #ffffff1a;
+    --color-well: #13181e;
+    --color-surface-deep: #0a0d12;
     --color-text: #e8eaed;
     --color-text-muted: #9aa0a8;
     --color-text-faint: #6b7280;
     --color-line: #2d333b;
+    --color-subtle: #22272e;
     --color-line-strong: #3d444d;
     --color-selected: #ffffff14;
     --color-hover: #ffffff0d;
-    --color-sidebar-bg: #13181e;
+    --color-sidebar-bg: #0a0d12;
     --color-accent: #58a6ff;
     --color-accent-hover: #79b8ff;
     --color-accent-soft: rgba(88, 166, 255, 0.14);

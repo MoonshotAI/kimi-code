@@ -107,7 +107,7 @@ function openMatch(match: GrepMatch): void {
   flex-direction: column;
   border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   padding: var(--space-1);
   max-height: calc(12 * 1.6 * var(--content-font-size));
   overflow-y: auto;

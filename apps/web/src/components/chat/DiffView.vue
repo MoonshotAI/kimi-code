@@ -482,7 +482,7 @@ function treeRowStyle(depth: number): Record<string, string> {
 }
 
 .ch-row:hover {
-  background: var(--panel2, #f5f6f8);
+  background: var(--panel2);
 }
 
 .ch-row:focus-visible {
@@ -554,7 +554,7 @@ function treeRowStyle(depth: number): Record<string, string> {
   pointer-events: none;
 }
 .tree-row:hover {
-  background: var(--panel2, #f5f6f8);
+  background: var(--panel2);
 }
 .tree-row:focus-visible {
   outline: 2px solid var(--color-accent);
@@ -599,9 +599,9 @@ function treeRowStyle(depth: number): Record<string, string> {
 .badge.renamed   { background: var(--color-done-soft); color: var(--color-done); }
 .badge.untracked { background: var(--color-success-soft); color: var(--color-success); }
 .badge.conflicted{ background: color-mix(in srgb, var(--color-danger) 10%, var(--bg)); color: var(--color-danger); font-size: max(9px, calc(var(--ui-font-size) - 5px)); }
-.badge.ignored   { background: var(--color-surface-sunken); color: var(--faint, #c0c5cc); }
-.badge.clean     { background: transparent; color: var(--faint, #c0c5cc); }
-.badge.unknown   { background: var(--color-surface-sunken); color: var(--muted, #9098a0); }
+.badge.ignored   { background: var(--color-well); color: var(--faint); }
+.badge.clean     { background: transparent; color: var(--faint); }
+.badge.unknown   { background: var(--color-well); color: var(--muted); }
 
 /* ---- File path ---- */
 .fpath {
@@ -633,7 +633,7 @@ function treeRowStyle(depth: number): Record<string, string> {
   justify-content: center;
   gap: var(--space-2);
   padding: 32px 20px;
-  color: var(--muted, #9098a0);
+  color: var(--muted);
   font-size: var(--ui-font-size);
   text-align: center;
   user-select: none;
@@ -645,7 +645,7 @@ function treeRowStyle(depth: number): Record<string, string> {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--color-surface-sunken);
+  background: var(--color-well);
   color: var(--color-text-muted);
 }
 
@@ -697,7 +697,7 @@ function treeRowStyle(depth: number): Record<string, string> {
     gap: 12px;
     font-size: var(--text-xs);
   }
-  .ch-row:active { background: var(--panel2, #f5f6f8); }
+  .ch-row:active { background: var(--panel2); }
   .badge { width: 18px; height: 18px; }
   .fpath { font-size: var(--text-xs); }
   .tree-row {

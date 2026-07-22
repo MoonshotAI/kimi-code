@@ -75,14 +75,14 @@ function rowClass(line: DiffViewLine): string {
   width: 40px;
   padding: 0 6px;
   text-align: right;
-  color: var(--faint, #aeb4bc);
-  background: var(--panel, #fafbfc);
+  color: var(--faint);
+  background: var(--color-surface-deep);
   user-select: none;
-  border-right: 1px solid var(--line2, #eef1f4);
+  border-right: 1px solid var(--color-subtle);
   font-variant-numeric: tabular-nums;
 }
 
-.dl-gutter.new { border-right: 1px solid var(--line, #e7eaee); }
+.dl-gutter.new { border-right: 1px solid var(--color-line); }
 
 .dl-sign {
   flex: none;
@@ -137,14 +137,16 @@ function rowClass(line: DiffViewLine): string {
   box-shadow: none;
 }
 
-/* Hunk header — muted band spanning the whole row. */
+/* Hunk header — muted band spanning the whole row. Sits on the sunken rung:
+   identical to the old --panel2 in light, and level with the diff body in
+   dark (never lighter than the content rows it introduces). */
 .dl-hunk {
-  background: var(--panel2, #f3f5f8);
+  background: var(--color-surface-sunken);
 }
 .dl-hunk .hunk-text {
   flex: 1;
   padding: 1px 12px;
-  color: var(--muted, #8b929b);
+  color: var(--muted);
   font-style: normal;
 }
 

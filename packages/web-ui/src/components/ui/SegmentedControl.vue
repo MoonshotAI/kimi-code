@@ -113,6 +113,9 @@ onBeforeUnmount(() => resizeObserver?.disconnect());
   font-weight: var(--weight-medium);
   cursor: pointer;
   line-height: 1;
+  /* A segmented control sizes to its labels — never wrap them (a squeezed
+     control in a settings row would otherwise grow two-line items). */
+  white-space: nowrap;
   transition: background var(--duration-base) var(--ease-out),
     color var(--duration-base) var(--ease-out),
     box-shadow var(--duration-base) var(--ease-out);

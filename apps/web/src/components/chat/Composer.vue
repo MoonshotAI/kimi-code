@@ -1327,7 +1327,7 @@ function selectModel(modelId: string): void {
   position: relative;
   border: 0.5px solid var(--line);
   border-radius: var(--radius-2xl);
-  background: var(--bg);
+  background: var(--color-surface-raised);
   box-shadow: var(--shadow-input);
   transition: border-color 0.15s, box-shadow 0.15s;
   user-select: none;
