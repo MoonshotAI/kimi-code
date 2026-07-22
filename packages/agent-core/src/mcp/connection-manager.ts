@@ -329,7 +329,7 @@ export class McpConnectionManager {
 
     let client: RuntimeMcpClient | undefined;
     try {
-      const startupClient = this.createClient(entry.config, entry.name);
+      const startupClient = this.createClient(entry.config, entry.name, timeoutMs);
       client = startupClient;
       entry.client = startupClient;
       const discovered = await withTimeout(
@@ -401,19 +401,29 @@ export class McpConnectionManager {
     return entry.attemptId;
   }
 
-  private createClient(config: McpServerConfig, name: string): RuntimeMcpClient {
+  private createClient(
+    config: McpServerConfig,
+    name: string,
+    startupTimeoutMs: number,
+  ): RuntimeMcpClient {
     const toolCallTimeoutMs = config.toolTimeoutMs ?? this.options.defaultToolTimeoutMs;
     if (config.transport === 'stdio') {
-      return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
+      return new StdioMcpClient(config, {
+        startupTimeoutMs,
+        toolCallTimeoutMs,
+        defaultCwd: this.options.stdioCwd,
+      });
     }
     if (config.transport === 'sse') {
       return new SseMcpClient(config, {
+        startupTimeoutMs,
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
         oauthProvider: this.resolveOAuthProvider(config, name),
       });
     }
     return new HttpMcpClient(config, {
+      startupTimeoutMs,
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
       oauthProvider: this.resolveOAuthProvider(config, name),

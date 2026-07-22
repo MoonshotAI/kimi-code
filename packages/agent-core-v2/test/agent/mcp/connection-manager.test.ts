@@ -2,7 +2,8 @@
  * Scenario: MCP connection lifecycle, timeout defaults, and session config readiness.
  *
  * Exercises the real connection manager and resolves the real session MCP
- * service through DI. Stdio MCP processes are the only external boundary.
+ * service through DI. Stdio MCP processes are the external boundary; timeout
+ * forwarding tests stub only the MCP SDK client boundary.
  * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
  * test/agent/mcp/connection-manager.test.ts`.
  */
@@ -17,6 +18,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join } from 'pathe';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type {
@@ -24,7 +26,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { z } from 'zod';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -422,22 +424,63 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
-  it('lets a per-server startupTimeoutMs override defaultStartupTimeoutMs', async () => {
-    const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 100 });
-    try {
-      await cm.connectAll({
-        slow: {
-          transport: 'stdio',
-          command: process.execPath,
-          args: [slowStdioFixture],
-          startupTimeoutMs: 10_000,
-        },
-      });
-      expect(cm.get('slow')?.status).toBe('connected');
-    } finally {
-      await cm.shutdown();
-    }
-  }, 20000);
+  it.each([
+    ['stdio', stdioConfig()],
+    ['http', { transport: 'http' as const, url: 'https://example.test/mcp' }],
+    ['sse', { transport: 'sse' as const, url: 'https://example.test/sse' }],
+  ])(
+    'forwards defaultStartupTimeoutMs above the SDK default over %s',
+    async (_transport, config) => {
+      const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+      const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+      const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 120_000 });
+      try {
+        await cm.connectAll({ server: config });
+        expect(connect).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ timeout: 120_000 }),
+        );
+        expect(listTools).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ timeout: 120_000 }),
+        );
+      } finally {
+        await cm.shutdown();
+        connect.mockRestore();
+        listTools.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ['stdio', stdioConfig()],
+    ['http', { transport: 'http' as const, url: 'https://example.test/mcp' }],
+    ['sse', { transport: 'sse' as const, url: 'https://example.test/sse' }],
+  ])(
+    'forwards per-server startupTimeoutMs above the SDK default over %s',
+    async (_transport, config) => {
+      const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
+      const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
+      const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 120_000 });
+      try {
+        await cm.connectAll({
+          server: { ...config, startupTimeoutMs: 180_000 },
+        });
+        expect(connect).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ timeout: 180_000 }),
+        );
+        expect(listTools).toHaveBeenCalledWith(
+          undefined,
+          expect.objectContaining({ timeout: 180_000 }),
+        );
+      } finally {
+        await cm.shutdown();
+        connect.mockRestore();
+        listTools.mockRestore();
+      }
+    },
+  );
 
   it('applies defaultToolTimeoutMs when the server entry omits toolTimeoutMs', async () => {
     const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
