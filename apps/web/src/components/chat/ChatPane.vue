@@ -1174,7 +1174,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg > :deep(.agent-group),
 .a-msg > :deep(.tool-line),
 .a-msg > :deep(.swarm-card),
-.a-msg > :deep(.media-tool) {
+.a-msg > :deep(.media-tool),
+.a-msg > :deep(.ask-receipt) {
   margin-top: var(--chat-block-gap);
 }
 .a-msg > .msg:first-child,
@@ -1185,7 +1186,8 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg > :deep(.agent-group:first-child),
 .a-msg > :deep(.tool-line:first-child),
 .a-msg > :deep(.swarm-card:first-child),
-.a-msg > :deep(.media-tool:first-child) {
+.a-msg > :deep(.media-tool:first-child),
+.a-msg > :deep(.ask-receipt:first-child) {
   margin-top: 0;
 }
 /* Inline-code chip. Must exclude <pre> descendants: a block <code> (shiki

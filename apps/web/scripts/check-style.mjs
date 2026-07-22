@@ -56,8 +56,9 @@ const FILE_EXEMPT = new Set(['views/DesignSystemView.vue']);
 // Files exempt from no-gradient-text. The rule targets gradient TEXT, but the
 // line regex matches any gradient — these use background opacity ramps as
 // edge-fade veils over scrolling content, an accepted design primitive (the
-// Sidebar column fades in the baseline are the same pattern).
-const GRADIENT_EXEMPT = new Set(['components/chat/ChatDock.vue']);
+// Sidebar column fades in the baseline and the ApprovalCard plan-scroll seam
+// are the same pattern).
+const GRADIENT_EXEMPT = new Set(['components/chat/ChatDock.vue', 'components/chat/ApprovalCard.vue']);
 
 const RADIUS_SCALE = new Set([4, 6, 8, 12, 16, 20, 999]);
 const WEIGHT_OK = new Set([

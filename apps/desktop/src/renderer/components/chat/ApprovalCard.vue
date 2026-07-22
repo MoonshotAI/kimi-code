@@ -1,6 +1,6 @@
 <!-- apps/web/src/components/chat/ApprovalCard.vue -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, onUpdated, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ApprovalBlock, FilePreviewRequest } from '../../types';
 import type { ApprovalDecision } from '../../api/types';
@@ -39,6 +39,21 @@ const planReview = computed<PlanReviewView | null>(() => {
 // Temporarily collapse to a thin bar so the approval stops covering the chat
 // while the user reads. The decision buttons + body return on expand.
 const minimized = ref(false);
+
+// Plan scroll seam: the plan body scrolls in a capped area; once scrolled, a
+// soft shadow fades in at the scroll area's top edge (the sidebar's
+// scroll-linked seam language), so clipped content reads as passing under the
+// card chrome instead of ending flush against it.
+const planBodyEl = ref<HTMLElement | null>(null);
+const planScrolled = ref(false);
+
+function updatePlanScrollState(): void {
+  planScrolled.value = (planBodyEl.value?.scrollTop ?? 0) > 0;
+}
+
+function onPlanScroll(e: Event): void {
+  planScrolled.value = (e.target as HTMLElement).scrollTop > 0;
+}
 
 // Lift the content body's height cap so long plans / Write previews / Edit
 // diffs can be read in full ("expand to tallest"). Independent of `minimized`
@@ -230,6 +245,9 @@ function handleKeydown(e: KeyboardEvent): void {
 
 onMounted(() => document.addEventListener('keydown', handleKeydown));
 onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
+// The plan scroll area unmounts with minimize / kind switches — recompute the
+// seam after every render so it can't linger on a detached or reset element.
+onUpdated(updatePlanScrollState);
 </script>
 
 <template>
@@ -339,8 +357,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
              offered approaches as numbered option rows PINNED below the
              scroll area (always visible — the approve action must never be
              buried at the end of a long plan) -->
-        <div v-else-if="block.kind === 'plan_review'" class="body-plan-wrap">
-          <div class="body-plan" :class="{ expanded }">
+        <div v-else-if="block.kind === 'plan_review'" class="body-plan-wrap" :class="{ scrolled: planScrolled }">
+          <div ref="planBodyEl" class="body-plan" :class="{ expanded }" @scroll="onPlanScroll">
             <Markdown :text="block.plan" :open-file="props.openFile" />
           </div>
           <div v-if="planReview && planReview.options.length > 0" class="plan-opts">
@@ -414,11 +432,12 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 </template>
 
 <style scoped>
-/* Floating neutral card: white surface, hairline border, large radius and a
-   soft shadow — it hovers above the transcript in place of the composer.
-   The card is a flex column capped just below the chat header, so a tall
-   plan + options can never overflow past the pane: only the plan scroll
-   area shrinks; header / options / footer keep their natural height. */
+/* Floating neutral card: white surface, hairline border, quiet radius and a
+   faint popover shadow — it hovers above the transcript in place of the
+   composer. The card is a flex column capped just below the chat header, so
+   a tall plan + options can never overflow past the pane: only the plan
+   scroll area shrinks; header / options / footer keep their natural
+   height. */
 .appr {
   display: flex;
   flex-direction: column;
@@ -426,8 +445,8 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   margin: var(--space-2) 0;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
   overflow: hidden;
   animation: kimi-card-in var(--duration-base) var(--ease-out);
 }
@@ -617,7 +636,28 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   display: flex;
   flex-direction: column;
   min-height: 0;
+  position: relative;
 }
+/* Scroll seam — once the plan scrolls, a soft shadow fades in at the scroll
+   area's top edge (same scroll-linked language as the sidebar list), so
+   clipped content reads as passing under the card chrome. */
+.body-plan-wrap::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 18px;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+.body-plan-wrap.scrolled::before { opacity: 1; }
 .body-plan-wrap > .plan-opts { flex: none; }
 .body-plan { max-height: 50vh; overflow-y: auto; min-height: 0; }
 .body-plan.expanded { max-height: none; flex: 1; }

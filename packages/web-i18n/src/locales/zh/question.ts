@@ -1,5 +1,5 @@
 export default {
-  back: '‹ 返回',
+  back: '‹ 上一题',
   nextQuestion: '下一题 ›',
   otherDefault: '其他…',
   submit: '提交',

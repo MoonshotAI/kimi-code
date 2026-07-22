@@ -340,7 +340,8 @@ function isRunStreaming(block: { items: { sourceIndex: number; kind?: string; du
 .tf-body-inner > :deep(.agent-group),
 .tf-body-inner > :deep(.tool-line),
 .tf-body-inner > :deep(.swarm-card),
-.tf-body-inner > :deep(.media-tool) {
+.tf-body-inner > :deep(.media-tool),
+.tf-body-inner > :deep(.ask-receipt) {
   margin-top: var(--chat-block-gap);
 }
 /* While the turn streams the head is hidden and the fold body may hold the
@@ -354,7 +355,8 @@ function isRunStreaming(block: { items: { sourceIndex: number; kind?: string; du
 .turn-fold.streaming .tf-body-inner > :deep(.agent-group:first-child),
 .turn-fold.streaming .tf-body-inner > :deep(.tool-line:first-child),
 .turn-fold.streaming .tf-body-inner > :deep(.swarm-card:first-child),
-.turn-fold.streaming .tf-body-inner > :deep(.media-tool:first-child) {
+.turn-fold.streaming .tf-body-inner > :deep(.media-tool:first-child),
+.turn-fold.streaming .tf-body-inner > :deep(.ask-receipt:first-child) {
   margin-top: 0;
 }
 

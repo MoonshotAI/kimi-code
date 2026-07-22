@@ -1,5 +1,5 @@
 export default {
-  back: '‹ Back',
+  back: '‹ Previous question',
   nextQuestion: 'Next question ›',
   otherDefault: 'Other…',
   submit: 'Submit',

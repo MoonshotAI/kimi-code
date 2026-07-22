@@ -1,16 +1,20 @@
 <!-- apps/kimi-web/src/components/chat/tool-calls/AskUserTool.vue
-     Result line for the AskUserQuestion tool. On a successful answer the
+     Result rendering for the AskUserQuestion tool. On a successful answer the
      output is a single JSON line ({ answers, note? }); answers are keyed by
      question text and the values are option labels (comma-joined for
      multi-select) or free-text (Other). Legacy transcripts instead carry
      synthesized ids (`q_<index>` keys, `opt_<q>_<o>` values) — both forms are
-     resolved. We zip answers back to the input questions and echo the full
-     option list, marking the picked option(s) selected and the rest faint —
-     so the transcript shows both what was chosen and what was passed over.
+     resolved.
 
-     Background launches and error cases return plain-text output instead of
-     the answer JSON; those fall back to a raw output view so the task id /
-     failure reason is not hidden behind an empty option list. -->
+     Settled + recognized → a RECEIPT CARD (the question card's "receipt"):
+     a small raised card echoing only the picked options, checked with the
+     same CSS glyph language as the live QuestionCard. Passed-over options
+     are not echoed. Dismissed (or zero answers) collapses to a slim
+     one-line card.
+
+     Running, and error/background cases whose output is not the answer JSON
+     (plain-text task id / failure reason), keep the quiet disclosure line so
+     the raw output is not hidden behind an empty card. -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -62,9 +66,42 @@ function otherText(qi: number): string {
 function isIndeterminate(qi: number): boolean {
   return resolved.value[qi]?.indeterminate ?? false;
 }
-function glyphFor(multiSelect: boolean, on: boolean): string {
-  return multiSelect ? (on ? '■' : '□') : (on ? '●' : '○');
-}
+
+const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
+
+// ---------------------------------------------------------------------------
+// Receipt card (settled + recognized)
+// ---------------------------------------------------------------------------
+
+// Per-question picked rows — the card echoes only what the user chose.
+const receiptRows = computed(() =>
+  questions.value.map((q, qi) => ({
+    q,
+    selected: q.options
+      .map((o, oi) => ({ o, oi }))
+      .filter(({ oi }) => isSelected(qi, oi)),
+  })),
+);
+
+const questionsLabel = computed(() =>
+  questions.value.length === 1
+    ? t('tools.ask.question', { count: 1 })
+    : t('tools.ask.questions', { count: questions.value.length }),
+);
+
+// Dismissed / zero-answer flat line: question text + localized "no answer"
+// (the daemon's note is a fixed English sentence — detection only, never
+// shown). Without a parsed question (unparseable legacy arg) the localized
+// note stands alone.
+const flatText = computed(() => {
+  const first = questions.value[0]?.question ?? '';
+  const note = t('tools.ask.unanswered');
+  return first ? `${first} —— ${note}` : note;
+});
+
+// ---------------------------------------------------------------------------
+// Quiet disclosure line (running / unrecognized output)
+// ---------------------------------------------------------------------------
 
 const summary = computed(() => {
   if (!recognized.value) return clip(props.tool.output?.[0] ?? '');
@@ -90,7 +127,6 @@ const canExpand = computed(
 );
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
-const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
 const label = computed(() => toolLabel(props.tool.name));
 
 watch(
@@ -102,7 +138,46 @@ watch(
 </script>
 
 <template>
-  <ToolDisclosure :status="status" :open="open" :expandable="canExpand" @toggle="open = !open">
+  <!-- Settled + recognized → receipt card -->
+  <div v-if="recognized && status === 'ok'" class="ask-receipt" :class="{ flat: isDismissed || answeredCount === 0 }">
+    <span v-if="isDismissed || answeredCount === 0" class="rc-flat">{{ flatText }}</span>
+    <template v-else>
+      <div class="rc-head">
+        <span>{{ t('tools.ask.collected') }} · {{ questionsLabel }}</span>
+        <span class="rc-st"><Icon name="check" size="sm" /></span>
+      </div>
+      <div v-for="(row, qi) in receiptRows" :key="qi" class="rc-q">
+        <div class="rc-qtext">
+          <span>{{ row.q.question }}</span>
+        </div>
+        <!-- Picked options (passed-over options are not echoed) -->
+        <div v-for="s in row.selected" :key="s.oi" class="rc-opt">
+          <span class="rc-g on" :class="row.q.multiSelect ? 'chk' : 'rad'"></span>
+          <span class="rc-lb">{{ s.o.label }}</span>
+        </div>
+        <div v-if="otherText(qi)" class="rc-opt">
+          <span class="rc-g on" :class="row.q.multiSelect ? 'chk' : 'rad'"></span>
+          <span class="rc-lb">{{ otherText(qi) }}</span>
+          <span class="rc-ds">{{ t('tools.ask.freeInput') }}</span>
+        </div>
+        <div v-if="isIndeterminate(qi)" class="rc-opt">
+          <span class="rc-g rad on"></span>
+          <span class="rc-lb">{{ t('tools.ask.answered') }}</span>
+        </div>
+        <!-- A question with no recorded answer (legacy / foreign transcripts
+             only — the live card requires every question answered) still
+             records the skip, so the receipt doesn't read as a rendering
+             gap. -->
+        <div
+          v-if="row.selected.length === 0 && !otherText(qi) && !isIndeterminate(qi)"
+          class="rc-qskip"
+        >{{ t('tools.ask.unanswered') }}</div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Running / unrecognized output (background launch, error) → quiet line -->
+  <ToolDisclosure v-else :status="status" :open="open" :expandable="canExpand" @toggle="open = !open">
     <template #leading><Icon name="help-circle" size="sm" /></template>
     <span class="tl-name">{{ label }}</span>
     <span v-if="summary" class="tl-dim">{{ summary }}</span>
@@ -110,127 +185,99 @@ watch(
       <span v-if="chip" class="tl-chip">{{ chip }}</span>
     </template>
     <template #body>
-      <div v-if="isDismissed" class="au-dismissed">{{ output.note }}</div>
-
-      <div v-else-if="recognized" class="au-list">
-        <div v-for="(q, qi) in questions" :key="qi" class="au-block">
-          <div class="au-q">
-            <span v-if="q.header" class="au-hdr">{{ q.header }}</span>
-            <span class="au-qtext">{{ q.question }}</span>
-          </div>
-          <div class="au-opts">
-            <div
-              v-for="(opt, oi) in q.options"
-              :key="oi"
-              class="au-opt"
-              :class="{ sel: isSelected(qi, oi) }"
-            >
-              <span class="au-glyph">{{ glyphFor(q.multiSelect, isSelected(qi, oi)) }}</span>
-              <span class="au-label">{{ opt.label }}</span>
-              <span v-if="opt.description" class="au-desc">{{ opt.description }}</span>
-            </div>
-            <div v-if="otherText(qi)" class="au-opt sel">
-              <span class="au-glyph">{{ glyphFor(q.multiSelect, true) }}</span>
-              <span class="au-label">{{ otherText(qi) }}</span>
-            </div>
-            <div v-if="isIndeterminate(qi)" class="au-opt sel">
-              <span class="au-glyph">●</span>
-              <span class="au-label">{{ t('tools.ask.answered') }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Not the answer payload (background launch / error): show the raw tool
            output instead of an empty option list. -->
-      <OutputPanel v-else :lines="tool.output" />
+      <OutputPanel :lines="tool.output" />
     </template>
   </ToolDisclosure>
 </template>
 
 <style scoped>
-.au-dismissed {
-  color: var(--color-text-muted);
-  font-size: calc(var(--content-font-size) - 1px);
-  line-height: var(--leading-normal);
-  font-style: italic;
-}
-
-.au-list {
-  display: flex;
-  flex-direction: column;
-  font-size: calc(var(--content-font-size) - 1px);
-  line-height: var(--leading-normal);
-}
-.au-block {
-  padding: var(--space-1) 0;
-}
-.au-block + .au-block {
-  margin-top: var(--space-1);
-  padding-top: 10px;
-  border-top: 1px dashed var(--color-line);
-}
-
-.au-q {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-bottom: 6px;
-}
-.au-hdr {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  background: var(--color-well);
+/* Receipt card — the question card's settled echo: raised surface, hairline
+   border, lg radius and the lightest shadow, flush with the stream's left
+   edge (block spacing is owned by ChatPane / TurnFold via .ask-receipt).
+   Only the picks echo — the passed-over options are not shown. */
+.ask-receipt {
+  max-width: 560px;
+  background: var(--color-surface-raised);
   border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-sm);
-  padding: 0 6px;
-  flex: none;
-}
-.au-qtext {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  padding: var(--space-2) var(--space-3) 10px;
+  font: var(--text-sm)/var(--leading-normal) var(--font-ui);
   color: var(--color-text);
-  font-weight: var(--weight-medium);
+}
+.ask-receipt.flat {
+  color: var(--color-text-faint);
+  font-style: italic;
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 
-.au-opts {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.au-opt {
+.rc-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 5px 10px;
-  border: 0.5px solid var(--color-line);
-  border-radius: var(--radius-md);
-  color: var(--color-text-faint);
-}
-.au-opt.sel {
-  border-color: var(--color-accent-bd);
-  background: var(--color-accent-soft);
-  color: var(--color-text);
-}
-.au-glyph {
-  font-family: var(--font-mono);
-  font-size: var(--text-base);
-  color: var(--color-text-faint);
-  width: 14px;
-  text-align: center;
-  flex: none;
-}
-.au-opt.sel .au-glyph {
-  color: var(--color-accent-hover);
-}
-.au-label {
-  color: inherit;
-}
-.au-desc {
   color: var(--color-text-faint);
   font-size: var(--text-xs);
-  margin-left: 2px;
+  margin-bottom: 6px;
 }
-.au-opt.sel .au-desc {
-  color: var(--color-text-muted);
+.rc-st { margin-left: auto; color: var(--color-success); display: inline-flex; }
+
+.rc-q + .rc-q { margin-top: 6px; }
+.rc-qtext {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: 3px;
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+.rc-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 1.5px 0;
+  color: var(--color-text);
+}
+/* Per-question skip marker — same faint italic as the flat dismissed card. */
+.rc-qskip {
+  padding: 1.5px 0;
+  color: var(--color-text-faint);
+  font-style: italic;
+}
+.rc-lb { min-width: 0; }
+.rc-ds { color: var(--color-text-faint); font-size: var(--text-xs); }
+
+/* CSS radio / checkbox glyphs — same language as the live QuestionCard, one
+   step smaller (14px) for the stream scale. */
+.rc-g {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 1.5px solid var(--color-line-strong);
+  position: relative;
+}
+.rc-g.chk { border-radius: var(--radius-xs); }
+.rc-g.rad { border-radius: 50%; }
+.rc-g.on { border-color: var(--color-accent); }
+.rc-g.chk.on { background: var(--color-accent); }
+.rc-g.chk.on::after {
+  content: '';
+  position: absolute;
+  left: 3.5px;
+  top: 0.5px;
+  width: 4px;
+  height: 8px;
+  border-right: 1.5px solid var(--color-text-on-accent);
+  border-bottom: 1.5px solid var(--color-text-on-accent);
+  transform: rotate(45deg);
+}
+.rc-g.rad.on::after {
+  content: '';
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background: var(--color-accent);
 }
 </style>

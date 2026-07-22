@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { UIQuestion } from '../../types';
 import type { QuestionAnswer, QuestionResponse } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
-import { Badge, Button, Icon, IconButton, openDialogCount, useImeComposition } from '@moonshot-ai/web-ui';
+import { Button, Icon, IconButton, openDialogCount, useImeComposition } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
   question: UIQuestion;
@@ -356,11 +356,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
     <template v-if="!minimized">
       <!-- Current question -->
       <div class="qbody">
-        <!-- Header chip -->
-        <div v-if="current.header" class="qheader-chip">
-          <Badge variant="neutral" size="sm">{{ current.header }}</Badge>
-        </div>
-
         <!-- Body markdown -->
         <Markdown v-if="current.body" :text="current.body" class="qmdbody" />
 
@@ -407,19 +402,11 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
         </div>
       </div>
 
-      <!-- Footer: back on the left, quiet dismiss + solid dark primary on the
-           right. -->
+      <!-- Footer: same contract as the approval card — actions left-aligned
+           with the solid dark primary first, quiet ghosts after; the
+           keyboard hint is pinned to the right edge. -->
       <div class="qfoot">
-        <span class="qhint">{{ t('question.hint') }}</span>
-        <Button
-          v-if="total > 1"
-          size="md"
-          variant="ghost"
-          :disabled="step === 0 || busy"
-          @click="goBack"
-        >{{ t('question.back') }}</Button>
         <div class="qbtns">
-          <Button size="md" variant="ghost" :loading="dismissing" :disabled="busy" @click="dismiss">{{ t('question.dismiss') }}</Button>
           <Button
             v-if="step < total - 1"
             class="qmain"
@@ -437,7 +424,16 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
             :loading="submitting"
             @click="submit"
           >{{ t('question.submit') }}</Button>
+          <Button
+            v-if="total > 1"
+            size="md"
+            variant="ghost"
+            :disabled="step === 0 || busy"
+            @click="goBack"
+          >{{ t('question.back') }}</Button>
+          <Button size="md" variant="ghost" :loading="dismissing" :disabled="busy" @click="dismiss">{{ t('question.dismiss') }}</Button>
         </div>
+        <span class="qhint">{{ t('question.hint') }}</span>
       </div>
     </template>
   </div>
@@ -445,13 +441,14 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
 <style scoped>
 /* Floating neutral card — same language as the approval card: white surface,
-   hairline border, large radius, soft shadow above the transcript. */
+   hairline border, quiet radius, faint popover shadow above the
+   transcript. */
 .qcard {
   margin: var(--space-2) 0;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-menu);
   overflow: hidden;
   animation: kimi-card-in var(--duration-base) var(--ease-out);
 }
@@ -517,10 +514,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   font: var(--text-base)/var(--leading-normal) var(--font-ui);
 }
 
-.qheader-chip {
-  margin-bottom: var(--space-2);
-}
-
 .qmdbody { margin-bottom: var(--space-2); }
 
 /* Options — borderless rows with a hover fill; the number chip doubles as the
@@ -529,7 +522,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 
 .qopt {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
@@ -543,9 +536,13 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 /* Multi-select keyboard highlight (↑/↓) — same fill as hover, persistent. */
 .qopt.highlighted { background: var(--color-hover); }
 
+/* Number chip and radio/checkbox glyph top-align with the option text block;
+   a small offset optically centres each on the label's first line
+   (--text-base × --leading-normal), same idiom as the header icon buttons. */
 .qopt-key {
   width: var(--p-chip-num);
   height: var(--p-chip-num);
+  margin-top: calc((var(--text-base) * var(--leading-normal) - var(--p-chip-num)) / 2);
   border-radius: var(--radius-sm);
   background: var(--color-inline-code-bg);
   color: var(--color-text);
@@ -561,6 +558,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .qopt-glyph {
   width: 16px;
   height: 16px;
+  margin-top: calc((var(--text-base) * var(--leading-normal) - 16px) / 2);
   flex: none;
   border: 1.5px solid var(--color-line-strong);
   position: relative;
@@ -624,8 +622,9 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   box-shadow: 0 1px 0 0 var(--color-accent);
 }
 
-/* Footer — hairline-separated: back on the left, quiet dismiss + solid dark
-   primary on the right. */
+/* Footer — hairline-separated: actions left-aligned in the approval card's
+   order (solid dark primary first, quiet ghosts after), keyboard hint pinned
+   to the right edge. */
 .qfoot {
   display: flex;
   align-items: center;
@@ -638,9 +637,9 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  margin-left: auto;
 }
 .qhint {
+  margin-left: auto;
   color: var(--color-text-faint);
   font: var(--text-xs) var(--font-ui);
   user-select: none;
@@ -659,14 +658,14 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   }
   .other-input { flex-basis: 100%; min-height: 28px; }
 
-  /* Footer → full-width stacked buttons with the primary on top. */
+  /* Footer → full-width stacked buttons; the primary is already first in DOM
+     order, so it lands on top. */
   .qfoot { flex-direction: column; align-items: stretch; }
   .qhint { display: none; }
-  .qbtns { flex-direction: column; margin-left: 0; gap: var(--space-2); }
+  .qbtns { flex-direction: column; gap: var(--space-2); }
   .qbtns :deep(.ui-button) {
     width: 100%;
     min-height: 46px;
   }
-  .qbtns .qmain { order: -1; }
 }
 </style>

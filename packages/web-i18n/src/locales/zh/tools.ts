@@ -97,5 +97,10 @@ export default {
     answers: '{count} 个回答',
     answered: '已回答',
     more: '（还有 {count} 个）',
+    collected: '已收集回答',
+    question: '{count} 个问题',
+    questions: '{count} 个问题',
+    freeInput: '（自由输入）',
+    unanswered: '未作答',
   },
 } as const;

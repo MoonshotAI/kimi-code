@@ -97,5 +97,10 @@ export default {
     answers: '{count} answers',
     answered: 'Answered',
     more: '(+{count} more)',
+    collected: 'Collected your answers',
+    question: '{count} question',
+    questions: '{count} questions',
+    freeInput: '(free text)',
+    unanswered: 'No answer',
   },
 } as const;
