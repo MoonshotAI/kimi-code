@@ -22,7 +22,10 @@ import {
   ISessionMetadata,
   SessionInteractionService,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentEvent } from '../src/transport/ws/v1/events';
+import {
+  type AgentEvent,
+  isVolatileEventType,
+} from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -35,6 +38,13 @@ import { TranscriptService } from '../src/services/transcript/transcriptService'
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
+
+describe('v1 event volatility', () => {
+  it('classifies global interaction notifications as volatile', () => {
+    expect(isVolatileEventType('event.session.interaction_requested')).toBe(true);
+    expect(isVolatileEventType('event.session.interaction_resolved')).toBe(true);
+  });
+});
 
 /** The fake bus carries wire agent events and v2-internal ones alike. */
 type FakeBusEvent = { type: string };
@@ -173,7 +183,34 @@ function makeCore(
   sessions: Map<string, FakeLifecycle>,
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
-): Scope {
+): Scope & {
+  fireSessionCreated(sessionId: string, lifecycle?: FakeLifecycle): void;
+  fireSessionWillClose(sessionId: string): Promise<void>;
+} {
+  const sessionCreatedHandlers: Array<
+    (e: { sessionId: string; handle?: unknown; source?: string }) => void
+  > = [];
+  const sessionWillCloseHooks = new Map<
+    string,
+    (
+      event: { sessionId: string; handle?: unknown; reason: string },
+      next: () => Promise<void>,
+    ) => void | Promise<void>
+  >();
+  const sessionHandle = (sid: string, announcedLifecycle?: FakeLifecycle) => {
+    const lifecycle = announcedLifecycle ?? sessions.get(sid);
+    if (lifecycle === undefined) return undefined;
+    const sessionAccessor = {
+      get: (t: unknown) => {
+        if (t === IAgentLifecycleService) return lifecycle;
+        if (t === ISessionInteractionService) return lifecycle.interactions;
+        // Minimal metadata read for the transcript binding's descriptor pass.
+        if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
+        return undefined;
+      },
+    };
+    return { id: sid, kind: 1, accessor: sessionAccessor, dispose: () => {} };
+  };
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
@@ -182,26 +219,56 @@ function makeCore(
           // Inert lifecycle events (TranscriptService subscribes on construction).
           onDidCloseSession: () => ({ dispose: () => {} }),
           onDidArchiveSession: () => ({ dispose: () => {} }),
-          get: (sid: string) => {
-            const lifecycle = sessions.get(sid);
-            if (lifecycle === undefined) return undefined;
-            const sessionAccessor = {
-              get: (t: unknown) => {
-                if (t === IAgentLifecycleService) return lifecycle;
-                if (t === ISessionInteractionService) return lifecycle.interactions;
-                // Minimal metadata read for the transcript binding's descriptor pass.
-                if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
-                return undefined;
-              },
-            };
-            return { id: sid, kind: 1, accessor: sessionAccessor, dispose: () => {} };
+          // Session activation signal — the broadcaster mounts producers on it.
+          onDidCreateSession: (h: (e: { sessionId: string }) => void) => {
+            sessionCreatedHandlers.push(h);
+            return { dispose: () => {} };
           },
+          hooks: {
+            onWillCloseSession: {
+              register: (
+                id: string,
+                hook: (
+                  event: { sessionId: string; handle?: unknown; reason: string },
+                  next: () => Promise<void>,
+                ) => void | Promise<void>,
+              ) => {
+                sessionWillCloseHooks.set(id, hook);
+                return { dispose: () => sessionWillCloseHooks.delete(id) };
+              },
+            },
+          },
+          list: () => [...sessions.keys()].map((sid) => sessionHandle(sid)),
+          get: sessionHandle,
         };
       }
       return undefined;
     },
   };
-  return { accessor } as unknown as Scope;
+  return {
+    accessor,
+    // Test hook: simulate the runtime materializing a session scope.
+    fireSessionCreated: (sessionId: string, lifecycle?: FakeLifecycle) => {
+      for (const h of [...sessionCreatedHandlers]) {
+        h({ sessionId, handle: sessionHandle(sessionId, lifecycle), source: 'startup' });
+      }
+    },
+    fireSessionWillClose: async (sessionId: string) => {
+      const hooks = [...sessionWillCloseHooks.values()];
+      const run = async (index: number): Promise<void> => {
+        const hook = hooks[index];
+        if (hook === undefined) return;
+        await hook(
+          { sessionId, handle: sessionHandle(sessionId), reason: 'exit' },
+          () => run(index + 1),
+        );
+      };
+      await run(0);
+    },
+  } as unknown as Scope & {
+    fireSessionCreated(sessionId: string, lifecycle?: FakeLifecycle): void;
+    fireSessionWillClose(sessionId: string): Promise<void>;
+  };
 }
 
 function agentEvent(type: string, extra: Record<string, unknown> = {}): AgentEvent {
@@ -228,15 +295,17 @@ describe('SessionEventBroadcaster', () => {
   let dir: string;
   let sessions: Map<string, FakeLifecycle>;
   let eventBus: FakeEventBus;
+  let core: ReturnType<typeof makeCore>;
   let bc: SessionEventBroadcaster;
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-test-'));
     sessions = new Map();
     eventBus = new FakeEventBus();
+    core = makeCore(sessions, eventBus);
     bc = new SessionEventBroadcaster({
       eventsDir: dir,
-      core: makeCore(sessions, eventBus),
+      core,
       maxBufferSize: 3,
     });
   });
@@ -958,7 +1027,7 @@ describe('SessionEventBroadcaster', () => {
     });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(2);
+    expect(envelopes).toHaveLength(3);
     expect(envelopes[0]).toMatchObject({
       type: 'event.session.work_changed',
       seq: 1,
@@ -979,17 +1048,32 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect(envelopes[1]!.volatile).toBeUndefined();
+    // The global notification counterpart rides alongside, volatile on the
+    // same watermark.
+    expect(envelopes[2]).toMatchObject({
+      type: 'event.session.interaction_requested',
+      seq: 2,
+      volatile: true,
+      session_id: 's1',
+      payload: {
+        sessionId: 's1',
+        interactionId: 'q1',
+        kind: 'question',
+        agentId: 'main',
+        questionPreview: 'Pick one',
+      },
+    });
 
     lc.interactions.respond('q1', { answers: { q_0: 'opt_0_0' }, method: 'enter' });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(4);
-    expect(envelopes[2]).toMatchObject({
+    expect(envelopes).toHaveLength(6);
+    expect(envelopes[3]).toMatchObject({
       type: 'event.session.work_changed',
       seq: 3,
       payload: { pending_interaction: 'none' },
     });
-    expect(envelopes[3]).toMatchObject({
+    expect(envelopes[4]).toMatchObject({
       type: 'event.question.answered',
       seq: 4,
       session_id: 's1',
@@ -998,7 +1082,20 @@ describe('SessionEventBroadcaster', () => {
         answers: { q_0: 'opt_0_0' },
       },
     });
-    expect((envelopes[3]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect((envelopes[4]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect(envelopes[5]).toMatchObject({
+      type: 'event.session.interaction_resolved',
+      volatile: true,
+      session_id: 's1',
+      payload: {
+        sessionId: 's1',
+        interactionId: 'q1',
+        kind: 'question',
+        agentId: 'main',
+        questionPreview: 'Pick one',
+        state: 'answered',
+      },
+    });
   });
 
   it('broadcasts question dismissed when resolved with null', async () => {
@@ -1018,10 +1115,15 @@ describe('SessionEventBroadcaster', () => {
 
     expect(envelopes.map((e) => e.type)).toEqual([
       'event.question.requested',
+      'event.session.interaction_requested',
       'event.question.dismissed',
+      'event.session.interaction_resolved',
     ]);
-    expect(envelopes[1]!.payload).toMatchObject({ question_id: 'q1' });
-    expect((envelopes[1]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
+    expect(envelopes[1]!.payload).toMatchObject({ interactionId: 'q1', kind: 'question' });
+    expect(envelopes[2]!.payload).toMatchObject({ question_id: 'q1' });
+    expect((envelopes[2]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
+    expect(envelopes[3]!.payload).toMatchObject({ interactionId: 'q1', state: 'dismissed' });
+    expect(envelopes[3]!.volatile).toBe(true);
   });
 
   it('carries the requesting agent onto resolved interaction events', async () => {
@@ -1075,7 +1177,7 @@ describe('SessionEventBroadcaster', () => {
     });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(2);
+    expect(envelopes).toHaveLength(3);
     expect(envelopes[0]).toMatchObject({
       type: 'event.session.work_changed',
       seq: 1,
@@ -1096,17 +1198,29 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect(envelopes[1]!.volatile).toBeUndefined();
+    expect(envelopes[2]).toMatchObject({
+      type: 'event.session.interaction_requested',
+      volatile: true,
+      session_id: 's1',
+      payload: {
+        sessionId: 's1',
+        interactionId: 'a1',
+        kind: 'approval',
+        agentId: 'main',
+        toolName: 'Bash',
+      },
+    });
 
     lc.interactions.respond('a1', { decision: 'approved', scope: 'session' });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(4);
-    expect(envelopes[2]).toMatchObject({
+    expect(envelopes).toHaveLength(6);
+    expect(envelopes[3]).toMatchObject({
       type: 'event.session.work_changed',
       seq: 3,
       payload: { pending_interaction: 'none' },
     });
-    expect(envelopes[3]).toMatchObject({
+    expect(envelopes[4]).toMatchObject({
       type: 'event.approval.resolved',
       seq: 4,
       session_id: 's1',
@@ -1116,7 +1230,20 @@ describe('SessionEventBroadcaster', () => {
         scope: 'session',
       },
     });
-    expect((envelopes[3]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect((envelopes[4]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect(envelopes[5]).toMatchObject({
+      type: 'event.session.interaction_resolved',
+      volatile: true,
+      session_id: 's1',
+      payload: {
+        sessionId: 's1',
+        interactionId: 'a1',
+        kind: 'approval',
+        agentId: 'main',
+        toolName: 'Bash',
+        state: 'approved',
+      },
+    });
   });
 
   it('fans event.session.work_changed out to every connection, bypassing agent filters', async () => {
@@ -1154,38 +1281,48 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes.some((e) => e.type === 'turn.started')).toBe(false);
   });
 
-  it('fans global events out to hello-only targets without leaking session frames', async () => {
+  it('broadcasts work facts to a hello-only global target, without leaking per-session frames', async () => {
+    // A connection that completed `client_hello` registers as a global target
+    // (`WsConnectionV1` calls registerGlobalTarget): it receives work_changed
+    // for ANY session — subscribed or not, opened by anyone or not — but
+    // never the session's own (per-session) frames.
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    bc.registerGlobalTarget(target);
 
-    // A regular subscriber activates the session producer. The global target
-    // models a connection that completed client_hello but did not subscribe.
-    const subscribed = collectingTarget();
-    const global = collectingTarget();
-    await bc.subscribe('s1', subscribed.target);
-    bc.registerGlobalTarget(global.target);
+    // The runtime materializes the session scope → the producer mounts even
+    // though nobody subscribed.
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    await bc.getCursor('s1');
-
-    expect(global.envelopes.map((e) => e.type)).toEqual(['event.session.work_changed']);
-    expect(global.envelopes[0]).toMatchObject({
-      session_id: 's1',
-      payload: { busy: true },
-    });
-    expect(global.envelopes.some((e) => e.type === 'turn.started')).toBe(false);
-
-    bc.unregisterGlobalTarget(global.target);
+    await bc.getCursor('s1'); // drain between the turn boundaries
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     await bc.getCursor('s1');
-    expect(global.envelopes).toHaveLength(1);
+
+    expect(envelopes.map((e) => e.type)).toEqual([
+      'event.session.work_changed',
+      'event.session.work_changed',
+    ]);
+    expect(envelopes.map((e) => e.payload)).toMatchObject([
+      { busy: true, last_turn_reason: undefined },
+      { busy: false, last_turn_reason: 'completed' },
+    ]);
+    expect(envelopes.every((e) => e.session_id === 's1')).toBe(true);
+
+    // Unregistering (socket close) stops the global fan-out to this target.
+    bc.unregisterGlobalTarget(target);
+    main.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    await bc.getCursor('s1');
+    expect(envelopes).toHaveLength(2);
   });
 
   it('sends a global event once to a target subscribed to multiple sessions', async () => {
-    const lc = new FakeLifecycle();
-    const main = lc.addAgent('main');
-    sessions.set('s1', lc);
+    const first = new FakeLifecycle();
+    const main = first.addAgent('main');
+    sessions.set('s1', first);
     sessions.set('s2', new FakeLifecycle());
 
     const view = collectingTarget();
@@ -1197,6 +1334,381 @@ describe('SessionEventBroadcaster', () => {
 
     expect(view.envelopes.filter((e) => e.type === 'event.session.work_changed')).toHaveLength(1);
     expect(view.envelopes.filter((e) => e.type === 'turn.started')).toHaveLength(1);
+  });
+
+  it('mounts producers for sessions already live when the broadcaster attaches', async () => {
+    // The constructor sweeps `ISessionLifecycleService.list()`: a session
+    // materialized before the broadcaster attached still gets its producer,
+    // so its work-facts broadcast from here on.
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+
+    const dir2 = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-test-'));
+    const bc2 = new SessionEventBroadcaster({
+      eventsDir: dir2,
+      core: makeCore(sessions, eventBus),
+      maxBufferSize: 3,
+    });
+    try {
+      const { target, envelopes } = collectingTarget();
+      bc2.registerGlobalTarget(target);
+      await bc2.getCursor('s1'); // settle the swept mount
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      await bc2.getCursor('s1');
+      expect(envelopes.map((e) => e.type)).toEqual(['event.session.work_changed']);
+      expect(envelopes[0]!.payload).toMatchObject({ busy: true });
+    } finally {
+      await bc2.close();
+      await rm(dir2, { recursive: true, force: true });
+    }
+  });
+
+  it('rebinds producers when a closed session is restored with a new scope', async () => {
+    const first = new FakeLifecycle();
+    const firstMain = first.addAgent('main');
+    sessions.set('s1', first);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    const view = collectingTarget();
+    bc.registerGlobalTarget(view.target);
+    firstMain.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    await core.fireSessionWillClose('s1');
+    sessions.delete('s1');
+    const restored = new FakeLifecycle();
+    const restoredMain = restored.addAgent('main');
+    sessions.set('s1', restored);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    restoredMain.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    await bc.getCursor('s1');
+
+    expect(
+      view.envelopes.filter(
+        (event) =>
+          event.type === 'event.session.work_changed' &&
+          (event.payload as { busy?: boolean }).busy === true,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('does not retain an activation that is closed while its journal opens', async () => {
+    const first = new FakeLifecycle();
+    const firstMain = first.addAgent('main');
+    sessions.set('s1', first);
+    const view = collectingTarget();
+    bc.registerGlobalTarget(view.target);
+
+    // Do not await a cursor between create and close: this deliberately races
+    // onWillCloseSession against the async journal open in state activation.
+    core.fireSessionCreated('s1');
+    await core.fireSessionWillClose('s1');
+    sessions.delete('s1');
+    firstMain.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+
+    const restored = new FakeLifecycle();
+    const restoredMain = restored.addAgent('main');
+    sessions.set('s1', restored);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+    restoredMain.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    await bc.getCursor('s1');
+
+    expect(
+      view.envelopes.filter(
+        (event) =>
+          event.type === 'event.session.work_changed' &&
+          (event.payload as { busy?: boolean }).busy === true,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('mounts a resumed producer from the create-event handle before lifecycle.get is ready', async () => {
+    const resumed = new FakeLifecycle();
+    const main = resumed.addAgent('main');
+    const view = collectingTarget();
+    bc.registerGlobalTarget(view.target);
+
+    // Production resume emits onDidCreateSession while the id is still hidden
+    // from lifecycle.get(). The event handle must be sufficient to bind now.
+    core.fireSessionCreated('s1', resumed);
+    sessions.set('s1', resumed);
+    await bc.getCursor('s1');
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    expect(view.envelopes).toContainEqual(
+      expect.objectContaining({
+        type: 'event.session.work_changed',
+        session_id: 's1',
+        payload: expect.objectContaining({ busy: true, main_turn_active: true }),
+      }),
+    );
+  });
+
+  it('re-emits the current work-fact when the producer mounts after the session became busy', async () => {
+    // Regression: a late-mounted producer seeded `emitted*` with the current
+    // state and therefore broadcast nothing — hello-only connections could
+    // not see the session was busy until the next change. The mount catch-up
+    // re-emits the fact once, volatile, to every connection.
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    // Mid-turn before the mount: the live activity view reports an active turn.
+    main.set(IAgentActivityView, {
+      state: () => ({
+        lifecycle: 'ready',
+        turn: {
+          turnId: 5,
+          phase: 'running',
+          step: 0,
+          ending: false,
+          pendingApprovals: [],
+          activeToolCalls: [],
+          since: 0,
+        },
+        background: [],
+      }),
+    });
+
+    const { target, envelopes } = collectingTarget();
+    bc.registerGlobalTarget(target);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 0,
+      volatile: true,
+      session_id: 's1',
+      payload: { busy: true, main_turn_active: true, pending_interaction: 'none' },
+    });
+    // Not journaled: the durable watermark did not advance.
+    expect((await bc.getCursor('s1')).seq).toBe(0);
+
+    // Later changes flow through the ordinary durable path.
+    main.bus.emit(agentEvent('turn.ended', { turnId: 5, reason: 'completed' }));
+    await bc.getCursor('s1');
+    expect(envelopes).toHaveLength(2);
+    expect(envelopes[1]).toMatchObject({
+      type: 'event.session.work_changed',
+      payload: { busy: false, main_turn_active: false, last_turn_reason: 'completed' },
+    });
+    expect(envelopes[1]!.volatile).toBeUndefined();
+  });
+
+  it('seeds a hello-only target that connects after an already-busy producer mounted', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    main.set(IAgentActivityView, {
+      state: () => ({
+        lifecycle: 'ready',
+        turn: {
+          turnId: 5,
+          phase: 'running',
+          step: 0,
+          ending: false,
+          pendingApprovals: [],
+          activeToolCalls: [],
+          since: 0,
+        },
+        background: [],
+      }),
+    });
+
+    // The session producer mounts before any connection has completed hello.
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    const { target, envelopes } = collectingTarget();
+    bc.registerGlobalTarget(target);
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 0,
+      volatile: true,
+      session_id: 's1',
+      payload: { busy: true, main_turn_active: true, pending_interaction: 'none' },
+    });
+
+    // Repeated hello handling is idempotent and does not duplicate the seed.
+    bc.registerGlobalTarget(target);
+    await bc.getCursor('s1');
+    expect(envelopes).toHaveLength(1);
+  });
+
+  it('recomputes a registering target catchup after queued work transitions', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    const { target, envelopes } = collectingTarget();
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    // Register before the queued busy:false transition drains. The target gets
+    // that durable transition, but must not then receive a stale busy catchup.
+    bc.registerGlobalTarget(target);
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      payload: { busy: false, main_turn_active: false, last_turn_reason: 'completed' },
+    });
+    expect(envelopes[0]!.volatile).toBeUndefined();
+  });
+
+  it('seeds the current idle fact when a global target reconnects after work finished', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1');
+
+    const first = collectingTarget();
+    bc.registerGlobalTarget(first.target);
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+    bc.unregisterGlobalTarget(first.target);
+
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    await bc.getCursor('s1');
+
+    const reconnected = collectingTarget();
+    bc.registerGlobalTarget(reconnected.target);
+    await bc.getCursor('s1');
+
+    expect(reconnected.envelopes).toHaveLength(1);
+    expect(reconnected.envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      volatile: true,
+      session_id: 's1',
+      payload: {
+        busy: false,
+        main_turn_active: false,
+        pending_interaction: 'none',
+        last_turn_reason: 'completed',
+      },
+    });
+  });
+
+  it('fans interaction notifications out to every global target while legacy events stay per-session', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    core.fireSessionCreated('s1');
+
+    const first = collectingTarget();
+    const second = collectingTarget();
+    bc.registerGlobalTarget(first.target);
+    bc.registerGlobalTarget(second.target);
+    const subscriber = collectingTarget();
+    await bc.subscribe('s1', subscriber.target);
+
+    lc.interactions.enqueue({
+      id: 'a1',
+      kind: 'approval',
+      payload: {
+        toolCallId: 'c1',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'ls' },
+      },
+    });
+    await bc.getCursor('s1');
+
+    // Both hello-only targets receive the volatile notification; the legacy
+    // durable event stays behind the subscription.
+    for (const view of [first, second]) {
+      expect(view.envelopes.map((e) => e.type)).toEqual([
+        'event.session.work_changed',
+        'event.session.interaction_requested',
+      ]);
+      expect(view.envelopes[1]).toMatchObject({
+        volatile: true,
+        session_id: 's1',
+        payload: {
+          sessionId: 's1',
+          interactionId: 'a1',
+          kind: 'approval',
+          agentId: 'main',
+          toolName: 'Bash',
+        },
+      });
+    }
+    expect(subscriber.envelopes.map((e) => e.type)).toEqual([
+      'event.session.work_changed',
+      'event.approval.requested',
+      'event.session.interaction_requested',
+    ]);
+    expect(subscriber.envelopes[1]!.volatile).toBeUndefined();
+
+    lc.interactions.respond('a1', { decision: 'rejected' });
+    await bc.getCursor('s1');
+
+    for (const view of [first, second]) {
+      expect(view.envelopes.at(-1)).toMatchObject({
+        type: 'event.session.interaction_resolved',
+        volatile: true,
+        payload: { interactionId: 'a1', kind: 'approval', toolName: 'Bash', state: 'rejected' },
+      });
+    }
+    expect(subscriber.envelopes.at(-2)).toMatchObject({
+      type: 'event.approval.resolved',
+      payload: { approval_id: 'a1', decision: 'rejected' },
+    });
+    expect(subscriber.envelopes.at(-1)!.type).toBe('event.session.interaction_resolved');
+  });
+
+  it('truncates long question previews with an ellipsis', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    bc.registerGlobalTarget(target);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1'); // settle the mount before the interaction lands
+
+    lc.interactions.enqueue({
+      id: 'q1',
+      kind: 'question',
+      payload: { questions: [{ question: 'x'.repeat(120), options: [{ label: 'A' }] }] },
+    });
+    await bc.getCursor('s1');
+
+    const notification = envelopes.find((e) => e.type === 'event.session.interaction_requested');
+    const preview = (notification!.payload as { questionPreview: string }).questionPreview;
+    expect(preview).toHaveLength(81);
+    expect(preview).toBe(`${'x'.repeat(80)}…`);
+  });
+
+  it('emits no interaction notification for user_tool interactions', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    bc.registerGlobalTarget(target);
+    core.fireSessionCreated('s1');
+    await bc.getCursor('s1'); // settle the mount before the interaction lands
+
+    lc.interactions.enqueue({ id: 'u1', kind: 'user_tool', payload: {} });
+    lc.interactions.respond('u1', { ok: true });
+    await bc.getCursor('s1');
+
+    expect(envelopes.some((e) => e.type.startsWith('event.session.interaction_'))).toBe(false);
   });
 
   it('does not re-announce interactions already pending at activation, but still broadcasts their resolution', async () => {
@@ -1211,18 +1723,32 @@ describe('SessionEventBroadcaster', () => {
     });
 
     const { target, envelopes } = collectingTarget();
+    // A hello-only connection learns the pending fact from the mount
+    // catch-up, volatile; the mounting subscriber is owed nothing.
+    const global = collectingTarget();
+    bc.registerGlobalTarget(global.target);
     await bc.subscribe('s1', target);
     await bc.getCursor('s1');
+    // No requested events (legacy or global) for the pre-existing pending.
     expect(envelopes).toHaveLength(0);
+    expect(global.envelopes).toHaveLength(1);
+    expect(global.envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 0,
+      volatile: true,
+      payload: { pending_interaction: 'question', busy: false },
+    });
 
     lc.interactions.respond('q0', { answers: { q_0: 'opt_0_0' } });
     await bc.getCursor('s1');
     expect(envelopes.map((e) => e.type)).toEqual([
       'event.session.work_changed',
       'event.question.answered',
+      'event.session.interaction_resolved',
     ]);
     expect(envelopes[0]!.payload).toMatchObject({ pending_interaction: 'none' });
     expect(envelopes[1]!.payload).toMatchObject({ question_id: 'q0' });
+    expect(envelopes[2]!.payload).toMatchObject({ interactionId: 'q0', state: 'answered' });
   });
 
   it('fans out the legacy background.task.* alias alongside native task.* for v1 clients', async () => {

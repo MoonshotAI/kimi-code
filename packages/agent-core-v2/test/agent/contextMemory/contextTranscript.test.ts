@@ -123,7 +123,11 @@ describe('reduceContextTranscript', () => {
   it('carries the originating wire record time per entry', () => {
     const result = reduceContextTranscript([
       { type: 'context.append_message', message: userMessage('u1'), time: 100 },
-      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'st1' }, time: 200 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'st1', turnId: '0' },
+        time: 200,
+      },
       {
         type: 'context.append_loop_event',
         event: { type: 'tool.call', stepUuid: 'st1', toolCallId: 'c1', name: 'Bash' },
@@ -138,13 +142,54 @@ describe('reduceContextTranscript', () => {
         },
         time: 220,
       },
-      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 'st1' }, time: 230 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'st1', turnId: '0' },
+        time: 230,
+      },
       // No record time → undefined (falls back to session createdAt + index).
       { type: 'context.append_message', message: userMessage('u2') },
     ]);
 
     expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user']);
     expect(result.times).toEqual([100, 200, 220, undefined]);
+    expect(result.endedTimes).toEqual([undefined, 230, undefined, undefined]);
+    expect(result.turnIds).toEqual([undefined, 0, undefined, undefined]);
+    expect(result.turnSpans).toEqual([{ turnId: 0, startedAt: 200, endedAt: 230 }]);
+  });
+
+  it('closes an unterminated step when the next step begins', () => {
+    const result = reduceContextTranscript([
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'st1', turnId: '3' },
+        time: 100,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 'st1', part: { type: 'text', text: 'retrying' } },
+        time: 110,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: 'st2', turnId: '3' },
+        time: 200,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'content.part', stepUuid: 'st2', part: { type: 'text', text: 'done' } },
+        time: 210,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: 'st2', turnId: '3' },
+        time: 300,
+      },
+    ]);
+
+    expect(result.times).toEqual([100, 200]);
+    expect(result.endedTimes).toEqual([200, 300]);
+    expect(result.turnSpans).toEqual([{ turnId: 3, startedAt: 100, endedAt: 300 }]);
   });
 
   it('preserves the pre-compaction assistant reply after a later undo', () => {

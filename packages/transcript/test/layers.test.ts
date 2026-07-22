@@ -275,6 +275,37 @@ describe('wire schemas', () => {
 });
 
 describe('groupMessagesIntoSnapshot (cold path)', () => {
+  it('preserves persisted turn and step timestamps', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'done' }],
+          toolCalls: [],
+          startedAt: 2_000,
+          endedAt: 6_000,
+          turnId: 3,
+        },
+      ],
+      [{ turnId: 3, startedAt: 1_000, endedAt: 6_000 }],
+    );
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.startedAt).toBe('1970-01-01T00:00:01.000Z');
+    expect(turn.endedAt).toBe('1970-01-01T00:00:06.000Z');
+    expect(turn.steps[0]).toMatchObject({
+      startedAt: '1970-01-01T00:00:02.000Z',
+      endedAt: '1970-01-01T00:00:06.000Z',
+    });
+  });
+
   it('groups flat messages into turns with folded tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'system', content: [{ type: 'text', text: 'sys' }] },

@@ -406,35 +406,94 @@ describe('WsConnectionV1 global target registration', () => {
     return { broadcaster, registered, unregistered };
   }
 
-  it('registers after client_hello and unregisters on close', async () => {
+  it('registers the connection as a global target on client_hello and unregisters on close', async () => {
     const socket = new FakeSocket();
     const { broadcaster, registered, unregistered } = makeRegisteringBroadcaster();
     const conn = makeConn(socket, { broadcaster });
+    expect(registered).toHaveLength(0);
 
     socket.emit(
       'message',
       JSON.stringify({ type: 'client_hello', id: 'h1', payload: { client_id: 'c1' } }),
     );
-    await vi.waitFor(() => expect(registered).toEqual([conn]));
+    await vi.waitFor(() => expect(registered).toHaveLength(1));
+    expect(registered[0]).toBe(conn);
+    expect(unregistered).toHaveLength(0);
 
     socket.emit('close');
     expect(unregistered).toEqual([conn]);
   });
 
-  it('registers only after requested cursor replay completes', async () => {
+  it('registers global catchup after client_hello cursor replay', async () => {
     const socket = new FakeSocket();
-    const order: string[] = [];
+    const replayed = durable('turn.started', 's1', 3);
+    const catchup = {
+      ...durable('event.session.work_changed', 's1', 4),
+      volatile: true,
+      payload: { sessionId: 's1', busy: true },
+    };
     const broadcaster = {
-      subscribe: async () => {
-        order.push('subscribe');
-        return true;
-      },
+      subscribe: async () => true,
       unsubscribe: () => {},
-      registerGlobalTarget: () => order.push('register-global'),
+      registerGlobalTarget: (target: { send: (event: unknown) => void }) => {
+        target.send(catchup);
+      },
+      unregisterGlobalTarget: () => {},
+      getCursor: async () => ({ seq: 4, epoch: 'e1' }),
+      getBufferedSince: async () => ({
+        events: [{ seq: replayed.seq, envelope: replayed }],
+        resyncRequired: false,
+        currentSeq: 4,
+        epoch: 'e1',
+      }),
+      flushTranscriptSeed: async () => {},
+    } as unknown as SessionEventBroadcaster;
+    const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
+
+    socket.emit(
+      'message',
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h1',
+        payload: {
+          client_id: 'c1',
+          subscriptions: ['s1'],
+          cursors: { s1: { seq: 2, epoch: 'e1' } },
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(socket.frames().some((frame) => (frame as { volatile?: boolean }).volatile)).toBe(true);
+    });
+
+    const sessionFrames = socket.frames().filter(
+      (frame) => (frame as { session_id?: string }).session_id === 's1',
+    ) as Array<{ type: string }>;
+    expect(sessionFrames.map((frame) => frame.type)).toEqual([
+      'turn.started',
+      'event.session.work_changed',
+    ]);
+    conn.close();
+  });
+
+  it('does not register a socket that closes during client_hello replay', async () => {
+    const socket = new FakeSocket();
+    const registered: unknown[] = [];
+    let releaseReplay!: () => void;
+    const replayGate = new Promise<void>((resolve) => {
+      releaseReplay = resolve;
+    });
+    const replayStarted = vi.fn();
+    const transcriptSeeded = vi.fn();
+    const broadcaster = {
+      subscribe: async () => true,
+      unsubscribe: () => {},
+      registerGlobalTarget: (target: unknown) => registered.push(target),
       unregisterGlobalTarget: () => {},
       getCursor: async () => ({ seq: 1, epoch: 'e1' }),
       getBufferedSince: async () => {
-        order.push('replay');
+        replayStarted();
+        await replayGate;
         return {
           events: [],
           resyncRequired: false,
@@ -442,9 +501,11 @@ describe('WsConnectionV1 global target registration', () => {
           epoch: 'e1',
         };
       },
-      flushTranscriptSeed: async () => order.push('flush-transcript'),
+      flushTranscriptSeed: async () => {
+        transcriptSeeded();
+      },
     } as unknown as SessionEventBroadcaster;
-    const conn = makeConn(socket, { broadcaster });
+    makeConn(socket, { broadcaster });
 
     socket.emit(
       'message',
@@ -458,10 +519,16 @@ describe('WsConnectionV1 global target registration', () => {
         },
       }),
     );
-    await vi.waitFor(() => expect(order).toContain('register-global'));
+    await vi.waitFor(() => {
+      expect(replayStarted).toHaveBeenCalledOnce();
+    });
+    socket.emit('close');
+    releaseReplay();
+    await vi.waitFor(() => {
+      expect(transcriptSeeded).toHaveBeenCalledOnce();
+    });
 
-    expect(order).toEqual(['subscribe', 'replay', 'flush-transcript', 'register-global']);
-    conn.close();
+    expect(registered).toHaveLength(0);
   });
 
   it('stops client_hello when the socket closes during authorization', async () => {
@@ -470,6 +537,7 @@ describe('WsConnectionV1 global target registration', () => {
     const authorizationGate = new Promise<void>((resolve) => {
       releaseAuthorization = resolve;
     });
+    const authorizationStarted = vi.fn();
     const authorizationFinished = vi.fn();
     const subscribe = vi.fn(async () => true);
     const registered: unknown[] = [];
@@ -489,6 +557,7 @@ describe('WsConnectionV1 global target registration', () => {
     makeConn(socket, {
       broadcaster,
       validateCredential: async () => {
+        authorizationStarted();
         await authorizationGate;
         authorizationFinished();
         return true;
@@ -503,15 +572,20 @@ describe('WsConnectionV1 global target registration', () => {
         payload: { client_id: 'c1', token: 'token', subscriptions: ['s1'] },
       }),
     );
+    await vi.waitFor(() => {
+      expect(authorizationStarted).toHaveBeenCalledOnce();
+    });
     socket.emit('close');
     releaseAuthorization();
-    await vi.waitFor(() => expect(authorizationFinished).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(authorizationFinished).toHaveBeenCalledOnce();
+    });
 
     expect(subscribe).not.toHaveBeenCalled();
     expect(registered).toHaveLength(0);
   });
 
-  it('undoes a subscription that resolves after the socket closes', async () => {
+  it('undoes a subscription that resolves after the socket closed', async () => {
     const socket = new FakeSocket();
     let releaseSubscription!: () => void;
     const subscriptionGate = new Promise<void>((resolve) => {
@@ -547,12 +621,27 @@ describe('WsConnectionV1 global target registration', () => {
         payload: { client_id: 'c1', subscriptions: ['s1'] },
       }),
     );
-    await vi.waitFor(() => expect(subscriptionStarted).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(subscriptionStarted).toHaveBeenCalledOnce();
+    });
     socket.emit('close');
     releaseSubscription();
-    await vi.waitFor(() => expect(unsubscribed).toEqual(['s1']));
+    await vi.waitFor(() => {
+      expect(unsubscribed).toEqual(['s1']);
+    });
 
     expect(registered).toHaveLength(0);
+  });
+
+  it('does not register without a client_hello', () => {
+    const socket = new FakeSocket();
+    const { broadcaster, registered, unregistered } = makeRegisteringBroadcaster();
+    makeConn(socket, { broadcaster });
+
+    socket.emit('close');
+    expect(registered).toHaveLength(0);
+    // Unregistering a never-registered connection is a harmless no-op.
+    expect(unregistered).toHaveLength(1);
   });
 });
 

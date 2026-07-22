@@ -83,7 +83,7 @@ describe('AgentTranscriptProjector', () => {
     );
     feed(ev({ type: 'tool.result', turnId: 1, toolCallId: 'call_1', output: 'file.txt' }));
     feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1, stepId: 'u1' }));
-    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 1_234 }));
 
     // Op-level: turn/step headers carry no render content; deltas are appends
     // with cumulative offsets; the step flush re-emits the full text.
@@ -103,6 +103,7 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
     expect(turn.origin).toEqual({ kind: 'user', payload: { kind: 'user' } });
     expect(turn.endedAt).toBeTypeOf('string');
+    expect(Date.parse(turn.endedAt!) - Date.parse(turn.startedAt!)).toBe(1_234);
     expect(turn.steps).toHaveLength(1);
     const step = turn.steps[0]!;
     expect(step.state).toBe('completed');
@@ -708,6 +709,23 @@ describe('AgentTranscriptProjector', () => {
     expect(markers[3]!.payload).toMatchObject({ phase: 'started' });
     expect(markers[4]!.payload).toMatchObject({ phase: 'completed' });
     expect(markers[5]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
+  });
+
+  it('does not turn append-only context changes into undo markers', () => {
+    const projector = new AgentTranscriptProjector('main');
+
+    expect(
+      projector.map(
+        ev({
+          type: 'context.spliced',
+          start: 0,
+          deleteCount: 0,
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+          ],
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it('projects error / warning events as notice markers outside any step', () => {

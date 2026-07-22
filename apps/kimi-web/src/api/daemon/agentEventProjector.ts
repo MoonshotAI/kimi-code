@@ -1516,6 +1516,15 @@ const PROTOCOL_EVENT_NAMES = new Set([
   'tool.completed',
 ]);
 
+// The legacy bundled web client has no cross-session interaction UI. These
+// volatile global notifications belong to the new code-app transcript client;
+// consume them here instead of surfacing an "Unhandled event" warning or
+// advancing the legacy client's durable cursor.
+const IGNORED_GLOBAL_NOTIFICATION_NAMES = new Set([
+  'session.interaction_requested',
+  'session.interaction_resolved',
+]);
+
 /**
  * Names that are ambiguous between the raw agent-core form (payload.delta is a
  * STRING) and the already-projected protocol form (payload.delta is an object
@@ -1545,6 +1554,10 @@ export function classifyFrame(rawType: string, payload: unknown): FrameRoute {
 
   const hasPrefix = rawType.startsWith('event.');
   const name = hasPrefix ? rawType.slice('event.'.length) : rawType;
+
+  if (hasPrefix && IGNORED_GLOBAL_NOTIFICATION_NAMES.has(name)) {
+    return { route: 'ignore' };
+  }
 
   // Ambiguous delta events: disambiguate by payload shape regardless of prefix.
   if (AMBIGUOUS_DELTA_NAMES.has(name)) {

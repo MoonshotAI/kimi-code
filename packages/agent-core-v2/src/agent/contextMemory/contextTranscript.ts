@@ -49,7 +49,16 @@ const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
 export interface ContextTranscript {
   readonly entries: readonly ContextMessage[];
   readonly times: readonly (number | undefined)[];
+  readonly endedTimes: readonly (number | undefined)[];
+  readonly turnIds: readonly (number | undefined)[];
+  readonly turnSpans: readonly ContextTranscriptTurnSpan[];
   readonly foldedLength: number;
+}
+
+export interface ContextTranscriptTurnSpan {
+  readonly turnId: number;
+  readonly startedAt?: number;
+  readonly endedAt?: number;
 }
 
 export interface ContextTranscriptReducer {
@@ -70,6 +79,8 @@ interface MutableMessage {
 interface MutableEntry {
   message: MutableMessage;
   time?: number;
+  endedTime?: number;
+  turnId?: number;
 }
 
 export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
@@ -83,6 +94,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   let foldedLength = 0;
   let clearFloor = 0;
   const openSteps = new Map<string, MutableEntry>();
+  const turnSpans = new Map<number, ContextTranscriptTurnSpan>();
   const pendingToolResultIds = new Set<string>();
   let deferred: MutableEntry[] = [];
   let lastOpenStepUuid: string | undefined;
@@ -120,10 +132,25 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     deferred = [];
     lastOpenStepUuid = undefined;
   };
-  const settleStep = (uuid: string): void => {
+  const updateTurnSpan = (
+    turnId: number | undefined,
+    startedAt: number | undefined,
+    endedAt: number | undefined,
+  ): void => {
+    if (turnId === undefined) return;
+    const current = turnSpans.get(turnId);
+    turnSpans.set(turnId, {
+      turnId,
+      startedAt: earliestTime(current?.startedAt, startedAt),
+      endedAt: latestTime(current?.endedAt, endedAt),
+    });
+  };
+  const settleStep = (uuid: string, time: number | undefined): void => {
     const entry = openSteps.get(uuid);
     if (entry === undefined) return;
     openSteps.delete(uuid);
+    entry.endedTime = time;
+    updateTurnSpan(entry.turnId, undefined, time);
     if (entry.message.toolCalls.length > 0) return;
     if (!entry.message.content.every(isVacuousContentPart)) return;
     const index = transcript.indexOf(entry);
@@ -136,10 +163,13 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     switch (event.type) {
       case 'step.begin': {
         closePendingToolResults(time);
-        if (lastOpenStepUuid !== undefined) settleStep(lastOpenStepUuid);
+        if (lastOpenStepUuid !== undefined) settleStep(lastOpenStepUuid, time);
+        const turnId = parseTurnId(event.turnId);
+        updateTurnSpan(turnId, time, undefined);
         const entry: MutableEntry = {
           message: { role: 'assistant', content: [], toolCalls: [] },
           time,
+          turnId,
         };
         push(entry);
         openSteps.set(event.uuid, entry);
@@ -147,7 +177,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         return;
       }
       case 'step.end': {
-        settleStep(event.uuid);
+        settleStep(event.uuid, time);
         if (lastOpenStepUuid === event.uuid) lastOpenStepUuid = undefined;
         flushDeferredIfToolExchangeClosed();
         return;
@@ -249,9 +279,28 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     result: () => ({
       entries: transcript.map((e) => e.message),
       times: transcript.map((e) => e.time),
+      endedTimes: transcript.map((e) => e.endedTime),
+      turnIds: transcript.map((e) => e.turnId),
+      turnSpans: [...turnSpans.values()].sort((a, b) => a.turnId - b.turnId),
       foldedLength,
     }),
   };
+}
+
+function parseTurnId(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function earliestTime(current: number | undefined, candidate: number | undefined): number | undefined {
+  if (candidate === undefined) return current;
+  return current === undefined ? candidate : Math.min(current, candidate);
+}
+
+function latestTime(current: number | undefined, candidate: number | undefined): number | undefined {
+  if (candidate === undefined) return current;
+  return current === undefined ? candidate : Math.max(current, candidate);
 }
 
 function toMutableEntry(message: ContextMessage, time: number | undefined): MutableEntry {

@@ -63,7 +63,7 @@ export interface ApplyResult {
 export function applyOperation(state: AgentState, op: TranscriptOperation): ApplyResult {
   switch (op.op) {
     case 'reset':
-      return applyReset(state, op);
+      return applyReset(op);
     case 'turn.upsert':
       return applyTurnUpsert(state, op.turn);
     case 'step.upsert':
@@ -93,9 +93,10 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
 
 // ---------------------------------------------------------------- reset
 
-function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'reset' }>): ApplyResult {
+function applyReset(op: Extract<TranscriptOperation, { op: 'reset' }>): ApplyResult {
   // Pending derives from BOTH channels: global entities (authoritative) and
   // legacy inline interaction frames (older producers send only those).
+  // The pre-reset state is irrelevant: a reset replaces it wholesale.
   const pending = new Set<InteractionId>();
   for (const interaction of op.snapshot.interactions) {
     if (interaction.state === 'pending') pending.add(interaction.interactionId);

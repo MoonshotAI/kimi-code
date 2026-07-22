@@ -9,8 +9,10 @@
  * `{seq, epoch}` cursor, or sends `resync_required` when the gap cannot be
  * served incrementally.
  *
- * A successful `client_hello` also registers the connection for global event
- * fan-out, independent of per-session subscriptions, until the socket closes.
+ * A successful `client_hello` also registers the connection as a global
+ * target on the broadcaster: global events (`event.session.*` and friends —
+ * work facts, interaction notifications) fan out to it regardless of any
+ * per-session subscription, until the socket closes.
  *
  * The server never initiates a disconnect: unlike v1's `WsConnection`
  * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
@@ -219,8 +221,10 @@ export class WsConnectionV1 implements BroadcastTarget {
       );
     }
 
-    // Register after requested cursor replays so live global events cannot
-    // arrive before older durable backlog for the same session.
+    // Global fan-out rides the handshake, not any subscription. Register only
+    // after every requested cursor replay so registerGlobalTarget's volatile
+    // work-fact catchup cannot precede and then be overwritten by older
+    // durable backlog for the same session.
     if (this.closed) return;
     this.broadcaster.registerGlobalTarget(this);
 

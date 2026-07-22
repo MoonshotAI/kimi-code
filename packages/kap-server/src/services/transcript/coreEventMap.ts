@@ -201,9 +201,13 @@ export class AgentTranscriptProjector {
           }),
         ];
       case 'context.spliced':
-        // Known limitation: undo/clear projects as a bare 'undo' marker (raw
-        // payload attached); no `items.remove` reconstruction in v1.
-        return [this.markerOp('undo', restOf(event))];
+        // ContextMemory publishes the same event for ordinary append-only
+        // messages (including the copied context of a fork). Those messages
+        // are already represented by turn/frame events and must not become
+        // timeline markers — besides duplicating prompts, doing so would leak
+        // inherited parent context into a child transcript. Only an actual
+        // removal/replacement is the undo/clear signal in v1.
+        return event.deleteCount > 0 ? [this.markerOp('undo', restOf(event))] : [];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':
@@ -240,19 +244,26 @@ export class AgentTranscriptProjector {
   private onTurnEnded(event: {
     turnId: number;
     reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    durationMs?: number;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
     const turnId = `t${event.turnId}`;
+    const endedAtMs = Date.now();
+    const endedAt = epochMsToIso(endedAtMs);
     // Defensive: a step left running is closed with the turn (the normal path
     // closes it via `turn.step.completed` / `turn.step.interrupted` first).
     if (this.currentStep !== undefined && this.currentStep.state === 'running') {
-      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: nowIso() };
+      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt };
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
     const prev = this.currentTurn?.turnId === turnId ? this.currentTurn : undefined;
     const state = mapTurnEndState(event.reason);
+    const startedAt =
+      event.durationMs === undefined
+        ? prev?.startedAt
+        : epochMsToIso(endedAtMs - Math.max(0, event.durationMs));
     this.currentTurn = {
       kind: 'turn',
       turnId,
@@ -260,8 +271,8 @@ export class AgentTranscriptProjector {
       state,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
-      startedAt: prev?.startedAt,
-      endedAt: nowIso(),
+      startedAt,
+      endedAt,
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     this.currentStep = undefined;

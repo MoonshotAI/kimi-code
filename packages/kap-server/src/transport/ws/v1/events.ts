@@ -76,6 +76,36 @@ export interface SessionWorkChangedEvent {
   readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
 }
 
+/**
+ * Global interaction notification — the volatile counterpart of the legacy
+ * per-session `event.approval.requested` / `event.question.requested`. Fans
+ * out to every hello'd connection (no subscription required) so sidebar
+ * badges and notifications track interactions on sessions the connection
+ * never opened. Never journaled, never replayed. `questionPreview` is a
+ * truncated excerpt for notification copy.
+ */
+export interface SessionInteractionRequestedEvent {
+  readonly type: 'event.session.interaction_requested';
+  readonly sessionId: string;
+  readonly interactionId: string;
+  readonly kind: 'approval' | 'question';
+  readonly agentId: string;
+  readonly toolName?: string;
+  readonly questionPreview?: string;
+}
+
+/** Resolution half of {@link SessionInteractionRequestedEvent}. */
+export interface SessionInteractionResolvedEvent {
+  readonly type: 'event.session.interaction_resolved';
+  readonly sessionId: string;
+  readonly interactionId: string;
+  readonly kind: 'approval' | 'question';
+  readonly agentId: string;
+  readonly toolName?: string;
+  readonly questionPreview?: string;
+  readonly state: 'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed';
+}
+
 type LegacySessionStatus =
   | 'idle'
   | 'running'
@@ -176,6 +206,8 @@ export type AgentEvent =
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
   | SessionWorkChangedEvent
+  | SessionInteractionRequestedEvent
+  | SessionInteractionResolvedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | PromptSubmittedEvent
@@ -193,6 +225,8 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.started',
   'shell.completed',
   'agent.status.updated',
+  'event.session.interaction_requested',
+  'event.session.interaction_resolved',
 ] as const;
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];

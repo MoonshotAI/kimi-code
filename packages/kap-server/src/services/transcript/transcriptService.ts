@@ -480,8 +480,39 @@ export class TranscriptService {
       }
       throw error;
     }
-    const messages = [...reduceContextTranscript(records).entries];
-    return groupMessagesIntoSnapshot(messages);
+    let forkedAgent = false;
+    if (agentId !== MAIN_AGENT_ID) {
+      try {
+        const raw = await readFile(
+          join(this.deps.homeDir, SESSIONS_ROOT, summary.workspaceId, sessionId, STATE_FILE),
+          'utf-8',
+        );
+        const meta = JSON.parse(raw) as SessionMeta;
+        forkedAgent = typeof meta.agents?.[agentId]?.forkedFrom === 'string';
+      } catch {
+        // Old/corrupt metadata still gets the legacy best-effort rebuild.
+      }
+    }
+    const firstPromptIndex = records.findIndex((record) => record.type === 'turn.prompt');
+    // Forked agents (currently BTW) persist the copied parent context before
+    // their first own `turn.prompt`. That context is useful to the model but
+    // is not part of the child agent's visible transcript. The record index is
+    // the stable ownership boundary; timestamps can collide within one
+    // millisecond. Reducing only the owned suffix also preserves undo and
+    // compaction semantics for the child-visible history.
+    const visibleRecords = forkedAgent
+      ? firstPromptIndex >= 0
+        ? records.slice(firstPromptIndex)
+        : []
+      : records;
+    const history = reduceContextTranscript(visibleRecords);
+    const messages = history.entries.map((message, index) => ({
+      ...message,
+      startedAt: history.times[index],
+      endedAt: history.endedTimes[index],
+      turnId: history.turnIds[index],
+    }));
+    return groupMessagesIntoSnapshot(messages, history.turnSpans);
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */

@@ -27,13 +27,27 @@
  *   6. Exposes replay (`getBufferedSince`) keyed by `{seq, epoch}` cursors and
  *      an atomic `getSnapshotState` for the snapshot route.
  *
- * A session is activated (journaling starts) on first `subscribe` /
- * `getSnapshotState` / `getCursor` and stays active for the process lifetime so
- * the journal is continuous from first activation onward.
+ * A session is activated (journaling starts) when its scope materializes in
+ * the runtime (`ISessionLifecycleService.onDidCreateSession`, plus a
+ * constructor sweep of sessions already live) or on first `subscribe` /
+ * `getSnapshotState` / `getCursor` — whichever comes first — and stays active
+ * for the process lifetime so the journal is continuous from first activation
+ * onward. Activation without a subscription is deliberate: a session nobody
+ * opened (background / cron work) must still produce its work-facts.
  *
  * Global events (`isGlobalEvent`) fan out to the union of every session's
- * subscribers and the connection-level global targets registered after
- * `client_hello`. Per-session frames still reach subscribers only.
+ * subscribers and the connection-level global targets registered via
+ * `registerGlobalTarget` (post-`client_hello`, no subscription required) —
+ * per-session frames still reach subscribers only. Two global-only producers
+ * ride this fan-out:
+ *
+ *   - Work-fact catch-up in both arrival orders: a late producer seeds existing
+ *     global targets, and a late hello target is seeded from existing producers.
+ *     Both re-emit the current non-idle fact as volatile — the `emitted*` dedup
+ *     state would otherwise keep it silent until the next change.
+ *   - `event.session.interaction_requested` / `..._resolved`: volatile
+ *     notification counterparts of the legacy durable per-session
+ *     approval/question events (which keep flowing unchanged).
  */
 
 import type {
@@ -157,6 +171,8 @@ interface SessionState {
   emittedMainTurnActive: boolean;
   emittedPendingInteraction: SessionPendingInteraction;
   emittedTurnOutcome?: 'completed' | 'cancelled' | 'failed';
+  /** Number of work-fact transitions emitted since this producer mounted. */
+  workFactRevision: number;
   pendingInteraction: SessionPendingInteraction;
   /** Recent durable envelopes for in-memory replay. */
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
@@ -167,8 +183,8 @@ interface SessionState {
   /** agentId → sink subscription. */
   readonly agentDisposables: Map<string, IDisposable>;
   readonly lifecycleDisposables: IDisposable[];
-  /** Interactions already announced (or pre-existing at activation): id → kind + owning agent (for the resolved event). */
-  readonly knownInteractions: Map<string, { readonly kind: InteractionKind; readonly agentId: string }>;
+  /** Interactions already announced (or pre-existing at activation): id → kind + owning agent + notification fields (for the resolved events). */
+  readonly knownInteractions: Map<string, KnownInteraction>;
   /** Attached on first transcript-grade subscription for this session. */
   transcriptStream?: TranscriptStream;
   /** Connections whose transcript baseline reset has landed — the ops fan-out is gated on it. */
@@ -184,6 +200,14 @@ interface AgentWorkFold {
   lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
+/** Tracked pending interaction — what the resolved events need after the kernel forgot it. */
+interface KnownInteraction {
+  readonly kind: InteractionKind;
+  readonly agentId: string;
+  readonly toolName?: string;
+  readonly questionPreview?: string;
+}
+
 export const DEFAULT_MAX_BUFFER_SIZE = 1000;
 const GLOBAL_SESSION_ID = '__global__';
 /** Turns shipped in a `transcript.reset` snapshot; older turns page in over REST. */
@@ -192,6 +216,7 @@ const TRANSCRIPT_RESET_TAIL_TURNS = 30;
 async function disposeSessionState(state: SessionState): Promise<void> {
   for (const d of state.lifecycleDisposables) d.dispose();
   for (const d of state.agentDisposables.values()) d.dispose();
+  await state.queue;
   await state.journal.close();
 }
 
@@ -209,10 +234,18 @@ export class SessionEventBroadcaster {
    * per-chunk `AABBCC` stream while every seq and offset still looks valid.
    */
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
-  /** Connections that completed `client_hello`, independent of session subscriptions. */
+  /**
+   * Connections registered as global targets (post-`client_hello`), independent
+   * of any per-session subscription. Global events fan out to the union of
+   * this set and every session's subscribers; per-session frames never reach
+   * a target through this set.
+   */
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
+  private readonly sessionLifecycleSubscription: IDisposable;
+  private readonly sessionWillCloseHook: IDisposable;
+  private readonly inactiveSessions = new Set<string>();
   private closed = false;
 
   constructor(
@@ -233,12 +266,73 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
+    // Mount the producer chain as soon as a session scope materializes in the
+    // runtime — work-facts must broadcast even for sessions nobody subscribed
+    // to. The sweep covers sessions already live when this broadcaster
+    // attached (their mount is a late one, so the catch-up re-emits any
+    // accumulated work-fact).
+    const lifecycle = opts.core.accessor.get(ISessionLifecycleService);
+    this.sessionLifecycleSubscription = lifecycle.onDidCreateSession(({ sessionId, handle }) => {
+      this.inactiveSessions.delete(sessionId);
+      void this.activateSession(sessionId, handle);
+    });
+    this.sessionWillCloseHook = lifecycle.hooks.onWillCloseSession.register(
+      'kap-server.session-event-broadcaster',
+      async ({ sessionId }, next) => {
+        this.inactiveSessions.add(sessionId);
+        await this.dropSessionState(sessionId);
+        await next();
+      },
+    );
+    for (const handle of lifecycle.list()) {
+      void this.activateSession(handle.id, handle);
+    }
   }
 
-  /** Register a connection for global fan-out until it closes. */
+  /** Mount a session's producer chain, logging (not propagating) activation failures. */
+  private async activateSession(
+    sessionId: string,
+    handle?: ISessionScopeHandle,
+  ): Promise<void> {
+    try {
+      await this.ensureState(sessionId, handle);
+    } catch (error) {
+      this.opts.logger?.warn(
+        { sessionId, err: error },
+        'session event producer activation failed',
+      );
+    }
+  }
+
+  private async dropSessionState(sessionId: string): Promise<void> {
+    // A close can race the journal open started by onDidCreateSession. Wait
+    // for that activation to observe inactiveSessions and settle before
+    // disposing state, so a stale continuation cannot reinsert itself after
+    // this method returns and before a later restore.
+    // Activation owns its error reporting; a failed activation cannot leave a
+    // state behind and therefore must not block the session-close hook.
+    await this.pendingStates.get(sessionId)?.catch(() => undefined);
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    this.sessions.delete(sessionId);
+    await disposeSessionState(state);
+    this.opts.transcriptService?.dropSession(sessionId);
+  }
+
+  /**
+   * Register a connection for the global fan-out — called on `client_hello`,
+   * before and independently of any per-session subscription. Idempotent;
+   * pair with {@link unregisterGlobalTarget} on connection close.
+   */
   registerGlobalTarget(target: BroadcastTarget): void {
-    if (this.closed) return;
+    if (this.closed || this.globalTargets.has(target)) return;
     this.globalTargets.add(target);
+    // A client may hello long after live sessions mounted their producers.
+    // Seed that connection with every non-idle current work fact now; future
+    // changes continue through the ordinary global fan-out.
+    for (const state of this.sessions.values()) {
+      this.enqueueWorkFactCatchup(state, [target]);
+    }
   }
 
   unregisterGlobalTarget(target: BroadcastTarget): void {
@@ -634,6 +728,8 @@ export class SessionEventBroadcaster {
     if (this.closed) return;
     this.closed = true;
     this.coreEventSubscription.dispose();
+    this.sessionLifecycleSubscription.dispose();
+    this.sessionWillCloseHook.dispose();
     this.globalTargets.clear();
     for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
@@ -644,13 +740,16 @@ export class SessionEventBroadcaster {
     this.sessions.clear();
   }
 
-  private ensureState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return Promise.resolve(undefined);
+  private ensureState(
+    sessionId: string,
+    handle?: ISessionScopeHandle,
+  ): Promise<SessionState | undefined> {
+    if (this.closed || this.inactiveSessions.has(sessionId)) return Promise.resolve(undefined);
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) return Promise.resolve(existing);
     let pending = this.pendingStates.get(sessionId);
     if (pending === undefined) {
-      pending = this.createSessionState(sessionId).finally(() => {
+      pending = this.createSessionState(sessionId, handle).finally(() => {
         if (this.pendingStates.get(sessionId) === pending) {
           this.pendingStates.delete(sessionId);
         }
@@ -660,17 +759,24 @@ export class SessionEventBroadcaster {
     return pending;
   }
 
-  private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
+  private async createSessionState(
+    sessionId: string,
+    announcedHandle?: ISessionScopeHandle,
+  ): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
 
-    const session = this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    // `onDidCreateSession` fires while resume still hides the id from
+    // `lifecycle.get()`. Prefer its authoritative handle so hello-only clients
+    // get a producer immediately, before any later subscribe/API lookup.
+    const session =
+      announcedHandle ?? this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) return undefined;
 
     const journal = await SessionEventJournal.open(
       sessionJournalPath(this.opts.eventsDir, sessionId),
       this.opts.logger,
     );
-    if (this.closed) {
+    if (this.closed || this.inactiveSessions.has(sessionId)) {
       await journal.close();
       return undefined;
     }
@@ -691,6 +797,7 @@ export class SessionEventBroadcaster {
       emittedMainTurnActive: activityByAgent.get(MAIN_AGENT_ID)?.turnActive ?? false,
       emittedPendingInteraction: pendingInteraction,
       emittedTurnOutcome: activityByAgent.get(MAIN_AGENT_ID)?.lastTurnReason,
+      workFactRevision: 0,
       pendingInteraction,
       tail: [],
       targets: new Map(),
@@ -711,6 +818,9 @@ export class SessionEventBroadcaster {
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') return undefined;
       throw error;
     }
+    // Snapshot the current targets at mount time. A target registered after
+    // this point gets the same seed from registerGlobalTarget instead.
+    this.enqueueWorkFactCatchup(state, [...this.globalTargets]);
     return state;
   }
 
@@ -743,6 +853,7 @@ export class SessionEventBroadcaster {
       emittedBusy: false,
       emittedMainTurnActive: false,
       emittedPendingInteraction: 'none',
+      workFactRevision: 0,
       pendingInteraction: 'none',
       tail: [],
       targets: new Map(),
@@ -1007,7 +1118,8 @@ export class SessionEventBroadcaster {
    * Bridge the session's interaction kernel (approvals / questions) onto the
    * v1 event stream. The kernel only emits in-process notifications
    * (`onDidChangePending` / `onDidResolve`), so the v1 protocol events are
-   * synthesized here.
+   * synthesized here — the legacy durable per-session events, plus their
+   * volatile global notification counterparts (`event.session.interaction_*`).
    */
   private attachInteractions(
     sessionId: string,
@@ -1016,9 +1128,11 @@ export class SessionEventBroadcaster {
   ): void {
     const interactions = session.accessor.get(ISessionInteractionService);
     // Seed silently: interactions already pending at activation are surfaced
-    // by the snapshot route (`pending_questions` / `pending_approvals`).
+    // by the snapshot route (`pending_questions` / `pending_approvals`) and
+    // by the mount catch-up's `pending_interaction` fact — no requested
+    // events (legacy or global) are re-announced for them.
     for (const i of interactions.listPending()) {
-      state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
+      state.knownInteractions.set(i.id, knownInteraction(i));
     }
     state.lifecycleDisposables.push(
       interactions.onDidChangePending(() => {
@@ -1027,13 +1141,14 @@ export class SessionEventBroadcaster {
         this.enqueueWorkChanged(state);
         for (const i of pending) {
           if (state.knownInteractions.has(i.id)) continue;
-          state.knownInteractions.set(i.id, {
-            kind: i.kind,
-            agentId: i.origin.agentId ?? 'main',
-          });
+          state.knownInteractions.set(i.id, knownInteraction(i));
           const event = interactionRequestedEvent(i, sessionId);
           if (event !== undefined) {
             this.enqueueDurable(state, event);
+          }
+          const notification = interactionRequestedNotification(i, sessionId);
+          if (notification !== undefined) {
+            this.enqueueVolatile(state, notification);
           }
         }
       }),
@@ -1045,6 +1160,10 @@ export class SessionEventBroadcaster {
         if (event !== undefined) {
           this.enqueueDurable(state, event);
         }
+        const notification = interactionResolvedNotification(known, id, response, sessionId);
+        if (notification !== undefined) {
+          this.enqueueVolatile(state, notification);
+        }
       }),
     );
   }
@@ -1053,6 +1172,78 @@ export class SessionEventBroadcaster {
     state.queue = state.queue
       .then(() => this.dispatch(state, event, false))
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
+  }
+
+  /**
+   * Queue a volatile event: fanned out live with the current durable watermark
+   * as `seq`, never journaled, never replayed — online-only delivery.
+   */
+  private enqueueVolatile(state: SessionState, event: Event): void {
+    state.queue = state.queue
+      .then(() => this.dispatch(state, event, true))
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
+  }
+
+  /**
+   * Re-emit the current work fact to the supplied global targets. This seeds
+   * both connections already present when a producer mounts and connections
+   * that hello after the producer is live. The `emitted*` state suppresses the first dedup
+   * pass, so a producer mounted after the session already accumulated state
+   * (busy turn, pending interaction) would stay silent until the next change
+   * — and a hello-only connection would never learn it. Volatile: it re-states
+   * current facts rather than recording a new one, so the journal and the
+   * durable watermark stay untouched; later changes flow through
+   * `enqueueWorkChanged` as usual. A session that has never emitted a work
+   * transition and is still quiet emits nothing — idle is every client's
+   * default assumption. Once a session has emitted work, reconnecting targets
+   * also receive its current idle fact so an offline busy state cannot stick.
+   */
+  private enqueueWorkFactCatchup(
+    state: SessionState,
+    targets: readonly BroadcastTarget[],
+  ): void {
+    const queuedAtRevision = state.workFactRevision;
+    state.queue = state.queue
+      .then(() => {
+        // A transition queued before this catch-up already reached the newly
+        // registered global target. Avoid restating it a second time.
+        if (state.workFactRevision !== queuedAtRevision) return;
+        // Read the fact only after earlier transitions on this session queue
+        // have drained. Capturing it before enqueueing can restate stale busy
+        // state immediately after the queued transition sent the correct one.
+        if (
+          state.workFactRevision === 0 &&
+          !state.emittedBusy &&
+          !state.emittedMainTurnActive &&
+          state.emittedPendingInteraction === 'none'
+        ) {
+          return;
+        }
+        const event = {
+          type: 'event.session.work_changed',
+          busy: state.emittedBusy,
+          main_turn_active: state.emittedMainTurnActive,
+          pending_interaction: state.emittedPendingInteraction,
+          last_turn_reason: state.emittedTurnOutcome,
+          agentId: 'main',
+          sessionId: state.sessionId,
+        } as Event;
+        const envelope = this.buildEnvelope(state.journal.seq, state.sessionId, event, {
+          epoch: state.journal.epoch,
+          volatile: true,
+        });
+        for (const target of targets) {
+          if (!this.globalTargets.has(target)) continue;
+          try {
+            target.send(envelope);
+          } catch {
+            // best-effort fan-out; a broken target is dropped, not fatal
+          }
+        }
+      })
+      .catch((error: unknown) =>
+        this.logDispatchDropped(state.sessionId, 'event.session.work_changed', error),
+      );
   }
 
   /**
@@ -1078,6 +1269,7 @@ export class SessionEventBroadcaster {
         state.emittedMainTurnActive = mainTurnActive;
         state.emittedPendingInteraction = state.pendingInteraction;
         state.emittedTurnOutcome = outcome;
+        state.workFactRevision += 1;
         await this.dispatch(
           state,
           {
@@ -1182,7 +1374,10 @@ export class SessionEventBroadcaster {
     };
   }
 
-  /** Yield global targets and session subscribers without duplicates. */
+  /**
+   * The global fan-out set: connection-level global targets (registered on
+   * `client_hello`) plus every session's subscribers, each yielded once.
+   */
   private *allTargets(): Iterable<BroadcastTarget> {
     const seen = new Set<BroadcastTarget>();
     for (const target of this.globalTargets) {
@@ -1397,6 +1592,114 @@ function interactionResolvedEvent(
         resolved_at: resolvedAt,
       } as unknown as Event;
     }
+    default:
+      return undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Interaction → global notification events (`event.session.interaction_*`).
+// Volatile counterparts of the legacy per-session events above: they ride the
+// global fan-out so every hello'd connection — subscribed to the session or
+// not — sees arrivals and resolutions (sidebar badges, notifications).
+// `user_tool` interactions have no notification, mirroring the legacy gate.
+// ---------------------------------------------------------------------------
+
+/** Max length of the `questionPreview` notification excerpt. */
+const QUESTION_PREVIEW_MAX = 80;
+
+/** Snapshot the notification fields of a fresh pending interaction. */
+function knownInteraction(interaction: Interaction): KnownInteraction {
+  return {
+    kind: interaction.kind,
+    agentId: interaction.origin.agentId ?? 'main',
+    toolName: interactionToolName(interaction),
+    questionPreview: interactionQuestionPreview(interaction),
+  };
+}
+
+function interactionToolName(interaction: Interaction): string | undefined {
+  if (interaction.kind !== 'approval') return undefined;
+  const toolName = (interaction.payload as { toolName?: unknown }).toolName;
+  return typeof toolName === 'string' ? toolName : undefined;
+}
+
+/** First question's text, truncated with an ellipsis for notification copy. */
+function interactionQuestionPreview(interaction: Interaction): string | undefined {
+  if (interaction.kind !== 'question') return undefined;
+  const questions = (interaction.payload as { questions?: unknown }).questions;
+  if (!Array.isArray(questions)) return undefined;
+  const first: unknown = questions[0];
+  const text =
+    typeof first === 'object' && first !== null
+      ? (first as { question?: unknown }).question
+      : undefined;
+  if (typeof text !== 'string') return undefined;
+  return text.length > QUESTION_PREVIEW_MAX ? `${text.slice(0, QUESTION_PREVIEW_MAX)}…` : text;
+}
+
+function interactionRequestedNotification(
+  interaction: Interaction,
+  sessionId: string,
+): Event | undefined {
+  if (interaction.kind !== 'approval' && interaction.kind !== 'question') return undefined;
+  return {
+    type: 'event.session.interaction_requested',
+    sessionId,
+    interactionId: interaction.id,
+    kind: interaction.kind,
+    agentId: interaction.origin.agentId ?? 'main',
+    toolName: interactionToolName(interaction),
+    questionPreview: interactionQuestionPreview(interaction),
+  } as unknown as Event;
+}
+
+function interactionResolvedNotification(
+  known: KnownInteraction,
+  id: string,
+  response: unknown,
+  sessionId: string,
+): Event | undefined {
+  const state = interactionResolutionState(known.kind, response);
+  if (state === undefined) return undefined;
+  return {
+    type: 'event.session.interaction_resolved',
+    sessionId,
+    interactionId: id,
+    kind: known.kind,
+    agentId: known.agentId,
+    toolName: known.toolName,
+    questionPreview: known.questionPreview,
+    state,
+  } as unknown as Event;
+}
+
+/**
+ * Fold a kernel resolution into the notification `state`. Approvals carry
+ * their decision verbatim; the turn-teardown response (`{ cancelled: true }`,
+ * see `ISessionInteractionService.cancelPendingForTurn`) maps to `cancelled`
+ * for both kinds. For questions `null` is a dismissal (see
+ * `ISessionQuestionService.dismiss`) and anything else an answer.
+ */
+function interactionResolutionState(
+  kind: InteractionKind,
+  response: unknown,
+): 'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed' | undefined {
+  const cancelled =
+    typeof response === 'object' &&
+    response !== null &&
+    (response as { cancelled?: unknown }).cancelled === true;
+  switch (kind) {
+    case 'approval': {
+      if (cancelled) return 'cancelled';
+      const decision = (response as Partial<ApprovalResponse> | null)?.decision;
+      return decision === 'approved' || decision === 'rejected' || decision === 'cancelled'
+        ? decision
+        : undefined;
+    }
+    case 'question':
+      if (cancelled) return 'cancelled';
+      return response === null ? 'dismissed' : 'answered';
     default:
       return undefined;
   }

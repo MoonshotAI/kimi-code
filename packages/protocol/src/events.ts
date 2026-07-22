@@ -533,6 +533,29 @@ export interface SessionWorkChangedEvent {
   readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
 }
 
+/** Volatile global notification for an approval or question request. */
+export interface SessionInteractionRequestedEvent {
+  readonly type: 'event.session.interaction_requested';
+  readonly sessionId: string;
+  readonly interactionId: string;
+  readonly kind: 'approval' | 'question';
+  readonly agentId: string;
+  readonly toolName?: string;
+  readonly questionPreview?: string;
+}
+
+/** Resolution half of {@link SessionInteractionRequestedEvent}. */
+export interface SessionInteractionResolvedEvent {
+  readonly type: 'event.session.interaction_resolved';
+  readonly sessionId: string;
+  readonly interactionId: string;
+  readonly kind: 'approval' | 'question';
+  readonly agentId: string;
+  readonly toolName?: string;
+  readonly questionPreview?: string;
+  readonly state: 'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed';
+}
+
 /**
  * @deprecated Replaced by {@link SessionWorkChangedEvent}: awaiting states
  * ride the approval/question channels and outcomes ride turn.ended. Kept so
@@ -911,6 +934,8 @@ export type AgentEvent =
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
   | SessionWorkChangedEvent
+  | SessionInteractionRequestedEvent
+  | SessionInteractionResolvedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ModelCatalogChangedEvent
@@ -1429,6 +1454,27 @@ export const sessionWorkChangedEventSchema = z.object({
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 }) satisfies z.ZodType<SessionWorkChangedEvent>;
 
+export const sessionInteractionRequestedEventSchema = z.object({
+  type: z.literal('event.session.interaction_requested'),
+  sessionId: z.string(),
+  interactionId: z.string(),
+  kind: z.enum(['approval', 'question']),
+  agentId: z.string(),
+  toolName: z.string().optional(),
+  questionPreview: z.string().optional(),
+}) satisfies z.ZodType<SessionInteractionRequestedEvent>;
+
+export const sessionInteractionResolvedEventSchema = z.object({
+  type: z.literal('event.session.interaction_resolved'),
+  sessionId: z.string(),
+  interactionId: z.string(),
+  kind: z.enum(['approval', 'question']),
+  agentId: z.string(),
+  toolName: z.string().optional(),
+  questionPreview: z.string().optional(),
+  state: z.enum(['approved', 'rejected', 'cancelled', 'answered', 'dismissed']),
+}) satisfies z.ZodType<SessionInteractionResolvedEvent>;
+
 /** @deprecated See {@link SessionStatusChangedEvent}. */
 export const sessionStatusChangedEventSchema = z.object({
   type: z.literal('event.session.status_changed'),
@@ -1770,6 +1816,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
+  sessionInteractionRequestedEventSchema,
+  sessionInteractionResolvedEventSchema,
   sessionStatusChangedEventSchema,
   modelCatalogChangedEventSchema,
   goalUpdatedEventSchema,
@@ -1847,6 +1895,8 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.started',
   'shell.completed',
   'agent.status.updated',
+  'event.session.interaction_requested',
+  'event.session.interaction_resolved',
 ] as const satisfies readonly AgentEvent['type'][];
 
 export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
