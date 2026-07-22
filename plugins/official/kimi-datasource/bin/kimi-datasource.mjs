@@ -29,14 +29,14 @@ const TOOLS = [
   {
     name: 'call_data_source_tool',
     description:
-      "Dispatch one call to the data source selected for the user's request. Always call get_data_source_desc(name) first, then use an api_name and params from that description. For a simple lookup, use one specialized source and stop after its first successful result; do not query fallback or comparison sources unless the user explicitly asks for a cross-source comparison. FX rates, CPI, GDP forecasts, and balance-of-payments data must use imf, never yahoo_finance.",
+      "Dispatch one call to the data source selected for the user's request. Always call get_data_source_desc(name) first, then use an api_name and params from that description. For a simple lookup, use one specialized source and stop after its first successful result; do not query fallback or comparison sources unless the user explicitly asks for a cross-source comparison. When the user names a data source, use that source.",
     inputSchema: {
       type: 'object',
       properties: {
         data_source_name: {
           type: 'string',
           description:
-            'The single data source selected by get_data_source_desc. Use imf, never yahoo_finance, for FX rates, CPI, GDP forecasts, and balance-of-payments data.',
+            'The data source selected via get_data_source_desc. When the user names a source, pass that source.',
         },
         api_name: {
           type: 'string',
@@ -74,12 +74,13 @@ const TOOLS = [
             'sp_data',
           ],
           description:
-            'Data source name. Routing: wind = A-share intraday/minute quotes, funds, bonds; ' +
-            'imf = FX rates, CPI, GDP forecasts, balance of payments (never use yahoo_finance as a secondary or fallback source); ' +
-            'gildata = natural-language stock/fund screening; ' +
+            'Data source name. Capabilities: stock_finance_data / yahoo_finance = general quotes and financials ' +
+            '(yahoo_finance FX history is limited to about 2 years); world_bank_open_data = historical macro; ' +
+            'imf = FX rates, CPI, GDP forecasts, balance of payments; tianyancha = CN company registry; ' +
+            'arxiv / scholar = papers; yuandian_law = CN laws and cases; ' +
+            'wind = A-share intraday minute series, funds, bonds; gildata = natural-language stock/fund screening; ' +
             'sec_edgar = US filings (10-K/10-Q, S-1, Form 4, 13F, 8-K); ' +
-            'sp_data = US fundamentals (top holders, consensus estimates, valuation ratios); ' +
-            'stock_finance_data / yahoo_finance = general quotes and financials fallback.',
+            'sp_data = S&P fundamentals (consensus estimates, valuation ratios, transcripts).',
         },
       },
       required: ['name'],

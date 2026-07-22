@@ -332,12 +332,13 @@ describe('kimi-datasource MCP server', () => {
       expect(call?.description).toContain(
         'For a simple lookup, use one specialized source and stop after its first successful result',
       );
+      expect(call?.description).toContain('When the user names a data source, use that source');
       expect(call?.inputSchema.properties['data_source_name']?.description).toContain(
-        'Use imf, never yahoo_finance',
+        'When the user names a source, pass that source',
       );
       expect(desc?.description).toContain('choose exactly one specialized source');
       expect(desc?.inputSchema.properties['name']?.description).toContain(
-        'never use yahoo_finance as a secondary or fallback source',
+        'yahoo_finance FX history is limited to about 2 years',
       );
     } finally {
       child?.stdin.end();

@@ -115,7 +115,7 @@ Once installed, describe your need in natural language and Kimi Code will automa
 | International macro (IMF) | Official IMF datasets (IFS, BOP, DOTS, WEO, and more): exchange rates, CPI, balance of payments, trade, and GDP forecasts |
 | Smart screening (Gildata) | Natural-language stock / fund / fund-manager screening, plus macro-industry data, research reports, announcements, and news |
 | US filings (SEC EDGAR) | 8,000+ US-listed companies — 10-K/10-Q statements, XBRL metrics, Form 4 insider trades, 13F institutional holdings, and 8-K material events (back to 2009) |
-| US fundamentals (S&P Capital IQ, paid) | Standardized financial statements, valuation ratios, consensus estimates, holders and executives, competitor relationships, corporate events, and call transcripts |
+| US fundamentals (S&P Capital IQ) | Standardized financial statements, valuation ratios, consensus estimates, holders and executives, competitor relationships, corporate events, and call transcripts |
 
 ### Billing and limitations
 
