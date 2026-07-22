@@ -5,7 +5,7 @@
  *   - public-bind gate (refuse without `--insecure-no-tls`; token-only warning
  *     logged on a non-loopback boot without a password);
  *   - real password path (`Authorization: Bearer <password>` → 200 via
- *     `verifyPassword`; wrong / missing credentials → 401);
+ *     the configured password verifier; wrong / missing credentials → 401);
  *   - auth-failure rate limit (10 bad tokens → 429 on the 11th) on a real bind;
  *   - security response headers on a non-loopback response.
  */
@@ -93,7 +93,7 @@ describe('public-bind gate', () => {
   });
 });
 
-describe('real password path (verifyPassword)', () => {
+describe('real password path', () => {
   async function bootPublic(): Promise<RunningServer> {
     process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
     const home = await tmpHome();

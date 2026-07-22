@@ -1,3 +1,10 @@
+/**
+ * Scenario: persistent server credentials and password verification.
+ * Responsibilities: private token storage, rotation, password caching, and auth composition.
+ * Wiring: real filesystem/crypto/bcrypt; comparator and clock seams are controlled where needed.
+ * Run: pnpm --filter @moonshot-ai/kap-server exec vitest run test/authTokenStore.test.ts
+ */
+
 import {
   chmodSync,
   existsSync,
@@ -10,7 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   PrivateFileTooPermissiveError,
@@ -23,7 +30,8 @@ import {
 } from '../src/services/auth/persistentToken';
 import { createTokenStore } from '../src/services/auth/tokenStore';
 import { createAuthTokenService } from '../src/services/auth/authTokenService';
-import { resolvePasswordHash, verifyPassword } from '../src/services/auth/password';
+import { createCredentialValidator } from '../src/services/auth/credentials';
+import { createPasswordVerifier, resolvePasswordHash } from '../src/services/auth/password';
 
 let tmpDir: string;
 
@@ -168,17 +176,122 @@ describe('password', () => {
     expect(await resolvePasswordHash({ KIMI_CODE_PASSWORD: '' })).toBeUndefined();
   });
 
-  it('hashes a set password with bcrypt and verifies correctly', async () => {
+  it('hashes a set password with bcrypt and verifies it through the cached verifier', async () => {
     const passwordHash = await resolvePasswordHash({
       KIMI_CODE_PASSWORD: 'correct-horse-battery-staple',
     });
+    const verify = createPasswordVerifier(passwordHash);
     expect(passwordHash?.startsWith('$2')).toBe(true);
-    expect(await verifyPassword('correct-horse-battery-staple', passwordHash)).toBe(true);
-    expect(await verifyPassword('wrong-password', passwordHash)).toBe(false);
+    expect(await verify('correct-horse-battery-staple')).toBe(true);
+    expect(await verify('wrong-password')).toBe(false);
   });
 
-  it('verifyPassword returns false when the hash is undefined', async () => {
-    expect(await verifyPassword('anything', undefined)).toBe(false);
+  it('returns false without consulting the comparator when the hash is undefined', async () => {
+    const compare = vi.fn(async () => true);
+    const verify = createPasswordVerifier(undefined, { compare });
+
+    expect(await verify('anything')).toBe(false);
+    expect(compare).not.toHaveBeenCalled();
+  });
+
+  it('runs a fresh comparison when the prior password verdict was false', async () => {
+    const compare = vi.fn(async () => false);
+    const verify = createPasswordVerifier('password-hash', { compare });
+
+    expect(await verify('wrong-password')).toBe(false);
+    expect(await verify('wrong-password')).toBe(false);
+    expect(compare).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a cached success when the verified candidate is checked again', async () => {
+    const compare = vi.fn(async () => true);
+    const verify = createPasswordVerifier('password-hash', { compare });
+
+    expect(await verify('correct-password')).toBe(true);
+    expect(await verify('correct-password')).toBe(true);
+    expect(compare).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a cached successful candidate isolated from a failed candidate', async () => {
+    const compare = vi.fn(async (candidate: string) => candidate === 'correct-password');
+    const verify = createPasswordVerifier('password-hash', { compare });
+
+    expect(await verify('correct-password')).toBe(true);
+    expect(await verify('wrong-password')).toBe(false);
+    expect(await verify('correct-password')).toBe(true);
+    expect(compare).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs one comparison when the same invalid candidate overlaps', async () => {
+    let settleComparison!: (valid: boolean) => void;
+    const comparison = new Promise<boolean>((resolve) => {
+      settleComparison = resolve;
+    });
+    const compare = vi.fn(() => comparison);
+    const verify = createPasswordVerifier('password-hash', { compare });
+
+    const first = verify('wrong-password');
+    const second = verify('wrong-password');
+    expect(compare).toHaveBeenCalledTimes(1);
+
+    settleComparison(false);
+    await expect(Promise.all([first, second])).resolves.toEqual([false, false]);
+  });
+
+  it('starts independent comparisons when distinct candidates overlap', async () => {
+    let settleFirst!: (valid: boolean) => void;
+    let settleSecond!: (valid: boolean) => void;
+    const compare = vi.fn((candidate: string) => new Promise<boolean>((resolve) => {
+      if (candidate === 'first-password') {
+        settleFirst = resolve;
+      } else {
+        settleSecond = resolve;
+      }
+    }));
+    const verify = createPasswordVerifier('password-hash', { compare });
+
+    const first = verify('first-password');
+    const second = verify('second-password');
+    expect(compare).toHaveBeenCalledTimes(2);
+
+    settleFirst(true);
+    settleSecond(false);
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(false);
+  });
+
+  it('returns a fresh verdict when the prior in-flight comparison throws', async () => {
+    let attempts = 0;
+    const compare = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error('bcrypt failed');
+      }
+      return true;
+    });
+    const verify = createPasswordVerifier('password-hash', { compare });
+
+    await expect(verify('correct-password')).rejects.toThrow('bcrypt failed');
+    await expect(verify('correct-password')).resolves.toBe(true);
+    expect(compare).toHaveBeenCalledTimes(2);
+  });
+
+  it('revalidates at the fixed expiry when intervening cache hits occur', async () => {
+    let now = 0;
+    const compare = vi.fn(async () => true);
+    const verify = createPasswordVerifier('password-hash', {
+      compare,
+      now: () => now,
+    });
+
+    expect(await verify('correct-password')).toBe(true);
+    now = 5 * 60_000 - 1;
+    expect(await verify('correct-password')).toBe(true);
+    expect(compare).toHaveBeenCalledTimes(1);
+
+    now = 5 * 60_000;
+    expect(await verify('correct-password')).toBe(true);
+    expect(compare).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -223,5 +336,24 @@ describe('createAuthTokenService', () => {
     expect(await svc.isValid(store.getToken())).toBe(true);
     expect(await svc.isValid('any-password')).toBe(false);
     await store.dispose();
+  });
+});
+
+describe('createCredentialValidator', () => {
+  it('accepts the rpcToken without consulting the auth token service', async () => {
+    const isValid = vi.fn(async () => {
+      throw new Error('auth token service should not be called');
+    });
+    const validate = createCredentialValidator(
+      {
+        _serviceBrand: undefined,
+        getToken: () => 'persistent-token',
+        isValid,
+      },
+      'rpc-token',
+    );
+
+    await expect(validate('rpc-token')).resolves.toBe(true);
+    expect(isValid).not.toHaveBeenCalled();
   });
 });

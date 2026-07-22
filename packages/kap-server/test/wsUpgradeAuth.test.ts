@@ -20,6 +20,7 @@ import { type RunningServer, startServer } from '../src/start';
 import { fixedTokenAuth } from './helpers/fixedAuth';
 
 const TOKEN = 'test-token';
+const RPC_TOKEN = 'rpc-token';
 
 function rawToString(data: RawData): string {
   if (typeof data === 'string') return data;
@@ -87,6 +88,7 @@ describe('WS upgrade auth', () => {
       homeDir: home,
       logLevel: 'silent',
       authTokenService: fixedTokenAuth(TOKEN),
+      rpcToken: RPC_TOKEN,
     });
     v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
@@ -125,6 +127,14 @@ describe('WS upgrade auth', () => {
     it('accepts a valid Authorization bearer header', async () => {
       const { ws, firstFrame } = await openConn(url(), {
         headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      sockets.push(ws);
+      expect(firstFrame).toMatchObject({ type: firstType });
+    });
+
+    it('accepts the rpcToken as a bearer subprotocol', async () => {
+      const { ws, firstFrame } = await openConn(url(), {
+        protocols: [`kimi-code.bearer.${RPC_TOKEN}`],
       });
       sockets.push(ws);
       expect(firstFrame).toMatchObject({ type: firstType });
