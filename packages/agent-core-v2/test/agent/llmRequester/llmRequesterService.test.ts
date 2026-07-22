@@ -32,6 +32,7 @@ import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { IAgentVideoResolverService } from '#/agent/media/videoResolver';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
@@ -194,6 +195,7 @@ function createService(
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
+  ix.stub(IAgentVideoResolverService, { resolve: async (messages) => messages });
   if (projector === undefined) {
     ix.set(
       IAgentContextProjectorService,

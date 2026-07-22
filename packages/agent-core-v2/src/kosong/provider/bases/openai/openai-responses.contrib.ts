@@ -33,6 +33,7 @@ registerProtocolBase({
           config.baseUrl ?? firstProcessEnv(endpoint?.baseUrlEnv) ?? endpoint?.defaultBaseUrl,
         defaultHeaders: traitDefaultHeaders(traits),
         maxOutputTokens: config.providerOptions?.defaultMaxTokens,
+        offEffort: config.providerOptions?.offEffort,
       }),
     });
   },

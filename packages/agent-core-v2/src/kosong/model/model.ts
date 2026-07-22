@@ -59,6 +59,7 @@ const ModelBaseSchema = z.object({
   provider: z.string().optional(),
   model: z.string().optional(),
   maxContextSize: z.number().int().min(1).optional(),
+  maxInputSize: z.number().int().min(1).optional(),
   maxOutputSize: z.number().int().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
@@ -67,6 +68,7 @@ const ModelBaseSchema = z.object({
   betaApi: z.boolean().optional(),
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
+  offEffort: z.string().optional(),
 });
 
 export const ModelOverrideSchema = ModelBaseSchema.omit({

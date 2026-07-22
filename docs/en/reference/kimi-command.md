@@ -359,13 +359,14 @@ kimi provider catalog list anthropic
 
 #### `kimi provider catalog add <providerId>`
 
-Import a known provider directly from the catalog by ID. The protocol type, base URL, and model information are all supplied by the catalog — only an API key is required.
+Import a known provider directly from the catalog by ID. The protocol type, base URL, and model information are all supplied by the catalog — only an API key is required. Vendors whose protocol the catalog does not declare (e.g. xai, openrouter, and other vendor-specific SDKs) are imported as OpenAI-compatible and the output notes the guess; when the catalog provides no usable endpoint, `--base-url` is required. Proprietary protocols (e.g. Amazon Bedrock) cannot be imported.
 
 | Parameter / Option | Description |
 | --- | --- |
 | `<providerId>` | Provider ID in the catalog, e.g., `anthropic`, `openai` |
 | `--api-key <key>` | Provider API key. Falls back to `KIMI_REGISTRY_API_KEY` if not provided; required |
 | `--default-model <modelId>` | Optional — set `default_model` to `<providerId>/<modelId>` after import |
+| `--base-url <url>` | Override the catalog endpoint; required when the catalog declares none (or only an env placeholder) |
 | `--url <url>` | Override the catalog URL; defaults to `https://models.dev/api.json` |
 
 ```sh

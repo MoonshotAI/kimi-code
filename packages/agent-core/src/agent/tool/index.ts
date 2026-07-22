@@ -776,6 +776,16 @@ export class ToolManager {
     this.initializeBuiltinTools();
   }
 
+  /**
+   * Uploader bound to the agent's current provider, for media that arrives
+   * outside a tool call (e.g. a video attached to a prompt). `undefined`
+   * when no model is bound or the provider has no video upload channel.
+   */
+  videoUploader(): b.VideoUploader | undefined {
+    if (!this.agent.config.hasProvider) return undefined;
+    return this.createVideoUploader(this.agent.config.provider);
+  }
+
   private createVideoUploader(provider: ChatProvider): b.VideoUploader | undefined {
     const uploadVideo = provider.uploadVideo?.bind(provider);
     if (uploadVideo === undefined) return undefined;
@@ -787,10 +797,11 @@ export class ToolManager {
     const baseProps = this.videoUploadTelemetryProps(modelAlias);
     const upload =
       withAuth === undefined
-        ? (input: b.VideoUploadInput) => uploadVideo(input)
-        : (input: b.VideoUploadInput) => withAuth((auth) => uploadVideo(input, { auth }));
+        ? (input: b.VideoUploadInput, signal?: AbortSignal) => uploadVideo(input, { signal })
+        : (input: b.VideoUploadInput, signal?: AbortSignal) =>
+            withAuth((auth) => uploadVideo(input, { auth, signal }));
 
-    return async (input) => {
+    return async (input, options) => {
       const startedAt = Date.now();
       const base = {
         ...baseProps,
@@ -805,7 +816,7 @@ export class ToolManager {
         }
       };
       try {
-        const part = await upload(input);
+        const part = await upload(input, options?.signal);
         track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
         return part;
       } catch (error) {

@@ -1,7 +1,7 @@
 import {
   BUDGET_THINKING_EFFORTS,
-  inferAnthropicModelProfile,
   matchKnownAnthropicModelProfile,
+  matchUnknownClaudeProfile,
 } from '@moonshot-ai/kosong/providers/anthropic-profile';
 
 import type { ModelAlias, ProviderType } from './schema';
@@ -22,19 +22,31 @@ export function effectiveModelAlias(
     delete effective.defaultEffort;
   }
 
-  return withAnthropicProfile(effective, providerType);
+  // The input cap can never exceed the effective total window (an override
+  // lowering max_context_size must not leave a stale, larger cap behind).
+  // Build a copy for the clamp — never rewrite the caller's config record.
+  const clamped =
+    effective.maxInputSize !== undefined && effective.maxInputSize > effective.maxContextSize
+      ? { ...effective, maxInputSize: effective.maxContextSize }
+      : effective;
+
+  return withAnthropicProfile(clamped, providerType);
 }
 
 function withAnthropicProfile(model: ModelAlias, providerType?: ProviderType): ModelAlias {
   const protocol = model.protocol ?? providerType;
   // The inferred fallback profile exists for third-party Anthropic-compatible
-  // endpoints whose model name encodes no known Claude version. Kimi providers
-  // — including managed models routed through protocol = "anthropic" — declare
-  // thinking efforts via the catalog, so they never receive the fallback.
-  // Callers without provider context fall back to name matching only.
+  // endpoints whose model name encodes no known Claude version. It only
+  // applies to names that still carry a Claude marker (e.g. a proxied
+  // `claude-latest`): clearly non-Claude models served over the Anthropic
+  // protocol (catalog-imported Kimi `k3`, GLM, …) must not advertise Claude
+  // effort levels. Kimi providers — including managed models routed through
+  // protocol = "anthropic" — declare thinking efforts via the catalog, so
+  // they never receive the fallback. Callers without provider context fall
+  // back to name matching only.
   const profile =
     providerType !== undefined && providerType !== 'kimi' && protocol === 'anthropic'
-      ? inferAnthropicModelProfile(model.model)
+      ? (matchKnownAnthropicModelProfile(model.model) ?? matchUnknownClaudeProfile(model.model))
       : matchKnownAnthropicModelProfile(model.model);
   if (profile === undefined) return model;
 

@@ -1041,6 +1041,22 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['include']).toBeUndefined();
     });
 
+    it('with_thinking("off") sends the configured offEffort for models that reason by default', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'grok-4',
+        apiKey: 'test-key',
+        offEffort: 'none',
+      }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning']).toEqual({ effort: 'none', summary: 'auto' });
+      expect(body['include']).toEqual(['reasoning.encrypted_content']);
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
     it('with_thinking("low") sends reasoning with effort=low', async () => {
       const provider = createProvider().withThinking('low');
       const history: Message[] = [

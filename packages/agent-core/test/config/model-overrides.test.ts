@@ -16,6 +16,30 @@ function alias(overrides?: ModelAlias['overrides']): ModelAlias {
 }
 
 describe('effectiveModelAlias', () => {
+  it('clamps the input cap to the effective total window without mutating the source', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 400000,
+      maxInputSize: 272000,
+      overrides: { maxContextSize: 128000 },
+    };
+
+    const effective = effectiveModelAlias(model);
+    expect(effective.maxContextSize).toBe(128000);
+    expect(effective.maxInputSize).toBe(128000);
+    expect(model.maxInputSize).toBe(272000);
+
+    const noOverrides: ModelAlias = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 128000,
+      maxInputSize: 272000,
+    };
+    expect(effectiveModelAlias(noOverrides).maxInputSize).toBe(128000);
+    expect(noOverrides.maxInputSize).toBe(272000);
+  });
+
   it('returns the alias unchanged when there are no overrides', () => {
     const model = alias();
 
@@ -60,10 +84,10 @@ describe('effectiveModelAlias', () => {
     });
   });
 
-  it('infers Anthropic effort metadata for an unknown model on a non-Kimi Anthropic provider', () => {
+  it('infers Anthropic effort metadata for an unknown Claude-marked model on a non-Kimi Anthropic provider', () => {
     const model: ModelAlias = {
       provider: 'custom',
-      model: 'custom-anthropic-model',
+      model: 'custom-claude-model',
       maxContextSize: 200000,
       protocol: 'anthropic',
     };
@@ -73,6 +97,32 @@ describe('effectiveModelAlias', () => {
       supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       defaultEffort: 'high',
     });
+  });
+
+  it('infers Anthropic effort metadata for a bare Claude family alias on a non-Kimi Anthropic provider', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'sonnet-latest',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+    };
+
+    expect(effectiveModelAlias(model, 'anthropic')).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for a clearly non-Claude model on a non-Kimi Anthropic provider', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+    };
+
+    expect(effectiveModelAlias(model, 'anthropic')).toEqual(model);
   });
 
   it('does not infer Anthropic effort metadata for a Kimi provider routed through the Anthropic protocol', () => {
@@ -102,7 +152,7 @@ describe('effectiveModelAlias', () => {
   it('limits an adaptive_thinking=false model to budget efforts', () => {
     const model: ModelAlias = {
       provider: 'custom',
-      model: 'custom-anthropic-model',
+      model: 'custom-claude-model',
       maxContextSize: 200000,
       protocol: 'anthropic',
       adaptiveThinking: false,
@@ -118,7 +168,7 @@ describe('effectiveModelAlias', () => {
   it('keeps a declared supportEfforts list authoritative when adaptive_thinking=false', () => {
     const model: ModelAlias = {
       provider: 'custom',
-      model: 'custom-anthropic-model',
+      model: 'custom-claude-model',
       maxContextSize: 200000,
       protocol: 'anthropic',
       adaptiveThinking: false,

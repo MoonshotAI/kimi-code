@@ -46,6 +46,7 @@ import {
 } from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
+import { degradeUnresolvedVideoToTag, resolvePromptMedia } from './media-resolve';
 import { ToolCallDeduplicator } from './tool-dedup';
 import { budgetToolResultForModel } from './tool-result-budget';
 
@@ -337,7 +338,13 @@ export class TurnFlow {
     const steers = this.steerBuffer;
     if (steers.length === 0) return false;
     for (const steer of steers) {
-      this.agent.context.appendUserMessage(steer.input, steer.origin);
+      // Steer flushes happen at sites that cannot await an upload, so any
+      // prompt-attached local video is degraded to an always-safe `<video
+      // path>` tag here; the model uploads it in-turn via ReadMediaFile.
+      this.agent.context.appendUserMessage(
+        degradeUnresolvedVideoToTag(steer.input),
+        steer.origin,
+      );
     }
     steers.length = 0;
     return true;
@@ -501,7 +508,9 @@ export class TurnFlow {
     this.agent.usage.beginTurn();
     const startedAt = Date.now();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
+    // The budget-exhausted goal turn does not run the model, so it cannot
+    // await an upload — degrade any local video to the always-safe tag form.
+    this.agent.context.appendUserMessage(degradeUnresolvedVideoToTag(input), origin);
     const ended: TurnEndedEvent = {
       type: 'turn.ended',
       turnId,
@@ -536,7 +545,6 @@ export class TurnFlow {
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
 
     const startedAt = Date.now();
     let ended: TurnEndedEvent;
@@ -546,7 +554,14 @@ export class TurnFlow {
     // sits just past the turn.ended boundary that consumers watch for.
     let errorEvent: AgentEvent | undefined;
     try {
-      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal, startedAt);
+      // Resolve any prompt-attached local video (a `file://` video_url) into
+      // its final delivered form — an uploaded `ms://` reference or an
+      // inline/tag fallback — BEFORE it lands in history, so no unresolved
+      // `file://` reference reaches the model or is persisted for resume. Auth
+      // rejections surface as a failed turn via the catch below.
+      const resolvedInput = await resolvePromptMedia(this.agent, input, signal);
+      this.agent.context.appendUserMessage(resolvedInput, origin);
+      const promptHookEnded = await this.applyUserPromptHook(turnId, resolvedInput, origin, signal, startedAt);
       if (promptHookEnded !== undefined) {
         ended = promptHookEnded.event;
         blockedByUserPromptHook = promptHookEnded.blocked;
@@ -778,6 +793,8 @@ export class TurnFlow {
       signal.throwIfAborted();
       const model = this.agent.config.model;
       const loopControl = this.agent.kimiConfig?.loopControl;
+      const maxStepsPerTurn = resolveMaxStepsPerTurn(loopControl?.maxStepsPerTurn);
+      const maxRetriesPerStep = resolveMaxRetriesPerStep(loopControl?.maxRetriesPerStep);
       let stopForGoalBudget = false;
       try {
         const result = await runTurn({
@@ -794,8 +811,8 @@ export class TurnFlow {
           buildTools: () => this.agent.tools.loopTools,
           describeMissingTool: (name) => this.agent.tools.missingToolMessage(name),
           log: this.agent.log,
-          maxSteps: loopControl?.maxStepsPerTurn,
-          maxRetryAttempts: loopControl?.maxRetriesPerStep,
+          maxSteps: maxStepsPerTurn,
+          maxRetryAttempts: maxRetriesPerStep,
           recordStepUsage: async (usage) => {
             try {
               const snapshot = await this.agent.goal.recordTokenUsage(usage.output);
@@ -880,7 +897,7 @@ export class TurnFlow {
               ) {
                 goalOutcomeMessageContinuationUsed = true;
                 goalOutcomeToolResultPending = false;
-                if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
+                if (!hasStepBudgetRemaining(maxStepsPerTurn, ctx.stepNumber)) {
                   return { continue: false };
                 }
                 return { continue: true };
@@ -1216,6 +1233,36 @@ export class TurnFlow {
     const failure = this.stepFailureByTurn.get(turnId);
     return failure?.reason === 'error' && failure.activeStep !== undefined;
   }
+}
+
+const MAX_STEPS_PER_TURN_ENV = 'KIMI_LOOP_MAX_STEPS_PER_TURN';
+const MAX_RETRIES_PER_STEP_ENV = 'KIMI_LOOP_MAX_RETRIES_PER_STEP';
+
+/**
+ * Resolve the effective per-turn step cap. Precedence:
+ * `KIMI_LOOP_MAX_STEPS_PER_TURN` (non-negative integer) → config
+ * (`loop_control.max_steps_per_turn`) → `undefined` (no cap). `0` means no
+ * cap, same as the config field; an invalid env value is ignored.
+ */
+export function resolveMaxStepsPerTurn(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_STEPS_PER_TURN_ENV) ?? configValue;
+}
+
+/**
+ * Resolve the effective per-step retry budget. Precedence:
+ * `KIMI_LOOP_MAX_RETRIES_PER_STEP` (non-negative integer) → config
+ * (`loop_control.max_retries_per_step`) → `undefined` (the loop's built-in
+ * default). An invalid env value is ignored.
+ */
+export function resolveMaxRetriesPerStep(configValue?: number): number | undefined {
+  return nonNegativeIntFromEnv(MAX_RETRIES_PER_STEP_ENV) ?? configValue;
+}
+
+function nonNegativeIntFromEnv(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw.length === 0 || !/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {

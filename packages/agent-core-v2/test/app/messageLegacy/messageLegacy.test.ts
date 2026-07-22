@@ -178,6 +178,54 @@ describe('MessageLegacyService', () => {
     });
   });
 
+  it('projects a kimi-file video reference to a structured file source without leaking the path', async () => {
+    const videoPart = {
+      type: 'video_url',
+      videoUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fclip.mp4' },
+    } as unknown as ContentPart;
+    const svc = buildService({
+      summary,
+      records: [
+        {
+          type: 'context.append_message',
+          message: { role: 'user', content: [videoPart], toolCalls: [] },
+        },
+      ],
+      contextMessages: [],
+    });
+
+    const page = await svc.list('s1', {});
+
+    expect(page.items[0]?.content[0]).toEqual({
+      type: 'video',
+      source: { kind: 'file', file_id: 'file_9' },
+    });
+  });
+
+  it('projects a provider video url to a structured url source carrying its id', async () => {
+    const videoPart = {
+      type: 'video_url',
+      videoUrl: { url: 'ms://prov-7', id: 'prov-7' },
+    } as unknown as ContentPart;
+    const svc = buildService({
+      summary,
+      records: [
+        {
+          type: 'context.append_message',
+          message: { role: 'user', content: [videoPart], toolCalls: [] },
+        },
+      ],
+      contextMessages: [],
+    });
+
+    const page = await svc.list('s1', {});
+
+    expect(page.items[0]?.content[0]).toEqual({
+      type: 'video',
+      source: { kind: 'url', url: 'ms://prov-7', id: 'prov-7' },
+    });
+  });
+
   it('passes media tool results through as raw content parts instead of flattening', async () => {
     const mediaPart = {
       type: 'image_url',

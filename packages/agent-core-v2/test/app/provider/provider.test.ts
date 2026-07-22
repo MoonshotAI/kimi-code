@@ -118,7 +118,7 @@ describe('ProviderService', () => {
     expect(configReplace).toHaveBeenCalledWith(PROVIDERS_SECTION, {
       p2: { type: 'kimi' },
     });
-    expect(configSet).toHaveBeenCalledWith('defaultProvider', undefined);
+    expect(configReplace).toHaveBeenCalledWith('defaultProvider', undefined);
   });
 
   it('delete leaves defaultProvider when removing a different provider', async () => {
@@ -127,7 +127,7 @@ describe('ProviderService', () => {
     defaultProvider = 'p2';
     const svc = ix.get(IProviderService);
     await svc.delete('p1');
-    expect(configSet).not.toHaveBeenCalled();
+    expect(configReplace).not.toHaveBeenCalledWith('defaultProvider', expect.anything());
   });
 
   it('forwards providers section changes as onDidChangeProviders with a diff', () => {
