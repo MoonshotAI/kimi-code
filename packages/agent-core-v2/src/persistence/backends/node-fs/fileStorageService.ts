@@ -10,8 +10,9 @@
  *                fsync, so the replacement is both atomic and durable.
  *   - `append` → `open('a')` + write + `fh.sync()` (when `durable`), plus a
  *                one-time directory fsync per scope.
- *   - `runExclusive` → the shared cross-process lock protocol on
- *                      `<value-path>.lock`, bounding lock waits to 10 seconds.
+ *   - `withExclusiveKeyMutation` → the shared cross-process lock protocol
+ *                                  on `<value-path>.lock`, bounding waits to
+ *                                  10 seconds.
  *   - `watch`  → chokidar on the parent directory, filtered to the exact key and
  *                debounced, so it survives atomic-replace renames and observes a
  *                file that does not exist yet at subscription time.
@@ -21,8 +22,8 @@
  * agent-execution-environment abstraction does not expose. Higher-level code
  * (wire journal, blob store) goes through the Store / Storage interfaces above
  * this backend, never `node:fs` directly. Session-rooted mutations run through
- * the App-scoped write-gate registry, which rejects writes after sealing and
- * tracks admitted I/O until it settles.
+ * the App-scoped write admission, which rejects writes after sealing and
+ * tracks admitted physical I/O until it settles.
  */
 
 import { createReadStream, mkdirSync, statSync } from 'node:fs';
@@ -48,7 +49,7 @@ import type {
   StorageWriteOptions,
 } from '#/persistence/interface/storage';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
-import { IWriteGateRegistry } from '#/persistence/interface/writeGate';
+import { IStorageWriteAdmission } from '#/persistence/interface/storageWriteAdmission';
 
 const WATCH_DEBOUNCE_MS = 150;
 const STORAGE_LOCK_WAIT_TIMEOUT_MS = 10_000;
@@ -78,8 +79,8 @@ export class FileStorageService implements IFileSystemStorageService {
     private readonly dirMode?: number,
     private readonly fileMode?: number,
     @optional(ICrossProcessLockService) private readonly locks?: ICrossProcessLockService,
-    @optional(IWriteGateRegistry)
-    private readonly writeGates?: IWriteGateRegistry,
+    @optional(IStorageWriteAdmission)
+    private readonly writeAdmission?: IStorageWriteAdmission,
   ) {}
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
@@ -119,7 +120,7 @@ export class FileStorageService implements IFileSystemStorageService {
     _options: StorageWriteOptions = {},
   ): Promise<void> {
     const filePath = this.path(scope, key);
-    await this.runWrite(scope, async () => {
+    await this.withPhysicalWrite(scope, async () => {
       try {
         await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
         await atomicWrite(filePath, data, undefined, this.fileMode);
@@ -138,7 +139,7 @@ export class FileStorageService implements IFileSystemStorageService {
   ): Promise<void> {
     const filePath = this.path(scope, key);
     const dir = dirname(filePath);
-    await this.runWrite(scope, async () => {
+    await this.withPhysicalWrite(scope, async () => {
       try {
         await mkdir(dir, { recursive: true, mode: this.dirMode });
         const fh = await open(filePath, 'a', this.fileMode);
@@ -172,7 +173,7 @@ export class FileStorageService implements IFileSystemStorageService {
 
   async delete(scope: string, key: string): Promise<void> {
     const filePath = this.path(scope, key);
-    await this.runWrite(scope, async () => {
+    await this.withPhysicalWrite(scope, async () => {
       try {
         await unlink(filePath);
       } catch (error) {
@@ -254,10 +255,14 @@ export class FileStorageService implements IFileSystemStorageService {
     };
   }
 
-  async runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
+  async withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
     const filePath = this.path(scope, key);
     const lockPath = `${filePath}.lock`;
-    await this.runWrite(scope, async () => {});
+    this.assertCanWriteNow(scope);
     if (this.locks === undefined) {
       throw new StorageError(
         StorageErrors.codes.STORAGE_IO_FAILED,
@@ -270,8 +275,8 @@ export class FileStorageService implements IFileSystemStorageService {
         lockPath,
         { wait: { timeoutMs: STORAGE_LOCK_WAIT_TIMEOUT_MS } },
         async () => {
-          await this.runWrite(scope, async () => {});
-          return op();
+          this.assertCanWriteNow(scope);
+          return mutation();
         },
       );
     } catch (error) {
@@ -302,8 +307,12 @@ export class FileStorageService implements IFileSystemStorageService {
     return join(this.baseDir, scope);
   }
 
-  private runWrite<T>(scope: string, write: () => Promise<T>): Promise<T> {
-    return this.writeGates?.run(scope, write) ?? write();
+  private assertCanWriteNow(scope: string): void {
+    this.writeAdmission?.assertCanWriteNow(scope);
+  }
+
+  private withPhysicalWrite<T>(scope: string, io: () => Promise<T>): Promise<T> {
+    return this.writeAdmission?.withPhysicalWrite(scope, io) ?? io();
   }
 
   private async syncDirOnce(dir: string): Promise<void> {

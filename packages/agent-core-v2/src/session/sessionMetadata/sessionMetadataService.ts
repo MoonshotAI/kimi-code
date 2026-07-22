@@ -14,7 +14,7 @@
  * a no-op (no write, no mirror, no event), so resuming a session — which
  * re-registers its agents as they materialize — never bumps `updatedAt` and
  * never reorders session listings. Every durable write is fenced by the
- * storage backend's per-session write gate, so an instance that lost or
+ * storage backend's per-session write admission, so an instance that lost or
  * released the session lease fails closed instead of overwriting a live
  * peer's state. Bound at Session scope.
  *

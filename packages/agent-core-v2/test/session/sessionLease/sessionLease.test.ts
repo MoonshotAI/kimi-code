@@ -71,28 +71,27 @@ describe('SessionLease', () => {
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
   });
 
-  it('seal rejects new writes while drained waits for an admitted write', async () => {
+  it('sealAndDrain rejects new writes while waiting for an admitted physical write', async () => {
     const lease = await acquire();
     let enterWrite!: () => void;
     const writeEntered = new Promise<void>((resolve) => {
       enterWrite = resolve;
     });
     let finishWrite!: () => void;
-    const writeGate = new Promise<void>((resolve) => {
+    const physicalWriteBlocked = new Promise<void>((resolve) => {
       finishWrite = resolve;
     });
-    const write = lease.run(async () => {
+    const write = lease.withPhysicalWrite(async () => {
       enterWrite();
-      await writeGate;
+      await physicalWriteBlocked;
     });
     await writeEntered;
 
-    lease.seal();
     let drained = false;
-    const drain = lease.drained().then(() => {
+    const drain = lease.sealAndDrain().then(() => {
       drained = true;
     });
-    await expect(lease.run(async () => {})).rejects.toMatchObject({
+    await expect(lease.withPhysicalWrite(async () => {})).rejects.toMatchObject({
       code: ErrorCodes.SESSION_LEASE_LOST,
     });
     expect(drained).toBe(false);

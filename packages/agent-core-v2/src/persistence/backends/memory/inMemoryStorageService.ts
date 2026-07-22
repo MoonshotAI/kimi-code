@@ -133,8 +133,12 @@ export class InMemoryStorageService implements IFileSystemStorageService {
     };
   }
 
-  runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
-    return enqueueKeyedOperation(this.operationQueues, this.watchKey(scope, key), op);
+  withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    return enqueueKeyedOperation(this.operationQueues, this.watchKey(scope, key), mutation);
   }
 
   private notifyWatchers(scope: string, key: string): void {

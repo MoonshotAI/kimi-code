@@ -82,18 +82,22 @@ class AtomicDocumentStoreBase implements IAtomicDocumentStore {
     key: string,
     mutate: (current: T | undefined) => T | Promise<T>,
   ): Promise<T> {
-    return this.runExclusive(scope, key, async () => {
+    return this.withExclusiveKeyMutation(scope, key, async () => {
       const next = await mutate(await this.get<T>(scope, key));
       await this.set(scope, key, next);
       return next;
     });
   }
 
-  runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
-    if (this.storage.runExclusive !== undefined) {
-      return this.storage.runExclusive(scope, key, op);
+  withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    if (this.storage.withExclusiveKeyMutation !== undefined) {
+      return this.storage.withExclusiveKeyMutation(scope, key, mutation);
     }
-    return enqueueKeyedOperation(this.operationQueues, `${scope}\0${key}`, op);
+    return enqueueKeyedOperation(this.operationQueues, `${scope}\0${key}`, mutation);
   }
 
   async delete(scope: string, key: string): Promise<void> {

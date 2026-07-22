@@ -221,8 +221,11 @@ describe('AgentLifecycleService', () => {
         atomicDocs.set(`${scope}/${key}`, next);
         return next;
       },
-      runExclusive: async <T>(_scope: string, _key: string, op: () => Promise<T>): Promise<T> =>
-        op(),
+      withExclusiveKeyMutation: async <T>(
+        _scope: string,
+        _key: string,
+        mutation: () => Promise<T>,
+      ): Promise<T> => mutation(),
       delete: async (scope: string, key: string): Promise<void> => {
         atomicDocs.delete(`${scope}/${key}`);
       },

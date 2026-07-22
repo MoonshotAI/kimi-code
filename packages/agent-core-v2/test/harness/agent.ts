@@ -111,6 +111,7 @@ import {
   ISessionBtwService,
   ISessionContext,
   ISessionLeaseService,
+  ISessionWriteAdmission,
   ISessionProcessRunner,
   IAgentScopeContext,
   IAgentShellCommandService,
@@ -124,6 +125,7 @@ import {
   IAgentBuiltinToolsRegistrar,
   IAgentUserToolService,
   IAgentUsageService,
+  IStorageWriteAdmission,
   ISessionWorkspaceContext,
   AgentLLMRequesterService,
   LifecycleScope,
@@ -532,7 +534,7 @@ export function homeDirServices(homeDir: string | undefined): TestAgentServiceOv
         reg.defineInstance(id, value);
       }
       const file = (): SyncDescriptor<IFileSystemStorageService> =>
-        new SyncDescriptor(FileStorageService, [homeDir], true);
+        new SyncDescriptor(FileStorageService, [homeDir, undefined, undefined], true);
       reg.defineDescriptor(IFileSystemStorageService, file());
       reg.define(IBlobStore, BlobStoreService);
     }
@@ -956,6 +958,7 @@ export class AgentTestContext {
   private readonly root: Scope;
   private readonly session: Scope;
   private readonly agent: Scope;
+  private readonly sessionWriteAdmissionRegistration: IDisposable;
   private readonly disposables: IDisposable[] = [];
   private suppressWireSnapshot = false;
   private pluginSessionStartRegistered = false;
@@ -1072,6 +1075,10 @@ export class AgentTestContext {
       .get(ITelemetryService)
       .withContext({ agent_id: agentId });
     const sessionScope = bootstrap.sessionScope(workspaceId, sessionId);
+    const sessionLease = stubSessionLeaseService();
+    this.sessionWriteAdmissionRegistration = this.root.accessor
+      .get(IStorageWriteAdmission)
+      .registerSession(sessionScope, sessionLease);
     this.session = this.root.createChild(LifecycleScope.Session, sessionId, {
       extra: collectScopeSeed(
         [
@@ -1086,7 +1093,8 @@ export class AgentTestContext {
               scope: (subKey?: string): string =>
                 subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
             });
-            reg.defineInstance(ISessionLeaseService, stubSessionLeaseService());
+            reg.defineInstance(ISessionLeaseService, sessionLease);
+            reg.defineInstance(ISessionWriteAdmission, sessionLease);
             reg.defineInstance(ISessionInteractionService, this.createInteractionService());
             reg.defineInstance(ISessionApprovalService, this.createApprovalService());
             reg.defineInstance(ISessionQuestionService, this.createQuestionService());
@@ -1701,6 +1709,7 @@ export class AgentTestContext {
       disposable.dispose();
     }
     await this.closeWire();
+    this.sessionWriteAdmissionRegistration.dispose();
     this.root.dispose();
   }
 

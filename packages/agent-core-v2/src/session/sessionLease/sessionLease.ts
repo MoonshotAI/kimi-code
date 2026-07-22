@@ -3,7 +3,7 @@
  *
  * Defines `ISessionLeaseService`, the Session-scope seeded ownership view,
  * and the `SessionLease` object that satisfies it together with the
- * `ISessionWriteGate` used by storage: an App-owned wrapper
+ * `ISessionWriteAdmission` used by storage: an App-owned wrapper
  * (`SessionLifecycleService` builds it; it is deliberately not a DI service)
  * around the cross-process lock handle at
  * `<homeDir>/session-leases/<sessionId>.lock`. `assertWritable` is the hard
@@ -11,7 +11,8 @@
  * sentinel fails closed with
  * `session.lease_lost`, marks the lease lost, seals write admission, and fires
  * the loss callback exactly once so the owning session tears itself down.
- * The gate tracks admitted writes so lifecycle release can await their drain.
+ * The admission tracks physical writes so lifecycle release can await their
+ * drain.
  *
  * No default is registered for either Session-scoped view: every production
  * session scope is seeded by `sessionLifecycle` via {@link sessionLeaseSeed};
@@ -28,7 +29,7 @@ import type {
   CrossProcessLockInspection,
   ICrossProcessLockHandle,
 } from '#/os/interface/crossProcessLock';
-import { ISessionWriteGate } from '#/persistence/interface/writeGate';
+import { ISessionWriteAdmission } from '#/persistence/interface/sessionWriteAdmission';
 
 export const LEASE_CREATING_RETRY_AFTER_MS = 1000;
 
@@ -100,7 +101,7 @@ export interface ISessionLeaseService {
 export const ISessionLeaseService: ServiceIdentifier<ISessionLeaseService> =
   createDecorator<ISessionLeaseService>('sessionLeaseService');
 
-export class SessionLease implements ISessionWriteGate, ISessionLeaseService {
+export class SessionLease implements ISessionWriteAdmission, ISessionLeaseService {
   declare readonly _serviceBrand: undefined;
 
   readonly lockId: string;
@@ -145,12 +146,16 @@ export class SessionLease implements ISessionWriteGate, ISessionLeaseService {
     }
   }
 
-  async run<T>(write: () => Promise<T>): Promise<T> {
-    if (this._sealed) throw this.writeGateClosedError();
+  assertCanWriteNow(): void {
+    if (this._sealed) throw this.writeAdmissionClosedError();
     this.assertWritable();
+  }
+
+  async withPhysicalWrite<T>(io: () => Promise<T>): Promise<T> {
+    this.assertCanWriteNow();
     this.inFlightWrites++;
     try {
-      return await write();
+      return await io();
     } finally {
       this.inFlightWrites--;
       if (this.inFlightWrites === 0) {
@@ -160,28 +165,33 @@ export class SessionLease implements ISessionWriteGate, ISessionLeaseService {
     }
   }
 
-  seal(): void {
+  sealAndDrain(): Promise<void> {
+    this.sealWrites();
+    return this.whenDrained();
+  }
+
+  private sealWrites(): void {
     this._sealed = true;
   }
 
-  drained(): Promise<void> {
+  private whenDrained(): Promise<void> {
     if (this.inFlightWrites === 0) return Promise.resolve();
     return new Promise<void>((resolve) => {
       this.drainWaiters.add(resolve);
     });
   }
 
-  private writeGateClosedError(): Error2 {
+  private writeAdmissionClosedError(): Error2 {
     return new Error2(
       ErrorCodes.SESSION_LEASE_LOST,
-      `session ${this.sessionId} write gate is sealed`,
+      `session ${this.sessionId} write admission is sealed`,
       { details: { sessionId: this.sessionId } },
     );
   }
 
   private markLost(): void {
     this._lost = true;
-    this.seal();
+    this.sealWrites();
     if (this._lossFired) return;
     this._lossFired = true;
     this.onLeaseLost(this.sessionId);
@@ -189,7 +199,7 @@ export class SessionLease implements ISessionWriteGate, ISessionLeaseService {
 
   release(): void {
     if (this._released) return;
-    this.seal();
+    this.sealWrites();
     this._released = true;
     this.handle.release();
   }
@@ -202,6 +212,6 @@ export function sessionLeasePath(homeDir: string, sessionId: string): string {
 export function sessionLeaseSeed(lease: SessionLease): ScopeSeed {
   return [
     [ISessionLeaseService as ServiceIdentifier<unknown>, lease],
-    [ISessionWriteGate as ServiceIdentifier<unknown>, lease],
+    [ISessionWriteAdmission as ServiceIdentifier<unknown>, lease],
   ];
 }

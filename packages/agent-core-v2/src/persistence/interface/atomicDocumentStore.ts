@@ -29,7 +29,11 @@ export interface IAtomicDocumentStore {
     key: string,
     mutate: (current: T | undefined) => T | Promise<T>,
   ): Promise<T>;
-  runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T>;
+  withExclusiveKeyMutation<T>(
+    scope: string,
+    key: string,
+    mutation: () => Promise<T>,
+  ): Promise<T>;
   delete(scope: string, key: string): Promise<void>;
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   watch(scope: string, key: string): Event<void>;

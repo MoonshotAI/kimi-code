@@ -46,10 +46,11 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
-import { ISessionWriteGate, IWriteGateRegistry } from '#/persistence/interface/writeGate';
+import { ISessionWriteAdmission } from '#/persistence/interface/sessionWriteAdmission';
+import { IStorageWriteAdmission } from '#/persistence/interface/storageWriteAdmission';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { WriteGateRegistryService } from '#/persistence/backends/node-fs/writeGateRegistryService';
+import { StorageWriteAdmissionService } from '#/persistence/backends/node-fs/storageWriteAdmissionService';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
@@ -300,7 +301,7 @@ function atomicDocumentStoreStub(): IAtomicDocumentStore {
     get: () => Promise.resolve(undefined),
     set: () => Promise.resolve(),
     update: (_scope, _key, mutate) => Promise.resolve(mutate(undefined)),
-    runExclusive: (_scope, _key, op) => op(),
+    withExclusiveKeyMutation: (_scope, _key, mutation) => mutation(),
     delete: () => Promise.resolve(),
     list: () => Promise.resolve([]),
     watch: () => (_listener) => ({ dispose: () => {} }),
@@ -513,7 +514,7 @@ describe('SessionLifecycleService', () => {
       stubPair(ILogService, stubLog()),
       stubPair(IFlagService, stubFlag(false)),
       stubPair(ICrossProcessLockService, stubCrossProcessLock()),
-      stubPair(IWriteGateRegistry, new WriteGateRegistryService()),
+      stubPair(IStorageWriteAdmission, new StorageWriteAdmissionService()),
       stubPair(ISessionLeaseContactProvider, new SessionLeaseContactProvider()),
       ...extra,
     ]);
@@ -1370,7 +1371,7 @@ describe('SessionLifecycleService', () => {
       return [
         stubPair(IBootstrapService, tmpBootstrapStub(root)),
         stubPair(ICrossProcessLockService, new CrossProcessLockService()),
-        stubPair(IWriteGateRegistry, new WriteGateRegistryService()),
+        stubPair(IStorageWriteAdmission, new StorageWriteAdmissionService()),
         ...over,
       ];
     }
@@ -1378,11 +1379,11 @@ describe('SessionLifecycleService', () => {
     function realAlsSeeds(root: string): {
       seeds: ReturnType<typeof stubPair>[];
       appendLog: AppendLogStore;
-      registry: WriteGateRegistryService;
+      registry: StorageWriteAdmissionService;
       storage: FileStorageService;
       docs: JsonAtomicDocumentStore;
     } {
-      const registry = new WriteGateRegistryService();
+      const registry = new StorageWriteAdmissionService();
       const locks = new CrossProcessLockService();
       const storage = new FileStorageService(root, undefined, undefined, locks, registry);
       const appendLog = new AppendLogStore(storage);
@@ -1391,7 +1392,7 @@ describe('SessionLifecycleService', () => {
         seeds: [
           stubPair(IBootstrapService, tmpBootstrapStub(root)),
           stubPair(ICrossProcessLockService, locks),
-          stubPair(IWriteGateRegistry, registry),
+          stubPair(IStorageWriteAdmission, registry),
           stubPair(IAppendLogStore, appendLog),
           stubPair(IAtomicDocumentStore, docs),
         ],
@@ -1574,7 +1575,7 @@ describe('SessionLifecycleService', () => {
       const root = await makeTmpRoot();
       const svc = build(realInstanceSeeds(root));
       const handle = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
-      const writeGate = handle.accessor.get(ISessionWriteGate);
+      const writeAdmission = handle.accessor.get(ISessionWriteAdmission);
       let finishWrite!: () => void;
       const writeBlocked = new Promise<void>((resolve) => {
         finishWrite = resolve;
@@ -1583,7 +1584,7 @@ describe('SessionLifecycleService', () => {
       const writeEntered = new Promise<void>((resolve) => {
         enterWrite = resolve;
       });
-      const write = writeGate.run(async () => {
+      const write = writeAdmission.withPhysicalWrite(async () => {
         enterWrite();
         await writeBlocked;
       });
@@ -1596,7 +1597,7 @@ describe('SessionLifecycleService', () => {
       let sealed = false;
       for (let attempt = 0; attempt < 10 && !sealed; attempt++) {
         try {
-          await writeGate.run(async () => {});
+          writeAdmission.assertCanWriteNow();
         } catch (error) {
           expect(error).toMatchObject({ code: ErrorCodes.SESSION_LEASE_LOST });
           sealed = true;
@@ -1629,7 +1630,7 @@ describe('SessionLifecycleService', () => {
       });
       expect(svc.get('s1')).toBeUndefined();
       await expect(
-        registry.run('sessions/wd_stub/s1/agents/main', async () => {}),
+        registry.withPhysicalWrite('sessions/wd_stub/s1/agents/main', async () => {}),
       ).rejects.toMatchObject({ code: ErrorCodes.SESSION_LEASE_LOST });
       expect(await docs.get<{ custom?: { dirtyAbort?: { reason?: string } } }>(
         'sessions/wd_stub/s1',
@@ -1674,7 +1675,7 @@ describe('SessionLifecycleService', () => {
       await svc.closeAll();
 
       await expect(
-        registry.run('sessions/wd_stub/s1', async () => {}),
+        registry.withPhysicalWrite('sessions/wd_stub/s1', async () => {}),
       ).rejects.toMatchObject({ code: ErrorCodes.SESSION_LEASE_LOST });
       expect(await docs.get<{ custom?: { dirtyAbort?: { reason?: string } } }>(
         'sessions/wd_stub/s1',
@@ -1692,7 +1693,7 @@ describe('SessionLifecycleService', () => {
       await Promise.all([svc.close('s1'), svc.closeAll()]);
 
       await expect(
-        registry.run('sessions/wd_stub/s1', async () => {}),
+        registry.withPhysicalWrite('sessions/wd_stub/s1', async () => {}),
       ).rejects.toMatchObject({ code: ErrorCodes.SESSION_LEASE_LOST });
       await expectLeaseFree(root, 's1');
     });

@@ -35,7 +35,7 @@
  *
  * Every materialization (create/resume/fork-target) first takes the session's
  * cross-process write lease under `session-leases/` and registers that lease
- * as the session's write gate. Close/archive stop producers, flush the
+ * as the session's write admission. Close/archive stop producers, flush the
  * session's append-log tail, seal new write admission, await already-admitted
  * I/O, and then release the lease. Any release failure converges internally to
  * a dirty-marked abandoned release; callers never need a second teardown
@@ -81,7 +81,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IWriteGateRegistry } from '#/persistence/interface/writeGate';
+import { IStorageWriteAdmission } from '#/persistence/interface/storageWriteAdmission';
 import {
   type CrossProcessLockInspection,
   ICrossProcessLockService,
@@ -145,7 +145,6 @@ type SessionReleaseStage =
   | 'dispose-scope'
   | 'will-release'
   | 'flush'
-  | 'seal'
   | 'drain-writes'
   | 'lease-lost'
   | 'shutdown';
@@ -197,7 +196,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @ICrossProcessLockService private readonly locks: ICrossProcessLockService,
-    @IWriteGateRegistry private readonly writeGates: IWriteGateRegistry,
+    @IStorageWriteAdmission private readonly writeAdmission: IStorageWriteAdmission,
     @ISessionLeaseContactProvider
     private readonly leaseContact: ISessionLeaseContactProvider,
   ) {
@@ -276,7 +275,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const lease = await this.acquireSessionLease(opts.sessionId);
     let registration: IDisposable;
     try {
-      registration = this.writeGates.register(sessionScope, lease);
+      registration = this.writeAdmission.registerSession(sessionScope, lease);
     } catch (error) {
       lease.release();
       throw error;
@@ -505,10 +504,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.announceWillRelease({ sessionId, reason: kind });
       stage = 'flush';
       await this.flushSessionTail(sessionId, entry.scope);
-      stage = 'seal';
-      entry.lease.seal();
       stage = 'drain-writes';
-      await entry.lease.drained();
+      await entry.lease.sealAndDrain();
     } catch (error) {
       await this.abandonSession(entry, stage, error);
       throw new Error2(
@@ -551,8 +548,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.writeDirtyMarker(entry, reason, stage);
     await this.announceWillRelease({ sessionId, reason: 'dirty-abort' });
     await Promise.allSettled(taskServices.map((tasks) => tasks.flushPersistence()));
-    entry.lease.seal();
-    await entry.lease.drained();
+    await entry.lease.sealAndDrain();
     this.finishSessionRelease(entry);
     if (reason === 'flush-failed') {
       this.telemetry.track2('session_dirty_abort', {
@@ -607,7 +603,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       entry.registration.dispose();
     } catch (error) {
-      this.log.warn('failed to unregister session write gate', {
+      this.log.warn('failed to unregister session write admission', {
         sessionId: entry.handle.id,
         error: String(error),
       });
