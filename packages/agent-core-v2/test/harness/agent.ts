@@ -1389,10 +1389,9 @@ export class AgentTestContext {
   ): void {
     this.appendMessage({
       role: 'user',
-      content: [{ type: 'text', text: content.trim() }],
+      content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
       toolCalls: [],
       origin,
-      tag: 'system-reminder',
     });
   }
 
@@ -2134,7 +2133,6 @@ function stripMessageId(message: ContextMessage): ContextMessage {
 
 function isSystemReminderMessage(message: ContextMessage): boolean {
   if (message.role !== 'user') return false;
-  if (message.tag === 'system-reminder') return true;
   const text = message.content
     .map((part) => (part.type === 'text' ? part.text : ''))
     .join('')

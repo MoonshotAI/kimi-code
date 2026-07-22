@@ -37,7 +37,7 @@ describe('Agent context', () => {
 
   it('stores prompt origins without leaking them to LLM projection', () => {
     ctx.appendUserMessage([{ type: 'text', text: 'hello' }]);
-    context.appendTagged('Remember this.', 'system-reminder', { kind: 'injection', variant: 'host' });
+    ctx.appendSystemReminder('Remember this.', { kind: 'injection', variant: 'host' });
     context.append(
       {
         role: 'assistant',
@@ -352,7 +352,7 @@ describe('Agent context', () => {
 
   it('keeps system reminders separate from real user prompts', async () => {
     profile.update({ activeToolNames: [] });
-    context.appendTagged('Remember the host note.', 'system-reminder', {
+    ctx.appendSystemReminder('Remember the host note.', {
       kind: 'injection',
       variant: 'host',
     });

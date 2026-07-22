@@ -27,7 +27,6 @@ import { createHash } from 'node:crypto';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { applyTagToContent } from '#/agent/contextMemory/tag';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
@@ -524,8 +523,7 @@ function projectedContent(source: ContextMessage, onAnomaly?: OnAnomaly): Conten
           note: source.note,
         })
       : source.content;
-  const cleaned = cleanContent(source, content, onAnomaly);
-  return source.tag !== undefined ? applyTagToContent(cleaned, source.tag) : cleaned;
+  return cleanContent(source, content, onAnomaly);
 }
 
 function cleanContent(

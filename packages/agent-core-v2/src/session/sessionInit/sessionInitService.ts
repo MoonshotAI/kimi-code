@@ -10,7 +10,7 @@
  * subagent finishes, reloads `AGENTS.md` through the `profile` context helper
  * (over the os `hostFs` + host home dir, with the `bootstrap` brand dir) and
  * appends an `init`-variant system reminder to the main agent via
- * `contextMemory`, then flushes the main agent's wire journal. Bound at
+ * `systemReminder`, then flushes the main agent's wire journal. Bound at
  * Session scope.
  *
  * Port of v1 `Session.generateAgentsMd()`. The main-agent lookup is a hard
@@ -30,7 +30,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { loadAgentsMd } from '#/agent/profile/context';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -112,8 +112,8 @@ export class SessionInitService implements ISessionInitService {
         this.bootstrap.homeDir,
       );
       main.accessor
-        .get(IAgentContextMemoryService)
-        .appendTagged(initCompletionReminder(agentsMd), 'system-reminder', {
+        .get(IAgentSystemReminderService)
+        .appendSystemReminder(initCompletionReminder(agentsMd), {
           kind: 'injection',
           variant: 'init',
         });

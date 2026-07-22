@@ -117,13 +117,16 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
     role: 'user',
     content: [{ type: 'text', text: buildCompactionElisionText(omittedTokens) }],
     toolCalls: [],
-    tag: 'system-reminder',
     origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
   };
 }
 
 export function buildCompactionElisionText(omittedTokens: number): string {
-  return `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`;
+  return [
+    '<system-reminder>',
+    `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
+    '</system-reminder>',
+  ].join('\n');
 }
 
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {

@@ -19,6 +19,7 @@ import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/t
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
 import { steerTurn } from '#/agent/loop/turnOps';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -67,6 +68,7 @@ export class AgentPromptService implements IAgentPromptService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
@@ -123,7 +125,7 @@ export class AgentPromptService implements IAgentPromptService {
       role: 'user', content: selected.flatMap((item) => item.message.content), toolCalls: [], origin: USER_PROMPT_ORIGIN,
     };
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
-    const request = new SteerStepRequest(rerouted, captions, this.context, (materialized) => {
+    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       this.wire.dispatch(steerTurn({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }));
     }, () => {});
     const turn = (await this.loop.enqueue(request).assigned).turn;
@@ -147,7 +149,7 @@ export class AgentPromptService implements IAgentPromptService {
 
   async inject(message: ContextMessage): Promise<Turn | undefined> {
     const { message: rerouted, captions } = this.extractCompressionCaptions(message);
-    const request = new SteerStepRequest(rerouted, captions, this.context, (materialized) => {
+    const request = new SteerStepRequest(rerouted, captions, this.reminders, (materialized) => {
       this.wire.dispatch(steerTurn({ input: materialized.content, origin: materialized.origin ?? USER_PROMPT_ORIGIN }));
     }, () => {}, 'activeOrNewTurn');
     return (await this.loop.enqueue(request).assigned).turn;
@@ -180,7 +182,7 @@ export class AgentPromptService implements IAgentPromptService {
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;
       }
-      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.context)).assigned).turn;
+      const turn = (await this.loop.enqueue(new PromptStepRequest(message, captions, this.reminders)).assigned).turn;
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));
@@ -227,7 +229,7 @@ export class AgentPromptService implements IAgentPromptService {
     return { message: captions.length === 0 ? message : { ...message, content: parts }, captions };
   }
   private appendPrompt(message: ContextMessage, captions: readonly string[]): void {
-    for (const caption of captions) this.context.appendTagged(caption, 'system-reminder', { kind: 'injection', variant: 'image_compression' });
+    for (const caption of captions) this.reminders.appendSystemReminder(caption, { kind: 'injection', variant: 'image_compression' });
     if (message.content.length > 0) this.context.append(message);
   }
   private async deliverToolResult(ctx: ToolDidExecuteContext): Promise<void> {

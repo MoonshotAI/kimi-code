@@ -18,7 +18,7 @@
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
-import type { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 
 abstract class UserMessageStepRequest extends StepRequest {
   protected readonly message: ContextMessage;
@@ -26,7 +26,7 @@ abstract class UserMessageStepRequest extends StepRequest {
   constructor(
     message: ContextMessage,
     private readonly captions: readonly string[],
-    private readonly context: IAgentContextMemoryService,
+    private readonly reminders: IAgentSystemReminderService,
     options?: StepRequestOptions,
   ) {
     super(options);
@@ -39,7 +39,7 @@ abstract class UserMessageStepRequest extends StepRequest {
 
   override onWillMaterialize(): void {
     for (const caption of this.captions) {
-      this.context.appendTagged(caption, 'system-reminder', {
+      this.reminders.appendSystemReminder(caption, {
         kind: 'injection',
         variant: 'image_compression',
       });
@@ -57,9 +57,9 @@ export class PromptStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    context: IAgentContextMemoryService,
+    reminders: IAgentSystemReminderService,
   ) {
-    super(message, captions, context, { admission: 'newTurn' });
+    super(message, captions, reminders, { admission: 'newTurn' });
   }
 
   override get turnSeed(): TurnSeed {
@@ -73,12 +73,12 @@ export class SteerStepRequest extends UserMessageStepRequest {
   constructor(
     message: ContextMessage,
     captions: readonly string[],
-    context: IAgentContextMemoryService,
+    reminders: IAgentSystemReminderService,
     private readonly recordSteer: (message: ContextMessage) => void,
     private readonly forgetSteer: (request: SteerStepRequest) => void,
     admission: 'activeTurnOnly' | 'activeOrNewTurn' = 'activeTurnOnly',
   ) {
-    super(message, captions, context, {
+    super(message, captions, reminders, {
       mergeable: true,
       turnScoped: false,
       admission,

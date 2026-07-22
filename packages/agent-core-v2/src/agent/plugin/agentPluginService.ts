@@ -2,8 +2,8 @@
  * `agentPlugin` domain (L4) — `IAgentPluginService` implementation.
  *
  * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
- * them through `contextInjector` and `contextMemory` (via `appendTagged`), and
- * uses `contextMemory` to neutralize stale guidance. Main-agent-only (v1 parity): the service
+ * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
+ * to neutralize stale guidance. Main-agent-only (v1 parity): the service
  * self-gates on `agentId === 'main'`, and the agent bootstrap force-instantiates
  * it (`igniteEagerServices`) so other agents construct it as a no-op. Resolves
  * session prompt context through `sessionContext` and reports missing skills
@@ -18,6 +18,7 @@ import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
@@ -39,6 +40,7 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
+    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
@@ -84,16 +86,14 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
   async appendFreshSessionStartReminder(): Promise<void> {
     const reminder = await this.renderSessionStartReminder();
     if (reminder !== undefined) {
-      this.context.appendTagged(
+      this.reminders.appendSystemReminder(
         `${reminder}\n\nThis supersedes any earlier plugin_session_start reminder in this session.`,
-        'system-reminder',
         { kind: 'injection', variant: SESSION_START_INJECTION_VARIANT },
       );
     } else if (shouldNeutralizePluginSessionStart(this.context.get())) {
-      this.context.appendTagged(
+      this.reminders.appendSystemReminder(
         'There are currently no active plugin session starts. ' +
           'This supersedes any earlier plugin_session_start reminder in this session.',
-        'system-reminder',
         { kind: 'injection', variant: SESSION_START_INJECTION_VARIANT },
       );
     }

@@ -52,7 +52,7 @@ import {
 } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -229,7 +229,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   constructor(
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
@@ -497,7 +497,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     }
     this.clearInternal(actor);
     if (actor === 'user') {
-      this.context.appendTagged(GOAL_CANCELLED_REMINDER, 'system-reminder', {
+      this.reminders.appendSystemReminder(GOAL_CANCELLED_REMINDER, {
         kind: 'system_trigger',
         name: 'goal_cancelled',
       });
@@ -675,7 +675,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       hasStepBudgetRemaining(maxSteps, ctx.step)
     ) {
       this.budgetGraceTurns.add(ctx.turnId);
-      this.context.appendTagged(GOAL_BUDGET_STOP_REMINDER, 'system-reminder', {
+      this.reminders.appendSystemReminder(GOAL_BUDGET_STOP_REMINDER, {
         kind: 'system_trigger',
         name: GOAL_BUDGET_STOP_REMINDER_NAME,
       });
@@ -890,7 +890,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private appendForkClearedReminder(): void {
     if (!this.wire.getModel(GoalForkNoticeModel).reminderPending) return;
-    this.context.appendTagged(GOAL_FORK_CLEARED_REMINDER, 'system-reminder', {
+    this.reminders.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
       kind: 'system_trigger',
       name: GOAL_FORK_CLEARED_REMINDER_NAME,
     });

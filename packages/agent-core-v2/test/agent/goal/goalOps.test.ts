@@ -23,6 +23,7 @@ import { AgentGoalService } from '#/agent/goal/goalService';
 import { GoalModel } from '#/agent/goal/goalOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -58,7 +59,6 @@ function createContextStub(): IAgentContextMemoryService {
     _serviceBrand: undefined,
     get: () => [],
     splice: () => undefined,
-    appendTagged: () => undefined as any,
   } as unknown as IAgentContextMemoryService;
 }
 
@@ -67,6 +67,13 @@ function createInjectorStub(): IAgentContextInjectorService {
     _serviceBrand: undefined,
     register: () => noopDisposable(),
   } as unknown as IAgentContextInjectorService;
+}
+
+function createRemindersStub(): IAgentSystemReminderService {
+  return {
+    _serviceBrand: undefined,
+    appendSystemReminder: () => undefined,
+  } as unknown as IAgentSystemReminderService;
 }
 
 function createTelemetryStub(): ITelemetryService {
@@ -115,6 +122,7 @@ function buildHost(key: string): {
   } as unknown as IAgentUsageService);
   ix.stub(IAgentContextMemoryService, createContextStub());
   ix.stub(IAgentContextInjectorService, createInjectorStub());
+  ix.stub(IAgentSystemReminderService, createRemindersStub());
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());
