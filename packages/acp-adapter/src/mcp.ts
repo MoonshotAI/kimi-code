@@ -102,17 +102,17 @@ function acpMcpServerToConfig(
 }
 
 function headersArrayToRecord(
-  headers: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+  headers: ReadonlyArray<{ readonly name: string; readonly value: string }> | undefined,
 ): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const h of headers) out[h.name] = h.value;
+  for (const h of headers ?? []) out[h.name] = h.value;
   return out;
 }
 
 function envArrayToRecord(
-  env: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+  env: ReadonlyArray<{ readonly name: string; readonly value: string }> | undefined,
 ): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const e of env) out[e.name] = e.value;
+  for (const e of env ?? []) out[e.name] = e.value;
   return out;
 }

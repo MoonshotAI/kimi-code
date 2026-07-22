@@ -169,6 +169,34 @@ describe('acpMcpServersToConfigs', () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
+  it('converts HTTP and SSE servers without headers', () => {
+    const out = acpMcpServersToConfigs([
+      {
+        type: 'http',
+        name: 'docs',
+        url: 'https://mcp.example.com',
+      } as unknown as McpServer,
+      {
+        type: 'sse',
+        name: 'events',
+        url: 'https://stream.example.com',
+      } as unknown as McpServer,
+    ]);
+    expect(out).toEqual({
+      docs: {
+        transport: 'http',
+        url: 'https://mcp.example.com',
+        headers: {},
+      },
+      events: {
+        transport: 'sse',
+        url: 'https://stream.example.com',
+        headers: {},
+      },
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it('converts a stdio server with args + env to a Record keyed by name', () => {
     const out = acpMcpServersToConfigs([
       stdioServer(
@@ -187,6 +215,25 @@ describe('acpMcpServersToConfigs', () => {
         command: '/usr/local/bin/mcp-fs',
         args: ['--root', '/tmp'],
         env: { NODE_ENV: 'production', DEBUG: '1' },
+      },
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('converts a stdio server without env', () => {
+    const out = acpMcpServersToConfigs([
+      {
+        name: 'fs',
+        command: '/usr/local/bin/mcp-fs',
+        args: ['--root', '/tmp'],
+      } as unknown as McpServer,
+    ]);
+    expect(out).toEqual({
+      fs: {
+        transport: 'stdio',
+        command: '/usr/local/bin/mcp-fs',
+        args: ['--root', '/tmp'],
+        env: {},
       },
     });
     expect(warnSpy).not.toHaveBeenCalled();
