@@ -63,6 +63,12 @@ import {
   SUBAGENT_TIMEOUT_ENV,
   type SubagentConfig,
 } from '#/session/subagent/configSection';
+import '#/agent/mcp/configSection';
+import {
+  MCP_SECTION,
+  MCP_STARTUP_TIMEOUT_ENV,
+  type McpSection,
+} from '#/agent/mcp/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -1234,6 +1240,69 @@ describe('subagent config section', () => {
     delete env[SUBAGENT_TIMEOUT_ENV];
     expect(config.get<SubagentConfig>(SUBAGENT_SECTION)).toEqual({
       timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+    });
+
+    disposables.dispose();
+  });
+});
+
+describe('mcp config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('is unset by default and honours the env override', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env);
+
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBeUndefined();
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = 'abc';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBeUndefined();
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = '60000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(60000);
+
+    disposables.dispose();
+  });
+
+  it('reads startup_timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(5000);
+
+    env[MCP_STARTUP_TIMEOUT_ENV] = '7000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned timeout to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [MCP_STARTUP_TIMEOUT_ENV]: '7000' };
+    const { config, disposables } = await createConfig(env, '[mcp]\nstartup_timeout_ms = 5000\n');
+
+    // A client echoing the env-overlaid section back.
+    await config.set(MCP_SECTION, { startupTimeoutMs: 7000 });
+
+    // Runtime resolution still lets the env win…
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
+    // …but persistence keeps the raw value.
+    expect(config.inspect<McpSection>(MCP_SECTION).userValue).toEqual({
+      startupTimeoutMs: 5000,
     });
 
     disposables.dispose();

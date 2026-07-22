@@ -57,6 +57,8 @@ Optional fields:
 | `enabledTools` | `string[]` | All | Tool allowlist |
 | `disabledTools` | `string[]` | All | Tool blocklist |
 
+You do not have to set the connection timeout per server: `[mcp] startup_timeout_ms` in `config.toml` or the `KIMI_MCP_STARTUP_TIMEOUT_MS` environment variable changes the global default. Precedence is: per-server field > environment variable > `config.toml` > built-in default of `30000` milliseconds. See [Configuration files](../configuration/config-files.md#mcp).
+
 HTTP and SSE servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
 
 Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`, then a new session must be started. See [Plugins](./plugins.md) for details.

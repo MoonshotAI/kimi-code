@@ -381,6 +381,41 @@ describe('McpConnectionManager', () => {
     }
   }, 7000);
 
+  it('applies defaultStartupTimeoutMs when the server entry omits startupTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 100 });
+    try {
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowStdioFixture],
+        },
+      });
+      const entry = cm.get('slow');
+      expect(entry?.status).toBe('failed');
+      expect(entry?.error?.toLowerCase()).toContain('timed out');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('lets a per-server startupTimeoutMs override defaultStartupTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 100 });
+    try {
+      await cm.connectAll({
+        slow: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowStdioFixture],
+          startupTimeoutMs: 10_000,
+        },
+      });
+      expect(cm.get('slow')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
   it('flips HTTP servers into needs-auth when the server returns 401 and no static token is set', async () => {
     const server: HttpServer = createHttpServer((_req, res) => {
       res.writeHead(401, {

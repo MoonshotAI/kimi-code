@@ -251,6 +251,7 @@ When `KIMI_MODEL_NAME` is set, the `provider` domain's `kimiModelEnvOverlay` (`s
 | `thinking` | `profile` | L4 | owner-owned |
 | `loopControl` | `loop` | L4 | owner-owned (read by `loop` + `profile`) |
 | `McpServerConfig` (type) | `mcp` | L5 | owner-owned (type only; not a registered section) |
+| `mcp` | `mcp` | L5 | owner-owned |
 | `session` | `config` | L2 | in config |
 | `models` / `defaultModel` / `defaultProvider` | `kosong` | L1 | owner-owned (read by `ProviderManager`) |
 | `hooks` | `externalHooks` | L4 | owner-owned |

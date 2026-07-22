@@ -63,6 +63,12 @@ export interface McpConnectionManagerOptions {
   readonly stdioCwd?: string;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
+  /**
+   * Global default startup (connect + tool discovery) timeout applied when a
+   * server entry does not set its own `startupTimeoutMs`. Falls back to the
+   * built-in default when unset.
+   */
+  readonly defaultStartupTimeoutMs?: number;
 }
 
 export class McpConnectionManager {
@@ -253,7 +259,10 @@ export class McpConnectionManager {
   }
 
   private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
-    const timeoutMs = entry.config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    const timeoutMs =
+      entry.config.startupTimeoutMs ??
+      this.options.defaultStartupTimeoutMs ??
+      DEFAULT_STARTUP_TIMEOUT_MS;
 
     let client: RuntimeMcpClient | undefined;
     try {
