@@ -37,6 +37,9 @@ function createPlanFakes(overrides: Partial<IHostFileSystem> = {}): PlanFakes {
   const fs = createFakeHostFs({
     mkdir: vi.fn().mockResolvedValue(undefined),
     readText: vi.fn().mockResolvedValue(''),
+    // Skill-root probes canonicalize through host fs; the fake fs has no
+    // symlinks, so identity realpath is the faithful default.
+    realpath: vi.fn(async (p: string) => p),
     ...overrides,
   });
   const runner = createFakeProcessRunner();
