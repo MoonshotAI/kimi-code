@@ -1319,6 +1319,23 @@ describe('SessionEventBroadcaster', () => {
     expect(envelopes).toHaveLength(2);
   });
 
+  it('sends a global event once to a target subscribed to multiple sessions', async () => {
+    const first = new FakeLifecycle();
+    const main = first.addAgent('main');
+    sessions.set('s1', first);
+    sessions.set('s2', new FakeLifecycle());
+
+    const view = collectingTarget();
+    await bc.subscribe('s1', view.target);
+    await bc.subscribe('s2', view.target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    expect(view.envelopes.filter((e) => e.type === 'event.session.work_changed')).toHaveLength(1);
+    expect(view.envelopes.filter((e) => e.type === 'turn.started')).toHaveLength(1);
+  });
+
   it('mounts producers for sessions already live when the broadcaster attaches', async () => {
     // The constructor sweeps `ISessionLifecycleService.list()`: a session
     // materialized before the broadcaster attached still gets its producer,

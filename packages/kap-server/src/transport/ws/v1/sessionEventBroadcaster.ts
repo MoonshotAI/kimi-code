@@ -1379,10 +1379,16 @@ export class SessionEventBroadcaster {
    * `client_hello`) plus every session's subscribers, each yielded once.
    */
   private *allTargets(): Iterable<BroadcastTarget> {
-    yield* this.globalTargets;
+    const seen = new Set<BroadcastTarget>();
+    for (const target of this.globalTargets) {
+      seen.add(target);
+      yield target;
+    }
     for (const state of this.sessions.values()) {
       for (const target of state.targets.keys()) {
-        if (!this.globalTargets.has(target)) yield target;
+        if (seen.has(target)) continue;
+        seen.add(target);
+        yield target;
       }
     }
   }

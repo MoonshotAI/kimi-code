@@ -1,5 +1,11 @@
 # @moonshot-ai/pi-tui
 
+## 0.80.8
+
+### Patch Changes
+
+- [#1976](https://github.com/MoonshotAI/kimi-code/pull/1976) [`e458323`](https://github.com/MoonshotAI/kimi-code/commit/e45832398d0d9cad98dbad1cbf1e5b103a20aace) Thanks [@liruifengv](https://github.com/liruifengv)! - Speed up the terminal renderer in long sessions by reusing processed lines across frames.
+
 ## 0.80.7
 
 ### Patch Changes
