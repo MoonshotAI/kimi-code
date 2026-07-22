@@ -15,7 +15,7 @@
  * still lost there.
  *
  * Once per process, the first operation triggers the startup sync with the
- * legacy `<homeDir>/session_index.jsonl`:
+ * legacy v1 session index through `ILegacySessionIndexStore`:
  *
  * 1. No usable catalog file → one-shot rebuild (one workspace per distinct
  *    absolute `workDir`), persisted.
@@ -63,17 +63,12 @@ import { basename, isAbsolute } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
+import { ILegacySessionIndexStore } from '#/app/sessionIndex/legacySessionIndexStore';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { IWorkspaceService, type Workspace, type WorkspaceUpdate } from './workspace';
-import {
-  collectAliasIds,
-  dedupeByRoot,
-  readSessionIndexEntries,
-  readSessionIndexWorkDirs,
-} from './workspaceAlias';
+import { collectAliasIds, dedupeByRoot } from './workspaceAlias';
 import { IWorkspacePersistence, type WorkspaceCatalog } from './workspacePersistence';
 
 export class WorkspaceService implements IWorkspaceService {
@@ -85,7 +80,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   constructor(
     @IWorkspacePersistence private readonly store: IWorkspacePersistence,
-    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @ILegacySessionIndexStore private readonly legacySessionIndex: ILegacySessionIndexStore,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
   ) {}
 
@@ -194,14 +189,11 @@ export class WorkspaceService implements IWorkspaceService {
       // aliases must die with it — a sibling spelling left registered (or
       // resurrectable from the session index) would resurface as this
       // directory's representative on the next list().
+      const sessionIndexEntries = await this.legacySessionIndex.readEntries();
       let root = catalog.workspaces.find((ws) => ws.id === id)?.root;
-      if (root === undefined) {
-        // Derived/unknown id: recover its spelling from the session index so
-        // the whole alias set can still be tombstoned.
-        root = (await readSessionIndexEntries(this.storage)).find(
-          (line) => encodeWorkDirKey(line.workDir) === id,
-        )?.workDir;
-      }
+      root ??= sessionIndexEntries.find(
+        (line) => encodeWorkDirKey(line.workDir) === id,
+      )?.workDir;
       if (root === undefined) {
         await this.store.save({
           workspaces: catalog.workspaces.filter((ws) => ws.id !== id),
@@ -210,11 +202,7 @@ export class WorkspaceService implements IWorkspaceService {
         return;
       }
       const rootKey = workspaceRootKey(root);
-      const aliasIds = collectAliasIds(
-        catalog.workspaces,
-        await readSessionIndexEntries(this.storage),
-        root,
-      );
+      const aliasIds = collectAliasIds(catalog.workspaces, sessionIndexEntries, root);
       await this.store.save({
         workspaces: catalog.workspaces.filter((ws) => workspaceRootKey(ws.root) !== rootKey),
         deletedIds: [...new Set([...catalog.deletedIds, ...aliasIds])],
@@ -257,7 +245,8 @@ export class WorkspaceService implements IWorkspaceService {
   ): Promise<boolean> {
     let changed = false;
     const now = Date.now();
-    for (const workDir of await readSessionIndexWorkDirs(this.storage)) {
+    for (const { workDir } of await this.legacySessionIndex.readEntries()) {
+      if (!isAbsolute(workDir)) continue;
       const id = encodeWorkDirKey(workDir);
       if (byId.has(id) || deletedIds.has(id)) continue;
       byId.set(id, {
@@ -279,7 +268,7 @@ export class WorkspaceService implements IWorkspaceService {
     // directory (Windows) collapse here too. First seen wins — the id stays
     // `encodeWorkDirKey` of that first-seen workDir string.
     const seenRootKeys = new Set<string>();
-    for (const entry of await readSessionIndexEntries(this.storage)) {
+    for (const entry of await this.legacySessionIndex.readEntries()) {
       if (!isAbsolute(entry.workDir)) continue;
       const rootKey = workspaceRootKey(entry.workDir);
       if (seenRootKeys.has(rootKey)) continue;

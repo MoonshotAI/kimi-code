@@ -73,52 +73,112 @@ export async function readSessionIndex(
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
-    const record = parseIndexLine(trimmed);
-    if (record === undefined) continue;
-    if ('deleted' in record) {
-      result.delete(record.sessionId);
-      continue;
+    for (const record of parseIndexRecords(trimmed)) {
+      if ('deleted' in record) {
+        result.delete(record.sessionId);
+        continue;
+      }
+      const entry = record;
+      const sessionDir = normalizeWorkDir(entry.sessionDir);
+      if (!isAbsolute(entry.sessionDir)) continue;
+      if (!isPathInside(sessionsDir, sessionDir)) continue;
+      if (basename(sessionDir) !== entry.sessionId) continue;
+      // `workDir` is no longer authoritative: summaries prefer the workDir stored
+      // in each session's self-describing state.json, so a stale or relocated
+      // index workDir must not drop an otherwise valid entry.
+      result.set(entry.sessionId, {
+        sessionId: entry.sessionId,
+        sessionDir,
+        workDir: entry.workDir,
+      });
     }
-    const entry = record;
-    const sessionDir = normalizeWorkDir(entry.sessionDir);
-    if (!isAbsolute(entry.sessionDir)) continue;
-    if (!isPathInside(sessionsDir, sessionDir)) continue;
-    if (basename(sessionDir) !== entry.sessionId) continue;
-    // `workDir` is no longer authoritative: summaries prefer the workDir stored
-    // in each session's self-describing state.json, so a stale or relocated
-    // index workDir must not drop an otherwise valid entry.
-    result.set(entry.sessionId, {
-      sessionId: entry.sessionId,
-      sessionDir,
-      workDir: entry.workDir,
-    });
   }
   return result;
 }
 
+function parseIndexRecords(line: string): SessionIndexRecord[] {
+  const record = parseIndexLine(line);
+  if (record !== undefined) return [record];
+
+  const records: SessionIndexRecord[] = [];
+  for (const candidate of scanJsonContainers(line)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate) as unknown;
+    } catch {
+      break;
+    }
+    const candidateRecord = indexRecordFromJson(parsed);
+    if (candidateRecord !== undefined) records.push(candidateRecord);
+  }
+  return records;
+}
+
+function* scanJsonContainers(line: string): Iterable<string> {
+  let offset = 0;
+  while (offset < line.length) {
+    while (offset < line.length && /[\t\n\r ]/.test(line[offset]!)) offset++;
+    if (offset >= line.length) return;
+    const opener = line[offset]!;
+    if (opener !== '{' && opener !== '[') return;
+
+    const start = offset;
+    const closers = [opener === '{' ? '}' : ']'];
+    let inString = false;
+    let escaped = false;
+    let completed = false;
+    for (let cursor = offset + 1; cursor < line.length; cursor++) {
+      const char = line[cursor]!;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{') closers.push('}');
+      else if (char === '[') closers.push(']');
+      else if (char === '}' || char === ']') {
+        if (closers.at(-1) !== char) return;
+        closers.pop();
+      }
+      if (closers.length === 0) {
+        yield line.slice(start, cursor + 1);
+        offset = cursor + 1;
+        completed = true;
+        break;
+      }
+    }
+    if (!completed) return;
+  }
+}
+
 function parseIndexLine(line: string): SessionIndexRecord | undefined {
   try {
-    const parsed = JSON.parse(line) as unknown;
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const entry = parsed as Partial<SessionIndexEntry & SessionIndexDeletion>;
-    if (typeof entry.sessionId !== 'string') return undefined;
-    if (entry.deleted === true) {
-      return { sessionId: entry.sessionId, deleted: true };
-    }
-    if (
-      typeof entry.sessionDir !== 'string' ||
-      typeof entry.workDir !== 'string'
-    ) {
-      return undefined;
-    }
-    return {
-      sessionId: entry.sessionId,
-      sessionDir: entry.sessionDir,
-      workDir: entry.workDir,
-    };
+    return indexRecordFromJson(JSON.parse(line) as unknown);
   } catch {
     return undefined;
   }
+}
+
+function indexRecordFromJson(parsed: unknown): SessionIndexRecord | undefined {
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const entry = parsed as Partial<SessionIndexEntry & SessionIndexDeletion>;
+  if (typeof entry.sessionId !== 'string') return undefined;
+  if (entry.deleted === true) {
+    return { sessionId: entry.sessionId, deleted: true };
+  }
+  if (typeof entry.sessionDir !== 'string' || typeof entry.workDir !== 'string') {
+    return undefined;
+  }
+  return {
+    sessionId: entry.sessionId,
+    sessionDir: entry.sessionDir,
+    workDir: entry.workDir,
+  };
 }
 
 function isPathInside(parent: string, child: string): boolean {

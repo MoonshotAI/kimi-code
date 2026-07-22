@@ -1,3 +1,9 @@
+/**
+ * Scenario: workspace aliases remain addressable across legacy index spellings.
+ * Responsibilities: resolve registered and index-only aliases through the App-scoped service.
+ * Wiring: file-backed workspace persistence plus a stub legacy-index Store.
+ * Run: pnpm vitest run packages/agent-core-v2/test/app/workspaceAliases/workspaceAliasesService.test.ts
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { promises as fsp } from 'node:fs';
@@ -12,6 +18,7 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
+import { ILegacySessionIndexStore } from '#/app/sessionIndex/legacySessionIndexStore';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -36,6 +43,7 @@ interface SessionIndexLine {
 
 describe('WorkspaceAliasesService (file-backed)', () => {
   let homeDir: string;
+  let sessionIndexEntries: readonly SessionIndexLine[];
   let currentHost: ReturnType<typeof createScopedTestHost> | undefined;
 
   beforeEach(async () => {
@@ -62,6 +70,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       'workspaceAliases',
     );
     homeDir = await fsp.mkdtemp(join(os.tmpdir(), 'ws-aliases-'));
+    sessionIndexEntries = [];
   });
 
   afterEach(async () => {
@@ -76,14 +85,13 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(ILegacySessionIndexStore, {
+        _serviceBrand: undefined,
+        readEntries: () => Promise.resolve(sessionIndexEntries),
+      }),
     ]);
     currentHost = host;
     return host.app.accessor.get(IWorkspaceAliases);
-  }
-
-  async function seedSessionIndex(entries: SessionIndexLine[]): Promise<void> {
-    const text = `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`;
-    await fsp.writeFile(join(homeDir, 'session_index.jsonl'), text, 'utf8');
   }
 
   async function writeWorkspacesJson(
@@ -125,9 +133,8 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   });
 
   it('resolveAliasIds folds in session-index-only spellings of the same root', async () => {
-    // The sibling bucket's spelling was never registered: only the legacy
-    // session index remembers it. Malformed index lines are skipped, never
-    // thrown.
+    // Trigger the one-shot workspace merge before the sibling spelling appears.
+    // The later lookup must therefore read it from the live legacy-index Store.
     const typedRoot = 'C:\\Users\\Foo\\Proj';
     const typedId = encodeWorkDirKey(typedRoot);
     const indexOnlyId = encodeWorkDirKey('c:\\Users\\Foo\\Proj');
@@ -139,14 +146,14 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
     });
-    await seedSessionIndex([
+    const aliases = build();
+    await expect(aliases.resolveAliasIds(typedId)).resolves.toEqual([typedId]);
+
+    sessionIndexEntries = [
       { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
       { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: 'c:\\Users\\Foo\\Proj' },
       { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
-    ]);
-    await fsp.appendFile(join(homeDir, 'session_index.jsonl'), 'not-json\n{}\n', 'utf8');
-
-    const aliases = build();
+    ];
     expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
       [typedId, indexOnlyId].toSorted(),
     );
