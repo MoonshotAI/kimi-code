@@ -8,8 +8,6 @@ import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -89,7 +87,6 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   log = ix.get(IAppendLogStore);
   eventBus = ix.get(IEventBus);
@@ -135,7 +132,6 @@ describe('WireService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     const log2 = ix2.get(IAppendLogStore);
     const replayEventBus = ix2.get(IEventBus);

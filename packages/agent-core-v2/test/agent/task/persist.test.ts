@@ -22,10 +22,8 @@ import {
 } from '#/agent/task/task';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import type { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 
 const SESSION_SCOPE = 'session';
 const AGENT_SCOPE = `${SESSION_SCOPE}/agents/main`;
@@ -34,7 +32,6 @@ let disposables: DisposableStore;
 let sessionDir: string;
 let docs: IAtomicDocumentStore;
 let bytes: IFileSystemStorageService;
-let authorityRegistry: IWriteAuthorityRegistry;
 let persistence: AgentTaskPersistence;
 
 function sample(overrides: Partial<Extract<AgentTaskInfo, { kind: 'process' }>> = {}): Extract<AgentTaskInfo, { kind: 'process' }> {
@@ -67,14 +64,12 @@ beforeEach(async () => {
   ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
   docs = ix.get(IAtomicDocumentStore);
   bytes = ix.get(IFileSystemStorageService);
-  authorityRegistry = new WriteAuthorityRegistryService();
   persistence = new AgentTaskPersistence(
     sessionDir,
     SESSION_SCOPE,
     docs,
     bytes,
     undefined,
-    authorityRegistry,
   );
 });
 
@@ -94,7 +89,6 @@ describe('AgentTaskPersistence', () => {
       docs,
       bytes,
       fallbackRoot,
-      authorityRegistry,
     );
   }
 

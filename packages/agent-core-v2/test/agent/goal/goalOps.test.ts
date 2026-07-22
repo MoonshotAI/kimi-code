@@ -28,8 +28,6 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -117,7 +115,6 @@ function buildHost(key: string): {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.stub(IAgentLoopService, createLoopStub());
   ix.stub(IAgentUsageService, {

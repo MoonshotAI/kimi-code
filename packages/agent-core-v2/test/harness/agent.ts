@@ -165,12 +165,10 @@ import { ISessionQuestionService, type QuestionResult } from '#/session/question
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionSwarmService } from '#/session/swarm/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
-import { stubWriteAuthorityRegistry } from '../agent/task/stubs';
 import { fakeHostFsWatch } from '../session/sessionFs/stubs';
 import { stubSessionLeaseService } from '../session/sessionLease/stubs';
 import { createScriptedGenerate } from './scripted-generate';
@@ -997,7 +995,6 @@ export class AgentTestContext {
           })) {
             reg.defineInstance(id, value);
           }
-          reg.defineInstance(IWriteAuthorityRegistry, stubWriteAuthorityRegistry(sessionId));
           reg.defineInstance(IHostFsWatchService, fakeHostFsWatch().service);
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
             new SyncDescriptor(InMemoryStorageService, [], true);

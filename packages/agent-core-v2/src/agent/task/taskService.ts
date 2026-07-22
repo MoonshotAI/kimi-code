@@ -63,7 +63,6 @@ import { IConfigService } from '#/app/config/config';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { defineModel } from '#/wire/model';
 import { IWireService } from '#/wire/wire';
@@ -232,7 +231,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IConfigService private readonly config: IConfigService,
     @IAtomicDocumentStore atomicDocs: IAtomicDocumentStore,
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
-    @IWriteAuthorityRegistry authorityRegistry: IWriteAuthorityRegistry,
     @ISessionContext session: ISessionContext,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
@@ -252,7 +250,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
       fallbackRoot,
-      authorityRegistry,
     );
     this._register(
       this.wire.hooks.onDidRestore.register('task', async (_ctx, next) => {

@@ -34,15 +34,12 @@
  * cron) are force-instantiated at the same point.
  *
  * Every materialization (create/resume/fork-target) first takes the session's
- * cross-process write lease under `session-leases/` and registers its
- * `ISessionWriteAuthority` with the `writeAuthorityRegistry`, so the
- * journal/state fencing gates have exactly one authority per live session.
- * A preparing scope is private until metadata, MCP, caller-specific setup and
- * lifecycle hooks finish. Close/archive move the entry through a draining
- * phase, dispose producers, durably flush only that session's append-log tail,
- * and release authority only after the barrier succeeds. A failed barrier
- * keeps the lease registered for a safe retry; lease loss takes the explicit
- * dirty-abort path without claiming a clean handoff.
+ * cross-process write lease under `session-leases/` and registers that lease
+ * as the session's write gate. Close/archive stop producers, flush the
+ * session's append-log tail, seal new write admission, await already-admitted
+ * I/O, and then release the lease. Any release failure converges internally to
+ * a dirty-marked abandoned release; callers never need a second teardown
+ * operation. Lease loss follows the same fail-closed release path.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -84,7 +81,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
+import { IWriteGateRegistry } from '#/persistence/interface/writeGate';
 import {
   type CrossProcessLockInspection,
   ICrossProcessLockService,
@@ -138,20 +135,29 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly workspaceId?: string;
 };
 
-type SessionEntryPhase = 'preparing' | 'active' | 'draining' | 'flush-failed';
-type SessionCloseKind = 'close' | 'archive';
+type SessionEntryState = 'opening' | 'active' | 'closing';
+type SessionReleaseKind = 'close' | 'archive';
+type SessionReleaseStage =
+  | 'set-archived'
+  | 'drain-agents'
+  | 'publish-archive'
+  | 'will-close'
+  | 'dispose-scope'
+  | 'will-release'
+  | 'flush'
+  | 'seal'
+  | 'drain-writes'
+  | 'lease-lost'
+  | 'shutdown';
 
 interface SessionEntry {
-  phase: SessionEntryPhase;
+  state: SessionEntryState;
   readonly handle: ISessionScopeHandle;
   readonly lease: SessionLease;
   readonly registration: IDisposable;
   readonly scope: string;
   disposed: boolean;
-  closeKind?: SessionCloseKind;
-  closeStep: number;
-  closePromise?: Promise<void>;
-  dirtyAbortPromise?: Promise<void>;
+  releasePromise?: Promise<void>;
 }
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
@@ -191,7 +197,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
     @ICrossProcessLockService private readonly locks: ICrossProcessLockService,
-    @IWriteAuthorityRegistry private readonly authorityRegistry: IWriteAuthorityRegistry,
+    @IWriteGateRegistry private readonly writeGates: IWriteGateRegistry,
     @ISessionLeaseContactProvider
     private readonly leaseContact: ISessionLeaseContactProvider,
   ) {
@@ -270,7 +276,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const lease = await this.acquireSessionLease(opts.sessionId);
     let registration: IDisposable;
     try {
-      registration = this.authorityRegistry.register(lease);
+      registration = this.writeGates.register(sessionScope, lease);
     } catch (error) {
       lease.release();
       throw error;
@@ -289,13 +295,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
       }
       entry = {
-        phase: 'preparing',
+        state: 'opening',
         handle,
         lease,
         registration,
         scope: sessionScope,
         disposed: false,
-        closeStep: 0,
       };
       this.entries.set(opts.sessionId, entry);
       handle.accessor.get(ISessionExternalHooksService);
@@ -347,7 +352,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   get(sessionId: string): ISessionScopeHandle | undefined {
     const entry = this.entries.get(sessionId);
-    return entry?.phase === 'active' ? entry.handle : undefined;
+    return entry?.state === 'active' ? entry.handle : undefined;
   }
 
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
@@ -403,73 +408,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   list(): readonly ISessionScopeHandle[] {
     const ready: ISessionScopeHandle[] = [];
     for (const entry of this.entries.values()) {
-      if (entry.phase === 'active') ready.push(entry.handle);
+      if (entry.state === 'active') ready.push(entry.handle);
     }
     return ready;
   }
 
   async close(sessionId: string): Promise<void> {
-    await this.closeSession(sessionId, 'close');
+    await this.releaseSession(sessionId, 'close');
   }
 
   async closeAll(): Promise<void> {
     await this.beginClose();
-    const failures: unknown[] = [];
-    for (const [sessionId, entry] of this.entries) {
-      try {
-        if (entry.phase === 'flush-failed') {
-          await this.forceAbort(sessionId);
-          continue;
-        }
-        try {
-          await this.close(sessionId);
-        } catch (error) {
-          if (this.entries.get(sessionId)?.phase !== 'flush-failed') throw error;
-          await this.forceAbort(sessionId);
-        }
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw new AggregateError(failures, 'failed to close all sessions');
-  }
-
-  async forceAbort(sessionId: string): Promise<void> {
-    const entry = this.entries.get(sessionId);
-    if (entry === undefined) return;
-    if (entry.phase !== 'flush-failed') {
-      throw new Error2(
-        ErrorCodes.SESSION_DURABILITY_FAILED,
-        `session ${sessionId} can only be force-aborted after a durability barrier failure`,
-        { details: { sessionId, phase: entry.phase } },
-      );
-    }
-
-    entry.lease.assertWritable();
-    await this.docs.update<SessionMeta>(entry.scope, 'state.json', (current) => {
-      if (current === undefined) {
-        throw new Error2(
-          ErrorCodes.SESSION_DURABILITY_FAILED,
-          `session ${sessionId} metadata is missing during force-abort`,
-          { details: { sessionId } },
-        );
-      }
-      return {
-        ...current,
-        custom: {
-          ...current.custom,
-          dirtyAbort: { reason: 'flush-failed', at: Date.now() },
-        },
-      };
-    });
-    this.telemetry.track2('session_dirty_abort', { session_id: sessionId, reason: 'flush-failed' });
-    this.log.warn('force-aborting session after an ambiguous durability failure', { sessionId });
-    await this.dirtyAbortSession(entry);
+    await Promise.allSettled([...this.entries].map(([sessionId]) => this.close(sessionId)));
   }
 
   async archive(sessionId: string): Promise<void> {
-    await this.closeSession(sessionId, 'archive');
+    await this.releaseSession(sessionId, 'archive');
   }
 
   async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
@@ -483,15 +437,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.hooks.onWillCloseSession.run(event);
   }
 
-  private async announceWillRelease(
-    event: SessionWillReleaseEvent,
-    entry: SessionEntry,
-  ): Promise<void> {
+  private async announceWillRelease(event: SessionWillReleaseEvent): Promise<void> {
     try {
       await this.hooks.onWillReleaseSession.run(event);
     } catch (error) {
-      entry.phase = 'flush-failed';
-      throw error;
+      this.log.warn('session release hook failed', {
+        sessionId: event.sessionId,
+        reason: event.reason,
+        error: String(error),
+      });
     }
   }
 
@@ -502,53 +456,72 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  private async closeSession(sessionId: string, kind: SessionCloseKind): Promise<void> {
+  private releaseSession(
+    sessionId: string,
+    kind: SessionReleaseKind,
+  ): Promise<void> {
     const entry = this.entries.get(sessionId);
-    if (entry === undefined) return;
-    if (entry.phase === 'preparing') {
+    if (entry === undefined) return Promise.resolve();
+    if (entry.state === 'opening') {
       this.rollbackSession(entry);
-      return;
+      return Promise.resolve();
     }
-    if (entry.phase === 'active') {
-      entry.phase = 'draining';
-      entry.closeKind = kind;
-      entry.closeStep = 0;
-    }
-    if (entry.closePromise !== undefined) {
-      await entry.closePromise;
-      return;
-    }
-    const closePromise = this.runSessionClose(sessionId, entry);
-    entry.closePromise = closePromise;
-    try {
-      await closePromise;
-    } finally {
-      if (this.entries.get(sessionId) === entry && entry.closePromise === closePromise) {
-        entry.closePromise = undefined;
-      }
-    }
+    if (entry.releasePromise !== undefined) return entry.releasePromise;
+    entry.state = 'closing';
+    const releasePromise = this.runSessionRelease(sessionId, entry, kind);
+    entry.releasePromise = releasePromise;
+    return releasePromise;
   }
 
-  private async runSessionClose(sessionId: string, entry: SessionEntry): Promise<void> {
-    const kind = entry.closeKind ?? 'close';
-    const stepCount = kind === 'close' ? 4 : 6;
-    while (entry.closeStep < stepCount) {
-      if (kind === 'close') {
-        await this.runCloseStep(sessionId, entry);
-      } else {
-        await this.runArchiveStep(sessionId, entry);
-      }
-      entry.closeStep++;
-    }
+  private async runSessionRelease(
+    sessionId: string,
+    entry: SessionEntry,
+    kind: SessionReleaseKind,
+  ): Promise<void> {
+    let stage: SessionReleaseStage = kind === 'archive' ? 'set-archived' : 'will-close';
     try {
+      if (kind === 'archive') {
+        await entry.handle.accessor.get(ISessionMetadata).setArchived(true);
+        stage = 'drain-agents';
+        await this.drainAgents(entry.handle);
+        stage = 'publish-archive';
+        this.event.publish({
+          type: 'event.session.archived',
+          payload: { sessionId },
+        });
+      } else {
+        await this.announceWillClose({ sessionId, handle: entry.handle, reason: 'exit' });
+        stage = 'drain-agents';
+        await this.drainAgents(entry.handle);
+      }
+
+      stage = 'will-close';
+      if (kind === 'archive') {
+        await this.announceWillClose({ sessionId, handle: entry.handle, reason: 'exit' });
+      }
+      stage = 'dispose-scope';
+      this.disposeSessionHandle(entry);
+      stage = 'will-release';
+      await this.announceWillRelease({ sessionId, reason: kind });
+      stage = 'flush';
       await this.flushSessionTail(sessionId, entry.scope);
+      stage = 'seal';
+      entry.lease.seal();
+      stage = 'drain-writes';
+      await entry.lease.drained();
     } catch (error) {
-      entry.phase = 'flush-failed';
-      throw error;
+      await this.abandonSession(entry, stage, error);
+      throw new Error2(
+        ErrorCodes.SESSION_DURABILITY_FAILED,
+        `session ${sessionId} was abandoned while releasing at ${stage}`,
+        {
+          details: { sessionId, stage },
+          cause: error,
+        },
+      );
     }
-    entry.registration.dispose();
-    entry.lease.release();
-    if (this.entries.get(sessionId) === entry) this.entries.delete(sessionId);
+
+    this.finishSessionRelease(entry);
     if (kind === 'archive') {
       this._onDidArchiveSession.fire({ sessionId });
     } else {
@@ -556,51 +529,102 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
   }
 
-  private async runCloseStep(sessionId: string, entry: SessionEntry): Promise<void> {
-    switch (entry.closeStep) {
-      case 0:
-        await this.announceWillClose({ sessionId, handle: entry.handle, reason: 'exit' });
-        return;
-      case 1:
-        await this.drainAgents(entry.handle);
-        return;
-      case 2:
-        this.disposeSessionHandle(entry);
-        return;
-      case 3:
-        await this.announceWillRelease({ sessionId, reason: 'close' }, entry);
-        return;
+  private async abandonSession(
+    entry: SessionEntry,
+    stage: SessionReleaseStage,
+    cause: unknown,
+  ): Promise<void> {
+    const sessionId = entry.handle.id;
+    const reason = stage === 'flush' ? 'flush-failed' : 'release-failed';
+    this.log.warn('abandoning session after release failed', {
+      sessionId,
+      stage,
+      error: String(cause),
+    });
+
+    const taskServices = this.collectTaskServices(entry);
+    try {
+      this.disposeSessionHandle(entry);
+    } catch {
+    }
+
+    await this.writeDirtyMarker(entry, reason, stage);
+    await this.announceWillRelease({ sessionId, reason: 'dirty-abort' });
+    await Promise.allSettled(taskServices.map((tasks) => tasks.flushPersistence()));
+    entry.lease.seal();
+    await entry.lease.drained();
+    this.finishSessionRelease(entry);
+    if (reason === 'flush-failed') {
+      this.telemetry.track2('session_dirty_abort', {
+        session_id: sessionId,
+        reason,
+      });
     }
   }
 
-  private async runArchiveStep(sessionId: string, entry: SessionEntry): Promise<void> {
-    switch (entry.closeStep) {
-      case 0:
-        await entry.handle.accessor.get(ISessionMetadata).setArchived(true);
-        return;
-      case 1:
-        await this.drainAgents(entry.handle);
-        return;
-      case 2:
-        this.event.publish({
-          type: 'event.session.archived',
-          payload: { sessionId },
-        });
-        return;
-      case 3:
-        await this.announceWillClose({ sessionId, handle: entry.handle, reason: 'exit' });
-        return;
-      case 4:
-        this.disposeSessionHandle(entry);
-        return;
-      case 5:
-        await this.announceWillRelease({ sessionId, reason: 'archive' }, entry);
-        return;
+  private async writeDirtyMarker(
+    entry: SessionEntry,
+    reason: 'flush-failed' | 'release-failed',
+    stage: SessionReleaseStage,
+  ): Promise<void> {
+    try {
+      await this.docs.update<SessionMeta>(entry.scope, 'state.json', (current) => {
+        if (current === undefined) {
+          throw new Error2(
+            ErrorCodes.SESSION_DURABILITY_FAILED,
+            `session ${entry.handle.id} metadata is missing while writing dirty marker`,
+            { details: { sessionId: entry.handle.id } },
+          );
+        }
+        return {
+          ...current,
+          custom: {
+            ...current.custom,
+            dirtyAbort: { reason, stage, at: Date.now() },
+          },
+        };
+      });
+    } catch (error) {
+      this.log.warn('failed to persist session dirty marker', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
     }
+  }
+
+  private collectTaskServices(entry: SessionEntry): IAgentTaskService[] {
+    try {
+      return entry.handle
+        .accessor.get(IAgentLifecycleService)
+        .list()
+        .map((agent) => agent.accessor.get(IAgentTaskService));
+    } catch {
+      return [];
+    }
+  }
+
+  private finishSessionRelease(entry: SessionEntry): void {
+    try {
+      entry.registration.dispose();
+    } catch (error) {
+      this.log.warn('failed to unregister session write gate', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
+    }
+    try {
+      entry.lease.release();
+    } catch (error) {
+      this.log.warn('failed to release session lease', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
+    }
+    if (this.entries.get(entry.handle.id) === entry) this.entries.delete(entry.handle.id);
   }
 
   private activateSession(entry: SessionEntry): void {
-    if (this.entries.get(entry.handle.id) !== entry || entry.phase !== 'preparing') {
+    if (this.entries.get(entry.handle.id) !== entry || entry.state !== 'opening') {
       throw new Error2(
         ErrorCodes.SESSION_LEASE_LOST,
         `session ${entry.handle.id} was torn down before activation`,
@@ -608,7 +632,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       );
     }
     entry.lease.assertWritable();
-    entry.phase = 'active';
+    entry.state = 'active';
   }
 
   private rollbackSession(entry: SessionEntry): void {
@@ -877,7 +901,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   override dispose(): void {
     this.closing = true;
-    for (const entry of this.entries.values()) void this.dirtyAbortSession(entry);
+    for (const entry of this.entries.values()) {
+      this.startAbandon(entry, 'shutdown', new Error('session lifecycle disposed'));
+    }
     super.dispose();
   }
 
@@ -901,7 +927,32 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private onLeaseLost(sessionId: string): void {
     this.log.error('session lease lost; tearing the session down', { sessionId });
     const entry = this.entries.get(sessionId);
-    if (entry !== undefined) void this.dirtyAbortSession(entry);
+    if (entry !== undefined) {
+      this.startAbandon(
+        entry,
+        'lease-lost',
+        new Error2(ErrorCodes.SESSION_LEASE_LOST, `session ${sessionId} lost its write lease`, {
+          details: { sessionId },
+        }),
+      );
+    }
+  }
+
+  private startAbandon(
+    entry: SessionEntry,
+    stage: SessionReleaseStage,
+    cause: unknown,
+  ): void {
+    if (entry.releasePromise !== undefined) return;
+    entry.state = 'closing';
+    const releasePromise = this.abandonSession(entry, stage, cause);
+    entry.releasePromise = releasePromise;
+    void releasePromise.catch((error) => {
+      this.log.error('unexpected failure while abandoning session', {
+        sessionId: entry.handle.id,
+        error: String(error),
+      });
+    });
   }
 
   private async acquireSessionLease(sessionId: string): Promise<SessionLease> {
@@ -958,46 +1009,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       });
       throw error;
     }
-  }
-
-  private dirtyAbortSession(entry: SessionEntry): Promise<void> {
-    if (entry.dirtyAbortPromise !== undefined) return entry.dirtyAbortPromise;
-    if (this.entries.get(entry.handle.id) === entry) this.entries.delete(entry.handle.id);
-
-    let taskServices: IAgentTaskService[] = [];
-    try {
-      taskServices = entry.handle
-        .accessor.get(IAgentLifecycleService)
-        .list()
-        .map((agent) => agent.accessor.get(IAgentTaskService));
-    } catch {
-    }
-    try {
-      this.disposeSessionHandle(entry);
-    } catch {
-    }
-    const dirtyAbortPromise = (async (): Promise<void> => {
-      try {
-        await this.hooks.onWillReleaseSession.run({
-          sessionId: entry.handle.id,
-          reason: 'dirty-abort',
-        });
-      } catch (error) {
-        this.log.warn('session release hook failed during dirty abort', {
-          sessionId: entry.handle.id,
-          error: String(error),
-        });
-      }
-      await Promise.allSettled(taskServices.map((tasks) => tasks.flushPersistence()));
-      try {
-        entry.registration.dispose();
-      } catch {
-      }
-      entry.lease.release();
-    })();
-    entry.dirtyAbortPromise = dirtyAbortPromise;
-    void dirtyAbortPromise.catch(() => {});
-    return dirtyAbortPromise;
   }
 
   private async readMetaFromDisk(

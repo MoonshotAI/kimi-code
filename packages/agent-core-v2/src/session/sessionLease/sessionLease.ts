@@ -1,22 +1,21 @@
 /**
  * `sessionLease` domain (L1) — the per-session write lease.
  *
- * Defines `ISessionLeaseService`, the Session-scope seeded capability that
- * state writers use to verify they still own the session's durable state,
- * and the `SessionLease` object that satisfies it: an App-owned wrapper
+ * Defines `ISessionLeaseService`, the Session-scope seeded ownership view,
+ * and the `SessionLease` object that satisfies it together with the
+ * `ISessionWriteGate` used by storage: an App-owned wrapper
  * (`SessionLifecycleService` builds it; it is deliberately not a DI service)
  * around the cross-process lock handle at
  * `<homeDir>/session-leases/<sessionId>.lock`. `assertWritable` is the hard
  * gate: it checks the live kernel-lock handle — a released or replaced
  * sentinel fails closed with
- * `session.lease_lost`, marks the lease lost, and fires the loss callback
- * exactly once so the owning session tears itself down. Release order is the
- * lifecycle's business; `release()` only forwards to the idempotent kernel
- * lock release.
+ * `session.lease_lost`, marks the lease lost, seals write admission, and fires
+ * the loss callback exactly once so the owning session tears itself down.
+ * The gate tracks admitted writes so lifecycle release can await their drain.
  *
- * No default is registered for `ISessionLeaseService`: every production
+ * No default is registered for either Session-scoped view: every production
  * session scope is seeded by `sessionLifecycle` via {@link sessionLeaseSeed};
- * resolving it unseeded (a session that bypassed materialization) is a bug
+ * resolving one unseeded (a session that bypassed materialization) is a bug
  * and must fail loudly rather than silently disable the fencing gate.
  */
 
@@ -29,7 +28,7 @@ import type {
   CrossProcessLockInspection,
   ICrossProcessLockHandle,
 } from '#/os/interface/crossProcessLock';
-import type { ISessionWriteAuthority } from '#/persistence/interface/writeAuthority';
+import { ISessionWriteGate } from '#/persistence/interface/writeGate';
 
 export const LEASE_CREATING_RETRY_AFTER_MS = 1000;
 
@@ -101,13 +100,16 @@ export interface ISessionLeaseService {
 export const ISessionLeaseService: ServiceIdentifier<ISessionLeaseService> =
   createDecorator<ISessionLeaseService>('sessionLeaseService');
 
-export class SessionLease implements ISessionWriteAuthority, ISessionLeaseService {
+export class SessionLease implements ISessionWriteGate, ISessionLeaseService {
   declare readonly _serviceBrand: undefined;
 
   readonly lockId: string;
   private _released = false;
   private _lost = false;
   private _lossFired = false;
+  private _sealed = false;
+  private inFlightWrites = 0;
+  private readonly drainWaiters = new Set<() => void>();
 
   constructor(
     readonly sessionId: string,
@@ -143,8 +145,43 @@ export class SessionLease implements ISessionWriteAuthority, ISessionLeaseServic
     }
   }
 
+  async run<T>(write: () => Promise<T>): Promise<T> {
+    if (this._sealed) throw this.writeGateClosedError();
+    this.assertWritable();
+    this.inFlightWrites++;
+    try {
+      return await write();
+    } finally {
+      this.inFlightWrites--;
+      if (this.inFlightWrites === 0) {
+        for (const resolve of this.drainWaiters) resolve();
+        this.drainWaiters.clear();
+      }
+    }
+  }
+
+  seal(): void {
+    this._sealed = true;
+  }
+
+  drained(): Promise<void> {
+    if (this.inFlightWrites === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.drainWaiters.add(resolve);
+    });
+  }
+
+  private writeGateClosedError(): Error2 {
+    return new Error2(
+      ErrorCodes.SESSION_LEASE_LOST,
+      `session ${this.sessionId} write gate is sealed`,
+      { details: { sessionId: this.sessionId } },
+    );
+  }
+
   private markLost(): void {
     this._lost = true;
+    this.seal();
     if (this._lossFired) return;
     this._lossFired = true;
     this.onLeaseLost(this.sessionId);
@@ -152,6 +189,7 @@ export class SessionLease implements ISessionWriteAuthority, ISessionLeaseServic
 
   release(): void {
     if (this._released) return;
+    this.seal();
     this._released = true;
     this.handle.release();
   }
@@ -162,5 +200,8 @@ export function sessionLeasePath(homeDir: string, sessionId: string): string {
 }
 
 export function sessionLeaseSeed(lease: SessionLease): ScopeSeed {
-  return [[ISessionLeaseService as ServiceIdentifier<unknown>, lease]];
+  return [
+    [ISessionLeaseService as ServiceIdentifier<unknown>, lease],
+    [ISessionWriteGate as ServiceIdentifier<unknown>, lease],
+  ];
 }

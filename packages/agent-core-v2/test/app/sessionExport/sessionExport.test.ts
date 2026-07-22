@@ -866,7 +866,6 @@ function registerSessionExportServices(
     resume: async () => options.lifecycleHandle,
     close: async () => {},
     closeAll: async () => {},
-    forceAbort: async () => {},
     archive: async () => {},
     restore: async () => options.lifecycleHandle,
     fork: async () => {

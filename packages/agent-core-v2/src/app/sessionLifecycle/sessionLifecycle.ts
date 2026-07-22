@@ -5,10 +5,10 @@
  * `ForkSessionOptions`, `CreateChildSessionOptions`, and the
  * `ISessionLifecycleService` used to create sessions (`create`), look up the
  * live ones (`get` / `list`), close them (`close`), archive/restore them,
- * fork them (`fork`), and fork-then-tag them as direct children (`createChild`). Announces
- * an ambiguous durability failure through explicit `forceAbort`, which records a
- * dirty-abort marker before releasing the session lease.
- * lifecycle transitions through ordered hook slots plus
+ * fork them (`fork`), and fork-then-tag them as direct children (`createChild`).
+ * Close and archive always release their lease; a release failure is
+ * dirty-marked and abandoned internally. Lifecycle transitions run through
+ * ordered hook slots plus
  * `onDidCreateSession` / `onDidCloseSession` / `onDidArchiveSession` /
  * `onDidForkSession`. App-scoped — a single
  * process-wide instance owns the live session scope tree. Persisted
@@ -103,7 +103,6 @@ export interface ISessionLifecycleService {
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   close(sessionId: string): Promise<void>;
   closeAll(): Promise<void>;
-  forceAbort(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string): Promise<ISessionScopeHandle | undefined>;
   fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle>;

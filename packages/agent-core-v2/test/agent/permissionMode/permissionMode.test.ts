@@ -13,8 +13,6 @@ import { AgentPermissionModeService } from '#/agent/permissionMode/permissionMod
 import { PermissionModeModel } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -59,7 +57,6 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   ix.stub(IAgentContextInjectorService, injectorStub);
   ix.set(IAgentPermissionModeService, new SyncDescriptor(AgentPermissionModeService));
   log = ix.get(IAppendLogStore);
@@ -202,7 +199,6 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     const log2 = ix2.get(IAppendLogStore);
     const fresh = registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-mode-replay'), {
       log: log2,

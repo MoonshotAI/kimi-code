@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { Error2, ErrorCodes } from '#/errors';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
+import { WriteGateRegistryService } from '#/persistence/backends/node-fs/writeGateRegistryService';
+import type { ISessionWriteGate } from '#/persistence/interface/writeGate';
 
 const isWin = process.platform === 'win32';
 const encoder = new TextEncoder();
@@ -101,17 +102,23 @@ describe('FileStorageService — session write fencing', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('revalidates the session authority for write, append, and delete', async () => {
-    const registry = new WriteAuthorityRegistryService();
+  it('runs write, append, and delete through the session gate', async () => {
+    const registry = new WriteGateRegistryService();
     let writable = true;
-    const registration = registry.register({
-      sessionId: 'session',
-      assertWritable: () => {
+    const gate: ISessionWriteGate = {
+      run: async (write) => {
         if (!writable) {
           throw new Error2(ErrorCodes.SESSION_LEASE_LOST, 'session lease lost');
         }
+        return write();
       },
-    });
+      seal: () => {},
+      drained: async () => {},
+    };
+    const registration = registry.register('sessions/workspace/session', gate);
+    expect(() => registry.register('sessions/workspace/session', gate)).toThrow(
+      /already registered/,
+    );
     const svc = new FileStorageService(dir, undefined, undefined, undefined, registry);
     const scope = 'sessions/workspace/session/agents/main/tool-results';
 
@@ -131,10 +138,13 @@ describe('FileStorageService — session write fencing', () => {
     });
     expect(await readFile(join(dir, scope, 'result.txt'), 'utf8')).toBe('ab');
     registration.dispose();
+    await expect(svc.append(scope, 'result.txt', encoder.encode('c'))).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
   });
 
-  it('fails closed without a session authority and leaves non-session scopes untouched', async () => {
-    const registry = new WriteAuthorityRegistryService();
+  it('fails closed without a session gate and leaves non-session scopes untouched', async () => {
+    const registry = new WriteGateRegistryService();
     const svc = new FileStorageService(dir, undefined, undefined, undefined, registry);
 
     await expect(

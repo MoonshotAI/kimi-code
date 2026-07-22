@@ -13,8 +13,6 @@ import {
   planRevision,
 } from '#/agent/plan/planOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -34,7 +32,6 @@ function buildHost(key: string): { wire: IWireService; log: IAppendLogStore; eve
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),

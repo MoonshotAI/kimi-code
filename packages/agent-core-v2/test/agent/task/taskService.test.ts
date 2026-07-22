@@ -36,7 +36,6 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { createHooks } from '#/hooks';
@@ -48,7 +47,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
-import { stubWriteAuthorityRegistry, type TaskServiceTestManager } from './stubs';
+import type { TaskServiceTestManager } from './stubs';
 
 function fakeProcessTask(): AgentTask {
   return {
@@ -149,7 +148,6 @@ describe('AgentTaskService', () => {
       flush: async () => {},
       close: async () => {},
     });
-    ix.stub(IWriteAuthorityRegistry, stubWriteAuthorityRegistry());
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
   });
   afterEach(() => disposables.dispose());
@@ -506,7 +504,6 @@ describe('AgentTaskService', () => {
     );
     ix.stub(IAtomicDocumentStore, docs);
     ix.stub(IFileSystemStorageService, bytes);
-    ix.stub(IWriteAuthorityRegistry, stubWriteAuthorityRegistry());
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
     return ix;
   }

@@ -13,11 +13,10 @@
  * released v1 builds. Re-registering an agent whose metadata is unchanged is
  * a no-op (no write, no mirror, no event), so resuming a session — which
  * re-registers its agents as they materialize — never bumps `updatedAt` and
- * never reorders session listings. Every durable write passes the
- * `sessionLease` hard gate first (`ISessionLeaseService.assertWritable`,
- * checking the held kernel-lock handle), so an instance that lost the
- * session lease fails closed instead of overwriting a live peer's state.
- * Bound at Session scope.
+ * never reorders session listings. Every durable write is fenced by the
+ * storage backend's per-session write gate, so an instance that lost or
+ * released the session lease fails closed instead of overwriting a live
+ * peer's state. Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is mirrored into the `IQueryStore`
@@ -37,7 +36,6 @@ import { IFlagService } from '#/app/flag/flag';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IQueryStore } from '#/persistence/interface/queryStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionLeaseService } from '#/session/sessionLease/sessionLease';
 
 import {
   ISessionMetadata,
@@ -70,7 +68,6 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     @ILogService private readonly log: ILogService,
     @IQueryStore private readonly queryStore: IQueryStore,
     @IFlagService private readonly flags: IFlagService,
-    @ISessionLeaseService private readonly lease: ISessionLeaseService,
   ) {
     super();
     this.scope = ctx.metaScope;
@@ -90,7 +87,6 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   private async applyUpdate(patch: SessionMetaPatch): Promise<void> {
     await this.ready;
     this.data = { ...this.data, ...patch, updatedAt: Date.now() };
-    this.lease.assertWritable();
     await this.store.set(this.scope, META_KEY, this.data);
     await this.mirrorToReadModel();
     this._onDidChangeMetadata.fire({
@@ -154,7 +150,6 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
           agents: this.data.agents ?? {},
           custom: this.data.custom ?? {},
         };
-        this.lease.assertWritable();
         await this.store.set(this.scope, META_KEY, this.data);
       }
       return;
@@ -170,7 +165,6 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
       agents: {},
       custom: {},
     };
-    this.lease.assertWritable();
     await this.store.set(this.scope, META_KEY, this.data);
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }

@@ -66,9 +66,8 @@ export interface SessionFacade {
   update(patch: SessionMetaPatch): Promise<void>;
   setArchived(archived: boolean): Promise<void>;
   status(): Promise<SessionStatus>;
+  /** Release the session; failures abandon internally before rejecting. */
   close(): Promise<void>;
-  /** Explicitly release a session lease after an ambiguous close flush failure. */
-  forceAbort(): Promise<void>;
   archive(): Promise<void>;
   /** Re-materialize a closed session; `false` when it no longer exists. */
   restore(): Promise<boolean>;
@@ -130,8 +129,6 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
       return 'idle';
     },
     close: () => call({}, 'sessionLifecycleService', 'close', [sessionId]) as Promise<void>,
-    forceAbort: () =>
-      call({}, 'sessionLifecycleService', 'forceAbort', [sessionId]) as Promise<void>,
     archive: () => call({}, 'sessionLifecycleService', 'archive', [sessionId]) as Promise<void>,
     restore: async () => {
       const handle = (await call({}, 'sessionLifecycleService', 'restore', [

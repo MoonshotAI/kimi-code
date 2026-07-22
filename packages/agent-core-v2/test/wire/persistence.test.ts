@@ -22,8 +22,6 @@ import {
   WIRE_PROTOCOL_VERSION,
   IFileSystemStorageService,
   IAppendLogStore,
-  IWriteAuthorityRegistry,
-  WriteAuthorityRegistryService,
   type WireRecord,
 } from '#/index';
 import { IWireService } from '#/wire/wire';
@@ -65,7 +63,6 @@ function createAppendLogHarness(storage: IFileSystemStorageService): IAppendLogS
   const ix = disposable.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   return ix.get(IAppendLogStore);
 }
 

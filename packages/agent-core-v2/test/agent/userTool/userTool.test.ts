@@ -10,8 +10,6 @@ import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTo
 import { AgentUserToolService } from '#/agent/userTool/userToolService';
 import { UserToolModel } from '#/agent/userTool/userToolOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -77,7 +75,6 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
   profile = createProfileStub();
   ix.stub(IAgentProfileService, profile);
@@ -142,7 +139,6 @@ describe('AgentUserToolService (wire-backed)', () => {
     const ixChild = disposables.add(new TestInstantiationService());
     ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
     ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ixChild.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub();
     ixChild.stub(IAgentProfileService, childProfile);
@@ -189,7 +185,6 @@ describe('AgentUserToolService (wire-backed)', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const profile2 = createProfileStub();
     ix2.stub(IAgentProfileService, profile2);

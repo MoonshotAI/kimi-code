@@ -12,14 +12,8 @@
  * post-rewrite drain is durable, supports scoped durability barriers, waits
  * every selected key before a flush reports an error, and preserves failed
  * retired buffers so their in-memory tail remains observable while replacement
- * owners wait for the prior generation. Session-scoped writes (journal
- * bytes under `sessions/<wsId>/<sessionId>`) are fenced: `drain` and `rewrite`
- * re-verify the session's registered `ISessionWriteAuthority` through
- * `IWriteAuthorityRegistry` immediately before bytes hit storage, a session
- * scope with no registered authority fails closed, and a fencing failure
- * sticks the buffer like any ambiguous storage failure (the session teardown
- * follows). The root scope and scopes outside the sessions tree carry no
- * authority and pass untouched. Bound at App scope.
+ * owners wait for the prior generation. Physical writes are admitted and
+ * tracked by the underlying byte-storage backend. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -27,10 +21,6 @@ import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import {
-  assertScopeWritable,
-  IWriteAuthorityRegistry,
-} from '#/persistence/interface/writeAuthority';
 import {
   AppendLogCorruptedError,
   IAppendLogStore,
@@ -57,10 +47,7 @@ export class AppendLogStore implements IAppendLogStore {
 
   private readonly logs = new Map<string, LogState>();
 
-  constructor(
-    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
-    @IWriteAuthorityRegistry private readonly authorityRegistry: IWriteAuthorityRegistry,
-  ) {}
+  constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {}
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void {
     const state = this.state(scope, key);
@@ -124,7 +111,6 @@ export class AppendLogStore implements IAppendLogStore {
     );
     const rewrite = priorSettled.then(async () => {
       try {
-        this.assertScopeWritable(scope);
         await this.storage.write(scope, key, encoded, { atomic: true });
         state.storageFailure = undefined;
       } catch (error) {
@@ -265,7 +251,6 @@ export class AppendLogStore implements IAppendLogStore {
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
       try {
-        this.assertScopeWritable(scope);
         await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
       } catch (error) {
         const failure = (state.storageFailure ??= { error });
@@ -276,9 +261,6 @@ export class AppendLogStore implements IAppendLogStore {
     }
   }
 
-  private assertScopeWritable(scope: string): void {
-    assertScopeWritable(scope, this.authorityRegistry);
-  }
 }
 
 function logId(scope: string, key: string): string {

@@ -11,8 +11,6 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -60,7 +58,6 @@ function makeContainer(storage: IFileSystemStorageService, logKey: string) {
   const ix = store.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   const log = ix.get(IAppendLogStore);
   const wire = registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
   return { ix, wire, log };
@@ -72,7 +69,6 @@ function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
   const ix = store.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   return ix.get(IAppendLogStore);
 }
 

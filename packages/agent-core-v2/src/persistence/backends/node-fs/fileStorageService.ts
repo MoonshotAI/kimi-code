@@ -20,9 +20,9 @@
  * control over append offsets, fsync, atomic rename and streaming, which the
  * agent-execution-environment abstraction does not expose. Higher-level code
  * (wire journal, blob store) goes through the Store / Storage interfaces above
- * this backend, never `node:fs` directly. Session-rooted mutations are fenced
- * through the App-scoped write-authority registry immediately before storage
- * I/O, so every file-backed Store shares the same fail-closed boundary.
+ * this backend, never `node:fs` directly. Session-rooted mutations run through
+ * the App-scoped write-gate registry, which rejects writes after sealing and
+ * tracks admitted I/O until it settles.
  */
 
 import { createReadStream, mkdirSync, statSync } from 'node:fs';
@@ -48,10 +48,7 @@ import type {
   StorageWriteOptions,
 } from '#/persistence/interface/storage';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
-import {
-  assertScopeWritable,
-  IWriteAuthorityRegistry,
-} from '#/persistence/interface/writeAuthority';
+import { IWriteGateRegistry } from '#/persistence/interface/writeGate';
 
 const WATCH_DEBOUNCE_MS = 150;
 const STORAGE_LOCK_WAIT_TIMEOUT_MS = 10_000;
@@ -81,8 +78,8 @@ export class FileStorageService implements IFileSystemStorageService {
     private readonly dirMode?: number,
     private readonly fileMode?: number,
     @optional(ICrossProcessLockService) private readonly locks?: ICrossProcessLockService,
-    @optional(IWriteAuthorityRegistry)
-    private readonly authorityRegistry?: IWriteAuthorityRegistry,
+    @optional(IWriteGateRegistry)
+    private readonly writeGates?: IWriteGateRegistry,
   ) {}
 
   async read(scope: string, key: string): Promise<Uint8Array | undefined> {
@@ -122,19 +119,15 @@ export class FileStorageService implements IFileSystemStorageService {
     _options: StorageWriteOptions = {},
   ): Promise<void> {
     const filePath = this.path(scope, key);
-    this.assertScopeWritable(scope);
-    try {
-      await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
-    } catch (error) {
-      throw toStorageIoError(error, { path: filePath, op: 'write' });
-    }
-    this.assertScopeWritable(scope);
-    try {
-      await atomicWrite(filePath, data, undefined, this.fileMode);
-      await this.syncDirOnce(dirname(filePath));
-    } catch (error) {
-      throw toStorageIoError(error, { path: filePath, op: 'write' });
-    }
+    await this.runWrite(scope, async () => {
+      try {
+        await mkdir(dirname(filePath), { recursive: true, mode: this.dirMode });
+        await atomicWrite(filePath, data, undefined, this.fileMode);
+        await this.syncDirOnce(dirname(filePath));
+      } catch (error) {
+        throw toStorageIoError(error, { path: filePath, op: 'write' });
+      }
+    });
   }
 
   async append(
@@ -145,29 +138,25 @@ export class FileStorageService implements IFileSystemStorageService {
   ): Promise<void> {
     const filePath = this.path(scope, key);
     const dir = dirname(filePath);
-    this.assertScopeWritable(scope);
-    try {
-      await mkdir(dir, { recursive: true, mode: this.dirMode });
-    } catch (error) {
-      throw toStorageIoError(error, { path: filePath, op: 'append' });
-    }
-    this.assertScopeWritable(scope);
-    try {
-      const fh = await open(filePath, 'a', this.fileMode);
+    await this.runWrite(scope, async () => {
       try {
-        if (data.byteLength > 0) {
-          await fh.writeFile(data);
+        await mkdir(dir, { recursive: true, mode: this.dirMode });
+        const fh = await open(filePath, 'a', this.fileMode);
+        try {
+          if (data.byteLength > 0) {
+            await fh.writeFile(data);
+          }
+          if (options.durable !== false) {
+            await fh.sync();
+          }
+        } finally {
+          await fh.close();
         }
-        if (options.durable !== false) {
-          await fh.sync();
-        }
-      } finally {
-        await fh.close();
+        await this.syncDirOnce(dir);
+      } catch (error) {
+        throw toStorageIoError(error, { path: filePath, op: 'append' });
       }
-      await this.syncDirOnce(dir);
-    } catch (error) {
-      throw toStorageIoError(error, { path: filePath, op: 'append' });
-    }
+    });
   }
 
   async list(scope: string, prefix?: string): Promise<readonly string[]> {
@@ -183,13 +172,14 @@ export class FileStorageService implements IFileSystemStorageService {
 
   async delete(scope: string, key: string): Promise<void> {
     const filePath = this.path(scope, key);
-    this.assertScopeWritable(scope);
-    try {
-      await unlink(filePath);
-    } catch (error) {
-      if (isEnoent(error)) return;
-      throw toStorageIoError(error, { path: filePath, op: 'delete' });
-    }
+    await this.runWrite(scope, async () => {
+      try {
+        await unlink(filePath);
+      } catch (error) {
+        if (isEnoent(error)) return;
+        throw toStorageIoError(error, { path: filePath, op: 'delete' });
+      }
+    });
   }
 
   watch(scope: string, key: string): Event<void> {
@@ -267,7 +257,7 @@ export class FileStorageService implements IFileSystemStorageService {
   async runExclusive<T>(scope: string, key: string, op: () => Promise<T>): Promise<T> {
     const filePath = this.path(scope, key);
     const lockPath = `${filePath}.lock`;
-    this.assertScopeWritable(scope);
+    await this.runWrite(scope, async () => {});
     if (this.locks === undefined) {
       throw new StorageError(
         StorageErrors.codes.STORAGE_IO_FAILED,
@@ -280,7 +270,7 @@ export class FileStorageService implements IFileSystemStorageService {
         lockPath,
         { wait: { timeoutMs: STORAGE_LOCK_WAIT_TIMEOUT_MS } },
         async () => {
-          this.assertScopeWritable(scope);
+          await this.runWrite(scope, async () => {});
           return op();
         },
       );
@@ -312,8 +302,8 @@ export class FileStorageService implements IFileSystemStorageService {
     return join(this.baseDir, scope);
   }
 
-  private assertScopeWritable(scope: string): void {
-    assertScopeWritable(scope, this.authorityRegistry);
+  private runWrite<T>(scope: string, write: () => Promise<T>): Promise<T> {
+    return this.writeGates?.run(scope, write) ?? write();
   }
 
   private async syncDirOnce(dir: string): Promise<void> {

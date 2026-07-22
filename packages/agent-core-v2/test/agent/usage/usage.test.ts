@@ -11,8 +11,6 @@ import {
 import { AgentUsageService } from '#/agent/usage/usageService';
 import { UsageModel } from '#/agent/usage/usageOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
-import { WriteAuthorityRegistryService } from '#/persistence/backends/node-fs/writeAuthorityRegistryService';
-import { IWriteAuthorityRegistry } from '#/persistence/interface/writeAuthority';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -36,7 +34,6 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(IAgentUsageService, new SyncDescriptor(AgentUsageService));
   log = ix.get(IAppendLogStore);
@@ -62,7 +59,6 @@ function createFreshWire(logKey: string): { readonly fresh: IWireService; readon
   const freshIx = disposables.add(new TestInstantiationService());
   freshIx.stub(IFileSystemStorageService, new InMemoryStorageService());
   freshIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  freshIx.stub(IWriteAuthorityRegistry, new WriteAuthorityRegistryService());
   const freshLog = freshIx.get(IAppendLogStore);
   const fresh = registerTestAgentWire(freshIx, testWireScope(SCOPE, logKey), {
     log: freshLog,

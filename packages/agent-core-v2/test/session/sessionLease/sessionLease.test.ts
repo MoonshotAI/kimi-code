@@ -2,7 +2,7 @@
  * `sessionLease` domain — unit tests for the per-session write lease.
  *
  * Runs against the real node-local kernel-lock service rooted at a mkdtemp
- * home, asserting the once-only loss notification and idempotent release.
+ * home, asserting loss notification, write admission/draining, and release.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -69,5 +69,38 @@ describe('SessionLease', () => {
 
     expect(lease.info).toBeUndefined();
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
+  });
+
+  it('seal rejects new writes while drained waits for an admitted write', async () => {
+    const lease = await acquire();
+    let enterWrite!: () => void;
+    const writeEntered = new Promise<void>((resolve) => {
+      enterWrite = resolve;
+    });
+    let finishWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      finishWrite = resolve;
+    });
+    const write = lease.run(async () => {
+      enterWrite();
+      await writeGate;
+    });
+    await writeEntered;
+
+    lease.seal();
+    let drained = false;
+    const drain = lease.drained().then(() => {
+      drained = true;
+    });
+    await expect(lease.run(async () => {})).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_LEASE_LOST,
+    });
+    expect(drained).toBe(false);
+
+    finishWrite();
+    await write;
+    await drain;
+    expect(drained).toBe(true);
+    lease.release();
   });
 });

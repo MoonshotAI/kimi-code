@@ -79,7 +79,6 @@ export const sessionLifecycleContract = {
   create: { input: z.tuple([createSessionOptionsSchema]), output: handleWireSchema },
   resume: { input: z.tuple([z.string()]), output: maybe(handleWireSchema) },
   close: { input: z.tuple([z.string()]), output: noResult },
-  forceAbort: { input: z.tuple([z.string()]), output: noResult },
   archive: { input: z.tuple([z.string()]), output: noResult },
   restore: { input: z.tuple([z.string()]), output: maybe(handleWireSchema) },
   fork: { input: z.tuple([forkSessionOptionsSchema]), output: handleWireSchema },
