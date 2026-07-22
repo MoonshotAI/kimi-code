@@ -17,6 +17,24 @@ let homeDir: string;
 let workDir: string;
 let extraDirs: string[];
 
+// Windows only allows creating symlinks with elevated privileges or Developer
+// Mode enabled; skip the test when the filesystem rejects the operation.
+async function symlinkOrSkip(
+  target: string,
+  path: string,
+  ctx: { skip: (message?: string) => never },
+): Promise<void> {
+  try {
+    await symlink(target, path);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EACCES') {
+      ctx.skip(`symlinks are not permitted in this environment (${code})`);
+    }
+    throw err;
+  }
+}
+
 beforeEach(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-agents-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-agents-work-'));
@@ -76,7 +94,7 @@ describe('loadAgentsMd user-level discovery', () => {
 });
 
 describe('loadAgentsMd symlinked files', () => {
-  it('follows symlinks when loading user-level and project-level AGENTS.md', async () => {
+  it('follows symlinks when loading user-level and project-level AGENTS.md', async (ctx) => {
     const targetDir = await mkdtemp(join(tmpdir(), 'kimi-agents-target-'));
     extraDirs.push(targetDir);
     const brandTarget = join(targetDir, 'brand-AGENTS.md');
@@ -85,8 +103,8 @@ describe('loadAgentsMd symlinked files', () => {
     await writeFile(projectTarget, 'project via symlink', 'utf-8');
 
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
-    await symlink(brandTarget, join(homeDir, '.kimi-code', 'AGENTS.md'));
-    await symlink(projectTarget, join(workDir, 'AGENTS.md'));
+    await symlinkOrSkip(brandTarget, join(homeDir, '.kimi-code', 'AGENTS.md'), ctx);
+    await symlinkOrSkip(projectTarget, join(workDir, 'AGENTS.md'), ctx);
 
     const result = await loadAgentsMd({ fs, homeDir }, workDir);
 
@@ -96,10 +114,10 @@ describe('loadAgentsMd symlinked files', () => {
 });
 
 describe('loadAgentsMd unreadable paths', () => {
-  it('warns when an instruction file exists but is a dangling symlink', async () => {
+  it('warns when an instruction file exists but is a dangling symlink', async (ctx) => {
     const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
     extraDirs.push(brandHome);
-    await symlink(join(workDir, 'missing-target.md'), join(workDir, 'AGENTS.md'));
+    await symlinkOrSkip(join(workDir, 'missing-target.md'), join(workDir, 'AGENTS.md'), ctx);
 
     const result = await prepareSystemPromptContext({ fs, homeDir }, workDir, brandHome);
 
