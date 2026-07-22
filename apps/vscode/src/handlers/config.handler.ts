@@ -38,10 +38,27 @@ const SLASH_COMMANDS: SlashCommandInfo[] = [
 
 const saveConfig: Handler<SessionConfig, { ok: boolean }> = async (params, ctx) => {
   const effort = sessionConfigEffort(params);
-  await ctx.harness.setConfig({
-    defaultModel: params.model,
-    thinking: thinkingConfig(effort),
-  });
+  const effortChanged = params.effortChanged !== false;
+  const config = await ctx.harness.getConfig({ reload: true });
+  const model = config.models?.[params.model];
+  const full = thinkingConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelAlias(model).supportEfforts,
+  );
+  // Re-confirming the effort already shown is not an explicit choice —
+  // persist the model but leave the stored effort preference alone (the TUI's
+  // persistModelSelection rule).
+  const patch = effortChanged ? full : { enabled: full.enabled };
+  if (
+    config.defaultModel !== params.model
+    || config.thinking?.enabled !== patch.enabled
+    || (effortChanged && config.thinking?.effort !== patch.effort)
+  ) {
+    await ctx.harness.setConfig({
+      defaultModel: params.model,
+      thinking: patch,
+    });
+  }
 
   const runtime = ctx.getSession();
   if (runtime !== undefined) {
@@ -138,9 +155,24 @@ function sessionConfigEffort(config: SessionConfig): ThinkingEffort {
   return config.thinking === true ? "on" : "off";
 }
 
-function thinkingConfig(effort: ThinkingEffort): { enabled: boolean; effort?: string } {
+/**
+ * Project a thinking effort to the `[thinking]` config patch persisted to
+ * config.toml — mirrors the TUI's thinkingEffortToConfig. "off" disables
+ * thinking; "on" is the boolean-model on-signal, so it only persists
+ * `enabled`. A concrete effort persists as the global default, EXCEPT the
+ * model's highest declared level — the last entry of `support_efforts` —
+ * which is session-only and records just `enabled`, so the most expensive
+ * tier never becomes the global default for every new session. When the
+ * model's levels are unknown the concrete effort is persisted as-is.
+ */
+function thinkingConfig(
+  effort: ThinkingEffort,
+  supportEfforts?: readonly string[],
+): { enabled: boolean; effort?: string } {
   if (effort === "off") return { enabled: false };
   if (effort === "on") return { enabled: true };
+  const top = supportEfforts?.at(-1);
+  if (top !== undefined && effort === top) return { enabled: true };
   return { enabled: true, effort };
 }
 

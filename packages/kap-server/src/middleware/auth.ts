@@ -57,7 +57,7 @@ function decodeRequestPath(rawUrl: string): string | null {
  *     AND is not one of the meta documents `/openapi.json` / `/asyncapi.json`.
  *
  * NOT bypassed (token required): every `/api/…` route — including the
- * `/api/v2` RPC surface — plus `/openapi.json` and `/asyncapi.json` (the meta
+ * `/api/v1/debug` RPC surface — plus `/openapi.json` and `/asyncapi.json` (the meta
  * documents leak the API shape, so they stay gated). One persistent bearer
  * token protects them all.
  */

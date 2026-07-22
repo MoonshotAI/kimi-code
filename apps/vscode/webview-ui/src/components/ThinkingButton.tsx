@@ -11,6 +11,9 @@ interface ThinkingButtonProps {
   efforts?: string[];
   alwaysOn?: boolean;
   disabled?: boolean;
+  /** When set, rendered as a muted wrapping note below the effort options
+   * (e.g. the mid-conversation switch cache-cost notice). */
+  cacheNote?: string;
   onToggle: () => void;
   onSelectEffort: (effort: string) => void;
 }
@@ -19,7 +22,7 @@ function label(effort: string): string {
   return effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
-export function ThinkingButton({ mode, effort, efforts = [], alwaysOn = false, disabled, onToggle, onSelectEffort }: ThinkingButtonProps) {
+export function ThinkingButton({ mode, effort, efforts = [], alwaysOn = false, disabled, cacheNote, onToggle, onSelectEffort }: ThinkingButtonProps) {
   if (mode === "none") return null;
 
   const active = effort !== "off" || alwaysOn;
@@ -57,6 +60,11 @@ export function ThinkingButton({ mode, effort, efforts = [], alwaysOn = false, d
               {label(option)}
             </DropdownMenuItem>
           ))}
+          {cacheNote !== undefined && (
+            <div className="w-44 px-2 py-1.5 text-[10px] leading-snug whitespace-normal text-muted-foreground">
+              {cacheNote}
+            </div>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     );

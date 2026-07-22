@@ -16,10 +16,10 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
-import type { ContentPart } from '#/app/llmProtocol/message';
+import type { ContentPart } from '#/kosong/contract/message';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
 
 const REMINDER_TEXT_1 =
@@ -223,7 +223,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
   ): void {
     this.toolExecutor.recordDupType(toolCallId, dupType);
     const properties: ToolCallDedupDetectedEvent = {
-      turn_id: this.activeTurnId ?? 0,
+      turn_id: this.activeTurnId,
       step_no: this.activeStep,
       tool_call_id: toolCallId,
       tool_name: toolName,
@@ -284,6 +284,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
 
     if (streak >= 2) {
       const properties: ToolCallRepeatEvent = {
+        turn_id: this.activeTurnId,
         tool_name: toolName,
         repeat_count: streak,
         action,

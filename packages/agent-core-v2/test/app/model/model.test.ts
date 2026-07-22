@@ -10,20 +10,49 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry } from '#/app/config/configService';
 import { ErrorCodes, Error2 } from '#/errors';
-import { kimiModelEnvOverlay, ENV_MODEL_ALIAS_KEY } from '#/app/model/envOverlay';
+import { kimiModelEnvOverlay, ENV_MODEL_ALIAS_KEY } from '#/kosong/model/envOverlay';
 import {
   IModelService,
-  type ModelAlias,
+  type ModelRecord,
   MODELS_SECTION,
   ModelsSectionSchema,
-} from '#/app/model/model';
-import { modelsFromToml, modelsToToml } from '#/app/model/configSection';
-import { ModelService } from '#/app/model/modelService';
-import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
-import { effectiveModelConfig } from '#/app/model/modelAuth';
-import type { ModelConfig } from '#/app/model/model';
+} from '#/kosong/model/model';
+import { modelsFromToml, modelsToToml } from '#/kosong/model/configSection';
+import { ModelService } from '#/kosong/model/modelService';
+import { ENV_MODEL_PROVIDER_KEY } from '#/kosong/provider/provider';
+import { effectiveModelConfig } from '#/kosong/model/modelAuth';
+
+// Side-effect registrations: endpoint defaults and the trait-driven-thinking
+// verdict (`drivesThinkingThroughTraits`) answer through the provider-definition registry.
+import '#/kosong/provider/providers/kimi/kimi.contrib';
+import '#/kosong/provider/providers/standard.contrib';
 
 describe('effectiveModelConfig', () => {
+  it('clamps the input cap to the effective total window without mutating the source', () => {
+    const record = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 128000,
+      maxInputSize: 272000,
+    };
+
+    const effective = effectiveModelConfig(record);
+    expect(effective.maxInputSize).toBe(128000);
+    expect(record.maxInputSize).toBe(272000);
+
+    const withOverrides = {
+      provider: 'custom',
+      model: 'gpt-5',
+      maxContextSize: 400000,
+      maxInputSize: 272000,
+      overrides: { maxContextSize: 128000 },
+    };
+    const effectiveOverride = effectiveModelConfig(withOverrides);
+    expect(effectiveOverride.maxContextSize).toBe(128000);
+    expect(effectiveOverride.maxInputSize).toBe(128000);
+    expect(withOverrides.maxInputSize).toBe(272000);
+  });
+
   it('derives the official effort metadata from a Claude model name', () => {
     expect(
       effectiveModelConfig({
@@ -38,12 +67,12 @@ describe('effectiveModelConfig', () => {
     });
   });
 
-  it('infers Anthropic effort metadata for an unknown model on a non-Kimi Anthropic provider', () => {
+  it('infers Anthropic effort metadata for an unknown Claude-marked model on a non-Kimi Anthropic provider', () => {
     expect(
       effectiveModelConfig(
         {
           provider: 'custom',
-          model: 'custom-anthropic-model',
+          model: 'custom-claude-model',
           maxContextSize: 200000,
           protocol: 'anthropic',
         },
@@ -56,8 +85,45 @@ describe('effectiveModelConfig', () => {
     });
   });
 
+  it('infers Anthropic effort metadata for a bare Claude family alias on a non-Kimi Anthropic provider', () => {
+    expect(
+      effectiveModelConfig(
+        {
+          provider: 'custom',
+          model: 'sonnet-latest',
+          maxContextSize: 200000,
+          protocol: 'anthropic',
+        },
+        'anthropic',
+      ),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for a clearly non-Claude model on a non-Kimi Anthropic provider', () => {
+    expect(
+      effectiveModelConfig(
+        {
+          provider: 'custom',
+          model: 'custom-anthropic-model',
+          maxContextSize: 200000,
+          protocol: 'anthropic',
+        },
+        'anthropic',
+      ),
+    ).toEqual({
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+    });
+  });
+
   it('does not infer Anthropic effort metadata for a Kimi provider routed through the Anthropic protocol', () => {
-    const model: ModelConfig = {
+    const model: ModelRecord = {
       provider: 'managed:kimi-code',
       model: 'kimi-for-coding',
       maxContextSize: 262144,
@@ -70,7 +136,7 @@ describe('effectiveModelConfig', () => {
   });
 
   it('does not infer the fallback profile without provider context', () => {
-    const model: ModelConfig = {
+    const model: ModelRecord = {
       provider: 'custom',
       model: 'custom-anthropic-model',
       maxContextSize: 200000,
@@ -85,7 +151,7 @@ describe('effectiveModelConfig', () => {
       effectiveModelConfig(
         {
           provider: 'custom',
-          model: 'custom-anthropic-model',
+          model: 'custom-claude-model',
           maxContextSize: 200000,
           protocol: 'anthropic',
           adaptiveThinking: false,
@@ -130,7 +196,7 @@ describe('ModelService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let registry: ConfigRegistry;
-  let models: Record<string, ModelAlias>;
+  let models: Record<string, ModelRecord>;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
 
@@ -337,14 +403,17 @@ describe('kimiModelEnvOverlay', () => {
     });
   });
 
-  it('synthesizes the openai default baseUrl when KIMI_MODEL_BASE_URL is unset', () => {
+  it('omits baseUrl for openai so the base SDK default applies at construction', () => {
     const { effective } = applyKimiModelEnvOverlay(
       { KIMI_MODEL_NAME: 'env-model' },
       { providers: { [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' } } },
     );
 
+    // The registry declares no `defaultBaseUrl` for the canonical vendors
+    // (standard.contrib): construction-time defaults stay inside the bases /
+    // their SDKs, so the overlay leaves baseUrl out — exactly like anthropic.
     expect(effective['providers']).toEqual({
-      [ENV_MODEL_PROVIDER_KEY]: { type: 'openai', baseUrl: 'https://api.openai.com/v1' },
+      [ENV_MODEL_PROVIDER_KEY]: { type: 'openai' },
     });
   });
 

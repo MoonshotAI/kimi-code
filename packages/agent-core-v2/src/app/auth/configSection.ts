@@ -26,7 +26,7 @@ import {
   snakeToCamel,
   transformPlainObject,
 } from '#/app/config/toml';
-import { OAuthRefSchema } from '#/app/provider/provider';
+import { OAuthRefSchema } from '#/kosong/provider/provider';
 
 export const SERVICES_SECTION = 'services';
 

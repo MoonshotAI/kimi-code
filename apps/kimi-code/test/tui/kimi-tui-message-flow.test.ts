@@ -19,6 +19,14 @@ import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
 } from '#/tui/components/messages/agent-swarm-progress';
+import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
+import { StepSummaryComponent } from '#/tui/components/messages/step-summary';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import {
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT,
+  TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED,
+  TRANSCRIPT_KEEP_RECENT_STEPS,
+} from '#/tui/utils/transcript-window';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
@@ -127,6 +135,8 @@ function makeStartupInput(): KimiTUIStartupInput {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      agent: undefined,
+      agentFiles: [],
     },
     tuiConfig: {
       theme: 'dark',
@@ -147,7 +157,8 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     id: 'ses-1',
     model: 'k2',
     summary: { title: null },
-    prompt: vi.fn(async () => {}),
+    prompt: vi.fn(async (_input: unknown) => {}),
+    compact: vi.fn(async () => {}),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
     startBtw: vi.fn(async () => 'agent-btw'),
@@ -1543,6 +1554,63 @@ command = "vim"
     expect(transcript).toContain('hello');
     expect(transcript).not.toContain('review');
   });
+
+  it('sends a pasted video as a file:// video_url part', async () => {
+    const { driver, session } = await makeDriver();
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+
+      // Submission is fully synchronous: the paste is copied to the cache and
+      // referenced by a `file://` video_url the engine resolves in-turn.
+      driver.handleUserInput(`watch ${attachment.placeholder}`);
+
+      const parts = vi.mocked(session.prompt).mock.calls[0]?.[0] as
+        | Array<{
+            type: string;
+            text?: string;
+            videoUrl?: { url: string };
+          }>
+        | undefined;
+      expect(parts?.[0]).toEqual({ type: 'text', text: 'watch ' });
+      expect(parts?.[1]?.type).toBe('video_url');
+      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('queues a pasted video (file:// part) while a turn is streaming', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const dir = await mkdtemp(join(tmpdir(), 'tui-video-'));
+    try {
+      const srcVideo = join(dir, 'clip.mp4');
+      await writeFile(srcVideo, 'video-bytes');
+      const attachment = imageStore.addVideo('video/mp4', srcVideo);
+      driver.state.appState.streamingPhase = 'waiting';
+
+      driver.handleUserInput(`describe ${attachment.placeholder}`);
+
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toHaveLength(1);
+      const queued = driver.state.queuedMessages[0];
+      const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
+      expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
+      expect(parts?.[1]?.type).toBe('video_url');
+      expect(parts?.[1]?.videoUrl?.url).toMatch(/^file:\/\/.*clip\.mp4$/);
+
+      driver.sendQueuedMessage(session, queued!);
+      expect(session.prompt).toHaveBeenCalledWith(parts);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
 
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
@@ -5371,7 +5439,33 @@ describe('/effort support_efforts override', () => {
     expect(transcript).toContain('Thinking set to max.');
   });
 
-  it('offers the latest Opus efforts for an unknown Anthropic-compatible model', async () => {
+  it('offers the latest Opus efforts for an unknown Claude-marked Anthropic-compatible model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-claude-model',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('offers no fallback efforts for a clearly non-Claude Anthropic-compatible model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {
@@ -5394,7 +5488,7 @@ describe('/effort support_efforts override', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
     });
     const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).toContain('Max');
+    expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
   it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
@@ -5424,14 +5518,14 @@ describe('/effort support_efforts override', () => {
     expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
-  it('offers the latest Opus efforts for a flat providerless Anthropic model', async () => {
+  it('offers the latest Opus efforts for a flat providerless Claude-marked Anthropic model', async () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {},
         models: {
           // v2 flat model shape: no named provider, inline endpoint + protocol.
           k2: {
-            model: 'compatible-model',
+            model: 'compatible-claude-model',
             baseUrl: 'https://anthropic.example.test',
             protocol: 'anthropic',
             maxContextSize: 100,
@@ -5479,5 +5573,125 @@ describe('/effort support_efforts override', () => {
       );
     });
     expect(session.setThinking).not.toHaveBeenCalled();
+  });
+});
+
+describe('transcript step and assistant folding', () => {
+  function driveSteps(driver: MessageDriver, cycles: number): void {
+    for (let i = 0; i < cycles; i++) {
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: `msg-${i} `,
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: `call_${i}`,
+          name: 'Bash',
+          args: { command: 'ls' },
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: `call_${i}`,
+          output: 'ok',
+          isError: undefined,
+        } as Event,
+        vi.fn(),
+      );
+    }
+  }
+
+  it('folds the oldest assistant messages and steps beyond their per-turn caps', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('fold me');
+
+    const cycles = Math.max(TRANSCRIPT_KEEP_RECENT_ASSISTANT, TRANSCRIPT_KEEP_RECENT_STEPS) + 7;
+    driveSteps(driver, cycles);
+
+    const children = driver.state.transcriptContainer.children;
+    const assistantCount = children.filter(
+      (child) => child instanceof AssistantMessageComponent,
+    ).length;
+    const toolCount = children.filter((child) => child instanceof ToolCallComponent).length;
+    expect(assistantCount).toBe(TRANSCRIPT_KEEP_RECENT_ASSISTANT);
+    expect(toolCount).toBe(TRANSCRIPT_KEEP_RECENT_STEPS);
+
+    const summaries = children.filter((child) => child instanceof StepSummaryComponent);
+    expect(summaries).toHaveLength(1);
+    const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
+    expect(summaryText).toContain(`call ${cycles - TRANSCRIPT_KEEP_RECENT_STEPS} tools`);
+    expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT} messages`);
+
+    // Folding drops mounted components only; every transcript entry is kept.
+    const assistantEntries = driver.state.transcriptEntries.filter(
+      (entry) => entry.kind === 'assistant',
+    );
+    expect(assistantEntries).toHaveLength(cycles);
+  });
+
+  it('does not fold a turn within the caps', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('small turn');
+    driveSteps(driver, 3);
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof AssistantMessageComponent)).toHaveLength(3);
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(3);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('folds a completed turn down to its conclusion tail on turn end', async () => {
+    const { driver } = await makeDriver();
+    driver.handleUserInput('round one');
+    const cycles = 10;
+    driveSteps(driver, cycles);
+
+    // Below the active-turn caps, nothing folds while the turn is live.
+    let children = driver.state.transcriptContainer.children;
+    expect(
+      children.filter((child) => child instanceof AssistantMessageComponent),
+    ).toHaveLength(cycles);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    children = driver.state.transcriptContainer.children;
+    const assistants = children.filter((child) => child instanceof AssistantMessageComponent);
+    expect(assistants).toHaveLength(TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED);
+
+    const summaries = children.filter((child) => child instanceof StepSummaryComponent);
+    expect(summaries).toHaveLength(1);
+    const summaryText = stripSgr(summaries[0]!.render(120).join('\n'));
+    expect(summaryText).toContain(`${cycles - TRANSCRIPT_KEEP_RECENT_ASSISTANT_COMPLETED} messages`);
+
+    // Steps below the step cap are untouched by the completed-turn fold.
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(cycles);
+
+    // The conclusion stays mounted.
+    const lastAssistant = assistants.at(-1)!;
+    expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
   });
 });

@@ -26,8 +26,19 @@ import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEv
 import type { PlanData } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
 import type {
   AgentAPI,
+  CancelPlanPayload,
+  CancelShellCommandPayload,
+  EmptyPayload,
+  GetTaskOutputPayload,
+  GetTasksPayload,
   PromptPart,
+  RunShellCommandPayload,
+  SetModelPayload,
+  SetModelResult,
+  ShellCommandResult,
+  StopTaskPayload,
 } from '@moonshot-ai/agent-core-v2/agent/rpc/core-api';
+import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { ISessionScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import type {
   CreateChildSessionOptions,
@@ -71,10 +82,9 @@ import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelConfig } from '@moonshot-ai/agent-core-v2/app/model/model';
-import type {
-  IModelCatalogService,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
 import type {
   GetPluginInfoInput,
   InstallPluginInput,
@@ -93,7 +103,7 @@ import type {
   PluginUpdateStatus,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/app/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
 import type {
   SessionListQuery,
   SessionSummary,
@@ -208,10 +218,12 @@ import {
 import {
   modelCatalogItemSchema,
   providerCatalogItemSchema,
-  refreshProviderModelsOptionsSchema,
-  refreshProviderModelsResponseSchema,
   setDefaultModelResponseSchema,
 } from '../src/contract/global/catalog.js';
+import {
+  refreshProviderModelsOptionsSchema,
+  refreshProviderModelsResponseSchema,
+} from '../src/contract/global/providerDiscovery.js';
 import { experimentalFeatureStateSchema } from '../src/contract/global/flags.js';
 import {
   fsBrowseResponseSchema,
@@ -318,15 +330,16 @@ const _experimentalFeatureState: AssertWire<
 const _fsBrowseResponse: AssertWire<typeof fsBrowseResponseSchema, FsBrowseResponse> = true;
 const _fsHomeResponse: AssertWire<typeof fsHomeResponseSchema, FsHomeResponse> = true;
 
-// catalog.ts — protocol wire shapes derived through the catalog service interface.
-type ModelCatalogItem = Awaited<ReturnType<IModelCatalogService['listModels']>>[number];
-type ProviderCatalogItem = Awaited<ReturnType<IModelCatalogService['listProviders']>>[number];
-type SetDefaultModelResponse = Awaited<ReturnType<IModelCatalogService['setDefaultModel']>>;
+// catalog.ts / providerDiscovery.ts — protocol wire shapes derived through the
+// catalog and discovery service interfaces.
+type ModelCatalogItem = Awaited<ReturnType<IModelCatalog['listModels']>>[number];
+type ProviderCatalogItem = Awaited<ReturnType<IModelCatalog['listProviders']>>[number];
+type SetDefaultModelResponse = Awaited<ReturnType<IModelCatalog['setDefaultModel']>>;
 type RefreshProviderModelsOptions = NonNullable<
-  Parameters<IModelCatalogService['refreshProviderModels']>[0]
+  Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;
 type RefreshProviderModelsResponse = Awaited<
-  ReturnType<IModelCatalogService['refreshProviderModels']>
+  ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 const _modelCatalogItem: AssertWire<typeof modelCatalogItemSchema, ModelCatalogItem> = true;
 const _providerCatalogItem: AssertWire<typeof providerCatalogItemSchema, ProviderCatalogItem> =
@@ -345,7 +358,7 @@ const _refreshProviderModelsResponse: AssertWire<
 > = true;
 
 // models.ts
-const _modelConfig: AssertWire<typeof modelConfigSchema, ModelConfig> = true;
+const _modelConfig: AssertWire<typeof modelConfigSchema, ModelRecord> = true;
 
 // plugins.ts
 const _pluginSummary: AssertWire<typeof pluginSummarySchema, PluginSummary> = true;
@@ -460,25 +473,17 @@ const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, A
   true;
 
 // ── agent scope (rpc.ts) ────────────────────────────────────────────────────
-// Payload/result types are reached through the `AgentAPI` interface so the
-// assertions track the exact methods the contract mirrors.
+// Payload/result types for the remaining `AgentAPI` methods are reached
+// through the interface so the assertions track the exact methods the
+// contract mirrors; payloads of the domain services the facade calls
+// directly (shellCommand / profile / usage / plan / task) are imported from
+// `core-api.ts` (they no longer have `AgentAPI` entries).
 type PromptPayload = Parameters<AgentAPI['prompt']>[0];
 type PromptLaunchResult = NonNullable<ReturnType<AgentAPI['prompt']>>;
 type SteerPayload = Parameters<AgentAPI['steer']>[0];
 type CancelPayload = Parameters<AgentAPI['cancel']>[0];
-type RunShellCommandPayload = Parameters<AgentAPI['runShellCommand']>[0];
-type ShellCommandResult = ReturnType<AgentAPI['runShellCommand']>;
-type CancelShellCommandPayload = Parameters<AgentAPI['cancelShellCommand']>[0];
-type SetModelPayload = Parameters<AgentAPI['setModel']>[0];
-type SetModelResult = ReturnType<AgentAPI['setModel']>;
 type SetPermissionPayload = Parameters<AgentAPI['setPermission']>[0];
-type UsageStatus = ReturnType<AgentAPI['getUsage']>;
 type TokenUsage = NonNullable<UsageStatus['total']>;
-type GetTasksPayload = Parameters<AgentAPI['getTasks']>[0];
-type StopTaskPayload = Parameters<AgentAPI['stopTask']>[0];
-type GetTaskOutputPayload = Parameters<AgentAPI['getTaskOutput']>[0];
-type CancelPlanPayload = Parameters<AgentAPI['cancelPlan']>[0];
-type EmptyPayload = Parameters<AgentAPI['getModel']>[0];
 
 const _emptyPayload: AssertWire<typeof emptyPayloadSchema, EmptyPayload> = true;
 const _promptPart: AssertWire<typeof promptPartSchema, PromptPart> = true;

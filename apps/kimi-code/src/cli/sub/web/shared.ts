@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ServerInstanceInfo, ServerLogLevel } from '@moonshot-ai/kap-server';
+import type { ServerLogLevel } from '@moonshot-ai/kap-server';
 
 export const LOCAL_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_LAN_HOST = '0.0.0.0';
@@ -30,14 +30,6 @@ export const VALID_LOG_LEVELS: readonly ServerLogLevel[] = [
   'trace',
   'silent',
 ];
-
-/**
- * Browser-reachable host for a registry instance: a wildcard bind
- * (`0.0.0.0`) is not a connectable address, so advertise loopback instead.
- */
-export function instanceConnectHost(instance: ServerInstanceInfo): string {
-  return instance.host === '0.0.0.0' ? LOCAL_SERVER_HOST : instance.host;
-}
 
 export interface ParsedServerOptions {
   host: string;
@@ -131,40 +123,6 @@ export function normalizeServerOrigin(value: string): string {
   url.search = '';
   url.hash = '';
   return url.toString().replace(/\/$/, '');
-}
-
-/** Single probe of `/api/v1/healthz`. Returns true if the response envelope reports `code: 0`. */
-export async function isServerHealthy(origin: string, timeoutMs: number): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
-  try {
-    const response = await fetch(`${origin}/api/v1/healthz`, {
-      signal: controller.signal,
-    });
-    if (!response.ok) return false;
-    const body = (await response.json()) as { code?: unknown };
-    return body.code === 0;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/** Poll `/api/v1/healthz` until it reports healthy or `timeoutMs` elapses. */
-export async function waitForServerHealthy(origin: string, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    if (await isServerHealthy(origin, 500)) {
-      return true;
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 200);
-    });
-  } while (Date.now() < deadline);
-  return false;
 }
 
 /**

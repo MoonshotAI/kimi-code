@@ -8,13 +8,13 @@
  * `registerMediaTools` and re-runs it whenever the resolved model or its
  * media capabilities change.
  *
- * `createVideoUploader` is a thin binder over a runnable `Model`'s optional
- * `uploadVideo`. Auth is already resolved via the Model's `authProvider`
+ * `createVideoUploader` is a thin binder over a `ModelRequester`'s optional
+ * `uploadVideo`. Auth is already resolved via the requester's auth-provider
  * closure; media tooling doesn't need to know about tokens.
  */
 
-import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { Model } from '#/app/model/modelInstance';
+import type { ModelCapability } from '#/kosong/contract/capability';
+import type { ModelRequester } from '#/kosong/model/modelRequester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
@@ -32,6 +32,7 @@ export interface RegisterMediaToolsDeps {
   readonly capabilities: ModelCapability;
   readonly videoUploader?: VideoUploader;
   readonly telemetry?: ITelemetryService;
+  readonly inlineVideoSupported?: boolean;
 }
 
 export function registerMediaTools(
@@ -49,20 +50,21 @@ export function registerMediaTools(
       deps.capabilities,
       deps.videoUploader,
       deps.telemetry,
+      deps.inlineVideoSupported,
     ),
   );
 }
 
 export function createVideoUploader(
-  model: Pick<Model, 'uploadVideo'> | undefined,
+  requester: Pick<ModelRequester, 'uploadVideo'> | undefined,
   telemetry?: VideoUploadTelemetry,
 ): VideoUploader | undefined {
-  const uploadVideo = model?.uploadVideo;
+  const uploadVideo = requester?.uploadVideo;
   if (uploadVideo === undefined) return undefined;
-  const bound = uploadVideo.bind(model);
-  if (telemetry === undefined) return (input) => bound(input);
+  const bound = uploadVideo.bind(requester);
+  if (telemetry === undefined) return (input, options) => bound(input, options);
 
-  return async (input) => {
+  return async (input, options) => {
     const startedAt = Date.now();
     const base = {
       ...telemetry.props,
@@ -76,7 +78,7 @@ export function createVideoUploader(
       }
     };
     try {
-      const part = await bound(input);
+      const part = await bound(input, options);
       track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
       return part;
     } catch (error) {

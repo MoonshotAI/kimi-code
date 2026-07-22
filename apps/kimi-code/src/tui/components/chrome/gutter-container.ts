@@ -7,6 +7,12 @@
  * prefixed with `left` plain spaces. Right padding is logical only — we
  * never emit trailing spaces, since terminals already paint background to
  * the edge and adding them would just churn the diff renderer.
+ *
+ * The render cache below validates per child (component identity + the
+ * identity of its rendered line array), so structural child-list changes —
+ * append, splice-removal, in-place replacement — are picked up correctly
+ * without a tree-wide `invalidate()`. Reserve `invalidate()` for global
+ * style changes that genuinely dirty every child (e.g. theme switches).
  */
 
 import { Container } from '@moonshot-ai/pi-tui';

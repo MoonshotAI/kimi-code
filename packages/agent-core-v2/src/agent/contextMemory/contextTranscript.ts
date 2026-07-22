@@ -18,7 +18,9 @@
  *   - `context.append_message`    → append (deferred while a tool exchange is open)
  *   - `context.append_loop_event` → step.begin/content.part/tool.call mutate the
  *                                   open assistant; tool.result appends a tool
- *                                   message with the raw output
+ *                                   message with the raw output; settling a step
+ *                                   (at its end or at the next begin) drops an
+ *                                   output-free assistant, mirroring the live fold
  *   - `context.apply_compaction`  → keep the full history, append the user-role
  *                                   summary marker, recover `foldedLength` from
  *                                   the recorded kept-count fields
@@ -28,7 +30,7 @@
  *                                   folded view
  */
 
-import { type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
+import { type ContentPart, type ToolCall } from '#/kosong/contract/message';
 import type { WireRecord } from '#/wire/record';
 
 import {
@@ -39,6 +41,7 @@ import {
 } from './compactionHandoff';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
+import { isVacuousContentPart } from './vacuousContent';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
@@ -82,6 +85,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const openSteps = new Map<string, MutableEntry>();
   const pendingToolResultIds = new Set<string>();
   let deferred: MutableEntry[] = [];
+  let lastOpenStepUuid: string | undefined;
 
   const push = (...entries: MutableEntry[]): void => {
     transcript.push(...entries);
@@ -114,22 +118,37 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     openSteps.clear();
     pendingToolResultIds.clear();
     deferred = [];
+    lastOpenStepUuid = undefined;
+  };
+  const settleStep = (uuid: string): void => {
+    const entry = openSteps.get(uuid);
+    if (entry === undefined) return;
+    openSteps.delete(uuid);
+    if (entry.message.toolCalls.length > 0) return;
+    if (!entry.message.content.every(isVacuousContentPart)) return;
+    const index = transcript.indexOf(entry);
+    if (index === -1) return;
+    transcript.splice(index, 1);
+    foldedLength = Math.max(0, foldedLength - 1);
   };
 
   const applyLoopEvent = (event: LoopRecordedEvent, time: number | undefined): void => {
     switch (event.type) {
       case 'step.begin': {
         closePendingToolResults(time);
+        if (lastOpenStepUuid !== undefined) settleStep(lastOpenStepUuid);
         const entry: MutableEntry = {
           message: { role: 'assistant', content: [], toolCalls: [] },
           time,
         };
         push(entry);
         openSteps.set(event.uuid, entry);
+        lastOpenStepUuid = event.uuid;
         return;
       }
       case 'step.end': {
-        openSteps.delete(event.uuid);
+        settleStep(event.uuid);
+        if (lastOpenStepUuid === event.uuid) lastOpenStepUuid = undefined;
         flushDeferredIfToolExchangeClosed();
         return;
       }

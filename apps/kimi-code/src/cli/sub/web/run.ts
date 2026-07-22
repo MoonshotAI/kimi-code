@@ -214,7 +214,7 @@ function formatDangerNoticeLines(): string[] {
   return [
     `  ${dangerBold('⚠ DANGER: authentication is DISABLED (--dangerous-bypass-auth).')}`,
     `  ${danger('Anyone who can reach this port gets full access. Only continue if you understand the risk.')}`,
-    `  ${danger(`If you are unsure, run `)}${dangerBold('kimi web kill')}${danger(' now to stop this process.')}`,
+    `  ${danger('If you are unsure, stop this process now with ')}${dangerBold('Ctrl+C')}${danger('.')}`,
   ];
 }
 
@@ -328,8 +328,6 @@ interface FormatReadyBannerOptions {
   networkAddresses?: NetworkAddress[];
   /** When true, render a red danger notice (auth is disabled). */
   dangerousBypassAuth?: boolean;
-  /** When true, the server is attached to this terminal — Stop hint is Ctrl+C. */
-  foreground?: boolean;
 }
 
 export function formatReadyBanner(
@@ -390,8 +388,8 @@ export function formatReadyBanner(
 
   // Auxiliary controls last.
   lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
-  const stopHint = opts.foreground === true ? 'Ctrl+C' : 'kimi web kill';
-  lines.push(`  ${label('Stop:     ')}${muted(stopHint)}`);
+  // The server always runs in the foreground attached to this terminal.
+  lines.push(`  ${label('Stop:     ')}${muted('Ctrl+C')}`);
   lines.push('');
   return lines.join('\n');
 }

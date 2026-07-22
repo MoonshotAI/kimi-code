@@ -1,4 +1,4 @@
-import type { ContentPart, Message } from '#/app/llmProtocol/message';
+import type { ContentPart, Message } from '#/kosong/contract/message';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
 

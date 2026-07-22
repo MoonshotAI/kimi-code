@@ -27,6 +27,7 @@ function createProvider(
     stream: boolean;
     reasoningKey: string;
     model: string;
+    offEffort: string;
   }>,
 ): OpenAILegacyChatProvider {
   return new OpenAILegacyChatProvider({
@@ -34,6 +35,7 @@ function createProvider(
     apiKey: 'test-key',
     stream: options?.stream ?? false,
     reasoningKey: options?.reasoningKey,
+    offEffort: options?.offEffort,
   });
 }
 
@@ -605,6 +607,39 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['max_tokens']).toBe(2048);
     });
 
+    it('passes constructor generationKwargs into the request body', async () => {
+      // The construction-time channel (session affinity): kwargs seeded via
+      // the options land on every request, no morph required.
+      const provider = new OpenAILegacyChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        stream: false,
+        generationKwargs: { prompt_cache_key: 'session-test' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['prompt_cache_key']).toBe('session-test');
+    });
+
+    it('explicit maxTokens wins over constructor generationKwargs on conflict', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        stream: false,
+        maxTokens: 1024,
+        generationKwargs: { max_tokens: 512 },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_tokens']).toBe(1024);
+    });
+
     it('maps json_schema response format to response_format', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -1001,6 +1036,17 @@ describe('OpenAILegacyChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['reasoning_effort']).toBeUndefined();
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('.withThinking("off") sends the configured offEffort for models that reason by default', async () => {
+      const provider = createProvider({ offEffort: 'none' }).withThinking('off');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('none');
       expect(provider.thinkingEffort).toBe('off');
     });
 

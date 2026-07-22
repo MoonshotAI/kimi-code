@@ -1,4 +1,4 @@
-import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { TokenUsage } from '#/kosong/contract/usage';
 
 import { isAbortError } from '#/_base/utils/abort';
 import {

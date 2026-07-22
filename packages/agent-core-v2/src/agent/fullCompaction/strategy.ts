@@ -1,7 +1,7 @@
-import type { Message } from '#/app/llmProtocol/message';
+import type { Message } from '#/kosong/contract/message';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
-import { estimateTokensForMessage } from '#/_base/utils/tokens';
+import { estimateTokensForMessage } from '#/kosong/contract/tokens';
 
 export interface CompactionConfig {
   triggerRatio: number;
@@ -71,14 +71,14 @@ export class RuntimeCompactionStrategy implements CompactionStrategy {
   private delegate(): DefaultCompactionStrategy {
     const model = this.context();
     return new DefaultCompactionStrategy(
-      () => model.modelCapabilities.max_context_tokens,
+      () => model.modelCapabilities.max_input_tokens ?? model.modelCapabilities.max_context_tokens,
       this.config(model),
     );
   }
 
   private windowDelegate(): DefaultCompactionStrategy {
     return new DefaultCompactionStrategy(
-      () => this.context().modelCapabilities.max_context_tokens,
+      () => this.context().modelCapabilities.max_input_tokens ?? this.context().modelCapabilities.max_context_tokens,
       DEFAULT_COMPACTION_CONFIG,
     );
   }

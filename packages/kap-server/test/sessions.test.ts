@@ -67,7 +67,7 @@ function agentRpc(
   method: string,
   sessionId: string,
 ): string {
-  return `/api/v2/session/${sessionId}/agent/main/${String(service)}/${method}`;
+  return `/api/v1/debug/session/${sessionId}/agent/main/${String(service)}/${method}`;
 }
 
 function goalContinuationStarts(events: readonly DomainEvent[]): readonly DomainEvent[] {
@@ -91,6 +91,7 @@ describe('server-v2 /api/v1/sessions', () => {
       port: 0,
       homeDir: home,
       logLevel: 'silent',
+      debugEndpoints: true,
     });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -1174,6 +1175,7 @@ describe('server-v2 /api/v1/sessions status context window', () => {
       port: 0,
       homeDir: home,
       logLevel: 'silent',
+      debugEndpoints: true,
     });
     base = `http://127.0.0.1:${server.port}`;
   });

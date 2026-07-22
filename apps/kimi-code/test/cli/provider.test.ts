@@ -888,6 +888,93 @@ describe('kimi provider catalog add', () => {
     expect(current().providers['openai']).toMatchObject({ apiKey: 'sk-env' });
   });
 
+  it('lets --base-url override the catalog-declared endpoint', async () => {
+    mockRegistryFetch(CATALOG_BODY);
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'openai', {
+        apiKey: 'sk-o',
+        baseUrl: 'https://proxy.example.test/v1',
+      }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().providers['openai']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://proxy.example.test/v1',
+    });
+  });
+
+  it('strips a trailing /v1 from --base-url for Anthropic-wire imports', async () => {
+    mockRegistryFetch({
+      'claude-gateway': {
+        id: 'claude-gateway',
+        name: 'Claude Gateway',
+        npm: '@custom/claude-gateway',
+        models: { 'claude-x': { id: 'claude-x', limit: { context: 1000 } } },
+      },
+    });
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'claude-gateway', {
+        apiKey: 'sk-gw',
+        baseUrl: 'https://claude-gateway.example.test/v1',
+      }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().providers['claude-gateway']).toMatchObject({
+      type: 'anthropic',
+      // The Anthropic SDK appends /v1/messages itself — persisting the /v1
+      // would double it (/v1/v1/messages).
+      baseUrl: 'https://claude-gateway.example.test',
+    });
+  });
+
+  it('rejects an empty --base-url instead of persisting a blank endpoint', async () => {
+    mockRegistryFetch(CATALOG_BODY);
+    const { harness } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleCatalogAdd(deps, 'openai', { apiKey: 'sk-o', baseUrl: '   ' }));
+
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('--base-url cannot be empty');
+    await expect(harness.getConfig().then((c) => c.providers['openai'])).resolves.toBeUndefined();
+  });
+
+  it('requires --base-url for a non-official Anthropic-compatible vendor without one', async () => {
+    mockRegistryFetch({
+      'claude-gateway': {
+        id: 'claude-gateway',
+        name: 'Claude Gateway',
+        npm: '@custom/claude-gateway',
+        models: { 'claude-x': { id: 'claude-x', limit: { context: 1000 } } },
+      },
+    });
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleCatalogAdd(deps, 'claude-gateway', { apiKey: 'sk-gw' }));
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('--base-url');
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'claude-gateway', {
+        apiKey: 'sk-gw',
+        baseUrl: 'https://claude-gateway.example.test',
+      }),
+    );
+    expect(current().providers['claude-gateway']).toMatchObject({
+      type: 'anthropic',
+      baseUrl: 'https://claude-gateway.example.test',
+    });
+  });
+
   it('exits 1 when the api key is missing and skips the network', async () => {
     const fetchMock = mockRegistryFetch(CATALOG_BODY);
     const { harness } = makeHarness({ providers: {} } as KimiConfig);
@@ -911,5 +998,98 @@ describe('kimi provider catalog add', () => {
 
     expect(exitCodes).toEqual([1]);
     expect(stderr.join('')).toContain('Provider "no-such-id" not found in catalog');
+  });
+
+  const GUESS_CATALOG_BODY = {
+    xai: {
+      id: 'xai',
+      name: 'xAI',
+      npm: '@ai-sdk/xai',
+      env: ['XAI_API_KEY'],
+      models: {
+        'grok-4': {
+          id: 'grok-4',
+          limit: { context: 256_000 },
+          reasoning: true,
+          reasoning_options: [{ type: 'effort', values: ['none', 'low', 'medium', 'high'] }],
+        },
+      },
+    },
+    bedrock: {
+      id: 'amazon-bedrock',
+      name: 'Amazon Bedrock',
+      npm: '@ai-sdk/amazon-bedrock',
+      models: { 'claude-x': { id: 'claude-x', limit: { context: 1000 } } },
+    },
+    azure: {
+      id: 'azure',
+      name: 'Azure',
+      npm: '@ai-sdk/azure',
+      env: ['AZURE_API_KEY'],
+      models: { 'gpt-x': { id: 'gpt-x', limit: { context: 1000 } } },
+    },
+  };
+
+  it('guesses openai for a vendor-specific SDK and requires --base-url', async () => {
+    mockRegistryFetch(GUESS_CATALOG_BODY);
+    const { harness } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleCatalogAdd(deps, 'xai', { apiKey: 'sk-xai' }));
+
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('--base-url');
+    await expect(harness.getConfig().then((c) => c.providers['xai'])).resolves.toBeUndefined();
+  });
+
+  it('imports a guessed vendor with --base-url, carrying off_effort and a guess note', async () => {
+    mockRegistryFetch(GUESS_CATALOG_BODY);
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stdout, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'xai', { apiKey: 'sk-xai', baseUrl: 'https://api.x.ai/v1' }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().providers['xai']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://api.x.ai/v1',
+      apiKey: 'sk-xai',
+    });
+    expect(current().models?.['xai/grok-4']).toMatchObject({
+      supportEfforts: ['low', 'medium', 'high'],
+      offEffort: 'none',
+    });
+    expect(stdout.join('')).toContain('guessed "openai"');
+  });
+
+  it('refuses a proprietary SDK (bedrock) instead of guessing', async () => {
+    mockRegistryFetch(GUESS_CATALOG_BODY);
+    const { harness } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleCatalogAdd(deps, 'bedrock', { apiKey: 'sk-x' }));
+
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('proprietary');
+  });
+
+  it('requires --base-url for a vendor with no catalog endpoint (azure shape)', async () => {
+    mockRegistryFetch(GUESS_CATALOG_BODY);
+    const { harness, current } = makeHarness({ providers: {} } as KimiConfig);
+    const { deps, stderr, exitCodes } = makeDeps(harness);
+
+    await tryRun(() => handleCatalogAdd(deps, 'azure', { apiKey: 'sk-az' }));
+    expect(exitCodes).toEqual([1]);
+    expect(stderr.join('')).toContain('--base-url');
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'azure', { apiKey: 'sk-az', baseUrl: 'https://res.example.test/openai/v1' }),
+    );
+    expect(current().providers['azure']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://res.example.test/openai/v1',
+    });
   });
 });
