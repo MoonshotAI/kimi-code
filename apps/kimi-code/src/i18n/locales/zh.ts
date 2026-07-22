@@ -1,3 +1,5 @@
+import type { LocaleMessages } from './types';
+
 export default {
   meta: {
     languageName: '中文',
@@ -1907,4 +1909,4 @@ export default {
       fieldReasoningEffort: '思考强度 (off/low/medium/high/max)',
     },
   },
-} as const;
+} as const satisfies LocaleMessages;
