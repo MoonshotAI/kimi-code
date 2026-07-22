@@ -15,11 +15,9 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { Message } from '#/kosong/contract/message';
 import type { ProtocolTrait, ResolvedTrait, TraitContext } from '#/kosong/protocol/protocolTrait';
 import {
   compactObject,
-  composeOpenAIChatHooks,
   firstProcessEnv,
   traitEndpoint,
   traitProvides,
@@ -30,110 +28,6 @@ const context: TraitContext = { config: { protocol: 'openai', modelName: 'm' } }
 function resolved(trait: ProtocolTrait): ResolvedTrait {
   return { trait, context };
 }
-
-const userMessage: Message = {
-  role: 'user',
-  content: [{ type: 'text', text: 'hi' }],
-  toolCalls: [],
-};
-
-describe('composeOpenAIChatHooks — pipeline hooks', () => {
-  it('chains convertMessage in trait order, each receiving the previous output', () => {
-    const order: string[] = [];
-    const hooks = composeOpenAIChatHooks([
-      resolved({
-        convertMessage: (_message, converted) => {
-          order.push('first');
-          return { ...converted, first: true };
-        },
-      }),
-      resolved({
-        convertMessage: (_message, converted) => {
-          order.push('second');
-          return { ...converted, second: converted['first'] === true };
-        },
-      }),
-    ]);
-
-    const out = hooks?.convertMessage?.(userMessage, { role: 'user' });
-    expect(order).toEqual(['first', 'second']);
-    expect(out).toEqual({ role: 'user', first: true, second: true });
-  });
-
-  it('drops the message when any convertMessage stage returns null and short-circuits', () => {
-    let secondCalled = false;
-    const hooks = composeOpenAIChatHooks([
-      resolved({ convertMessage: () => null }),
-      resolved({
-        convertMessage: (_message, converted) => {
-          secondCalled = true;
-          return converted;
-        },
-      }),
-    ]);
-
-    expect(hooks?.convertMessage?.(userMessage, { role: 'user' })).toBeNull();
-    expect(secondCalled).toBe(false);
-  });
-
-  it('chains mergeHistory and buildParams through each stage', () => {
-    const hooks = composeOpenAIChatHooks([
-      resolved({
-        mergeHistory: (messages) => [...messages, { marker: 'a' }],
-        buildParams: (params) => ({ ...params, a: 1 }),
-      }),
-      resolved({
-        mergeHistory: (messages) =>
-          messages.some((m) => m['marker'] === 'a') ? [...messages, { marker: 'b' }] : undefined,
-        buildParams: (params) => ({ ...params, b: (params['a'] as number) + 1 }),
-      }),
-    ]);
-
-    expect(hooks?.mergeHistory?.([{ role: 'user' }])).toEqual([
-      { role: 'user' },
-      { marker: 'a' },
-      { marker: 'b' },
-    ]);
-    expect(hooks?.buildParams?.({})).toEqual({ a: 1, b: 2 });
-  });
-});
-
-describe('composeOpenAIChatHooks — single-value hooks', () => {
-  it('lets the last declarer win', () => {
-    const hooks = composeOpenAIChatHooks([
-      resolved({
-        cacheKey: (key) => ({ first_would_lose: key }),
-        reasoningKey: () => 'first_key',
-        withThinking: () => ({ first: true }),
-      }),
-      resolved({
-        cacheKey: (key) => ({ prompt_cache_key: key }),
-        reasoningKey: () => 'reasoning_content',
-        withThinking: (_effort, _options, kwargs) => ({ ...kwargs, second: true }),
-      }),
-    ]);
-
-    expect(hooks?.cacheKey?.('session-1')).toEqual({ prompt_cache_key: 'session-1' });
-    expect(hooks?.reasoningKey?.()).toBe('reasoning_content');
-    expect(hooks?.withThinking?.('high', {}, { seeded: 1 })).toEqual({
-      seeded: 1,
-      second: true,
-    });
-  });
-
-  it('returns undefined when no per-request hooks are declared', () => {
-    expect(composeOpenAIChatHooks([])).toBeUndefined();
-    expect(
-      composeOpenAIChatHooks([
-        resolved({
-          endpoint: () => ({ apiKeyEnv: 'SOME_KEY' }),
-          defaultHeaders: () => ({ 'x-a': 'b' }),
-          provides: () => ({ stream: false }),
-        }),
-      ]),
-    ).toBeUndefined();
-  });
-});
 
 describe('traitEndpoint / firstProcessEnv', () => {
   const ENV_A = 'KOSONG_TEST_ENV_A';
