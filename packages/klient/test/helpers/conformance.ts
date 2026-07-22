@@ -72,7 +72,7 @@ export function defineKlientConformance(
       expect(typeof count).toBe('number');
     });
 
-    it('providers.set/get/delete works and emits providers.changed', async () => {
+    it('providers.set/get/delete works and emits kosong.providers.changed', async () => {
       const events: Array<{
         added: readonly string[];
         removed: readonly string[];
@@ -82,7 +82,7 @@ export function defineKlientConformance(
       target.klient.events.onError((error) => {
         errors.push(error);
       });
-      const sub = target.klient.events.on('providers.changed', (event) => {
+      const sub = target.klient.events.on('kosong.providers.changed', (event) => {
         events.push(event);
       });
       // Give the subscription a wire round-trip (memory is synchronous; ipc
@@ -93,16 +93,19 @@ export function defineKlientConformance(
 
       const name = '__klient_conformance__';
       try {
-        await target.klient.global.providers.set({ name, config: { apiKey: 'conf-key' } });
-        const got = await target.klient.global.providers.get(name);
-        expect(got?.apiKey).toBe('conf-key');
+        await target.klient.global.kosong.addProvider(name, {
+          type: 'openai',
+          auth: { method: 'api-key', apiKey: 'conf-key' },
+        });
+        const got = await target.klient.global.kosong.getProvider(name);
+        expect(got.has_api_key).toBe(true);
 
         await waitFor(
           () => events.some((event) => [...event.added, ...event.changed].includes(name)),
           5_000,
         );
       } finally {
-        await target.klient.global.providers.delete(name);
+        await target.klient.global.kosong.removeProvider(name);
         sub.dispose();
       }
       expect(errors).toEqual([]);
@@ -124,37 +127,40 @@ export function defineKlientConformance(
       expect(Array.isArray(browse.entries)).toBe(true);
     });
 
-    it('catalog lists models/providers and models registry round-trips', async () => {
-      const catalog = target.klient.global.catalog;
-      expect(Array.isArray(await catalog.listModels())).toBe(true);
-      expect(Array.isArray(await catalog.listProviders())).toBe(true);
+    it('kosong lists models/providers and anonymous provider round-trips', async () => {
+      const kosong = target.klient.global.kosong;
+      expect(Array.isArray(await kosong.listModels())).toBe(true);
+      expect(Array.isArray(await kosong.listProviders())).toBe(true);
 
-      const models = target.klient.global.models;
       const events: Array<{
         added: readonly string[];
         removed: readonly string[];
         changed: readonly string[];
       }> = [];
-      const sub = target.klient.events.on('models.changed', (event) => {
+      const sub = target.klient.events.on('kosong.models.changed', (event) => {
         events.push(event);
       });
-      // See providers.changed above — give the subscription a wire round-trip.
+      // See kosong.providers.changed above — give the subscription a wire round-trip.
       await new Promise((resolve) => {
         setTimeout(resolve, 300);
       });
 
       const id = '__klient_conformance__';
       try {
-        await models.set({ id, config: { name: 'conf-model', model: 'conf-model' } });
-        const got = await models.get(id);
-        expect(got?.name).toBe('conf-model');
+        await kosong.addProvider({
+          id,
+          model: 'conf-model',
+          protocol: 'openai',
+          baseUrl: 'http://127.0.0.1:1',
+          auth: { method: 'api-key', apiKey: 'conf-key' },
+        });
 
         await waitFor(
           () => events.some((event) => [...event.added, ...event.changed].includes(id)),
           5_000,
         );
       } finally {
-        await models.delete(id);
+        await kosong.removeProvider(id);
         sub.dispose();
       }
     });

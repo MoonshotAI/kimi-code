@@ -31,23 +31,23 @@ async function main(): Promise<void> {
     console.log('[sessions] list               ->', sessions.items.length, 'sessions');
     const workspaces = await klient.global.workspaces.list();
     console.log('[workspaces] list             ->', workspaces.length, 'workspaces');
-    const providers = await klient.global.providers.list();
-    console.log('[providers] list              ->', Object.keys(providers).length, 'providers');
+    const providers = await klient.global.kosong.listProviders();
+    console.log('[providers] list              ->', providers.length, 'providers');
 
     // 3) Events — klient-level forwarding (no onDid*/onWill* in sight).
-    const sub = klient.events.on('providers.changed', (event) => {
+    const sub = klient.events.on('kosong.providers.changed', (event) => {
       console.log(
-        '[event]    providers.changed  -> +%s -%s ~%s',
+        '[event]    kosong.providers.changed  -> +%s -%s ~%s',
         event.added,
         event.removed,
         event.changed,
       );
     });
-    await klient.global.providers.set({
-      name: '__klient_example__',
-      config: { apiKey: 'example-key' },
+    await klient.global.kosong.addProvider('__klient_example__', {
+      type: 'openai',
+      auth: { method: 'api-key', apiKey: 'example-key' },
     });
-    await klient.global.providers.delete('__klient_example__');
+    await klient.global.kosong.removeProvider('__klient_example__');
     sub.dispose();
 
     // 4) Error path — a missing plugin surfaces an error.

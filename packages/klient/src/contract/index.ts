@@ -65,4 +65,5 @@ export const globalContract: KlientContract = {
   agentTaskService: agentTaskContract,
 };
 
-export type { KlientContract, ProcedureContract, ServiceContract } from './types.js';
+export type { KlientContract, ProcedureContract, ServiceContract, StreamingProcedureContract } from './types.js';
+export { isStreamingContract } from './types.js';
