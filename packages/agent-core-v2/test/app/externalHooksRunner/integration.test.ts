@@ -62,10 +62,7 @@ import { SessionExternalHooksService } from '#/session/externalHooks/externalHoo
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
-
-function nodeCommand(source: string): string {
-  return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
-}
+import { nodeScriptCommand as nodeCommand } from '../../harness/nodeScriptCommand';
 
 function stdinScript(body: string): string {
   return nodeCommand([

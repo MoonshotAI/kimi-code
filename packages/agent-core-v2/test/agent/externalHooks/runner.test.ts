@@ -3,11 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { buildHookSpawnOptions, runHook } from '#/agent/externalHooks/runner';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 
-const hostProcess = new HostProcessService();
+import { nodeScriptCommand as nodeCommand } from '../../harness/nodeScriptCommand';
 
-function nodeCommand(source: string): string {
-  return `node -e ${JSON.stringify(source.replace(/\s*\n\s*/g, ' '))}`;
-}
+const hostProcess = new HostProcessService();
 
 describe('runHook process runner', () => {
   it('returns allow when the hook exits 0 and captures stdout', async () => {

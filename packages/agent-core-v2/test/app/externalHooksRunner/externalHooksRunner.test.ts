@@ -5,10 +5,7 @@ import type { ContentPart } from '#/kosong/contract/message';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeHookRunner } from '../../agent/externalHooks/runner-stub';
-
-function nodeCommand(source: string): string {
-  return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
-}
+import { nodeScriptCommand as nodeCommand } from '../../harness/nodeScriptCommand';
 
 describe('ExternalHooksRunnerService', () => {
   it('fires a hook whose matcher regex matches the matcher value', async () => {
