@@ -1571,11 +1571,18 @@ function formatContextUsage(contextUsage: number): string {
 
 /**
  * Inspect the leading `ContentBlock` of an ACP prompt for a
- * `/skill:<name>` form. Only the first block is examined — when Zed
- * (or any other ACP client) sends a slash command, it always lives in
- * the first text block; multi-part prompts that interleave images or
- * resources before text are typed by humans and do not start with a
- * slash. Non-text leading blocks short-circuit to passthrough.
+ * `/skill:<name>` form. When Zed (or any other ACP client) sends a slash
+ * command, it always lives in the first text-carrying block; multi-part
+ * prompts that interleave images or resources before text are typed by
+ * humans and do not start with a slash. Non-text leading blocks
+ * short-circuit to passthrough.
+ *
+ * Leading whitespace-only text blocks are treated as separators, not
+ * content — they are skipped so a `[text(" "), text("/compact")]` payload
+ * still classifies as `/compact` rather than passthrough. This mirrors the
+ * same normalization the prompt-part converter applies (see
+ * `acpBlocksToPromptParts` in `./convert.ts`, #1777); slash routing and
+ * prompt submission must agree on what the "leading" block is.
  *
  * The parsing/resolution itself is delegated to `./slash` —
  * deliberately duplicated from the TUI's
@@ -1587,9 +1594,12 @@ function detectLeadingSlashIntent(
   blocks: readonly ContentBlock[],
   skillCommandMap: ReadonlyMap<string, string>,
 ): ReturnType<typeof detectSlashIntent> {
-  const first = blocks[0];
-  if (!first || first.type !== 'text') return { kind: 'passthrough' };
-  return detectSlashIntent(first.text, skillCommandMap);
+  for (const block of blocks) {
+    if (block.type !== 'text') return { kind: 'passthrough' };
+    if (block.text.trim().length === 0) continue;
+    return detectSlashIntent(block.text, skillCommandMap);
+  }
+  return { kind: 'passthrough' };
 }
 
 function mapPromptError(err: unknown, sessionId: string): RequestError {
