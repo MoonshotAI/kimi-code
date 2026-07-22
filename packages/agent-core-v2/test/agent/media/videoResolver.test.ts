@@ -234,6 +234,32 @@ describe('AgentVideoResolverService', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
+  it('retries the upload on a later step after a transient failure instead of freezing the tag', async () => {
+    let uploadCalls = 0;
+    const upload = vi.fn(async (): Promise<VideoURLPart> => {
+      uploadCalls += 1;
+      if (uploadCalls === 1) throw new Error('files endpoint unavailable');
+      return msPart('prov-1');
+    });
+    const resolver = new AgentVideoResolverService(
+      fileService(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]])),
+      blobStore(),
+      telemetry,
+    );
+    const message = videoMessage(buildKimiFileUrl(FILE_ID, FALLBACK_PATH));
+    const req = requester({ uploadVideo: upload });
+
+    const failed = await resolver.resolve([message], req);
+    expect(firstPart(failed)).toEqual({ type: 'text', text: `<video path="${FALLBACK_PATH}"></video>` });
+
+    const retried = await resolver.resolve([message], req);
+    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+
+    const memoed = await resolver.resolve([message], req);
+    expect(firstPart(memoed)).toEqual(msPart('prov-1'));
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
+
   it('tags when the bytes do not sniff as a video', async () => {
     const upload = vi.fn();
     const out = await new AgentVideoResolverService(

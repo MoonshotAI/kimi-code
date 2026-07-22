@@ -15,7 +15,10 @@
  * token, and an upload interrupted by the step's aborted signal re-throws —
  * shape-agnostic, since abort rejections vary by provider — so cancellation
  * ends the request instead of memoizing a degraded fallback for the rest of
- * the agent's lifetime. Bound at Agent scope.
+ * the agent's lifetime. Resolution outcomes are memoized per (file, provider)
+ * for step/retry stability — except a transient upload failure, which
+ * degrades only the current request to the tag form so a later step retries
+ * the upload instead of freezing the fallback. Bound at Agent scope.
  */
 
 import { createHash } from 'node:crypto';
@@ -96,8 +99,8 @@ export class AgentVideoResolverService implements IAgentVideoResolverService {
     const memoed = this.resolved.get(cacheKey);
     if (memoed !== undefined) return memoed;
 
-    const part = await this.resolveUncached(ref, requester, cacheKey, signal);
-    this.resolved.set(cacheKey, part);
+    const { part, memoize } = await this.resolveUncached(ref, requester, cacheKey, signal);
+    if (memoize) this.resolved.set(cacheKey, part);
     return part;
   }
 
@@ -106,10 +109,13 @@ export class AgentVideoResolverService implements IAgentVideoResolverService {
     requester: ModelRequester,
     cacheKey: string,
     signal: AbortSignal | undefined,
-  ): Promise<ContentPart> {
+  ): Promise<{ part: ContentPart; memoize: boolean }> {
     const cachedLlmFileId = await this.readCachedUpload(cacheKey);
     if (cachedLlmFileId !== undefined) {
-      return { type: 'video_url', videoUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId } };
+      return {
+        part: { type: 'video_url', videoUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId } },
+        memoize: true,
+      };
     }
 
     let bytes: Buffer;
@@ -119,15 +125,15 @@ export class AgentVideoResolverService implements IAgentVideoResolverService {
       bytes = await readStream(file.stream());
       filename = file.meta.name;
     } catch {
-      return tag(ref);
+      return { part: tag(ref), memoize: true };
     }
 
     const fileType = detectFileType(filename, bytes.subarray(0, MEDIA_SNIFF_BYTES), 'media');
-    if (fileType.kind !== 'video') return tag(ref);
+    if (fileType.kind !== 'video') return { part: tag(ref), memoize: true };
     const mimeType = fileType.mimeType;
 
     const model = requester.model;
-    if (!model.capabilities.video_in) return tag(ref);
+    if (!model.capabilities.video_in) return { part: tag(ref), memoize: true };
     const inlineSupported = inlineVideoSupportedForProtocol(model.protocol);
 
     const uploader = createVideoUploader(requester, {
@@ -139,21 +145,27 @@ export class AgentVideoResolverService implements IAgentVideoResolverService {
       },
     });
     if (uploader === undefined) {
-      return inlineSupported ? inlineVideoPart(bytes, mimeType) : tag(ref);
+      return {
+        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : tag(ref),
+        memoize: true,
+      };
     }
 
     try {
       const uploaded = await uploader({ data: bytes, mimeType, filename }, { signal });
       const llmFileId = uploaded.videoUrl.id ?? msFileIdFromUrl(uploaded.videoUrl.url);
       if (llmFileId !== undefined) await this.writeCachedUpload(cacheKey, llmFileId);
-      return uploaded;
+      return { part: uploaded, memoize: true };
     } catch (error) {
       if (signal?.aborted) throw error;
       if (isVideoUploadAuthError(error)) throw error;
       if (isVideoUploadUnsupportedError(error)) {
-        return inlineSupported ? inlineVideoPart(bytes, mimeType) : tag(ref);
+        return {
+          part: inlineSupported ? inlineVideoPart(bytes, mimeType) : tag(ref),
+          memoize: true,
+        };
       }
-      return tag(ref);
+      return { part: tag(ref), memoize: false };
     }
   }
 
