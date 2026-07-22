@@ -140,6 +140,29 @@ pnpm --filter @moonshot-ai/kimi-code run build:native:release
 
 Output: `apps/kimi-code/dist-native/bin/win32-x64/kimi.exe`
 
+#### Linux (x64)
+
+```sh
+cd apps/kimi-code
+pnpm run build:native:js
+pnpm run build:native:sea -- --profile=local
+```
+
+Output: `apps/kimi-code/dist-native/bin/linux-x64/kimi` (~166 MB)
+
+Deploy to local `.kimi-code`:
+
+```bash
+cp apps/kimi-code/dist-native/bin/linux-x64/kimi ~/.kimi-code/bin/kimi
+```
+
+If the running `kimi` process is already using the binary (Text file busy):
+
+```bash
+cp apps/kimi-code/dist-native/bin/linux-x64/kimi ~/.kimi-code/bin/kimi-new
+mv ~/.kimi-code/bin/kimi-new ~/.kimi-code/bin/kimi
+```
+
 > **Note**: The SEA build currently requires `@moonshot-ai/kimi-native-tools` listed as a dependency in `apps/kimi-code/package.json` and registered in `apps/kimi-code/scripts/native/native-deps.mjs`. See [Common Issues](#common-issues) for known pitfalls.
 
 ### Common Issues
