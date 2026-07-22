@@ -3,13 +3,13 @@ import Ajv2019 from 'ajv/dist/2019';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 
-const DRAFT_07_AJV = new Ajv({ strict: false, allErrors: true });
+const DRAFT_07_AJV = new Ajv({ strict: false, allErrors: true, verbose: true });
 addFormats(DRAFT_07_AJV);
 
-const DRAFT_2019_AJV = new Ajv2019({ strict: false, allErrors: true });
+const DRAFT_2019_AJV = new Ajv2019({ strict: false, allErrors: true, verbose: true });
 addFormats(DRAFT_2019_AJV);
 
-const DRAFT_2020_AJV = new Ajv2020({ strict: false, allErrors: true });
+const DRAFT_2020_AJV = new Ajv2020({ strict: false, allErrors: true, verbose: true });
 addFormats(DRAFT_2020_AJV);
 
 const DRAFT_2019_KEYWORDS = new Set([
@@ -61,13 +61,79 @@ export interface JsonObject extends Record<string, JsonType> {}
 
 export type ToolArgsValidator = ValidateFunction<JsonType>;
 
+type SchemaObject = Record<string, unknown>;
+
+function asSchemaObject(value: unknown): SchemaObject | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  return value as SchemaObject;
+}
+
+function schemaProperties(error: ErrorObject): SchemaObject | undefined {
+  const parentSchema = asSchemaObject(error.parentSchema);
+  if (parentSchema === undefined) return undefined;
+  return asSchemaObject(parentSchema['properties']);
+}
+
+function validProperties(error: ErrorObject): string | undefined {
+  const properties = schemaProperties(error);
+  if (properties === undefined) return undefined;
+
+  const names = Object.keys(properties);
+  return names.length === 0 ? undefined : names.join(', ');
+}
+
+function formatTypeList(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+
+  if (Array.isArray(value)) {
+    const types = value.filter((item): item is string => typeof item === 'string');
+    return types.length === 0 ? undefined : types.join(' or ');
+  }
+
+  return undefined;
+}
+
+function expectedType(schema: unknown): string | undefined {
+  const schemaObject = asSchemaObject(schema);
+  if (schemaObject === undefined) return undefined;
+
+  const directType = formatTypeList(schemaObject['type']);
+  if (directType !== undefined) return directType;
+
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const branches = schemaObject[key];
+    if (!Array.isArray(branches)) continue;
+
+    const branchTypes = new Set<string>();
+    for (const branch of branches) {
+      const branchType = expectedType(branch);
+      if (branchType !== undefined) branchTypes.add(branchType);
+    }
+    if (branchTypes.size > 0) return [...branchTypes].join(' or ');
+  }
+
+  return undefined;
+}
+
+function expectedPropertyType(error: ErrorObject, property: string): string | undefined {
+  const properties = schemaProperties(error);
+  if (properties === undefined) return undefined;
+  return expectedType(properties[property]);
+}
+
 function formatValidationError(error: ErrorObject): string {
   if (error.keyword === 'required' && 'missingProperty' in error.params) {
-    return `must have required property '${String(error.params['missingProperty'])}'`;
+    const property = String(error.params['missingProperty']);
+    const type = expectedPropertyType(error, property);
+    const typeHint = type === undefined ? '' : ` (expected ${type})`;
+    return `must have required property '${property}'${typeHint}`;
   }
 
   if (error.keyword === 'additionalProperties' && 'additionalProperty' in error.params) {
-    return `must NOT have additional property '${String(error.params['additionalProperty'])}'`;
+    const property = String(error.params['additionalProperty']);
+    const properties = validProperties(error);
+    const propertiesHint = properties === undefined ? '' : `; valid properties: ${properties}`;
+    return `must NOT have additional property '${property}'${propertiesHint}`;
   }
 
   const path = error.instancePath ? `${error.instancePath} ` : '';
