@@ -125,10 +125,6 @@ const DOMAIN_LAYER = new Map([
   ['config', 2],
   ['projectLocalConfig', 2],
   ['sessionFs', 2],
-  // `sessionFileLedger` is the Session-scope optimistic-concurrency ledger for
-  // the write path: it consumes the `sessionFs` dirty-tick state and the L1
-  // hostFs stat, so it sits beside `sessionFs` at L2.
-  ['sessionFileLedger', 2],
   ['process', 2],
   ['workspace', 2],
   ['workspaceAliases', 2],
@@ -178,8 +174,8 @@ const DOMAIN_LAYER = new Map([
   ['runtime', 4],
   ['toolDedupe', 4],
   // `fileFencing` is the Agent-scope optimistic-concurrency gate: a
-  // tool-executor hook participant (L3) over the `sessionFileLedger` (L2),
-  // so it sits at L4 beside `toolDedupe`.
+  // tool-executor hook participant (L3) that owns Agent-local file revision
+  // baselines, so it sits at L4 beside `toolDedupe`.
   ['fileFencing', 4],
   ['toolSelect', 4],
   ['toolPolicy', 4],

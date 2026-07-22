@@ -1,43 +1,43 @@
 /**
  * `fileFencing` domain (L4) — `IAgentFileFencingService` implementation.
  *
- * Registers the `writeFencing` participant on the `toolExecutor`
- * `onBeforeExecuteTool` / `onDidExecuteTool` hook slots, matching
- * `Read`/`Write`/`Edit` by tool name and letting every other tool pass
- * through. For Edit and overwrite Write the before hook injects an execution
- * wrapper; append Write remains non-destructive and bypasses read-first. The
- * wrapper re-checks the ledger only after the scheduler grants the declared
- * file access, so a queued write cannot rely on a stale preflight verdict. The
- * target path comes from the resolved execution's file accesses
- * — the exact canonical path the tool itself computed. `stale` blocks with an
- * outside-modification conflict and `no-baseline` blocks with a read-first
- * reason (Edit-over-existing, or overwrite Write over an existing file). The
- * did-hook baselines the ledger from the revision the successful call captured
- * on its own result (ranged Reads excepted — per the ledger contract they
- * never count as full reads); direct creation of a new file is verdict-`clean`,
- * so it never blocks. Checked after `permission` (ignition order is set by
- * `agentLifecycle`). Bound at Agent scope.
+ * Owns one Agent's in-memory file revision baselines and participates in the
+ * `toolExecutor` hooks to enforce read-before-write and stale-write blocking
+ * for `Write`/`Edit`. Reads current revisions through the os host filesystem
+ * and keys paths with the normalization owned by `sessionFs`. Bound at Agent
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { unwrapErrorCause } from '#/_base/errors/errors';
+import { fileStatTuplesEqual } from '#/_base/utils/fs';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   ToolBeforeExecuteContext,
   ToolDidExecuteContext,
   ToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import {
-  ISessionFileLedger,
-  type FileLedgerVerdict,
-} from '#/session/sessionFileLedger/fileLedger';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { normalizeFsWatchKey } from '#/session/sessionFs/fsWatch';
 import { toolFileRevision, type ToolAccesses } from '#/tool/toolContract';
 
 import { IAgentFileFencingService } from './fileFencing';
 
 const READ_TOOL = 'Read';
 const WRITE_TOOLS = new Set(['Write', 'Edit']);
+
+type FileRevision =
+  | { readonly exists: false }
+  | {
+      readonly exists: true;
+      readonly ino?: number;
+      readonly mtimeMs?: number;
+      readonly size: number;
+    };
+
+type FileFencingVerdict = 'clean' | 'stale' | 'no-baseline';
 
 function isFenced(ctx: ToolExecutionHookContext): boolean {
   return ctx.toolCall.name === READ_TOOL || WRITE_TOOLS.has(ctx.toolCall.name);
@@ -68,24 +68,32 @@ function isAppendWrite(ctx: ToolExecutionHookContext): boolean {
   return (ctx.args as { readonly mode?: unknown }).mode === 'append';
 }
 
-function blockReason(toolName: string, path: string, verdict: FileLedgerVerdict): string {
+function fileRevisionsEqual(a: FileRevision, b: FileRevision): boolean {
+  if (a.exists !== b.exists) return false;
+  if (!a.exists || !b.exists) return true;
+  return fileStatTuplesEqual(a, b);
+}
+
+function blockReason(toolName: string, path: string, verdict: FileFencingVerdict): string {
   if (verdict === 'no-baseline') {
     return toolName === 'Edit'
-      ? `Editing "${path}" is blocked: the file exists but has not been read in this session. Read it first, then retry the edit.`
-      : `Writing "${path}" is blocked: the file already exists but has not been read in this session. Read it first, then retry the write.`;
+      ? `Editing "${path}" is blocked: the file exists but has not been read by this agent. Read it first, then retry the edit.`
+      : `Writing "${path}" is blocked: the file already exists but has not been read by this agent. Read it first, then retry the write.`;
   }
   const verb = toolName === 'Edit' ? 'Editing' : 'Writing';
   return (
     `${verb} "${path}" is blocked: the file changed on disk since it was last read or written ` +
-    'in this session. Read it again, then retry.'
+    'by this agent. Read it again, then retry.'
   );
 }
 
 export class AgentFileFencingService extends Disposable implements IAgentFileFencingService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly baselines = new Map<string, FileRevision>();
+
   constructor(
-    @ISessionFileLedger private readonly ledger: ISessionFileLedger,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
@@ -110,7 +118,7 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     ctx.decision = {
       ...ctx.decision,
       execute: async (executeCtx) => {
-        const verdict = await this.ledger.compare(path);
+        const verdict = await this.compareRevision(path);
         if (verdict !== 'clean') {
           const reason = blockReason(ctx.toolCall.name, path, verdict);
           return { output: reason, isError: true };
@@ -126,12 +134,31 @@ export class AgentFileFencingService extends Disposable implements IAgentFileFen
     if (ctx.toolCall.name === READ_TOOL && isRangedRead(ctx.args)) return;
     const revision = ctx.result[toolFileRevision];
     if (revision !== undefined) {
-      this.ledger.recordBaseline(revision.path, {
+      this.baselines.set(normalizeFsWatchKey(revision.path), {
         exists: true,
         ino: revision.ino,
         mtimeMs: revision.mtimeMs,
         size: revision.size,
       });
+    }
+  }
+
+  private async compareRevision(path: string): Promise<FileFencingVerdict> {
+    const baseline = this.baselines.get(normalizeFsWatchKey(path));
+    const currentRevision = await this.tryStat(path);
+    if (currentRevision === undefined) return 'stale';
+    if (baseline === undefined) return currentRevision.exists ? 'no-baseline' : 'clean';
+    return fileRevisionsEqual(baseline, currentRevision) ? 'clean' : 'stale';
+  }
+
+  private async tryStat(path: string): Promise<FileRevision | undefined> {
+    try {
+      const stat = await this.hostFs.stat(path);
+      return { exists: true, ino: stat.ino, mtimeMs: stat.mtimeMs, size: stat.size };
+    } catch (error) {
+      const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return { exists: false };
+      return undefined;
     }
   }
 }

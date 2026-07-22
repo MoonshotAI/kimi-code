@@ -329,8 +329,6 @@ export * from '#/session/sessionFs/fsWatchService';
 export * from '#/session/sessionFs/gitContext';
 export * from '#/session/sessionFs/rgLocator';
 export * from '#/session/sessionFs/runRg';
-export * from '#/session/sessionFileLedger/fileLedger';
-export * from '#/session/sessionFileLedger/fileLedgerService';
 export * from '#/app/hostFolderBrowser/hostFolderBrowser';
 export * from '#/app/hostFolderBrowser/hostFolderBrowserService';
 export * from '#/persistence/interface/storage';

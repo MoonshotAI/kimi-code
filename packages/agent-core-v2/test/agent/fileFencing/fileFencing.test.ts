@@ -3,8 +3,8 @@
  * through the real DI scope tree: a real tmpdir, the real `HostFileSystem`,
  * and the registered `writeFencing` hook participant over a real
  * `OrderedHookSlot`. Covers the hard-block verdicts (stale outside change /
- * never-read existing file), stat-only checks, and ledger isolation between
- * two Session scopes sharing one workspace.
+ * never-read existing file), stat-only checks, and baseline isolation between
+ * two Agent scopes in one Session.
  */
 
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -24,8 +24,6 @@ import type {
 } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { ISessionFileLedger } from '#/session/sessionFileLedger/fileLedger';
-import { SessionFileLedger } from '#/session/sessionFileLedger/fileLedgerService';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -39,7 +37,6 @@ import { stubToolExecutor } from '../loop/stubs';
 import { countingHostFs } from '../../session/sessionFs/stubs';
 
 void AgentFileFencingService;
-void SessionFileLedger;
 void AgentToolExecutorService;
 
 interface Env {
@@ -47,39 +44,32 @@ interface Env {
   readonly workDir: string;
   readonly outsideDir: string;
   readonly statCalls: () => number;
+  readonly poisonedPaths: Set<string>;
 }
 
 function makeEnv(): Env {
   const workDir = mkdtempSync(join(tmpdir(), 'kimi-fencing-work-'));
   const outsideDir = mkdtempSync(join(tmpdir(), 'kimi-fencing-out-'));
   cleanupPaths.push(workDir, outsideDir);
-  const { fs, statCalls } = countingHostFs();
+  const poisonedPaths = new Set<string>();
+  const { fs, statCalls } = countingHostFs(poisonedPaths);
   const host = createScopedTestHost([stubPair(IHostFileSystem, fs)]);
   hosts.push(host);
-  return { host, workDir, outsideDir, statCalls };
+  return { host, workDir, outsideDir, statCalls, poisonedPaths };
 }
 
 interface AgentWorld {
   readonly env: Env;
-  readonly session: Scope;
-  readonly agent: Scope;
   readonly executor: IAgentToolExecutorService;
-  readonly ledger: ISessionFileLedger;
 }
 
-function makeAgent(env: Env, session: Scope): AgentWorld {
+function makeAgent(env: Env, session: Scope, agentId = 'main'): AgentWorld {
   const executor = stubToolExecutor();
-  const agent = env.host.childOf(session, LifecycleScope.Agent, 'main', [
+  const agent = env.host.childOf(session, LifecycleScope.Agent, agentId, [
     stubPair(IAgentToolExecutorService, executor),
   ]);
   agent.accessor.get(IAgentFileFencingService);
-  return {
-    env,
-    session,
-    agent,
-    executor,
-    ledger: session.accessor.get(ISessionFileLedger),
-  };
+  return { env, executor };
 }
 
 function setup(): AgentWorld {
@@ -223,8 +213,25 @@ describe('AgentFileFencingService', () => {
     writeFileSync(file, 'hello');
 
     const blocked = await runBlocked(world, 'Edit', file);
-    expect(blocked.output).toContain('has not been read in this session');
+    expect(blocked.output).toContain('has not been read by this agent');
     expect(blocked.output).toContain('Read it first');
+  });
+
+  it('requires each Agent in one Session to establish its own read baseline', async () => {
+    const env = makeEnv();
+    const session = env.host.child(LifecycleScope.Session, 's1');
+    const first = makeAgent(env, session, 'first');
+    const second = makeAgent(env, session, 'second');
+    const file = join(env.workDir, 'a.txt');
+    writeFileSync(file, 'hello');
+
+    await runOk(first, 'Read', file);
+
+    const blocked = await runBlocked(second, 'Edit', file);
+    expect(blocked.output).toContain('has not been read by this agent');
+
+    await runOk(second, 'Read', file);
+    await runOk(second, 'Edit', file);
   });
 
   it('blocks Edit when the file changed on disk since the last read, and unblocks after re-read', async () => {
@@ -260,6 +267,18 @@ describe('AgentFileFencingService', () => {
     expect(blocked?.output).toContain('changed on disk since');
   });
 
+  it('fails closed when the current file revision cannot be read', async () => {
+    const world = setup();
+    const file = join(world.env.workDir, 'a.txt');
+    writeFileSync(file, 'hello');
+    await runOk(world, 'Read', file);
+
+    world.env.poisonedPaths.add(file);
+
+    const blocked = await runBlocked(world, 'Edit', file);
+    expect(blocked.output).toContain('changed on disk since');
+  });
+
   it('keeps the revision captured by Read when the file changes before the did-hook', async () => {
     const world = setup();
     const file = join(world.env.workDir, 'a.txt');
@@ -284,7 +303,7 @@ describe('AgentFileFencingService', () => {
 
     const blocked = await runBlocked(world, 'Write', file);
     expect(blocked.output).toContain('already exists');
-    expect(blocked.output).toContain('has not been read in this session');
+    expect(blocked.output).toContain('has not been read by this agent');
   });
 
   it('allows Write append on an existing file without a read baseline', async () => {
@@ -304,9 +323,9 @@ describe('AgentFileFencingService', () => {
     const file = join(world.env.workDir, 'new.txt');
 
     await runOk(world, 'Write', file);
-    expect(await world.ledger.compare(file)).toBe('clean');
+    const edited = await runOk(world, 'Edit', file);
 
-    await runOk(world, 'Edit', file);
+    expect(edited.result.isError).not.toBe(true);
   });
 
   it('allows consecutive Edits and keeps them clean while the stat tuple matches the baseline', async () => {
@@ -321,8 +340,6 @@ describe('AgentFileFencingService', () => {
 
     await runOk(world, 'Edit', file);
     expect(world.env.statCalls()).toBe(2);
-
-    expect(await world.ledger.compare(file)).toBe('clean');
   });
 
   it('blocks ranged-Read followed by Edit because ranged reads never baseline', async () => {
@@ -332,7 +349,7 @@ describe('AgentFileFencingService', () => {
 
     await runOk(world, 'Read', file, { args: { path: file, line_offset: 5 } });
     const blocked = await runBlocked(world, 'Edit', file);
-    expect(blocked.output).toContain('has not been read in this session');
+    expect(blocked.output).toContain('has not been read by this agent');
   });
 
   it('keeps Edit blocked when a default Read has no complete-file revision', async () => {
@@ -344,7 +361,7 @@ describe('AgentFileFencingService', () => {
     await runDid(world, ctx, { output: 'partial' });
 
     const blocked = await runBlocked(world, 'Edit', file);
-    expect(blocked.output).toContain('has not been read in this session');
+    expect(blocked.output).toContain('has not been read by this agent');
   });
 
   it('blocks out-of-root writes through the stat-only fallback and allows them after Read', async () => {
@@ -353,7 +370,7 @@ describe('AgentFileFencingService', () => {
     writeFileSync(file, 'hello');
 
     const first = await runBlocked(world, 'Edit', file);
-    expect(first.output).toContain('has not been read in this session');
+    expect(first.output).toContain('has not been read by this agent');
 
     await runOk(world, 'Read', file);
     await runOk(world, 'Edit', file);

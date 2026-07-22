@@ -242,9 +242,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // force-injections that used to pull it up, so it must be resolved here or
     // tool execution would run without policy adjudication.
     handle.accessor.get(IAgentPermissionGate);
-    // File fencing wraps Read/Write/Edit execution on the shared Session file
-    // ledger. Resolve after externalHooks so permission and external preflight
-    // participants register first.
+    // File fencing wraps Read/Write/Edit execution using Agent-local file
+    // revisions. Resolve after externalHooks so permission and external
+    // preflight participants register first.
     handle.accessor.get(IAgentFileFencingService);
     handle.accessor.get(IAgentMcpService);
     // Agent plugin service: registers main-agent-only plugin session-start

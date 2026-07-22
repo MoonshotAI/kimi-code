@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-The agent now refuses to edit a file that changed on disk since it was last read in the session, instead of silently overwriting external changes.
+Each agent now tracks its own file-read baselines and refuses to overwrite files that changed on disk after its last read.

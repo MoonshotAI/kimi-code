@@ -1,12 +1,11 @@
 /**
- * `fileFencing` domain (L4) — `IAgentFileFencingService` contract.
+ * `fileFencing` domain (L4) — Agent-local read-before-write protection.
  *
- * The Agent-scope tool-hook participant that gates `Write`/`Edit` calls on
- * the `sessionFileLedger` optimistic-concurrency verdict and re-baselines
- * the ledger after successful `Read`/`Write`/`Edit` executions. The service
- * exists for its constructor side effects (it registers by name on the
- * `toolExecutor` hook slots); nothing calls its methods. Bound at Agent
- * scope.
+ * Defines the Agent-scoped hook participant that owns the file revisions
+ * observed by one Agent, gates `Write`/`Edit` calls on those baselines, and
+ * refreshes them after successful `Read`/`Write`/`Edit` executions. The
+ * service exists for its constructor side effects; nothing calls its methods.
+ * Bound at Agent scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';

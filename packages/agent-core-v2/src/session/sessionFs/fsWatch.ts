@@ -10,9 +10,9 @@
  *
  * Also owns the lexical key helper `normalizeFsWatchKey` (lexical normalize
  * only, no `realpath`; case-folded on macOS/Windows). The watch service
- * itself never keys paths with it — the sole consumer is the
- * optimistic-concurrency ledger (`sessionFileLedger`), which keys its
- * baselines with it.
+ * itself never keys paths with it — the sole consumer is the Agent-local
+ * optimistic-concurrency gate (`fileFencing`), which keys its baselines with
+ * it.
  */
 
 import { normalize, sep } from 'node:path';
