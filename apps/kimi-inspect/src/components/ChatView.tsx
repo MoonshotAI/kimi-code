@@ -835,19 +835,8 @@ function FrameView({
             </Badge>
           </div>
         ) : null;
-      const tagBadge =
-        frame.tag !== undefined ? (
-          <span className="mb-1 mr-1 inline-block">
-            <Badge tone="violet">{frame.tag}</Badge>
-          </span>
-        ) : null;
       const bubble =
-        frame.tag !== undefined ? (
-          <div className="mb-2 max-w-[85%] whitespace-pre-wrap rounded-lg border border-violet-800/50 bg-violet-950/30 px-3 py-2 text-[13px] text-neutral-300">
-            {tagBadge}
-            {frame.text}
-          </div>
-        ) : frame.role === 'user' ? (
+        frame.role === 'user' ? (
           <div className="mb-2 flex justify-end">
             <div className="max-w-[80%] whitespace-pre-wrap rounded-lg bg-sky-900/40 px-3 py-2 text-[13px] text-neutral-100">
               {frame.text}

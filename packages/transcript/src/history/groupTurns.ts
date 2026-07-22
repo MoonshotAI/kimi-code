@@ -60,7 +60,6 @@ export interface HistoryMessage {
   readonly toolCallId?: string;
   readonly isError?: boolean;
   readonly origin?: { readonly kind: string };
-  readonly tag?: string;
 }
 
 interface TurnDraft {
