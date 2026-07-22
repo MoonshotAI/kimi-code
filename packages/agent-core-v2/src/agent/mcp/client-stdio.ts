@@ -50,7 +50,7 @@ export class StdioMcpClient implements MCPClient {
     this.transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: mergeStdioEnv(config.env),
+      env: mergeStdioEnv(config.env, process.env, config.command, config.args),
       cwd: resolveStdioCwd(config.cwd, options.defaultCwd),
       stderr: 'pipe',
     });
@@ -184,6 +184,8 @@ function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | und
 export function mergeStdioEnv(
   configEnv?: Record<string, string>,
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
+  command = '',
+  args: readonly string[] = [],
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(parentEnv)) {
@@ -192,5 +194,39 @@ export function mergeStdioEnv(
   if (configEnv !== undefined) Object.assign(merged, configEnv);
   Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
+  if (
+    !usesNodeEnvProxy(command, args) &&
+    !explicitlyKeepsBracketedIpv6(configEnv) &&
+    !explicitlyKeepsBracketedIpv6(parentEnv)
+  ) {
+    for (const key of ['NO_PROXY', 'no_proxy'] as const) {
+      const value = merged[key];
+      if (value !== undefined && value !== '*') {
+        merged[key] = value
+          .split(',')
+          .filter((host) => host.trim() !== '[::1]')
+          .join(',');
+      }
+    }
+  }
   return merged;
+}
+
+const NODE_ENV_PROXY_COMMAND_RE =
+  /^(?:node(?:\.exe)?|nodejs(?:\.exe)?|corepack(?:\.cmd)?|npm(?:\.cmd)?|npx(?:\.cmd)?|pnpm(?:\.cmd)?|yarn(?:\.cmd)?|tsx(?:\.cmd)?|ts-node(?:\.cmd)?|.+\.(?:c|m)?js)$/i;
+const NODE_ENV_PROXY_WRAPPER_RE =
+  /^(?:ba|z|fi)?sh$|^(?:env|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|docker|podman|nix-shell)$/i;
+const NODE_ENV_PROXY_ARGUMENT_RE =
+  /(?:^|[\\/\s"'=])(?:node(?:\.exe)?|nodejs(?:\.exe)?|corepack(?:\.cmd)?|npm(?:\.cmd)?|npx(?:\.cmd)?|pnpm(?:\.cmd)?|yarn(?:\.cmd)?|tsx(?:\.cmd)?|ts-node(?:\.cmd)?|[^\s"']+\.(?:c|m)?js)(?=$|[\s"';])/i;
+
+function usesNodeEnvProxy(command: string, args: readonly string[]): boolean {
+  const executable = command.split(/[\\/]/).at(-1) ?? '';
+  if (NODE_ENV_PROXY_COMMAND_RE.test(executable)) return true;
+  return NODE_ENV_PROXY_WRAPPER_RE.test(executable) && args.some((arg) => NODE_ENV_PROXY_ARGUMENT_RE.test(arg));
+}
+
+function explicitlyKeepsBracketedIpv6(env?: Readonly<Record<string, string | undefined>>): boolean {
+  return [env?.['no_proxy'], env?.['NO_PROXY']].some((value) =>
+    value?.split(',').some((host) => host.trim() === '[::1]'),
+  );
 }
