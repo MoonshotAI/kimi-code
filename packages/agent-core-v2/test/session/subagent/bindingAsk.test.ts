@@ -287,4 +287,42 @@ describe('createSubagentBindingAsker', () => {
     await expect(asker('coder')).rejects.toThrow('Aborted');
     expect(writeType).not.toHaveBeenCalled();
   });
+
+  it('throws when the spawn signal is already aborted instead of inheriting', async () => {
+    const controller = new AbortController();
+    controller.abort(abortError());
+    const config = stubWorkspaceLocalConfig();
+    const writeType = vi.spyOn(config, 'writeSubagentBinding');
+    const asker = createSubagentBindingAsker({
+      question: stubQuestionService(),
+      workspaceLocalConfig: config,
+      modelCatalog: stubCatalog([modelItem('kimi-k2')]),
+      workDir: WORK_DIR,
+      agentId: 'agent-caller',
+      signal: controller.signal,
+    });
+
+    await expect(asker('coder')).rejects.toThrow('Aborted');
+    expect(writeType).not.toHaveBeenCalled();
+  });
+
+  it('assigns distinct request ids to consecutive asks', async () => {
+    const question = stubQuestionService({ respond: (req) => answer(req, 'kimi-k2') });
+    const asker = createSubagentBindingAsker({
+      question,
+      workspaceLocalConfig: stubWorkspaceLocalConfig(),
+      modelCatalog: stubCatalog([modelItem('kimi-k2')]),
+      workDir: WORK_DIR,
+      agentId: 'agent-caller',
+    });
+
+    await asker('coder');
+    await asker('explorer');
+
+    const firstId = question.request.mock.calls[0]?.[0].id;
+    const secondId = question.request.mock.calls[1]?.[0].id;
+    expect(firstId).toMatch(/^subagent-binding:agent-caller:\d+$/);
+    expect(secondId).toMatch(/^subagent-binding:agent-caller:\d+$/);
+    expect(firstId).not.toBe(secondId);
+  });
 });

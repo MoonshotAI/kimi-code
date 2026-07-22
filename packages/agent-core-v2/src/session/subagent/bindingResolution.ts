@@ -42,23 +42,11 @@ export interface SubagentSpawnBindingResolution {
   readonly warning?: string;
 }
 
-/**
- * Context for one interactive ask-once point: `slot` is set when the ask
- * concerns a named binding slot rather than a subagent type, and
- * `missingModel` is set when a stored binding references a model alias that
- * is missing or cannot be resolved — the ask explains why it is happening
- * and the answer repairs the broken binding.
- */
 export interface AskSubagentBindingContext {
   readonly missingModel?: string;
   readonly slot?: string;
 }
 
-/**
- * Interactive ask-once binding creation. Returns the binding the user chose
- * (the asker persists the answer itself), or `undefined` when the ask was
- * dismissed or the environment is non-interactive.
- */
 export type AskSubagentSpawnBindingCallback = (
   profileName: string,
   context?: AskSubagentBindingContext,
@@ -68,10 +56,6 @@ export interface ResolveSubagentSpawnBindingDeps {
   readonly flags: IFlagService;
   readonly workspaceLocalConfig: IWorkspaceLocalConfigService;
   readonly modelCatalog: IModelCatalog;
-  /**
-   * Interactive ask-once creation — supplied only by the `Agent` tool spawn
-   * path; the swarm path resolves read-only and never asks.
-   */
   readonly ask?: AskSubagentSpawnBindingCallback;
 }
 
@@ -119,9 +103,6 @@ export async function resolveSubagentSpawnBinding(
     input.workDir,
     input.profileName,
   );
-  // An explicit slot request that reaches here already had its one ask (or
-  // resolves read-only on the swarm path): apply the type binding when
-  // configured, but never escalate into a second question for this spawn.
   const mayAsk = !explicitSlot;
   if (typeEntry !== undefined) {
     const resolved = resolveBindingEntry(
@@ -146,12 +127,6 @@ export async function resolveSubagentSpawnBinding(
   return withWarnings({}, warnings);
 }
 
-/**
- * Run one interactive ask point when an `ask` callback is supplied. Returns
- * the adopted resolution, or `undefined` when asking is unavailable (the
- * read-only swarm path) or the ask was dismissed — the caller then falls
- * through exactly as if the entry were missing.
- */
 async function askOnce(
   deps: ResolveSubagentSpawnBindingDeps,
   profileName: string,
@@ -163,10 +138,6 @@ async function askOnce(
   return adoptAskedBinding(binding);
 }
 
-/**
- * An ask answer is already persisted by the asker and its options come from
- * the model catalog, so it is adopted directly without re-validation.
- */
 function adoptAskedBinding(binding: SubagentBinding): SubagentSpawnBindingResolution {
   if (binding.inherit === true) return {};
   return { model: binding.model, thinking: binding.thinkingEffort };
@@ -177,7 +148,6 @@ type BindingEntryResolution =
   | {
       readonly terminal: false;
       readonly warning: string;
-      /** The stale alias, for the interactive repair ask. */
       readonly missingModel: string;
     };
 

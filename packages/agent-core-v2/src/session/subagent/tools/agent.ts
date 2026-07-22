@@ -6,7 +6,8 @@
  * (`bindingResolution`) behind the `subagent-model-selection` experimental
  * flag, asking the user once to create a missing or stale binding
  * (`bindingAsk`) — creates (or resumes) an agent through
- * `IAgentLifecycleService`, drives one turn via `ISessionSubagentService.run`,
+ * `IAgentLifecycleService` (resume keeps the child's own binding and fails
+ * fast on a stale alias), drives one turn via `ISessionSubagentService.run`,
  * and mirrors the run onto the calling agent's record stream
  * (`mirrorAgentRun`). The tool also owns the JSON schema + description,
  * approval rule, background-task registration (so the LLM can see the run
@@ -165,7 +166,8 @@ const SUBAGENT_MODEL_UNAVAILABLE_MESSAGE =
 
 export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly name: string = 'Agent';
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
+
+  private readonly fullParameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
@@ -195,6 +197,15 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       this.toolPolicy.isToolActive('TaskList') &&
       this.toolPolicy.isToolActive('TaskOutput') &&
       this.toolPolicy.isToolActive('TaskStop');
+  }
+
+  get parameters(): Record<string, unknown> {
+    if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+      return this.fullParameters;
+    }
+    const properties = { ...(this.fullParameters['properties'] as Record<string, unknown>) };
+    delete properties['binding_slot'];
+    return { ...this.fullParameters, properties };
   }
 
   get description(): string {
@@ -404,10 +415,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
 
   private realignChildModel(target: IAgentScopeHandle): void {
     if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
-      // Sticky resume keeps the child's own binding; validate the bound
-      // alias still resolves so a stale binding fails fast (v1 parity:
-      // `resolveChildModel` → SUBAGENT_MODEL_UNAVAILABLE_MESSAGE) instead
-      // of surfacing mid-turn.
       const childModelAlias = target.accessor.get(IAgentProfileService).data().modelAlias;
       if (childModelAlias !== undefined) {
         try {

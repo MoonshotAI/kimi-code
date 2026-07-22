@@ -20,6 +20,7 @@ import {
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -30,6 +31,7 @@ import {
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { resolveSubagentTimeoutMs } from '#/session/subagent/configSection';
+import { SUBAGENT_MODEL_SELECTION_FLAG_ID } from '#/session/subagent/flag';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
@@ -114,8 +116,8 @@ interface SwarmRunResult {
 export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   readonly name = 'AgentSwarm' as const;
   readonly description = AGENT_SWARM_DESCRIPTION;
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
 
+  private readonly fullParameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
   private readonly callerAgentId: string;
 
   constructor(
@@ -125,8 +127,18 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     @IConfigService private readonly config: IConfigService,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     this.callerAgentId = scopeContext.agentId;
+  }
+
+  get parameters(): Record<string, unknown> {
+    if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
+      return this.fullParameters;
+    }
+    const properties = { ...(this.fullParameters['properties'] as Record<string, unknown>) };
+    delete properties['binding_slot'];
+    return { ...this.fullParameters, properties };
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {

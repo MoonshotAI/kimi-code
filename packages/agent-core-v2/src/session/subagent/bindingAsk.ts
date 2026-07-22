@@ -5,8 +5,8 @@
  * the `Agent` tool spawn path (the swarm path never asks). The first spawn
  * of an unbound subagent type or named slot — or a stored binding that
  * references a model alias absent from or unresolvable in the catalog —
- * asks the user once through `ISessionQuestionService` and persists the
- * answer to
+ * asks the user once through `ISessionQuestionService` (routed to the asking
+ * agent's surfaces, never `main`) and persists the answer to
  * `.kimi-code/local.toml` (`[subagent.<type>]` / `[subagent-slot.<name>]`),
  * including an explicit "keep inheriting" choice so the question never
  * repeats for that type or slot. A model whose catalog entry declares
@@ -36,12 +36,13 @@ import { type AskSubagentSpawnBindingCallback } from './bindingResolution';
 
 const INHERIT_LABEL = 'Keep inheriting from the main agent';
 
+let bindingAskSeq = 0;
+
 export interface SubagentBindingAskerDeps {
   readonly question: ISessionQuestionService;
   readonly workspaceLocalConfig: IWorkspaceLocalConfigService;
   readonly modelCatalog: IModelCatalog;
   readonly workDir: string;
-  /** Questions route to the asking agent's surfaces, never to 'main'. */
   readonly agentId: string;
   readonly signal?: AbortSignal;
 }
@@ -70,7 +71,7 @@ export function createSubagentBindingAsker(
         ...models.map((model) => ({ label: model.model })),
       ],
     });
-    if (chosen === undefined) return undefined; // dismissed — ask again next spawn
+    if (chosen === undefined) return undefined;
 
     const persist = async (binding: SubagentBinding): Promise<void> => {
       if (slot === undefined) {
@@ -118,15 +119,18 @@ async function askOne(
   let result: QuestionResult;
   try {
     result = await deps.question.request(
-      { questions: [{ question: item.question, header: 'Subagent', options: item.options }] },
+      {
+        id: `subagent-binding:${deps.agentId}:${String(++bindingAskSeq)}`,
+        questions: [{ question: item.question, header: 'Subagent', options: item.options }],
+      },
       { agentId: deps.agentId, signal: deps.signal },
     );
   } catch (error) {
     if (isAbortError(error)) throw error;
-    // A non-interactive client (NOT_IMPLEMENTED) or any other question
-    // failure must never block the spawn — fall back to inheritance.
     return undefined;
   }
+  const signal = deps.signal;
+  if (signal?.aborted === true) signal.throwIfAborted();
   return answerFor(result, item.question);
 }
 
@@ -137,10 +141,6 @@ function answerFor(result: QuestionResult, question: string): string | undefined
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-/**
- * `QuestionResult` is either a bare answers record or `{ answers }`; TS
- * cannot narrow the union via `in`, so normalize explicitly.
- */
 function normalizeAnswers(result: QuestionResult): QuestionAnswers | undefined {
   if (result === null) return undefined;
   if (isQuestionResponse(result)) return result.answers;

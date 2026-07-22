@@ -7,8 +7,10 @@
  * scheduler, and tracks one `AbortController` per caller so `cancel` can abort
  * every in-flight run. Spawn attempts resolve the workspace model bindings
  * (`subagent/bindingResolution`) behind the `subagent-model-selection`
- * experimental flag before falling back to the caller model. The caller ↔ child association is this domain's own
- * business data: requester-side display facts (`subagent.spawned` wire signals
+ * experimental flag before falling back to the caller model; resume attempts
+ * keep the child's own binding and fail fast on a stale alias. The caller ↔
+ * child association is this domain's own business data: requester-side display
+ * facts (`subagent.spawned` wire signals
  * carrying the swarm's tool-call context, `subagent.suspended` when a task is
  * requeued after a provider rate limit) are emitted here / via the
  * `agentLifecycle` wrapper helper `mirrorAgentRun`; the lifecycle registry
@@ -275,10 +277,6 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   private realignChildModel(caller: IAgentScopeHandle, child: IAgentScopeHandle): void {
     if (this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID)) {
-      // Sticky resume keeps the child's own binding; validate the bound
-      // alias still resolves so a stale binding fails fast (v1 parity:
-      // `resolveChildModel` → SUBAGENT_MODEL_UNAVAILABLE_MESSAGE) instead
-      // of surfacing mid-turn.
       const childModelAlias = child.accessor.get(IAgentProfileService).data().modelAlias;
       if (childModelAlias !== undefined) {
         try {
