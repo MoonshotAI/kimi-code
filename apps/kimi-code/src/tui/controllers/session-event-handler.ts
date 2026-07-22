@@ -27,6 +27,7 @@ import type {
   TurnStartedEvent,
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
+  TurnStepRetryingEvent,
   TurnStepStartedEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -245,7 +246,7 @@ export class SessionEventHandler {
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
-      case 'turn.step.retrying': break;
+      case 'turn.step.retrying': this.handleStepRetrying(event); break;
       case 'tool.progress': this.handleToolProgress(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
@@ -365,6 +366,23 @@ export class SessionEventHandler {
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
     });
+  }
+
+  private handleStepRetrying(event: TurnStepRetryingEvent): void {
+    const { failedAttempt, nextAttempt, maxAttempts, delayMs, statusCode } = event;
+    const delaySec = Math.round(delayMs / 1000);
+    const attemptLabel = `(${nextAttempt}/${maxAttempts})`;
+    if (statusCode === 429) {
+      this.host.showStatus(
+        `Rate limited (429), retrying in ${delaySec}s… ${attemptLabel}`,
+        'warning',
+      );
+    } else {
+      this.host.showStatus(
+        `Request failed, retrying in ${delaySec}s… ${attemptLabel}`,
+        'warning',
+      );
+    }
   }
 
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
