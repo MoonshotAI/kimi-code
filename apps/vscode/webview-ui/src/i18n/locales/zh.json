@@ -1,0 +1,57 @@
+{
+  "chatMessage": {
+    "forkFromPoint": "从此处创建分支对话",
+    "forkConversation": "创建分支对话",
+    "kimi": "Kimi"
+  },
+  "copyButton": {
+    "copyMessage": "复制消息"
+  },
+  "chatStatus": {
+    "tokenUsage": "Token 用量",
+    "context": "上下文",
+    "input": "输入",
+    "output": "输出",
+    "contextWindowUsage": "上下文窗口使用率",
+    "totalInputTokens": "输入 Token 总数",
+    "outputTokens": "输出 Token 数",
+    "retry": "重试 {next}/{max}",
+    "retryingIn": "{seconds} 秒后重试：{message}"
+  },
+  "thinking": {
+    "thinking": "思考中"
+  },
+  "header": {
+    "session": "会话",
+    "history": "历史",
+    "messages": "消息",
+    "startNewConversation": "开始新对话？"
+  },
+  "login": {
+    "skip": "跳过",
+    "subscribe": "订阅"
+  },
+  "mcpServers": {
+    "name": "名称",
+    "transport": "传输方式",
+    "command": "命令",
+    "arguments": "参数",
+    "recommended": "推荐",
+    "cancel": "取消"
+  },
+  "actionMenu": {
+    "settings": "设置",
+    "support": "支持",
+    "account": "账号"
+  },
+  "sessionList": {
+    "deleteConversation": "删除对话？",
+    "switchConversation": "切换对话？"
+  },
+  "queuedMessages": {
+    "insertNow": "立即插入（指引）"
+  },
+  "inputArea": {
+    "exitPlanMode": "退出计划模式"
+  }
+}
