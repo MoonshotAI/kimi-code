@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
 import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -724,6 +724,36 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
 
     expect(toolPolicy.isToolActive('Skill')).toBe(false);
     await vi.waitFor(() => expect(profile.getSystemPrompt()).not.toContain(skillMarker));
+  });
+
+  it('refreshes the skill listing when disabled_skills changes at runtime', async () => {
+    const skillMarker = 'live-disabled-skill-marker';
+    const sinkChange = new Emitter<string>();
+    let listing = skillMarker;
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionSkillCatalog, {
+        _serviceBrand: undefined,
+        get catalog() {
+          return { getModelSkillListing: () => listing } as never;
+        },
+        ready: Promise.resolve(),
+        onDidChange: sinkChange.event,
+        load: async () => {},
+        reload: async () => {},
+      }),
+    );
+    const { profile } = profileServices(ctx);
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(profile.getSystemPrompt()).toContain(skillMarker);
+
+    listing = 'No skills';
+    sinkChange.fire('disabledSkills');
+
+    await vi.waitFor(() => {
+      expect(profile.getSystemPrompt()).not.toContain(skillMarker);
+    });
+    sinkChange.dispose();
   });
 });
 

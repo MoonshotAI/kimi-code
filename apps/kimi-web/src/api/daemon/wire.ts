@@ -415,6 +415,7 @@ export interface WireConfig {
   services?: unknown;
   merge_all_available_skills?: boolean;
   extra_skill_dirs?: string[];
+  disabled_skills?: string[];
   loop_control?: unknown;
   background?: unknown;
   experimental?: Record<string, boolean>;

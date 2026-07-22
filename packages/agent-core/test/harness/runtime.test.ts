@@ -1036,6 +1036,55 @@ base_url = "https://search.example.test/v1"
     expect(reminders.at(-1)).toContain('supersedes any earlier plugin_session_start');
   });
 
+  it('neutralizes a stale plugin_session_start reminder when its skill becomes disabled', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const pluginRoot = join(tmp, 'plugin');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+    await writeSessionStartPlugin(pluginRoot, 'BODY');
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await core.installPlugin({ source: pluginRoot });
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_disabled_sessionstart',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.reloadSession({
+      sessionId: created.id,
+      forcePluginSessionStartReminder: true,
+    });
+    expect(pluginSessionStartReminders(core, created.id)).toHaveLength(1);
+
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      baseModelConfig().replace(
+        '\n[providers.test]',
+        '\ndisabled_skills = ["greeter"]\n\n[providers.test]',
+      ),
+    );
+    await rpc.reloadSession({
+      sessionId: created.id,
+      forcePluginSessionStartReminder: true,
+    });
+
+    const reminders = pluginSessionStartReminders(core, created.id);
+    expect(reminders).toHaveLength(2);
+    expect(reminders.at(-1)).toContain('no active plugin session starts');
+    expect(reminders.at(-1)).not.toContain('<plugin_session_start');
+  });
+
   it('does not append a plugin_session_start reminder on reload without the force flag', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');

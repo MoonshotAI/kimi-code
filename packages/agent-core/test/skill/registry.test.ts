@@ -98,6 +98,29 @@ describe('skill registry prompt rendering', () => {
   });
 });
 
+describe('disabled_skills config filter', () => {
+  it('hides disabled skill names from listSkills, listInvocableSkills, and model listing', () => {
+    const registry = new SessionSkillRegistry({
+      disabledSkills: ['Review-Helper', ' legacy-helper '],
+    });
+    registry.register(makeSkill('review-helper', 'user', 'Review helper'));
+    registry.register(makeSkill('legacy-helper', 'user', 'Legacy helper'));
+    registry.register(makeSkill('keep-me', 'user', 'Still available'));
+
+    expect(registry.isSkillDisabled('review-helper')).toBe(true);
+    expect(registry.isSkillDisabled('LEGACY-HELPER')).toBe(true);
+    expect(registry.isSkillDisabled('keep-me')).toBe(false);
+
+    expect(registry.listSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.listInvocableSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.getModelSkillListing()).toContain('keep-me');
+    expect(registry.getModelSkillListing()).not.toContain('review-helper');
+    expect(registry.getModelSkillListing()).not.toContain('legacy-helper');
+    // Still resolvable for diagnostics / hard-deny paths.
+    expect(registry.getSkill('review-helper')?.name).toBe('review-helper');
+  });
+});
+
 describe('getModelSkillListing description truncation', () => {
   it('keeps descriptions at or below the 250-char limit unchanged', () => {
     const description = 'a'.repeat(250);

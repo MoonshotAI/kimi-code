@@ -32,7 +32,7 @@ function skill(
 
 function registry(
   skills: readonly SkillDefinition[] = [],
-  options: { readonly sessionId?: string } = {},
+  options: { readonly sessionId?: string; readonly disabledSkills?: readonly string[] } = {},
 ): AgentSkillRegistry {
   const registry = new SessionSkillRegistry(options);
   for (const item of skills) {
@@ -142,6 +142,17 @@ describe('SkillTool execution', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('can only be triggered by the user');
+  });
+
+  it('rejects skills listed in disabled_skills config', async () => {
+    const tool = skillTool(
+      registry([skill('review-helper')], { disabledSkills: ['review-helper'] }),
+    );
+
+    const result = await execute(tool, { skill: 'review-helper' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('disabled in configuration (disabled_skills)');
   });
 
   it('rejects non-inline skill types in the current v1 runtime', async () => {

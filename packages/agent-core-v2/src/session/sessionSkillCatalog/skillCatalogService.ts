@@ -11,7 +11,12 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { IConfigService } from '#/app/config/config';
 import { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
+import {
+  DISABLED_SKILLS_SECTION,
+  type DisabledSkillsConfig,
+} from '#/app/skillCatalog/configSection';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import type { ISkillSource, SkillContribution } from '#/app/skillCatalog/skillSource';
 import type { SkillCatalog } from '#/app/skillCatalog/types';
@@ -47,12 +52,21 @@ export class SessionSkillCatalogService
     @IExtraFileSkillSource extra: IExtraFileSkillSource,
     @IWorkspaceFileSkillSource workspace: IWorkspaceFileSkillSource,
     @IPluginSkillSource plugin: IPluginSkillSource,
+    @IConfigService private readonly config: IConfigService,
   ) {
     super();
     this.sources = [builtin, user, explicit, extra, workspace, plugin].toSorted((a, b) => a.priority - b.priority);
     for (const s of this.sources) {
       if (s.onDidChange) this._register(s.onDidChange(() => { void this.reloadSource(s.id); }));
     }
+    this._register(
+      this.config.onDidSectionChange((event) => {
+        if (event.domain === DISABLED_SKILLS_SECTION) {
+          this.remerge();
+          this.onDidChangeEmitter.fire(DISABLED_SKILLS_SECTION);
+        }
+      }),
+    );
     this.ready = this.loadAll();
   }
 
@@ -115,7 +129,9 @@ export class SessionSkillCatalogService
   }
 
   private remerge(): void {
-    const m = new InMemorySkillCatalog();
+    const disabledSkills =
+      this.config.get<DisabledSkillsConfig>(DISABLED_SKILLS_SECTION) ?? [];
+    const m = new InMemorySkillCatalog({ disabledSkills });
     const ordered = [...this.contributions.values()].toSorted((a, b) => a.priority - b.priority);
     for (const { c } of ordered) {
       for (const skill of c.skills) m.register(skill, { replace: true });

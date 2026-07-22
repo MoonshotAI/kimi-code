@@ -258,10 +258,16 @@ export function useModelProviderState(
       .catch((error: unknown) => pushOperationFailure('setConfig', error));
   }
 
+  const sessionSkillRequestSeq = new Map<string, number>();
+  const workspaceSkillRequestSeq = new Map<string, number>();
+
   async function loadSkillsForSession(sessionId: string): Promise<void> {
+    const requestSeq = (sessionSkillRequestSeq.get(sessionId) ?? 0) + 1;
+    sessionSkillRequestSeq.set(sessionId, requestSeq);
     try {
       const api = getKimiWebApi();
       const list = await api.listSkills(sessionId);
+      if (sessionSkillRequestSeq.get(sessionId) !== requestSeq) return;
       skillsBySession.value = { ...skillsBySession.value, [sessionId]: list };
     } catch {
       // Skills are side data; an older daemon without /skills just yields no
@@ -270,14 +276,24 @@ export function useModelProviderState(
   }
 
   async function loadSkillsForWorkspace(workspaceId: string): Promise<void> {
+    const requestSeq = (workspaceSkillRequestSeq.get(workspaceId) ?? 0) + 1;
+    workspaceSkillRequestSeq.set(workspaceId, requestSeq);
     try {
       const api = getKimiWebApi();
       const list = await api.listSkillsForWorkspace(workspaceId);
+      if (workspaceSkillRequestSeq.get(workspaceId) !== requestSeq) return;
       skillsByWorkspace.value = { ...skillsByWorkspace.value, [workspaceId]: list };
     } catch {
       // Side data; an older daemon without /workspaces/{id}/skills just yields
       // no slash-skills for the onboarding composer.
     }
+  }
+
+  async function refreshLoadedSkills(): Promise<void> {
+    await Promise.all([
+      ...Object.keys(skillsBySession.value).map(loadSkillsForSession),
+      ...Object.keys(skillsByWorkspace.value).map(loadSkillsForWorkspace),
+    ]);
   }
 
   /** Load models (cached — call again to force refresh) */
@@ -583,6 +599,7 @@ export function useModelProviderState(
     // actions
     loadSkillsForSession,
     loadSkillsForWorkspace,
+    refreshLoadedSkills,
     loadModels,
     loadProviders,
     setModel,

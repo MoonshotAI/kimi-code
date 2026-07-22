@@ -103,6 +103,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `extra_agent_dirs` | `array<string>` | — | Extra custom agent search directories, layered on top of the default directories |
+| `disabled_skills` | `array<string>` | `[]` | Skill names to fully disable in Kimi (model listing, Skill tool, slash menu, and user activation). Case-insensitive. Files stay on disk. Does not block `Bash` or other tools that reimplement a skill's workflow — pair with [`permission`](#permission) deny rules when needed. See [Agent Skills](../customization/skills.md#skill-locations) |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
 | `providers` | `table` | `{}` | API provider table → [`providers`](#providers) |
 | `models` | `table` | — | Model alias table → [`models`](#models) |
@@ -319,6 +320,8 @@ api_key = "sk-xxx"
 
 Built-in tool names are listed in [Built-in tools](../reference/tools.md). Most built-in tools that accept rule arguments define their own matching subject, such as `Bash(command-pattern)` or `Read(path-pattern)`. `AgentSwarm`, MCP tools, and custom tools can only be matched by tool name — argument patterns are not supported for them.
 
+**Permission mode vs deny:** `default_permission_mode` (`manual` / `yolo` / `auto`) only changes what happens when no deny rule matches. A `decision = "deny"` rule always blocks the matching tool call, including in YOLO mode.
+
 ```toml
 [[permission.rules]]
 decision = "allow"
@@ -335,6 +338,20 @@ pattern = "Bash(rm -rf*)"
 [[permission.rules]]
 decision = "ask"
 pattern = "Bash"
+```
+
+To hide a skill from the model **and** block shell helpers that reimplement it (for example after `disabled_skills`):
+
+```toml
+disabled_skills = ["review-helper", "legacy-helper"]
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(*review-helper-cli*)"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(*legacy-helper-cli*)"
 ```
 
 ::: tip

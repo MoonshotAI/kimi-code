@@ -21,6 +21,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
+import { DISABLED_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -64,7 +65,7 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
     );
     this._register(
       this.skillCatalog.onDidChange((sourceId) => {
-        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
+        if (sourceId === PLUGIN_SKILL_SOURCE_ID || sourceId === DISABLED_SKILLS_SECTION) {
           void this.appendFreshSessionStartReminder();
         }
       }),
@@ -115,6 +116,7 @@ function renderPluginSessionStartReminder(
   if (catalog === undefined) return undefined;
   const blocks: string[] = [];
   for (const sessionStart of sessionStarts) {
+    if (catalog.isSkillDisabled(sessionStart.skillName)) continue;
     const skill = catalog.getPluginSkill(sessionStart.pluginId, sessionStart.skillName);
     if (skill === undefined) {
       log?.warn('plugin sessionStart skill not found', {

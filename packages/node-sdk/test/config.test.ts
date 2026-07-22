@@ -43,6 +43,7 @@ theme = "dark"
 show_thinking_stream = true
 merge_all_available_skills = true
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
+disabled_skills = ["review-helper", "legacy-helper"]
 
 [providers.kimi-for-coding]
 type = "kimi"
@@ -134,6 +135,7 @@ max_context_size = "large"
     expect(config.defaultPlanMode).toBe(false);
     expect(config.mergeAllAvailableSkills).toBe(true);
     expect(config.extraSkillDirs).toEqual(['~/team-skills', '.agents/team-skills']);
+    expect(config.disabledSkills).toEqual(['review-helper', 'legacy-helper']);
 
     const provider = config.providers['kimi-for-coding'];
     expect(provider).toMatchObject({
@@ -192,6 +194,7 @@ max_context_size = "large"
     expect(text).toContain('default_model = "kimi-for-coding"');
     expect(text).toContain('default_permission_mode = "auto"');
     expect(text).toContain('extra_skill_dirs = [ "~/team-skills", ".agents/team-skills" ]');
+    expect(text).toContain('disabled_skills = [ "review-helper", "legacy-helper" ]');
     expect(text).not.toContain('default_yolo');
     expect(text).toContain('max_steps_per_turn = 42');
     expect(text).toContain('display_name = "Kimi for Coding"');

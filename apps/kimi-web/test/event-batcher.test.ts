@@ -576,7 +576,7 @@ describe('coalesceAppRenderEvents (lossless stream grouping)', () => {
   });
 });
 
-describe('useKimiWebClient (resync integration)', () => {
+describe('useKimiWebClient integration', () => {
   it('flushes queued deltas around an authoritative snapshot before live streaming resumes', async () => {
     vi.stubGlobal('WebSocket', class {});
 
@@ -770,6 +770,147 @@ describe('useKimiWebClient (resync integration)', () => {
       );
 
       expect(assistantText()).toBe('snapshot live');
+    } finally {
+      connection.close();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refreshes loaded skills after a configChanged event', async () => {
+    vi.resetModules();
+    vi.stubGlobal('WebSocket', vi.fn());
+
+    const sessionId = 'session-config';
+    const session: AppSession = {
+      id: sessionId,
+      title: 'Session',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      status: 'idle',
+      archived: false,
+      currentPromptId: null,
+      cwd: '/workspace',
+      model: 'model-1',
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        totalCostUsd: 0,
+        contextTokens: 0,
+        contextLimit: 0,
+        turnCount: 0,
+      },
+      messageCount: 0,
+      lastSeq: 0,
+      workspaceId: 'workspace-1',
+    };
+    let handlers: KimiEventHandlers | undefined;
+    let sessionSkills = [{ name: 'before-config', description: '', source: 'project' as const }];
+    const listSkills = vi.fn(async () => sessionSkills);
+    const connection: KimiEventConnection = {
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      bindNextPromptId: vi.fn(),
+      seedSnapshot: vi.fn(),
+      abort: vi.fn(),
+      terminalAttach: vi.fn(),
+      terminalInput: vi.fn(),
+      terminalResize: vi.fn(),
+      terminalDetach: vi.fn(),
+      terminalClose: vi.fn(),
+      markSideChannelAgent: vi.fn(),
+      health: () => ({ connected: true, open: true, stale: false }),
+      reconnect: vi.fn(),
+      close: vi.fn(),
+    };
+    const api: Partial<KimiWebApi> = {
+      getAuth: vi.fn(async () => ({
+        ready: true,
+        defaultModel: 'model-1',
+        managedProvider: null,
+      })),
+      getHealth: vi.fn(async () => ({ status: 'ok', uptimeSec: 1 })),
+      getMeta: vi.fn(async () => ({
+        serverVersion: '0.0.0',
+        serverId: 'server-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        capabilities: {},
+        openInApps: [],
+        dangerousBypassAuth: false,
+        backend: 'v2',
+      })),
+      getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' })),
+      listModels: vi.fn(async () => []),
+      listProviders: vi.fn(async () => []),
+      listWorkspaces: vi.fn(async () => [
+        { id: 'workspace-1', root: '/workspace', name: 'Workspace', sessionCount: 1 },
+      ]),
+      getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
+      listSessions: vi.fn(async () => ({ items: [session], hasMore: false })),
+      getSessionSnapshot: vi.fn(async () => ({
+        asOfSeq: 0,
+        epoch: 'epoch-1',
+        session,
+        messages: [],
+        hasMoreMessages: false,
+        inFlightTurn: null,
+        subagents: [],
+        pendingApprovals: [],
+        pendingQuestions: [],
+      })),
+      getSessionStatus: vi.fn(async () => ({
+        model: 'model-1',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: false,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        contextUsage: 0,
+      })),
+      getSessionGoal: vi.fn(async () => null),
+      getSessionWarnings: vi.fn(async () => []),
+      getGitStatus: vi.fn(async () => ({
+        branch: '',
+        ahead: 0,
+        behind: 0,
+        entries: {},
+        additions: 0,
+        deletions: 0,
+        pullRequest: null,
+      })),
+      listTasks: vi.fn(async () => []),
+      listSkills,
+      listSkillsForWorkspace: vi.fn(async () => []),
+      getFileUrl: (fileId) => `file:${fileId}`,
+      connectEvents: vi.fn((nextHandlers) => {
+        handlers = nextHandlers;
+        return connection;
+      }),
+    };
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    Object.assign(clientApiMock, api);
+
+    try {
+      const { useKimiWebClient } = await import('../src/composables/useKimiWebClient');
+      const client = useKimiWebClient();
+      await client.load();
+      await vi.waitFor(() => expect(client.skills.value[0]?.name).toBe('before-config'));
+      listSkills.mockClear();
+      sessionSkills = [{ name: 'after-config', description: '', source: 'project' as const }];
+
+      handlers!.onEvent(
+        {
+          type: 'configChanged',
+          changedFields: ['disabledSkills'],
+          config: { providers: {}, defaultModel: 'model-1', disabledSkills: ['review-helper'] },
+        },
+        { sessionId, seq: 1 },
+      );
+
+      await vi.waitFor(() => expect(listSkills).toHaveBeenCalledWith(sessionId));
+      await vi.waitFor(() => expect(client.skills.value[0]?.name).toBe('after-config'));
     } finally {
       connection.close();
       vi.unstubAllGlobals();

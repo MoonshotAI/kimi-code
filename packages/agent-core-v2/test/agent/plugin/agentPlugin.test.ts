@@ -7,7 +7,7 @@
  * test/agent/plugin/agentPlugin.test.ts`.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Emitter } from '#/_base/event';
@@ -228,6 +228,54 @@ describe('AgentPluginService plugin session-start wiring', () => {
     const latest = messageText(messages.at(-1)!);
     expect(latest).toContain('<plugin_session_start plugin="demo" skill="demo-skill">');
     expect(latest).toContain('supersedes any earlier plugin_session_start reminder');
+    sinkChange.dispose();
+  });
+
+  it('neutralizes the reminder when disabled_skills changes in an active session', async () => {
+    let catalog = new InMemorySkillCatalog();
+    catalog.register(pluginSkill());
+    const sinkChange = new Emitter<string>();
+    const skillCatalog: ISessionSkillCatalog = {
+      _serviceBrand: undefined,
+      get catalog() {
+        return catalog;
+      },
+      ready: Promise.resolve(),
+      onDidChange: sinkChange.event,
+      load: async () => {},
+      reload: async () => {},
+    };
+
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        pluginServiceStub({
+          sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
+        }),
+      ),
+      skillServices(skillCatalog),
+      agentService(
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
+      ),
+    );
+
+    ctx.get(IAgentPluginService);
+    await injectRegistered(ctx);
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+    const activeCtx = ctx;
+
+    catalog = new InMemorySkillCatalog({ disabledSkills: ['demo-skill'] });
+    catalog.register(pluginSkill());
+    sinkChange.fire('disabledSkills');
+
+    await vi.waitFor(() => {
+      expect(findPluginSessionStartMessages(activeCtx)).toHaveLength(2);
+    });
+    const latest = messageText(findPluginSessionStartMessages(activeCtx).at(-1)!);
+    expect(latest).toContain('no active plugin session starts');
+    expect(latest).not.toContain('<plugin_session_start');
     sinkChange.dispose();
   });
 

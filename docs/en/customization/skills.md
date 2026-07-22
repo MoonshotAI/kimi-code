@@ -81,6 +81,32 @@ The Kimi-specific user Skill directory moves with `KIMI_CODE_HOME`, so isolated 
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
 
+**Disabling skills by name**: Use top-level `disabled_skills` when a Skill directory is shared with other tools (for example `~/.agents/skills/`) but you do not want selected Skills to appear in Kimi at all:
+
+```toml
+disabled_skills = ["review-helper", "legacy-helper"]
+```
+
+Disabled names are case-insensitive. Matching Skills are removed from the model listing, rejected by the `Skill` tool, hidden from the slash menu, and blocked from user activation. Files remain on disk for other tools. After editing `config.toml`, run `/reload` or start a new session.
+
+This is stronger than frontmatter `disableModelInvocation: true` (which only blocks automatic model invocation while still allowing slash use) and stronger than a permission deny rule for `Skill(...)` (which can block the tool call but still leaves the Skill in the model listing).
+
+`disabled_skills` only covers the Skill surface. The agent may still reimplement a skill's workflow with other tools — for example running a helper binary via `Bash` because a handoff document or earlier conversation showed that command. To block those shell paths as well, add deny rules (deny still applies in YOLO mode):
+
+```toml
+disabled_skills = ["review-helper", "legacy-helper"]
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(*review-helper-cli*)"
+
+[[permission.rules]]
+decision = "deny"
+pattern = "Bash(*legacy-helper-cli*)"
+```
+
+See [Permission rules](../configuration/config-files.md#permission) for the full rule format.
+
 **Built-in Skills** are distributed with the CLI and have the lowest priority. They provide out-of-the-box workflows for common tasks — for example, configuring MCP servers, customizing the TUI theme, and editing config files. See [Built-in skill commands](../reference/slash-commands.md#built-in-skill-commands) for the full list.
 
 ## Invoking a Skill

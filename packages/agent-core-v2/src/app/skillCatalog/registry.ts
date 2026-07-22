@@ -18,7 +18,12 @@ import type {
   SkillSource,
   SkippedSkill,
 } from './types';
-import { isInlineSkillType, normalizeSkillName } from './types';
+import {
+  createDisabledSkillNameSet,
+  isDisabledSkillName,
+  isInlineSkillType,
+  normalizeSkillName,
+} from './types';
 
 const LISTING_DESC_MAX = 250;
 
@@ -32,11 +37,21 @@ export class SkillNotFoundError extends Error {
   }
 }
 
+export interface InMemorySkillCatalogOptions {
+  /** Skill names from config `disabled_skills` (case-insensitive). */
+  readonly disabledSkills?: readonly string[];
+}
+
 export class InMemorySkillCatalog implements SkillCatalog {
   private readonly byName = new Map<string, SkillDefinition>();
   private readonly byPluginAndName = new Map<string, SkillDefinition>();
   private readonly roots: string[] = [];
   private readonly skipped: SkippedSkill[] = [];
+  private readonly disabledSkills: ReadonlySet<string>;
+
+  constructor(options: InMemorySkillCatalogOptions = {}) {
+    this.disabledSkills = createDisabledSkillNameSet(options.disabledSkills);
+  }
 
   registerBuiltinSkill(skill: SkillDefinition): void {
     this.register(skill.source === 'builtin' ? skill : { ...skill, source: 'builtin' });
@@ -90,8 +105,14 @@ export class InMemorySkillCatalog implements SkillCatalog {
     );
   }
 
+  isSkillDisabled(name: string): boolean {
+    return isDisabledSkillName(name, this.disabledSkills);
+  }
+
   listSkills(): readonly SkillDefinition[] {
-    return [...this.byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
+    return [...this.byName.values()]
+      .filter((skill) => !this.isSkillDisabled(skill.name))
+      .toSorted((a, b) => a.name.localeCompare(b.name));
   }
 
   listInvocableSkills(): readonly SkillDefinition[] {

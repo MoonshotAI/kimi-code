@@ -30,7 +30,8 @@
  *     shared `SessionNotFoundError` (→ 40401).
  *   - `SkillNotFoundError` (→ 40415) when agent-core reports `skill.not_found`.
  *   - `SkillNotActivatableError` (→ 40912) when agent-core reports
- *     `skill.type_unsupported` (e.g. `reference`-type skills).
+ *     `skill.type_unsupported` (e.g. `reference`-type skills) or
+ *     `skill.disabled`.
  *
  * **Anti-corruption**: imports `@moonshot-ai/agent-core` only for the
  * `createDecorator` value and the `SkillSummary` type.

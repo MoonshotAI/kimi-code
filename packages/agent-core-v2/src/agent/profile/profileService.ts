@@ -33,7 +33,7 @@
  * window); a same-name rebind keeps the persisted thinking effort unless the
  * caller explicitly overrides it. `refreshSystemPrompt` never rejects: a
  * failed context build keeps the current prompt and surfaces a warning,
- * because the `[tools]` config watcher fires it voided (an unhandled
+ * because config and skill-catalog watchers fire it voided (an unhandled
  * rejection would crash kap-server) and the Session tool-policy fan-out
  * awaits it across agents. Tool-policy entries that can never activate
  * anything (typo'd names, wildcards without the `mcp__` prefix, incomplete
@@ -70,6 +70,7 @@ import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/a
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { DISABLED_SKILLS_SECTION } from '#/app/skillCatalog/configSection';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -187,6 +188,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       this.config.onDidSectionChange(({ domain }) => {
         if (domain === TOOLS_SECTION) {
           this.publishToolPatternWarnings();
+          void this.refreshSystemPrompt();
+        }
+      }),
+    );
+    this._register(
+      this.skillCatalog.onDidChange((sourceId) => {
+        if (sourceId === DISABLED_SKILLS_SECTION) {
           void this.refreshSystemPrompt();
         }
       }),

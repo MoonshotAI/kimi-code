@@ -114,6 +114,25 @@ describe('AgentSkillService', () => {
     await expect(svc.activate({ name: 'missing' })).rejects.toThrow(/not found/i);
   });
 
+  it('activate throws for skills listed in disabled_skills config', async () => {
+    const disabledCatalog = new InMemorySkillCatalog({ disabledSkills: ['review-helper'] });
+    disabledCatalog.register(stubSkill('review-helper'));
+    ix.set(ISessionSkillCatalog, {
+      _serviceBrand: undefined,
+      catalog: disabledCatalog,
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      load: async () => {},
+      reload: async () => {},
+    } satisfies ISessionSkillCatalog);
+    ix.set(IAgentSkillService, new SyncDescriptor(AgentSkillService));
+
+    const svc = ix.get(IAgentSkillService);
+    await expect(svc.activate({ name: 'review-helper' })).rejects.toThrow(
+      /disabled in configuration \(disabled_skills\)/i,
+    );
+  });
+
   it('activate waits for the catalog to be ready before resolving', async () => {
     let resolveReady!: () => void;
     const ready = new Promise<void>((resolve) => {
@@ -264,6 +283,29 @@ describe('SkillTool', () => {
     expect(result).toMatchObject({
       isError: true,
       output: 'Skill "private" can only be triggered by the user (model invocation is disabled).',
+    });
+  });
+
+  it('rejects skills listed in disabled_skills config', async () => {
+    const disabledCatalog = new InMemorySkillCatalog({ disabledSkills: ['review-helper'] });
+    disabledCatalog.register(stubSkill('review-helper'));
+    ix.set(ISessionSkillCatalog, {
+      _serviceBrand: undefined,
+      catalog: disabledCatalog,
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      load: async () => {},
+      reload: async () => {},
+    } satisfies ISessionSkillCatalog);
+
+    const result = await executeTool(
+      makeTool(ix),
+      toolContext({ skill: 'review-helper' }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'Skill "review-helper" is disabled in configuration (disabled_skills).',
     });
   });
 

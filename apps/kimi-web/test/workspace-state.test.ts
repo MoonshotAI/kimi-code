@@ -10,6 +10,7 @@ import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
+import { useModelProviderState } from '../src/composables/client/useModelProviderState';
 import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 import { clearTrace, traceKeyEvent } from '../src/debug/trace';
@@ -33,6 +34,8 @@ const apiMock = vi.hoisted(() => ({
   getHealth: vi.fn(),
   getMeta: vi.fn(),
   listSessions: vi.fn(),
+  listSkills: vi.fn(),
+  listSkillsForWorkspace: vi.fn(),
   listWorkspaces: vi.fn(),
 }));
 
@@ -232,6 +235,85 @@ function task(id: string, status: AppTask['status'] = 'running'): AppTask {
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
+
+describe('useModelProviderState — skill cache refresh', () => {
+  it('reloads every session and workspace skill list already in use', async () => {
+    apiMock.listSkills.mockReset();
+    apiMock.listSkillsForWorkspace.mockReset();
+    apiMock.listSkills.mockResolvedValue([
+      { name: 'fresh-session-skill', description: '', source: 'project' },
+    ]);
+    apiMock.listSkillsForWorkspace.mockResolvedValue([
+      { name: 'fresh-workspace-skill', description: '', source: 'project' },
+    ]);
+    const provider = useModelProviderState(createState(), {
+      pushOperationFailure: vi.fn(),
+      refreshSessionStatus: vi.fn(async () => {}),
+      persistSessionProfile: vi.fn(async () => true),
+      activity: computed(() => 'running'),
+      updateSession: vi.fn(),
+      updateSessionMessages: vi.fn(),
+    });
+    provider.skillsBySession.value = { sess_1: [] };
+    provider.skillsByWorkspace.value = { workspace_1: [] };
+
+    await provider.refreshLoadedSkills();
+
+    expect(apiMock.listSkills).toHaveBeenCalledWith('sess_1');
+    expect(apiMock.listSkillsForWorkspace).toHaveBeenCalledWith('workspace_1');
+    expect(provider.skillsBySession.value['sess_1']?.[0]?.name).toBe('fresh-session-skill');
+    expect(provider.skillsByWorkspace.value['workspace_1']?.[0]?.name).toBe(
+      'fresh-workspace-skill',
+    );
+  });
+
+  it('keeps newer skill caches when overlapping refreshes resolve out of order', async () => {
+    const skill = (name: string) => ({ name, description: '', source: 'project' as const });
+    const deferred = <T>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    };
+    const olderSession = deferred<ReturnType<typeof skill>[]>();
+    const newerSession = deferred<ReturnType<typeof skill>[]>();
+    const olderWorkspace = deferred<ReturnType<typeof skill>[]>();
+    const newerWorkspace = deferred<ReturnType<typeof skill>[]>();
+    apiMock.listSkills.mockReset();
+    apiMock.listSkillsForWorkspace.mockReset();
+    apiMock.listSkills
+      .mockImplementationOnce(() => olderSession.promise)
+      .mockImplementationOnce(() => newerSession.promise);
+    apiMock.listSkillsForWorkspace
+      .mockImplementationOnce(() => olderWorkspace.promise)
+      .mockImplementationOnce(() => newerWorkspace.promise);
+    const provider = useModelProviderState(createState(), {
+      pushOperationFailure: vi.fn(),
+      refreshSessionStatus: vi.fn(async () => {}),
+      persistSessionProfile: vi.fn(async () => true),
+      activity: computed(() => 'running'),
+      updateSession: vi.fn(),
+      updateSessionMessages: vi.fn(),
+    });
+    provider.skillsBySession.value = { sess_1: [] };
+    provider.skillsByWorkspace.value = { workspace_1: [] };
+
+    const olderRefresh = provider.refreshLoadedSkills();
+    const newerRefresh = provider.refreshLoadedSkills();
+    newerSession.resolve([skill('newer-session-skill')]);
+    newerWorkspace.resolve([skill('newer-workspace-skill')]);
+    await newerRefresh;
+    olderSession.resolve([skill('older-session-skill')]);
+    olderWorkspace.resolve([skill('older-workspace-skill')]);
+    await olderRefresh;
+
+    expect(provider.skillsBySession.value['sess_1']?.[0]?.name).toBe('newer-session-skill');
+    expect(provider.skillsByWorkspace.value['workspace_1']?.[0]?.name).toBe(
+      'newer-workspace-skill',
+    );
+  });
+});
 
 describe('useWorkspaceState — abortCurrentPrompt', () => {
   beforeEach(() => {
