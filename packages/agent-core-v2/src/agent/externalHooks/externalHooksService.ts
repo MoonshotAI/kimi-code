@@ -39,6 +39,7 @@ import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -127,7 +128,7 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
       toolExecutor.onBeforeExecuteTool(async (event) => {
         const reason = await this.runPreToolUse(event);
         if (reason !== undefined) {
-          event.veto({ block: true, reason });
+          event.veto(denyToolExecution(reason));
         }
       }),
     );

@@ -36,6 +36,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { PlanModeInjection } from '#/agent/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   BeforeToolExecuteEvent,
@@ -120,30 +121,31 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
         event.allow();
         return;
       }
-      event.veto({
-        block: true,
-        reason: this.toolApproval.formatDenyMessage(planModeWriteDeniedMessage(plan.path)),
-      });
+      event.veto(
+        denyToolExecution(this.toolApproval.formatDenyMessage(planModeWriteDeniedMessage(plan.path))),
+      );
       return;
     }
 
     if (toolName === 'TaskStop') {
-      event.veto({
-        block: true,
-        reason: this.toolApproval.formatDenyMessage(
-          'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
+      event.veto(
+        denyToolExecution(
+          this.toolApproval.formatDenyMessage(
+            'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
+          ),
         ),
-      });
+      );
       return;
     }
 
     if (toolName === 'CronCreate' || toolName === 'CronDelete') {
-      event.veto({
-        block: true,
-        reason: this.toolApproval.formatDenyMessage(
-          `${toolName} is not available in plan mode because it would mutate scheduled work that runs after plan exit. Call ExitPlanMode first.`,
+      event.veto(
+        denyToolExecution(
+          this.toolApproval.formatDenyMessage(
+            `${toolName} is not available in plan mode because it would mutate scheduled work that runs after plan exit. Call ExitPlanMode first.`,
+          ),
         ),
-      });
+      );
       return;
     }
   }

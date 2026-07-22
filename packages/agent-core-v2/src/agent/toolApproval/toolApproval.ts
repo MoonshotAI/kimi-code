@@ -16,7 +16,7 @@ import type {
   PermissionPolicyResult,
 } from '#/agent/permissionPolicy/types';
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 
@@ -27,13 +27,13 @@ export interface IAgentToolApprovalService {
     result: PermissionPolicyResolution,
     context: ResolvedToolExecutionHookContext,
     origin: string,
-  ): Promise<AuthorizeToolExecutionResult | undefined>;
+  ): Promise<BeforeExecuteDecision | undefined>;
 
   requestToolApproval(
     context: ResolvedToolExecutionHookContext,
     result: Extract<PermissionPolicyResult, { kind: 'ask' }>,
     origin: string,
-  ): Promise<AuthorizeToolExecutionResult | undefined>;
+  ): Promise<BeforeExecuteDecision | undefined>;
 
   formatDenyMessage(message: string): string;
 

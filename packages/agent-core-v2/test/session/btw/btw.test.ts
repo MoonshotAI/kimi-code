@@ -81,8 +81,10 @@ describe('SessionBtwService', () => {
     });
 
     expect(decision).toEqual({
-      block: true,
-      reason: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
+      veto: {
+        output: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
+        isError: true,
+      },
     });
     expect(formatDenyMessage).toHaveBeenCalledWith(TOOL_CALL_DISABLED_MESSAGE);
   });

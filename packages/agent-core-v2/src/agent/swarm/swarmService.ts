@@ -25,6 +25,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
@@ -60,14 +61,15 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
         if (agentSwarmCount === 0 || (agentSwarmCount === 1 && event.toolCalls.length === 1)) {
           return;
         }
-        event.veto({
-          block: true,
-          reason: this.toolApproval.formatDenyMessage(
-            agentSwarmCount > 1
-              ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
-              : mixedAgentSwarmDeniedMessage(),
+        event.veto(
+          denyToolExecution(
+            this.toolApproval.formatDenyMessage(
+              agentSwarmCount > 1
+                ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
+                : mixedAgentSwarmDeniedMessage(),
+            ),
           ),
-        });
+        );
       }),
     );
   }

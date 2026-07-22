@@ -11,7 +11,8 @@
  *    runs;
  * 2. deferred adjudications — only when pass 1 produced no decision, the
  *    cold factories registered via `waitUntil(factory)` are invoked one at a
- *    time, and the first returned payload decides the call.
+ *    time; the first returned `veto` decides the call, while a returned
+ *    `executionMetadata` joins the pass trace.
  *
  * Because the factories stay cold through pass 1, an approval round-trip
  * (the only side-effecting adjudication) can never start while another
@@ -24,15 +25,24 @@
 import { Emitter } from '#/_base/event';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { LLMRequestTrace } from '#/kosong/contract/requestTrace';
-import type { ExecutableTool, RunnableToolExecution } from '#/tool/toolContract';
+import type {
+  ExecutableTool,
+  ExecutableToolResult,
+  RunnableToolExecution,
+} from '#/tool/toolContract';
 
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
 } from './toolHooks';
 
-type PendingVetoFactory = () => Promise<AuthorizeToolExecutionResult | undefined>;
+type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
+
+/** Convenience for the common veto shape: a denial carrying only a message. */
+export function denyToolExecution(reason: string): ExecutableToolResult {
+  return { output: reason, isError: true };
+}
 
 export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   readonly turnId: number;
@@ -44,7 +54,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   readonly args: unknown;
   readonly execution: RunnableToolExecution;
 
-  private _vetoResult: AuthorizeToolExecutionResult | undefined;
+  private _vetoResult: ExecutableToolResult | undefined;
   private _finalAllowed = false;
   private _passMetadata: unknown;
   private readonly _pendingVetos: PendingVetoFactory[] = [];
@@ -61,7 +71,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this.execution = context.execution;
   }
 
-  veto(result: AuthorizeToolExecutionResult): void {
+  veto(result: ExecutableToolResult): void {
     this.assertOpen('veto');
     this._vetoResult ??= result;
   }
@@ -81,7 +91,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this._pendingVetos.push(factory);
   }
 
-  get vetoResult(): AuthorizeToolExecutionResult | undefined {
+  get vetoResult(): ExecutableToolResult | undefined {
     return this._vetoResult;
   }
 
@@ -111,7 +121,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
 export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
   async fireBeforeExecute(
     context: ResolvedToolExecutionHookContext,
-  ): Promise<AuthorizeToolExecutionResult | undefined> {
+  ): Promise<BeforeExecuteDecision | undefined> {
     if (this.isDisposed || this._listeners === undefined || this._listeners.size === 0) {
       return undefined;
     }
@@ -120,16 +130,16 @@ export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
     for (const entry of Array.from(this._listeners)) {
       await entry.listener.call(entry.thisArg, event);
       if (event.finalAllowed) return undefined;
-      if (event.vetoResult !== undefined) return event.vetoResult;
+      if (event.vetoResult !== undefined) return { veto: event.vetoResult };
     }
     event.closeRegistration();
 
+    let passMetadata = event.passMetadata;
     for (const factory of event.pendingVetos) {
-      const result = await factory();
-      if (result !== undefined) return result;
+      const decision = await factory();
+      if (decision?.veto !== undefined) return { veto: decision.veto };
+      passMetadata ??= decision?.executionMetadata;
     }
-    return event.passMetadata === undefined
-      ? undefined
-      : { executionMetadata: event.passMetadata };
+    return passMetadata === undefined ? undefined : { executionMetadata: passMetadata };
   }
 }

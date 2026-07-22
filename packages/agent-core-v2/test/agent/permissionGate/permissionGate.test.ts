@@ -4,7 +4,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import type { TestInstantiationService } from '#/_base/di/test';
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
@@ -118,7 +118,7 @@ describe('AgentPermissionGate', () => {
   it('forwards the policy resolution to the approval service and returns its result', async () => {
     const resolution: PermissionPolicyResolution = { kind: 'deny', message: 'nope' };
     policyResult = { policyName: 'user-configured-deny', result: resolution };
-    const blocked: AuthorizeToolExecutionResult = { block: true, reason: 'nope' };
+    const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
     resolvePermissionResolution.mockResolvedValue(blocked);
     const svc = make();
     const ctx = makeContext('bash');
@@ -169,7 +169,7 @@ describe('AgentPermissionGate', () => {
   });
 
   it('vetoes with the resolved denial and ends adjudication on a deny resolution', async () => {
-    const blocked: AuthorizeToolExecutionResult = { block: true, reason: 'nope' };
+    const blocked: BeforeExecuteDecision = { veto: { output: 'nope', isError: true } };
     policyResult = { policyName: 'p', result: { kind: 'deny', message: 'nope' } };
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
@@ -178,14 +178,12 @@ describe('AgentPermissionGate', () => {
 
     const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 
-    expect(decision).toBe(blocked);
+    expect(decision).toEqual(blocked);
     expect(later).not.toHaveBeenCalled();
   });
 
   it('defers an ask resolution to a cold waitUntil factory', async () => {
-    const synthetic: AuthorizeToolExecutionResult = {
-      syntheticResult: { output: 'Plan review handled.' },
-    };
+    const synthetic: BeforeExecuteDecision = { veto: { output: 'Plan review handled.' } };
     const ask: PermissionPolicyResolution = { kind: 'ask' };
     policyResult = { policyName: 'p', result: ask };
     requestToolApproval.mockResolvedValue(synthetic);
@@ -194,7 +192,7 @@ describe('AgentPermissionGate', () => {
 
     const decision = await executorEvents.fireBeforeExecute(ctx);
 
-    expect(decision).toBe(synthetic);
+    expect(decision).toEqual(synthetic);
     expect(requestToolApproval).toHaveBeenCalledWith(
       expect.objectContaining({ toolCall: ctx.toolCall }),
       ask,

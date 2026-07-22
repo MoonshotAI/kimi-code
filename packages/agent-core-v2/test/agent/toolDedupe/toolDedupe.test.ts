@@ -11,7 +11,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, AuthorizeToolExecutionResult } from '#/agent/toolExecutor/toolHooks';
+import type { ToolDidExecuteContext, ResolvedToolExecutionHookContext, BeforeExecuteDecision } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolDedupeService, type ToolDedupeResult } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService, __testing as toolDedupeTesting } from '#/agent/toolDedupe/toolDedupeService';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
@@ -51,7 +51,7 @@ interface Harness {
   readonly registry: IAgentToolRegistryService;
   readonly fireBefore: (
     ctx: ResolvedToolExecutionHookContext,
-  ) => Promise<AuthorizeToolExecutionResult | undefined>;
+  ) => Promise<BeforeExecuteDecision | undefined>;
 }
 
 function createHarness(
@@ -258,13 +258,13 @@ describe('AgentToolDedupeService', () => {
       expect(b1).toBeUndefined();
 
       const b2 = await h.fireBefore(willCtx('c2', 'Read', { path: '/a' }));
-      expect(b2?.syntheticResult).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Read', { path: '/a' }, okResult('FILE_A'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
       expect(d1.result).toEqual(okResult('FILE_A'));
 
-      const d2 = didCtx('c2', 'Read', { path: '/a' }, b2!.syntheticResult!);
+      const d2 = didCtx('c2', 'Read', { path: '/a' }, b2!.veto!);
       await h.executor.hooks.onDidExecuteTool.run(d2);
       expect(d2.result).toEqual(okResult('FILE_A'));
     });
@@ -275,11 +275,11 @@ describe('AgentToolDedupeService', () => {
 
       await h.fireBefore(willCtx('c1', 'Bash', { cmd: 'x' }));
       const b2 = await h.fireBefore(willCtx('c2', 'Bash', { cmd: 'x' }));
-      expect(b2?.syntheticResult).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Bash', { cmd: 'x' }, errResult('boom'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
-      const d2 = didCtx('c2', 'Bash', { cmd: 'x' }, b2!.syntheticResult!);
+      const d2 = didCtx('c2', 'Bash', { cmd: 'x' }, b2!.veto!);
       await h.executor.hooks.onDidExecuteTool.run(d2);
       expect(d2.result).toEqual(errResult('boom'));
     });
@@ -501,11 +501,11 @@ describe('AgentToolDedupeService', () => {
       expect(b1).toBeUndefined();
 
       const b2 = await h.fireBefore(willCtx('c2', 'Read', { b: 2, a: 1 }));
-      expect(b2?.syntheticResult).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Read', { a: 1, b: 2 }, okResult('SAME'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
-      const d2 = didCtx('c2', 'Read', { b: 2, a: 1 }, b2!.syntheticResult!);
+      const d2 = didCtx('c2', 'Read', { b: 2, a: 1 }, b2!.veto!);
       await h.executor.hooks.onDidExecuteTool.run(d2);
       expect(d2.result).toEqual(okResult('SAME'));
     });
@@ -519,12 +519,12 @@ describe('AgentToolDedupeService', () => {
       const b1 = await h.fireBefore(willCtx('c1', 'Read', { path: '/a' }));
       expect(b1).toBeUndefined();
       const b2 = await h.fireBefore(willCtx('c2', 'Read', { path: '/a' }));
-      expect(b2?.syntheticResult).toEqual({ output: '' });
+      expect(b2?.veto).toEqual({ output: '' });
 
       const d1 = didCtx('c1', 'Read', { path: '/REWRITTEN' }, okResult('A'));
       await h.executor.hooks.onDidExecuteTool.run(d1);
 
-      const d2 = didCtx('c2', 'Read', { path: '/a' }, b2!.syntheticResult!);
+      const d2 = didCtx('c2', 'Read', { path: '/a' }, b2!.veto!);
       await Promise.race([
         h.executor.hooks.onDidExecuteTool.run(d2),
         new Promise<never>((_, reject) => {
@@ -545,7 +545,7 @@ describe('AgentToolDedupeService', () => {
       const b1 = await h.fireBefore(willCtx('leaked', 'Read', { p: 1 }));
       expect(b1).toBeUndefined();
       const b2 = await h.fireBefore(willCtx('dup', 'Read', { p: 1 }));
-      const placeholder = b2!.syntheticResult!;
+      const placeholder = b2!.veto!;
       expect(placeholder).toEqual({ output: '' });
 
       await beforeStep(h, 1, 2);

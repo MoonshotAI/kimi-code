@@ -120,7 +120,7 @@ constructor(@IAgentToolExecutorService executor, ...) {
 ```
 
 - The veto event carries no id and no ordering contract. Listeners answer with `event.veto(result)` (first one wins, ends adjudication), `event.allow()` (final pass, ends everything including the permission gate's own listener), `event.pass(metadata)` (pass with an `executionMetadata` trace, ends nothing), or `event.waitUntil(factory)` (defer to a cold factory).
-- **Guard** (hard deny): call `event.veto({ block: true, reason: toolApproval.formatDenyMessage(...) })`. An immediate veto suppresses every pending `waitUntil` factory, so a deny can never be preceded by someone else's approval prompt.
+- **Guard** (hard deny): call `event.veto(denyToolExecution(toolApproval.formatDenyMessage(...)))`. An immediate veto suppresses every pending `waitUntil` factory, so a deny can never be preceded by someone else's approval prompt.
 - **Review** (product approval): intercept the tool with `event.waitUntil(() => ...requestToolApproval(event, ask, origin))`. The factory is cold — the executor only invokes it after every listener ran without a veto or an allow, so the review's Interaction starts only once the call is otherwise clear to proceed; abstain (no statement) for every case you do not review so user rules still apply.
 - **Plain allow**: do NOT `allow()` casually — prefer putting the tool in `default-tool-approve`'s whitelist so user deny/ask rules keep their precedence; reserve `allow()` for cases like the plan-file write guard that must bypass even the permission chain.
 

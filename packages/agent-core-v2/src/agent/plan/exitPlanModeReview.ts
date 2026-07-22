@@ -19,7 +19,7 @@ import type {
 } from '#/agent/permissionPolicy/types';
 import type { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
@@ -40,7 +40,7 @@ export class ExitPlanModeReview {
 
   async requestApproval(
     context: ResolvedToolExecutionHookContext,
-  ): Promise<AuthorizeToolExecutionResult | undefined> {
+  ): Promise<BeforeExecuteDecision | undefined> {
     const display = context.execution.display;
     if (display?.kind !== 'plan_review') return undefined;
     if (display.plan.trim().length === 0) return undefined;
@@ -88,7 +88,7 @@ export class ExitPlanModeReview {
     const formattedPlan = `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${display.plan}`;
     return {
       kind: 'result',
-      syntheticResult: {
+      result: {
         isError: false,
         output: `Exited plan mode. ${optionPrefix}${formattedPlan}`,
       },
@@ -101,7 +101,7 @@ export class ExitPlanModeReview {
     if (result.decision === 'cancelled') {
       return {
         kind: 'result',
-        syntheticResult: {
+        result: {
           isError: false,
           output: 'Plan approval dismissed. Plan mode remains active.',
         },
@@ -112,7 +112,7 @@ export class ExitPlanModeReview {
       this.plan.exit();
       return {
         kind: 'result',
-        syntheticResult: {
+        result: {
           isError: true,
           stopTurn: true,
           output: 'Plan rejected by user. Plan mode deactivated.',
@@ -124,7 +124,7 @@ export class ExitPlanModeReview {
     if (result.selectedLabel === 'Revise' || feedback.length > 0) {
       return {
         kind: 'result',
-        syntheticResult: {
+        result: {
           isError: false,
           output:
             feedback.length > 0
@@ -136,7 +136,7 @@ export class ExitPlanModeReview {
 
     return {
       kind: 'result',
-      syntheticResult: {
+      result: {
         isError: true,
         stopTurn: true,
         output: 'Plan rejected by user. Plan mode remains active.',

@@ -308,13 +308,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this._register(
       toolExecutor.onBeforeExecuteTool((event) => {
         if (this.isStaleGoalToolCall(event)) {
-          event.veto({ syntheticResult: { output: GOAL_STALE_TOOL_RESULT } });
+          event.veto({ output: GOAL_STALE_TOOL_RESULT });
           return;
         }
         if (this.budgetGraceTurns.has(event.turnId)) {
-          event.veto({
-            syntheticResult: { output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE },
-          });
+          event.veto({ output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE });
         }
       }),
     );

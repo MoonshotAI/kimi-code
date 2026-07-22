@@ -189,7 +189,7 @@ describe('AgentToolApprovalService', () => {
           makeContext('Bash'),
           'p',
         ),
-      ).resolves.toEqual({ block: true, reason: 'nope' });
+      ).resolves.toEqual({ veto: { output: 'nope', isError: true } });
     });
 
     it('uses a default reason when a deny has no message', async () => {
@@ -197,8 +197,7 @@ describe('AgentToolApprovalService', () => {
       await expect(
         svc.resolvePermissionResolution({ kind: 'deny' }, makeContext('Bash'), 'p'),
       ).resolves.toEqual({
-        block: true,
-        reason: 'Tool "Bash" was denied by permission policy.',
+        veto: { output: 'Tool "Bash" was denied by permission policy.', isError: true },
       });
     });
 
@@ -212,8 +211,7 @@ describe('AgentToolApprovalService', () => {
           'p',
         ),
       ).resolves.toEqual({
-        block: true,
-        reason: `nope ${RETRY_GUIDANCE}`,
+        veto: { output: `nope ${RETRY_GUIDANCE}`, isError: true },
       });
     });
 
@@ -223,15 +221,13 @@ describe('AgentToolApprovalService', () => {
         svc.resolvePermissionResolution(
           {
             kind: 'result',
-            syntheticResult: { output: 'Plan review handled.' },
-            executionMetadata: { extra: true },
+            result: { output: 'Plan review handled.' },
           },
           makeContext('ExitPlanMode'),
           'p',
         ),
       ).resolves.toEqual({
-        syntheticResult: { output: 'Plan review handled.' },
-        executionMetadata: { extra: true },
+        veto: { output: 'Plan review handled.' },
       });
     });
 
@@ -403,8 +399,10 @@ describe('AgentToolApprovalService', () => {
       await expect(
         svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
       ).resolves.toEqual({
-        block: true,
-        reason: 'Tool "Bash" was not run because the user rejected the approval request.',
+        veto: {
+          output: 'Tool "Bash" was not run because the user rejected the approval request.',
+          isError: true,
+        },
       });
     });
 
@@ -416,10 +414,12 @@ describe('AgentToolApprovalService', () => {
       await expect(
         svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
       ).resolves.toEqual({
-        block: true,
-        reason:
-          'Tool "Bash" was not run because the user rejected the approval request.' +
-          ` Reason: too broad ${RETRY_GUIDANCE}`,
+        veto: {
+          output:
+            'Tool "Bash" was not run because the user rejected the approval request.' +
+            ` Reason: too broad ${RETRY_GUIDANCE}`,
+          isError: true,
+        },
       });
     });
 
@@ -430,8 +430,10 @@ describe('AgentToolApprovalService', () => {
       await expect(
         svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask'),
       ).resolves.toMatchObject({
-        block: true,
-        reason: expect.stringContaining('approval request was cancelled'),
+        veto: {
+          output: expect.stringContaining('approval request was cancelled'),
+          isError: true,
+        },
       });
 
       expect(records).toContainEqual({
@@ -473,13 +475,13 @@ describe('AgentToolApprovalService', () => {
             ask({
               resolveApproval: () => ({
                 kind: 'result',
-                syntheticResult: { output: 'Plan review handled.' },
+                result: { output: 'Plan review handled.' },
               }),
             }),
             'exit-plan-mode-review-ask',
           ),
         ).resolves.toEqual({
-          syntheticResult: { output: 'Plan review handled.' },
+          veto: { output: 'Plan review handled.' },
         });
 
         expect(records).toContainEqual({
@@ -540,8 +542,7 @@ describe('AgentToolApprovalService', () => {
           'exit-plan-mode-review-ask',
         ),
       ).resolves.toEqual({
-        block: true,
-        reason: 'review unavailable',
+        veto: { output: 'review unavailable', isError: true },
       });
     });
 

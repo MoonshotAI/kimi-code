@@ -22,7 +22,7 @@ import { IAgentPermissionRulesService } from '#/agent/permissionRules/permission
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
@@ -73,14 +73,14 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
       return;
     }
     const resolved = await this.toolApproval.resolvePermissionResolution(result, event, policyName);
-    if (resolved !== undefined) {
-      event.veto(resolved);
+    if (resolved?.veto !== undefined) {
+      event.veto(resolved.veto);
     }
   }
 
   async authorize(
     context: ResolvedToolExecutionHookContext,
-  ): Promise<AuthorizeToolExecutionResult | undefined> {
+  ): Promise<BeforeExecuteDecision | undefined> {
     const evaluation = await this.policyService.evaluate(context);
     if (evaluation === undefined) return undefined;
     this.telemetry.track2('permission_policy_decision', {

@@ -16,6 +16,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
@@ -43,7 +44,7 @@ export class SessionBtwService implements ISessionBtwService {
     child.accessor
       .get(IAgentToolExecutorService)
       ?.onBeforeExecuteTool((event) => {
-        event.veto({ block: true, reason });
+        event.veto(denyToolExecution(reason));
       });
     return child.id;
   }

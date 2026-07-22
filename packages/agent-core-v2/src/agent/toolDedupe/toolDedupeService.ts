@@ -141,7 +141,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
         event.trace,
       );
       if (checked.syntheticResult !== null) {
-        event.veto({ syntheticResult: checked.syntheticResult });
+        event.veto(checked.syntheticResult);
       }
     });
     toolExecutor.hooks.onDidExecuteTool.register('toolDedupe', async (ctx, next) => {

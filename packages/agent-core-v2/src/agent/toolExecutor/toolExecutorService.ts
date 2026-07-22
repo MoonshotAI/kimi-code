@@ -373,19 +373,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const beforeContext = buildBeforeExecuteContext(call, execution, allCalls, options);
     const decision = await this.beforeExecuteEmitter.fireBeforeExecute(beforeContext);
 
-    if (decision?.block === true) {
-      return settleError(
-        call.args,
-        decision.reason ?? `Tool call "${call.toolName}" was blocked`,
-        displayFields,
-      );
-    }
-    if (decision?.syntheticResult !== undefined) {
-      return settleSynthetic(
-        call.args,
-        decision.syntheticResult,
-        displayFields,
-      );
+    if (decision?.veto !== undefined) {
+      return settleSynthetic(call.args, decision.veto, displayFields);
     }
 
     const executionMetadata = decision?.executionMetadata;

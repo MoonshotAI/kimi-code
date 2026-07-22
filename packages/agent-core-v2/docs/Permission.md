@@ -218,7 +218,7 @@ constructor(@IAgentToolExecutorService executor, ...) {
 ```
 
 - veto 事件没有 id、没有排序契约。监听器用 `event.veto(result)`（先到先得，终止裁决）、`event.allow()`（终局放行，终止包括 permission gate 自己在内的一切后续表态）、`event.pass(metadata)`（留痕放行，不终止他人表态）或 `event.waitUntil(factory)`（申报需要等外部输入的挂起裁决）表态。
-- **guard（硬 deny）**：`event.veto({ block: true, reason: toolApproval.formatDenyMessage(...) })`。即时 veto 会压制所有待履行的 `waitUntil` factory——deny 之前绝不可能先弹出别人的审批。
+- **guard（硬 deny）**：`event.veto(denyToolExecution(toolApproval.formatDenyMessage(...)))`。即时 veto 会压制所有待履行的 `waitUntil` factory——deny 之前绝不可能先弹出别人的审批。
 - **review（产物审批）**：拦截自家工具，`event.waitUntil(() => ...requestToolApproval(event, ask, origin))`。factory 是 cold 的——executor 只会在所有监听器都跑完且无人 veto/allow 后才履行它，所以 review 的 Interaction 只可能在调用已经确定要继续时发出；不审批的情形一律不表态，让用户规则继续生效。
 - **纯放行**：不要随便 `allow()`——把工具加进 `default-tool-approve` 白名单，保住用户 deny/ask 规则的优先权；`allow()` 留给 plan 文件写 guard 这种必须绕过整条权限链的场景。
 

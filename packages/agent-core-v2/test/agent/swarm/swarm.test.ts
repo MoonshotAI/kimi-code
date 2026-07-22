@@ -17,7 +17,7 @@ import { AgentSwarmTool, AgentSwarmToolInputSchema } from '#/agent/swarm/tools/a
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/kosong/contract/message';
@@ -159,7 +159,7 @@ describe('AgentSwarmService', () => {
 
   async function fire(
     ctx: ResolvedToolExecutionHookContext,
-  ): Promise<AuthorizeToolExecutionResult | undefined> {
+  ): Promise<BeforeExecuteDecision | undefined> {
     disposables.add(
       executorEvents.executor.onBeforeExecuteTool(() => {
         permissionGateRan = true;
@@ -224,8 +224,10 @@ describe('AgentSwarmService', () => {
     );
 
     expect(decision).toEqual({
-      block: true,
-      reason: expect.stringContaining('one swarm at a time'),
+      veto: {
+        output: expect.stringContaining('one swarm at a time'),
+        isError: true,
+      },
     });
     expect(permissionGateRan).toBe(false);
     expect(formatDenyMessage).toHaveBeenCalledTimes(1);
@@ -238,8 +240,10 @@ describe('AgentSwarmService', () => {
     );
 
     expect(decision).toEqual({
-      block: true,
-      reason: expect.stringContaining('must be the only tool call'),
+      veto: {
+        output: expect.stringContaining('must be the only tool call'),
+        isError: true,
+      },
     });
     expect(permissionGateRan).toBe(false);
     expect(formatDenyMessage).toHaveBeenCalledTimes(1);

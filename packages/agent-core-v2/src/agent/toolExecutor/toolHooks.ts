@@ -5,13 +5,14 @@
  * `IAgentToolExecutorService`'s execution-interception surface:
  *
  * - `onBeforeExecuteTool` (veto event, `BeforeToolExecuteEvent`): listeners
- *   answer with `veto(result)` (block / synthetic short-circuit, first one
- *   wins), `allow()` (final pass, ends all adjudication), `pass(metadata)`
- *   (pass with an `executionMetadata` trace, ends nothing), or
- *   `waitUntil(factory)` (defer an adjudication that needs external input —
- *   the fire side invokes the cold factory only when no listener vetoed or
- *   allowed outright, so an ask round-trip can never start while another
- *   listener would have denied). No ids, no ordering contract.
+ *   answer with `veto(result)` (replace the execution with the given tool
+ *   result — an `isError: true` result reads as a denial, anything else as a
+ *   short-circuit; first one wins), `allow()` (final pass, ends all
+ *   adjudication), `pass(metadata)` (pass with an `executionMetadata` trace,
+ *   ends nothing), or `waitUntil(factory)` (defer an adjudication that needs
+ *   external input — the fire side invokes the cold factory only when no
+ *   listener vetoed or allowed outright, so an ask round-trip can never start
+ *   while another listener would have denied). No ids, no ordering contract.
  * - `onWillExecuteTool` (waitUntil participation event,
  *   `WillExecuteToolEvent`): listeners attach hot promises via
  *   `waitUntil(promise)`; the executor awaits all of them before dispatching
@@ -44,21 +45,18 @@ export interface ResolvedToolExecutionHookContext extends ToolExecutionHookConte
   readonly execution: RunnableToolExecution;
 }
 
-export interface AuthorizeToolExecutionResult {
-  readonly block?: boolean | undefined;
-  readonly reason?: string | undefined;
-  readonly syntheticResult?: ExecutableToolResult | undefined;
+export interface BeforeExecuteDecision {
+  readonly veto?: ExecutableToolResult;
   readonly executionMetadata?: unknown;
 }
 
 export interface BeforeToolExecuteEvent extends ResolvedToolExecutionHookContext {
   /**
-   * Decide the call now: `{ block, reason }` denies it, `{ syntheticResult }`
-   * short-circuits it with a synthetic tool result, and a metadata-only
-   * payload lets it run carrying `executionMetadata`. First veto wins; later
-   * vetoes are ignored.
+   * Replace the execution with the given tool result: an `isError: true`
+   * result reads as a denial, anything else as a short-circuit with a
+   * synthetic result. First veto wins; later vetoes are ignored.
    */
-  veto(result: AuthorizeToolExecutionResult): void;
+  veto(result: ExecutableToolResult): void;
   /** Allow the call and end all adjudication: no further listener runs and no pending `waitUntil` factory is invoked. */
   allow(): void;
   /** Allow the call but leave an `executionMetadata` trace; does not stop other listeners from adjudicating. */
@@ -68,9 +66,10 @@ export interface BeforeToolExecuteEvent extends ResolvedToolExecutionHookContext
    * round-trip). The factory is cold: the fire side invokes it only after
    * every listener ran without a veto or an allow, so its side effects
    * (Interactions) can never happen while another listener would have
-   * denied. Returns the veto payload, or `undefined` to allow.
+   * denied. Returns the decision (`veto` to replace the execution,
+   * `executionMetadata` to pass with a trace), or `undefined` to allow.
    */
-  waitUntil(factory: () => Promise<AuthorizeToolExecutionResult | undefined>): void;
+  waitUntil(factory: () => Promise<BeforeExecuteDecision | undefined>): void;
 }
 
 export interface WillExecuteToolEvent extends IWaitUntil {

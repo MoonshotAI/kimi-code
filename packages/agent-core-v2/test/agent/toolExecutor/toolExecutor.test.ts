@@ -382,11 +382,11 @@ describe('AgentToolExecutorService', () => {
     expect(toolCallEvent?.args).toEqual({ x: 1 });
   });
 
-  it('onBeforeExecuteTool block records an error result without invoking execute', async () => {
+  it('onBeforeExecuteTool veto with an error result does not invoke execute', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ block: true, reason: 'forbidden' });
+      event.veto({ output: 'forbidden', isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
@@ -400,18 +400,14 @@ describe('AgentToolExecutorService', () => {
     expect(tool.calls).toEqual([]);
   });
 
-  it('onBeforeExecuteTool syntheticResult bypasses execute', async () => {
+  it('onBeforeExecuteTool veto with a plain result bypasses execute', async () => {
     const first = new TestTool('first');
     const second = new TestTool('second');
     registry.register(first);
     registry.register(second);
     executor.onBeforeExecuteTool((event) => {
       if (event.toolCall.id !== 'call_first') return;
-      event.veto({
-        syntheticResult: {
-          output: 'synthetic',
-        },
-      });
+      event.veto({ output: 'synthetic' });
     });
 
     const results = await execute([
@@ -746,11 +742,11 @@ describe('onBeforeExecuteTool veto semantics', () => {
     registry.register(tool);
     const later = vi.fn();
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ block: true, reason: 'first' });
+      event.veto({ output: 'first', isError: true });
     });
     executor.onBeforeExecuteTool((event) => {
       later();
-      event.veto({ block: true, reason: 'second' });
+      event.veto({ output: 'second', isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
@@ -769,7 +765,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
     });
     executor.onBeforeExecuteTool((event) => {
       later();
-      event.veto({ block: true, reason: 'denied' });
+      event.veto({ output: 'denied', isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
@@ -804,7 +800,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
       event.waitUntil(askFactory);
     });
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ block: true, reason: 'disabled' });
+      event.veto({ output: 'disabled', isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
@@ -827,7 +823,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
     executor.onBeforeExecuteTool((event) => {
       event.waitUntil(async () => {
         fulfilled.push('second');
-        return { block: true, reason: 'second-denied' };
+        return { veto: { output: 'second-denied', isError: true } };
       });
     });
     executor.onBeforeExecuteTool((event) => {
@@ -874,7 +870,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
     expect(() => closed.waitUntil(async () => undefined)).toThrow(
       'waitUntil can NOT be called asynchronously',
     );
-    expect(() => closed.veto({ block: true })).toThrow(
+    expect(() => closed.veto({ output: 'x', isError: true })).toThrow(
       'veto can NOT be called asynchronously',
     );
   });
@@ -905,7 +901,7 @@ describe('onWillExecuteTool', () => {
     const willListener = vi.fn();
     executor.onWillExecuteTool(willListener);
     executor.onBeforeExecuteTool((event) => {
-      event.veto({ block: true, reason: 'nope' });
+      event.veto({ output: 'nope', isError: true });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);

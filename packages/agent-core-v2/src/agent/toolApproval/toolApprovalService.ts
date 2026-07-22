@@ -23,8 +23,9 @@ import type {
 } from '#/agent/permissionPolicy/types';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import type {
-  AuthorizeToolExecutionResult,
+  BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IEventBus } from '#/app/event/eventBus';
@@ -77,7 +78,7 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
     result: PermissionPolicyResolution,
     context: ResolvedToolExecutionHookContext,
     origin: string,
-  ): Promise<AuthorizeToolExecutionResult | undefined> {
+  ): Promise<BeforeExecuteDecision | undefined> {
     switch (result.kind) {
       case 'approve':
         return result.executionMetadata === undefined
@@ -85,17 +86,16 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
           : { executionMetadata: result.executionMetadata };
       case 'deny':
         return {
-          block: true,
-          reason: this.formatDenyMessage(
-            result.message ?? `Tool "${context.toolCall.name}" was denied by permission policy.`,
+          veto: denyToolExecution(
+            this.formatDenyMessage(
+              result.message ?? `Tool "${context.toolCall.name}" was denied by permission policy.`,
+            ),
           ),
         };
       case 'ask':
         return this.requestToolApproval(context, result, origin);
-      case 'result': {
-        const { kind: _kind, ...authorizeResult } = result;
-        return authorizeResult;
-      }
+      case 'result':
+        return { veto: result.result };
     }
   }
 
@@ -103,7 +103,7 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
     context: ResolvedToolExecutionHookContext,
     result: Extract<PermissionPolicyResult, { kind: 'ask' }>,
     origin: string,
-  ): Promise<AuthorizeToolExecutionResult | undefined> {
+  ): Promise<BeforeExecuteDecision | undefined> {
     const name = context.toolCall.name;
     const action = context.execution.description ?? `Approve ${name}`;
     const display =
@@ -212,8 +212,7 @@ export class AgentToolApprovalService extends Disposable implements IAgentToolAp
 
     if (response.decision === 'approved') return undefined;
     return {
-      block: true,
-      reason: this.formatApprovalRejectionMessage(name, response),
+      veto: denyToolExecution(this.formatApprovalRejectionMessage(name, response)),
     };
   }
 
