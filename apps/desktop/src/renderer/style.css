@@ -446,7 +446,7 @@ body {
 
 /* Click-to-blink: a single quick blink on click (overrides the idle 11s blink
    while the .blink-now class is present, ~300ms). */
-.ch-logo.blink-now .ch-eye {
+.blink-now .ch-eye {
   animation: kimi-eye-blink-once 0.24s ease-in-out;
 }
 @keyframes kimi-eye-blink-once {

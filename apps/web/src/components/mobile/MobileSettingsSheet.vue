@@ -35,7 +35,10 @@ const props = withDefaults(
     swarmMode?: boolean;
     colorScheme?: ColorScheme;
     uiFontSize?: number;
-    authReady?: boolean;
+    /** Managed Kimi account credential state from GET /api/v1/auth — drives the
+        sign-in/out row (third-party providers must not keep it "signed in"
+        after a Kimi logout). */
+    managedProviderStatus?: string | null;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
     serverVersion?: string;
     /** Available models — used to derive the current model's thinking segments. */
@@ -44,7 +47,7 @@ const props = withDefaults(
   {
     colorScheme: 'system',
     uiFontSize: 14,
-    authReady: false,
+    managedProviderStatus: null,
     serverVersion: '',
     models: () => [],
   },
@@ -365,7 +368,7 @@ watch(
     </div>
 
     <!-- Account: sign in / out -->
-    <button v-if="authReady" type="button" class="srow acct out" @click="onLogout">
+    <button v-if="managedProviderStatus === 'authenticated'" type="button" class="srow acct out" @click="onLogout">
       <span class="srow-main">
         <span class="srow-label">{{ t('sidebar.signOut') }}</span>
       </span>

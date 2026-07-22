@@ -21,7 +21,7 @@ import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/mobile/MobileTopBar.vue';
 import MobileSwitcherSheet from './components/mobile/MobileSwitcherSheet.vue';
 import MobileSettingsSheet from './components/mobile/MobileSettingsSheet.vue';
-import Onboarding from './components/settings/Onboarding.vue';
+import OnboardingWizard from './components/onboarding/OnboardingWizard.vue';
 import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
@@ -29,7 +29,6 @@ import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useConfirmDialog } from './composables/useConfirmDialog';
 import type { PromptAttachment } from './composables/useKimiWebClient';
 import type { TurnAttachment } from './types';
-import { useAuthGate } from './composables/useAuthGate';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
 import { useFilePreview, type DetailTarget } from './composables/useFilePreview';
@@ -42,7 +41,7 @@ import { initServerAuth, onAuthRequired } from './lib/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
-import { Button, Icon, IconButton } from '@moonshot-ai/web-ui';
+import { Icon, IconButton } from '@moonshot-ai/web-ui';
 import InternalBuildBanner from './components/InternalBuildBanner.vue';
 import { isMacosDesktop } from './lib/desktopFlag';
 
@@ -99,16 +98,10 @@ const activeWorkspaceSessionCount = computed<number>(
 // running: true when activity is not idle
 const running = computed(() => client.activity.value !== 'idle');
 
-// Auth readiness gates the main app. Once the first load finishes and auth is
-// still missing, show a full-page login entry instead of an in-app banner.
-const authLogoRef = ref<SVGSVGElement | null>(null);
-const { showAuthGate, blinkAuthLogo } = useAuthGate({ client, authLogoRef });
-
-
 // Static page title (app name only). The session title and workspace name are
 // intentionally excluded so the tab title stays stable. Prefixes an animated
 // spinner while the agent is running so activity is visible at a glance.
-usePageTitle({ running, showAuthGate });
+usePageTitle({ running });
 
 // The /thinking slash command has no popover anchor, so it steps to the next
 // segment for the active model (effort models cycle through their declared
@@ -133,8 +126,9 @@ const statusPanelThinking = computed<ThinkingLevel>(() => {
   return effectiveThinkingLevel(model, client.thinking.value);
 });
 
-// First-run onboarding (language + welcome greeting). Shown until the user
-// finishes it once.
+// First-run onboarding wizard (language → appearance → notifications → Kimi
+// login). Shown until the user finishes it once — completing OR skipping the
+// login step both count.
 const showOnboarding = ref(!client.onboarded.value);
 function completeOnboarding(): void {
   client.setOnboarded(true);
@@ -497,6 +491,14 @@ async function handleLoginSuccess(): Promise<void> {
   await client.load();
 }
 
+// The wizard's embedded login flow succeeded: mark onboarding done in the same
+// stroke as the dialog path above (first-run completion requires nothing else).
+async function handleWizardLoginSuccess(): Promise<void> {
+  completeOnboarding();
+  await client.checkAuth();
+  await client.load();
+}
+
 // Edit + resend the last user message: undo the latest exchange on the daemon,
 // then drop that message's text back into the composer for editing.
 async function handleEditMessage(payload: {
@@ -696,32 +698,9 @@ function openPr(url: string): void {
 <template>
   <div class="app-shell">
     <ServerAuthDialog v-if="showServerAuth" />
-    <section v-if="showAuthGate" class="auth-page">
-      <div class="auth-page-inner">
-        <svg ref="authLogoRef" class="auth-page-logo ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @mousedown.prevent @click="blinkAuthLogo">
-          <defs>
-            <mask id="authKimiEyes" maskUnits="userSpaceOnUse">
-              <rect x="0" y="0" width="32" height="22" fill="#fff" />
-              <g class="ch-eyes" fill="#000">
-                <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
-                <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
-              </g>
-            </mask>
-          </defs>
-          <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#authKimiEyes)" />
-        </svg>
-        <div class="auth-page-copy">
-          <h1>{{ t('app.authPageTitle') }}</h1>
-          <p>{{ t('app.authPageMessage') }}</p>
-        </div>
-        <Button class="auth-page-btn" variant="primary" @click="openLogin">
-          <Icon name="log-in" size="md" />
-          <span>{{ t('app.authPageLogin') }}</span>
-        </Button>
-      </div>
-    </section>
+    <!-- inert while the first-run wizard is up: the wizard lives outside
+         `.app` and must own the whole tab order. -->
     <div
-      v-else
       class="app"
       :class="{
         mobile: isMobile,
@@ -729,6 +708,7 @@ function openPr(url: string): void {
         'macos-desktop': isMacosDesktop,
       }"
       :style="{ '--preview-w': previewPanelWidth + 'px' }"
+      :inert="showOnboarding"
     >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
     <template v-if="!isMobile">
@@ -1006,8 +986,8 @@ function openPr(url: string): void {
       v-if="showSettings"
       :color-scheme="client.colorScheme.value"
       :ui-font-size="client.uiFontSize.value"
-      :auth-ready="client.authReady.value"
-      :account-model="client.defaultModel.value"
+      :managed-provider-status="client.managedProviderStatus.value"
+      :on-fetch-usage="client.getUsage"
       :notify="client.notifyEnabled.value"
       :notify-permission="client.notifyPermission.value"
       :notify-sound="client.notifySound.value"
@@ -1067,15 +1047,6 @@ function openPr(url: string): void {
       <GlobalLoading v-if="!client.initialized.value" :issue="client.connectIssue.value" />
     </Transition>
 
-    <!-- First-run onboarding overlay (language + welcome greeting). Held back
-         until the first load settled so it can't cover the connecting splash
-         (it teleports to <body> and would float above the retry error). -->
-    <Onboarding
-      v-if="client.initialized.value && showOnboarding && !showAuthGate"
-      @complete="completeOnboarding"
-      @skip="completeOnboarding"
-    />
-
     <!-- Floating warnings / agent errors (e.g. a 403 from the model provider) -->
     <WarningToasts :warnings="client.warnings.value" @dismiss="client.dismissWarning" />
 
@@ -1116,7 +1087,7 @@ function openPr(url: string): void {
       :swarm-mode="client.swarmMode.value"
       :color-scheme="client.colorScheme.value"
       :ui-font-size="client.uiFontSize.value"
-      :auth-ready="client.authReady.value"
+      :managed-provider-status="client.managedProviderStatus.value"
       :server-version="client.serverVersion.value"
       @pick-model="openModelPicker()"
       @set-thinking="client.setThinking($event)"
@@ -1129,6 +1100,19 @@ function openPr(url: string): void {
       @logout="client.logout"
     />
     </div>
+    <!-- First-run onboarding wizard (language → appearance → notifications →
+         Kimi login). Held back until the first load settled so it can't cover
+         the connecting splash. Outside `.app` like LoginDialog — `.app` goes
+         inert while the wizard is up, and the wizard must stay focusable. -->
+    <OnboardingWizard
+      v-if="client.initialized.value && showOnboarding"
+      :auth-ready="client.managedProviderStatus.value === 'authenticated'"
+      :on-start-o-auth-login="handleStartOAuthLogin"
+      :on-poll-o-auth-login="handlePollOAuthLogin"
+      :on-cancel-o-auth-login="handleCancelOAuthLogin"
+      @complete="completeOnboarding"
+      @login-success="handleWizardLoginSuccess"
+    />
     <!-- Login Dialog overlay. It is outside `.app` so `/login` can open it too. -->
     <LoginDialog
       v-if="showLogin"
@@ -1162,57 +1146,6 @@ function openPr(url: string): void {
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
-}
-.auth-page {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px;
-  background: var(--bg);
-  color: var(--color-text);
-  box-sizing: border-box;
-}
-.auth-page-inner {
-  width: min(420px, 100%);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 18px;
-}
-.auth-page-logo {
-  width: 64px;
-  height: 44px;
-  flex: none;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: transform 0.18s ease;
-}
-.auth-page-logo:hover {
-  transform: scale(1.06);
-}
-.auth-page-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.auth-page-copy h1 {
-  margin: 0;
-  font-family: var(--sans);
-  font-size: 30px;
-  line-height: 1.15;
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--color-text);
-}
-.auth-page-copy p {
-  margin: 0;
-  font-family: var(--sans);
-  font-size: var(--ui-font-size-lg);
-  line-height: 1.55;
-  color: var(--dim);
 }
 .app {
   --preview-w: 460px;
@@ -1347,23 +1280,6 @@ function openPr(url: string): void {
   width: auto;
   transition: none;
   border-top: 2px solid var(--color-text);
-}
-
-@media (max-width: 640px) {
-  .auth-page {
-    align-items: flex-start;
-    padding:
-      max(48px, var(--safe-top))
-      max(20px, var(--safe-right))
-      max(24px, var(--safe-bottom))
-      max(20px, var(--safe-left));
-  }
-  .auth-page-copy h1 {
-    font-size: 26px;
-  }
-  .auth-page-btn {
-    width: 100%;
-  }
 }
 </style>
 

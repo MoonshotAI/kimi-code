@@ -826,6 +826,7 @@ export interface KimiWebApi {
   } | null>;
   cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
+  getUsage(): Promise<ManagedUsageResult>;
 }
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
@@ -846,3 +847,29 @@ export type OAuthLoginStartResult =
       provider: string;
       status: 'authenticated';
     };
+
+// ---------------------------------------------------------------------------
+// Managed-account plan usage (GET /api/v1/oauth/usage)
+// ---------------------------------------------------------------------------
+
+export interface UsageRow {
+  label: string;
+  used: number;
+  limit: number;
+  resetHint?: string;
+}
+
+export interface BoosterWallet {
+  balanceCents: number;
+  totalCents: number;
+  monthlyChargeLimitEnabled: boolean;
+  monthlyChargeLimitCents: number;
+  monthlyUsedCents: number;
+  currency: string;
+}
+
+/** Discriminated by `kind` so the settings UI can render inline states
+    (not signed in / endpoint unavailable / fetch failed) without a throw. */
+export type ManagedUsageResult =
+  | { kind: 'ok'; summary: UsageRow | null; limits: UsageRow[]; extraUsage: BoosterWallet | null }
+  | { kind: 'error'; message: string; status?: number };

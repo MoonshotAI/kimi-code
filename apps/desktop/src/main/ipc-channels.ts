@@ -26,6 +26,7 @@ export const IPC = {
   menuSuspend: 'kimi:menu-suspend',
   globalShortcut: 'kimi:global-shortcut',
   globalShortcutSuspend: 'kimi:global-shortcut-suspend',
+  setOnboarded: 'kimi:set-onboarded',
   petDragStart: 'kimi:pet-drag-start',
   petDragMove: 'kimi:pet-drag-move',
   petDragEnd: 'kimi:pet-drag-end',

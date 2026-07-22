@@ -75,6 +75,11 @@
   - 现状：`renderer/lib/serverAuth.ts` 从 URL `#token=` hash 读 token 再镜像 localStorage（7 天 TTL）。
   - 做法：`kimi:get-server-token` IPC 已存在未用，desktop 可直接问主进程要，省掉 hash 注入与 localStorage 持久化。
 
+- [x] **onboarded 标记主进程持久化**（已完成，desktop 专属）
+  - 实现：新增 `src/main/ui-state.ts`——`<userData>/ui-state.json` 存 `{onboarded:true}`（照 window-state/pet-state 模式，函数带可选路径参数便于测试）。读路径走 URL 注入：`connect.ts` 建窗时 `rendererUrl(..., isOnboarded())` 拼 `?kimi_onboarded=1`（protocol.ts 第 4 参）；写路径走 IPC `kimi:set-onboarded`（ipc-channels/ipc/preload 已接，preload 白名单测试同步）。renderer 侧 `useKimiWebClient.ts` 启动时 `注入值 || localStorage值` OR 合并读（标记只会 false→true），完成/跳过向导时 localStorage + IPC 双写；**无桥降级**——探测不到 `window.kimiDesktop`（web、老桥）时只用 localStorage，两端文件零分叉。
+  - 动机：dev server `strictPort: false` 端口顺延会换 origin，localStorage 按 origin 隔离导致向导每次 dev 都重弹；dev 与打包版共享同一 userData 目录，主进程文件天然互通。
+  - 测试：`tests/main/ui-state.test.ts`（缺失/损坏文件、往返、保留其它 key、目录创建、幂等）；`tests/main/preload.test.ts` 白名单 + 通道断言。
+
 - [x] **系统托盘常驻图标**（已完成，desktop 专属）
   - 实现：新增 `src/main/tray.ts`——`Tray` + 单一右键/左击菜单（`显示主窗口` / `退出`）；macOS 下 status item 设了 context menu 后单击即弹菜单，Windows 左键额外接 `click → popUpContextMenu` 对齐行为。托盘图标按平台分资产（`trayIconPath` 纯函数）：macOS 用 `trayTemplate.png`/`@2x`（机器人单色剪影、眼睛镂空，`Template` 文件名让 nativeImage 自动标记为 template image，OS 按深浅色菜单栏自动反色）；Windows 用 `tray.ico`，Linux 用 `tray.png`/`tray@2x.png`（满铺白底圆角方块 + 机器人的彩色构图）；经 `electron-builder.config.cjs` `extraResources` 的 `build/` + `filter: ['tray*']` 进 resources（注意 extraResources 的 `from` **不吃 glob**，写成 `build/tray*` 会被当字面路径静默跳过——v0.0.2 就踩了这个、包里没有托盘，见 config 注释）。`index.ts` 模块级持有 `Tray` 引用（无引用会被 GC、图标消失），`before-quit` 里 `tray.destroy()`；`quit` 走 `app.quit()`，server 清理照常执行。
   - **web 无对应物**：浏览器没有托盘面，`apps/web` 不涉及（非共享文件分叉）。

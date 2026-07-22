@@ -1,7 +1,22 @@
 export default {
-  title: 'Welcome to Kimi Code',
-  subtitle: 'Pick a few preferences — you can change them anytime in Settings.',
-  languageLabel: 'Language',
-  start: 'Get started',
+  continue: 'Continue',
+  back: 'Back',
   skip: 'Skip',
+  welcome: {
+    title: 'Welcome to KIMI Code',
+    subtitle: 'The AI coding workbench for professional developers',
+    languageLabel: 'Language',
+    themeLabel: 'Appearance',
+  },
+  login: {
+    title: 'Configure Model',
+    subtitle: 'Choose the model service that powers KIMI Code. You can change it later in Settings',
+    kimiTitle: 'Sign in with Kimi',
+    kimiHint: 'Ready out of the box with Kimi membership benefits',
+    recommended: 'Recommended',
+    loggedInTitle: 'Logged in with Kimi',
+    loggedInHint: 'Your model service is ready to use',
+    finish: 'Finish',
+    skip: 'Skip for now',
+  },
 } as const;

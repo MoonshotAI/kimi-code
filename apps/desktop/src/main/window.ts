@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, dialog, screen, shell } from 'electron';
 
 import { connect } from './connect';
 import { installDownloadHandler } from './downloads';
@@ -119,6 +119,17 @@ interface WindowBounds {
 
 const DEFAULT_BOUNDS: WindowBounds = { width: 1280, height: 860 };
 
+/** Saved bounds that (nearly) fill a whole display mean the window was closed
+    while maximized or full-screen — relaunch at the default size instead of a
+    fake full screen (see shouldPersistBounds; this also heals state files
+    written before that guard existed). */
+export function looksMaximizedBounds(
+  bounds: { width: number; height: number },
+  workArea: { width: number; height: number },
+): boolean {
+  return bounds.width >= workArea.width * 0.95 && bounds.height >= workArea.height * 0.95;
+}
+
 function stateFile(): string {
   return join(app.getPath('userData'), 'window-state.json');
 }
@@ -127,12 +138,23 @@ function loadBounds(): WindowBounds {
   try {
     const parsed = JSON.parse(readFileSync(stateFile(), 'utf-8')) as Partial<WindowBounds>;
     if (typeof parsed.width === 'number' && typeof parsed.height === 'number') {
-      return {
+      const bounds: WindowBounds = {
         width: parsed.width,
         height: parsed.height,
         x: typeof parsed.x === 'number' ? parsed.x : undefined,
         y: typeof parsed.y === 'number' ? parsed.y : undefined,
       };
+      const workArea = (
+        bounds.x === undefined
+          ? screen.getPrimaryDisplay()
+          : screen.getDisplayMatching({
+              x: bounds.x,
+              y: bounds.y ?? 0,
+              width: bounds.width,
+              height: bounds.height,
+            })
+      ).workArea;
+      if (!looksMaximizedBounds(bounds, workArea)) return bounds;
     }
   } catch {
     // No saved state yet, or it is unreadable — fall back to defaults.
@@ -140,9 +162,21 @@ function loadBounds(): WindowBounds {
   return DEFAULT_BOUNDS;
 }
 
+/** Persisted-bounds policy: the live size is only usable from the normal
+    state — a maximized/full-screen size would relaunch the window looking
+    full-screen, so that path persists the last normal bounds instead. */
+export function shouldPersistBounds(maximized: boolean, fullscreen: boolean): boolean {
+  return !maximized && !fullscreen;
+}
+
 function saveBounds(win: BrowserWindow): void {
   try {
-    const bounds = win.getBounds();
+    // In the maximized/full-screen close path, getNormalBounds() still holds
+    // the pre-maximize rectangle — persist THAT rather than skipping the
+    // write, or the next launch falls back to a stale, older size.
+    const bounds = shouldPersistBounds(win.isMaximized(), win.isFullScreen())
+      ? win.getBounds()
+      : win.getNormalBounds();
     mkdirSync(dirname(stateFile()), { recursive: true });
     writeFileSync(
       stateFile(),

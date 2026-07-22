@@ -486,6 +486,41 @@ export interface WireLogoutResult {
   logged_out: boolean;
 }
 
+// `GET /oauth/usage` — managed-account plan usage, discriminated by `kind`:
+// the server mirrors the toolkit result so the client can render inline
+// states (not signed in / endpoint unavailable / fetch failed) without a hard
+// HTTP failure.
+export interface WireUsageRow {
+  label: string;
+  used: number;
+  limit: number;
+  reset_hint?: string;
+}
+
+export interface WireBoosterWallet {
+  balance_cents: number;
+  total_cents: number;
+  monthly_charge_limit_enabled: boolean;
+  monthly_charge_limit_cents: number;
+  monthly_used_cents: number;
+  currency: string;
+}
+
+export interface WireUsageOk {
+  kind: 'ok';
+  summary: WireUsageRow | null;
+  limits: WireUsageRow[];
+  extra_usage: WireBoosterWallet | null;
+}
+
+export interface WireUsageError {
+  kind: 'error';
+  message: string;
+  status?: number;
+}
+
+export type WireUsageResult = WireUsageOk | WireUsageError;
+
 // ---------------------------------------------------------------------------
 // File upload wire DTOs
 // ---------------------------------------------------------------------------

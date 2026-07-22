@@ -8,6 +8,7 @@ import { serverTokenPath } from '@moonshot-ai/kap-server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
 import { rendererUrl, rendererDevBase } from './protocol';
+import { isOnboarded } from './ui-state';
 import { resolveConnectTarget } from './connect-target';
 import { dataUrl, errorHtml } from './screens';
 import { log, redactUrlForLog } from './log';
@@ -96,7 +97,7 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
       ({ origin, token } = serverHandle);
     }
     if (!win.isDestroyed()) {
-      await win.loadURL(rendererUrl(origin, token, devBase));
+      await win.loadURL(rendererUrl(origin, token, devBase, isOnboarded()));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -7,7 +7,7 @@
 
 import { ref, watch, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, OAuthLoginStartResult, ThinkingLevel } from '../../api/types';
+import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, ManagedUsageResult, OAuthLoginStartResult, ThinkingLevel } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
 import {
   defaultThinkingLevelFor,
@@ -556,6 +556,18 @@ export function useModelProviderState(
     }
   }
 
+  /** Fetch managed-account plan usage. Never throws — failures (e.g. an older
+   *  daemon without the endpoint) come back as the `error` shape so the
+   *  settings UI can render an inline state instead of a toast. */
+  async function getUsage(): Promise<ManagedUsageResult> {
+    try {
+      const api = getKimiWebApi();
+      return await api.getUsage();
+    } catch (err) {
+      return { kind: 'error', message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   /** Persist and apply a new extended-thinking level (also pushed to the active
    *  session profile so the daemon's /status reflects it; still sent per-prompt). */
   function setThinking(level: ThinkingLevel): void {
@@ -590,6 +602,7 @@ export function useModelProviderState(
     startOAuthLogin,
     pollOAuthLogin,
     cancelOAuthLogin,
+    getUsage,
     setThinking,
   };
 }

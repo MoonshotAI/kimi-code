@@ -5,16 +5,12 @@
 // at a glance.
 
 import { computed, onUnmounted, ref, watch, watchEffect, type Ref } from 'vue';
-import { useI18n } from 'vue-i18n';
 
 export interface UsePageTitleOptions {
   running: Ref<boolean>;
-  showAuthGate: Ref<boolean>;
 }
 
-export function usePageTitle({ running, showAuthGate }: UsePageTitleOptions): void {
-  const { t } = useI18n();
-
+export function usePageTitle({ running }: UsePageTitleOptions): void {
   const SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
   const spinnerFrame = ref(0);
   let spinnerTimer: ReturnType<typeof setInterval> | null = null;
@@ -42,7 +38,6 @@ export function usePageTitle({ running, showAuthGate }: UsePageTitleOptions): vo
 
   const pageTitle = computed<string>(() => {
     const prefix = running.value ? `${SPINNER_FRAMES[spinnerFrame.value]} ` : '';
-    if (showAuthGate.value) return `${prefix}${t('app.authPageTitle')} - Kimi Code`;
     return `${prefix}Kimi Code`;
   });
   watchEffect(() => {

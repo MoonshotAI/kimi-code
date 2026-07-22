@@ -788,8 +788,16 @@ function persistSessionProfile(patch: {
 
 // ---------------------------------------------------------------------------
 // Onboarding: a "has the user been onboarded" flag that gates the first-run
-// onboarding screen (preference: language). Persisted; can be reset to re-open
-// the screen from the settings popover.
+// onboarding wizard. Persisted in TWO places: origin-scoped localStorage
+// (same-origin cache), and — on desktop — the main process's ui-state.json,
+// injected as `?kimi_onboarded=1` on the boot URL and written back over IPC,
+// so the flag survives dev-server port shifts and crosses dev/packaged. The
+// main-process value wins ties via OR (the flag only ever goes false→true).
+// Without the desktop bridge (web) only localStorage is used. An injected
+// `true` is mirrored back into localStorage on read, because writeSessionUrl()
+// drops the boot URL's query when it rewrites the location to /sessions/<id> —
+// a plain renderer reload (Cmd+R / HMR full reload) would otherwise lose both
+// sources and re-show the wizard.
 // ---------------------------------------------------------------------------
 function loadStringFromStorage(key: string): string {
   try {
@@ -798,13 +806,30 @@ function loadStringFromStorage(key: string): string {
     return '';
   }
 }
-const onboarded = ref<boolean>(loadStringFromStorage(ONBOARDED_STORAGE_KEY) === '1');
+function readInjectedOnboarded(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get('kimi_onboarded') === '1';
+}
+const injectedOnboarded = readInjectedOnboarded();
+if (injectedOnboarded && loadStringFromStorage(ONBOARDED_STORAGE_KEY) !== '1') {
+  try {
+    safeSetString(ONBOARDED_STORAGE_KEY, '1');
+  } catch {
+    /* ignore */
+  }
+}
+const onboarded = ref<boolean>(
+  injectedOnboarded || loadStringFromStorage(ONBOARDED_STORAGE_KEY) === '1',
+);
 function setOnboarded(done: boolean): void {
   onboarded.value = done;
   try {
     safeSetString(ONBOARDED_STORAGE_KEY, done ? '1' : '0');
   } catch {
     /* ignore */
+  }
+  if (done) {
+    (window as { kimiDesktop?: { setOnboarded?: () => void } }).kimiDesktop?.setOnboarded?.();
   }
 }
 
@@ -3159,6 +3184,7 @@ export function useKimiWebClient() {
     startOAuthLogin: modelProvider.startOAuthLogin,
     pollOAuthLogin: modelProvider.pollOAuthLogin,
     cancelOAuthLogin: modelProvider.cancelOAuthLogin,
+    getUsage: modelProvider.getUsage,
     logout: workspaceState.logout,
   };
 }

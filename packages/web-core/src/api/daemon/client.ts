@@ -27,7 +27,9 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  ManagedUsageResult,
   OAuthLoginStartResult,
+  UsageRow,
   Page,
   PageRequest,
   PromptSubmission,
@@ -83,6 +85,8 @@ import type {
   WireSessionSnapshot,
   WireWorkspace,
   WireLogoutResult,
+  WireUsageResult,
+  WireUsageRow,
 } from './wire';
 import { DaemonEventSocket } from './ws';
 
@@ -1370,6 +1374,35 @@ export class DaemonKimiWebApi implements KimiWebApi {
   async logout(): Promise<{ loggedOut: boolean }> {
     const data = await this.http.post<WireLogoutResult>('/oauth/logout', {});
     return { loggedOut: data.logged_out };
+  }
+
+  async getUsage(): Promise<ManagedUsageResult> {
+    const data = await this.http.get<WireUsageResult>('/oauth/usage');
+    if (data.kind === 'error') {
+      return { kind: 'error', message: data.message, status: data.status };
+    }
+    const mapRow = (row: WireUsageRow): UsageRow => ({
+      label: row.label,
+      used: row.used,
+      limit: row.limit,
+      resetHint: row.reset_hint,
+    });
+    return {
+      kind: 'ok',
+      summary: data.summary === null ? null : mapRow(data.summary),
+      limits: data.limits.map(mapRow),
+      extraUsage:
+        data.extra_usage === null
+          ? null
+          : {
+              balanceCents: data.extra_usage.balance_cents,
+              totalCents: data.extra_usage.total_cents,
+              monthlyChargeLimitEnabled: data.extra_usage.monthly_charge_limit_enabled,
+              monthlyChargeLimitCents: data.extra_usage.monthly_charge_limit_cents,
+              monthlyUsedCents: data.extra_usage.monthly_used_cents,
+              currency: data.extra_usage.currency,
+            },
+    };
   }
 
   // -------------------------------------------------------------------------

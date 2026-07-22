@@ -65,12 +65,17 @@ export function rendererUrl(
   origin: string,
   token: string | undefined,
   base: string = DEFAULT_RENDERER_BASE,
+  onboarded = false,
 ): string {
   const params = new URLSearchParams({
     kimi_desktop: '1',
     platform: process.platform,
     kimi_origin: origin,
   });
+  // Onboarding completion, persisted by the main process in ui-state.json and
+  // injected here so the renderer's first-run gate does not depend on
+  // origin-scoped localStorage (dev-server ports shift between runs).
+  if (onboarded) params.set('kimi_onboarded', '1');
   const hash = token === undefined ? '' : `#token=${encodeURIComponent(token)}`;
   return `${base}?${params.toString()}${hash}`;
 }

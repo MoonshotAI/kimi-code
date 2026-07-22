@@ -2,9 +2,13 @@
 <!-- Managed Kimi OAuth device-code login dialog. Built on the design-system -->
 <!-- Dialog primitive; the device code + countdown stay monospace. -->
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import {
+  useOAuthLoginFlow,
+  type OAuthLoginStartResult,
+} from '../../composables/useOAuthLoginFlow';
 import { AuthStateIcon, Button, Dialog, Icon, Spinner } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
@@ -29,25 +33,7 @@ const emit = defineEmits<{
 // -------------------------------------------------------------------------
 
 const props = defineProps<{
-  onStartOAuthLogin: () => Promise<
-    | {
-        flowId: string;
-        provider: string;
-        status: 'pending';
-        verificationUri: string;
-        verificationUriComplete: string;
-        userCode: string;
-        expiresIn: number;
-        interval: number;
-        expiresAt: string;
-      }
-    | {
-        flowId: string;
-        provider: string;
-        status: 'authenticated';
-      }
-    | null
-  >;
+  onStartOAuthLogin: () => Promise<OAuthLoginStartResult | null>;
   onPollOAuthLogin: () => Promise<{
     flowId: string;
     status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
@@ -57,152 +43,24 @@ const props = defineProps<{
 }>();
 
 // -------------------------------------------------------------------------
-// State
-// 'starting'     → calling startOAuthLogin (brief spinner)
-// 'device-code'  → showing code, polling
-// 'success'      → authenticated
-// 'expired'      → flow expired or cancelled
-// 'error'        → startOAuthLogin failed (endpoint missing)
+// Flow state machine (shared with the onboarding wizard's login step)
 // -------------------------------------------------------------------------
 
-type Step = 'starting' | 'device-code' | 'success' | 'expired' | 'error';
-const step = ref<Step>('starting');
-// True when the error step came from repeated poll failures (daemon gone)
-// rather than startOAuthLogin failing (unsupported endpoint) — picks the copy.
-const pollError = ref(false);
+const { step, pollError, flow, secondsLeft, startFlow, cancelFlow } = useOAuthLoginFlow({
+  onStartOAuthLogin: props.onStartOAuthLogin,
+  onPollOAuthLogin: props.onPollOAuthLogin,
+  onCancelOAuthLogin: props.onCancelOAuthLogin,
+  onSuccess: () => {
+    emit('success');
+    emit('close');
+  },
+});
 
-interface FlowData {
-  flowId: string;
-  verificationUri: string;
-  verificationUriComplete: string;
-  userCode: string;
-  expiresIn: number;
-  interval: number;
-}
-
-const flow = ref<FlowData | null>(null);
-const secondsLeft = ref(0);
 const copied = ref(false);
-
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
-let countdownTimer: ReturnType<typeof setInterval> | null = null;
-// Consecutive failed polls (onPollOAuthLogin returned null). A single null can
-// be a transient blip; several in a row means the daemon is gone and polling
-// forever would strand the user on "waiting for authorization".
-let consecutivePollFailures = 0;
-const MAX_CONSECUTIVE_POLL_FAILURES = 3;
-
-// -------------------------------------------------------------------------
-// Lifecycle
-// -------------------------------------------------------------------------
 
 onMounted(async () => {
   await startFlow();
 });
-
-onUnmounted(() => {
-  stopTimers();
-});
-
-// -------------------------------------------------------------------------
-// Flow control
-// -------------------------------------------------------------------------
-
-async function startFlow(): Promise<void> {
-  stopTimers();
-  flow.value = null;
-  pollError.value = false;
-  consecutivePollFailures = 0;
-  step.value = 'starting';
-
-  const result = await props.onStartOAuthLogin();
-  if (!result) {
-    step.value = 'error';
-    return;
-  }
-
-  // Already-authenticated fast path: the server had a usable cached token and
-  // did not issue a device code. Skip the device-code UI entirely and surface
-  // the success state — the poller is irrelevant here.
-  if (result.status === 'authenticated') {
-    stopTimers();
-    step.value = 'success';
-    setTimeout(() => {
-      emit('success');
-      emit('close');
-    }, 800);
-    return;
-  }
-
-  flow.value = {
-    flowId: result.flowId,
-    verificationUri: result.verificationUri,
-    verificationUriComplete: result.verificationUriComplete,
-    userCode: result.userCode,
-    expiresIn: result.expiresIn,
-    interval: result.interval,
-  };
-  secondsLeft.value = result.expiresIn;
-  step.value = 'device-code';
-  startCountdown();
-  scheduleNextPoll(result.interval);
-}
-
-function startCountdown(): void {
-  if (countdownTimer) clearInterval(countdownTimer);
-  countdownTimer = setInterval(() => {
-    if (secondsLeft.value > 0) {
-      secondsLeft.value--;
-    } else {
-      if (countdownTimer) clearInterval(countdownTimer);
-      countdownTimer = null;
-    }
-  }, 1000);
-}
-
-function scheduleNextPoll(intervalSec: number): void {
-  if (pollTimer) clearTimeout(pollTimer);
-  pollTimer = setTimeout(async () => {
-    const result = await props.onPollOAuthLogin();
-    if (result === null) {
-      // Poll failed (or no active flow). Keep polling through transient
-      // blips, but give up with an explicit error after several in a row.
-      consecutivePollFailures += 1;
-      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        stopTimers();
-        pollError.value = true;
-        step.value = 'error';
-        return;
-      }
-      scheduleNextPoll(intervalSec);
-      return;
-    }
-    consecutivePollFailures = 0;
-    if (result.status === 'authenticated') {
-      stopTimers();
-      step.value = 'success';
-      setTimeout(() => {
-        emit('success');
-        emit('close');
-      }, 1200);
-    } else if (result.status === 'expired' || result.status === 'cancelled') {
-      stopTimers();
-      step.value = 'expired';
-    } else {
-      // pending — keep polling
-      scheduleNextPoll(intervalSec);
-    }
-  }, intervalSec * 1000);
-}
-
-function stopTimers(): void {
-  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
-}
-
-async function retryFlow(): Promise<void> {
-  await startFlow();
-}
 
 async function copyCode(): Promise<void> {
   if (!flow.value) return;
@@ -213,11 +71,7 @@ async function copyCode(): Promise<void> {
 }
 
 async function close(): Promise<void> {
-  stopTimers();
-  // Best-effort cancel
-  if (step.value === 'device-code') {
-    void props.onCancelOAuthLogin();
-  }
+  cancelFlow();
   emit('close');
 }
 
@@ -304,7 +158,7 @@ function formatSeconds(s: number): string {
         <span class="center-hint">{{ t('login.expiredHint') }}</span>
       </div>
       <div class="actions">
-        <Button variant="primary" @click="retryFlow">{{ t('login.retry') }}</Button>
+        <Button variant="primary" @click="startFlow">{{ t('login.retry') }}</Button>
         <Button variant="secondary" @click="close">{{ t('login.closeBtn') }}</Button>
       </div>
     </template>
@@ -321,7 +175,7 @@ function formatSeconds(s: number): string {
         </span>
       </div>
       <div class="actions">
-        <Button variant="primary" @click="retryFlow">{{ t('login.retry') }}</Button>
+        <Button variant="primary" @click="startFlow">{{ t('login.retry') }}</Button>
         <Button variant="secondary" @click="close">{{ t('login.closeBtn') }}</Button>
       </div>
     </template>

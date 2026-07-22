@@ -1,7 +1,22 @@
 export default {
-  title: '欢迎来使用 Kimi Code',
-  subtitle: '来选择一些你的偏好 —— 之后也可以在设置里随时修改。',
-  languageLabel: '语言',
-  start: '开始使用',
+  continue: '继续',
+  back: '上一步',
   skip: '跳过',
+  welcome: {
+    title: '欢迎使用 KIMI Code',
+    subtitle: '为专业开发者打造的 AI 编程工作台',
+    languageLabel: '语言',
+    themeLabel: '外观',
+  },
+  login: {
+    title: '选择配置模型',
+    subtitle: '选择驱动 Kimi Code 的模型服务，之后可在「设置」中更改。',
+    kimiTitle: '登录 Kimi 账号',
+    kimiHint: '使用 Kimi 会员权益，开箱即用',
+    recommended: '推荐',
+    loggedInTitle: '已登录 Kimi 账号',
+    loggedInHint: '模型服务已就绪，可以开始使用',
+    finish: '完成',
+    skip: '跳过，稍后再说',
+  },
 };

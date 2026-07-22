@@ -1625,7 +1625,8 @@ onUnmounted(() => {
                 <tr><td class="tk">Confirm / Login / Status</td><td>padded · md · auto</td><td>title + message or form + right-aligned foot</td></tr>
                 <tr><td class="tk">App update (desktop)</td><td>padded · md · auto</td><td>version title + quiet meta line (release date · current version) / progress bar + right-aligned foot (skip → download, later → restart)</td></tr>
                 <tr><td class="tk">Server token</td><td>padded · md · auto</td><td><code>hideClose</code>, no Esc/overlay close — resolved only by a valid token</td></tr>
-                <tr><td class="tk">Settings / Onboarding</td><td>flush · xl · fixed</td><td>page-like exceptions: side-nav region / brand head, per §03</td></tr>
+                <tr><td class="tk">Settings</td><td>flush · xl · fixed</td><td>page-like exception: side-nav region, per §03</td></tr>
+                <tr><td class="tk">Onboarding wizard</td><td>not a Dialog</td><td>full-page takeover (not built on §03): one centered column (brand lockup → step content → ghost actions + centered primary CTA); selectable options share the option-card pattern — 1px <code>--color-line</code> border, <code>--color-accent</code> border + <code>--color-accent-soft</code> fill when selected</td></tr>
               </tbody>
             </table>
 

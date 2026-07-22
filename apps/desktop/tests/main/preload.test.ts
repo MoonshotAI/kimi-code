@@ -44,6 +44,7 @@ const WHITELIST = [
   'setLocale',
   'setMenuShortcuts',
   'setMenuSuspended',
+  'setOnboarded',
   'setTheme',
   'setTrayAttention',
   'showOpenDialog',
@@ -145,6 +146,9 @@ describe('kimiDesktop preload bridge', () => {
     await expect(exposed.setGlobalShortcutSuspended(false)).resolves.toBe(false);
     await expect(exposed.setGlobalShortcutSuspended('yes')).resolves.toBe(false);
 
+    exposed.setOnboarded();
+    expect(send).toHaveBeenCalledWith('kimi:set-onboarded');
+
     // Pet drag: validated screen points forward; junk never reaches main.
     exposed.petDragStart({ screenX: 100, screenY: 200 });
     expect(send).toHaveBeenCalledWith('kimi:pet-drag-start', { screenX: 100, screenY: 200 });
@@ -152,10 +156,10 @@ describe('kimiDesktop preload bridge', () => {
     expect(send).toHaveBeenCalledWith('kimi:pet-drag-move', { screenX: 120, screenY: 220 });
     exposed.petDragStart({ screenX: '100', screenY: 200 });
     exposed.petDragMove({ screenX: Number.NaN, screenY: 0 });
-    expect(send).toHaveBeenCalledTimes(7);
+    expect(send).toHaveBeenCalledTimes(8);
     exposed.petDragEnd();
     expect(send).toHaveBeenCalledWith('kimi:pet-drag-end');
-    expect(send).toHaveBeenCalledTimes(8);
+    expect(send).toHaveBeenCalledTimes(9);
 
     exposed.showWindow();
     expect(send).toHaveBeenCalledWith('kimi:show-window');

@@ -8,6 +8,7 @@ import { getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpda
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
+import { markOnboarded } from './ui-state';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -134,5 +135,11 @@ export function registerIpcHandlers(): void {
   // window.focus() can't un-hide it — only the main process can.
   ipcMain.on(IPC.showWindow, () => {
     showMainWindow();
+  });
+  // Onboarding completed (or skipped to the same effect): persist the flag in
+  // ui-state.json so it survives dev-server port shifts (renderer localStorage
+  // is origin-scoped; this file is not).
+  ipcMain.on(IPC.setOnboarded, () => {
+    markOnboarded();
   });
 }

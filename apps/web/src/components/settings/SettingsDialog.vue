@@ -13,7 +13,8 @@ import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
 import type { ColorScheme } from '../../composables/useKimiWebClient';
-import type { AppConfig, AppModel } from '../../api/types';
+import type { AppConfig, AppModel, ManagedUsageResult } from '../../api/types';
+import PlanUsageCard from './PlanUsageCard.vue';
 import type { IconName } from '../../lib/icons';
 import { Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch } from '@moonshot-ai/web-ui';
 
@@ -22,8 +23,14 @@ const { t } = useI18n();
 const props = defineProps<{
   colorScheme: ColorScheme;
   uiFontSize: number;
-  authReady: boolean;
-  accountModel?: string | null;
+  /** Managed Kimi account credential state from GET /api/v1/auth
+      ('authenticated' | 'unauthenticated' | null when unconfigured). The
+      account row keys off THIS, not a global "any usable model exists" flag —
+      third-party providers keep readiness true after a Kimi logout. */
+  managedProviderStatus?: string | null;
+  /** Fetches managed-account plan usage for the Plan Usage section (account
+      tab, signed-in only); failures surface inline in the card. */
+  onFetchUsage: () => Promise<ManagedUsageResult>;
   /** Master system-notification preference (all kinds). */
   notify: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
@@ -54,12 +61,11 @@ const emit = defineEmits<{
 
 const uiFontSizeDraft = ref(String(props.uiFontSize));
 
-const accountSubtitle = computed(() => {
-  if (!props.authReady) return t('settings.signedOutHint');
-  return props.accountModel
-    ? `${props.accountModel} · ${t('settings.signedIn')}`
-    : t('settings.signedIn');
-});
+const signedIn = computed(() => props.managedProviderStatus === 'authenticated');
+
+const accountSubtitle = computed(() =>
+  signedIn.value ? t('settings.signedIn') : t('settings.signedOutHint'),
+);
 
 watch(
   () => props.uiFontSize,
@@ -537,14 +543,15 @@ function archiveTime(iso: string): string {
                 <Icon name="user" size="md" />
               </span>
               <span class="account-meta">
-                <span class="account-name">{{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
+                <span class="account-name">{{ signedIn ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
                 <span class="account-sub">{{ accountSubtitle }}</span>
               </span>
-              <Button v-if="authReady" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
+              <Button v-if="signedIn" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
               <Button v-else variant="primary" size="sm" @click="emit('login')">{{ t('sidebar.signIn') }}</Button>
             </div>
             </div>
           </section>
+          <PlanUsageCard v-if="signedIn" :on-fetch-usage="props.onFetchUsage" />
         </section>
 
         <!-- Agent defaults -->

@@ -1,0 +1,49 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { isOnboarded, loadUiState, markOnboarded } from '../../src/main/ui-state';
+
+describe('ui-state persistence', () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'kimi-ui-state-'));
+    file = join(dir, 'ui-state.json');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('treats a missing or unreadable file as not onboarded', () => {
+    expect(isOnboarded(file)).toBe(false);
+    writeFileSync(file, 'not json', 'utf-8');
+    expect(isOnboarded(file)).toBe(false);
+    writeFileSync(file, '{"onboarded":"yes"}', 'utf-8');
+    expect(isOnboarded(file)).toBe(false);
+  });
+
+  it('markOnboarded writes the flag and preserves other keys', () => {
+    writeFileSync(file, '{"other":1}', 'utf-8');
+    markOnboarded(file);
+    expect(isOnboarded(file)).toBe(true);
+    expect(loadUiState(file)).toEqual({ other: 1, onboarded: true });
+    expect(JSON.parse(readFileSync(file, 'utf-8'))).toEqual({ other: 1, onboarded: true });
+  });
+
+  it('creates the parent directory when missing', () => {
+    const nested = join(dir, 'a', 'b', 'ui-state.json');
+    markOnboarded(nested);
+    expect(isOnboarded(nested)).toBe(true);
+  });
+
+  it('markOnboarded is idempotent', () => {
+    markOnboarded(file);
+    markOnboarded(file);
+    expect(loadUiState(file)).toEqual({ onboarded: true });
+  });
+});
