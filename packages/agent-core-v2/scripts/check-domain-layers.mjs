@@ -422,6 +422,10 @@ const ALLOWED_EXCEPTIONS = new Set([
   // `swarm` (L4) drives sub-agent runs through the `subagent` domain (L6) —
   // same shape as the `swarm>agentLifecycle` spawn exception above.
   'swarm>subagent',
+  // `agentTask` (L5) owns the print-mode (`kimi -p`) policy; filling its
+  // config defaults reaches the `subagent` section (L6) for the subagent
+  // timeout — same cross-scope config-fill shape as `swarm>subagent`.
+  'agentTask>subagent',
   'cron>agentLifecycle',
   'cron>sessionContext',
   'todo>agentLifecycle',

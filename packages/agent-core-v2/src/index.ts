@@ -237,6 +237,7 @@ export {
   type AgentTaskConfig,
   type PrintBackgroundMode,
 } from '#/agent/task/configSection';
+export * from '#/agent/task/printDefaults';
 import '#/agent/task/tools/task-list';
 import '#/agent/task/tools/task-output';
 import '#/agent/task/tools/task-stop';
