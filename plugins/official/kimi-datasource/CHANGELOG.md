@@ -3,7 +3,8 @@
 ## 3.3.0 - 2026-07-22
 
 - Add five data sources: `wind` (万得), `imf` (IMF macro datasets), `gildata` (恒生聚源 smart screening), `sec_edgar` (US SEC filings), and `sp_data` (S&P Capital IQ, paid scope).
-- Strengthen source routing: explicit routing rules in SKILL.md and routing hints in the `get_data_source_desc` schema description, so specialized sources are not bypassed for generic quote sources.
+- Strengthen source routing: require one specialized source per simple lookup, stop after the first sufficient result, and keep FX requests on IMF instead of querying Yahoo Finance in parallel or as a fallback.
+- Retry once with a credential refreshed by the Kimi Code host when the backend rejects the previous access token during rotation.
 
 ## 3.2.0 - 2026-06-10
 

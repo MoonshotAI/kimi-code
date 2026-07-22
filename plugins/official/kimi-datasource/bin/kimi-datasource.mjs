@@ -29,13 +29,14 @@ const TOOLS = [
   {
     name: 'call_data_source_tool',
     description:
-      "Dispatch a call to any registered data source's API via the Kimi Code gateway. Always call get_data_source_desc(name) first to learn that source's available APIs and required params, then construct this call with api_name and params taken from that description.",
+      "Dispatch one call to the data source selected for the user's request. Always call get_data_source_desc(name) first, then use an api_name and params from that description. For a simple lookup, use one specialized source and stop after its first successful result; do not query fallback or comparison sources unless the user explicitly asks for a cross-source comparison. FX rates, CPI, GDP forecasts, and balance-of-payments data must use imf, never yahoo_finance.",
     inputSchema: {
       type: 'object',
       properties: {
         data_source_name: {
           type: 'string',
-          description: 'Data source name returned or documented by get_data_source_desc.',
+          description:
+            'The single data source selected by get_data_source_desc. Use imf, never yahoo_finance, for FX rates, CPI, GDP forecasts, and balance-of-payments data.',
         },
         api_name: {
           type: 'string',
@@ -52,7 +53,7 @@ const TOOLS = [
   {
     name: 'get_data_source_desc',
     description:
-      'Get the current API documentation for one Kimi data source before calling a specific API.',
+      'Get the current API documentation for one Kimi data source before calling a specific API. For a simple lookup, choose exactly one specialized source; do not inspect fallback or comparison sources unless the user explicitly asks for a cross-source comparison.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -74,7 +75,7 @@ const TOOLS = [
           ],
           description:
             'Data source name. Routing: wind = A-share intraday/minute quotes, funds, bonds; ' +
-            'imf = FX rates, CPI, GDP forecasts, balance of payments; ' +
+            'imf = FX rates, CPI, GDP forecasts, balance of payments (never use yahoo_finance as a secondary or fallback source); ' +
             'gildata = natural-language stock/fund screening; ' +
             'sec_edgar = US filings (10-K/10-Q, S-1, Form 4, 13F, 8-K); ' +
             'sp_data = US fundamentals (top holders, consensus estimates, valuation ratios); ' +
@@ -312,15 +313,12 @@ async function loadAccessToken() {
   if (token.length === 0) {
     throw new Error('Kimi Code credentials do not contain access_token. Run /login again.');
   }
-  const expiresAt = typeof parsed.expires_at === 'number' ? parsed.expires_at : 0;
-  if (expiresAt > 0 && expiresAt <= Math.floor(Date.now() / 1000)) {
-    throw new Error('Kimi Code access_token has expired. Run /login again and retry.');
-  }
   return { kimiHome, token };
 }
 
 async function callKimiTool(method, params, trace = {}) {
-  const { kimiHome, token } = await loadAccessToken();
+  const { kimiHome, token: initialToken } = await loadAccessToken();
+  let token = initialToken;
   const toolCallId = randomUUID();
   trace.toolCallId = toolCallId;
   const controller = new AbortController();
@@ -328,15 +326,29 @@ async function callKimiTool(method, params, trace = {}) {
     controller.abort();
   }, REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: await buildHeaders(kimiHome, token, toolCallId),
-      body: JSON.stringify({ method, params }),
-      signal: controller.signal,
-    });
+    const request = async (accessToken) => {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: await buildHeaders(kimiHome, accessToken, toolCallId),
+        body: JSON.stringify({ method, params }),
+        signal: controller.signal,
+      });
+      return { response, text: await response.text() };
+    };
+
+    let { response, text } = await request(token);
+    if (response.status === 401) {
+      const refreshed = await loadAccessToken();
+      if (refreshed.token !== token) {
+        token = refreshed.token;
+        ({ response, text } = await request(token));
+      }
+    }
     trace.requestId = extractRequestId(response.headers);
-    const text = await response.text();
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('Kimi Code access_token was rejected. Run /login again and retry.');
+      }
       throw new Error(`HTTP ${response.status} error: ${text}`);
     }
     try {
