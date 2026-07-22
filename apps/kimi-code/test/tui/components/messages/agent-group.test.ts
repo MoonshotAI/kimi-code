@@ -60,6 +60,23 @@ describe('AgentGroupComponent', () => {
     vi.useRealTimers();
   });
 
+  it('requests one render when attaching an agent', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const ui = stubTui();
+    const group = new AgentGroupComponent(ui);
+    const agent = createAgent('call_agent_1', 'inspect project', 'reviewer', ui);
+
+    vi.mocked(ui.requestRender).mockClear();
+
+    group.attach('call_agent_1', agent);
+
+    expect(ui.requestRender).toHaveBeenCalledTimes(1);
+
+    group.dispose();
+    agent.dispose();
+  });
+
   it('shows explicit active breakdown, row state, and waiting fallback', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
