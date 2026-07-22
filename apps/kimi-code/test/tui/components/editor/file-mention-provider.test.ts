@@ -1,3 +1,8 @@
+// Scenario: slash-command and file-mention autocomplete.
+// Responsibilities: rank command matches and resolve path suggestions through the real provider.
+// Wiring: isolated temporary directories; fd is the only optional external boundary.
+// Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/components/editor/file-mention-provider.test.ts
+
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,6 +11,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
+import { BUILTIN_SLASH_COMMANDS, sortSlashCommands } from '#/tui/commands';
 
 function ctrl(): AbortSignal {
   return new AbortController().signal;
@@ -161,6 +167,19 @@ describe('FileMentionProvider', () => {
       value: 'new',
       label: 'new (clear)',
     });
+  });
+
+  it('ranks exit first when /ex matches multiple built-in commands', async () => {
+    const commands = sortSlashCommands(BUILTIN_SLASH_COMMANDS).map((command) => ({
+      name: command.name,
+      aliases: command.aliases,
+      description: command.description,
+    }));
+    const provider = new FileMentionProvider(commands, workDir, NO_FD);
+
+    const result = await provider.getSuggestions(['/ex'], 0, 3, { signal: ctrl() });
+
+    expect(result?.items[0]?.value).toBe('exit');
   });
 
   it('prefers exact alias matches over fuzzy skill matches', async () => {
