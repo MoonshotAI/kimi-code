@@ -168,9 +168,11 @@ export async function listModelsFromHarness(
  * The alias's provider type, resolved like
  * `ProviderManager.resolveProviderConfig` does: the alias's provider (falling
  * back to the configured default provider). The Anthropic fallback profile in
- * `effectiveModelAlias` only applies to non-Kimi providers, so a custom-named
- * model on a `type = "anthropic"` provider still gets an inferred effort list
- * while managed Kimi models keep only their catalog-declared efforts.
+ * `effectiveModelAlias` only applies to non-Kimi providers, and then only to
+ * model names that still carry a Claude marker — a custom-named Claude model
+ * on a `type = "anthropic"` provider still gets an inferred effort list,
+ * while managed Kimi models and clearly non-Claude names keep only their
+ * catalog-declared efforts.
  */
 function providerTypeOf(
   alias: ModelAlias,

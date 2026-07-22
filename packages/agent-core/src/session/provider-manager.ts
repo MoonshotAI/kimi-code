@@ -126,11 +126,13 @@ export class ProviderManager implements ModelProvider {
       providerConfig,
       alias.model,
       alias.protocol,
+      alias.baseUrl,
       this.options.kimiRequestHeaders,
       effectiveAlias.maxOutputSize,
       effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
       effectiveAlias.supportEfforts,
+      effectiveAlias.offEffort,
       effectiveAlias.adaptiveThinking,
       alias.betaApi,
     );
@@ -239,6 +241,7 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: alias.maxContextSize,
+    max_input_tokens: alias.maxInputSize,
     // Message-level tool declarations ("dynamically loaded tools"). Every
     // field here must be merged explicitly — a capability registered in
     // kosong that is not forwarded here never reaches the agent.
@@ -252,11 +255,13 @@ function toKosongProviderConfig(
   provider: ProviderConfig,
   model: string,
   modelProtocol: ModelAlias['protocol'],
+  modelBaseUrl: string | undefined,
   kimiRequestHeaders: Record<string, string> | undefined,
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
   supportEfforts: readonly string[] | undefined,
+  offEffort: string | undefined,
   adaptiveThinking: boolean | undefined,
   betaApi: boolean | undefined,
 ): KosongProviderConfig {
@@ -264,7 +269,10 @@ function toKosongProviderConfig(
   const envCustomHeaders = parseKimiCodeCustomHeaders();
   switch (effectiveType) {
     case 'anthropic': {
-      const baseUrl = providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
+      // A per-model endpoint (catalog gateway override) wins over the
+      // provider-level base URL; it is already adapted to the wire convention.
+      const baseUrl =
+        modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL');
       return {
         type: 'anthropic',
         model,
@@ -299,9 +307,13 @@ function toKosongProviderConfig(
       return {
         type: 'openai',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
+        // A per-model endpoint (catalog gateway override) wins over the
+        // provider-level base URL, same as the Anthropic branch.
+        baseUrl:
+          modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
+        offEffort,
         // Session affinity: route every request of this session through the
         // same provider-side prompt cache (the OpenAI analog of Anthropic
         // `metadata.user_id` above). Undefined values are stripped at
@@ -317,7 +329,7 @@ function toKosongProviderConfig(
       return {
         type: 'kimi',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
+        baseUrl: modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
         generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
@@ -330,7 +342,8 @@ function toKosongProviderConfig(
       return {
         type: 'google-genai',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
+        baseUrl:
+          modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
         apiKey: providerApiKey(provider),
         ...defaultHeadersField({
           ...envCustomHeaders,
@@ -342,8 +355,10 @@ function toKosongProviderConfig(
       return {
         type: 'openai_responses',
         model,
-        baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
+        baseUrl:
+          modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        offEffort,
         // Session affinity: same `prompt_cache_key` intent as the `openai`
         // branch; the Responses API accepts it as a top-level request field.
         generationKwargs: { prompt_cache_key: promptCacheKey },
@@ -359,7 +374,8 @@ function toKosongProviderConfig(
       // location detection, so the env fallback behaves exactly like
       // `base_url` — including deriving the region from an
       // `*-aiplatform.googleapis.com` host for the service-account path.
-      const baseUrl = providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
+      const baseUrl =
+        modelBaseUrl ?? providerValue(provider.baseUrl, provider.env, 'GOOGLE_VERTEX_BASE_URL');
       const useServiceAccount = hasVertexAIServiceEnv(provider, baseUrl);
       return {
         type: 'vertexai',

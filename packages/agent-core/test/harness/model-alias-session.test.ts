@@ -117,10 +117,11 @@ default_effort = "${defaultEffort}"
   });
 
   it('resolves the initial effort with provider context for an Anthropic-typed provider', async () => {
-    // The model name is unknown to the Anthropic profile matrix and the alias
-    // declares no protocol/capabilities itself; the provider's
-    // `type = "anthropic"` must still route the default resolution through
-    // the inferred profile (default effort "high"), not fall back to "off".
+    // The model name is unknown to the Anthropic profile matrix but still
+    // carries a Claude marker, and the alias declares no protocol/capabilities
+    // itself; the provider's `type = "anthropic"` must still route the
+    // default resolution through the inferred profile (default effort
+    // "high"), not fall back to "off".
     await writeFile(
       configPath,
       `
@@ -133,7 +134,7 @@ base_url = "https://api.example.test"
 
 [models."compat/custom"]
 provider = "compat"
-model = "joint-model-0714-vibe"
+model = "joint-claude-0714-vibe"
 max_context_size = 200000
 `,
     );

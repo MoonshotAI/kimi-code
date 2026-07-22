@@ -41,6 +41,10 @@ const ModelAliasBaseSchema = z.object({
   provider: z.string(),
   model: z.string(),
   maxContextSize: z.number().int().min(1),
+  // Declared prompt/input cap when below the total window (e.g. gpt-5: 400k
+  // window, 272k input). Compaction and other prompt-budget checks prefer it
+  // over max_context_size; completion budgeting keeps the total window.
+  maxInputSize: z.number().int().min(1).optional(),
   maxOutputSize: z.number().int().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
@@ -56,10 +60,19 @@ const ModelAliasBaseSchema = z.object({
   // config.toml. The user's chosen effort is stored globally in thinking.effort.
   supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
+  // The effort value that encodes "thinking off" on the wire for this model
+  // (models.dev declares it as the "none" entry, e.g. xai grok). When set,
+  // turning thinking off sends this value instead of omitting the effort
+  // field — required by models whose default is to reason.
+  offEffort: z.string().optional(),
   // Route the Anthropic transport through the beta Messages API
   // (`POST /v1/messages?beta=true`) instead of the standard endpoint. Used by
   // managed Kimi Code models that declare `protocol: 'anthropic'`.
   betaApi: z.boolean().optional(),
+  // Per-model endpoint override, paired with `protocol`. Catalog imports set
+  // it when a gateway provider serves this model over a different endpoint
+  // than the provider default.
+  baseUrl: z.string().optional(),
 });
 
 export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
@@ -67,6 +80,7 @@ export const ModelAliasOverrideSchema = ModelAliasBaseSchema.omit({
   model: true,
   protocol: true,
   betaApi: true,
+  baseUrl: true,
 }).partial();
 
 export type ModelAliasOverrides = z.infer<typeof ModelAliasOverrideSchema>;

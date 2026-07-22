@@ -29,6 +29,11 @@ import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/appr
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
+import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
+import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
+import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 
 /** Wire service name (decorator id string) → token. */
 export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>> = {
@@ -52,6 +57,11 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   sessionQuestionService: ISessionQuestionService,
   agentRPCService: IAgentRPCService,
   agentActivityView: IAgentActivityView,
+  agentShellCommandService: IAgentShellCommandService,
+  agentProfileService: IAgentProfileService,
+  agentUsageService: IAgentUsageService,
+  agentPlanService: IAgentPlanService,
+  agentTaskService: IAgentTaskService,
 };
 
 export { IEventService };

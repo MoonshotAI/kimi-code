@@ -5,7 +5,7 @@
  *
  * Tasks live in `ISessionCronService` (Session scope) and are persisted
  * through the App-scoped `ICronTaskPersistence` under the project's cron
- * scope, so a `kimi resume` of the same session reloads them and the
+ * scope, so resuming the same session reloads them and the
  * scheduler picks up where it left off (fires that fell during downtime
  * are collapsed into a single delivery with `coalescedCount`). Tasks do
  * NOT carry over into a brand-new session.

@@ -9,6 +9,7 @@
 
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ContentPart } from '#/kosong/contract/message';
+import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -172,6 +173,7 @@ function makeTool(
   caps: ModelCapability = capabilities(),
   videoUploader?: VideoUploader,
   telemetry?: ITelemetryService,
+  inlineVideoSupported?: boolean,
 ): ReadMediaFileTool {
   return new ReadMediaFileTool(
     createTestFs(files),
@@ -180,6 +182,7 @@ function makeTool(
     caps,
     videoUploader,
     telemetry,
+    inlineVideoSupported,
   );
 }
 
@@ -684,6 +687,75 @@ describe('ReadMediaFileTool', () => {
     expect(parts[1]).toEqual(uploadResult);
   });
 
+  it('falls back to an inline base64 video part when the upload fails', async () => {
+    const videoUploader = vi.fn<VideoUploader>().mockRejectedValue(new Error('404 route not found'));
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(videoUploader).toHaveBeenCalledOnce();
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${mp4Buffer().toString('base64')}` },
+    });
+  });
+
+  it('surfaces auth rejections from the upload channel instead of falling back', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(Object.assign(new Error('401 Unauthorized'), { statusCode: 401 }));
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('401 Unauthorized');
+  });
+
+  it('surfaces the by-design no-hook error instead of falling back to inline', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(
+        new VideoUploadUnsupportedError(
+          'Model "stub" (protocol=openai) does not support video upload',
+        ),
+      );
+    const result = await execute(
+      makeTool({ '/workspace/clip.mp4': { data: mp4Buffer() } }, capabilities(), videoUploader),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('does not support video upload');
+  });
+
+  it('falls back to inline for a no-hook provider whose wire carries video', async () => {
+    const videoUploader = vi
+      .fn<VideoUploader>()
+      .mockRejectedValue(
+        new VideoUploadUnsupportedError(
+          'Model "gemini-stub" (protocol=google-genai) does not support video upload',
+        ),
+      );
+    const result = await execute(
+      makeTool(
+        { '/workspace/clip.mp4': { data: mp4Buffer() } },
+        capabilities(),
+        videoUploader,
+        undefined,
+        true,
+      ),
+      { path: '/workspace/clip.mp4' },
+    );
+    expect(result.isError).not.toBe(true);
+    const parts = outputParts(result);
+    expect(parts[1]).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${mp4Buffer().toString('base64')}` },
+    });
+  });
+
   it('rejects empty files', async () => {
     const result = await execute(
       makeTool({ '/workspace/sample.png': { data: pngBuffer(), size: 0 } }),
@@ -864,7 +936,7 @@ describe('createVideoUploader', () => {
     const uploadVideo = vi.fn().mockResolvedValue(uploadResult);
     const uploader = createVideoUploader(modelWith(uploadVideo));
     await expect(uploader!(input)).resolves.toEqual(uploadResult);
-    expect(uploadVideo).toHaveBeenCalledWith(input);
+    expect(uploadVideo).toHaveBeenCalledWith(input, undefined);
   });
 
   it('reports video_upload telemetry on success', async () => {

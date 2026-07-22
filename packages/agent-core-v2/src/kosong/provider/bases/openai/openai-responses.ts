@@ -350,6 +350,7 @@ export interface OpenAIResponsesOptions {
   baseUrl?: string | undefined;
   model: string;
   maxOutputTokens?: number | undefined;
+  offEffort?: string | undefined;
   thinkingEffort?: ThinkingEffort | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
@@ -1000,6 +1001,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private readonly _baseUrl: string | undefined;
   private readonly _defaultHeaders: Record<string, string> | undefined;
   private readonly _thinkingEffort: ThinkingEffort | undefined;
+  private readonly _offEffort: string | undefined;
   private readonly _generationKwargs: OpenAIResponsesGenerationKwargs;
   private readonly _toolMessageConversion: ToolMessageConversion;
   private readonly _client: OpenAI | undefined;
@@ -1014,6 +1016,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._model = options.model;
     this._stream = true;
     this._thinkingEffort = options.thinkingEffort;
+    this._offEffort = options.offEffort;
     this._generationKwargs = {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
@@ -1071,9 +1074,12 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       options?.thinking ??
       (this._thinkingEffort !== undefined ? { effort: this._thinkingEffort } : undefined);
     if (thinking !== undefined) {
-      // 'off' and 'on' have no wire encoding and suppress any seeded effort.
       const effort =
-        thinking.effort === 'off' || thinking.effort === 'on' ? undefined : thinking.effort;
+        thinking.effort === 'off'
+          ? this._offEffort
+          : thinking.effort === 'on'
+            ? undefined
+            : thinking.effort;
       kwargs = { ...kwargs, reasoning_effort: effort };
     }
 

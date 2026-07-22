@@ -6,12 +6,11 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
-  catalogBaseUrl,
   catalogProviderModels,
   CatalogFetchError,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
-  inferWireType,
+  resolveCatalogImport,
   type Catalog,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -33,6 +32,7 @@ import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { effectiveModelForHost } from './config';
 import {
   promptApiKey,
+  promptBaseUrl,
   promptCatalogProviderSelection,
 } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -192,15 +192,34 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     return;
   }
 
-  const apiKey = await promptApiKey(host, entry.name ?? providerId);
-  if (apiKey === undefined) return;
-
-  const wire = inferWireType(entry);
-  if (wire === undefined) {
-    host.showError(`Provider "${providerId}" has unsupported wire type.`);
+  let resolution = resolveCatalogImport(entry);
+  if (resolution.kind === 'needs-base-url') {
+    const entered = await promptBaseUrl(host, entry.name ?? providerId);
+    if (entered === undefined) return;
+    resolution = resolveCatalogImport(entry, entered);
+  }
+  if (resolution.kind !== 'ok') {
+    if (resolution.kind === 'invalid') {
+      if (resolution.reason === 'unknown-explicit-type') {
+        host.showError(
+          `Provider "${providerId}" declares protocol "${entry.type}" in the catalog, which this client version does not support.`,
+        );
+      } else if (resolution.reason === 'proprietary-sdk') {
+        host.showError(
+          `Provider "${providerId}" uses a proprietary SDK this client cannot speak (e.g. Amazon Bedrock or Cohere); it cannot be imported from the catalog.`,
+        );
+      } else {
+        host.showError(
+          `Base URL contains an env placeholder or is empty. Enter the resolved URL instead.`,
+        );
+      }
+    }
     return;
   }
-  const baseUrl = catalogBaseUrl(entry, wire);
+  const { wire, baseUrl } = resolution;
+
+  const apiKey = await promptApiKey(host, entry.name ?? providerId);
+  if (apiKey === undefined) return;
 
   // Persist the provider and all its models immediately after the api key is
   // entered. The model selector that follows is just a convenience to pick the
@@ -229,6 +248,11 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   await host.authFlow.refreshConfigAfterLogin();
   host.track('connect', { provider: providerId, method: 'catalog' });
   host.showStatus(`Provider added: ${entry.name ?? providerId}`);
+  if (resolution.guessed) {
+    host.showStatus(
+      `Protocol guessed as "openai" for ${providerId} — edit "type" in config.toml if requests fail.`,
+    );
+  }
 
   // Build a merged model dictionary that includes existing models plus the
   // newly-persisted provider's models, so the tabbed selector shows every

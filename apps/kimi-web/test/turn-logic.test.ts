@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AppMessage, AppMessageContent } from '../src/api/types';
 import { latestTodos } from '../src/composables/latestTodos';
 import { messagesToTurns } from '../src/composables/messagesToTurns';
+import { isPlayableMediaUrl } from '../src/composables/useFilePreview';
 
 function message(
   id: string,
@@ -214,6 +215,50 @@ describe('messagesToTurns', () => {
     expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
     expect(turns[0]?.attachments).toEqual([
       { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
+    ]);
+  });
+
+  it('renders a structured file-source video part as a video attachment', () => {
+    // An uploaded video comes back from the message projection as a structured
+    // `{video, source:{kind:'file'}}` part (mirroring images). It resolves to
+    // the authenticated file URL, keyed by the same fileId the preview fetches.
+    const fileId = 'f_01KWK39A0ZC8R2ATZEQMD8716C';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'look at this' },
+          { type: 'video', source: { kind: 'file', fileId } },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
+    expect(turns[0]?.attachments).toEqual([
+      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
+    ]);
+  });
+
+  it('leaves url-source video parts untouched', () => {
+    const dataUrl = 'data:video/mp4;base64,AAAA';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'video', source: { kind: 'url', url: 'https://example.com/clip.mp4' } },
+          { type: 'video', source: { kind: 'url', url: dataUrl } },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { url: 'https://example.com/clip.mp4', kind: 'video' },
+      { url: dataUrl, kind: 'video' },
     ]);
   });
 
@@ -813,5 +858,25 @@ describe('messagesToTurns cron', () => {
     // No prompt ids anywhere (REST-shaped): the cron still becomes its own
     // turn, and the cron-triggered reply does not merge into the first answer.
     expect(turns.map((t) => t.role)).toEqual(['user', 'assistant', 'cron', 'assistant']);
+  });
+});
+
+describe('isPlayableMediaUrl', () => {
+  // Gates the file-preview media source: a playable url feeds a native
+  // <video>/<img> src; a non-playable one falls through to the no-preview card.
+  it('accepts browser-loadable schemes', () => {
+    expect(isPlayableMediaUrl('https://example.com/clip.mp4')).toBe(true);
+    expect(isPlayableMediaUrl('http://example.com/clip.mp4')).toBe(true);
+    expect(isPlayableMediaUrl('data:video/mp4;base64,AAAA')).toBe(true);
+    expect(isPlayableMediaUrl('blob:https://app/uuid')).toBe(true);
+  });
+
+  it('rejects a provider ms:// reference (no local bytes → no preview)', () => {
+    expect(isPlayableMediaUrl('ms://file-abc123')).toBe(false);
+  });
+
+  it('rejects other non-loadable inputs', () => {
+    expect(isPlayableMediaUrl('/api/v1/files/f_abc')).toBe(false);
+    expect(isPlayableMediaUrl('')).toBe(false);
   });
 });

@@ -128,8 +128,52 @@ describe('resolveThinkingEffort', () => {
     ).toBe('high');
   });
 
-  it('preserves off for always-thinking models on compatible protocols', () => {
-    expect(resolveThinkingEffort('off', undefined, alwaysThinkingEffortModel, false)).toBe('off');
+  it('clamps always-thinking models to their default effort on every protocol', () => {
+    // A model declared always-on never resolves to off — claiming off while
+    // upstream keeps reasoning at its default would be a lie.
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingEffortModel, false)).toBe(
+      'high',
+    );
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel, false)).toBe('on');
+  });
+
+  it('normalizes a configured off value (case/whitespace) instead of sending it upstream', () => {
+    expect(resolveThinkingEffort(undefined, { effort: ' OFF ' }, effortModel, false)).toBe('off');
+    expect(resolveThinkingEffort(undefined, { effort: 'Off' }, booleanModel, false)).toBe('off');
+    // … and inside the always-on clamp it is treated as absent, not as an effort.
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: ' OFF ' }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+  });
+
+  it('reads a whitespace-only configured effort as absent, not as an empty effort', () => {
+    expect(resolveThinkingEffort(undefined, { effort: '   ' }, effortModel, false)).toBe('medium');
+    expect(resolveThinkingEffort(undefined, { effort: '   ' }, alwaysThinkingModel, false)).toBe('on');
+  });
+
+  it('normalizes the requested effort (case/whitespace) on every wire', () => {
+    expect(resolveThinkingEffort(' OFF ', undefined, effortModel, false)).toBe('off');
+    expect(resolveThinkingEffort(' Max ', undefined, effortModel, false)).toBe('max');
+    expect(resolveThinkingEffort('  ', undefined, effortModel, false)).toBe('medium');
+  });
+
+  it('treats a configured off as absent when clamping always-thinking models', () => {
+    expect(resolveThinkingEffort(undefined, { effort: 'off' }, alwaysThinkingEffortModel, false)).toBe(
+      'high',
+    );
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: 'off' }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: ' OFF ' }, alwaysThinkingEffortModel, false),
+    ).toBe('high');
+    // … while an explicitly configured concrete effort is still honored.
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false, effort: 'max' }, alwaysThinkingEffortModel, true),
+    ).toBe('max');
   });
 
   it('does not force on for models that are not always-thinking', () => {

@@ -133,7 +133,8 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   // rebases the measured model first, so the max only wins in that window.
   const measured = wire.getModel(ContextSizeModel);
   const contextTokens = Math.max(contextSize.get().size, measured.tokens);
-  const maxContextTokens = profile.getModelCapabilities().max_context_tokens;
+  const capabilities = profile.getModelCapabilities();
+  const maxContextTokens = capabilities.max_input_tokens ?? capabilities.max_context_tokens;
   const model = profile.getModel();
   return { usage, contextTokens, maxContextTokens, model };
 }

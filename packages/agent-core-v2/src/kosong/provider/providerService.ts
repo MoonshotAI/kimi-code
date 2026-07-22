@@ -68,7 +68,10 @@ export class ProviderService extends Disposable implements IProviderService {
     const { [name]: _removed, ...rest } = current;
     await this.config.replace(PROVIDERS_SECTION, rest);
     if (this.config.get<string>(DEFAULT_PROVIDER_SECTION) === name) {
-      await this.config.set(DEFAULT_PROVIDER_SECTION, undefined);
+      // Delete, not merge: `set(domain, undefined)` resolves back to the base
+      // value by design — only `replace(domain, undefined)` removes the key,
+      // otherwise the default-provider id dangles to a deleted provider.
+      await this.config.replace(DEFAULT_PROVIDER_SECTION, undefined);
     }
   }
 }

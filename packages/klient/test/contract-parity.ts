@@ -26,8 +26,19 @@ import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEv
 import type { PlanData } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
 import type {
   AgentAPI,
+  CancelPlanPayload,
+  CancelShellCommandPayload,
+  EmptyPayload,
+  GetTaskOutputPayload,
+  GetTasksPayload,
   PromptPart,
+  RunShellCommandPayload,
+  SetModelPayload,
+  SetModelResult,
+  ShellCommandResult,
+  StopTaskPayload,
 } from '@moonshot-ai/agent-core-v2/agent/rpc/core-api';
+import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { ISessionScopeHandle } from '@moonshot-ai/agent-core-v2/_base/di/scope';
 import type {
   CreateChildSessionOptions,
@@ -462,25 +473,17 @@ const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, A
   true;
 
 // ── agent scope (rpc.ts) ────────────────────────────────────────────────────
-// Payload/result types are reached through the `AgentAPI` interface so the
-// assertions track the exact methods the contract mirrors.
+// Payload/result types for the remaining `AgentAPI` methods are reached
+// through the interface so the assertions track the exact methods the
+// contract mirrors; payloads of the domain services the facade calls
+// directly (shellCommand / profile / usage / plan / task) are imported from
+// `core-api.ts` (they no longer have `AgentAPI` entries).
 type PromptPayload = Parameters<AgentAPI['prompt']>[0];
 type PromptLaunchResult = NonNullable<ReturnType<AgentAPI['prompt']>>;
 type SteerPayload = Parameters<AgentAPI['steer']>[0];
 type CancelPayload = Parameters<AgentAPI['cancel']>[0];
-type RunShellCommandPayload = Parameters<AgentAPI['runShellCommand']>[0];
-type ShellCommandResult = ReturnType<AgentAPI['runShellCommand']>;
-type CancelShellCommandPayload = Parameters<AgentAPI['cancelShellCommand']>[0];
-type SetModelPayload = Parameters<AgentAPI['setModel']>[0];
-type SetModelResult = ReturnType<AgentAPI['setModel']>;
 type SetPermissionPayload = Parameters<AgentAPI['setPermission']>[0];
-type UsageStatus = ReturnType<AgentAPI['getUsage']>;
 type TokenUsage = NonNullable<UsageStatus['total']>;
-type GetTasksPayload = Parameters<AgentAPI['getTasks']>[0];
-type StopTaskPayload = Parameters<AgentAPI['stopTask']>[0];
-type GetTaskOutputPayload = Parameters<AgentAPI['getTaskOutput']>[0];
-type CancelPlanPayload = Parameters<AgentAPI['cancelPlan']>[0];
-type EmptyPayload = Parameters<AgentAPI['getModel']>[0];
 
 const _emptyPayload: AssertWire<typeof emptyPayloadSchema, EmptyPayload> = true;
 const _promptPart: AssertWire<typeof promptPartSchema, PromptPart> = true;

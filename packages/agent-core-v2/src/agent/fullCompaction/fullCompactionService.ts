@@ -172,7 +172,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   }
 
   private getEffectiveMaxContextTokens(): number {
-    const configured = this.profile.data().modelCapabilities.max_context_tokens;
+    const capability = this.profile.data().modelCapabilities;
+    const configured = capability.max_input_tokens ?? capability.max_context_tokens;
     const modelAlias = this.profile.data().modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);
@@ -183,11 +184,13 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
   private resolveModelContextWithEffectiveMax(): ProfileModelContext {
     const resolved = this.profile.resolveModelContext();
+    const effectiveMax = this.getEffectiveMaxContextTokens();
     return {
       ...resolved,
       modelCapabilities: {
         ...resolved.modelCapabilities,
-        max_context_tokens: this.getEffectiveMaxContextTokens(),
+        max_context_tokens: effectiveMax,
+        max_input_tokens: effectiveMax,
       },
     };
   }

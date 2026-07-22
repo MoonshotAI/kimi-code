@@ -133,7 +133,7 @@ function toAppImageSource(src: WireImageSource): ImageSource {
   if (src.kind === 'file') {
     return { kind: 'file', fileId: src.file_id };
   }
-  return { kind: 'url', url: src.url };
+  return { kind: 'url', url: src.url, id: src.id };
 }
 
 export function toAppMessageContent(wire: WireMessageContent): AppMessageContent {
@@ -229,7 +229,7 @@ function toWireMessageContent(app: AppMessageContent): WireMessageContent {
       } else if (src.kind === 'file') {
         wireSrc = { kind: 'file', file_id: src.fileId };
       } else {
-        wireSrc = { kind: 'url', url: src.url };
+        wireSrc = { kind: 'url', url: src.url, id: src.id };
       }
       return { type: app.type, source: wireSrc };
     }

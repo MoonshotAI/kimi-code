@@ -193,7 +193,7 @@ export type WireMessageContent =
   | { type: 'thinking'; thinking: string; signature?: string };
 
 export type WireImageSource =
-  | { kind: 'url'; url: string }
+  | { kind: 'url'; url: string; id?: string }
   | { kind: 'base64'; media_type: string; data: string }
   | { kind: 'file'; file_id: string };
 

@@ -238,7 +238,22 @@ describe('buildSessionConfigOptions', () => {
     }
   });
 
-  it('shows the thinking control for an unknown model using the Anthropic protocol', async () => {
+  it('shows the thinking control for an unknown Claude-marked model using the Anthropic protocol', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'custom',
+        model: 'custom-claude-model',
+        protocol: 'anthropic',
+        providerType: 'anthropic',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'custom', 'off', 'default');
+
+    expect(result.map((option) => option.id)).toEqual(['model', 'thinking', 'mode']);
+  });
+
+  it('hides the thinking control for a clearly non-Claude model using the Anthropic protocol', async () => {
     const { harness } = makeHarnessWithModels([
       {
         id: 'custom',
@@ -250,7 +265,7 @@ describe('buildSessionConfigOptions', () => {
 
     const result = await buildSessionConfigOptions(harness, 'custom', 'off', 'default');
 
-    expect(result.map((option) => option.id)).toEqual(['model', 'thinking', 'mode']);
+    expect(result.map((option) => option.id)).toEqual(['model', 'mode']);
   });
 
   it('hides the thinking control for an unknown model on a Kimi provider using the Anthropic protocol', async () => {

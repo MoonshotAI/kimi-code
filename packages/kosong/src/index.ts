@@ -43,8 +43,16 @@ export {
   catalogModelToCapability,
   catalogProviderModels,
   inferWireType,
+  resolveCatalogImport,
 } from './catalog';
-export type { Catalog, CatalogModel, CatalogModelEntry, CatalogProviderEntry } from './catalog';
+export type {
+  Catalog,
+  CatalogModel,
+  CatalogModelEntry,
+  CatalogProviderEntry,
+  CatalogImportInvalidReason,
+  CatalogImportResolution,
+} from './catalog';
 
 // Core functions
 export { generate } from './generate';

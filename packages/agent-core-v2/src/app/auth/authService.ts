@@ -27,6 +27,7 @@ import {
   resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
+  type AuthManagedUsageResult,
   type BearerTokenProvider,
   type DeviceAuthorization,
   type ManagedKimiConfigShape,
@@ -260,6 +261,21 @@ export class OAuthService extends Disposable implements IOAuthService {
     return this.toolkit.getCachedAccessToken(provider, this.resolveRuntimeOAuthRef(provider, oauthRef));
   }
 
+  getManagedUsage(provider = KIMI_CODE_PROVIDER_NAME): Promise<AuthManagedUsageResult> {
+    // Same resolution path as the managed model refresh: env-aware base url +
+    // oauth ref, so a self-hosted/proxied login environment reports its own
+    // usage endpoint. The toolkit handles token freshness and error mapping.
+    const configured = this.providerService.get(provider);
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: configured?.baseUrl,
+      configuredOAuthRef: configured?.oauth,
+    });
+    return this.toolkit.getManagedUsage(provider, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
+  }
+
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
     const run = this.refreshChain.then(() => this.doRefreshOAuthProviderModels());
     this.refreshChain = run.then(
@@ -329,8 +345,11 @@ export class OAuthService extends Disposable implements IOAuthService {
         );
         await this.config.replace(PROVIDERS_SECTION, next.providers);
         await this.config.replace(MODELS_SECTION, next.models ?? {});
-        await this.config.set(DEFAULT_MODEL_SECTION, next.defaultModel);
-        await this.config.set(THINKING_SECTION, next.thinking);
+        // defaultModel/thinking hold the final computed values — write them
+        // with replace (set-undefined cannot delete; set-object would merge
+        // stale keys into the previous thinking config).
+        await this.config.replace(DEFAULT_MODEL_SECTION, next.defaultModel);
+        await this.config.replace(THINKING_SECTION, next.thinking);
         changed.push({
           provider_id: KIMI_CODE_PROVIDER_NAME,
           provider_name: 'Kimi Code',
@@ -509,8 +528,12 @@ export class OAuthService extends Disposable implements IOAuthService {
       await this.config.replace(SERVICES_SECTION, next.services);
     }
     if (cleanup.defaultModelCleared) {
-      await this.config.set(DEFAULT_MODEL_SECTION, undefined);
-      await this.config.set(THINKING_SECTION, undefined);
+      // Delete, not merge: `set(domain, undefined)` resolves back to the base
+      // value by design — only `replace(domain, undefined)` actually removes
+      // the key, and leaving defaultModel dangling to a just-removed managed
+      // model keeps /api/v1/auth reporting ready=true after logout.
+      await this.config.replace(DEFAULT_MODEL_SECTION, undefined);
+      await this.config.replace(THINKING_SECTION, undefined);
     }
   }
 

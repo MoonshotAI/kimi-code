@@ -130,6 +130,7 @@ export interface OpenAILegacyOptions {
   stream?: boolean | undefined;
   maxTokens?: number | undefined;
   reasoningKey?: string | undefined;
+  offEffort?: string | undefined;
   thinkingEffort?: ThinkingEffort | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
@@ -528,6 +529,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private readonly _baseUrl: string | undefined;
   private readonly _defaultHeaders: Record<string, string> | undefined;
   private readonly _reasoningKey: string | undefined;
+  private readonly _offEffort: string | undefined;
   private readonly _thinkingEffort: ThinkingEffort | undefined;
   private readonly _generationKwargs: OpenAILegacyGenerationKwargs;
   private readonly _toolMessageConversion: ToolMessageConversion;
@@ -560,6 +562,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         ? normalizedReasoningKey
         : this._hooks?.reasoningKey?.();
     this._thinkingEffort = options.thinkingEffort;
+    this._offEffort = options.offEffort;
     this._generationKwargs = normalizeGenerationKwargs(
       this._model,
       options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {},
@@ -722,16 +725,12 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       }
     }
 
-    // 'off' and 'on' have no wire encoding; only a concrete effort is passed
-    // through. An explicit 'off' must also suppress the history-based
-    // auto-enable below (issue #1616), so it stays distinguishable from
-    // "never configured".
     let reasoningEffort: string | undefined =
-      explicitThinkingEffort === undefined ||
-      explicitThinkingEffort === 'off' ||
-      explicitThinkingEffort === 'on'
-        ? undefined
-        : explicitThinkingEffort;
+      explicitThinkingEffort === 'off'
+        ? this._offEffort
+        : explicitThinkingEffort === undefined || explicitThinkingEffort === 'on'
+          ? undefined
+          : explicitThinkingEffort;
 
     // issue #1616 history scan — disabled entirely when a withThinking hook
     // exists: once a trait takes over thinking, the base must not interfere.

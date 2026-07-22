@@ -344,6 +344,13 @@ export interface OpenAIResponsesOptions {
   baseUrl?: string | undefined;
   model: string;
   maxOutputTokens?: number | undefined;
+  /**
+   * The effort value that encodes "thinking off" on this wire (e.g. `'none'`
+   * for xai grok). When set, `withThinking('off')` sends it as
+   * `reasoning_effort` instead of omitting the field — required by models
+   * whose default is to reason.
+   */
+  offEffort?: string | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
@@ -1032,6 +1039,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
   private _generationKwargs: OpenAIResponsesGenerationKwargs;
+  private _offEffort: string | undefined;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
@@ -1045,6 +1053,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._model = options.model;
     this._stream = true; // Responses API always supports streaming
     this._generationKwargs = { ...options.generationKwargs };
+    this._offEffort = options.offEffort;
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
@@ -1152,7 +1161,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAIResponsesChatProvider {
-    const reasoningEffort = effort === 'off' || effort === 'on' ? undefined : effort;
+    // 'on' sends no effort field; 'off' sends the model's declared off value
+    // (e.g. 'none') when one is configured, and omits the field otherwise.
+    const reasoningEffort =
+      effort === 'off' ? this._offEffort : effort === 'on' ? undefined : effort;
     const clone = this._clone();
     clone._generationKwargs = {
       ...clone._generationKwargs,

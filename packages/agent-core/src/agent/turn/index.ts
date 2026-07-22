@@ -46,6 +46,7 @@ import {
 } from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
+import { degradeUnresolvedVideoToTag, resolvePromptMedia } from './media-resolve';
 import { ToolCallDeduplicator } from './tool-dedup';
 import { budgetToolResultForModel } from './tool-result-budget';
 
@@ -337,7 +338,13 @@ export class TurnFlow {
     const steers = this.steerBuffer;
     if (steers.length === 0) return false;
     for (const steer of steers) {
-      this.agent.context.appendUserMessage(steer.input, steer.origin);
+      // Steer flushes happen at sites that cannot await an upload, so any
+      // prompt-attached local video is degraded to an always-safe `<video
+      // path>` tag here; the model uploads it in-turn via ReadMediaFile.
+      this.agent.context.appendUserMessage(
+        degradeUnresolvedVideoToTag(steer.input),
+        steer.origin,
+      );
     }
     steers.length = 0;
     return true;
@@ -501,7 +508,9 @@ export class TurnFlow {
     this.agent.usage.beginTurn();
     const startedAt = Date.now();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
+    // The budget-exhausted goal turn does not run the model, so it cannot
+    // await an upload — degrade any local video to the always-safe tag form.
+    this.agent.context.appendUserMessage(degradeUnresolvedVideoToTag(input), origin);
     const ended: TurnEndedEvent = {
       type: 'turn.ended',
       turnId,
@@ -536,7 +545,6 @@ export class TurnFlow {
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
-    this.agent.context.appendUserMessage(input, origin);
 
     const startedAt = Date.now();
     let ended: TurnEndedEvent;
@@ -546,7 +554,14 @@ export class TurnFlow {
     // sits just past the turn.ended boundary that consumers watch for.
     let errorEvent: AgentEvent | undefined;
     try {
-      const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal, startedAt);
+      // Resolve any prompt-attached local video (a `file://` video_url) into
+      // its final delivered form — an uploaded `ms://` reference or an
+      // inline/tag fallback — BEFORE it lands in history, so no unresolved
+      // `file://` reference reaches the model or is persisted for resume. Auth
+      // rejections surface as a failed turn via the catch below.
+      const resolvedInput = await resolvePromptMedia(this.agent, input, signal);
+      this.agent.context.appendUserMessage(resolvedInput, origin);
+      const promptHookEnded = await this.applyUserPromptHook(turnId, resolvedInput, origin, signal, startedAt);
       if (promptHookEnded !== undefined) {
         ended = promptHookEnded.event;
         blockedByUserPromptHook = promptHookEnded.blocked;

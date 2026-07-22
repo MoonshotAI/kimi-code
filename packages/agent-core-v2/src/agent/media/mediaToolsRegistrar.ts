@@ -11,7 +11,11 @@
  * service re-invokes {@link registerMediaTools} when the model alias or its
  * media capabilities differ from what it last registered (rebinding the
  * video uploader to the new model, and dropping the tool when the model
- * loses media input).
+ * loses media input). The `inlineVideoSupported` flag rides the same
+ * refresh: it is derived from the model's protocol because only the OpenAI
+ * family drops inline video on the wire — every other protocol that
+ * converts `video_url` takes the inline fallback when no upload hook
+ * exists.
  *
  * `AgentLifecycleService.create` force-instantiates this service right after
  * the builtin-tools registrar, before any `opts.binding` bind runs, so the
@@ -103,6 +107,7 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
           protocol: model?.protocol,
         },
       }),
+      inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       telemetry: this.telemetry,
     });
   }

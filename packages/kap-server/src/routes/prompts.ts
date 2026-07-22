@@ -22,6 +22,8 @@ import {
   IEventService,
   IFileService,
   ISessionMetadata,
+  buildKimiFileUrl,
+  parseKimiFileUrl,
   promptMetadataTextFromContentParts,
   ProfileError,
   type ContentPart,
@@ -179,6 +181,24 @@ async function applyProfileSelection(
   return true;
 }
 
+/**
+ * Fail fast on stale or mis-kinded file references before anything
+ * session-scoped happens: a bad `file_id` (unknown, or a real file used with
+ * the wrong media kind, e.g. a PDF submitted as a video) must reject the
+ * request without creating the prompt agent and without touching the
+ * session's model/thinking/permission.
+ */
+async function assertPromptFileRefs(body: PromptSubmission, store: IFileService): Promise<void> {
+  for (const part of body.content) {
+    if (part.type === 'file') {
+      await store.get(part.file_id);
+    } else if ((part.type === 'image' || part.type === 'video') && part.source.kind === 'file') {
+      const file = await store.get(part.source.file_id);
+      assertMediaFile(file, part.type);
+    }
+  }
+}
+
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
     {
@@ -217,7 +237,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.AUTH_TOKEN_UNAUTHORIZED]: { detailsSchema: authProviderDetailsSchema },
         [ErrorCode.AUTH_MODEL_NOT_RESOLVED]: { detailsSchema: authModelDetailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.SESSION_BUSY]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
       },
       description: 'Submit a prompt to a session',
@@ -225,14 +244,28 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       operationId: 'submitPrompt',
     },
     async (req, reply) => {
+      const { session_id } = req.params;
       try {
-        const { session_id } = req.params;
+        // Fail fast on stale file references before anything is resolved or
+        // mutated: a bad `file_id` must not create the agent, register `main`
+        // in session metadata, or touch the session's controls.
+        await assertPromptFileRefs(req.body, core.accessor.get(IFileService));
+        const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
+        await resolved.auth.ensureReady();
+
+        // Media resolution runs BEFORE any control mutation, so a failed
+        // submission leaves the session's controls untouched. Prompt videos
+        // are materialized to a local copy and carried into context as an
+        // internal `kimi-file://` reference; the engine resolves them to a
+        // provider form (upload / inline / `<video path>` tag) at request
+        // time, so the edge no longer uploads.
+        const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
         const resolvedBody = await resolvePromptMediaFiles(
           req.body,
           core.accessor.get(IFileService),
           core.accessor.get(IBootstrapService).cacheDir,
           {
-            telemetry: core.accessor.get(ITelemetryService).withContext({ sessionId: session_id }),
+            telemetry,
             resolveOriginalsDir: async () => {
               const session = await core.accessor.get(ISessionLifecycleService).resume(session_id);
               if (session === undefined) return undefined;
@@ -245,28 +278,27 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             },
           },
         );
-        const resolved = await resolvePrompt(core, session_id, resolvedBody.agent_id);
-        await resolved.auth.ensureReady();
-        const session = await resolveSession(core, session_id);
+
+        // Media prepared successfully — only now do the overrides bind.
         let thinkingConsumed = false;
-        if (resolvedBody.profile !== undefined) {
+        if (req.body.profile !== undefined) {
           thinkingConsumed =
             (await applyProfileSelection(
               resolved.profile,
-              resolvedBody.profile,
-              resolvedBody.model,
-              resolvedBody.thinking,
-            )) && resolvedBody.thinking !== undefined;
+              req.body.profile,
+              req.body.model,
+              req.body.thinking,
+            )) && req.body.thinking !== undefined;
         }
-        if (resolvedBody.model !== undefined) await resolved.profile.setModel(resolvedBody.model);
-        if (resolvedBody.thinking !== undefined && !thinkingConsumed)
-          resolved.profile.setThinking(resolvedBody.thinking);
-        if (resolvedBody.permission_mode !== undefined) resolved.permissionMode.setMode(resolvedBody.permission_mode);
-        if (resolvedBody.disabled_tools !== undefined) {
+        if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
+        if (req.body.thinking !== undefined && !thinkingConsumed)
+          resolved.profile.setThinking(req.body.thinking);
+        if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+        if (req.body.disabled_tools !== undefined) {
           // A session denylist before bind throws `profile.not_bound` — map it
           // onto 40001 like the profile-selection errors above.
           try {
-            await resolved.toolPolicy.setSessionDisabledTools(resolvedBody.disabled_tools);
+            await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
           } catch (error) {
             if (error instanceof ProfileError) {
               throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
@@ -275,6 +307,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }
         }
         const parts = contentToCoreParts(resolvedBody.content);
+        const session = await resolveSession(core, session_id);
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),
@@ -399,12 +432,20 @@ function corePartsToProtocol(content: readonly ContentPart[]): PromptSubmission[
     else if (part.type === 'image_url') {
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
       parts.push(match === null
-        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url } }
+        ? { type: 'image', source: { kind: 'url', url: part.imageUrl.url, id: part.imageUrl.id } }
         : { type: 'image', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
     } else if (part.type === 'video_url') {
+      // An internal `kimi-file://<id>?path=…` reference projects back to the
+      // daemon upload it came from — the materialization path never leaks to
+      // the client.
+      const kimiFile = parseKimiFileUrl(part.videoUrl.url);
+      if (kimiFile !== undefined) {
+        parts.push({ type: 'video', source: { kind: 'file', file_id: kimiFile.fileId } });
+        continue;
+      }
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.videoUrl.url);
       parts.push(match === null
-        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url } }
+        ? { type: 'video', source: { kind: 'url', url: part.videoUrl.url, id: part.videoUrl.id } }
         : { type: 'video', source: { kind: 'base64', media_type: match[1]!, data: match[2]! } });
     }
   }
@@ -415,9 +456,9 @@ function contentToCoreParts(content: PromptSubmission['content']): ContentPart[]
   const parts: ContentPart[] = [];
   for (const part of content) {
     if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url } });
+    else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url, id: part.source.id } });
     else if (part.type === 'image' && part.source.kind === 'base64') parts.push({ type: 'image_url', imageUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
-    else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url } });
+    else if (part.type === 'video' && part.source.kind === 'url') parts.push({ type: 'video_url', videoUrl: { url: part.source.url, id: part.source.id } });
     else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}` } });
   }
   return parts;
@@ -649,8 +690,16 @@ async function resolvePromptMediaFiles(
       continue;
     }
 
+    // Uploaded video: materialize a local copy the model can open as a
+    // fallback, and carry the upload into context as an internal
+    // `kimi-file://<id>?path=<materialized path>` reference. The engine
+    // resolves it to a provider form (upload / inline / `<video path>` tag) at
+    // request time, so the edge never uploads and never blocks on the provider.
     const cachePath = await materializeVideoToCache(file, cacheDir);
-    content.push({ type: 'text', text: `<video path="${escapeAttribute(cachePath)}"></video>` });
+    content.push({
+      type: 'video',
+      source: { kind: 'url', url: buildKimiFileUrl(file.meta.id, cachePath) },
+    });
     changed = true;
   }
   return changed ? { ...body, content } : body;
@@ -746,14 +795,6 @@ function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
     'validation.failed',
     `file ${file.meta.id} is ${file.meta.media_type}, not ${expected === 'video' ? 'a video' : 'an image'}`,
   );
-}
-
-function escapeAttribute(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }
 
 function sendMappedError(

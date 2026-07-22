@@ -52,6 +52,7 @@ export interface InspectedResolvedModel {
   readonly auth: InspectedAuth;
   readonly capabilities: ModelCapability;
   readonly maxContextSize: number;
+  readonly maxInputSize?: number;
   readonly maxOutputSize?: number;
   readonly displayName?: string;
   readonly reasoningKey?: string;
@@ -183,6 +184,20 @@ export function attributeEffectiveFields(
     const before = (base as Record<string, unknown>)[key];
     const after = (effective as Record<string, unknown>)[key];
     if (before === undefined && after === undefined) continue;
+    if (key === 'maxInputSize') {
+      const rawValue = (overridden.has(key) ? overrides?.[key] : before) as number | undefined;
+      if (
+        rawValue !== undefined &&
+        effective.maxContextSize !== undefined &&
+        rawValue > effective.maxContextSize
+      ) {
+        trace.record(path, {
+          kind: 'synthesized',
+          detail: 'clamped to the effective max_context_size',
+        });
+        continue;
+      }
+    }
     if (overridden.has(key)) {
       trace.record(path, { kind: 'override', detail: 'models.*.overrides' });
       continue;
@@ -258,6 +273,7 @@ interface ResolvedModelLike {
   readonly aliases: readonly string[];
   readonly capabilities: ModelCapability;
   readonly maxContextSize: number;
+  readonly maxInputSize?: number;
   readonly maxOutputSize?: number;
   readonly displayName?: string;
   readonly reasoningKey?: string;
@@ -319,6 +335,7 @@ export function assembleModelInspection(args: {
   // Mirror the effective-field sources onto their resolved counterparts.
   for (const field of [
     'maxContextSize',
+    'maxInputSize',
     'maxOutputSize',
     'displayName',
     'reasoningKey',
@@ -431,6 +448,7 @@ export function assembleModelInspection(args: {
       auth,
       capabilities: model.capabilities,
       maxContextSize: model.maxContextSize,
+      maxInputSize: model.maxInputSize,
       maxOutputSize: model.maxOutputSize,
       displayName: model.displayName,
       reasoningKey: model.reasoningKey,
@@ -483,6 +501,14 @@ function attributeCapabilities(
     kind: 'synthesized',
     detail: 'forced to the resolved maxContextSize',
   });
+  const maxInputSource = sources.get('model.effective.maxInputSize');
+  sources.set(
+    'resolved.capabilities.max_input_tokens',
+    maxInputSource ?? {
+      kind: 'none',
+      detail: 'no declared input limit — the total window applies',
+    },
+  );
 }
 
 function attributeHeaders(

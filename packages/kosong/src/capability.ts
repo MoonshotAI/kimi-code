@@ -14,7 +14,15 @@ export interface ModelCapability {
   readonly audio_in: boolean;
   readonly thinking: boolean;
   readonly tool_use: boolean;
+  /** Total context window (input + output), used for completion budgeting. */
   readonly max_context_tokens: number;
+  /**
+   * Maximum prompt/input tokens when the model declares one below the total
+   * window (e.g. gpt-5: 400k window, 272k input cap). Compaction and other
+   * prompt-budget checks use this in preference to the total window; absent
+   * means the total window is the only known ceiling.
+   */
+  readonly max_input_tokens?: number;
   /**
    * Model accepts message-level tool declarations (`messages[].tools`) — the
    * "dynamically loaded tools" wire feature that clients can drive with

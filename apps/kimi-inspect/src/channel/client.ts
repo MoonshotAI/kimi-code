@@ -7,7 +7,7 @@
  *   const client = createInspectClient({ url: 'http://127.0.0.1:58627' });
  *   await client.core(ISessionIndex).list({});
  *   await client.session('s1').service(ISessionMetadata).read();
- *   await client.session('s1').agent('main').service(IAgentRPCService).getModel();
+ *   await client.session('s1').agent('main').service(IAgentRPCService).cancel({});
  *
  * The `agent-core-v2` service token is the whole key: its type parameter `T`
  * types the returned proxy, and its decorator id (`String(id)`) is the channel

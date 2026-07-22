@@ -213,7 +213,50 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
-  it('materializes uploaded video prompts into cache path tags', async () => {
+  it('rejects a stale file reference without creating the agent or mutating the model', async () => {
+    const id = await createSession(home as string);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'stub',
+      content: [
+        { type: 'text', text: 'look' },
+        { type: 'video', source: { kind: 'file', file_id: 'f_does_not_exist' } },
+      ],
+    });
+    expect(body.code).toBe(40407);
+
+    // The failed request must not have materialized the main agent either.
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('rejects a mis-kinded file reference without creating the agent', async () => {
+    const id = await createSession(home as string);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+
+    // A real upload, but referenced with the wrong media kind.
+    const form = new FormData();
+    form.set('file', new Blob([Buffer.from('%PDF-1.4 fake')], { type: 'application/pdf' }), 'spec.pdf');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
+    expect(uploaded.code).toBe(0);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      model: 'stub',
+      content: [
+        { type: 'text', text: 'watch this' },
+        { type: 'video', source: { kind: 'file', file_id: uploaded.data.id } },
+      ],
+    });
+    expect(body.code).toBe(40001);
+    expect(session!.accessor.get(IAgentLifecycleService).get('main')).toBeUndefined();
+  });
+
+  it('carries an uploaded video into the prompt as an internal kimi-file reference', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const videoBytes = Buffer.from('tiny fake mp4 bytes');
@@ -235,16 +278,24 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(submitted.body.code).toBe(0);
 
-    const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+    // The edge no longer uploads to the provider. The queued prompt reprojects
+    // the video as the file reference it came from — a `{ kind: 'file' }` source
+    // is only ever produced from an internal `kimi-file://` url, so this proves
+    // the enqueued message carries the reference (its materialization path is
+    // never leaked back to the client).
+    const content = submitted.body.data.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
     expect(content[0]).toEqual({ type: 'text', text: 'what happens in this video?' });
-    expect(content[1]?.type).toBe('text');
-    const match = /<video path="([^"]+)"><\/video>/.exec(content[1]?.text ?? '');
-    expect(match).not.toBeNull();
-    const cachePath = match![1]!;
-    expect(cachePath.startsWith(join(home as string, 'cache'))).toBe(true);
-    expect(cachePath.endsWith('.mp4')).toBe(true);
-    expect(await readFile(cachePath)).toEqual(videoBytes);
+    expect(content[1]).toEqual({
+      type: 'video',
+      source: { kind: 'file', file_id: uploaded.data.id },
+    });
+
+    // The `?path=` of that reference points at a materialized copy of the bytes
+    // (written during the submit), which the engine resolver falls back to when
+    // it cannot upload or inline the video.
+    const materialized = join(home as string, 'cache', `${uploaded.data.id}.mp4`);
+    expect(await readFile(materialized)).toEqual(videoBytes);
   });
 
   it('compresses uploaded image prompts into base64 image parts with a readback caption', async () => {

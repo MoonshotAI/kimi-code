@@ -1038,6 +1038,31 @@ describe('OpenAI reasoning_effort path (issue #1616)', () => {
     expect(body).not.toHaveProperty('reasoning_effort');
   });
 
+  it('encodes an explicit off as the configured offEffort for models that reason by default', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'grok-4',
+      apiKey: 'sk-probe',
+      stream: false,
+      offEffort: 'none',
+    });
+
+    const body = await captureOpenAIBody(provider, { thinking: { effort: 'off' } }, THINK_HISTORY);
+
+    expect(body['reasoning_effort']).toBe('none');
+  });
+
+  it('encodes an explicit off as the configured offEffort on the Responses wire', async () => {
+    const provider = new OpenAIResponsesChatProvider({
+      model: 'grok-4',
+      apiKey: 'sk-probe',
+      offEffort: 'none',
+    });
+
+    const body = await captureResponsesBody(provider, { thinking: { effort: 'off' } });
+
+    expect(body['reasoning']).toEqual({ effort: 'none', summary: 'auto' });
+  });
+
   it('disables the auto-enable entirely once a withThinking hook exists (load-bearing)', async () => {
     // A hook that defers (returns undefined) still counts as "a trait took
     // thinking over": the base's history scan must not fire, but an explicit

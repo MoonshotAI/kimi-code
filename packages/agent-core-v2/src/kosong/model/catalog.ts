@@ -85,6 +85,7 @@ export interface Model {
 
   readonly capabilities: ModelCapability;
   readonly maxContextSize: number;
+  readonly maxInputSize?: number;
   readonly maxOutputSize?: number;
   readonly displayName?: string;
   readonly reasoningKey?: string;
