@@ -69,6 +69,12 @@ export interface McpConnectionManagerOptions {
    * built-in default when unset.
    */
   readonly defaultStartupTimeoutMs?: number;
+  /**
+   * Global default single tool-call timeout applied when a server entry does
+   * not set its own `toolTimeoutMs`. Falls back to the client built-in when
+   * unset.
+   */
+  readonly defaultToolTimeoutMs?: number;
 }
 
 export class McpConnectionManager {
@@ -333,7 +339,7 @@ export class McpConnectionManager {
   }
 
   private async createClient(config: McpServerConfig, name: string): Promise<RuntimeMcpClient> {
-    const toolCallTimeoutMs = config.toolTimeoutMs;
+    const toolCallTimeoutMs = config.toolTimeoutMs ?? this.options.defaultToolTimeoutMs;
     if (config.transport === 'stdio') {
       return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
     }

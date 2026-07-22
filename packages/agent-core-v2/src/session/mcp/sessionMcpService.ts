@@ -5,11 +5,11 @@
  * agent), resolves the session + caller-supplied + plugin MCP config, drives
  * the initial connect (`ensureMcpReady`, cached so session creation and first
  * agent creation can both await it), and reports connection telemetry. The
- * manager's global default startup timeout comes from the `[mcp]` config
- * section (`KIMI_MCP_STARTUP_TIMEOUT_MS` / `startup_timeout_ms`); a per-server
- * `startupTimeoutMs` in `mcp.json` still wins. An outright initial-load
- * failure is logged (per-server failures are status entries). Bound at
- * Session scope.
+ * manager's global default startup / tool-call timeouts come from the `[mcp]`
+ * config section (`KIMI_MCP_STARTUP_TIMEOUT_MS` / `startup_timeout_ms` and
+ * `KIMI_MCP_TOOL_TIMEOUT_MS` / `tool_timeout_ms`); the per-server fields in
+ * `mcp.json` still win. An outright initial-load failure is logged
+ * (per-server failures are status entries). Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -64,12 +64,13 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
     const oauthService = new McpOAuthService({
       store: createMcpOAuthStore(this.atomicDocs),
     });
+    const mcpSection = this.config.get<McpSection | undefined>(MCP_SECTION);
     const manager = new McpConnectionManager({
       log: this.log,
       oauthService,
       stdioCwd: this.workspace.workDir,
-      defaultStartupTimeoutMs: this.config.get<McpSection | undefined>(MCP_SECTION)
-        ?.startupTimeoutMs,
+      defaultStartupTimeoutMs: mcpSection?.startupTimeoutMs,
+      defaultToolTimeoutMs: mcpSection?.toolTimeoutMs,
     });
     this.mcpManager = manager;
     this._register({ dispose: () => void manager.shutdown() });

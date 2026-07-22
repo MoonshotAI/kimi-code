@@ -28,6 +28,7 @@ import {
   cwdStdioFixture,
   hangingListStdioFixture,
   slowStdioFixture,
+  slowToolStdioFixture,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';
@@ -411,6 +412,44 @@ describe('McpConnectionManager', () => {
         },
       });
       expect(cm.get('slow')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('applies defaultToolTimeoutMs when the server entry omits toolTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+    try {
+      await cm.connectAll({
+        slowTool: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowToolStdioFixture],
+        },
+      });
+      const client = cm.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      await expect(client.callTool('slow_echo', { text: 'hi' })).rejects.toThrow(/timed out/i);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 15000);
+
+  it('lets a per-server toolTimeoutMs override defaultToolTimeoutMs', async () => {
+    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+    try {
+      await cm.connectAll({
+        slowTool: {
+          transport: 'stdio',
+          command: process.execPath,
+          args: [slowToolStdioFixture],
+          toolTimeoutMs: 10_000,
+        },
+      });
+      const client = cm.resolved('slowTool')?.client;
+      if (client === undefined) throw new Error('expected a connected client');
+      const result = await client.callTool('slow_echo', { text: 'hi' });
+      expect(result.content).toEqual([{ type: 'text', text: 'hi' }]);
     } finally {
       await cm.shutdown();
     }

@@ -85,10 +85,11 @@ omit it. For less common fields (`enabled`, `startupTimeoutMs`,
 truth is `McpServerStdioConfigSchema` / `McpServerHttpConfigSchema` in
 `packages/agent-core/src/config/schema.ts`.
 
-When the user wants to change the connection timeout for *every* server,
-don't write `startupTimeoutMs` into each entry — the global default lives in
-`config.toml` (`[mcp] startup_timeout_ms`) or the
-`KIMI_MCP_STARTUP_TIMEOUT_MS` env var; per-server fields override it.
+When the user wants to change a timeout for *every* server, don't write
+`startupTimeoutMs` / `toolTimeoutMs` into each entry — the global defaults
+live in `config.toml` (`[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms`)
+or the `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` env vars;
+per-server fields override them.
 
 If the user only wants to **see** what's configured, read all three files,
 show a merged view with enough source-path context to inspect or remove a

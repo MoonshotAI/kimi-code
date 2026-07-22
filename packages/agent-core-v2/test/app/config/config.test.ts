@@ -67,6 +67,7 @@ import '#/agent/mcp/configSection';
 import {
   MCP_SECTION,
   MCP_STARTUP_TIMEOUT_ENV,
+  MCP_TOOL_TIMEOUT_ENV,
   type McpSection,
 } from '#/agent/mcp/configSection';
 import { ILogService } from '#/_base/log/log';
@@ -1287,6 +1288,20 @@ describe('mcp config section', () => {
 
     env[MCP_STARTUP_TIMEOUT_ENV] = '7000';
     expect(config.get<McpSection | undefined>(MCP_SECTION)?.startupTimeoutMs).toBe(7000);
+
+    disposables.dispose();
+  });
+
+  it('reads tool_timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[mcp]\ntool_timeout_ms = 60000\n');
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(60000);
+
+    env[MCP_TOOL_TIMEOUT_ENV] = 'abc';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(60000);
+
+    env[MCP_TOOL_TIMEOUT_ENV] = '90000';
+    expect(config.get<McpSection | undefined>(MCP_SECTION)?.toolTimeoutMs).toBe(90000);
 
     disposables.dispose();
   });

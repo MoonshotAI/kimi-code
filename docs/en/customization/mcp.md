@@ -57,7 +57,7 @@ Optional fields:
 | `enabledTools` | `string[]` | All | Tool allowlist |
 | `disabledTools` | `string[]` | All | Tool blocklist |
 
-You do not have to set the connection timeout per server: `[mcp] startup_timeout_ms` in `config.toml` or the `KIMI_MCP_STARTUP_TIMEOUT_MS` environment variable changes the global default. Precedence is: per-server field > environment variable > `config.toml` > built-in default of `30000` milliseconds. See [Configuration files](../configuration/config-files.md#mcp).
+You do not have to set the connection timeout or the single tool-call timeout per server: `[mcp] startup_timeout_ms` / `[mcp] tool_timeout_ms` in `config.toml` or the `KIMI_MCP_STARTUP_TIMEOUT_MS` / `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables change the global defaults. Precedence is: per-server field > environment variable > `config.toml` > built-in default. See [Configuration files](../configuration/config-files.md#mcp).
 
 HTTP and SSE servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
 
