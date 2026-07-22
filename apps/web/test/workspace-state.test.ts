@@ -151,7 +151,6 @@ function createDeps(): UseWorkspaceStateDeps {
     saveHiddenWorkspacesToStorage: vi.fn(),
     goalErrorMessage: vi.fn(),
     basename: (path: string) => path.split('/').at(-1) ?? path,
-    resetFastMoon: vi.fn(),
     initialized: ref(true),
     selectedDiffPath: ref(null),
     fileDiffLines: ref([]),

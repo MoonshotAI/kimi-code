@@ -2,12 +2,13 @@
 <!-- Shiki syntax highlighting for code surfaces: plain content (Write tool
      card) or line-diff rows (Edit tool card). Renders plain text immediately
      and upgrades in place once the lazily-loaded highlighter resolves; unknown
-     languages and highlighter failures stay plain. Themes follow the app
-     colour scheme (github-light / github-dark, same as chat markdown code
-     blocks). Shiki is imported dynamically so its core stays out of the main
-     bundle. -->
+     languages and highlighter failures stay plain. Streaming content updates
+     revalidate throttled WITHOUT clearing the previous tokens, so the block
+     never flashes plain mid-stream. Themes follow the app colour scheme
+     (github-light / github-dark, same as chat markdown code blocks). Shiki is
+     imported dynamically so its core stays out of the main bundle. -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ThemedToken } from 'shiki';
 import { useIsDark } from '@moonshot-ai/web-core';
 import { codeLanguageFromPath } from '../lib/codeLanguage';
@@ -61,21 +62,33 @@ const plainTokens = ref<ThemedToken[][] | null>(null);
 const beforeTokens = ref<ThemedToken[][] | null>(null);
 const afterTokens = ref<ThemedToken[][] | null>(null);
 
+function clearTokens(): void {
+  plainTokens.value = null;
+  beforeTokens.value = null;
+  afterTokens.value = null;
+}
+
+// Re-tokenizing on every streaming delta — and clearing first — flashed the
+// block plain→styled continuously. Throttle instead: the previous tokens stay
+// visible while revalidating (rows beyond them render their current text
+// plain), at most one highlight per interval. A pure debounce is wrong here:
+// the template renders token CONTENTS, so deferring past the stream's end
+// would freeze the visible text mid-stream; the trailing timer always
+// re-reads the latest inputs, so the settled state is the last one painted.
+const HIGHLIGHT_INTERVAL_MS = 200;
+let throttleTimer: ReturnType<typeof setTimeout> | null = null;
+let lastHighlightAt = 0;
+
 // Only the latest request may commit: inputs/theme can change again while an
 // earlier highlight is still in flight.
 let ticket = 0;
 async function highlight(): Promise<void> {
   const mine = ++ticket;
-  const clear = (): void => {
-    plainTokens.value = null;
-    beforeTokens.value = null;
-    afterTokens.value = null;
-  };
+  lastHighlightAt = Date.now();
   const lang = language.value;
-  // Inputs changed: fall back to the CURRENT plain text immediately instead
-  // of showing the previous content's tokens while the new highlight loads.
-  clear();
   if (!lang) {
+    // Unknown language renders plain permanently.
+    if (mine === ticket) clearTokens();
     return;
   }
   try {
@@ -97,12 +110,50 @@ async function highlight(): Promise<void> {
     }
   } catch {
     // Grammar load failure: keep the plain-text fallback.
-    if (mine === ticket) clear();
+    if (mine === ticket) clearTokens();
   }
 }
 
+function scheduleHighlight(): void {
+  if (throttleTimer !== null) return;
+  const wait = Math.max(0, HIGHLIGHT_INTERVAL_MS - (Date.now() - lastHighlightAt));
+  throttleTimer = setTimeout(() => {
+    throttleTimer = null;
+    void highlight();
+  }, wait);
+}
+
+/** The texts actually tokenized — compared BY VALUE. Every streaming delta
+    re-runs messagesToTurns, which rebuilds EVERY turn's tool objects; an
+    identity-based watch would fire for settled blocks dozens of times per
+    second and re-tokenize them for nothing (and before the stale-while-
+    revalidate change, that identity churn was exactly what cleared tokens
+    and flashed settled blocks while OTHER content streamed below). */
+const plainText = computed(() => plainRows.value.join('\n'));
+const diffBefore = computed(() => diffTexts.value?.before ?? null);
+const diffAfter = computed(() => diffTexts.value?.after ?? null);
+
+// Content changes keep the previous tokens while revalidating (no flash) and
+// deliberately do NOT invalidate an in-flight run: killing it on every delta
+// starves commits whenever tokenizing outpaces the stream — the block would
+// freeze on an old snapshot until the stream pauses. A stale commit is
+// bounded to one throttle interval and the next run refreshes it. Only a
+// language/theme change invalidates in-flight work (wrong grammar/colours)
+// and clears immediately.
+watch([plainText, diffBefore, diffAfter], scheduleHighlight);
+watch([language, isDark], () => {
+  ticket++;
+  clearTokens();
+  scheduleHighlight();
+});
+
 onMounted(highlight);
-watch([plainRows, diffTexts, language, isDark], highlight);
+onUnmounted(() => {
+  // In-flight highlights must not commit after unmount.
+  ticket++;
+  if (throttleTimer !== null) clearTimeout(throttleTimer);
+  throttleTimer = null;
+});
 
 /** Tokens for one diff row: deletions read the before text, additions and
     context rows read the after text (same content either way for context).

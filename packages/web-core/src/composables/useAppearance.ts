@@ -1,7 +1,7 @@
-// web-core — appearance preferences (color scheme / UI font size)
-// and the streaming "fast moon" spinner state. Pure local UI state: only
-// touches localStorage + the DOM, never the session state or the API. The
-// values are module-level singletons so the whole app shares one instance.
+// web-core — appearance preferences (color scheme / UI font size). Pure
+// local UI state: only touches localStorage + the DOM, never the session
+// state or the API. The values are module-level singletons so the whole app
+// shares one instance.
 //
 // DOM writes (`documentElement` datasets / theme-color meta) are registered
 // on the FIRST explicit `useAppearance()` call (gated by `started`), never at
@@ -104,68 +104,12 @@ function setUiFontSize(value: number): void {
   storageSet(KEY_UI_FONT_SIZE, String(next));
 }
 
-// CSS handles the moon frames; this only flips the spinner between normal and
-// fast classes when the active session is visibly producing content quickly.
-const MOON_FAST_WINDOW_MS = 600;
-const MOON_FAST_MIN_ELAPSED_MS = 250;
-const MOON_FAST_CHECK_INTERVAL_MS = 250;
-const MOON_FAST_HOLD_MS = 1000;
-const MOON_FAST_CHARS_PER_SECOND = 160;
-
-type MoonSpeedSample = { time: number; chars: number };
-
-const fastMoon = ref(false);
-let moonSpeedSamples: MoonSpeedSample[] = [];
-let moonFastResetTimer: ReturnType<typeof setTimeout> | null = null;
-let lastMoonFastCheckAt = -MOON_FAST_CHECK_INTERVAL_MS;
-
-function resetFastMoon(): void {
-  moonSpeedSamples = [];
-  lastMoonFastCheckAt = -MOON_FAST_CHECK_INTERVAL_MS;
-  fastMoon.value = false;
-  if (moonFastResetTimer !== null) {
-    clearTimeout(moonFastResetTimer);
-    moonFastResetTimer = null;
-  }
-}
-
-function holdFastMoon(): void {
-  fastMoon.value = true;
-  if (moonFastResetTimer !== null) clearTimeout(moonFastResetTimer);
-  moonFastResetTimer = setTimeout(() => {
-    moonFastResetTimer = null;
-    moonSpeedSamples = [];
-    lastMoonFastCheckAt = -MOON_FAST_CHECK_INTERVAL_MS;
-    fastMoon.value = false;
-  }, MOON_FAST_HOLD_MS);
-}
-
-function recordMoonDelta(chars: number): void {
-  if (chars <= 0) return;
-  const now = Date.now();
-  moonSpeedSamples.push({ time: now, chars });
-  const cutoff = now - MOON_FAST_WINDOW_MS;
-  moonSpeedSamples = moonSpeedSamples.filter((s) => s.time >= cutoff);
-
-  if (now - lastMoonFastCheckAt < MOON_FAST_CHECK_INTERVAL_MS) return;
-  lastMoonFastCheckAt = now;
-
-  const oldest = moonSpeedSamples[0]?.time ?? now;
-  const elapsed = Math.max(now - oldest, MOON_FAST_MIN_ELAPSED_MS);
-  const totalChars = moonSpeedSamples.reduce((sum, s) => sum + s.chars, 0);
-  const charsPerSecond = (totalChars / elapsed) * 1000;
-  if (charsPerSecond >= MOON_FAST_CHARS_PER_SECOND) holdFastMoon();
-}
-
 export function useAppearance() {
   startDomSync();
   return {
     colorScheme,
     uiFontSize,
-    fastMoon,
     setColorScheme,
     setUiFontSize,
-    resetFastMoon,
-    recordMoonDelta,
   };
 }

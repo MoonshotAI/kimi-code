@@ -1017,10 +1017,6 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
     }
   }
 
-  if (appEvent.type === 'assistantDelta' && meta.sessionId === rawState.activeSessionId) {
-    appearance.recordMoonDelta((appEvent.delta.text?.length ?? 0) + (appEvent.delta.thinking?.length ?? 0));
-  }
-
   // Prompt-end cleanup. The MAIN agent's turn boundary is the authoritative
   // "the prompt is done" signal: it drives the in-flight/moon cleanup, the
   // queued-message drain, and the completion side effects. The session may
@@ -2850,7 +2846,6 @@ const workspaceState = useWorkspaceState(rawState, {
   saveActiveWorkspaceToStorage,
   saveHiddenWorkspacesToStorage,
   goalErrorMessage,
-  resetFastMoon: appearance.resetFastMoon,
   initialized,
   connectIssue,
   selectedDiffPath,
@@ -3048,7 +3043,6 @@ export function useKimiWebClient() {
     inFlight,
     working,
     isStartingFirstPrompt,
-    fastMoon: appearance.fastMoon,
 
     // Model + Provider reactive state
     models: modelProvider.models,

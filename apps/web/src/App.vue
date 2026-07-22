@@ -821,7 +821,6 @@ function openPr(url: string): void {
       :upload-image="client.uploadImage"
       :working="client.working.value"
       :starting="client.isStartingFirstPrompt.value"
-      :fast-moon="client.fastMoon.value"
       :file-reload-key="client.activeSessionId.value"
       :session-loading="client.sessionLoading.value"
       :compaction="client.compaction.value"

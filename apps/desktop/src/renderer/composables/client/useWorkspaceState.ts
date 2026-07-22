@@ -261,7 +261,6 @@ export interface UseWorkspaceStateDeps {
   saveActiveWorkspaceToStorage: (id: string) => void;
   saveHiddenWorkspacesToStorage: (roots: string[]) => void;
   goalErrorMessage: (err: unknown) => string | undefined;
-  resetFastMoon: () => void;
   initialized: Ref<boolean>;
   /** Diagnostic for the connecting splash, set by checkAuth on transient
    *  failures and cleared once a check gets through. */
@@ -310,7 +309,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     saveActiveWorkspaceToStorage,
     saveHiddenWorkspacesToStorage,
     goalErrorMessage,
-    resetFastMoon,
     initialized,
     connectIssue,
     selectedDiffPath,
@@ -1455,7 +1453,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       writeSessionUrl(sessionId, opts?.urlMode ?? 'push');
       rawState.sessionLoading = !messagesLoaded && !knownEmpty;
       setActiveSessionId(sessionId);
-      resetFastMoon();
       // Opening a session clears its unread dot.
       if (rawState.unreadBySession[sessionId]) {
         rawState.unreadBySession = { ...rawState.unreadBySession, [sessionId]: false };
@@ -1932,9 +1929,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const nextPromptIds = { ...rawState.promptIdBySession };
       delete nextPromptIds[sid];
       rawState.promptIdBySession = nextPromptIds;
-    }
-    if (sid === rawState.activeSessionId) {
-      resetFastMoon();
     }
 
     const mayDrain =

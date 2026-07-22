@@ -128,14 +128,11 @@ watch(
     } else {
       stopTick();
     }
-    // Leaving the live phase folds the body back; pin the head so the
-    // collapsing body doesn't yank the viewport.
+    // Leaving the live phase folds the body back. This auto-fold is not a user
+    // toggle, so it carries no scroll pin: the follow (or native
+    // overflow-anchor off-follow) absorbs the height change.
     if (prev === 'live' && now !== 'live') {
       open.value = false;
-      void nextTick(() => {
-        const el = headEl.value;
-        if (el) pinScroll(el);
-      });
     }
   },
   { immediate: true },

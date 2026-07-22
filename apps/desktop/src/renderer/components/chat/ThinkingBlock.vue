@@ -74,13 +74,29 @@ const elapsedLabel = computed(() => {
   return '';
 });
 
-// Same disclosure pattern as ActivityRun: after toggling, pin the head back into
-// the viewport so collapsing a long body doesn't leave the user stranded.
+// Settled blocks pin the head after toggling (the ConversationPane pin), so
+// collapsing a long body doesn't leave the user stranded. A LIVE block (still
+// streaming) skips the pin instead: it keeps growing on its own, and the
+// follow — or native anchoring off-follow — absorbs the toggle, so expanding
+// mid-stream becomes read-along rather than breaking the follow.
 const pinScroll = inject<(el: HTMLElement, ms?: number) => void>('pinScroll', () => {});
 const headEl = ref<HTMLElement | null>(null);
+const bodyInnerEl = ref<HTMLElement | null>(null);
+
+// Set for a reveal whose content already exceeds the viewport: the 160ms
+// grid-rows transition would streak thousands of px, so the reveal (and its
+// matching collapse) goes instant instead. Recomputed on every expand.
+const instant = ref(false);
 
 function onHeadClick(): void {
+  if (!open.value) {
+    const tall =
+      (bodyInnerEl.value?.scrollHeight ?? 0) >
+      (typeof window !== 'undefined' ? window.innerHeight : 0);
+    instant.value = props.streaming && tall;
+  }
   open.value = !open.value;
+  if (props.streaming) return;
   const el = headEl.value;
   if (el) nextTick(() => pinScroll(el));
 }
@@ -94,8 +110,8 @@ function onHeadClick(): void {
       <span v-if="elapsedLabel" class="think-time">{{ elapsedLabel }}</span>
       <Icon class="think-car" name="chevron-right" size="sm" />
     </button>
-    <div class="think-body" :class="{ open }" :inert="!open">
-      <div class="think-body-inner">
+    <div class="think-body" :class="{ open, instant }" :inert="!open">
+      <div ref="bodyInnerEl" class="think-body-inner">
         <pre class="think-text">{{ text }}</pre>
       </div>
     </div>
@@ -156,8 +172,13 @@ function onHeadClick(): void {
 }
 
 /* While streaming the label breathes (opacity only — the design system bans
-   gradient shimmer text); reduced-motion keeps it static. */
-.streaming .think-title {
+   gradient shimmer text); reduced-motion keeps it static. The `.streaming`
+   class must be pinned to the think root itself: with a bare descendant
+   selector (`.streaming .think-title`), scoped CSS only attaches the data-v
+   attribute to `.think-title`, so ANY ancestor carrying `streaming` (e.g.
+   TurnFold's root while its turn streams) would make EVERY completed thinking
+   row inside breathe too. */
+.think.streaming .think-title {
   animation: think-breathe 1.6s var(--ease-in-out) infinite;
 }
 @keyframes think-breathe {
@@ -170,7 +191,7 @@ function onHeadClick(): void {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .streaming .think-title {
+  .think.streaming .think-title {
     animation: none;
   }
 }
@@ -191,6 +212,11 @@ function onHeadClick(): void {
   grid-template-rows: minmax(0, 0fr);
   overflow: hidden;
   transition: grid-template-rows var(--duration-base) var(--ease-out);
+}
+/* Instant reveal (see onHeadClick): skip the transition so a very tall live
+   body doesn't streak thousands of px across the viewport. */
+.think-body.instant {
+  transition: none;
 }
 .think-body.open {
   grid-template-rows: minmax(0, 1fr);

@@ -62,7 +62,6 @@ const props = defineProps<{
   /** True while the empty-composer first prompt is being created + submitted.
    *  Drives the empty-session "starting conversation…" loading state. */
   starting?: boolean;
-  fastMoon?: boolean;
   /** Mobile shell: compact chrome. */
   mobile?: boolean;
   /** True while switching sessions and the turns array is not yet loaded. */
@@ -260,6 +259,11 @@ function resolveAgentTaskId(toolCallId: string): string | undefined {
   return undefined;
 }
 provide('resolveAgentTaskId', resolveAgentTaskId);
+// Only manual toggles on SETTLED rows call this: the row is pinned while its
+// body transition runs, breaking the bottom follow on purpose; the follow
+// state is re-decided from real geometry once the pin settles (see
+// settleAfterPin). Live (streaming/running) rows skip the pin — the follow
+// absorbs their growth as read-along.
 provide('pinScroll', pinScrollFor);
 const todoDoneCount = computed(() => (props.todos ?? []).filter((td) => td.status === 'done').length);
 // The goal rides the dock as one more work pill, so it keeps the workbar (and
@@ -362,6 +366,20 @@ function updateActiveTocQuery(): void {
     if (top <= paneMiddle) bestId = id;
   });
   activeTurnId.value = bestId ?? items[0]!.id;
+}
+
+let activeTocRaf = 0;
+
+// Scroll events fire faster than once per frame; merge the O(N) anchor
+// measurement into a single run per frame (same raf pattern as
+// scheduleTocTableHitTest). One-shot callers (watchers, mount) invoke
+// updateActiveTocQuery directly.
+function scheduleActiveTocUpdate(): void {
+  if (activeTocRaf) return;
+  activeTocRaf = raf(() => {
+    activeTocRaf = 0;
+    updateActiveTocQuery();
+  });
 }
 
 // --- TOC occlusion by wide tables -------------------------------------------
@@ -587,26 +605,71 @@ function onPanesScroll(): void {
     showPill.value = false;
   }
   lastScrollTop = top;
-  updateActiveTocQuery();
+  scheduleActiveTocUpdate();
 }
 
 function scrollToBottom(smooth = false): void {
   const el = panesRef.value;
   following.value = true;
   showPill.value = false;
+  // A newer scroll writer supersedes a pending TOC settle correction.
+  cancelTocSettleCorrection();
   if (!el) return;
   // A smooth scroll (e.g. right after sending a message) needs time to play;
   // skip instant jumps during the guard window so the streaming follow doesn't
   // immediately snap to the bottom and cancel the animation.
   if (!smooth && performance.now() < smoothScrollUntil) return;
-  if (smooth && typeof el.scrollTo === 'function') {
-    lastSmoothScroll = performance.now();
-    smoothScrollUntil = performance.now() + SMOOTH_SCROLL_GUARD_MS;
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  if (smooth) {
+    smoothScrollToBottom();
   } else {
     el.scrollTop = el.scrollHeight;
   }
   lastScrollTop = el.scrollTop;
+}
+
+let smoothRaf = 0;
+
+// raf-driven smooth scroll: the target is re-read from scrollHeight every
+// frame, so streaming growth during the animation still lands on the true
+// bottom (a one-shot scrollTo would freeze the target at click time).
+function smoothScrollToBottom(ms = 320): void {
+  const el = panesRef.value;
+  if (!el) return;
+  // A previous animation may still be running (e.g. rapid consecutive
+  // submits): its loop would survive cancelActiveScrollWrites (which only
+  // holds the latest handle) and keep dragging the viewport to the bottom.
+  if (smoothRaf) {
+    cancelRaf(smoothRaf);
+    smoothRaf = 0;
+  }
+  // The CSS reduced-motion rules can't reach a JS-driven scroll — honor the
+  // preference here by landing on the bottom instantly instead of animating.
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.scrollTop = el.scrollHeight;
+    lastScrollTop = el.scrollTop;
+    return;
+  }
+  const start = el.scrollTop;
+  const t0 = performance.now();
+  lastSmoothScroll = t0;
+  smoothScrollUntil = t0 + ms + SMOOTH_SCROLL_GUARD_MS;
+  const tick = () => {
+    smoothRaf = 0;
+    const p = Math.min(1, (performance.now() - t0) / ms);
+    const ease = 1 - Math.pow(1 - p, 3);
+    el.scrollTop = start + (el.scrollHeight - start) * ease;
+    lastScrollTop = el.scrollTop;
+    if (p < 1) {
+      smoothRaf = raf(tick);
+    } else {
+      // The guard exists to protect the in-flight animation from instant
+      // follow writes; lift it the moment the animation completes so the
+      // follow resumes on the very next change instead of stalling until the
+      // guard's tail expires.
+      smoothScrollUntil = 0;
+    }
+  };
+  smoothRaf = raf(tick);
 }
 
 type ScrollAnchor = { kind: 'turn' | 'tool'; id: string; top: number };
@@ -730,6 +793,21 @@ function attrEscape(value: string): string {
   return value.replaceAll(/["\\]/g, '\\$&');
 }
 
+// content-visibility: auto estimates off-screen message heights, so the smooth
+// scrollIntoView lands on an estimated position that drifts as real layouts
+// replace the estimates. Re-measure once the animation has settled (~480ms)
+// and correct to the real position; cancelled when the user takes over
+// scrolling (any wheel/touch input, a scrollbar grab, or a newer scroll
+// writer — see cancelTocSettleCorrection's call sites).
+let tocSettleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelTocSettleCorrection(): void {
+  if (tocSettleTimer !== null) {
+    clearTimeout(tocSettleTimer);
+    tocSettleTimer = null;
+  }
+}
+
 function scrollToTurn(turnId: string): void {
   const el = panesRef.value;
   if (!el) return;
@@ -739,6 +817,16 @@ function scrollToTurn(turnId: string): void {
   following.value = false;
   showPill.value = distanceFromBottom() > BOTTOM_THRESHOLD;
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  cancelTocSettleCorrection();
+  tocSettleTimer = setTimeout(() => {
+    tocSettleTimer = null;
+    const el2 = panesRef.value;
+    const t2 = el2?.querySelector<HTMLElement>(`.turn-anchor[data-turn-id="${attrEscape(turnId)}"]`);
+    if (!el2 || !t2) return;
+    const delta = (t2.getBoundingClientRect().top + t2.offsetHeight / 2)
+      - (el2.getBoundingClientRect().top + el2.clientHeight / 2);
+    if (Math.abs(delta) > 48) el2.scrollTop += delta;
+  }, 480);
 }
 
 function currentLayoutKey(): string {
@@ -762,32 +850,66 @@ function cancelRaf(id: number): void {
 }
 
 // --- Scroll anchoring for expand/collapse interactions ----------------------
-// Toggling a tool row/group grows or shrinks its body, which would otherwise move
-// the viewport: a collapse near the bottom shrinks scrollHeight and lets the
-// browser clamp scrollTop, and the auto-follow may snap to the tail. While the
-// transition runs we pin the toggled row's viewport position and suppress the
-// auto-follow, so the row stays put and only its body opens downward / collapses
-// upward.
+// A manual toggle on a SETTLED row (tool / thinking / fold) always pins the
+// row's viewport position while its grid-rows transition runs, so the row
+// stays put and only its body opens downward / collapses upward. Pinning
+// deliberately breaks the bottom follow: an expanding body pushes the tail
+// out of view. The follow state is re-decided from real geometry once the pin
+// settles — the bottom back within reach resumes the follow (and hides the
+// new-message pill); otherwise the pane stays unfollowed with the pill
+// visible. Two kinds of toggles never pin: automatic folds (turn/activity
+// settle) and LIVE rows (a streaming thinking / a streaming activity run) —
+// those keep growing on their own, so the follow (read-along) or the native
+// overflow-anchor off-follow absorbs them. (Tool rows always pin: their
+// bodies are height-bounded — OutputPanel caps at 12 lines — so a pin never
+// fights unbounded growth, and a tool parked on an approval is static.)
 let pinUntil = 0;
 let pinRaf = 0;
 let pinEl: HTMLElement | null = null;
 let pinTargetTop = 0;
+// Reactive twin of the pin window for the pane's `is-pinned` class: breaking
+// the follow drops `is-following`, which would re-enable native overflow
+// anchoring mid-pin and let the browser's anchor fight the pin loop.
+const pinActive = ref(false);
 
 function isPinned(): boolean {
   return performance.now() < pinUntil;
 }
 
-function pinScrollFor(el: HTMLElement, ms = 260): void {
+// The default window matches the --duration-base (160ms) fold transition, with
+// 40ms of slack.
+function pinScrollFor(el: HTMLElement, ms = 200): void {
   const panes = panesRef.value;
   if (!panes) return;
+  // A history restore owns the scroll while older messages prepend.
+  if (historyLoadInProgress.value) return;
+  // Clean slate: stop queued follow writers, any in-flight smooth scroll and
+  // a previous pin (a cancelled pin never settles — the newer writer owns the
+  // scroll state). Also clears the user-action follow lock: the toggle is the
+  // newer intent.
+  cancelActiveScrollWrites();
+  // Breaking the follow is the point of the pin: the body opening downward
+  // pushes the tail out of view. settleAfterPin() re-decides the state.
+  following.value = false;
   pinEl = el;
   pinTargetTop = el.getBoundingClientRect().top;
   pinUntil = performance.now() + ms;
+  pinActive.value = true;
   if (pinRaf) return;
   const tick = () => {
     pinRaf = 0;
-    if (performance.now() >= pinUntil || !pinEl) {
+    // Cancelled — another writer owns the scroll state; never settle.
+    if (!pinEl) return;
+    // The follow resumed externally (e.g. a new submit) — yield, no settle.
+    if (following.value) {
       pinEl = null;
+      pinActive.value = false;
+      return;
+    }
+    if (performance.now() >= pinUntil) {
+      pinEl = null;
+      pinActive.value = false;
+      settleAfterPin();
       return;
     }
     const delta = pinEl.getBoundingClientRect().top - pinTargetTop;
@@ -795,6 +917,23 @@ function pinScrollFor(el: HTMLElement, ms = 260): void {
     pinRaf = raf(tick);
   };
   pinRaf = raf(tick);
+}
+
+// The transition has run out; re-decide the follow state from real geometry.
+// The bottom back within reach (e.g. a collapse pulled the tail back up)
+// resumes the follow and hides the pill; anything else keeps the pane
+// unfollowed with the pill visible. Resuming the follow deliberately does NOT
+// snap to the bottom: an instant jump right after the user's click reads as a
+// glitch — the next follow trigger (a streaming delta / a resize) glues the
+// tail on its own cadence, and a quiet transcript needs no scroll at all.
+function settleAfterPin(): void {
+  if (distanceFromBottom() <= BOTTOM_THRESHOLD) {
+    following.value = true;
+    showPill.value = false;
+  } else {
+    following.value = false;
+    showPill.value = true;
+  }
 }
 
 function scheduleStableFollow(maxFrames = 36): void {
@@ -1072,6 +1211,12 @@ function cancelActiveScrollWrites(): void {
   cancelScheduledFollow();
   pinUntil = 0;
   pinEl = null;
+  pinActive.value = false;
+  if (smoothRaf) {
+    cancelRaf(smoothRaf);
+    smoothRaf = 0;
+  }
+  cancelTocSettleCorrection();
 
   if (el) {
     const top = el.scrollTop;
@@ -1111,15 +1256,11 @@ function nestedScrollerCanMoveUp(event: Event): boolean {
 }
 
 function onPanesWheel(event: WheelEvent): void {
-  if (
-    event.defaultPrevented ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.deltaY >= 0 ||
-    nestedScrollerCanMoveUp(event)
-  ) {
-    return;
-  }
+  if (event.defaultPrevented || event.ctrlKey || event.shiftKey) return;
+  // Any wheel input takes over from a pending TOC settle correction — not
+  // just the upward scroll that also breaks the follow below.
+  cancelTocSettleCorrection();
+  if (event.deltaY >= 0 || nestedScrollerCanMoveUp(event)) return;
   stopFollowingForUserIntent();
 }
 
@@ -1142,6 +1283,8 @@ function onPanesTouchStart(event: TouchEvent): void {
 
 function onPanesTouchMove(event: TouchEvent): void {
   const y = event.touches.length === 1 ? event.touches[0]!.clientY : null;
+  // Any deliberate touch-drag takes over from a pending TOC settle correction.
+  cancelTocSettleCorrection();
   // The finger moving down means the scroll container is moving up.
   if (
     y !== null &&
@@ -1311,7 +1454,10 @@ onUnmounted(() => {
   if (scrollRaf) cancelRaf(scrollRaf);
   if (stableFollowRaf) cancelRaf(stableFollowRaf);
   if (pinRaf) cancelRaf(pinRaf);
+  if (smoothRaf) cancelRaf(smoothRaf);
   if (tocHitTestRaf) cancelRaf(tocHitTestRaf);
+  if (activeTocRaf) cancelRaf(activeTocRaf);
+  if (tocSettleTimer !== null) clearTimeout(tocSettleTimer);
   if (abortToastTimer !== null) clearTimeout(abortToastTimer);
   if (copyConversationCopiedTimer !== null) {
     clearTimeout(copyConversationCopiedTimer);
@@ -1403,6 +1549,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :class="{
           'is-following': following,
           'history-prepending': historyLoadInProgress,
+          'is-pinned': pinActive,
         }"
         @scroll.passive="onPanesScroll"
         @wheel.passive="onPanesWheel"
@@ -1540,7 +1687,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :questions="questions"
               :turn-active="turnActive"
               :working="working"
-              :fast-moon="fastMoon"
               :session-loading="sessionLoading"
               :compaction="compaction"
               :has-more-messages="hasMoreMessages"
@@ -1686,7 +1832,10 @@ defineExpose({ loadComposerForEdit, focusComposer });
 }
 
 .panes.is-following,
-.panes.history-prepending {
+.panes.history-prepending,
+/* While a row pin owns scrollTop, native anchoring must not join in (the
+   follow — and its is-following class — is off for the pin's duration). */
+.panes.is-pinned {
   overflow-anchor: none;
 }
 

@@ -73,8 +73,6 @@ const props = withDefaults(
      * transcript and gates "edit & resend" on the last user message.
      */
     working?: boolean;
-    /** Switches the CSS-only working moon to the faster visual cadence. */
-    fastMoon?: boolean;
     /**
      * True while the session turns are being fetched (e.g. after switching to
      * a historical session). Shows a lightweight loading placeholder instead of
@@ -119,7 +117,6 @@ const props = withDefaults(
     questions: () => [],
     turnActive: false,
     working: false,
-    fastMoon: false,
     compaction: null,
     hasMoreMessages: false,
     loadingMore: false,
@@ -790,7 +787,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
          unfinished prompt (covers a page refresh mid-stream, where the
          optimistic submit flag was lost but the main turn is still in flight). -->
     <div v-if="showWorking" class="sending-placeholder">
-      <MoonSpinner :fast="fastMoon" />
+      <MoonSpinner />
     </div>
 
     <!-- Inline queue — pending user messages shown after the running turn.

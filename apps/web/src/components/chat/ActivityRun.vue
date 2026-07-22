@@ -108,9 +108,9 @@ const seededStartMs = computed<number | null>(() => {
 
 // Settle quiet: once every item in the run has finished (the stream moved
 // past it), fold back to the summary row — even if the user expanded it
-// mid-run (the thinking block's vocabulary). Pin the head so the collapsing
-// body doesn't yank the viewport. A settled → running transition (the stream
-// appending another step to this same run) reopens the row.
+// mid-run (the thinking block's vocabulary). This auto-fold is not a user
+// toggle, so it carries no scroll pin. A settled → running transition (the
+// stream appending another step to this same run) reopens the row.
 watch(
   runStatus,
   (status, prev, onCleanup) => {
@@ -129,8 +129,6 @@ watch(
       open.value = false;
       if (startedMs.value !== null) settledDurationMs.value = Date.now() - startedMs.value;
       startedMs.value = null;
-      const el = headEl.value;
-      if (el) nextTick(() => pinScroll(el));
     }
   },
   { immediate: true },
@@ -138,6 +136,9 @@ watch(
 
 function toggle(): void {
   open.value = !open.value;
+  // A streaming run keeps growing on its own — no pin: the follow (or native
+  // anchoring off-follow) absorbs the toggle (same rule as ThinkingBlock).
+  if (props.streaming) return;
   const el = headEl.value;
   if (el) nextTick(() => pinScroll(el));
 }

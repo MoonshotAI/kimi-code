@@ -5,11 +5,9 @@
 <script setup lang="ts">
 const MOON_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
 const MOON_FRAME_MS = 120;
-const MOON_FAST_FRAME_MS = 60;
 
 withDefaults(defineProps<{
   size?: 'sm' | 'md' | 'lg';
-  fast?: boolean;
   label?: string;
 }>(), {
   size: 'md',
@@ -19,7 +17,6 @@ withDefaults(defineProps<{
 function moonFrameStyle(index: number): Record<string, string> {
   return {
     '--moon-frame-delay': `${index * MOON_FRAME_MS}ms`,
-    '--moon-frame-fast-delay': `${index * MOON_FAST_FRAME_MS}ms`,
   };
 }
 </script>
@@ -27,7 +24,7 @@ function moonFrameStyle(index: number): Record<string, string> {
 <template>
   <span
     class="ui-moon"
-    :class="[`ui-moon--${size}`, { 'ui-moon--fast': fast }]"
+    :class="`ui-moon--${size}`"
     :aria-label="label"
     role="img"
   >
@@ -66,10 +63,6 @@ function moonFrameStyle(index: number): Record<string, string> {
   animation-timing-function: steps(1, end);
   animation-iteration-count: infinite;
   animation-delay: var(--moon-frame-delay);
-}
-.ui-moon--fast .ui-moon__frame {
-  animation-duration: 480ms;
-  animation-delay: var(--moon-frame-fast-delay);
 }
 
 @keyframes ui-moon-frame {
