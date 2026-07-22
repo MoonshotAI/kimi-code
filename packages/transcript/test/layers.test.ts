@@ -11,7 +11,7 @@ import {
   transcriptQuerySchema,
   transcriptResponseSchema,
   transcriptGradeSpecSchema,
-} from '#/wire/schema';
+} from '#/contract/schema';
 import type { TranscriptItem } from '#/model/item';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
@@ -220,7 +220,7 @@ describe('ViewRegistry', () => {
   });
 });
 
-describe('wire schemas', () => {
+describe('contract schemas', () => {
   it('roundtrips every op kind', () => {
     const ops: TranscriptOperation[] = [
       { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], meta: {}, hasMoreOlder: true } },

@@ -126,7 +126,7 @@ export function groupMessagesIntoSnapshot(
               : source.kind === 'file'
                 ? { kind: 'file', fileId: source.file_id }
                 : undefined,
-          // base64 bytes are deliberately dropped — never shipped on the wire.
+          // base64 bytes are deliberately dropped — never shipped to clients.
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);

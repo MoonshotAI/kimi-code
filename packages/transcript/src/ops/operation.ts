@@ -27,9 +27,9 @@ import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 
-/** Turn header as carried on the wire: steps always arrive via step.upsert. */
+/** Turn header as carried in ops: steps always arrive via step.upsert. */
 export type TurnHeader = Omit<TranscriptTurn, 'steps'>;
-/** Step header as carried on the wire: frames always arrive via frame.upsert. */
+/** Step header as carried in ops: frames always arrive via frame.upsert. */
 export type StepHeader = Omit<TranscriptStep, 'frames'>;
 
 export interface ResetOp {
@@ -103,7 +103,7 @@ export interface InteractionUpsertOp {
 
 /**
  * Attachment entity upsert — global, addressed by id. Media bytes never
- * travel the wire; the entity carries metadata plus a fetch reference.
+ * travel in ops; the entity carries metadata plus a fetch reference.
  */
 export interface AttachmentUpsertOp {
   readonly op: 'attachment.upsert';

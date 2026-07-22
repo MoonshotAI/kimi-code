@@ -7,8 +7,8 @@
  * envelope `payload` shapes: flat events carrying their own `type`
  * discriminant, mirroring how core domain events sit in the envelope.
  *
- * Delivery contract (server-side): every transcript frame is `volatile: true`
- * with the current durable watermark as the envelope `seq` — frames are never
+ * Delivery contract (server-side): every transcript event is `volatile: true`
+ * with the current durable watermark as the envelope `seq` — events are never
  * journaled into the durable log and never advance its seq. Reliability comes
  * from the transcript layer's own op-batch sequence (the payload `seq` —
  * consecutive per agent, see `transcriptSeqSchema`): sequenced servers keep a
@@ -43,7 +43,7 @@ export const transcriptEventSchema = z.discriminatedUnion('type', [
 
 /**
  * The TS event shapes live on the domain model (readonly), NOT on zod output
- * (mutable, purely structural) — the schemas above validate wire frames, the
+ * (mutable, purely structural) — the schemas above validate WS payloads, the
  * types below are what server and client code actually exchange.
  */
 export interface TranscriptResetEvent {

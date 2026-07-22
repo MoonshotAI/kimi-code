@@ -7,7 +7,7 @@
  *
  * `getItems()` is a self-consistent snapshot at any moment: states held here
  * are always whole (text blocks carry their full text so far); deltas exist
- * only as ops on the wire. Snapshots are copy-on-write, so a previously
+ * only as ops in transit. Snapshots are copy-on-write, so a previously
  * returned array/object is never mutated by later applies.
  */
 

@@ -192,7 +192,7 @@ export const modesMetaSchema = z.object({
   swarm: z.object({ trigger: z.string().optional() }).optional(),
 });
 
-/** `meta.merge` wire shape: a mode key set to `null` clears that badge. */
+/** `meta.merge` contract shape: a mode key set to `null` clears that badge. */
 export const modesMetaMergeSchema = z.object({
   plan: z
     .object({ reviewPath: z.string().optional(), version: z.number().optional() })
@@ -354,7 +354,7 @@ export const transcriptSinceSchema = z.record(
 // ---------------------------------------------------------------- REST
 
 /**
- * `GET /v1/sessions/{session_id}/transcript` wire shape, owned by this
+ * `GET /v1/sessions/{session_id}/transcript` contract shape, owned by this
  * package: `agent_id` (required) + turn cursor (`before_turn` / `after_turn`,
  * mutually exclusive) + `page_size` (default 20, max 100). The page unit is
  * the turn (contiguous turn slice plus segment markers/taskrefs); `tasks`,
@@ -442,7 +442,7 @@ export const transcriptUserMessageSchema = z.object({
 });
 
 /**
- * `GET /v1/sessions/{session_id}/transcript/user-messages` wire shape:
+ * `GET /v1/sessions/{session_id}/transcript/user-messages` contract shape:
  * per-agent user messages (agents are separate transcripts — user input is
  * each agent's own). `agent_id` optional on the query: present reads one
  * agent, absent reads every rostered agent. `attachments` carries the
