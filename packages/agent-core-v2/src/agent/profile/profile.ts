@@ -15,6 +15,7 @@
 
 import type { AgentProfile, AgentProfileContext } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/kosong/contract/capability';
+import type { Message } from '#/kosong/contract/message';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelRequestParams } from '#/kosong/model/modelRequester';
 
@@ -147,6 +148,11 @@ export interface IAgentProfileService {
   isRunnable(): boolean;
   hasProvider(): boolean;
   getSystemPrompt(): string;
+  /**
+   * Request-time user fragments (time fringe, AGENTS.md, listings, skills).
+   * Prefixed onto history at LLM request assembly; not part of context memory.
+   */
+  getBaselineContextMessages(): readonly Message[];
   getActiveToolNames(): readonly string[] | undefined;
   addActiveTool(name: string): void;
   removeActiveTool(name: string): void;

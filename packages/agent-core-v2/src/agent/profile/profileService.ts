@@ -87,6 +87,8 @@ import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
 import { IEventBus } from '#/app/event/eventBus';
 import { prepareSystemPromptContext } from './context';
+import { baselineMessagesForContext, skillActiveFor } from '#/app/agentProfileCatalog/profile-shared';
+import type { Message } from '#/kosong/contract/message';
 import type {
   ApplyProfileOptions,
   BindAgentInput,
@@ -156,6 +158,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   private activeProfile: ResolvedAgentProfile | undefined;
+  private baselineContextMessages: readonly Message[] = [];
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -221,6 +224,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
     this.activeProfile = undefined;
     this.activeToolNamesOverlay = undefined;
+    this.baselineContextMessages = [];
     this.wire.dispatch(
       profileBind({
         cwd: snapshot.cwd,
@@ -277,6 +281,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const currentProfileName = this.profileName;
     const systemPrompt = profile.systemPrompt(context);
     this.activeProfile = profile;
+    this.baselineContextMessages = baselineMessagesForContext(context, {
+      skillActive: skillActiveFor(profile.tools ?? []),
+    });
     this.cacheAgentsMdWarning(context);
 
     const thinkingLevel = this.resolveThinkingEffort(
@@ -359,6 +366,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
+    this.baselineContextMessages = baselineMessagesForContext(context, {
+      skillActive: skillActiveFor(profile.tools ?? []),
+    });
     this.update({
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
@@ -391,6 +401,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       return;
     }
     this.activeProfile = profile;
+    this.baselineContextMessages = baselineMessagesForContext(context, {
+      skillActive: skillActiveFor(profile.tools ?? []),
+    });
     this.update({
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
@@ -482,6 +495,10 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   getSystemPrompt(): string {
     return this.systemPrompt;
+  }
+
+  getBaselineContextMessages(): readonly Message[] {
+    return this.baselineContextMessages;
   }
 
   getActiveToolNames(): readonly string[] | undefined {

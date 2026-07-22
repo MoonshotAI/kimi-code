@@ -137,6 +137,7 @@ interface TurnRequestConfig {
   readonly resolved: ProfileModelContext;
   readonly params: ModelRequestParams;
   readonly systemPrompt: string;
+  readonly baselineContextMessages: readonly Message[];
 }
 
 export class AgentLLMRequesterService implements IAgentLLMRequesterService {
@@ -545,7 +546,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     });
     const requester = this.modelCatalog.getRequester(resolved.modelAlias);
 
-    const messages = overrides.messages ?? this.context.get();
+    const history = overrides.messages ?? this.context.get();
+    const baseline =
+      turnConfig?.baselineContextMessages ?? this.profile.getBaselineContextMessages();
+    const messages =
+      baseline.length === 0 ? [...history] : [...baseline, ...history];
     return {
       requester,
       model: requester.model,
@@ -554,7 +559,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
       tools: [...(overrides.tools ?? this.defaultTools())],
-      messages: [...messages],
+      messages,
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };
@@ -575,6 +580,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         resolved: this.profile.resolveModelContext(),
         params: this.profile.resolveRequestParams(),
         systemPrompt: this.profile.getSystemPrompt(),
+        baselineContextMessages: this.profile.getBaselineContextMessages(),
       };
       this.turnConfigs.set(turnId, snapshot);
     }
