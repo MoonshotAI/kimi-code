@@ -19,6 +19,9 @@ export function getMainWindow(): BrowserWindow | null {
     click): un-minimize + show + focus when it exists (including hidden via
     hide-on-close); recreate it after a real destroy. */
 export function showMainWindow(): void {
+  // Cancel a deferred full-screen hide scheduled by the close handler: the
+  // explicit re-show is the fresher intent and wins.
+  pendingFullscreenHide = false;
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -57,6 +60,12 @@ function installQuitWatch(): void {
 export function markQuitting(): void {
   isQuitting = true;
 }
+
+// Deferred hide scheduled by the close handler for a full-screen window (the
+// hide only fires once the leave-full-screen transition settles — see
+// createWindow). Cleared by showMainWindow: a re-show during the transition
+// cancels the stale close intent.
+let pendingFullscreenHide = false;
 
 /** Close-button policy: hide instead of destroy on macOS, unless quitting. */
 export function shouldHideOnClose(platform: NodeJS.Platform, quitting: boolean): boolean {
@@ -284,7 +293,18 @@ export function createWindow(): void {
       event.preventDefault();
       // A detached DevTools window would linger on screen after the hide.
       if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
-      win.hide();
+      // Hiding a full-screen window would leave a black space behind (macOS)
+      // — exit full-screen first, hide once the transition settles.
+      if (win.isFullScreen()) {
+        pendingFullscreenHide = true;
+        win.setFullScreen(false);
+        win.once('leave-full-screen', () => {
+          if (pendingFullscreenHide && !win.isDestroyed()) win.hide();
+          pendingFullscreenHide = false;
+        });
+      } else {
+        win.hide();
+      }
     }
   });
   win.on('closed', () => {

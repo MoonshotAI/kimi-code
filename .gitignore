@@ -8,6 +8,7 @@ resources-stage
 coverage
 .vite
 .kimi-code/local.toml
+.tmp/
 .ci-signing/
 .env
 mac_keys
