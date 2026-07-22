@@ -9,6 +9,7 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
+  type ToolCallContent,
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
@@ -217,13 +218,15 @@ describe('buildPermissionToolCallUpdate (Phase 5.1 minimal shape)', () => {
   it('prefixes the toolCallId with the turnId when one is known', () => {
     const update = buildPermissionToolCallUpdate(42, baseReq);
     expect(update.toolCallId).toBe('42:abc');
-    expect(update.title).toBe('Bash');
+    expect(update.title).toBe('ls -la');
+    expect(update.kind).toBe('execute');
+    expect(update.rawInput).toEqual({ command: 'ls -la' });
   });
 
   it('falls back to the raw SDK toolCallId when no turnId is tracked yet', () => {
     const update = buildPermissionToolCallUpdate(undefined, baseReq);
     expect(update.toolCallId).toBe('abc');
-    expect(update.title).toBe('Bash');
+    expect(update.title).toBe('ls -la');
   });
 });
 
@@ -296,7 +299,22 @@ describe('AcpSession ↔ requestPermission bridge (end-to-end via wire)', () => 
       REJECT_OPTION_ID,
     ]);
     expect(req.toolCall.toolCallId).toBe(`${turnId}:tc-1`);
-    expect(req.toolCall.title).toBe('Bash');
+    expect(req.toolCall.title).toBe('echo hi');
+    expect(req.toolCall.kind).toBe('execute');
+    expect(req.toolCall.rawInput).toEqual({ command: 'echo hi' });
+    expect(req.toolCall.content).toHaveLength(2);
+    const [command, action] = req.toolCall.content as [
+      ToolCallContent,
+      ToolCallContent,
+    ];
+    expect(command).toEqual({
+      type: 'content',
+      content: { type: 'text', text: 'echo hi' },
+    });
+    expect(action).toEqual({
+      type: 'content',
+      content: { type: 'text', text: 'Requesting approval to run command' },
+    });
 
     // Settle the parked prompt with a turn.ended so the test exits
     // cleanly.
