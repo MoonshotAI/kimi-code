@@ -289,6 +289,24 @@ const {
   closeOpenSidePanel,
 } = useDetailPanel({ client, sideWidth, detailTarget, closeFilePreview });
 
+// Right-panel resize: --preview-w is owned IMPERATIVELY, never via a :style
+// binding. Vue rewrites every bound style key on each patch (runtime-dom's
+// patchStyle has no unchanged-value skip), so a bound --preview-w would let
+// any unrelated mid-drag re-render clobber the live width with the stale
+// pre-drag value. The watch applies the committed width on mount / panel
+// remount / non-drag changes; during a drag the handle's applyLive writes
+// each frame's width straight to the aside, and previewWidth commits once on
+// pointerup (which this watch then re-applies).
+const previewPanelEl = ref<HTMLElement | null>(null);
+function applyPreviewWidthLive(width: number): void {
+  previewPanelEl.value?.style.setProperty('--preview-w', `${width}px`);
+}
+watch(
+  [previewPanelEl, previewPanelWidth],
+  ([el, w]) => el?.style.setProperty('--preview-w', `${w}px`),
+  { immediate: true },
+);
+
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
 
@@ -707,7 +725,6 @@ function openPr(url: string): void {
         'sidebar-collapsed': sidebarCollapsed && !isMobile,
         'macos-desktop': isMacosDesktop,
       }"
-      :style="{ '--preview-w': previewPanelWidth + 'px' }"
       :inert="showOnboarding"
     >
     <!-- Desktop navigation: workspace rail + resizable session column. -->
@@ -898,6 +915,7 @@ function openPr(url: string): void {
       :max="previewMax"
       reverse
       :aria-label="t('layout.resizePreviewAria')"
+      :apply-live="applyPreviewWidthLive"
       @update:width="previewWidth = $event"
       @update:dragging="panelDragging = $event"
     />
@@ -909,6 +927,7 @@ function openPr(url: string): void {
          zero-width empty shell. -->
     <aside
       v-if="!isMobile || sidePanelVisible"
+      ref="previewPanelEl"
       class="global-preview"
       :class="{ open: sidePanelVisible, mobile: isMobile, 'no-anim': panelDragging || panelSwitching }"
       role="complementary"
@@ -1148,7 +1167,6 @@ function openPr(url: string): void {
   box-sizing: border-box;
 }
 .app {
-  --preview-w: 460px;
   flex: 1;
   min-height: 0;
   position: relative;
@@ -1251,7 +1269,12 @@ function openPr(url: string): void {
 /* The right-side panel column: a permanent grid item whose width animates
    0 ↔ var(--preview-w). The CONTENT keeps a fixed width (and carries the
    left hairline) so it clips during the transition instead of reflowing. */
+/* --preview-w lives on this element (set inline), NOT on the .app root:
+   a custom property change invalidates every inheriting descendant's style,
+   so scoping it here keeps resize-drag style recalculation inside the panel
+   subtree instead of spanning the whole app. */
 .global-preview {
+  --preview-w: 460px;
   grid-column: 5;
   min-width: 0;
   min-height: 0;

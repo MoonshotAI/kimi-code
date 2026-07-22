@@ -3,8 +3,16 @@
 // width value, clamps it to [min, max], persists it to localStorage, and wires
 // up pointer events (pointerdown/move/up with capture, no text-selection while
 // dragging). Used by the sidebar session column drag handle.
+//
+// Drag performance: pointermove can fire well above display rate, so width
+// updates are coalesced into one per animation frame, and localStorage is
+// written once when the drag ends — not per move event.
+//
+// The resize cursor is directional: at the eastward/westward limit it shows
+// w-resize/e-resize (the direction that still has an effect) instead of the
+// neutral col-resize.
 
-import { onBeforeUnmount, ref, toValue, type MaybeRefOrGetter, type Ref } from 'vue';
+import { computed, onBeforeUnmount, ref, toValue, type MaybeRefOrGetter, type Ref } from 'vue';
 import { safeGetString, safeSetString } from '../lib/storage';
 
 export interface UseResizableOptions {
@@ -19,6 +27,12 @@ export interface UseResizableOptions {
   max: MaybeRefOrGetter<number>;
   /** True when dragging right should shrink the controlled width. */
   reverse?: boolean;
+  /** Optional live applier for drag frames. When set, each animation frame
+   *  calls it with the latest clamped width INSTEAD of updating the `width`
+   *  ref — the caller writes straight to the DOM, keeping Vue re-renders out
+   *  of the per-frame loop. The ref (and localStorage) commit once on drag
+   *  end, so `update:width` watchers only fire then. */
+  applyLive?: (width: number) => void;
 }
 
 export interface UseResizable {
@@ -26,6 +40,9 @@ export interface UseResizable {
   width: Ref<number>;
   /** True while a drag is in progress. */
   dragging: Ref<boolean>;
+  /** Cursor reflecting the directions that still resize: col-resize mid-range,
+   *  w-resize/e-resize at the eastward/westward limit. */
+  cursor: Ref<string>;
   /** Clamp a value to [min, max]. */
   clamp: (value: number) => number;
   /** Set the width (clamped + persisted). */
@@ -54,7 +71,7 @@ function writeStored(key: string, value: number): void {
 }
 
 export function useResizable(options: UseResizableOptions): UseResizable {
-  const { storageKey, defaultWidth, min, max, reverse = false } = options;
+  const { storageKey, defaultWidth, min, max, reverse = false, applyLive } = options;
 
   function clamp(value: number): number {
     if (!Number.isFinite(value)) return defaultWidth;
@@ -63,6 +80,32 @@ export function useResizable(options: UseResizableOptions): UseResizable {
 
   const width = ref<number>(clamp(readStored(storageKey) ?? defaultWidth));
   const dragging = ref(false);
+
+  // The cursor names the direction that still has an effect: at the eastward
+  // limit only westward dragging resizes (w-resize), and vice versa. `reverse`
+  // flips which direction grows the width.
+  function cursorFor(w: number): string {
+    const atMin = w <= min;
+    const atMax = w >= toValue(max);
+    if (atMin && atMax) return 'col-resize'; // no room to move at all
+    if (atMax) return reverse ? 'e-resize' : 'w-resize';
+    if (atMin) return reverse ? 'w-resize' : 'e-resize';
+    return 'col-resize';
+  }
+
+  // Live drag width, non-null only while dragging. Drives the cursor (and the
+  // handle bound to it) even on the applyLive path, where `width` stays put
+  // until drag end — an element's own cursor style always beats what it would
+  // inherit from <body>, so the handle's binding must track the drag itself.
+  const dragWidth = ref<number | null>(null);
+  const cursor = computed(() => cursorFor(dragWidth.value ?? width.value));
+
+  // Drag cursor on the body: elements without their own cursor style inherit
+  // it, so the resize cursor still follows the pointer off the handle.
+  function setDragCursor(w: number): void {
+    if (typeof document === 'undefined') return;
+    document.body.style.cursor = cursorFor(w);
+  }
 
   function setWidth(value: number): void {
     const next = clamp(value);
@@ -76,16 +119,56 @@ export function useResizable(options: UseResizableOptions): UseResizable {
   let startWidth = 0;
   let activeEl: HTMLElement | null = null;
   let activePointerId = -1;
+  // Latest pointer position and the frame its update is scheduled on.
+  let latestClientX = 0;
+  let rafId = 0;
+  // Last clamped drag width; the applyLive path commits it to the ref on
+  // drag end, so it is tracked even while the ref stays untouched.
+  let latestDragWidth = 0;
+
+  // Applies the latest drag position. Deliberately skips localStorage — that
+  // is written once in endDrag, not per frame. With applyLive set, the width
+  // goes straight to the DOM and the ref keeps its pre-drag value.
+  function applyDragWidth(): void {
+    rafId = 0;
+    if (!dragging.value) return;
+    const delta = latestClientX - startX;
+    latestDragWidth = clamp(startWidth + (reverse ? -delta : delta));
+    dragWidth.value = latestDragWidth; // keep the handle's cursor live
+    // Track the limit mid-drag: hitting it flips the cursor to the one
+    // direction that still resizes.
+    setDragCursor(latestDragWidth);
+    if (applyLive) applyLive(latestDragWidth);
+    else width.value = latestDragWidth;
+  }
 
   function onPointerMove(event: PointerEvent): void {
     if (!dragging.value) return;
-    const delta = event.clientX - startX;
-    setWidth(startWidth + (reverse ? -delta : delta));
+    latestClientX = event.clientX;
+    if (rafId !== 0) return; // a frame with the newest position is already pending
+    if (typeof requestAnimationFrame !== 'function') {
+      applyDragWidth(); // no rAF (non-DOM environment) — update synchronously
+      return;
+    }
+    rafId = requestAnimationFrame(applyDragWidth);
   }
 
   function endDrag(): void {
     if (!dragging.value) return;
+    if (rafId !== 0) {
+      cancelAnimationFrame(rafId);
+      // Commit the position the pointer was released at, not the last frame's.
+      applyDragWidth();
+    }
     dragging.value = false;
+    if (applyLive) {
+      // The live path kept the ref (and Vue) out of the per-frame loop —
+      // commit the final width once, now that the drag is over.
+      setWidth(latestDragWidth);
+    } else {
+      writeStored(storageKey, width.value);
+    }
+    dragWidth.value = null; // cursor falls back to the committed width
     if (typeof document !== 'undefined') {
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
@@ -112,13 +195,14 @@ export function useResizable(options: UseResizableOptions): UseResizable {
     // or a side panel opens). Clamp the drag start so the handle responds
     // immediately instead of first covering an invisible delta.
     startWidth = clamp(width.value);
+    latestDragWidth = startWidth;
     activeEl = event.currentTarget as HTMLElement;
     activePointerId = event.pointerId;
     // Suppress text selection / show a resize cursor for the whole drag.
     if (typeof document !== 'undefined') {
       document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'col-resize';
     }
+    setDragCursor(startWidth);
     try {
       activeEl.setPointerCapture(activePointerId);
     } catch {
@@ -131,5 +215,5 @@ export function useResizable(options: UseResizableOptions): UseResizable {
 
   onBeforeUnmount(endDrag);
 
-  return { width, dragging, clamp, setWidth, onPointerDown };
+  return { width, dragging, cursor, clamp, setWidth, onPointerDown };
 }

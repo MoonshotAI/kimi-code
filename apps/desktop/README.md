@@ -53,7 +53,7 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 - `src/renderer/` — web UI 副本（构建源）。`pet.html` 与 `pet/` 是 desktop 专属的桌宠入口，
   不属于 web 快照，整目录 re-copy 同步时必须保留（见 `docs/native-todos.md`）。
 - `vite.renderer.config.ts` — renderer 构建配置。
-- 主进程测试在 `tests/main/`，renderer 测试与源码同目录。
+- 主进程测试在 `tests/main/`，renderer 测试在 `tests/renderer/`（早期用例仍有与源码同目录的，新测试一律进 `tests/renderer/`）。
 
 ## 开发
 

@@ -1,8 +1,9 @@
 <!-- apps/web/src/components/ResizeHandle.vue -->
 <!-- A thin (~4px) vertical drag bar used to resize the panel to its LEFT. It -->
 <!-- owns the width via useResizable and reports changes through v-model:width so -->
-<!-- the parent can drive its grid/flex sizing. col-resize cursor, subtle blue -->
-<!-- hover highlight, no text-selection while dragging. -->
+<!-- the parent can drive its grid/flex sizing. Directional resize cursor (at a -->
+<!-- drag limit it hints the one direction that still works), subtle blue hover -->
+<!-- highlight, no text-selection while dragging. -->
 <script setup lang="ts">
 import { watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -16,6 +17,11 @@ const props = withDefaults(
     max: number;
     reverse?: boolean;
     ariaLabel?: string;
+    /** Optional live applier: while dragging, each frame calls it with the
+        clamped width INSTEAD of emitting update:width (which then fires once
+        on pointerup). Lets the parent write straight to the DOM and skip a
+        Vue re-render per frame. */
+    applyLive?: (width: number) => void;
   }>(),
   {},
 );
@@ -29,7 +35,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const { width, dragging, onPointerDown } = useResizable({
+const { width, dragging, cursor, onPointerDown } = useResizable({
   storageKey: props.storageKey,
   defaultWidth: props.defaultWidth,
   min: props.min,
@@ -37,6 +43,7 @@ const { width, dragging, onPointerDown } = useResizable({
   // after the handle mounts and the next drag will use the new limit.
   max: () => props.max,
   reverse: props.reverse,
+  applyLive: props.applyLive,
 });
 
 // Surface the restored width immediately, then keep the parent in sync on drag.
@@ -49,6 +56,7 @@ watch(dragging, (d) => emit('update:dragging', d));
   <div
     class="rh"
     :class="{ dragging }"
+    :style="{ cursor }"
     role="separator"
     aria-orientation="vertical"
     :aria-label="ariaLabel ?? t('layout.resizeHandleAria')"
@@ -62,7 +70,6 @@ watch(dragging, (d) => emit('update:dragging', d));
 .rh {
   width: 4px;
   flex: none;
-  cursor: col-resize;
   position: relative;
   align-self: stretch;
   background: transparent;
