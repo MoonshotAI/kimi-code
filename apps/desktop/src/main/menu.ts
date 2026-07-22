@@ -2,7 +2,7 @@ import { app, dialog, Menu, shell } from 'electron';
 import type { MenuItem, MenuItemConstructorOptions } from 'electron';
 
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
-import { connect, serverLogPath } from './connect';
+import { connect } from './connect';
 import { togglePetVisibility } from './pet';
 import { requestUpdateCheck, requestUpdateDownload } from './updater';
 import { IPC } from './ipc-channels';
@@ -25,6 +25,7 @@ interface MenuStrings {
   quitApp: string;
   settings: string;
   checkForUpdates: string;
+  retryConnection: string;
   updateCheckTitle: string;
   updateAvailable: string;
   updateLatest: string;
@@ -49,6 +50,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     quitApp: '退出 Kimi Code',
     settings: '设置…',
     checkForUpdates: '检查更新…',
+    retryConnection: '重试连接',
     updateCheckTitle: '检查更新',
     updateAvailable: '发现新版本 {version},可立即下载更新。',
     updateLatest: '当前已是最新版本。',
@@ -71,6 +73,7 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     quitApp: 'Quit Kimi Code',
     settings: 'Settings…',
     checkForUpdates: 'Check for Updates…',
+    retryConnection: 'Retry Connection',
     updateCheckTitle: 'Check for Updates',
     updateAvailable: 'Version {version} is available.',
     updateLatest: "You're on the latest version.",
@@ -310,7 +313,7 @@ export function menuTemplate(
       { type: 'separator' },
       {
         id: 'retry-connection',
-        label: '重试连接',
+        label: strings.retryConnection,
         click: () => {
           // Forward to the renderer (4.5) in addition to the main-process retry.
           sendToRenderer(IPC.menuAction, 'retry-connection');
@@ -320,12 +323,6 @@ export function menuTemplate(
           } else {
             createWindow();
           }
-        },
-      },
-      {
-        label: '打开服务日志',
-        click: () => {
-          void shell.openPath(serverLogPath());
         },
       },
       { type: 'separator' },

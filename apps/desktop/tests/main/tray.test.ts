@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import {
   asTrayAttention,
+  dockBadgeText,
   trayAttentionItemLabel,
   trayAttentionSummary,
   trayAttentionTitle,
@@ -114,6 +115,19 @@ describe('trayAttentionTitle', () => {
 
   it('is empty when nothing pends (icon-only menu bar)', () => {
     expect(trayAttentionTitle(attention())).toBe('');
+  });
+});
+
+describe('dockBadgeText', () => {
+  it('shows the total pending count', () => {
+    expect(dockBadgeText(attention({ unread: 1 }))).toBe('1');
+    expect(dockBadgeText(attention({ approvals: 2 }))).toBe('2');
+    expect(dockBadgeText(attention({ questions: 1 }))).toBe('1');
+    expect(dockBadgeText(attention({ unread: 3, approvals: 2, questions: 1 }))).toBe('6');
+  });
+
+  it('is empty when nothing needs attention', () => {
+    expect(dockBadgeText(attention())).toBe('');
   });
 });
 

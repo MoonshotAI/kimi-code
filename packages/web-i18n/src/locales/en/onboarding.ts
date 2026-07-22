@@ -3,14 +3,14 @@ export default {
   back: 'Back',
   skip: 'Skip',
   welcome: {
-    title: 'Welcome to KIMI Code',
+    title: 'Welcome to Kimi Code',
     subtitle: 'The AI coding workbench for professional developers',
     languageLabel: 'Language',
     themeLabel: 'Appearance',
   },
   login: {
     title: 'Configure Model',
-    subtitle: 'Choose the model service that powers KIMI Code. You can change it later in Settings',
+    subtitle: 'Choose the model service that powers Kimi Code. You can change it later in Settings',
     kimiTitle: 'Sign in with Kimi',
     kimiHint: 'Ready out of the box with Kimi membership benefits',
     recommended: 'Recommended',

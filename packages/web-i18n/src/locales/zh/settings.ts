@@ -1,5 +1,6 @@
 export default {
   title: '设置',
+  internalTest: '内部测试',
   close: '关闭 (Esc)',
   tabs: {
     general: '通用',

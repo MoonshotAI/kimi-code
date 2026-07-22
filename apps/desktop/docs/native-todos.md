@@ -163,6 +163,13 @@
   - 测试：`tests/main/preload.test.ts`（白名单 + webUtils 路径/空串/抛错三态断言）；`tests/renderer/nativeWorkspaceDrop.test.ts`（13 用例：桥探测三态、启发式含 text/plain 排除、提取只收目录、去重、null 过滤、桥缺省/抛错）。
 
 
+## 共享组件 UI 分叉
+
+- **侧边栏 Settings「内部测试」badge（desktop production only）**
+  - 实现：`Sidebar.vue` 底部设置按钮在 desktop 生产包显示黄色 `Badge`（`variant="warning" size="sm"`），文案 `settings.internalTest`；条件为 `isDesktop && import.meta.env.PROD`，dev 与 web 均不显示。
+  - **web 刻意移除**：`apps/web/src/components/Sidebar.vue` 不渲染该 badge、不 import `Badge`；其余 Settings 按钮样式（`.btn-settings-label`）两端保持一致。
+  - 整目录 re-copy 同步时需保留 desktop 侧的分叉块（badge import + 模板 + `.btn-settings-badge` 样式）。
+
 ## 已原生化的（不用动）
 
 - 深色模式同步：renderer → `kimi:theme` → `nativeTheme.themeSource`

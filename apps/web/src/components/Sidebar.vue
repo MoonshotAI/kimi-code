@@ -979,7 +979,7 @@ onBeforeUnmount(() => {
       <div class="side-footer" :class="{ 'side-footer--shadowed': sessionsCanScrollDown }">
         <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
           <Icon name="settings" />
-          <span>{{ t('settings.title') }}</span>
+          <span class="btn-settings-label">{{ t('settings.title') }}</span>
         </button>
       </div>
 
@@ -1434,7 +1434,7 @@ onBeforeUnmount(() => {
 .btn-settings:hover { background: var(--sb-hover); }
 .btn-settings:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .btn-settings svg { flex: none; }
-.btn-settings span {
+.btn-settings-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

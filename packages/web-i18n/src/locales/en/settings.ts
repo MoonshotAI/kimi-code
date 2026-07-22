@@ -1,5 +1,6 @@
 export default {
   title: 'Settings',
+  internalTest: 'Internal Test',
   close: 'Close (Esc)',
   tabs: {
     general: 'General',

@@ -3,7 +3,7 @@ export default {
   back: '上一步',
   skip: '跳过',
   welcome: {
-    title: '欢迎使用 KIMI Code',
+    title: '欢迎使用 Kimi Code',
     subtitle: '为专业开发者打造的 AI 编程工作台',
     languageLabel: '语言',
     themeLabel: '外观',

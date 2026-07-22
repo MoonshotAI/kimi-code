@@ -164,6 +164,15 @@ export function trayAttentionTitle(attention: TrayAttention): string {
   return total > 0 ? String(total) : '';
 }
 
+/** Dock badge text: the total pending count as a string while anything needs
+ *  attention, empty string otherwise. Electron's Dock badge on macOS shows
+ *  numeric strings as a count and non-numeric strings as a dot; we use the
+ *  count so the user can see how much activity is waiting. */
+export function dockBadgeText(attention: TrayAttention): string {
+  const total = attention.unread + attention.approvals + attention.questions;
+  return total > 0 ? String(total) : '';
+}
+
 // --- localization -------------------------------------------------------------
 //
 // The renderer's vue-i18n owns en/zh; the main process has no i18n runtime, so
@@ -346,6 +355,9 @@ function renderTray(): void {
     const title = trayAttentionTitle(lastAttention);
     tray.setTitle(app.isPackaged ? title : `dev${title}`, { fontType: 'monospacedDigit' });
   }
+  // Dock badge (macOS only — app.dock is undefined on Windows/Linux). A red
+  // dot appears while any attention is pending and is cleared when caught up.
+  app.dock?.setBadge(dockBadgeText(lastAttention));
   const summary = trayAttentionSummary(lastAttention, locale);
   tray.setToolTip(summary === '' ? 'Kimi Code' : `Kimi Code — ${summary}`);
   tray.setContextMenu(buildTrayMenu(trayActions, lastAttention, locale));

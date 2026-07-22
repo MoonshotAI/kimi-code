@@ -30,9 +30,9 @@ import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import UpdateIndicator from './UpdateIndicator.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import PinnedSessionList from './PinnedSessionList.vue';
-import { isMacosDesktop } from '../lib/desktopFlag';
+import { isDesktop, isMacosDesktop } from '../lib/desktopFlag';
 import { resolvedBindingKeys } from '../composables/useShortcuts';
-import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
+import { Badge, Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -42,6 +42,7 @@ const { t } = useI18n();
 // proxy forwards to — click it to switch presets without restarting Vite. In
 // production this is all inert.
 const isDev = import.meta.env.DEV;
+const isProd = import.meta.env.PROD;
 const devBackend = ref<DevBackendState | null>(isDev ? initialDevBackendState() : null);
 if (isDev) {
   onMounted(async () => {
@@ -972,7 +973,8 @@ onBeforeUnmount(() => {
       <div class="side-footer" :class="{ 'side-footer--shadowed': sessionsCanScrollDown }">
         <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
           <Icon name="settings" />
-          <span>{{ t('settings.title') }}</span>
+          <span class="btn-settings-label">{{ t('settings.title') }}</span>
+          <Badge v-if="isDesktop && isProd" class="btn-settings-badge" variant="warning" size="sm">{{ t('settings.internalTest') }}</Badge>
         </button>
       </div>
 
@@ -1427,10 +1429,14 @@ onBeforeUnmount(() => {
 .btn-settings:hover { background: var(--sb-hover); }
 .btn-settings:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .btn-settings svg { flex: none; }
-.btn-settings span {
+.btn-settings-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.btn-settings-badge {
+  margin-left: var(--space-2);
+  flex: none;
 }
 
 /* Section label — heads the workspace list below the action buttons. Aligns
