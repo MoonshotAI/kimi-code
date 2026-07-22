@@ -58,6 +58,15 @@ export interface HistoryMessage {
   readonly toolCallId?: string;
   readonly isError?: boolean;
   readonly origin?: { readonly kind: string };
+  readonly startedAt?: number;
+  readonly endedAt?: number;
+  readonly turnId?: number;
+}
+
+export interface HistoryTurnSpan {
+  readonly turnId: number;
+  readonly startedAt?: number;
+  readonly endedAt?: number;
 }
 
 interface TurnDraft {
@@ -67,12 +76,16 @@ interface TurnDraft {
   prompt?: string;
   attachmentIds?: string[];
   steps: StepDraft[];
+  startedAt?: number;
+  endedAt?: number;
 }
 
 interface StepDraft {
   stepId: string;
   ordinal: number;
   frames: TranscriptFrame[];
+  startedAt?: number;
+  endedAt?: number;
 }
 
 /** Origins whose content is context, not display — folded away, not shown. */
@@ -99,6 +112,7 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
+  turnSpans: readonly HistoryTurnSpan[] = [],
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
@@ -106,6 +120,7 @@ export function groupMessagesIntoSnapshot(
   /** Next turn ordinal — 0-based, matching the engine's live turn numbering. */
   let nextOrdinal = 0;
   let markerCount = 0;
+  const turnSpanById = new Map(turnSpans.map((span) => [span.turnId, span]));
 
   /** Media parts of a turn-opening user message → attachment entities (+ ids). */
   const collectAttachments = (message: HistoryMessage): string[] | undefined => {
@@ -153,7 +168,11 @@ export function groupMessagesIntoSnapshot(
     return turn;
   };
 
-  const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
+  const startTurn = (
+    origin: TurnOrigin,
+    prompt?: string,
+    attachmentIds?: string[],
+  ): TurnDraft => {
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
     turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
@@ -199,11 +218,18 @@ export function groupMessagesIntoSnapshot(
 
     if (message.role === 'assistant') {
       const current = ensureTurn();
+      const span = message.turnId === undefined ? undefined : turnSpanById.get(message.turnId);
+      current.startedAt = earliestTime(current.startedAt, span?.startedAt);
+      current.startedAt = earliestTime(current.startedAt, message.startedAt);
+      current.endedAt = latestTime(current.endedAt, span?.endedAt);
+      current.endedAt = latestTime(current.endedAt, message.endedAt);
       const stepOrdinal = current.steps.length + 1;
       const step: StepDraft = {
         stepId: `${current.turnId}.${stepOrdinal}`,
         ordinal: stepOrdinal,
         frames: [],
+        startedAt: message.startedAt,
+        endedAt: message.endedAt,
       };
       current.steps.push(step);
       let frameCount = 0;
@@ -246,6 +272,7 @@ export function groupMessagesIntoSnapshot(
           error: message.isError ? output : undefined,
         };
         replaceToolFrame(turn!, message.toolCallId!, patched);
+        turn!.endedAt = latestTime(turn!.endedAt, message.endedAt ?? message.startedAt);
         syncTurnItem(items, turn!);
       }
     }
@@ -338,15 +365,33 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
     origin: draft.origin,
     prompt: draft.prompt,
     attachmentIds: draft.attachmentIds,
+    startedAt: epochMsToIso(draft.startedAt),
+    endedAt: epochMsToIso(draft.endedAt),
     steps: draft.steps.map((step) => ({
       kind: 'step' as const,
       stepId: step.stepId,
       turnId: draft.turnId,
       ordinal: step.ordinal,
       state: 'completed' as const,
+      startedAt: epochMsToIso(step.startedAt),
+      endedAt: epochMsToIso(step.endedAt),
       frames: step.frames,
     })),
   };
+}
+
+function latestTime(current: number | undefined, candidate: number | undefined): number | undefined {
+  if (candidate === undefined) return current;
+  return current === undefined ? candidate : Math.max(current, candidate);
+}
+
+function earliestTime(current: number | undefined, candidate: number | undefined): number | undefined {
+  if (candidate === undefined) return current;
+  return current === undefined ? candidate : Math.min(current, candidate);
+}
+
+function epochMsToIso(value: number | undefined): string | undefined {
+  return value === undefined || !Number.isFinite(value) ? undefined : new Date(value).toISOString();
 }
 
 /** Re-project the (mutated) draft into the items array, preserving identity of slots. */

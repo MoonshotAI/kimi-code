@@ -505,8 +505,14 @@ export class TranscriptService {
         ? records.slice(firstPromptIndex)
         : []
       : records;
-    const messages = reduceContextTranscript(visibleRecords).entries;
-    return groupMessagesIntoSnapshot(messages);
+    const history = reduceContextTranscript(visibleRecords);
+    const messages = history.entries.map((message, index) => ({
+      ...message,
+      startedAt: history.times[index],
+      endedAt: history.endedTimes[index],
+      turnId: history.turnIds[index],
+    }));
+    return groupMessagesIntoSnapshot(messages, history.turnSpans);
   }
 
   /** Dispose the live store + binding for a session (session closed / server shutdown). */

@@ -244,19 +244,26 @@ export class AgentTranscriptProjector {
   private onTurnEnded(event: {
     turnId: number;
     reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+    durationMs?: number;
   }): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
     const turnId = `t${event.turnId}`;
+    const endedAtMs = Date.now();
+    const endedAt = epochMsToIso(endedAtMs);
     // Defensive: a step left running is closed with the turn (the normal path
     // closes it via `turn.step.completed` / `turn.step.interrupted` first).
     if (this.currentStep !== undefined && this.currentStep.state === 'running') {
-      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: nowIso() };
+      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt };
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId: step.turnId, step });
     }
     const prev = this.currentTurn?.turnId === turnId ? this.currentTurn : undefined;
     const state = mapTurnEndState(event.reason);
+    const startedAt =
+      event.durationMs === undefined
+        ? prev?.startedAt
+        : epochMsToIso(endedAtMs - Math.max(0, event.durationMs));
     this.currentTurn = {
       kind: 'turn',
       turnId,
@@ -264,8 +271,8 @@ export class AgentTranscriptProjector {
       state,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
-      startedAt: prev?.startedAt,
-      endedAt: nowIso(),
+      startedAt,
+      endedAt,
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     this.currentStep = undefined;
