@@ -1381,7 +1381,13 @@ export class TUI extends Container {
 			if (!debugRedraw) return;
 			const logPath = path.join(os.homedir(), ".pi", "agent", "pi-debug.log");
 			const msg = `[${new Date().toISOString()}] fullRender: ${reason} (prev=${this.previousLines.length}, new=${newLines.length}, height=${height})\n`;
-			fs.appendFileSync(logPath, msg);
+
+			try {
+				fs.mkdirSync(path.dirname(logPath), { recursive: true });
+				fs.appendFileSync(logPath, msg);
+			} catch {
+				// never let debug logging break rendering
+			}
 		};
 
 		// First render - just output everything without clearing (assumes clean screen)
@@ -1606,8 +1612,7 @@ export class TUI extends Container {
 		buffer += "\x1b[?2026l"; // End synchronized output
 
 		if (process.env['PI_TUI_DEBUG'] === "1") {
-			const debugDir = "/tmp/tui";
-			fs.mkdirSync(debugDir, { recursive: true });
+			const debugDir = path.join(os.tmpdir(), "tui");
 			const debugPath = path.join(debugDir, `render-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
 			const debugData = [
 				`firstChanged: ${firstChanged}`,
@@ -1631,7 +1636,13 @@ export class TUI extends Container {
 				"=== buffer ===",
 				JSON.stringify(buffer),
 			].join("\n");
-			fs.writeFileSync(debugPath, debugData);
+
+			try {
+				fs.mkdirSync(debugDir, { recursive: true });
+				fs.writeFileSync(debugPath, debugData);
+			} catch {
+				//never let debug logging break rendering.
+			}
 		}
 
 		// Write entire buffer at once
