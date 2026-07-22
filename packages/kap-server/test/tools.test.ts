@@ -21,6 +21,7 @@ import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
   ISessionLifecycleService,
+  ISessionToolPolicy,
   IModelCatalog,
   type ExecutableTool,
 } from '@moonshot-ai/agent-core-v2';
@@ -46,6 +47,7 @@ interface ToolWire {
   input_schema: unknown;
   source: string;
   mcp_server_id?: string;
+  active?: boolean;
 }
 
 describe('server-v2 /api/v1 tools + mcp', () => {
@@ -180,7 +182,8 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       const echo = tools.find((t) => t.name === 'Echo');
       // v1 parity: `input_schema` is always null on the wire, even though v2's
       // registry carries the real JSON schema (`parameters`).
-      expect(echo).toMatchObject({ source: 'builtin', input_schema: null });
+      // With no gate in play every tool is `active: true` (v2 extension).
+      expect(echo).toMatchObject({ source: 'builtin', input_schema: null, active: true });
       expect(echo?.mcp_server_id).toBeUndefined();
 
       const skill = tools.find((t) => t.name === 'MySkill');
@@ -200,6 +203,24 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       );
       expect(body.code).toBe(0);
       expect(listToolsResponseSchema.safeParse(body.data).success).toBe(true);
+    });
+
+    it('marks tools denied by the session tool policy as inactive', async () => {
+      const id = await createSession();
+      await ensureMainAgent(id);
+
+      // Set the session-scope denylist directly: this harness's model catalog is
+      // a throwing stub, so the REST prompt path (which requires a bound profile)
+      // is unavailable here. The composed gate read by the route is the same.
+      const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+      if (session === undefined) throw new Error(`session ${id} not found`);
+      await session.accessor.get(ISessionToolPolicy).setDisabledTools(['Bash']);
+
+      const { body } = await getJson<{ tools: ToolWire[] }>(`/api/v1/tools?session_id=${id}`);
+      expect(body.code).toBe(0);
+      const tools = listToolsResponseSchema.parse(body.data).tools;
+      expect(tools.find((t) => t.name === 'Bash')).toMatchObject({ active: false });
+      expect(tools.find((t) => t.name === 'Read')).toMatchObject({ active: true });
     });
 
     it('rejects an empty session_id with 40001', async () => {

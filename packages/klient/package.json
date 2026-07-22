@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/klient",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Kimi client SDK — contract-driven facade over agent-core-v2, routable over ipc or in-memory transports.",
   "license": "MIT",

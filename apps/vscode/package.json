@@ -3,7 +3,7 @@
   "publisher": "moonshot-ai",
   "displayName": "Kimi Code",
   "description": "Official Kimi Code plugin for VS Code",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -84,7 +84,11 @@
         "kimi.editorContext": {
           "type": "string",
           "default": "never",
-          "enum": ["never", "onConversationStart", "onFileChange"],
+          "enum": [
+            "never",
+            "onConversationStart",
+            "onFileChange"
+          ],
           "enumDescriptions": [
             "Never share editor context",
             "Share once when conversation starts",

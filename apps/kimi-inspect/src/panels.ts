@@ -272,8 +272,6 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
         input: 'Steps',
         run: (svc, n) => call(svc, 'undoHistory', { count: Number(n) }),
       },
-      { label: 'beginCompaction', run: (svc) => call(svc, 'beginCompaction', {}) },
-      { label: 'clearContext', danger: true, run: (svc) => call(svc, 'clearContext', {}) },
     ],
   },
 ];

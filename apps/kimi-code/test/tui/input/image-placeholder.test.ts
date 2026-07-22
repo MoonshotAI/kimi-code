@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
@@ -40,16 +41,17 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'kimi-src-'));
 }
 
-type TextPart = { type: 'text'; text: string };
+type VideoUrlPart = { type: 'video_url'; videoUrl: { url: string } };
 
+// Prompt-attached videos are emitted as a `video_url` part whose url is a
+// local `file://` reference to the cache copy; decode it back to a filesystem
+// path for assertions.
 function videoPathFromParts(parts: unknown[]): string {
-  const text = parts
-    .filter((p): p is TextPart => (p as TextPart).type === 'text')
-    .map((p) => p.text)
-    .join('');
-  const m = /<video path="([^"]+)"><\/video>/.exec(text);
-  if (!m) throw new Error(`no video tag found in: ${text}`);
-  return m[1]!;
+  const part = parts.find(
+    (p): p is VideoUrlPart => (p as VideoUrlPart).type === 'video_url',
+  );
+  if (!part) throw new Error(`no video_url part found in: ${JSON.stringify(parts)}`);
+  return fileURLToPath(part.videoUrl.url);
 }
 
 describe('extractMediaAttachments', () => {
@@ -135,26 +137,27 @@ describe('extractMediaAttachments', () => {
     });
   });
 
-  it('escapes media paths in generated tags', () => {
+  it('keeps the video label (including special chars) in the cache path', () => {
     const { cleanup } = setupTempCache();
     const srcDir = makeTempDir();
     try {
       const srcVideo = join(srcDir, 'source.mp4');
       writeFileSync(srcVideo, 'x');
       const store = new ImageAttachmentStore();
-      // The filename drives the cache label; `&` must be escaped in the attribute.
+      // The filename drives the cache label; `&` is a valid path char the cache
+      // copy keeps verbatim (the engine escapes it if it later renders a tag).
       const att = store.addVideo('video/mp4', srcVideo, 'a&b.mp4');
       const r = extractMediaAttachments(att.placeholder, store);
       expect(r.parts).toHaveLength(1);
-      const text = (r.parts[0] as TextPart).text;
-      expect(text).toMatch(/<video path="[^"]+a&amp;b\.mp4"><\/video>/);
+      expect((r.parts[0] as VideoUrlPart).type).toBe('video_url');
+      expect(videoPathFromParts(r.parts).endsWith('a&b.mp4')).toBe(true);
     } finally {
       cleanup();
       rmSync(srcDir, { recursive: true, force: true });
     }
   });
 
-  it('copies video placeholders into the cache and emits cache-path tags', () => {
+  it('copies video placeholders into the cache and emits a file:// video_url part', () => {
     const { cleanup } = setupTempCache();
     const srcDir = makeTempDir();
     try {
@@ -165,8 +168,11 @@ describe('extractMediaAttachments', () => {
       const r = extractMediaAttachments(att.placeholder, store);
       expect(r.hasMedia).toBe(true);
       expect(r.videoAttachmentIds).toEqual([1]);
+      const part = r.parts[0] as VideoUrlPart;
+      expect(part.type).toBe('video_url');
+      expect(part.videoUrl.url.startsWith('file:')).toBe(true);
       const cachePath = videoPathFromParts(r.parts);
-      // The tag points at the cache, not the original source path.
+      // The part points at the cache copy, not the original source path.
       expect(cachePath.startsWith(getCacheDir())).toBe(true);
       expect(cachePath).not.toBe(srcVideo);
       expect(readFileSync(cachePath, 'utf8')).toBe('video-data');

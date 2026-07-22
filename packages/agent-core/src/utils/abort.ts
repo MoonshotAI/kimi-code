@@ -59,7 +59,7 @@ export function linkAbortSignal(source: AbortSignal, target: AbortController): (
   };
 }
 
-function abortReason(signal: AbortSignal): Error {
+export function abortReason(signal: AbortSignal): Error {
   if (signal.reason instanceof Error && !isDefaultAbortReason(signal.reason)) {
     return signal.reason;
   }

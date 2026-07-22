@@ -1135,7 +1135,18 @@ export class KimiTUI {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    const extraction = extractMediaAttachments(text, this.imageStore);
+    let extraction: ReturnType<typeof extractMediaAttachments>;
+    try {
+      // Pasted videos are copied into the cache and expand to a `file://`
+      // `video_url` part; the engine resolves (uploads or degrades) them
+      // inside the turn, so submission stays fully synchronous.
+      extraction = extractMediaAttachments(text, this.imageStore);
+    } catch (error) {
+      // A video cache copy failed (unwritable cache dir, vanished source…);
+      // nothing was dispatched.
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
+    }
     if (!this.validateMediaCapabilities(extraction)) return;
     const session = this.session;
     if (session === undefined) {

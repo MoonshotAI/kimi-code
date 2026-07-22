@@ -48,6 +48,7 @@ registerProtocolBase({
         defaultHeaders: traitDefaultHeaders(traits),
         maxTokens: config.providerOptions?.defaultMaxTokens,
         reasoningKey: config.providerOptions?.reasoningKey,
+        offEffort: config.providerOptions?.offEffort,
         hooks: composeOpenAIChatHooks(traits),
       }),
     });

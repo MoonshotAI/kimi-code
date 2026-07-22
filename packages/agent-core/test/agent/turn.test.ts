@@ -24,13 +24,17 @@ import {
   type ModelCapability,
   type ToolCall,
 } from '@moonshot-ai/kosong';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
 import { abortError } from '../../src/utils/abort';
 import type { AgentOptions, AgentRecord, AgentRecordPersistence } from '../../src/agent';
 import { ProcessBackgroundTask } from '../../src/agent/background';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import {
+  resolveMaxRetriesPerStep,
+  resolveMaxStepsPerTurn,
+} from '../../src/agent/turn';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import type { Logger, LogPayload } from '../../src/logging';
 import type {
@@ -1871,6 +1875,90 @@ describe('Agent turn flow', () => {
         }),
       }),
     );
+  });
+
+  describe('loop control env overrides', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('honors KIMI_LOOP_MAX_STEPS_PER_TURN over config in agent turns', async () => {
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '1');
+      const ctx = testAgent({
+        initialConfig: {
+          providers: {},
+          loopControl: { maxStepsPerTurn: 100 },
+        },
+        kaos: createCommandKaos('loop-output'),
+      });
+      ctx.configure({ tools: ['Bash'] });
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+      ctx.newEvents();
+
+      const bashCall: ToolCall = {
+        id: 'call_bash',
+        type: 'function',
+        name: 'Bash',
+        arguments: '{"command":"printf loop-output","timeout":60}',
+      };
+      ctx.mockNextResponse(bashCall);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command once' }] });
+      const events = await ctx.untilTurnEnd();
+
+      expect(ctx.llmCalls).toHaveLength(1);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({
+            reason: 'failed',
+            error: expect.objectContaining({
+              code: 'loop.max_steps_exceeded',
+              details: expect.objectContaining({
+                maxSteps: 1,
+              }),
+            }),
+          }),
+        }),
+      );
+    });
+
+    it('prefers KIMI_LOOP_MAX_STEPS_PER_TURN over config and ignores invalid values', () => {
+      expect(resolveMaxStepsPerTurn(100)).toBe(100);
+      expect(resolveMaxStepsPerTurn()).toBeUndefined();
+
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '5');
+      expect(resolveMaxStepsPerTurn(100)).toBe(5);
+      expect(resolveMaxStepsPerTurn()).toBe(5);
+
+      // `0` is a valid override: it means "no cap", same as the config field.
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '0');
+      expect(resolveMaxStepsPerTurn(100)).toBe(0);
+
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', 'abc');
+      expect(resolveMaxStepsPerTurn(100)).toBe(100);
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '-3');
+      expect(resolveMaxStepsPerTurn(100)).toBe(100);
+      vi.stubEnv('KIMI_LOOP_MAX_STEPS_PER_TURN', '1.5');
+      expect(resolveMaxStepsPerTurn()).toBeUndefined();
+    });
+
+    it('prefers KIMI_LOOP_MAX_RETRIES_PER_STEP over config and ignores invalid values', () => {
+      expect(resolveMaxRetriesPerStep(10)).toBe(10);
+      expect(resolveMaxRetriesPerStep()).toBeUndefined();
+
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', '3');
+      expect(resolveMaxRetriesPerStep(10)).toBe(3);
+      expect(resolveMaxRetriesPerStep()).toBe(3);
+
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', '0');
+      expect(resolveMaxRetriesPerStep(10)).toBe(0);
+
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', 'not-a-number');
+      expect(resolveMaxRetriesPerStep(10)).toBe(10);
+      vi.stubEnv('KIMI_LOOP_MAX_RETRIES_PER_STEP', '-1');
+      expect(resolveMaxRetriesPerStep(10)).toBe(10);
+    });
   });
 
   it('force-refreshes OAuth credentials and replays the request on 401', async () => {

@@ -1,26 +1,33 @@
 /**
- * The agent facade — one `session.agent(id)` handle over the `agentRPCService`
- * channel (the single agent-scope facade service the wire exposes). Prompt
- * streaming is NOT on this interface: it flows through the agent's `events`
- * hub (`turn.*`, `assistant.delta`, `tool.call.*`, `prompt.completed`, …).
+ * The agent facade — one `session.agent(id)` handle over the agent-scope
+ * services the wire exposes. Turn-driving calls (prompt / steer / cancel) go
+ * through the `agentRPCService` channel; shell commands, model, usage, plan,
+ * and task calls go straight to their domain services. Prompt streaming is
+ * NOT on this interface: it flows through the agent's `events` hub
+ * (`turn.*`, `assistant.delta`, `tool.call.*`, `prompt.completed`, …).
  */
 
 import type { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
+import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
+import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
+import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
+import type { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 
 import type { ScopeRef } from '../channel.js';
 import type { ScopedCaller } from './session.js';
 
-// Wire-type aliases derived through the RPC interface (keeps klient free of
-// protocol-package imports).
+// Wire-type aliases derived through the engine service interfaces (keeps
+// klient free of protocol-package imports).
 export type PromptLaunchResult = Awaited<ReturnType<IAgentRPCService['prompt']>>;
-export type ShellCommandResult = Awaited<ReturnType<IAgentRPCService['runShellCommand']>>;
-export type SetModelResult = Awaited<ReturnType<IAgentRPCService['setModel']>>;
-export type UsageStatus = Awaited<ReturnType<IAgentRPCService['getUsage']>>;
+export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
+export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
+export type UsageStatus = Awaited<ReturnType<IAgentUsageService['status']>>;
 export type AgentContextData = Awaited<ReturnType<IAgentRPCService['getContext']>>;
-export type PlanData = Awaited<ReturnType<IAgentRPCService['getPlan']>>;
-export type AgentTaskInfo = Awaited<ReturnType<IAgentRPCService['getTasks']>>[number];
+export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
+export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
 
 export interface AgentFacade {
   prompt(input: {
@@ -53,19 +60,34 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     prompt: (input) => rpc('prompt', input) as Promise<PromptLaunchResult>,
     steer: (input) => rpc('steer', input) as Promise<PromptLaunchResult>,
     cancel: (input) => rpc('cancel', input ?? {}) as Promise<void>,
-    runShellCommand: (input) => rpc('runShellCommand', input) as Promise<ShellCommandResult>,
-    cancelShellCommand: (input) => rpc('cancelShellCommand', input) as Promise<void>,
-    getModel: () => rpc('getModel', {}) as Promise<string>,
-    setModel: (model) => rpc('setModel', { model }) as Promise<SetModelResult>,
+    runShellCommand: (input) =>
+      call(scope, 'agentShellCommandService', 'run', [input]) as Promise<ShellCommandResult>,
+    cancelShellCommand: (input) =>
+      call(scope, 'agentShellCommandService', 'cancel', [input.commandId]) as Promise<void>,
+    getModel: () => call(scope, 'agentProfileService', 'getModel', []) as Promise<string>,
+    setModel: (model) =>
+      call(scope, 'agentProfileService', 'setModel', [model]) as Promise<SetModelResult>,
     setPermission: (mode) => rpc('setPermission', { mode }) as Promise<void>,
-    getUsage: () => rpc('getUsage', {}) as Promise<UsageStatus>,
+    getUsage: () => call(scope, 'agentUsageService', 'status', []) as Promise<UsageStatus>,
     getContext: () => rpc('getContext', {}) as Promise<AgentContextData>,
-    getPlan: () => rpc('getPlan', {}) as Promise<PlanData>,
-    enterPlan: () => rpc('enterPlan', {}) as Promise<void>,
-    clearPlan: () => rpc('clearPlan', {}) as Promise<void>,
-    cancelPlan: (input) => rpc('cancelPlan', input ?? {}) as Promise<void>,
-    getTasks: (input) => rpc('getTasks', input ?? {}) as Promise<readonly AgentTaskInfo[]>,
-    stopTask: (input) => rpc('stopTask', input) as Promise<void>,
-    getTaskOutput: (input) => rpc('getTaskOutput', input) as Promise<string>,
+    getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
+    enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,
+    clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,
+    cancelPlan: (input) =>
+      call(scope, 'agentPlanService', 'cancel', [input?.id]) as Promise<void>,
+    getTasks: (input) =>
+      call(scope, 'agentTaskService', 'list', [
+        input?.activeOnly ?? false,
+        input?.limit,
+      ]) as Promise<readonly AgentTaskInfo[]>,
+    stopTask: async (input) => {
+      if (input.reason === undefined) {
+        await call(scope, 'agentTaskService', 'stopByUser', [input.taskId]);
+        return;
+      }
+      await call(scope, 'agentTaskService', 'stop', [input.taskId, input.reason]);
+    },
+    getTaskOutput: (input) =>
+      call(scope, 'agentTaskService', 'readOutput', [input.taskId, input.tail]) as Promise<string>,
   };
 }

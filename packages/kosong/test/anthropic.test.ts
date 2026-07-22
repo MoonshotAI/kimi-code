@@ -7,7 +7,7 @@
 import { ChatProviderError } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { AnthropicChatProvider, resolveDefaultMaxTokens } from '#/providers/anthropic';
-import { matchKnownAnthropicModelProfile } from '#/providers/anthropic-profile';
+import { matchKnownAnthropicModelProfile, matchUnknownClaudeProfile, LATEST_OPUS_PROFILE } from '#/providers/anthropic-profile';
 import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
@@ -81,6 +81,23 @@ describe('Anthropic model profile matching', () => {
   it('does not claim an official profile for an unrecognized compatible model', () => {
     expect(matchKnownAnthropicModelProfile('Example Compatible Model')).toBeUndefined();
   });
+
+  it.each([
+    'claude-latest',
+    'bedrock/claude-next',
+    'sonnet-latest',
+    'opus-latest',
+    'gateway/haiku-proxy',
+  ])('claims the unknown-Claude fallback for %s', (model) => {
+    expect(matchUnknownClaudeProfile(model)).toEqual(LATEST_OPUS_PROFILE);
+  });
+
+  it.each(['k3', 'kimi-for-coding', 'glm-5.2', 'deepseek-v4-pro', 'Example Compatible Model'])(
+    'does not claim the unknown-Claude fallback for %s',
+    (model) => {
+      expect(matchUnknownClaudeProfile(model)).toBeUndefined();
+    },
+  );
 });
 
 type AnthropicGenerationState = {
