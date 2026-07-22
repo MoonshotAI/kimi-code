@@ -30,6 +30,10 @@
  * A session is activated (journaling starts) on first `subscribe` /
  * `getSnapshotState` / `getCursor` and stays active for the process lifetime so
  * the journal is continuous from first activation onward.
+ *
+ * Global events (`isGlobalEvent`) fan out to the union of every session's
+ * subscribers and the connection-level global targets registered after
+ * `client_hello`. Per-session frames still reach subscribers only.
  */
 
 import type {
@@ -205,6 +209,8 @@ export class SessionEventBroadcaster {
    * per-chunk `AABBCC` stream while every seq and offset still looks valid.
    */
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
+  /** Connections that completed `client_hello`, independent of session subscriptions. */
+  private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private closed = false;
@@ -227,6 +233,16 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
+  }
+
+  /** Register a connection for global fan-out until it closes. */
+  registerGlobalTarget(target: BroadcastTarget): void {
+    if (this.closed) return;
+    this.globalTargets.add(target);
+  }
+
+  unregisterGlobalTarget(target: BroadcastTarget): void {
+    this.globalTargets.delete(target);
   }
 
   /**
@@ -618,6 +634,7 @@ export class SessionEventBroadcaster {
     if (this.closed) return;
     this.closed = true;
     this.coreEventSubscription.dispose();
+    this.globalTargets.clear();
     for (const [sessionId, state] of this.sessions) {
       await disposeSessionState(state);
       // Transcript bindings die with the session stream (its store
@@ -1165,9 +1182,19 @@ export class SessionEventBroadcaster {
     };
   }
 
+  /** Yield global targets and session subscribers without duplicates. */
   private *allTargets(): Iterable<BroadcastTarget> {
+    const seen = new Set<BroadcastTarget>();
+    for (const target of this.globalTargets) {
+      seen.add(target);
+      yield target;
+    }
     for (const state of this.sessions.values()) {
-      for (const target of state.targets.keys()) yield target;
+      for (const target of state.targets.keys()) {
+        if (seen.has(target)) continue;
+        seen.add(target);
+        yield target;
+      }
     }
   }
 }
