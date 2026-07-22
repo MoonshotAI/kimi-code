@@ -148,7 +148,10 @@ const emit = defineEmits<{
 
 // Empty-composer workspace picker.
 const wsPickOpen = ref(false);
-const wsPickExpanded = ref(false);
+// Flip above the chip when there's more room there, and clamp the panel's
+// max-height to the scrollport so opening it can't shift the centred composer.
+const wsPickUp = ref(false);
+const wsPickMaxHeight = ref<string | null>(null);
 
 const activeWorkspaceLabel = computed(() => {
   const w = props.workspaces?.find((ws) => ws.id === props.activeWorkspaceId);
@@ -157,19 +160,33 @@ const activeWorkspaceLabel = computed(() => {
 
 const hasWorkspaces = computed(() => (props.workspaces?.length ?? 0) > 0);
 
+// Capped recent list, no expander.
 const visibleWorkspaces = computed(() =>
-  getVisibleWorkspaces(props.workspaces ?? [], props.activeWorkspaceId, wsPickExpanded.value),
+  getVisibleWorkspaces(props.workspaces ?? [], props.activeWorkspaceId, false),
 );
 
-const hiddenWorkspaceCount = computed(
-  () => (props.workspaces?.length ?? 0) - visibleWorkspaces.value.length,
-);
-
-// Collapse the expanded list when the dropdown closes so it doesn't stay open
-// the next time the user opens the menu.
-watch(wsPickOpen, (open) => {
-  if (!open) wsPickExpanded.value = false;
-});
+function toggleWsPick(event: MouseEvent): void {
+  if (wsPickOpen.value) {
+    wsPickOpen.value = false;
+    return;
+  }
+  const anchor = (event.currentTarget as HTMLElement | null)?.closest('.ws-anchor');
+  const scroller = anchor?.closest('.panes');
+  if (anchor instanceof HTMLElement && scroller instanceof HTMLElement) {
+    const chip = anchor.getBoundingClientRect();
+    const port = scroller.getBoundingClientRect();
+    // 4px matches the panel's top/bottom offset (--space-1).
+    const below = port.bottom - chip.bottom - 4;
+    const above = chip.top - port.top - 4;
+    wsPickUp.value = above > below;
+    const available = Math.max(0, Math.floor(wsPickUp.value ? above : below));
+    wsPickMaxHeight.value = `min(calc(var(--space-8) * 10), ${available}px)`;
+  } else {
+    wsPickUp.value = false;
+    wsPickMaxHeight.value = null;
+  }
+  wsPickOpen.value = true;
+}
 
 function pickWorkspace(id: string): void {
   wsPickOpen.value = false;
@@ -1409,57 +1426,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
                 <span>{{ t('conversation.starting') }}</span>
               </span>
               <span v-if="!starting" class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
-              <!-- Workspace picker: choose where this new conversation starts.
-                   Hidden while starting — a workspace is already committed. -->
-              <div v-if="hasWorkspaces && !starting" class="ws-pick">
-                <Tooltip :text="t('conversation.switchWorkspace')">
-                  <button type="button" class="ws-pick-btn" @click.stop="wsPickOpen = !wsPickOpen">
-                    <Icon name="folder" size="sm" />
-                    <span class="ws-pick-name">{{ activeWorkspaceLabel }}</span>
-                    <Icon class="ws-pick-chev" :class="{ open: wsPickOpen }" name="chevron-down" size="sm" />
-                  </button>
-                </Tooltip>
-                <div v-if="wsPickOpen" class="ws-pick-backdrop" @click="wsPickOpen = false" />
-                <div v-if="wsPickOpen" class="ws-pick-menu">
-                  <button
-                    v-for="w in visibleWorkspaces"
-                    :key="w.id"
-                    type="button"
-                    class="ws-pick-item"
-                    :class="{ on: w.id === activeWorkspaceId }"
-                    @click.stop="pickWorkspace(w.id)"
-                  >
-                    <span class="ws-pick-item-name">{{ w.name }}</span>
-                    <span class="ws-pick-item-path">{{ w.shortPath }}</span>
-                  </button>
-                  <button
-                    v-if="hiddenWorkspaceCount > 0"
-                    type="button"
-                    class="ws-pick-item ws-pick-more"
-                    @click.stop="wsPickExpanded = !wsPickExpanded"
-                  >
-                    <span>{{ t('conversation.moreWorkspaces', { count: hiddenWorkspaceCount }) }}</span>
-                  </button>
-                  <div class="ws-pick-divider" />
-                  <button
-                    type="button"
-                    class="ws-pick-action"
-                    @click.stop="wsPickOpen = false; emit('addWorkspace')"
-                  >
-                    <Icon name="plus" size="sm" />
-                    <span>{{ t('conversation.addWorkspace') }}</span>
-                  </button>
-                </div>
-              </div>
-              <button
-                v-else-if="!starting"
-                type="button"
-                class="empty-add-workspace"
-                @click="emit('addWorkspace')"
-              >
-                <Icon name="folder-plus" size="sm" />
-                <span>{{ t('conversation.addWorkspace') }}</span>
-              </button>
             </div>
             <Composer
               ref="emptyComposerRef"
@@ -1499,7 +1465,71 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @compact="emit('compact')"
               @pick-model="emit('pickModel')"
               @select-model="emit('selectModel', $event)"
-            />
+            >
+              <!-- Workspace picker as an attachment card after the composer
+                   card; hidden while starting. -->
+              <template v-if="!starting" #footer>
+                <div class="ws-bar">
+                  <div v-if="hasWorkspaces" class="ws-anchor">
+                    <Tooltip :text="t('conversation.switchWorkspace')">
+                      <button
+                        type="button"
+                        class="ws-chip"
+                        :class="{ open: wsPickOpen }"
+                        :aria-expanded="wsPickOpen"
+                        @click.stop="toggleWsPick"
+                      >
+                        <Icon name="folder" />
+                        <span class="ws-chip-name">{{ activeWorkspaceLabel }}</span>
+                        <Icon class="ws-chip-chev" name="chevron-down" size="sm" />
+                      </button>
+                    </Tooltip>
+                    <div
+                      v-if="wsPickOpen"
+                      class="ws-panel"
+                      :class="{ up: wsPickUp }"
+                      :style="wsPickMaxHeight ? { maxHeight: wsPickMaxHeight } : undefined"
+                      role="menu"
+                    >
+                      <div class="ws-caption">{{ t('workspace.recentLabel') }}</div>
+                      <button
+                        v-for="w in visibleWorkspaces"
+                        :key="w.id"
+                        type="button"
+                        class="ws-row"
+                        :class="{ on: w.id === activeWorkspaceId }"
+                        role="menuitem"
+                        @click.stop="pickWorkspace(w.id)"
+                      >
+                        <Icon name="folder" />
+                        <span class="ws-info">
+                          <span class="ws-name">{{ w.name }}</span>
+                          <span class="ws-path">{{ w.shortPath }}</span>
+                        </span>
+                        <Icon v-if="w.id === activeWorkspaceId" class="ws-check" name="check" size="sm" />
+                      </button>
+                      <div class="ws-divider" />
+                      <button
+                        type="button"
+                        class="ws-action"
+                        role="menuitem"
+                        @click.stop="wsPickOpen = false; emit('addWorkspace')"
+                      >
+                        <Icon name="folder-plus" />
+                        <span>{{ t('conversation.pickFolder') }}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <button v-else type="button" class="ws-chip ws-ghost" @click="emit('addWorkspace')">
+                    <Icon name="folder-plus" />
+                    <span>{{ t('conversation.pickFolder') }}</span>
+                  </button>
+                </div>
+              </template>
+            </Composer>
+            <!-- Backdrop must live outside the composer card (container-type
+                 captures position:fixed). -->
+            <div v-if="wsPickOpen" class="ws-backdrop" @click="wsPickOpen = false" />
             <div class="empty-spacer" />
           </template>
           <template v-else>
@@ -1748,158 +1778,187 @@ defineExpose({ loadComposerForEdit, focusComposer });
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.empty-add-workspace {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 7px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--dim);
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-sm);
-  cursor: pointer;
-}
-.empty-add-workspace:hover {
-  border-color: var(--color-accent-bd);
-  color: var(--color-text);
-}
-.empty-add-workspace:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-.empty-add-workspace svg {
-  flex: none;
-}
-
-/* Empty-composer workspace picker */
-.ws-pick {
-  position: relative;
+/* Attachment card tucked --space-4 under the complete composer card; the
+   card is raised so the attachment always paints behind it. */
+.empty-composer :deep(.composer-card) { position: relative; z-index: var(--z-sticky); }
+.ws-bar {
+  margin-top: calc(-1 * var(--space-4));
+  padding: calc(var(--space-4) + var(--space-2)) var(--space-2) var(--space-2);
+  background: color-mix(in srgb, var(--color-hover) 60%, transparent);
+  border-radius: 0 0 var(--radius-2xl) var(--radius-2xl);
   font-family: var(--font-ui);
 }
-.ws-pick-btn {
+.ws-anchor {
+  position: relative;
+}
+
+.ws-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  width: max-content;
-  max-width: min(100%, calc(100vw - var(--space-8)));
-  padding: 5px 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--dim);
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--color-text-muted);
   font-family: inherit;
   font-size: var(--ui-font-size-sm);
   cursor: pointer;
+  transition: background var(--duration-base) var(--ease-out);
 }
-.ws-pick-btn:hover { border-color: var(--color-accent-bd); color: var(--color-text); }
-.ws-pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-pick-chev { flex: none; color: var(--muted); transition: transform 0.15s; }
-.ws-pick-chev.open { transform: rotate(180deg); }
-.ws-pick-backdrop {
+.ws-chip:hover,
+.ws-chip.open {
+  background: var(--color-selected);
+  color: var(--color-text);
+}
+.ws-chip:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.ws-chip > .kw-icon { flex: none; }
+.ws-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-option-label);
+}
+.ws-chip-chev {
+  flex: none;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.ws-chip.open .ws-chip-chev { transform: rotate(180deg); }
+
+.ws-chip.ws-ghost { color: var(--color-text-muted); }
+.ws-chip.ws-ghost:hover { color: var(--color-text); }
+
+.ws-backdrop {
   position: fixed;
   inset: 0;
   z-index: var(--z-sticky);
 }
-.ws-pick-menu {
+
+.ws-panel {
   position: absolute;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  left: 50%;
-  transform: translateX(-50%);
-  top: calc(100% + 6px);
+  left: 0;
+  top: calc(100% + var(--space-1));
   z-index: var(--z-dropdown);
   width: max-content;
-  min-width: min(180px, calc(100cqw - var(--space-8)));
-  max-width: calc(100cqw - var(--space-8));
-  max-height: 50vh;
+  min-width: min(calc(var(--space-8) * 8), 100%);
+  max-width: 100%;
+  max-height: calc(var(--space-8) * 10);
   overflow: hidden auto;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow:
-    0 6px 18px lch(0% 0 0 / 0.02),
-    0 3px 9px lch(0% 0 0 / 0.04),
-    0 1px 1px lch(0% 0 0 / 0.04);
-  padding: 4px;
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-1);
+  animation: ws-pop var(--duration-base) var(--ease-out);
 }
-.ws-pick-item {
+.ws-panel.up {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+  animation-name: ws-pop-up;
+}
+@keyframes ws-pop {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--space-1))) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ws-pop-up {
+  from { opacity: 0; transform: translateY(var(--space-1)) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.ws-caption {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-faint);
+  user-select: none;
+}
+
+.ws-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
   text-align: left;
   background: none;
   border: none;
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
   cursor: pointer;
   font-family: var(--font-ui);
 }
-.ws-pick-item:hover { background: var(--panel2); }
-.ws-pick-item.on { background: var(--color-accent-soft); }
-.ws-pick-item-name {
+.ws-row > .kw-icon { flex: none; color: var(--muted); }
+.ws-row:hover { background: var(--color-hover); }
+.ws-row.on { background: var(--color-selected); }
+.ws-row:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.ws-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ws-name {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-base);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-option-label);
   color: var(--color-text);
+  line-height: var(--leading-normal);
 }
-.ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); }
-.ws-pick-item-path {
+.ws-path {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-xs);
-  font-weight: 475;
+  font-weight: var(--weight-option-label);
   color: var(--muted);
+  line-height: var(--leading-normal);
 }
-.ws-pick-item.ws-pick-more {
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-start;
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--dim);
+.ws-check {
+  flex: none;
+  margin-left: var(--space-3);
+  color: var(--color-text);
 }
-.ws-pick-item.ws-pick-more:hover { color: var(--color-text); }
-.ws-pick-item.ws-pick-more span,
-.ws-pick-action span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ws-pick-divider {
+
+.ws-divider {
   height: 1px;
-  margin: 4px 6px;
+  margin: var(--space-1) var(--space-2);
   background: var(--line);
 }
-.ws-pick-action {
+
+.ws-action {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--space-2);
   width: 100%;
   text-align: left;
   background: none;
   border: none;
-  border-radius: 6px;
-  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
   cursor: pointer;
   font-family: var(--font-ui);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--dim);
 }
-.ws-pick-action:hover { background: var(--panel2); color: var(--color-text); }
-.ws-pick-action svg { flex: none; }
+.ws-action > .kw-icon { flex: none; color: var(--muted); }
+.ws-action span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-action:hover { background: var(--color-hover); color: var(--color-text); }
+.ws-action:hover > .kw-icon { color: var(--dim); }
+.ws-action:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
 /* Chat scroll area: owns only messages; the dock is the bottom sibling. */
 .chat-scroll {

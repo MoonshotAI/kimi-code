@@ -1,4 +1,4 @@
-<!-- apps/web/src/components/chat/Composer.vue -->
+<!-- apps/kimi-web/src/components/chat/Composer.vue -->
 <script setup lang="ts">
 import { measureNaturalWidth, prepareWithSegments } from '@chenglou/pretext';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -1260,6 +1260,12 @@ function selectModel(modelId: string): void {
         </div>
         </Transition>
       </div>
+  </div>
+
+  <!-- Optional footer (empty-session workspace picker) — a sibling of the
+       card, so the attachment can tuck under the complete card shell. -->
+  <div v-if="$slots.footer" class="composer-footer">
+    <slot name="footer" />
   </div>
   <!-- Full-window drop target affordance: shown while files are dragged anywhere
        over the app (document-level listeners in useAttachmentUpload). Pure CSS

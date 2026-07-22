@@ -91,6 +91,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **常用检查**：`pnpm test`、`pnpm lint`、`pnpm typecheck`、`pnpm build`。
 - **UI 设计系统**：改 UI 前必读 `apps/desktop/src/renderer/views/DesignSystemView.vue`（应用内长按侧栏 logo 打开），样式只用 `style.css` 的设计 token，并在亮色 + 暗色下做视觉验证。细则见 `AGENTS.md` 的"硬约束"。
 - **主进程原生界面文案**：新增用户可见字符串（托盘、通知、对话框等）要 en/zh 双语——主进程无 i18n runtime，用 `apps/desktop/src/main/tray.ts` 同款字符串表，应用语言经 `kimi:locale` 通道同步（OS 语言兜底）。细则见 `AGENTS.md` 的"硬约束"。
+- **注释克制**：密度对齐所在文件，不写复述代码的注释；设计决策与 bug 根因进 spec / commit message，不进代码。细则见 `AGENTS.md` 的"硬约束"。
 - **本地打包并签名 macOS 包**：`pnpm package:macos`（CI 不可用时的替代，arm64；凭证与流程见 `apps/desktop/README.md` 的"打包"一节）。
 
 ## 发布

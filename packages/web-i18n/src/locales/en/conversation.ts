@@ -8,6 +8,7 @@ export default {
   switchWorkspace: 'Switch workspace',
   addWorkspace: 'New workspace',
   moreWorkspaces: 'More workspaces ({count})',
+  pickFolder: 'Choose folder…',
   compacting: 'Compacting context…',
   compactedPlain: 'Context compacted',
   compactedAuto: 'Context auto-compacted',

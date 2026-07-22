@@ -1313,6 +1313,12 @@ function selectModel(modelId: string): void {
         </Transition>
       </div>
   </div>
+
+  <!-- Optional footer (empty-session workspace picker) — a sibling of the
+       card, so the attachment can tuck under the complete card shell. -->
+  <div v-if="$slots.footer" class="composer-footer">
+    <slot name="footer" />
+  </div>
   <!-- Full-window drop target affordance: shown while files are dragged anywhere
        over the app (document-level listeners in useAttachmentUpload). Pure CSS
        show/hide — a Vue <Transition> can strand an invisible node when the drag
