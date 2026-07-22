@@ -5,9 +5,9 @@ import { formatStartupBanner } from './startup-banner';
 async function main(): Promise<void> {
   const host = resolveHost();
   const authToken = resolveVisAuthToken(host);
-  const { port } = await startVisServer({ host, authToken });
+  const { port, lanUrls } = await startVisServer({ host, authToken });
   process.stdout.write(
-    formatStartupBanner({ authToken, host, kimiCodeHome: KIMI_CODE_HOME, port }),
+    formatStartupBanner({ authToken, host, kimiCodeHome: KIMI_CODE_HOME, port, lanUrls }),
   );
 }
 
