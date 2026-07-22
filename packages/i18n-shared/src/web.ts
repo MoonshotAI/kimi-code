@@ -76,7 +76,7 @@ export function createI18n<M extends Record<Locale, MessageValue>>(
     key: TranslationKey<M['en']> | (string & {}),
     params?: Record<string, string | number>,
   ): string {
-    return translate(messages[currentLocale], messages.en, key, params);
+    return translate(messages[currentLocale], messages.en, key as string, params);
   }
 
   function setLocale(locale: Locale): void {
@@ -122,7 +122,7 @@ export function createI18n<M extends Record<Locale, MessageValue>>(
     }
 
     const { useState, useEffect, useCallback } = React;
-    const [locale, setLocaleState] = useState<Locale>(currentLocale);
+    const [locale, setLocaleState] = useState(currentLocale);
 
     const set = useCallback((l: Locale) => {
       setLocale(l);

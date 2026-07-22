@@ -96,7 +96,7 @@ export function createI18n<M extends Record<Locale, MessageValue>>(
         return native.nativeTranslateCached(
           localeJsonCurrent,
           localeJsonEn,
-          key,
+          key as string,
           stringParams,
         );
       }
@@ -105,7 +105,7 @@ export function createI18n<M extends Record<Locale, MessageValue>>(
         return native.nativeTranslate(
           localeJsonCurrent,
           localeJsonEn,
-          key,
+          key as string,
           stringParams,
         );
       }
@@ -117,7 +117,7 @@ export function createI18n<M extends Record<Locale, MessageValue>>(
     return translate(
       messages[currentLocale],
       messages.en,
-      key,
+      key as string,
       params,
     );
   }

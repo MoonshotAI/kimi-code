@@ -12,7 +12,7 @@
 
 import type {
   Locale,
-  TranslationKey,
+  TranslationKey as SharedTranslationKey,
   I18nInstance as SharedI18nInstance,
 } from '@moonshot-ai/i18n-shared';
 import { detectLocaleNode } from '@moonshot-ai/i18n-shared';
@@ -22,7 +22,7 @@ import zh from './locales/zh';
 
 // Re-export shared types for consumers.
 export type { Locale };
-export type TranslationKey = TranslationKey<typeof en>;
+export type TranslationKey = SharedTranslationKey<typeof en>;
 export type Engine = 'rust' | 'js';
 
 // In a SEA binary, @moonshot-ai/kimi-native-tools is excluded from the JS
