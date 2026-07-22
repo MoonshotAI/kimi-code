@@ -1,2 +1,0 @@
-first line
-second line

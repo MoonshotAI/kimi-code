@@ -1,1 +1,0 @@
-Invoke a registered skill from the current skill listing. BLOCKING REQUIREMENT: when a skill from the listing matches the user's request, you MUST call this tool (not free-form text). Do NOT call the same skill repeatedly inside one turn — recursive depth is capped at {{ MAX_SKILL_QUERY_DEPTH }}.

@@ -1,9 +1,0 @@
----
-source: tui/src/bottom_pane/chat_composer.rs
-expression: terminal.backend()
----
-"                                                            "
-"› /ar                                                       "
-"                                                            "
-"                                                            "
-"  /archive  archive this session and exit                   "

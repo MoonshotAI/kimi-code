@@ -1,4 +1,0 @@
-class BaseClass:
-  def method():
-
-    return True

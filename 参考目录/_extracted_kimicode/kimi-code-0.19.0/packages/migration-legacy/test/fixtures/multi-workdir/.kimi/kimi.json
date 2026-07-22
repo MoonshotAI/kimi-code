@@ -1,7 +1,0 @@
-{
-  "work_dirs": [
-    { "path": "/proj-a", "kaos": "local", "last_session_id": null },
-    { "path": "/proj-b", "kaos": "local", "last_session_id": null },
-    { "path": "/proj-c", "kaos": "kaos-foo", "last_session_id": null }
-  ]
-}

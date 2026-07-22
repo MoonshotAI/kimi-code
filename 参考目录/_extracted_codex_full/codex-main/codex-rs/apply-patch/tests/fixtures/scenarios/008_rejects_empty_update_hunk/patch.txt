@@ -1,3 +1,0 @@
-*** Begin Patch
-*** Update File: foo.txt
-*** End Patch

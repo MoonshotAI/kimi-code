@@ -1,5 +1,0 @@
-{"role":"_system_prompt","content":"You are ..."}
-{"role":"_checkpoint","id":0}
-{"role":"user","content":"hi"}
-{"role":"_usage","token_count":9133}
-{"role":"assistant","content":[{"type":"text","text":"Hello! How can I help?"}]}
