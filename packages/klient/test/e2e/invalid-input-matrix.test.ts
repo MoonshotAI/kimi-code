@@ -380,7 +380,7 @@ beforeAll(async () => {
   // M_KIMI needs a `provider` reference to KIMI_PROVIDER so the engine
   // resolves kimi provider traits (uploadVideo). The facade's addProvider()
   // doesn't support provider-linkage, so call modelService directly.
-  app!.accessor.get(IModelService).set(M_KIMI, {
+  await app!.accessor.get(IModelService).set(M_KIMI, {
     model: 'kimi-k2-matrix',
     provider: KIMI_PROVIDER,
     protocol: 'openai',

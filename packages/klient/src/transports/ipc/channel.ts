@@ -129,9 +129,8 @@ export class IpcChannel implements KlientChannel {
   }
 
   stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown> {
-    const channel = this;
     return {
-      [Symbol.asyncIterator]() {
+      [Symbol.asyncIterator]: () => {
         // Simple queue: push/pull with deferred promises. `buffer` holds
         // already-received chunks waiting for a `next()` call; `waiters`
         // holds unresolved `next()` calls waiting for a chunk.
@@ -154,10 +153,10 @@ export class IpcChannel implements KlientChannel {
               buffer.push(result);
             }
           },
-          end() {
+          end: () => {
             if (done) return;
             done = true;
-            if (streamId !== undefined) channel.streams.delete(streamId);
+            if (streamId !== undefined) this.streams.delete(streamId);
             const terminal: IteratorResult<unknown> = { done: true, value: undefined };
             const waiter = waiters.shift();
             if (waiter !== undefined) {
@@ -171,10 +170,10 @@ export class IpcChannel implements KlientChannel {
             }
             waiters.length = 0;
           },
-          error(err: Error) {
+          error: (err: Error) => {
             if (done) return;
             done = true;
-            if (streamId !== undefined) channel.streams.delete(streamId);
+            if (streamId !== undefined) this.streams.delete(streamId);
             const waiter = waiters.shift();
             if (waiter !== undefined) {
               waiter.reject(err);
@@ -194,14 +193,14 @@ export class IpcChannel implements KlientChannel {
         const ensureStarted = (): void => {
           if (started) return;
           started = true;
-          void channel.ready.then(() => {
-            if (channel.closed) {
+          void this.ready.then(() => {
+            if (this.closed) {
               pending.error(new Error('ipc closed'));
               return;
             }
-            streamId = channel.nextId();
-            channel.streams.set(streamId, pending);
-            channel.send({
+            streamId = this.nextId();
+            this.streams.set(streamId, pending);
+            this.send({
               type: 'stream',
               id: streamId,
               scope: scopeKindOf(scope),
@@ -230,12 +229,12 @@ export class IpcChannel implements KlientChannel {
               waiters.push({ resolve, reject });
             });
           },
-          return(): Promise<IteratorResult<unknown>> {
+          return: (): Promise<IteratorResult<unknown>> => {
             if (!done) {
               done = true;
               if (streamId !== undefined) {
-                channel.streams.delete(streamId);
-                channel.send({ type: 'stream_cancel', id: streamId });
+                this.streams.delete(streamId);
+                this.send({ type: 'stream_cancel', id: streamId });
               }
               // Resolve any pending waiters
               for (const w of waiters) {
