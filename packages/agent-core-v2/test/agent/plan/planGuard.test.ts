@@ -1,12 +1,14 @@
 /**
- * Scenario: plan-mode Harness constraints as the `'plan-guard'` executor hook.
- * Responsibilities: verify Write/Edit plan-file short-circuit and denies,
- * TaskStop/Cron denies, fall-through delegation, and every ExitPlanMode review
- * branch (approve with/without option, Reject and Exit, Revise, dismiss,
- * auto / no-plan / empty-plan / non-plan_review skips) with telemetry.
- * Wiring: real wire and plan services; the executor slot carries a
- * `'permission'` stand-in so hook ordering and next() delegation are
- * observable; `IAgentToolApprovalService` is a recording stub.
+ * Scenario: plan-mode Harness constraints as an `onBeforeExecuteTool` veto
+ * listener. Responsibilities: verify Write/Edit plan-file allow and vetoes,
+ * TaskStop/Cron vetoes, abstention on unrelated tools, and every ExitPlanMode
+ * review branch (approve with/without option, Reject and Exit, Revise,
+ * dismiss, auto / no-plan / empty-plan / non-plan_review skips) with
+ * telemetry.
+ * Wiring: real wire and plan services against a fireable executor event
+ * stub; a stand-in listener registered after the plan listener proves
+ * whether the guard ended adjudication (veto/allow) or abstained;
+ * `IAgentToolApprovalService` is a recording stub.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/plan/planGuard.test.ts`.
  */
 
@@ -29,12 +31,10 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   AuthorizeToolExecutionResult,
-  ToolBeforeExecuteContext,
-  ToolDidExecuteContext,
+  ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { OrderedHookSlot } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -45,6 +45,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { registerTestAgentWireServices } from '../../wire/stubs';
 import { stubPermissionModeService } from '../permissionMode/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 
 const signal = new AbortController().signal;
 const SESSION_DIR = '/session';
@@ -79,7 +80,7 @@ function hookContext(
     readonly accesses?: ToolAccesses;
     readonly display?: ToolInputDisplay;
   } = {},
-): ToolBeforeExecuteContext {
+): ResolvedToolExecutionHookContext {
   const args = input.args ?? {};
   const call = toolCall(toolName, args);
   return {
@@ -129,11 +130,12 @@ function mapResolution(
   return result;
 }
 
-describe('AgentPlanService plan-guard hook', () => {
+describe('AgentPlanService plan-guard listener', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let beforeSlot: OrderedHookSlot<ToolBeforeExecuteContext>;
+  let executorEvents: ToolExecutorEventStubs;
   let permissionRan: boolean;
+  let permissionStandInRegistered: boolean;
   let records: TelemetryRecord[];
   let requests: ApprovalRequestRecord[];
   let approvalResponse: ApprovalResponse;
@@ -150,20 +152,13 @@ describe('AgentPlanService plan-guard hook', () => {
     mode = 'manual';
     files = new Map();
     permissionRan = false;
-
-    beforeSlot = new OrderedHookSlot<ToolBeforeExecuteContext>();
-    // The plan-guard hook registers `before: 'permission'`, so the slot needs
-    // a stand-in for the permissionGate hook; the flag proves whether the
-    // hook short-circuited or delegated via next().
-    beforeSlot.register('permission', async (_ctx, next) => {
-      permissionRan = true;
-      await next();
-    });
+    permissionStandInRegistered = false;
+    executorEvents = stubToolExecutorEvents();
 
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
       resolvePermissionResolution: async () => {
-        throw new Error('resolvePermissionResolution is not used by the plan-guard hook');
+        throw new Error('resolvePermissionResolution is not used by the plan-guard listener');
       },
       requestToolApproval: async (_context, ask, origin) => {
         requests.push({ ask, origin });
@@ -196,12 +191,7 @@ describe('AgentPlanService plan-guard hook', () => {
           register: () => ({ dispose: () => {} }),
         });
         reg.definePartialInstance(IAgentTelemetryContextService, { set: () => {} });
-        reg.definePartialInstance(IAgentToolExecutorService, {
-          hooks: {
-            onBeforeExecuteTool: beforeSlot,
-            onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
-          },
-        });
+        reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
@@ -222,31 +212,43 @@ describe('AgentPlanService plan-guard hook', () => {
     return svc;
   }
 
-  async function run(ctx: ToolBeforeExecuteContext): Promise<ToolBeforeExecuteContext> {
-    await beforeSlot.run(ctx);
-    return ctx;
+  async function run(
+    ctx: ResolvedToolExecutionHookContext,
+  ): Promise<AuthorizeToolExecutionResult | undefined> {
+    // The stand-in must land after the plan-guard listener, so register it
+    // lazily on first fire — every test constructs the plan service (which
+    // registers the guard) before firing.
+    if (!permissionStandInRegistered) {
+      permissionStandInRegistered = true;
+      disposables.add(
+        executorEvents.executor.onBeforeExecuteTool(() => {
+          permissionRan = true;
+        }),
+      );
+    }
+    return executorEvents.fireBeforeExecute(ctx);
   }
 
   describe('guard', () => {
     it.each(['Write', 'Edit'] as const)(
-      'lets a %s that only targets the active plan file through without the permission chain',
+      'lets a %s that only targets the active plan file through without other adjudication',
       async (toolName) => {
         await enterPlan();
-        const ctx = await run(
+        const decision = await run(
           hookContext(toolName, {
             args: { path: PLAN_PATH },
             accesses: ToolAccesses.writeFile(PLAN_PATH),
           }),
         );
 
-        expect(ctx.decision).toEqual({});
+        expect(decision).toBeUndefined();
         expect(permissionRan).toBe(false);
       },
     );
 
     it('lets multiple writes through when every write access targets the active plan file', async () => {
       await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('Edit', {
           args: { path: PLAN_PATH },
           accesses: [
@@ -256,7 +258,7 @@ describe('AgentPlanService plan-guard hook', () => {
         }),
       );
 
-      expect(ctx.decision).toEqual({});
+      expect(decision).toBeUndefined();
       expect(permissionRan).toBe(false);
     });
 
@@ -265,16 +267,16 @@ describe('AgentPlanService plan-guard hook', () => {
       async (toolName) => {
         await enterPlan();
         const otherPath = '/workspace/src/main.ts';
-        const ctx = await run(
+        const decision = await run(
           hookContext(toolName, {
             args: { path: otherPath },
             accesses: ToolAccesses.writeFile(otherPath),
           }),
         );
 
-        expect(ctx.decision?.block).toBe(true);
-        expect(ctx.decision?.reason).toContain('current plan file');
-        expect(ctx.decision?.reason).toContain('ExitPlanMode');
+        expect(decision?.block).toBe(true);
+        expect(decision?.reason).toContain('current plan file');
+        expect(decision?.reason).toContain('ExitPlanMode');
         expect(formatDenyMessage).toHaveBeenCalledWith(
           expect.stringContaining(PLAN_PATH),
         );
@@ -286,17 +288,17 @@ describe('AgentPlanService plan-guard hook', () => {
       await enterPlan();
 
       for (const toolName of ['Write', 'Edit'] as const) {
-        const ctx = await run(
+        const decision = await run(
           hookContext(toolName, { args: {}, accesses: ToolAccesses.none() }),
         );
-        expect(ctx.decision?.block).toBe(true);
+        expect(decision?.block).toBe(true);
       }
       expect(permissionRan).toBe(false);
     });
 
     it('blocks mixed plan-file and non-plan-file write accesses', async () => {
       await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('Edit', {
           args: { path: PLAN_PATH },
           accesses: [
@@ -306,18 +308,18 @@ describe('AgentPlanService plan-guard hook', () => {
         }),
       );
 
-      expect(ctx.decision?.block).toBe(true);
-      expect(ctx.decision?.reason).toContain('current plan file');
+      expect(decision?.block).toBe(true);
+      expect(decision?.reason).toContain('current plan file');
       expect(permissionRan).toBe(false);
     });
 
     it('blocks TaskStop while plan mode is active', async () => {
       await enterPlan();
-      const ctx = await run(hookContext('TaskStop', { args: { task_id: 'bash-abc12345' } }));
+      const decision = await run(hookContext('TaskStop', { args: { task_id: 'bash-abc12345' } }));
 
-      expect(ctx.decision?.block).toBe(true);
-      expect(ctx.decision?.reason).toContain('TaskStop');
-      expect(ctx.decision?.reason).toContain('ExitPlanMode');
+      expect(decision?.block).toBe(true);
+      expect(decision?.reason).toContain('TaskStop');
+      expect(decision?.reason).toContain('ExitPlanMode');
       expect(permissionRan).toBe(false);
     });
 
@@ -325,36 +327,36 @@ describe('AgentPlanService plan-guard hook', () => {
       'blocks %s while plan mode is active',
       async (toolName) => {
         await enterPlan();
-        const ctx = await run(hookContext(toolName, { args: {} }));
+        const decision = await run(hookContext(toolName, { args: {} }));
 
-        expect(ctx.decision?.block).toBe(true);
-        expect(ctx.decision?.reason).toContain(toolName);
-        expect(ctx.decision?.reason).toContain('plan mode');
+        expect(decision?.block).toBe(true);
+        expect(decision?.reason).toContain(toolName);
+        expect(decision?.reason).toContain('plan mode');
         expect(permissionRan).toBe(false);
       },
     );
 
     it.each(['Read', 'Grep', 'Bash', 'CronList'] as const)(
-      'delegates %s to the permission chain while plan mode is active',
+      'abstains on %s while plan mode is active',
       async (toolName) => {
         await enterPlan();
-        const ctx = await run(hookContext(toolName, { args: {} }));
+        const decision = await run(hookContext(toolName, { args: {} }));
 
-        expect(ctx.decision).toBeUndefined();
+        expect(decision).toBeUndefined();
         expect(permissionRan).toBe(true);
       },
     );
 
-    it('delegates everything once plan mode has exited', async () => {
+    it('abstains on everything once plan mode has exited', async () => {
       plan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('Write', {
           args: { path: '/workspace/src/main.ts' },
           accesses: ToolAccesses.writeFile('/workspace/src/main.ts'),
         }),
       );
 
-      expect(ctx.decision).toBeUndefined();
+      expect(decision).toBeUndefined();
       expect(permissionRan).toBe(true);
     });
   });
@@ -362,7 +364,7 @@ describe('AgentPlanService plan-guard hook', () => {
   describe('exit plan mode review', () => {
     it('asks through toolApproval under the legacy origin and tracks plan_submitted', async () => {
       await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
@@ -374,25 +376,24 @@ describe('AgentPlanService plan-guard hook', () => {
         event: 'plan_submitted',
         properties: { has_options: false },
       });
-      expect(ctx.decision?.syntheticResult).toBeDefined();
-      expect(permissionRan).toBe(false);
+      expect(decision?.syntheticResult).toBeDefined();
     });
 
     it('approves with the chosen option prefix and tracks the chosen option', async () => {
       const svc = await enterPlan();
       approvalResponse = { decision: 'approved', selectedLabel: 'Approach B' };
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay({ options }) }),
       );
 
-      expect(ctx.decision?.syntheticResult?.isError).toBe(false);
-      expect(ctx.decision?.syntheticResult?.output).toContain(
+      expect(decision?.syntheticResult?.isError).toBe(false);
+      expect(decision?.syntheticResult?.output).toContain(
         'Selected approach: Approach B',
       );
-      expect(ctx.decision?.syntheticResult?.output).toContain(
+      expect(decision?.syntheticResult?.output).toContain(
         'Execute ONLY the selected approach',
       );
-      expect(ctx.decision?.syntheticResult?.output).toContain('## Approved Plan:\n# Plan');
+      expect(decision?.syntheticResult?.output).toContain('## Approved Plan:\n# Plan');
       expect(records).toContainEqual({
         event: 'plan_submitted',
         properties: { has_options: true },
@@ -406,14 +407,14 @@ describe('AgentPlanService plan-guard hook', () => {
 
     it('approves without a selected label and saves the plan path into the output', async () => {
       const svc = await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(ctx.decision?.syntheticResult?.output).toContain(
+      expect(decision?.syntheticResult?.output).toContain(
         `Plan saved to: ${PLAN_PATH}`,
       );
-      expect(ctx.decision?.syntheticResult?.output).not.toContain('Selected approach:');
+      expect(decision?.syntheticResult?.output).not.toContain('Selected approach:');
       expect(records).toContainEqual({
         event: 'plan_resolved',
         properties: { outcome: 'approved' },
@@ -423,24 +424,24 @@ describe('AgentPlanService plan-guard hook', () => {
 
     it('omits the saved-to line when the display has no path', async () => {
       await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', {
           display: planReviewDisplay({ plan: '# Draft Plan', path: undefined }),
         }),
       );
 
-      expect(ctx.decision?.syntheticResult?.output).toContain('## Approved Plan:\n# Draft Plan');
-      expect(ctx.decision?.syntheticResult?.output).not.toContain('Plan saved to:');
+      expect(decision?.syntheticResult?.output).toContain('## Approved Plan:\n# Draft Plan');
+      expect(decision?.syntheticResult?.output).not.toContain('Plan saved to:');
     });
 
     it('exits plan mode with a stopping error result when the user chooses Reject and Exit', async () => {
       const svc = await enterPlan();
       approvalResponse = { decision: 'rejected', selectedLabel: 'Reject and Exit' };
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(ctx.decision?.syntheticResult).toMatchObject({
+      expect(decision?.syntheticResult).toMatchObject({
         isError: true,
         stopTurn: true,
         output: 'Plan rejected by user. Plan mode deactivated.',
@@ -459,12 +460,12 @@ describe('AgentPlanService plan-guard hook', () => {
         selectedLabel: 'Revise',
         feedback: 'Add verification.',
       };
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(ctx.decision?.syntheticResult?.isError).toBe(false);
-      expect(ctx.decision?.syntheticResult?.output).toContain('Add verification.');
+      expect(decision?.syntheticResult?.isError).toBe(false);
+      expect(decision?.syntheticResult?.output).toContain('Add verification.');
       expect(records).toContainEqual({
         event: 'plan_resolved',
         properties: { outcome: 'revise', has_feedback: true },
@@ -475,11 +476,11 @@ describe('AgentPlanService plan-guard hook', () => {
     it('keeps plan mode active with a stopping error result when the user rejects the plan', async () => {
       const svc = await enterPlan();
       approvalResponse = { decision: 'rejected' };
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(ctx.decision?.syntheticResult).toMatchObject({
+      expect(decision?.syntheticResult).toMatchObject({
         isError: true,
         stopTurn: true,
         output: 'Plan rejected by user. Plan mode remains active.',
@@ -494,11 +495,11 @@ describe('AgentPlanService plan-guard hook', () => {
     it('keeps plan mode active with a dismissed result when the approval is cancelled', async () => {
       const svc = await enterPlan();
       approvalResponse = { decision: 'cancelled' };
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(ctx.decision?.syntheticResult).toMatchObject({
+      expect(decision?.syntheticResult).toMatchObject({
         isError: false,
         output: 'Plan approval dismissed. Plan mode remains active.',
       });
@@ -512,57 +513,57 @@ describe('AgentPlanService plan-guard hook', () => {
     it('skips the review in auto mode', async () => {
       mode = 'auto';
       await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
       expect(requests).toHaveLength(0);
       expect(records).toEqual([]);
-      expect(ctx.decision).toBeUndefined();
+      expect(decision).toBeUndefined();
       expect(permissionRan).toBe(true);
     });
 
     it('skips the review when no plan is active', async () => {
       plan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
       expect(requests).toHaveLength(0);
-      expect(ctx.decision).toBeUndefined();
+      expect(decision).toBeUndefined();
       expect(permissionRan).toBe(true);
     });
 
     it('skips the review when the plan is empty', async () => {
       await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay({ plan: '   ' }) }),
       );
 
       expect(requests).toHaveLength(0);
-      expect(ctx.decision).toBeUndefined();
+      expect(decision).toBeUndefined();
       expect(permissionRan).toBe(true);
     });
 
     it('skips the review for a non-plan_review display', async () => {
       await enterPlan();
-      const ctx = await run(
+      const decision = await run(
         hookContext('ExitPlanMode', {
           display: { kind: 'generic', summary: 'Presenting plan', detail: {} },
         }),
       );
 
       expect(requests).toHaveLength(0);
-      expect(ctx.decision).toBeUndefined();
+      expect(decision).toBeUndefined();
       expect(permissionRan).toBe(true);
     });
 
     it('skips the review when the display is missing', async () => {
       await enterPlan();
-      const ctx = await run(hookContext('ExitPlanMode'));
+      const decision = await run(hookContext('ExitPlanMode'));
 
       expect(requests).toHaveLength(0);
-      expect(ctx.decision).toBeUndefined();
+      expect(decision).toBeUndefined();
       expect(permissionRan).toBe(true);
     });
   });

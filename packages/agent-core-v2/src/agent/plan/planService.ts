@@ -12,15 +12,14 @@
  * `plan/<id>/v<N>.md`, and dispatches a reference-only `plan.revision` op
  * carrying the homeDir-relative path, sha256 and byte length. N comes from
  * the Model's replayed per-id `revisionCount`, starting at 1. Also carries
- * the plan-mode Harness constraints as an executor `onBeforeExecuteTool`
- * hook (`'plan-guard'`, ordered before `'permission'` whenever the gate's
- * hook already exists): while a plan is active, Write/Edit calls targeting
- * only the current plan file are let through without the permission chain,
- * any other Write/Edit and every TaskStop/CronCreate/CronDelete call is
- * blocked with a `toolApproval.formatDenyMessage`-formatted reason, and an
- * `ExitPlanMode` call outside `auto` mode goes through the
- * `exitPlanModeReview` user review instead of the permission chain. Bound at
- * Agent scope.
+ * the plan-mode Harness constraints as an `onBeforeExecuteTool` veto
+ * listener: while a plan is active, Write/Edit calls targeting only the
+ * current plan file are allowed outright (`allow()`, ending all other
+ * adjudication), any other Write/Edit and every TaskStop/CronCreate/
+ * CronDelete call is vetoed with a `toolApproval.formatDenyMessage`-
+ * formatted reason, and an `ExitPlanMode` call outside `auto` mode defers
+ * to a cold `waitUntil` factory running the `exitPlanModeReview` user
+ * review. Bound at Agent scope.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -39,8 +38,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
+  BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
-  ToolBeforeExecuteContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -49,7 +48,6 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IWireService } from '#/wire/wire';
 import type { ToolFileAccess } from '#/tool/toolContract';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import {
   IAgentPlanService,
   type PlanData,
@@ -82,7 +80,6 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @ITelemetryService telemetry: ITelemetryService,
-    @IAgentPermissionGate _permissionGate: IAgentPermissionGate,
   ) {
     super();
 
@@ -99,76 +96,56 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     this._register(this.registerPlanGuard(toolExecutor));
   }
 
-  // Injecting the gate above forces it to be constructed first, so the
-  // `'permission'` hook is always registered when this hook lands ahead of it.
   private registerPlanGuard(toolExecutor: IAgentToolExecutorService): IDisposable {
-    const slot = toolExecutor.hooks.onBeforeExecuteTool;
-    const handler = async (
-      ctx: ToolBeforeExecuteContext,
-      next: () => Promise<void>,
-    ): Promise<void> => {
-      await this.guardToolExecution(ctx, next);
-    };
-    return slot.register('plan-guard', handler, { before: 'permission' });
+    return toolExecutor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
   }
 
-  private async guardToolExecution(
-    ctx: ToolBeforeExecuteContext,
-    next: () => Promise<void>,
-  ): Promise<void> {
-    const toolName = ctx.toolCall.name;
+  private async guardToolExecution(event: BeforeToolExecuteEvent): Promise<void> {
+    const toolName = event.toolCall.name;
     const plan = await this.status();
 
     if (toolName === 'ExitPlanMode') {
       if (plan !== null && this.modeService.mode !== 'auto') {
-        const decision = await this.review.requestApproval(ctx);
-        if (decision !== undefined) {
-          ctx.decision = decision;
-          if (decision.block === true || decision.syntheticResult !== undefined) return;
-        }
+        event.waitUntil(() => this.review.requestApproval(event));
       }
-      await next();
       return;
     }
 
     if (plan === null) {
-      await next();
       return;
     }
 
     if (toolName === 'Write' || toolName === 'Edit') {
-      if (writesOnlyPlanFile(ctx, plan.path)) {
-        ctx.decision = {};
+      if (writesOnlyPlanFile(event, plan.path)) {
+        event.allow();
         return;
       }
-      ctx.decision = {
+      event.veto({
         block: true,
         reason: this.toolApproval.formatDenyMessage(planModeWriteDeniedMessage(plan.path)),
-      };
+      });
       return;
     }
 
     if (toolName === 'TaskStop') {
-      ctx.decision = {
+      event.veto({
         block: true,
         reason: this.toolApproval.formatDenyMessage(
           'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
         ),
-      };
+      });
       return;
     }
 
     if (toolName === 'CronCreate' || toolName === 'CronDelete') {
-      ctx.decision = {
+      event.veto({
         block: true,
         reason: this.toolApproval.formatDenyMessage(
           `${toolName} is not available in plan mode because it would mutate scheduled work that runs after plan exit. Call ExitPlanMode first.`,
         ),
-      };
+      });
       return;
     }
-
-    await next();
   }
 
   private get isActive(): boolean {

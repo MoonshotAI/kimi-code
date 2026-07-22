@@ -6,11 +6,6 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type {
-  ToolBeforeExecuteContext,
-  ToolDidExecuteContext,
-} from '#/agent/toolExecutor/toolHooks';
-import { OrderedHookSlot } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
@@ -20,13 +15,15 @@ import {
 } from '#/session/btw/btw';
 import { SessionBtwService } from '#/session/btw/btwService';
 
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent/toolExecutor/stubs';
+
 describe('SessionBtwService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let fork: ReturnType<typeof vi.fn>;
   let appendSystemReminder: ReturnType<typeof vi.fn>;
   let formatDenyMessage: ReturnType<typeof vi.fn>;
-  let beforeExecuteSlot: OrderedHookSlot<ToolBeforeExecuteContext>;
+  let executorEvents: ToolExecutorEventStubs;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -35,7 +32,7 @@ describe('SessionBtwService', () => {
     // The suffix mimics the worker-rejection guidance formatDenyMessage appends
     // for forked sub agents, so the assertion proves the reason went through it.
     formatDenyMessage = vi.fn((message: string) => `${message} [worker guidance]`);
-    beforeExecuteSlot = new OrderedHookSlot<ToolBeforeExecuteContext>();
+    executorEvents = stubToolExecutorEvents();
 
     const child = {
       id: 'agent-btw-1',
@@ -43,14 +40,7 @@ describe('SessionBtwService', () => {
         get: (id: unknown) => {
           if (id === IAgentSystemReminderService) return { appendSystemReminder };
           if (id === IAgentToolApprovalService) return { formatDenyMessage };
-          if (id === IAgentToolExecutorService) {
-            return {
-              hooks: {
-                onBeforeExecuteTool: beforeExecuteSlot,
-                onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
-              },
-            };
-          }
+          if (id === IAgentToolExecutorService) return executorEvents.executor;
           return undefined;
         },
       },
@@ -76,29 +66,24 @@ describe('SessionBtwService', () => {
     });
   });
 
-  it('blocks every tool call on the child through the btw-deny-all executor hook', async () => {
+  it('vetoes every tool call on the child through the btw deny listener', async () => {
     const svc = ix.get(ISessionBtwService);
     await svc.start();
 
     const toolCall: ToolCall = { type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' };
-    const ctx: ToolBeforeExecuteContext = {
+    const decision = await executorEvents.fireBeforeExecute({
       turnId: 0,
       signal: new AbortController().signal,
       toolCall,
       toolCalls: [toolCall],
       args: {},
       execution: { approvalRule: 'Bash', execute: async () => ({ output: '' }) },
-    };
-    let terminalRan = false;
-    await beforeExecuteSlot.run(ctx, async () => {
-      terminalRan = true;
     });
 
-    expect(ctx.decision).toEqual({
+    expect(decision).toEqual({
       block: true,
       reason: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
     });
-    expect(terminalRan).toBe(false);
     expect(formatDenyMessage).toHaveBeenCalledWith(TOOL_CALL_DISABLED_MESSAGE);
   });
 });

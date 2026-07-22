@@ -6,7 +6,6 @@ import type { TestInstantiationService } from '#/_base/di/test';
 import type {
   AuthorizeToolExecutionResult,
   ResolvedToolExecutionHookContext,
-  ToolBeforeExecuteContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
@@ -27,7 +26,7 @@ import { stubPermissionModeService } from '../permissionMode/stubs';
 import { stubPermissionPolicyService } from '../permissionPolicy/stubs';
 import { stubPermissionRulesService } from '../permissionRules/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { stubToolExecutor } from '../loop/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 
 function makeContext(
   toolName: string,
@@ -60,9 +59,12 @@ describe('AgentPermissionGate', () => {
   let rules: readonly PermissionRule[];
   let policyResult: PermissionPolicyEvaluation | undefined;
   let records: TelemetryRecord[];
-  let executor: ReturnType<typeof stubToolExecutor>;
+  let executorEvents: ToolExecutorEventStubs;
   let resolvePermissionResolution: ReturnType<
     typeof vi.fn<IAgentToolApprovalService['resolvePermissionResolution']>
+  >;
+  let requestToolApproval: ReturnType<
+    typeof vi.fn<IAgentToolApprovalService['requestToolApproval']>
   >;
 
   beforeEach(() => {
@@ -71,12 +73,13 @@ describe('AgentPermissionGate', () => {
     rules = [];
     policyResult = undefined;
     records = [];
-    executor = stubToolExecutor();
+    executorEvents = stubToolExecutorEvents();
     resolvePermissionResolution = vi.fn(async () => undefined);
+    requestToolApproval = vi.fn(async () => undefined);
     const toolApproval: IAgentToolApprovalService = {
       _serviceBrand: undefined,
       resolvePermissionResolution,
-      requestToolApproval: vi.fn(async () => undefined),
+      requestToolApproval,
       formatDenyMessage: (message) => message,
       formatApprovalRejectionMessage: () => '',
     };
@@ -90,7 +93,7 @@ describe('AgentPermissionGate', () => {
         );
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
-        reg.defineInstance(IAgentToolExecutorService, executor);
+        reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.define(IAgentPermissionGate, AgentPermissionGate);
       },
       strict: true,
@@ -165,54 +168,69 @@ describe('AgentPermissionGate', () => {
     });
   });
 
-  it('writes the decision into the hook context and stops the chain on block', async () => {
+  it('vetoes with the resolved denial and ends adjudication on a deny resolution', async () => {
     const blocked: AuthorizeToolExecutionResult = { block: true, reason: 'nope' };
     policyResult = { policyName: 'p', result: { kind: 'deny', message: 'nope' } };
     resolvePermissionResolution.mockResolvedValue(blocked);
     make();
-    const ctx: ToolBeforeExecuteContext = makeContext('bash');
-    const terminal = vi.fn(async () => {});
+    const later = vi.fn();
+    executorEvents.executor.onBeforeExecuteTool(later);
 
-    await executor.hooks.onBeforeExecuteTool.run(ctx, terminal);
+    const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 
-    expect(ctx.decision).toBe(blocked);
-    expect(terminal).not.toHaveBeenCalled();
+    expect(decision).toBe(blocked);
+    expect(later).not.toHaveBeenCalled();
   });
 
-  it('stops the chain on a synthetic result', async () => {
+  it('defers an ask resolution to a cold waitUntil factory', async () => {
     const synthetic: AuthorizeToolExecutionResult = {
       syntheticResult: { output: 'Plan review handled.' },
     };
-    policyResult = { policyName: 'p', result: { kind: 'ask' } };
-    resolvePermissionResolution.mockResolvedValue(synthetic);
+    const ask: PermissionPolicyResolution = { kind: 'ask' };
+    policyResult = { policyName: 'p', result: ask };
+    requestToolApproval.mockResolvedValue(synthetic);
     make();
-    const ctx: ToolBeforeExecuteContext = makeContext('ExitPlanMode');
-    const terminal = vi.fn(async () => {});
+    const ctx = makeContext('ExitPlanMode');
 
-    await executor.hooks.onBeforeExecuteTool.run(ctx, terminal);
+    const decision = await executorEvents.fireBeforeExecute(ctx);
 
-    expect(ctx.decision).toBe(synthetic);
-    expect(terminal).not.toHaveBeenCalled();
+    expect(decision).toBe(synthetic);
+    expect(requestToolApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCall: ctx.toolCall }),
+      ask,
+      'p',
+    );
+    expect(resolvePermissionResolution).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['no decision', undefined],
-    ['approve with executionMetadata', { executionMetadata: { marker: true } }],
-  ] as const)('continues the chain on %s', async (_name, result) => {
-    policyResult = { policyName: 'p', result: { kind: 'approve' } };
-    resolvePermissionResolution.mockResolvedValue(result);
+  it('makes no decision without a policy evaluation', async () => {
     make();
-    const ctx: ToolBeforeExecuteContext = makeContext('bash');
-    const terminal = vi.fn(async () => {});
 
-    await executor.hooks.onBeforeExecuteTool.run(ctx, terminal);
+    const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 
-    if (result === undefined) {
-      expect(ctx.decision).toBeUndefined();
-    } else {
-      expect(ctx.decision).toBe(result);
-    }
-    expect(terminal).toHaveBeenCalledTimes(1);
+    expect(decision).toBeUndefined();
+    expect(resolvePermissionResolution).not.toHaveBeenCalled();
+    expect(requestToolApproval).not.toHaveBeenCalled();
+  });
+
+  it('passes an approve resolution with its executionMetadata', async () => {
+    const executionMetadata = { marker: true };
+    policyResult = { policyName: 'p', result: { kind: 'approve', executionMetadata } };
+    make();
+
+    const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
+
+    expect(decision).toEqual({ executionMetadata });
+    expect(resolvePermissionResolution).not.toHaveBeenCalled();
+  });
+
+  it('makes no decision on a bare approve resolution', async () => {
+    policyResult = { policyName: 'p', result: { kind: 'approve' } };
+    make();
+
+    const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
+
+    expect(decision).toBeUndefined();
   });
 
   it('data() reflects the mode and rules services', () => {

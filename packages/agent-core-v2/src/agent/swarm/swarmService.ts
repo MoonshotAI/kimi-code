@@ -13,10 +13,10 @@
  * stays in step) and appends the exit reminder when nothing was
  * popped. Bound at Agent scope. The `AgentSwarm` tool self-registers via
  * `registerTool(...)` in `tools/agent-swarm.ts`. The service also guards
- * AgentSwarm batch exclusivity through an executor `onBeforeExecuteTool` hook
- * (`swarm-exclusive`, ordered before `permission`): an AgentSwarm call must be
- * the only tool call in its batch, anything else is blocked with a
- * `toolApproval.formatDenyMessage`-formatted reason.
+ * AgentSwarm batch exclusivity through an `onBeforeExecuteTool` veto
+ * listener: an AgentSwarm call must be the only tool call in its batch,
+ * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted
+ * reason.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -27,7 +27,6 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IWireService } from '#/wire/wire';
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
@@ -44,7 +43,6 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentPermissionGate _permissionGate: IAgentPermissionGate,
   ) {
     super();
     this._register(
@@ -55,27 +53,22 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
       }),
     );
     this._register(
-      toolExecutor.hooks.onBeforeExecuteTool.register(
-        'swarm-exclusive',
-        async (ctx, next) => {
-          const agentSwarmCount = ctx.toolCalls.filter(
-            (toolCall) => toolCall.name === 'AgentSwarm',
-          ).length;
-          if (agentSwarmCount === 0 || (agentSwarmCount === 1 && ctx.toolCalls.length === 1)) {
-            await next();
-            return;
-          }
-          ctx.decision = {
-            block: true,
-            reason: this.toolApproval.formatDenyMessage(
-              agentSwarmCount > 1
-                ? multipleAgentSwarmDeniedMessage(ctx.toolCalls.length > agentSwarmCount)
-                : mixedAgentSwarmDeniedMessage(),
-            ),
-          };
-        },
-        { before: 'permission' },
-      ),
+      toolExecutor.onBeforeExecuteTool((event) => {
+        const agentSwarmCount = event.toolCalls.filter(
+          (toolCall) => toolCall.name === 'AgentSwarm',
+        ).length;
+        if (agentSwarmCount === 0 || (agentSwarmCount === 1 && event.toolCalls.length === 1)) {
+          return;
+        }
+        event.veto({
+          block: true,
+          reason: this.toolApproval.formatDenyMessage(
+            agentSwarmCount > 1
+              ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
+              : mixedAgentSwarmDeniedMessage(),
+          ),
+        });
+      }),
     );
   }
 

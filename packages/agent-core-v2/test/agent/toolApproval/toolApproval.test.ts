@@ -224,14 +224,14 @@ describe('AgentToolApprovalService', () => {
           {
             kind: 'result',
             syntheticResult: { output: 'Plan review handled.' },
-            updatedArgs: { extra: true },
+            executionMetadata: { extra: true },
           },
           makeContext('ExitPlanMode'),
           'p',
         ),
       ).resolves.toEqual({
         syntheticResult: { output: 'Plan review handled.' },
-        updatedArgs: { extra: true },
+        executionMetadata: { extra: true },
       });
     });
 

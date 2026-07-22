@@ -22,12 +22,13 @@
  * `toolExecutor`, writes system reminders through `systemReminder`, reports
  * telemetry through `telemetry`, and checks main-agent eligibility through
  * `scopeContext`. Measures time and arms hard deadlines through `goal`'s
- * App-scoped deadline scheduler. Runs the goal-start review as a
- * `toolExecutor` hook (`'goal-start-review'`, ordered before `'permission'`):
- * a `CreateGoal` call carrying a `goal_start` display outside `auto` mode is
- * approved through `toolApproval` under the origin `goal-start-review-ask` —
- * including the permission-mode switch picked on the approval surface — and
- * never falls through to the permission policy chain. Bound at Agent scope.
+ * App-scoped deadline scheduler. Two `onBeforeExecuteTool` veto listeners
+ * guard the goal lifecycle: stale or budget-exhausted goal tool calls are
+ * vetoed with synthetic results, and a `CreateGoal` call carrying a
+ * `goal_start` display outside `auto` mode defers to a cold `waitUntil`
+ * factory that runs the goal-start review through `toolApproval` under the
+ * origin `goal-start-review-ask` — including the permission-mode switch
+ * picked on the approval surface. Bound at Agent scope.
  * Subagent instances reject every goal command and do not install goal
  * injection, accounting, budget, or continuation hooks.
  */
@@ -54,12 +55,11 @@ import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRe
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -240,7 +240,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IConfigService private readonly config: IConfigService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
     @IAgentScopeContext private readonly agentContext: IAgentScopeContext,
-    @IAgentPermissionGate _permissionGate: IAgentPermissionGate,
   ) {
     super();
     if (!this.isSupportedAgent) return;
@@ -278,22 +277,18 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         await next();
       }),
     );
-    // Injecting the gate forces it to be constructed first, so the
-    // `'permission'` hook target always exists for the registration below.
     this._register(
-      toolExecutor.hooks.onBeforeExecuteTool.register(
-        'goal-start-review',
-        async (ctx, next) => {
-          if (
-            ctx.toolCall.name !== 'CreateGoal' ||
-            this.permissionMode.mode === 'auto' ||
-            ctx.execution.display?.kind !== 'goal_start'
-          ) {
-            await next();
-            return;
-          }
-          const result = await this.toolApproval.requestToolApproval(
-            ctx,
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (
+          event.toolCall.name !== 'CreateGoal' ||
+          this.permissionMode.mode === 'auto' ||
+          event.execution.display?.kind !== 'goal_start'
+        ) {
+          return;
+        }
+        event.waitUntil(async () =>
+          this.toolApproval.requestToolApproval(
+            event,
             {
               kind: 'ask',
               resolveApproval: (approval) => {
@@ -306,30 +301,22 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
               },
             },
             'goal-start-review-ask',
-          );
-          if (result !== undefined) ctx.decision = result;
-        },
-        { before: 'permission' },
-      ),
+          ),
+        );
+      }),
     );
     this._register(
-      toolExecutor.hooks.onBeforeExecuteTool.register(
-        'goal-budget-reject',
-        async (ctx, next) => {
-          if (this.isStaleGoalToolCall(ctx)) {
-            ctx.decision = { syntheticResult: { output: GOAL_STALE_TOOL_RESULT } };
-            return;
-          }
-          if (this.budgetGraceTurns.has(ctx.turnId)) {
-            ctx.decision = {
-              syntheticResult: { output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE },
-            };
-            return;
-          }
-          await next();
-        },
-        { before: 'goal-start-review' },
-      ),
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (this.isStaleGoalToolCall(event)) {
+          event.veto({ syntheticResult: { output: GOAL_STALE_TOOL_RESULT } });
+          return;
+        }
+        if (this.budgetGraceTurns.has(event.turnId)) {
+          event.veto({
+            syntheticResult: { output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE },
+          });
+        }
+      }),
     );
     this._register(
       toolExecutor.hooks.onDidExecuteTool.register('goal-outcome-tool-result', async (ctx, next) => {
@@ -845,7 +832,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return state?.status === 'active' && state.goalId === goalId;
   }
 
-  private isStaleGoalToolCall(ctx: ToolBeforeExecuteContext): boolean {
+  private isStaleGoalToolCall(ctx: BeforeToolExecuteEvent): boolean {
     const toolName = ctx.toolCall.name;
     if (!isGoalMutationTool(toolName)) return false;
     const goalId = this.goalTurnTarget(ctx.turnId);

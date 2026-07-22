@@ -4,7 +4,7 @@ The target design for the agent-core permission system. Read this when touching 
 
 > **The permission system should be a composable, registrable chain of responsibility (a microkernel).** The kernel only runs the chain in order, first hit wins; concrete permission dimensions (policies) are contributed by their owning Domain Services through a registry; tools only declare standardized resource access (`accesses`) in `resolveExecution`, and generic dimensions consume that metadata.
 >
-> **The chain adjudicates risk only.** A policy node answers "how dangerous is this call, and may the user override that judgment?" — its `ask`/`deny` outcomes are always user-overridable. **Harness constraints are not permissions**: a mechanism that limits the agent for its own correctness (plan-mode write guard, AgentSwarm batch exclusivity, btw side-question fork, goal budget rejection) produces a hard deny with no ask channel and no per-call user exemption. Those live in their owning domains as `onBeforeExecuteTool` hooks ordered `before: 'permission'` (precedent: `goalService.ts`'s `goal-budget-reject`). Product reviews (plan review, goal-start review) are likewise not permissions: the owning domain intercepts its tool and drives the shared `IAgentToolApprovalService` round-trip itself.
+> **The chain adjudicates risk only.** A policy node answers "how dangerous is this call, and may the user override that judgment?" — its `ask`/`deny` outcomes are always user-overridable. **Harness constraints are not permissions**: a mechanism that limits the agent for its own correctness (plan-mode write guard, AgentSwarm batch exclusivity, btw side-question fork, goal budget rejection) produces a hard deny with no ask channel and no per-call user exemption. Those live in their owning domains as `onBeforeExecuteTool` veto listeners that call `event.veto(...)` (precedent: `goalService.ts`'s budget/stale rejection). Product reviews (plan review, goal-start review) are likewise not permissions: the owning domain intercepts its tool with a cold `event.waitUntil(factory)` and drives the shared `IAgentToolApprovalService` round-trip itself, so the review only starts once no other listener vetoed the call.
 >
 > **Do not introduce Casbin** — the hard part here is *decision behavior* (continuations, side effects, RPC, state machines), not "match + scalar decision".
 
@@ -58,7 +58,7 @@ Casbin = single Strategy + data-driven. This design = multiple Strategies + chai
 
 1. **The chain encodes "permission dimensions", not "tools".** Adding a tool does not lengthen the chain; only adding a dimension adds a node.
 2. **Two contribution paths:** high-frequency trivial specifics go through the **data path** (rules); low-frequency new dimensions with behavior go through the **code path** (policies).
-3. **Guard/review off-chain, risk on-chain:** harness constraints and product reviews ship with their owning domain as executor hooks (§5.4); risk dimensions contributed by a domain self-register as chain policies in DI, mirroring v2's "domain self-registers tools".
+3. **Guard/review off-chain, risk on-chain:** harness constraints and product reviews ship with their owning domain as `onBeforeExecuteTool` veto listeners (§5.4); risk dimensions contributed by a domain self-register as chain policies in DI, mirroring v2's "domain self-registers tools".
 4. **Tools declare resources; generic dimensions consume them:** bash/write/read only declare `accesses`; file/security dimensions judge centrally.
 
 ### 5.2 Core abstractions
@@ -108,21 +108,21 @@ Key points:
 
 Most growth goes through the data path — node count is bounded by "kinds of behavior"; rule count grows with specifics (rule matching is a cheap Set/glob).
 
-### 5.4 Domain dimensions: guard/review via executor hooks, policy registration for risk
+### 5.4 Domain dimensions: guard/review via the executor veto event, policy registration for risk
 
-**Harness constraints and product reviews no longer live on the chain.** A domain that owns one registers an executor hook ordered `before: 'permission'` and decides for itself:
+**Harness constraints and product reviews no longer live on the chain.** A domain that owns one registers an `onBeforeExecuteTool` veto listener and adjudicates through the event:
 
 ```ts
 // src/plan/planService.ts — constructor
-constructor(@IAgentPermissionGate _gate, @IAgentToolExecutorService executor, ...) {
-  executor.hooks.onBeforeExecuteTool.register('plan-guard', handler, { before: 'permission' });
+constructor(@IAgentToolExecutorService executor, ...) {
+  executor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
 }
 ```
 
-- Injecting `IAgentPermissionGate` (unused, `_`-prefixed) forces the gate to be constructed first, so the `'permission'` hook target always exists — the built-in tools registrar can otherwise construct the domain service before the gate is ignited.
-- **Guard** (hard deny): set `ctx.decision = { block: true, reason: toolApproval.formatDenyMessage(...) }` and do not call `next()`. Short-circuiting a *deny* ahead of the chain is correct — these policies sat at the head of the chain anyway.
-- **Review** (product approval): intercept the tool, drive `IAgentToolApprovalService.requestToolApproval(ctx, ask, origin)` and fold the continuation into `ctx.decision`; pass `next()` for every case you do not review so user rules still apply.
-- **Plain allow**: do NOT short-circuit approvals in the hook — put the tool in `default-tool-approve`'s whitelist and `next()`, so user deny/ask rules keep their precedence.
+- The veto event carries no id and no ordering contract. Listeners answer with `event.veto(result)` (first one wins, ends adjudication), `event.allow()` (final pass, ends everything including the permission gate's own listener), `event.pass(metadata)` (pass with an `executionMetadata` trace, ends nothing), or `event.waitUntil(factory)` (defer to a cold factory).
+- **Guard** (hard deny): call `event.veto({ block: true, reason: toolApproval.formatDenyMessage(...) })`. An immediate veto suppresses every pending `waitUntil` factory, so a deny can never be preceded by someone else's approval prompt.
+- **Review** (product approval): intercept the tool with `event.waitUntil(() => ...requestToolApproval(event, ask, origin))`. The factory is cold — the executor only invokes it after every listener ran without a veto or an allow, so the review's Interaction starts only once the call is otherwise clear to proceed; abstain (no statement) for every case you do not review so user rules still apply.
+- **Plain allow**: do NOT `allow()` casually — prefer putting the tool in `default-tool-approve`'s whitelist so user deny/ask rules keep their precedence; reserve `allow()` for cases like the plan-file write guard that must bypass even the permission chain.
 
 **Risk dimensions contributed by a domain still go through the chain** (the registry path below): a domain whose state changes the *risk* verdict registers its policy via `IPermissionPolicyRegistry`, mirroring v2's "domain self-registers tools". A complex domain may register a single **composite** node externally and run a small internal chain, hiding its internal order from the global chain.
 
@@ -175,12 +175,12 @@ Each new resource kind can pair with a generic dimension that consumes it; tools
 | Dimension | Owner | Type |
 |---|---|---|
 | external hook veto | `externalHooks` domain | generic |
-| tool-batch exclusivity | `swarm` domain — executor hook `swarm-exclusive` | harness constraint (off-chain) |
-| plan-mode write guard | `plan` domain — executor hook `plan-guard` | harness constraint (off-chain) |
-| plan review | `plan` domain — same hook + `toolApproval` | product review (off-chain) |
-| goal-start review | `goal` domain — executor hook `goal-start-review` + `toolApproval` | product review (off-chain) |
-| goal budget rejection | `goal` domain — executor hook `goal-budget-reject` | harness constraint (off-chain) |
-| btw tool disablement | `btw` domain — executor hook `btw-deny-all` on the fork | harness constraint (off-chain) |
+| tool-batch exclusivity | `swarm` domain — `onBeforeExecuteTool` veto listener | harness constraint (off-chain) |
+| plan-mode write guard | `plan` domain — `onBeforeExecuteTool` veto listener | harness constraint (off-chain) |
+| plan review | `plan` domain — same listener's `waitUntil` + `toolApproval` | product review (off-chain) |
+| goal-start review | `goal` domain — veto listener's `waitUntil` + `toolApproval` | product review (off-chain) |
+| goal budget / stale rejection | `goal` domain — `onBeforeExecuteTool` veto listener | harness constraint (off-chain) |
+| btw tool disablement | `btw` domain — veto listener on the fork | harness constraint (off-chain) |
 | runtime-mode posture (auto/yolo) | `permissionMode` domain (chain nodes, pending the level×routing split) | generic |
 | static config rules | `permissionRules` domain | generic (data path) |
 | session approval memory | `permissionRules` domain | generic |
@@ -190,13 +190,13 @@ Each new resource kind can pair with a generic dimension that consumes it; tools
 | fallback | core permission | generic |
 | approval round-trip | `toolApproval` domain — shared by gate asks and domain reviews | infrastructure |
 
-Pattern: **harness constraints and reviews ship with their owning domain as executor hooks; risk dimensions ship as chain policies (self-registered once the registry lands); generic dimensions register centrally and apply across tools via the declared `accesses`.**
+Pattern: **harness constraints and reviews ship with their owning domain as `onBeforeExecuteTool` veto listeners; risk dimensions ship as chain policies (self-registered once the registry lands); generic dimensions register centrally and apply across tools via the declared `accesses`.**
 
 ## 6. Evolution path
 
 Incremental, not big-bang:
 
-1. ~~**Sink domain dimensions.**~~ **Done** — plan guard/review, goal-start review, swarm batch exclusivity, and btw deny-all moved out of the chain into their owning domains as executor hooks ordered `before: 'permission'`; the shared approval round-trip was extracted to `IAgentToolApprovalService`; `registerPolicy` was removed (btw was its only production user). The chain now holds 12 risk-adjudication nodes only.
+1. ~~**Sink domain dimensions.**~~ **Done** — plan guard/review, goal-start review, swarm batch exclusivity, and btw deny-all moved out of the chain into their owning domains as `onBeforeExecuteTool` veto listeners (immediate `veto` / `allow` / `pass` statements plus cold `waitUntil` factories for approval round-trips); the shared approval round-trip was extracted to `IAgentToolApprovalService`; `registerPolicy` was removed (btw was its only production user). The chain now holds 12 risk-adjudication nodes only.
 2. **Level × routing split.** Separate "risk level" (read-only / read-write / yolo posture — what `yolo-mode-approve` really is) from "interaction routing" (what `auto-mode-approve` / `auto-mode-ask-user-question-deny` really are: route permission asks and reviews without the user). The routing layer lands on the `session/approval` broker; the three remaining mode policies leave the chain here.
 3. **Registry + Composer.** Replace the hardcoded `new`s in `PermissionPolicyService` with reads from `IPermissionPolicyRegistry`; lift mode guards into `modes` metadata. Chain shape becomes selectable per `(agent, mode)` and externally extensible.
 4. **(On demand) extend resource types.** When non-file resources (network/DB/shell) need structural dimensions, extend the `ToolResourceAccess` union.
@@ -205,9 +205,8 @@ Incremental, not big-bang:
 ## Red lines (this topic)
 
 - Do not introduce Casbin — decisions are behavior bundles, not scalar effects.
-- The chain adjudicates risk only. A node whose deny/ask the user cannot per-call exempt is a harness constraint: implement it as an executor hook ordered `before: 'permission'` in the owning domain, never as a chain policy.
-- Product reviews (plan/goal) are not permissions either: the owning domain intercepts its tool and drives `IAgentToolApprovalService` itself; the gate only handles chain asks.
-- When registering such a hook, inject `IAgentPermissionGate` (unused) so the gate exists before you order `before: 'permission'`.
+- The chain adjudicates risk only. A node whose deny/ask the user cannot per-call exempt is a harness constraint: implement it as an `onBeforeExecuteTool` veto listener in the owning domain (`event.veto(...)` / `event.allow()`), never as a chain policy.
+- Product reviews (plan/goal) are not permissions either: the owning domain intercepts its tool with a cold `event.waitUntil(factory)` and drives `IAgentToolApprovalService` itself; the gate only handles chain asks.
 - The chain encodes dimensions, not tools: a new tool must not lengthen the chain.
 - New specifics go through the data path (rules); only new risk behavior goes through the code path (a policy node).
 - Tools only declare `accesses`; generic dimensions consume them. kaos is the execution environment, not the permission abstraction.

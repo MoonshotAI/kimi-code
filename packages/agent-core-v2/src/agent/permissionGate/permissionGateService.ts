@@ -1,13 +1,15 @@
 /**
  * `permissionGate` domain (L3) — `IAgentPermissionGate` implementation.
  *
- * Runs the `permissionPolicy` chain for every tool execution through the
- * executor's `onBeforeExecuteTool` hook (registered as `'permission'`), reports
- * `permission_policy_decision` through `telemetry`, and delegates the ask
- * round-trip (broker, events, session-rule recording) to `toolApproval`.
- * Harness constraints (plan guard, swarm exclusivity, btw deny) live in their
- * own domains as executor hooks ordered `before: 'permission'` — this gate
- * only adjudicates risk. Bound at Agent scope.
+ * Runs the `permissionPolicy` chain for every tool execution as an
+ * `onBeforeExecuteTool` veto listener: `deny` / `result` resolutions veto,
+ * `approve` passes with its `executionMetadata`, and `ask` defers to a cold
+ * `waitUntil` factory so the approval round-trip only starts once no other
+ * listener vetoed or allowed the call. Reports `permission_policy_decision`
+ * through `telemetry`, and delegates the ask round-trip (broker, events,
+ * session-rule recording) to `toolApproval`. Harness constraints (plan
+ * guard, swarm exclusivity, btw deny) live in their own domains as veto
+ * listeners — this gate only adjudicates risk. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -21,6 +23,7 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
   AuthorizeToolExecutionResult,
+  BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -38,16 +41,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
     super();
-    toolExecutor.hooks.onBeforeExecuteTool.register('permission', async (ctx, next) => {
-      const result = await this.authorize(ctx);
-      if (result !== undefined) {
-        ctx.decision = result;
-      }
-      if (result?.block === true || result?.syntheticResult !== undefined) {
-        return;
-      }
-      await next();
-    });
+    this._register(toolExecutor.onBeforeExecuteTool((event) => this.adjudicate(event)));
   }
 
   data(): PermissionData {
@@ -55,6 +49,33 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
       mode: this.modeService.mode,
       rules: [...this.rulesService.rules],
     };
+  }
+
+  private async adjudicate(event: BeforeToolExecuteEvent): Promise<void> {
+    const evaluation = await this.policyService.evaluate(event);
+    if (evaluation === undefined) return;
+    this.telemetry.track2('permission_policy_decision', {
+      turn_id: event.turnId,
+      tool_call_id: event.toolCall.id,
+      policy_name: evaluation.policyName,
+      tool_name: event.toolCall.name,
+      permission_mode: this.modeService.mode,
+      decision: evaluation.result.kind,
+      ...evaluation.result.reason,
+    });
+    const { result, policyName } = evaluation;
+    if (result.kind === 'ask') {
+      event.waitUntil(() => this.toolApproval.requestToolApproval(event, result, policyName));
+      return;
+    }
+    if (result.kind === 'approve') {
+      event.pass(result.executionMetadata);
+      return;
+    }
+    const resolved = await this.toolApproval.resolvePermissionResolution(result, event, policyName);
+    if (resolved !== undefined) {
+      event.veto(resolved);
+    }
   }
 
   async authorize(

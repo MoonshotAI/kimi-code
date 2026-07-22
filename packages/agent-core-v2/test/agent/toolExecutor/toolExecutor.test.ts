@@ -1,7 +1,7 @@
 import type { ToolCall } from '#/kosong/contract/message';
 import type { DomainEvent } from '#/app/event/eventBus';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -16,6 +16,7 @@ import {
   type ToolUpdate,
 } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -134,9 +135,8 @@ describe('AgentToolExecutorService', () => {
     const tool = new TestTool('echo');
     registry.register(tool);
     let tag = true;
-    executor.hooks.onBeforeExecuteTool.register('test-dup-tag', async (ctx, next) => {
-      if (tag && ctx.toolCall.id === 'call_dup') executor.recordDupType('call_dup', 'cross_step');
-      await next();
+    executor.onBeforeExecuteTool((event) => {
+      if (tag && event.toolCall.id === 'call_dup') executor.recordDupType('call_dup', 'cross_step');
     });
 
     await execute([
@@ -385,8 +385,8 @@ describe('AgentToolExecutorService', () => {
   it('onBeforeExecuteTool block records an error result without invoking execute', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    executor.hooks.onBeforeExecuteTool.register('block', async (ctx) => {
-      ctx.decision = { block: true, reason: 'forbidden' };
+    executor.onBeforeExecuteTool((event) => {
+      event.veto({ block: true, reason: 'forbidden' });
     });
 
     const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
@@ -405,13 +405,13 @@ describe('AgentToolExecutorService', () => {
     const second = new TestTool('second');
     registry.register(first);
     registry.register(second);
-    executor.hooks.onBeforeExecuteTool.register('synthetic', async (ctx) => {
-      if (ctx.toolCall.id !== 'call_first') return;
-      ctx.decision = {
+    executor.onBeforeExecuteTool((event) => {
+      if (event.toolCall.id !== 'call_first') return;
+      event.veto({
         syntheticResult: {
           output: 'synthetic',
         },
-      };
+      });
     });
 
     const results = await execute([
@@ -737,6 +737,181 @@ describe('AgentToolExecutorService', () => {
       kind: 'steer',
       message: { content: [{ type: 'text', text: 'injected' }] },
     });
+  });
+});
+
+describe('onBeforeExecuteTool veto semantics', () => {
+  it('applies the first veto and does not run later listeners', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const later = vi.fn();
+    executor.onBeforeExecuteTool((event) => {
+      event.veto({ block: true, reason: 'first' });
+    });
+    executor.onBeforeExecuteTool((event) => {
+      later();
+      event.veto({ block: true, reason: 'second' });
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(results).toEqual([expect.objectContaining({ output: 'first', isError: true })]);
+    expect(later).not.toHaveBeenCalled();
+    expect(tool.calls).toEqual([]);
+  });
+
+  it('lets an allow end adjudication before later listeners run', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const later = vi.fn();
+    executor.onBeforeExecuteTool((event) => {
+      event.allow();
+    });
+    executor.onBeforeExecuteTool((event) => {
+      later();
+      event.veto({ block: true, reason: 'denied' });
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
+    expect(later).not.toHaveBeenCalled();
+    expect(tool.calls).toHaveLength(1);
+  });
+
+  it('threads pass metadata into the execution context', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const metadata = { marker: true };
+    executor.onBeforeExecuteTool((event) => {
+      event.pass(metadata);
+    });
+
+    await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(tool.calls[0]).toEqual(expect.objectContaining({ metadata }));
+  });
+
+  // Regression for the ask/deny ordering bug: a deny-style veto (btw's
+  // deny-all) registered after an ask-style listener (permission) must win
+  // without the ask's Interaction ever starting — the waitUntil factory
+  // stays cold because the veto lands in the immediate pass.
+  it('never invokes waitUntil factories when an immediate veto decides the call', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const askFactory = vi.fn(async () => undefined);
+    executor.onBeforeExecuteTool((event) => {
+      event.waitUntil(askFactory);
+    });
+    executor.onBeforeExecuteTool((event) => {
+      event.veto({ block: true, reason: 'disabled' });
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(results).toEqual([expect.objectContaining({ output: 'disabled', isError: true })]);
+    expect(askFactory).not.toHaveBeenCalled();
+    expect(tool.calls).toEqual([]);
+  });
+
+  it('fulfills waitUntil factories in registration order when no listener decides immediately', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const fulfilled: string[] = [];
+    executor.onBeforeExecuteTool((event) => {
+      event.waitUntil(async () => {
+        fulfilled.push('first');
+        return undefined;
+      });
+    });
+    executor.onBeforeExecuteTool((event) => {
+      event.waitUntil(async () => {
+        fulfilled.push('second');
+        return { block: true, reason: 'second-denied' };
+      });
+    });
+    executor.onBeforeExecuteTool((event) => {
+      event.waitUntil(async () => {
+        fulfilled.push('third');
+        return undefined;
+      });
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(fulfilled).toEqual(['first', 'second']);
+    expect(results).toEqual([
+      expect.objectContaining({ output: 'second-denied', isError: true }),
+    ]);
+    expect(tool.calls).toEqual([]);
+  });
+
+  it('lets a call through when every waitUntil factory returns undefined', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    executor.onBeforeExecuteTool((event) => {
+      event.waitUntil(async () => undefined);
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
+    expect(tool.calls).toHaveLength(1);
+  });
+
+  it('throws when a statement is made after the statement window closed', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    let captured: BeforeToolExecuteEvent | undefined;
+    executor.onBeforeExecuteTool((event) => {
+      captured = event;
+    });
+
+    await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(captured).toBeDefined();
+    const closed = captured!;
+    expect(() => closed.waitUntil(async () => undefined)).toThrow(
+      'waitUntil can NOT be called asynchronously',
+    );
+    expect(() => closed.veto({ block: true })).toThrow(
+      'veto can NOT be called asynchronously',
+    );
+  });
+});
+
+describe('onWillExecuteTool', () => {
+  it('awaits registered waitUntil work before executing the tool', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const gate = deferred<void>();
+    executor.onWillExecuteTool((event) => {
+      event.waitUntil(gate.promise);
+    });
+
+    const pending = execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(tool.calls).toEqual([]);
+
+    gate.resolve();
+    const results = await pending;
+    expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
+    expect(tool.calls).toHaveLength(1);
+  });
+
+  it('does not fire for a vetoed call', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const willListener = vi.fn();
+    executor.onWillExecuteTool(willListener);
+    executor.onBeforeExecuteTool((event) => {
+      event.veto({ block: true, reason: 'nope' });
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+
+    expect(results).toEqual([expect.objectContaining({ output: 'nope', isError: true })]);
+    expect(willListener).not.toHaveBeenCalled();
   });
 });
 

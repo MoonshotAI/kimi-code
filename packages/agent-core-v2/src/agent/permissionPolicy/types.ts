@@ -1,4 +1,4 @@
-import type { PrepareToolExecutionResult, ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { AuthorizeToolExecutionResult, ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 
@@ -32,7 +32,7 @@ export type PermissionDecisionReason = Readonly<Record<string, PermissionReasonV
 
 export type PermissionPolicyResolution =
   | PermissionPolicyResult
-  | ({ readonly kind: 'result' } & PrepareToolExecutionResult);
+  | ({ readonly kind: 'result' } & AuthorizeToolExecutionResult);
 
 export interface PermissionPolicyContext extends ResolvedToolExecutionHookContext {}
 

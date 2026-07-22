@@ -389,7 +389,7 @@ function domainFromRel(rel, { exemptRootFile }) {
  * Post-rebase-v2 restructuring introduced cross-domain type sharing between
  * L3 (registries/capabilities) and L4 (agent behaviour). The tool contract
  * (`ExecutableTool` / `ToolExecution` / results) and the tool-execution hook
- * contexts (`ToolExecutionHookContext` / `ToolBeforeExecuteContext` / …) now
+ * contexts (`ToolExecutionHookContext` / `BeforeToolExecuteEvent` / …) now
  * live in `tool` (L3); the only remaining L3→L4 import is a `loop` error /
  * event helper used by `toolExecutor` — surfaced for review rather than a
  * layering violation to fix here.

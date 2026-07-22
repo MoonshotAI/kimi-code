@@ -17,10 +17,9 @@ import { AgentSwarmTool, AgentSwarmToolInputSchema } from '#/agent/swarm/tools/a
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type {
-  ToolBeforeExecuteContext,
-  ToolDidExecuteContext,
+  AuthorizeToolExecutionResult,
+  ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import { OrderedHookSlot } from '#/hooks';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -42,6 +41,7 @@ import { stubContextMemory } from '../contextMemory/stubs';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 
 const signal = new AbortController().signal;
 
@@ -56,7 +56,7 @@ function toolCall(name: string, id: string): ToolCall {
   return { type: 'function', id, name, arguments: '{}' };
 }
 
-function hookContext(toolCalls: ToolCall[]): ToolBeforeExecuteContext {
+function hookContext(toolCalls: ToolCall[]): ResolvedToolExecutionHookContext {
   return {
     turnId: 0,
     signal,
@@ -122,7 +122,7 @@ function stubCallerProfile(
 describe('AgentSwarmService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let beforeExecuteSlot: OrderedHookSlot<ToolBeforeExecuteContext>;
+  let executorEvents: ToolExecutorEventStubs;
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
 
@@ -141,21 +141,11 @@ describe('AgentSwarmService', () => {
       run: async () => [],
       cancel: () => {},
     });
-    // The swarm-exclusive hook registers `before: 'permission'`, so the slot
-    // needs a stand-in for the permissionGate hook; the flag proves whether
-    // the swarm hook short-circuited or delegated via next().
-    beforeExecuteSlot = new OrderedHookSlot<ToolBeforeExecuteContext>();
+    // A stand-in listener registered after the swarm listener proves whether
+    // the swarm-exclusive veto ended adjudication or abstained.
+    executorEvents = stubToolExecutorEvents();
     permissionGateRan = false;
-    beforeExecuteSlot.register('permission', async (_ctx, next) => {
-      permissionGateRan = true;
-      await next();
-    });
-    ix.stub(IAgentToolExecutorService, {
-      hooks: {
-        onBeforeExecuteTool: beforeExecuteSlot,
-        onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
-      },
-    });
+    ix.stub(IAgentToolExecutorService, executorEvents.executor);
     formatDenyMessage = vi.fn((message: string) => message);
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
@@ -166,6 +156,17 @@ describe('AgentSwarmService', () => {
     ix.set(IAgentSwarmService, new SyncDescriptor(AgentSwarmService));
   });
   afterEach(() => disposables.dispose());
+
+  async function fire(
+    ctx: ResolvedToolExecutionHookContext,
+  ): Promise<AuthorizeToolExecutionResult | undefined> {
+    disposables.add(
+      executorEvents.executor.onBeforeExecuteTool(() => {
+        permissionGateRan = true;
+      }),
+    );
+    return executorEvents.fireBeforeExecute(ctx);
+  }
 
   it('enter / exit toggle isActive and emit agent.status.updated via wire', () => {
     const swarm = ix.get(IAgentSwarmService);
@@ -216,16 +217,13 @@ describe('AgentSwarmService', () => {
     expect(fresh.getModel(SwarmModel)).toBe('manual');
   });
 
-  it('blocks a batch with multiple AgentSwarm calls before the permission gate', async () => {
+  it('blocks a batch with multiple AgentSwarm calls before any other adjudication', async () => {
     ix.get(IAgentSwarmService);
-    const ctx = hookContext([
-      toolCall('AgentSwarm', 'call_swarm_1'),
-      toolCall('AgentSwarm', 'call_swarm_2'),
-    ]);
+    const decision = await fire(
+      hookContext([toolCall('AgentSwarm', 'call_swarm_1'), toolCall('AgentSwarm', 'call_swarm_2')]),
+    );
 
-    await beforeExecuteSlot.run(ctx);
-
-    expect(ctx.decision).toEqual({
+    expect(decision).toEqual({
       block: true,
       reason: expect.stringContaining('one swarm at a time'),
     });
@@ -235,11 +233,11 @@ describe('AgentSwarmService', () => {
 
   it('blocks an AgentSwarm call mixed with other tools in one batch', async () => {
     ix.get(IAgentSwarmService);
-    const ctx = hookContext([toolCall('AgentSwarm', 'call_swarm'), toolCall('Bash', 'call_bash')]);
+    const decision = await fire(
+      hookContext([toolCall('AgentSwarm', 'call_swarm'), toolCall('Bash', 'call_bash')]),
+    );
 
-    await beforeExecuteSlot.run(ctx);
-
-    expect(ctx.decision).toEqual({
+    expect(decision).toEqual({
       block: true,
       reason: expect.stringContaining('must be the only tool call'),
     });
@@ -247,24 +245,22 @@ describe('AgentSwarmService', () => {
     expect(formatDenyMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('lets a single AgentSwarm call through to the permission gate', async () => {
+  it('abstains on a single AgentSwarm call', async () => {
     ix.get(IAgentSwarmService);
-    const ctx = hookContext([toolCall('AgentSwarm', 'call_swarm')]);
+    const decision = await fire(hookContext([toolCall('AgentSwarm', 'call_swarm')]));
 
-    await beforeExecuteSlot.run(ctx);
-
-    expect(ctx.decision).toBeUndefined();
+    expect(decision).toBeUndefined();
     expect(permissionGateRan).toBe(true);
     expect(formatDenyMessage).not.toHaveBeenCalled();
   });
 
-  it('lets tool batches without AgentSwarm through to the permission gate', async () => {
+  it('abstains on tool batches without AgentSwarm', async () => {
     ix.get(IAgentSwarmService);
-    const ctx = hookContext([toolCall('Bash', 'call_bash'), toolCall('Read', 'call_read')]);
+    const decision = await fire(
+      hookContext([toolCall('Bash', 'call_bash'), toolCall('Read', 'call_read')]),
+    );
 
-    await beforeExecuteSlot.run(ctx);
-
-    expect(ctx.decision).toBeUndefined();
+    expect(decision).toBeUndefined();
     expect(permissionGateRan).toBe(true);
     expect(formatDenyMessage).not.toHaveBeenCalled();
   });

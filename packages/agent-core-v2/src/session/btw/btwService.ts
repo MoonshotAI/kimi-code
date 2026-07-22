@@ -2,8 +2,8 @@
  * `btw` domain — `ISessionBtwService` implementation.
  *
  * Forks the main agent into a side-question child: inherits profile/context via
- * `IAgentLifecycleService.fork`, then disables tool calls via an executor
- * `onBeforeExecuteTool` hook (`btw-deny-all`, blocks every tool call with the
+ * `IAgentLifecycleService.fork`, then disables tool calls via an
+ * `onBeforeExecuteTool` veto listener (blocks every tool call with the
  * `toolApproval.formatDenyMessage`-formatted TOOL_CALL_DISABLED_MESSAGE) and
  * appends the side-channel system reminder. Bound at Session scope —
  * `fork('main')` is a session-level operation, so the service injects the
@@ -42,8 +42,8 @@ export class SessionBtwService implements ISessionBtwService {
       ) ?? TOOL_CALL_DISABLED_MESSAGE;
     child.accessor
       .get(IAgentToolExecutorService)
-      ?.hooks.onBeforeExecuteTool.register('btw-deny-all', async (ctx) => {
-        ctx.decision = { block: true, reason };
+      ?.onBeforeExecuteTool((event) => {
+        event.veto({ block: true, reason });
       });
     return child.id;
   }

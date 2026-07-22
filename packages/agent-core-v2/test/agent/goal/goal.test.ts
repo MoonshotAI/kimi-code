@@ -4,7 +4,7 @@
  * Wiring: real goal/wire services; loop is stubbed only for focused scheduling cases.
  * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/goal/goal.test.ts`.
  */
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 
@@ -26,7 +26,7 @@ import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
-import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import type { WireRecord } from '#/wire/record';
@@ -35,7 +35,6 @@ import { APIConnectionError, APIStatusError } from '#/kosong/contract/errors';
 import type { ToolCall } from '#/kosong/contract/message';
 import type { TokenUsage } from '#/kosong/contract/usage';
 import { ErrorCodes, Error2, errorInfo, toKimiErrorPayload } from '#/errors';
-import type { HookHandler } from '#/hooks';
 import type { ExecutableTool, RunnableToolExecution } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -53,12 +52,12 @@ import {
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
+import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { stubAgentSwarm } from './stubs';
 
-// The real AgentSwarmService registers its executor hook `before: 'permission'`,
-// which the test-agent harness cannot satisfy (the permission gate transitively
-// constructs the swarm service through the policy chain). Goal tests never
-// exercise swarm behavior, so every test agent here stubs it out.
+// The real AgentSwarmService self-wires executor listeners and pulls in the
+// swarm runtime; goal tests never exercise swarm behavior, so every test
+// agent here stubs it out to keep the wiring focused on the goal domain.
 function createTestAgent(
   ...inputs: readonly (TestAgentServiceOverride | TestAgentOptions)[]
 ): TestAgentContext {
@@ -717,9 +716,8 @@ describe('AgentGoalService goal-start review', () => {
   };
 
   let ctx: TestAgentContext | undefined;
-  let toolExecutor: IAgentToolExecutorService;
+  let executorEvents: ToolExecutorEventStubs;
   let approvalCalls: ApprovalCall[];
-  let tailHook: Mock<HookHandler<ToolBeforeExecuteContext>>;
 
   function approvalStub(): IAgentToolApprovalService {
     return {
@@ -736,23 +734,20 @@ describe('AgentGoalService goal-start review', () => {
 
   function setup(mode: PermissionMode): void {
     approvalCalls = [];
+    executorEvents = stubToolExecutorEvents();
     ctx = createTestAgent(
       permissionModeServices(mode),
       agentService(IAgentToolApprovalService, approvalStub()),
+      agentService(IAgentToolExecutorService, executorEvents.executor),
     );
     ctx.get(IAgentGoalService);
-    toolExecutor = ctx.get(IAgentToolExecutorService);
-    tailHook = vi.fn<HookHandler<ToolBeforeExecuteContext>>(async (_hookCtx, next) => {
-      await next();
-    });
-    toolExecutor.hooks.onBeforeExecuteTool.register('test-tail', tailHook);
   }
 
   afterEach(async () => {
     await ctx?.dispose();
   });
 
-  function createGoalHookContext(display: ToolInputDisplay | undefined): ToolBeforeExecuteContext {
+  function createGoalHookContext(display: ToolInputDisplay | undefined): ResolvedToolExecutionHookContext {
     const toolCall: ToolCall = {
       type: 'function',
       id: 'call_create_goal',
@@ -779,13 +774,12 @@ describe('AgentGoalService goal-start review', () => {
     setup('manual');
     const hookCtx = createGoalHookContext(goalStartDisplay);
 
-    await toolExecutor.hooks.onBeforeExecuteTool.run(hookCtx);
+    const decision = await executorEvents.fireBeforeExecute(hookCtx);
 
     expect(approvalCalls).toHaveLength(1);
     expect(approvalCalls[0]!.origin).toBe('goal-start-review-ask');
     expect(approvalCalls[0]!.result.kind).toBe('ask');
-    expect(hookCtx.decision).toBeUndefined();
-    expect(tailHook).not.toHaveBeenCalled();
+    expect(decision).toBeUndefined();
 
     const resolved = approvalCalls[0]!.result.resolveApproval?.({
       decision: 'approved',
@@ -795,26 +789,24 @@ describe('AgentGoalService goal-start review', () => {
     expect(ctx!.get(IAgentPermissionModeService).mode).toBe('yolo');
   });
 
-  it('lets CreateGoal through to the permission chain in auto mode', async () => {
+  it('does not review CreateGoal in auto mode', async () => {
     setup('auto');
     const hookCtx = createGoalHookContext(goalStartDisplay);
 
-    await toolExecutor.hooks.onBeforeExecuteTool.run(hookCtx);
+    const decision = await executorEvents.fireBeforeExecute(hookCtx);
 
     expect(approvalCalls).toHaveLength(0);
-    expect(tailHook).toHaveBeenCalledTimes(1);
-    expect(hookCtx.decision).toBeUndefined();
+    expect(decision).toBeUndefined();
   });
 
-  it('lets CreateGoal through to the permission chain without a goal_start display', async () => {
+  it('does not review CreateGoal without a goal_start display', async () => {
     setup('manual');
     const hookCtx = createGoalHookContext({ kind: 'generic', summary: 'Creating a goal' });
 
-    await toolExecutor.hooks.onBeforeExecuteTool.run(hookCtx);
+    const decision = await executorEvents.fireBeforeExecute(hookCtx);
 
     expect(approvalCalls).toHaveLength(0);
-    expect(tailHook).toHaveBeenCalledTimes(1);
-    expect(hookCtx.decision).toBeUndefined();
+    expect(decision).toBeUndefined();
   });
 });
 
@@ -1081,20 +1073,13 @@ describe('AgentGoalService core workflow hooks', () => {
       name,
       arguments: JSON.stringify(args),
     };
-    const before: ToolBeforeExecuteContext = {
-      turnId: oldTurn.id,
-      signal: oldTurn.signal,
-      toolCall,
-      toolCalls: [toolCall],
-      args,
-      execution: { approvalRule: name, execute: async () => ({ output: 'executed' }) },
-    };
 
-    await toolExecutor.hooks.onBeforeExecuteTool.run(before);
+    const results = await executeToolCall(toolExecutor, oldTurn, toolCall);
 
-    expect(before.decision?.syntheticResult).toEqual({
-      output: 'Goal changed since this turn started; ignored stale goal tool call.',
-    });
+    expect(results).toHaveLength(1);
+    expect(results[0]!.result.output).toBe(
+      'Goal changed since this turn started; ignored stale goal tool call.',
+    );
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
       status: 'active',
