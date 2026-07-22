@@ -48,6 +48,7 @@ export async function applyReloadedTuiConfig(
     disablePasteBurst: config.disablePasteBurst,
     notifications: config.notifications,
     upgrade: config.upgrade,
+    footer: config.footer,
   });
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
 }

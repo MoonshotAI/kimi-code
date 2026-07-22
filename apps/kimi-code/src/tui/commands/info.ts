@@ -4,7 +4,7 @@ import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/ki
 
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
-import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
+import { buildUsageReportLines, UsagePanelComponent } from '../components/messages/usage-panel';
 import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
@@ -22,6 +22,7 @@ import {
 import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { submitFeedbackWithAttachments } from '../../feedback/feedback-attachments';
 import { formatErrorMessage } from '../utils/event-payload';
+import { fetchManagedUsageReport } from '../utils/managed-usage';
 import { openUrl } from '#/utils/open-url';
 import { promptFeedbackAttachment, promptFeedbackInput } from './prompts';
 import type { SlashCommandHost } from './dispatch';
@@ -113,14 +114,9 @@ interface RuntimeStatusResult {
   readonly error?: string;
 }
 
-interface ManagedUsageResult {
-  readonly usage?: ManagedUsageReport;
-  readonly error?: string;
-}
-
 export async function showUsage(host: SlashCommandHost): Promise<void> {
   const sessionUsage = await loadSessionUsageReport(host);
-  const managedUsage = await loadManagedUsageReport(host);
+  const managedUsage = await fetchManagedUsageReport(host.harness, host.state.appState);
   const reportArgs = {
     sessionUsage: sessionUsage.usage,
     sessionUsageError: sessionUsage.error,
@@ -138,7 +134,7 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
 export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   const [runtimeStatus, managedUsage] = await Promise.all([
     loadRuntimeStatusReport(host),
-    loadManagedUsageReport(host),
+    fetchManagedUsageReport(host.harness, host.state.appState),
   ]);
   const appState = host.state.appState;
   const reportArgs = {
@@ -197,21 +193,4 @@ async function loadRuntimeStatusReport(host: SlashCommandHost): Promise<RuntimeS
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUsageResult | undefined> {
-  const alias = host.state.appState.model;
-  const providerKey = host.state.appState.availableModels[alias]?.provider;
-  if (!isManagedUsageProvider(providerKey)) return undefined;
-
-  let res;
-  try {
-    res = await host.harness.auth.getManagedUsage(providerKey);
-  } catch (error) {
-    return { error: formatErrorMessage(error) };
-  }
-  if (res.kind === 'error') {
-    return { error: res.message };
-  }
-  return { usage: { summary: res.summary, limits: res.limits, extraUsage: res.extraUsage } };
 }

@@ -137,6 +137,7 @@ import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
+import { fetchManagedUsageReport } from './utils/managed-usage';
 import { REPLAY_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
@@ -230,6 +231,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
+    footer: input.tuiConfig.footer,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -392,6 +394,12 @@ export class KimiTUI {
     this.migrateOnly = startupInput.migrateOnly ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
+    // Reads `this.state.appState` lazily on every poll, so model/provider
+    // switches are picked up without rewiring. Gated by the config inside
+    // the footer (default off).
+    this.state.footer.setManagedUsageFetcher(() =>
+      fetchManagedUsageReport(this.harness, this.state.appState),
+    );
     this.uninstallRainbowDance = installRainbowDance(() => {
       this.state.ui.requestRender();
     });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import { DEFAULT_FOOTER_CONFIG } from '#/tui/config';
 
 interface SignalDriver {
   state: TUIState;
@@ -31,6 +32,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      footer: DEFAULT_FOOTER_CONFIG,
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-signals',

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_FOOTER_CONFIG,
   DEFAULT_TUI_CONFIG,
   INVALID_TUI_CONFIG_MESSAGE,
   loadTuiConfig,
@@ -40,6 +41,9 @@ describe('TUI config', () => {
     expect(text).toContain('[notifications]');
     expect(text).toContain('enabled = true');
     expect(text).toContain('notification_condition = "unfocused"');
+    expect(text).toContain('[footer]');
+    expect(text).toContain('show_version = false');
+    expect(text).toContain('show_plan_usage = false');
   });
 
   it('parses valid TOML', () => {
@@ -63,6 +67,7 @@ auto_install = false
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      footer: DEFAULT_FOOTER_CONFIG,
     });
   });
 
@@ -87,6 +92,7 @@ command = "   "
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      footer: DEFAULT_FOOTER_CONFIG,
     });
   });
 
@@ -119,6 +125,7 @@ command = "   "
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
+        footer: { showVersion: true, showPlanUsage: true, planUsageRefreshSeconds: 30 },
       },
       filePath,
     );
@@ -129,6 +136,7 @@ command = "   "
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
+      footer: { showVersion: true, showPlanUsage: true, planUsageRefreshSeconds: 30 },
     });
   });
 
@@ -141,10 +149,63 @@ command = "   "
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,
+        footer: DEFAULT_TUI_CONFIG.footer,
       },
       filePath,
     );
 
     expect((await loadTuiConfig(filePath)).theme).toBe(theme);
+  });
+
+  it('parses the [footer] section', () => {
+    const config = parseTuiConfig(`
+[footer]
+show_version = true
+show_plan_usage = true
+plan_usage_refresh_seconds = 120
+`);
+
+    expect(config.footer).toEqual({
+      showVersion: true,
+      showPlanUsage: true,
+      planUsageRefreshSeconds: 120,
+    });
+  });
+
+  it('defaults both footer enrichments to off when the section is omitted', () => {
+    const config = parseTuiConfig(`theme = "dark"`);
+
+    expect(config.footer).toEqual(DEFAULT_FOOTER_CONFIG);
+    expect(config.footer.showVersion).toBe(false);
+    expect(config.footer.showPlanUsage).toBe(false);
+  });
+
+  it('clamps a non-positive footer refresh period instead of rejecting the config', () => {
+    const config = parseTuiConfig(`
+[footer]
+plan_usage_refresh_seconds = 0
+`);
+
+    expect(config.footer.planUsageRefreshSeconds).toBe(1);
+  });
+
+  it('round-trips the [footer] section through save and load', async () => {
+    await saveTuiConfig(
+      {
+        ...DEFAULT_TUI_CONFIG,
+        footer: { showVersion: true, showPlanUsage: true, planUsageRefreshSeconds: 90 },
+      },
+      filePath,
+    );
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('[footer]');
+    expect(text).toContain('show_version = true');
+    expect(text).toContain('plan_usage_refresh_seconds = 90');
+    expect((await loadTuiConfig(filePath)).footer).toEqual({
+      showVersion: true,
+      showPlanUsage: true,
+      planUsageRefreshSeconds: 90,
+    });
   });
 });

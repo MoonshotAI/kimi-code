@@ -30,6 +30,12 @@ export const UpgradePreferencesSchema = z.object({
   autoInstall: z.boolean(),
 });
 
+export const FooterConfigSchema = z.object({
+  showVersion: z.boolean(),
+  showPlanUsage: z.boolean(),
+  planUsageRefreshSeconds: z.number().int().positive(),
+});
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   disable_paste_burst: z.boolean().optional(),
@@ -49,6 +55,13 @@ export const TuiConfigFileSchema = z.object({
       auto_install: z.boolean().optional(),
     })
     .optional(),
+  footer: z
+    .object({
+      show_version: z.boolean().optional(),
+      show_plan_usage: z.boolean().optional(),
+      plan_usage_refresh_seconds: z.number().int().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -57,12 +70,14 @@ export const TuiConfigSchema = z.object({
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
+  footer: FooterConfigSchema,
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 export type UpgradePreferences = z.infer<typeof UpgradePreferencesSchema>;
+export type FooterConfig = z.infer<typeof FooterConfigSchema>;
 
 export const DEFAULT_NOTIFICATIONS_CONFIG: NotificationsConfig = {
   enabled: true,
@@ -73,12 +88,19 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
   autoInstall: true,
 };
 
+export const DEFAULT_FOOTER_CONFIG: FooterConfig = {
+  showVersion: false,
+  showPlanUsage: false,
+  planUsageRefreshSeconds: 60,
+};
+
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
   disablePasteBurst: false,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
+  footer: DEFAULT_FOOTER_CONFIG,
 });
 
 /**
@@ -145,6 +167,15 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
     upgrade: {
       autoInstall: config.upgrade?.auto_install ?? DEFAULT_UPGRADE_PREFERENCES.autoInstall,
     },
+    footer: {
+      showVersion: config.footer?.show_version ?? DEFAULT_FOOTER_CONFIG.showVersion,
+      showPlanUsage: config.footer?.show_plan_usage ?? DEFAULT_FOOTER_CONFIG.showPlanUsage,
+      planUsageRefreshSeconds: Math.max(
+        1,
+        config.footer?.plan_usage_refresh_seconds ??
+          DEFAULT_FOOTER_CONFIG.planUsageRefreshSeconds,
+      ),
+    },
   });
 }
 
@@ -165,6 +196,11 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
+
+[footer]
+show_version = ${String(config.footer.showVersion)} # true shows the CLI version next to the model name
+show_plan_usage = ${String(config.footer.showPlanUsage)} # true shows managed-plan quota left of the context readout
+plan_usage_refresh_seconds = ${String(config.footer.planUsageRefreshSeconds)} # Quota poll period; clamped to >= 1
 `;
 }
 
