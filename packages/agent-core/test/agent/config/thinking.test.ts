@@ -154,6 +154,12 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort(undefined, { effort: '   ' }, alwaysThinkingModel, false)).toBe('on');
   });
 
+  it('normalizes the requested effort (case/whitespace) on every wire', () => {
+    expect(resolveThinkingEffort(' OFF ', undefined, effortModel, false)).toBe('off');
+    expect(resolveThinkingEffort(' Max ', undefined, effortModel, false)).toBe('max');
+    expect(resolveThinkingEffort('  ', undefined, effortModel, false)).toBe('medium');
+  });
+
   it('treats a configured off as absent when clamping always-thinking models', () => {
     expect(resolveThinkingEffort(undefined, { effort: 'off' }, alwaysThinkingEffortModel, false)).toBe(
       'high',
