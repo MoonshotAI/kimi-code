@@ -93,9 +93,9 @@ import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
 import {
-  LLM_NOT_SET_MESSAGE,
+  getLlmNotSetMessage,
+  getNoActiveSessionMessage,
   MAIN_AGENT_ID,
-  NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
 } from './constant/kimi-tui';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -1132,14 +1132,14 @@ export class KimiTUI {
   sendNormalUserInput(text: string): void {
     if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
-      this.showError(LLM_NOT_SET_MESSAGE);
+      this.showError(getLlmNotSetMessage());
       return;
     }
     const extraction = extractMediaAttachments(text, this.imageStore);
     if (!this.validateMediaCapabilities(extraction)) return;
     const session = this.session;
     if (session === undefined) {
-      this.showError(LLM_NOT_SET_MESSAGE);
+      this.showError(getLlmNotSetMessage());
       return;
     }
     if (extraction.hasMedia) {
@@ -1507,7 +1507,7 @@ export class KimiTUI {
 
   requireSession(): Session {
     if (this.session === undefined) {
-      throw new Error(NO_ACTIVE_SESSION_MESSAGE);
+      throw new Error(getNoActiveSessionMessage());
     }
     return this.session;
   }
@@ -1515,7 +1515,7 @@ export class KimiTUI {
   private async createSessionFromCurrentState(): Promise<Session> {
     const model = this.state.appState.model.trim();
     if (model.length === 0) {
-      throw new Error(LLM_NOT_SET_MESSAGE);
+      throw new Error(getLlmNotSetMessage());
     }
     const options: MutableCreateSessionOptions = {
       workDir: this.state.appState.workDir,
@@ -2568,7 +2568,7 @@ export class KimiTUI {
 
     const session = this.session;
     if (session === undefined) {
-      this.showError(NO_ACTIVE_SESSION_MESSAGE);
+      this.showError(getNoActiveSessionMessage());
       return;
     }
 
