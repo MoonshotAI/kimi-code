@@ -93,6 +93,24 @@ base_url = "https://api.openai.com/v1"
 api_key = "sk-xxxxx"
 ```
 
+### Example: Eden AI (EU gateway, OpenAI-compatible)
+
+[Eden AI](https://www.edenai.co) is a French, EU-based gateway that exposes 700+ models from many vendors (OpenAI, Anthropic, Mistral, Google, …) behind a single OpenAI-compatible key — handy when you want one credential, unified billing, and EU/GDPR data residency. Because it speaks the OpenAI Chat Completions protocol, configure it with `type = "openai"` and point `base_url` at the Eden AI endpoint. Models use a `provider/model` naming scheme.
+
+```toml
+[providers.edenai]
+type = "openai"
+base_url = "https://api.edenai.run/v3"   # EU residency: https://api.eu.edenai.run/v3
+api_key = "your-edenai-key"
+
+[models."edenai-gpt-4o-mini"]
+provider = "edenai"
+model = "openai/gpt-4o-mini"   # provider/model, e.g. anthropic/claude-haiku-4-5
+max_context_size = 128000
+```
+
+Create or manage keys on the [Eden AI API settings page](https://app.edenai.run/admin/api-settings/features-preferences). See the [Eden AI documentation](https://www.edenai.co/docs) for the full model catalog and the `provider/model` identifiers.
+
 ## `openai_responses`
 
 Corresponds to OpenAI's newer Responses API, always operating in streaming mode. Configuration is the same as `openai`.
