@@ -13,6 +13,7 @@ export { handleCopyCommand } from './copy';
 export {
   handleCompactCommand,
   handleEditorCommand,
+  handleLanguageCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,

@@ -131,6 +131,7 @@ function makeHost({
   const state = {
     appState: {
       theme: 'dark',
+      language: 'en',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -165,6 +166,9 @@ function makeHost({
     }),
     applyTheme: vi.fn((theme: string) => {
       state.appState.theme = theme;
+    }),
+    applyLanguage: vi.fn((language: string) => {
+      state.appState.language = language;
     }),
     refreshTerminalThemeTracking: vi.fn(),
     refreshSlashCommandAutocomplete: vi.fn(),

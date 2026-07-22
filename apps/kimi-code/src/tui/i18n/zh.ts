@@ -1,0 +1,58 @@
+import type { Translations } from './types';
+
+export const zh: Translations = {
+  language: {
+    label: '语言',
+    en: 'English',
+    zh: '中文',
+  },
+  settings: {
+    title: '设置',
+    model: '模型',
+    modelDescription: '切换当前模型和思考模式。',
+    permission: '权限',
+    permissionDescription: '选择工具操作的审批方式。',
+    theme: '主题',
+    themeDescription: '更改终端 UI 主题。',
+    editor: '编辑器',
+    editorDescription: '设置外部编辑器命令。',
+    experiments: '实验功能',
+    experimentsDescription: '开启或关闭实验功能。',
+    upgrade: '自动更新',
+    upgradeDescription: '开启或关闭 CLI 自动更新。',
+    usage: '用量',
+    usageDescription: '显示会话 Token、上下文窗口和计划配额。',
+    language: '语言',
+    languageDescription: '更改 TUI 显示语言。',
+  },
+  theme: {
+    title: '选择主题',
+    auto: '自动（跟随终端）',
+    dark: '深色',
+    light: '浅色',
+    custom: '自定义：{{name}}',
+  },
+  footer: {
+    context: '上下文：{{pct}}%',
+  },
+  welcome: {
+    title: '欢迎使用 Kimi Code！',
+    loggedOutHint: '运行 /login 或 /provider 开始使用。',
+    loggedInHint: '发送 /help 查看帮助信息。',
+    notSet: '未设置，运行 /login 或 /provider',
+    directory: '目录：',
+    session: '会话：',
+    model: '模型：',
+    version: '版本：',
+    mcp: 'MCP：',
+  },
+  common: {
+    navigate: '上下移动',
+    page: '翻页',
+    select: '选择',
+    cancel: '取消',
+    typeToSearch: '输入以搜索',
+    noMatches: '无匹配项',
+    current: '当前',
+  },
+};

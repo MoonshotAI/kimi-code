@@ -117,8 +117,10 @@ import { QuestionController } from './reverse-rpc/question/controller';
 import { createQuestionAskHandler } from './reverse-rpc/question/handler';
 import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
 import { currentTheme, getColorPalette, getBuiltInPalette, isBuiltInTheme } from './theme';
+import { DEFAULT_TUI_CONFIG } from './config';
 import type { ColorToken, ResolvedTheme, ThemeName } from './theme';
 import { createTUIState, type TUIState } from './tui-state';
+import { setLanguage, type Language } from './i18n';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
@@ -225,6 +227,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     streamingPhase: 'idle',
     streamingStartTime: 0,
     theme: input.tuiConfig.theme,
+    language: input.tuiConfig.language ?? DEFAULT_TUI_CONFIG.language,
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     disablePasteBurst: input.tuiConfig.disablePasteBurst,
@@ -391,6 +394,7 @@ export class KimiTUI {
     this.migrationPlan = startupInput.migrationPlan ?? null;
     this.migrateOnly = startupInput.migrateOnly ?? false;
     this.startupNotice = startupInput.startupNotice;
+    setLanguage(tuiOptions.initialAppState.language);
     this.state = createTUIState(tuiOptions);
     this.uninstallRainbowDance = installRainbowDance(() => {
       this.state.ui.requestRender();
@@ -2649,6 +2653,14 @@ export class KimiTUI {
     this.updateEditorBorderHighlight();
     // Force every historical message to re-render so Markdown/Text caches
     // (which hold old ANSI colour codes) are cleared.
+    this.state.transcriptContainer.invalidate();
+    this.state.ui.requestRender(true);
+  }
+
+  applyLanguage(language: Language): void {
+    setLanguage(language);
+    this.setAppState({ language });
+    // Re-render chrome and transcript so translated labels appear immediately.
     this.state.transcriptContainer.invalidate();
     this.state.ui.requestRender(true);
   }

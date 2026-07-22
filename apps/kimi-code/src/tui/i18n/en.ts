@@ -1,0 +1,58 @@
+import type { Translations } from './types';
+
+export const en: Translations = {
+  language: {
+    label: 'Language',
+    en: 'English',
+    zh: '中文',
+  },
+  settings: {
+    title: 'Settings',
+    model: 'Model',
+    modelDescription: 'Switch the active model and thinking mode.',
+    permission: 'Permission',
+    permissionDescription: 'Choose how tool actions are approved.',
+    theme: 'Theme',
+    themeDescription: 'Change the terminal UI theme.',
+    editor: 'Editor',
+    editorDescription: 'Set the external editor command.',
+    experiments: 'Experiments',
+    experimentsDescription: 'Turn experimental features on or off.',
+    upgrade: 'Automatic updates',
+    upgradeDescription: 'Turn automatic CLI updates on or off.',
+    usage: 'Usage',
+    usageDescription: 'Show session tokens, context window, and plan quotas.',
+    language: 'Language',
+    languageDescription: 'Change the TUI display language.',
+  },
+  theme: {
+    title: 'Select theme',
+    auto: 'Auto (match terminal)',
+    dark: 'Dark',
+    light: 'Light',
+    custom: 'Custom: {{name}}',
+  },
+  footer: {
+    context: 'context: {{pct}}%',
+  },
+  welcome: {
+    title: 'Welcome to Kimi Code!',
+    loggedOutHint: 'Run /login or /provider to get started.',
+    loggedInHint: 'Send /help for help information.',
+    notSet: 'not set, run /login or /provider',
+    directory: 'Directory:',
+    session: 'Session:',
+    model: 'Model:',
+    version: 'Version:',
+    mcp: 'MCP:',
+  },
+  common: {
+    navigate: 'navigate',
+    page: 'page',
+    select: 'select',
+    cancel: 'cancel',
+    typeToSearch: 'type to search',
+    noMatches: 'No matches',
+    current: 'current',
+  },
+};

@@ -1,56 +1,67 @@
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
+import { t } from '#/tui/i18n';
+
 export type SettingsSelection =
   | 'model'
   | 'theme'
+  | 'language'
   | 'editor'
   | 'permission'
   | 'experiments'
   | 'upgrade'
   | 'usage';
 
-const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
-  {
-    value: 'model',
-    label: 'Model',
-    description: 'Switch the active model and thinking mode.',
-  },
-  {
-    value: 'permission',
-    label: 'Permission',
-    description: 'Choose how tool actions are approved.',
-  },
-  {
-    value: 'theme',
-    label: 'Theme',
-    description: 'Change the terminal UI theme.',
-  },
-  {
-    value: 'editor',
-    label: 'Editor',
-    description: 'Set the external editor command.',
-  },
-  {
-    value: 'experiments',
-    label: 'Experiments',
-    description: 'Turn experimental features on or off.',
-  },
-  {
-    value: 'upgrade',
-    label: 'Automatic updates',
-    description: 'Turn automatic CLI updates on or off.',
-  },
-  {
-    value: 'usage',
-    label: 'Usage',
-    description: 'Show session tokens, context window, and plan quotas.',
-  },
-];
+function settingsOptions(): readonly ChoiceOption[] {
+  return [
+    {
+      value: 'model',
+      label: t('settings.model'),
+      description: t('settings.modelDescription'),
+    },
+    {
+      value: 'permission',
+      label: t('settings.permission'),
+      description: t('settings.permissionDescription'),
+    },
+    {
+      value: 'theme',
+      label: t('settings.theme'),
+      description: t('settings.themeDescription'),
+    },
+    {
+      value: 'language',
+      label: t('settings.language'),
+      description: t('settings.languageDescription'),
+    },
+    {
+      value: 'editor',
+      label: t('settings.editor'),
+      description: t('settings.editorDescription'),
+    },
+    {
+      value: 'experiments',
+      label: t('settings.experiments'),
+      description: t('settings.experimentsDescription'),
+    },
+    {
+      value: 'upgrade',
+      label: t('settings.upgrade'),
+      description: t('settings.upgradeDescription'),
+    },
+    {
+      value: 'usage',
+      label: t('settings.usage'),
+      description: t('settings.usageDescription'),
+    },
+  ];
+}
 
 function isSettingsSelection(value: string): value is SettingsSelection {
   return (
     value === 'model' ||
     value === 'theme' ||
+    value === 'language' ||
     value === 'editor' ||
     value === 'permission' ||
     value === 'experiments' ||
@@ -67,8 +78,8 @@ export interface SettingsSelectorOptions {
 export class SettingsSelectorComponent extends ChoicePickerComponent {
   constructor(opts: SettingsSelectorOptions) {
     super({
-      title: 'Settings',
-      options: [...SETTINGS_OPTIONS],
+      title: t('settings.title'),
+      options: [...settingsOptions()],
       onSelect: (value) => {
         if (isSettingsSelection(value)) opts.onSelect(value);
       },

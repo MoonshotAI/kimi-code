@@ -19,6 +19,8 @@ export const INVALID_TUI_CONFIG_MESSAGE =
 
 export const TuiThemeSchema = z.string();
 
+export const TuiLanguageSchema = z.enum(['en', 'zh']);
+
 export const NotificationConditionSchema = z.enum(['unfocused', 'always']);
 
 export const NotificationsConfigSchema = z.object({
@@ -32,6 +34,7 @@ export const UpgradePreferencesSchema = z.object({
 
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
+  language: TuiLanguageSchema.optional(),
   disable_paste_burst: z.boolean().optional(),
   editor: z
     .object({
@@ -53,6 +56,7 @@ export const TuiConfigFileSchema = z.object({
 
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
+  language: TuiLanguageSchema,
   disablePasteBurst: z.boolean(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
@@ -75,6 +79,7 @@ export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
 
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
+  language: 'en',
   disablePasteBurst: false,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
@@ -135,6 +140,7 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
   const command = config.editor?.command?.trim();
   return TuiConfigSchema.parse({
     theme: config.theme ?? DEFAULT_TUI_CONFIG.theme,
+    language: config.language ?? DEFAULT_TUI_CONFIG.language,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
@@ -154,6 +160,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
+language = "${config.language}" # "en" | "zh"
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 
 [editor]

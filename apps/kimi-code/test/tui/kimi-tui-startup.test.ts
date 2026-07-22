@@ -91,6 +91,7 @@ function makeStartupInput(
     },
     tuiConfig: {
       theme: 'dark',
+      language: 'en',
       disablePasteBurst: false,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
