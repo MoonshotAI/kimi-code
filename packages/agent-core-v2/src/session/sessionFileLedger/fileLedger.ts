@@ -2,7 +2,7 @@
  * `sessionFileLedger` domain (L2) — per-session optimistic-concurrency ledger.
  *
  * Defines the `ISessionFileLedger` that remembers, per normalized absolute
- * path, the on-disk stat tuple (`ino`, `mtimeMs`, `size`, existence) this
+ * path, the on-disk file revision (`ino`, `mtimeMs`, `size`, existence) this
  * session last successfully read or wrote. Before every Write/Edit, `compare`
  * stats the target again and compares the tuple directly. The mechanism is
  * detection, not mutual exclusion: it blocks stale writes it can observe and
@@ -27,7 +27,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { fileStatTuplesEqual as statTuplesEqual } from '#/_base/utils/fs';
 
-export type FileStatTuple =
+export type FileRevision =
   | { readonly exists: false }
   | {
       readonly exists: true;
@@ -36,7 +36,7 @@ export type FileStatTuple =
       readonly size: number;
     };
 
-export function fileStatTuplesEqual(a: FileStatTuple, b: FileStatTuple): boolean {
+export function fileRevisionsEqual(a: FileRevision, b: FileRevision): boolean {
   if (a.exists !== b.exists) return false;
   if (!a.exists || !b.exists) return true;
   return statTuplesEqual(a, b);
@@ -47,7 +47,7 @@ export type FileLedgerVerdict = 'clean' | 'stale' | 'no-baseline';
 export interface ISessionFileLedger {
   readonly _serviceBrand: undefined;
 
-  recordBaseline(path: string, revision: FileStatTuple): void;
+  recordBaseline(path: string, revision: FileRevision): void;
 
   compare(path: string): Promise<FileLedgerVerdict>;
 }

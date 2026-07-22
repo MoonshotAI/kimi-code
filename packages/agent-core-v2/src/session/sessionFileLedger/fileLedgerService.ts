@@ -1,7 +1,7 @@
 /**
  * `sessionFileLedger` domain (L2) — `ISessionFileLedger` implementation.
  *
- * In-memory per-session ledger of on-disk stat tuples keyed by
+ * In-memory per-session ledger of on-disk file revisions keyed by
  * `normalizeFsWatchKey`. `recordBaseline` stores the revision observed by
  * successful file I/O and `compare` always re-stats immediately before a
  * write decision. An unverifiable stat fails closed as `stale`.
@@ -16,32 +16,32 @@ import { normalizeFsWatchKey } from '#/session/sessionFs/fsWatch';
 
 import {
   ISessionFileLedger,
-  fileStatTuplesEqual,
+  fileRevisionsEqual,
   type FileLedgerVerdict,
-  type FileStatTuple,
+  type FileRevision,
 } from './fileLedger';
 
 export class SessionFileLedger implements ISessionFileLedger {
   declare readonly _serviceBrand: undefined;
 
-  private readonly entries = new Map<string, FileStatTuple>();
+  private readonly baselines = new Map<string, FileRevision>();
 
   constructor(@IHostFileSystem private readonly hostFs: IHostFileSystem) {}
 
-  recordBaseline(path: string, revision: FileStatTuple): void {
-    this.entries.set(normalizeFsWatchKey(path), revision);
+  recordBaseline(path: string, revision: FileRevision): void {
+    this.baselines.set(normalizeFsWatchKey(path), revision);
   }
 
   async compare(path: string): Promise<FileLedgerVerdict> {
     const key = normalizeFsWatchKey(path);
-    const entry = this.entries.get(key);
-    const current = await this.tryStat(path);
-    if (current === undefined) return 'stale';
-    if (entry === undefined) return current.exists ? 'no-baseline' : 'clean';
-    return fileStatTuplesEqual(entry, current) ? 'clean' : 'stale';
+    const baseline = this.baselines.get(key);
+    const currentRevision = await this.tryStat(path);
+    if (currentRevision === undefined) return 'stale';
+    if (baseline === undefined) return currentRevision.exists ? 'no-baseline' : 'clean';
+    return fileRevisionsEqual(baseline, currentRevision) ? 'clean' : 'stale';
   }
 
-  private async tryStat(path: string): Promise<FileStatTuple | undefined> {
+  private async tryStat(path: string): Promise<FileRevision | undefined> {
     try {
       const stat = await this.hostFs.stat(path);
       return { exists: true, ino: stat.ino, mtimeMs: stat.mtimeMs, size: stat.size };

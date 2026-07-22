@@ -71,8 +71,8 @@ export const HELD_BY_PEER_CREATING_DETAILS: HeldByPeerDetails = {
 export function heldByPeerDetailsFromInspection(
   inspection: CrossProcessLockInspection,
 ): HeldByPeerDetails | undefined {
-  if (inspection.state === 'held' && inspection.payload !== undefined) {
-    const { address } = inspection.payload;
+  if (inspection.state === 'held' && inspection.ownerMetadata !== undefined) {
+    const { address } = inspection.ownerMetadata;
     return address !== undefined
       ? { kind: 'held-by-peer', phase: 'routable', address }
       : { kind: 'held-by-peer', phase: 'held-by-local-instance' };
@@ -83,7 +83,7 @@ export function heldByPeerDetailsFromInspection(
   return undefined;
 }
 
-export interface ISessionLeaseInfo {
+export interface SessionLeaseIdentity {
   readonly sessionId: string;
   readonly lockId: string;
 }
@@ -91,8 +91,8 @@ export interface ISessionLeaseInfo {
 export interface ISessionLeaseService {
   readonly _serviceBrand: undefined;
 
-  /** The held lease identity; `undefined` once the lease is released. */
-  readonly info: ISessionLeaseInfo | undefined;
+  /** The active lease identity; `undefined` once the lease is released. */
+  readonly leaseIdentity: SessionLeaseIdentity | undefined;
   /** Hard gate. Throws `Error2(session.lease_lost)` when this instance no
       longer holds the kernel lease — including after `release()`. */
   assertWritable(): void;
@@ -120,7 +120,7 @@ export class SessionLease implements ISessionWriteAdmission, ISessionLeaseServic
     this.lockId = handle.lockId;
   }
 
-  get info(): ISessionLeaseInfo | undefined {
+  get leaseIdentity(): SessionLeaseIdentity | undefined {
     return this._released ? undefined : { sessionId: this.sessionId, lockId: this.lockId };
   }
 

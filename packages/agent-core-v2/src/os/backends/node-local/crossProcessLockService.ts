@@ -23,7 +23,7 @@ import {
   CrossProcessLockErrorCode,
   type CrossProcessLockAcquireOptions,
   type CrossProcessLockInspection,
-  type CrossProcessLockPayload,
+  type CrossProcessLockOwnerMetadata,
   type CrossProcessLockServiceDeps,
   type CrossProcessLockWaitOptions,
   type ICrossProcessLockHandle,
@@ -32,7 +32,7 @@ import {
 
 const DEFAULT_WAIT_RETRY_INTERVAL_MS = 50;
 
-interface DiskLockPayload {
+interface PersistedLockOwnerMetadata {
   lock_id?: string;
   instance_id?: string;
   pid?: number;
@@ -49,40 +49,44 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function ownerPath(lockPath: string): string {
+function ownerMetadataPath(lockPath: string): string {
   return `${lockPath}.owner.json`;
 }
 
-function toDiskPayload(payload: CrossProcessLockPayload): DiskLockPayload {
+function toPersistedOwnerMetadata(
+  ownerMetadata: CrossProcessLockOwnerMetadata,
+): PersistedLockOwnerMetadata {
   return {
-    lock_id: payload.lockId,
-    instance_id: payload.instanceId,
-    pid: payload.pid,
-    address: payload.address,
+    lock_id: ownerMetadata.lockId,
+    instance_id: ownerMetadata.instanceId,
+    pid: ownerMetadata.pid,
+    address: ownerMetadata.address,
   };
 }
 
-function fromDiskPayload(payload: DiskLockPayload): CrossProcessLockPayload | undefined {
+function fromPersistedOwnerMetadata(
+  persistedOwner: PersistedLockOwnerMetadata,
+): CrossProcessLockOwnerMetadata | undefined {
   if (
-    typeof payload.lock_id !== 'string' ||
-    typeof payload.instance_id !== 'string' ||
-    typeof payload.pid !== 'number'
+    typeof persistedOwner.lock_id !== 'string' ||
+    typeof persistedOwner.instance_id !== 'string' ||
+    typeof persistedOwner.pid !== 'number'
   ) {
     return undefined;
   }
   return {
-    lockId: payload.lock_id,
-    instanceId: payload.instance_id,
-    pid: payload.pid,
-    address: typeof payload.address === 'string' ? payload.address : undefined,
+    lockId: persistedOwner.lock_id,
+    instanceId: persistedOwner.instance_id,
+    pid: persistedOwner.pid,
+    address: typeof persistedOwner.address === 'string' ? persistedOwner.address : undefined,
   };
 }
 
-function readPayload(lockPath: string): CrossProcessLockPayload | undefined {
+function readOwnerMetadata(lockPath: string): CrossProcessLockOwnerMetadata | undefined {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(ownerPath(lockPath), 'utf8'));
+    const parsed: unknown = JSON.parse(readFileSync(ownerMetadataPath(lockPath), 'utf8'));
     return parsed !== null && typeof parsed === 'object'
-      ? fromDiskPayload(parsed as DiskLockPayload)
+      ? fromPersistedOwnerMetadata(parsed as PersistedLockOwnerMetadata)
       : undefined;
   } catch (error) {
     if (readErrno(error) === 'ENOENT' || error instanceof SyntaxError) return undefined;
@@ -90,11 +94,16 @@ function readPayload(lockPath: string): CrossProcessLockPayload | undefined {
   }
 }
 
-function writePayload(lockPath: string, payload: CrossProcessLockPayload): void {
-  const path = ownerPath(lockPath);
+function writeOwnerMetadata(
+  lockPath: string,
+  ownerMetadata: CrossProcessLockOwnerMetadata,
+): void {
+  const path = ownerMetadataPath(lockPath);
   const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(tempPath, JSON.stringify(toDiskPayload(payload)), { mode: 0o600 });
+    writeFileSync(tempPath, JSON.stringify(toPersistedOwnerMetadata(ownerMetadata)), {
+      mode: 0o600,
+    });
     renameSync(tempPath, path);
   } catch (error) {
     rmSync(tempPath, { force: true });
@@ -118,7 +127,7 @@ function heldError(
   return new CrossProcessLockError(
     CrossProcessLockErrorCode.Held,
     `cross-process lock unavailable (${inspection.state})`,
-    { details: { path: lockPath, reason: inspection.state, holder: inspection.payload } },
+    { details: { path: lockPath, reason: inspection.state, holder: inspection.ownerMetadata } },
   );
 }
 
@@ -153,7 +162,7 @@ class CrossProcessLockHandle implements ICrossProcessLockHandle {
     try {
       if (this.kernelHandle.checkHeld()) {
         try {
-          rmSync(ownerPath(this.lockPath), { force: true });
+          rmSync(ownerMetadataPath(this.lockPath), { force: true });
         } catch {}
       }
     } finally {
@@ -192,15 +201,15 @@ export class CrossProcessLockService implements ICrossProcessLockService {
     if (kernelHandle === undefined) throw heldError(lockPath, this.inspectHeld(lockPath));
 
     const lockId = this.newLockId();
-    const payload: CrossProcessLockPayload = {
+    const ownerMetadata: CrossProcessLockOwnerMetadata = {
       lockId,
       instanceId: this.instanceId,
       pid: this.selfPid,
       address: options.address,
     };
     try {
-      rmSync(ownerPath(lockPath), { force: true });
-      writePayload(lockPath, payload);
+      rmSync(ownerMetadataPath(lockPath), { force: true });
+      writeOwnerMetadata(lockPath, ownerMetadata);
       return new CrossProcessLockHandle(lockPath, lockId, kernelHandle);
     } catch (error) {
       kernelHandle.release();
@@ -275,8 +284,10 @@ export class CrossProcessLockService implements ICrossProcessLockService {
 
   private inspectHeld(lockPath: string): CrossProcessLockInspection {
     try {
-      const payload = readPayload(lockPath);
-      return payload === undefined ? { state: 'creating' } : { state: 'held', payload };
+      const ownerMetadata = readOwnerMetadata(lockPath);
+      return ownerMetadata === undefined
+        ? { state: 'creating' }
+        : { state: 'held', ownerMetadata };
     } catch (error) {
       throw toLockIoError(error, lockPath, 'read-owner');
     }

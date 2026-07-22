@@ -7,9 +7,9 @@
  * `IAtomicDocumentStore` access-pattern Store. The `deleted_workspace_ids`
  * tombstone list round-trips with the catalog so soft deletions survive
  * regardless of which engine (v1 or v2) last wrote the file, and the parsed
- * document rides along in `WorkspaceCatalog.raw` so `save` re-applies the
- * semantic view onto it — unknown top-level and entry fields written by other
- * engine versions are preserved. Bound at App scope.
+ * document rides along in `WorkspaceCatalog.sourceDocument` so `save`
+ * re-applies the semantic view onto it — unknown top-level and entry fields
+ * written by other engine versions are preserved. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -37,17 +37,17 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
   }
 
   async load(): Promise<WorkspaceCatalog | undefined> {
-    const file = await this.docs.get<Record<string, unknown>>(
+    const document = await this.docs.get<Record<string, unknown>>(
       WORKSPACE_CATALOG_SCOPE,
       WORKSPACE_CATALOG_KEY,
     );
-    if (!isRecord(file)) return undefined;
-    const rawWorkspaces = file['workspaces'];
-    if (!isRecord(rawWorkspaces)) return undefined;
+    if (!isRecord(document)) return undefined;
+    const unvalidatedWorkspaces = document['workspaces'];
+    if (!isRecord(unvalidatedWorkspaces)) return undefined;
     const now = Date.now();
     const workspaces: Workspace[] = [];
-    for (const [id, raw] of Object.entries(rawWorkspaces)) {
-      const entry = sanitizeEntry(raw);
+    for (const [id, unvalidatedEntry] of Object.entries(unvalidatedWorkspaces)) {
+      const entry = sanitizeEntry(unvalidatedEntry);
       if (entry === null) continue;
       workspaces.push({
         id,
@@ -57,34 +57,34 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
         lastOpenedAt: parseTime(entry.last_opened_at, now),
       });
     }
-    const rawDeleted = file['deleted_workspace_ids'];
-    const deletedIds = Array.isArray(rawDeleted)
-      ? rawDeleted.filter((id): id is string => typeof id === 'string')
+    const unvalidatedDeletedIds = document['deleted_workspace_ids'];
+    const deletedIds = Array.isArray(unvalidatedDeletedIds)
+      ? unvalidatedDeletedIds.filter((id): id is string => typeof id === 'string')
       : [];
-    return { workspaces, deletedIds, raw: file };
+    return { workspaces, deletedIds, sourceDocument: document };
   }
 
   async save(catalog: WorkspaceCatalog): Promise<void> {
-    const rawWorkspaces = catalog.raw['workspaces'];
-    const previousWorkspaces = isRecord(rawWorkspaces) ? rawWorkspaces : {};
-    const record: Record<string, unknown> = {};
+    const unvalidatedWorkspaces = catalog.sourceDocument['workspaces'];
+    const sourceWorkspaces = isRecord(unvalidatedWorkspaces) ? unvalidatedWorkspaces : {};
+    const workspaceRecord: Record<string, unknown> = {};
     for (const ws of catalog.workspaces) {
-      const previous = previousWorkspaces[ws.id];
-      record[ws.id] = {
-        ...(isPlainRecord(previous) ? previous : {}),
+      const sourceEntry = sourceWorkspaces[ws.id];
+      workspaceRecord[ws.id] = {
+        ...(isPlainRecord(sourceEntry) ? sourceEntry : {}),
         root: ws.root,
         name: ws.name,
         created_at: new Date(ws.createdAt).toISOString(),
         last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
       };
     }
-    const file = {
-      ...catalog.raw,
+    const document = {
+      ...catalog.sourceDocument,
       version: WORKSPACE_CATALOG_VERSION,
-      workspaces: record,
+      workspaces: workspaceRecord,
       deleted_workspace_ids: [...catalog.deletedIds],
     };
-    await this.docs.set(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY, file);
+    await this.docs.set(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY, document);
   }
 }
 

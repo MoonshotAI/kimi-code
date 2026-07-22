@@ -67,7 +67,7 @@ describe('SessionLease', () => {
     lease.release();
     lease.release();
 
-    expect(lease.info).toBeUndefined();
+    expect(lease.leaseIdentity).toBeUndefined();
     expect(thrownError(() => lease.assertWritable()).code).toBe(ErrorCodes.SESSION_LEASE_LOST);
   });
 

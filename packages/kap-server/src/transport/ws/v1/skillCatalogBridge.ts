@@ -50,7 +50,7 @@ export interface SkillCatalogConnection {
 interface ConnEntry {
   readonly conn: SkillCatalogConnection;
   /** Per-connection monotonic frame counter; starts at 0, pre-incremented per delivery. */
-  seq: number;
+  volatileSeq: number;
 }
 
 interface SessionWatch {
@@ -96,7 +96,7 @@ export class SkillCatalogBridge implements IDisposable {
       this.bySession.set(sessionId, sw);
     }
     if (!sw.conns.has(conn.id)) {
-      sw.conns.set(conn.id, { conn, seq: 0 });
+      sw.conns.set(conn.id, { conn, volatileSeq: 0 });
     }
     sw.sub ??= sw.skillCatalog.onDidChange((sourceId) => {
       this.onSessionEvent(sessionId, sourceId);
@@ -135,10 +135,10 @@ export class SkillCatalogBridge implements IDisposable {
     const sw = this.bySession.get(sessionId);
     if (sw === undefined) return;
     for (const entry of sw.conns.values()) {
-      entry.seq += 1;
+      entry.volatileSeq += 1;
       const frame: SkillCatalogChangedFrame = {
         type: 'skill_catalog.changed',
-        seq: entry.seq,
+        seq: entry.volatileSeq,
         session_id: sessionId,
         timestamp: new Date().toISOString(),
         volatile: true,

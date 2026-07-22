@@ -13,7 +13,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 
-export interface CrossProcessLockPayload {
+export interface CrossProcessLockOwnerMetadata {
   lockId: string;
   instanceId: string;
   pid: number;
@@ -31,7 +31,7 @@ export interface CrossProcessLockAcquireOptions {
 
 export interface CrossProcessLockInspection {
   readonly state: 'free' | 'creating' | 'held';
-  readonly payload?: CrossProcessLockPayload;
+  readonly ownerMetadata?: CrossProcessLockOwnerMetadata;
 }
 
 export interface ICrossProcessLockHandle {

@@ -153,8 +153,8 @@ interface SessionEntry {
   state: SessionEntryState;
   readonly handle: ISessionScopeHandle;
   readonly lease: SessionLease;
-  readonly registration: IDisposable;
-  readonly scope: string;
+  readonly writeAdmissionRegistration: IDisposable;
+  readonly storageScope: string;
   disposed: boolean;
   releasePromise?: Promise<void>;
 }
@@ -273,9 +273,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
     await this.hostEnv.ready;
     const lease = await this.acquireSessionLease(opts.sessionId);
-    let registration: IDisposable;
+    let writeAdmissionRegistration: IDisposable;
     try {
-      registration = this.writeAdmission.registerSession(sessionScope, lease);
+      writeAdmissionRegistration = this.writeAdmission.registerSession(sessionScope, lease);
     } catch (error) {
       lease.release();
       throw error;
@@ -297,8 +297,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         state: 'opening',
         handle,
         lease,
-        registration,
-        scope: sessionScope,
+        writeAdmissionRegistration,
+        storageScope: sessionScope,
         disposed: false,
       };
       this.entries.set(opts.sessionId, entry);
@@ -314,7 +314,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (entry !== undefined) {
         this.rollbackSession(entry);
       } else {
-        registration.dispose();
+        writeAdmissionRegistration.dispose();
         lease.release();
       }
       throw error;
@@ -503,7 +503,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       stage = 'will-release';
       await this.announceWillRelease({ sessionId, reason: kind });
       stage = 'flush';
-      await this.flushSessionTail(sessionId, entry.scope);
+      await this.flushSessionTail(sessionId, entry.storageScope);
       stage = 'drain-writes';
       await entry.lease.sealAndDrain();
     } catch (error) {
@@ -564,7 +564,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     stage: SessionReleaseStage,
   ): Promise<void> {
     try {
-      await this.docs.update<SessionMeta>(entry.scope, 'state.json', (current) => {
+      await this.docs.update<SessionMeta>(entry.storageScope, 'state.json', (current) => {
         if (current === undefined) {
           throw new Error2(
             ErrorCodes.SESSION_DURABILITY_FAILED,
@@ -601,7 +601,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private finishSessionRelease(entry: SessionEntry): void {
     try {
-      entry.registration.dispose();
+      entry.writeAdmissionRegistration.dispose();
     } catch (error) {
       this.log.warn('failed to unregister session write admission', {
         sessionId: entry.handle.id,
@@ -638,7 +638,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } catch {
     }
     try {
-      entry.registration.dispose();
+      entry.writeAdmissionRegistration.dispose();
     } catch {
     }
     entry.lease.release();
@@ -995,9 +995,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return heldByPeerDetailsFromInspection(inspection) ?? HELD_BY_PEER_CREATING_DETAILS;
   }
 
-  private async flushSessionTail(sessionId: string, scope: string): Promise<void> {
+  private async flushSessionTail(sessionId: string, storageScope: string): Promise<void> {
     try {
-      await this.appendLogStore.flush(scope);
+      await this.appendLogStore.flush(storageScope);
     } catch (error) {
       this.log.warn('final journal flush failed while closing session', {
         sessionId,

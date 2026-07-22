@@ -14,7 +14,7 @@ export function stubSessionLeaseService(
 ): ISessionLeaseService & ISessionWriteAdmission {
   const lease: ISessionLeaseService & ISessionWriteAdmission = {
     _serviceBrand: undefined,
-    info: undefined,
+    leaseIdentity: undefined,
     assertWritable: () => {},
     assertCanWriteNow: () => lease.assertWritable(),
     withPhysicalWrite: async (io) => {

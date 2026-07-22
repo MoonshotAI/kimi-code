@@ -73,7 +73,7 @@ interface ConnEntry {
   readonly conn: FsWatchConnection;
   readonly paths: Set<string>;
   /** Per-connection monotonic frame counter; starts at 0, pre-incremented per delivery. */
-  seq: number;
+  volatileSeq: number;
 }
 
 interface SessionWatch {
@@ -140,7 +140,7 @@ export class FsWatchBridge implements IDisposable {
     }
 
     if (entry === undefined) {
-      entry = { conn, paths: new Set(), seq: 0 };
+      entry = { conn, paths: new Set(), volatileSeq: 0 };
       sw.conns.set(conn.id, entry);
     }
     for (const rel of toAdd) entry.paths.add(rel);
@@ -250,10 +250,10 @@ export class FsWatchBridge implements IDisposable {
         // No frame for this connection → its seq does not advance.
         if (changes.length === 0) continue;
       }
-      entry.seq += 1;
+      entry.volatileSeq += 1;
       const frame: FsChangedFrame = {
         type: 'event.fs.changed',
-        seq: entry.seq,
+        seq: entry.volatileSeq,
         session_id: sessionId,
         timestamp: new Date().toISOString(),
         payload: {

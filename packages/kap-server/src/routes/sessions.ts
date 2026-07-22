@@ -1146,8 +1146,8 @@ function resolvePendingInteraction(
  * Join one session's holder annotation from the shared `session-leases/` tree
  * (design §3.8 layer 2). Classification:
  *
- *   - 'self': this instance materialized the session and still holds its write
- *     lease (`ISessionLeaseService.info` survives only while held).
+ *   - 'self': this instance materialized the session and its active write
+ *     lease has not been released (`ISessionLeaseService.leaseIdentity`).
  *   - 'peer': the lease file is held (or mid-creation) under a live kernel
  *     lock by someone else; `address` rides along when the holder advertised
  *     one — the redirect target.
@@ -1167,7 +1167,7 @@ function resolveSessionOwnership(
   const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
   if (handle !== undefined) {
     const lease = handle.accessor.get(ISessionLeaseService);
-    if (lease.info !== undefined) return { held_by: 'self' };
+    if (lease.leaseIdentity !== undefined) return { held_by: 'self' };
   }
   const inspection = core
     .accessor.get(ICrossProcessLockService)

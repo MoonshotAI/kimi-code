@@ -8,12 +8,12 @@
  * 4.0.3 on darwin): a recursive watch on a path whose immediate parent
  * exists picks the path up when it is created, but a path with two or more
  * missing leading segments reports NOTHING when the chain appears. So an
- * absent root is tracked by a depth-0 sentinel on the nearest existing
- * ancestor that re-anchors down the chain as segments appear — sentinel
+ * absent root is tracked by a depth-0 watch on the nearest existing ancestor
+ * that re-anchors down the chain as segments appear — ancestor-watch
  * events only trigger an existence re-probe (a `mkdir -p` chain is never
  * missed) — and once the root exists a recursive watch is armed in its
- * place. Root deletion while armed falls back to sentinel mode on the next
- * advance, so delete/recreate cycles stay live. Pure helper owned by the
+ * place. Root deletion while armed falls back to ancestor-watch mode on the
+ * next advance, so delete/recreate cycles stay live. Pure helper owned by the
  * file-backed skill sources; not a DI service.
  */
 
@@ -30,8 +30,8 @@ const SKILL_WATCH_DEBOUNCE_MS = 300;
 interface RootWatchState {
   readonly root: string;
   rootWatch: IHostFsWatchHandle | undefined;
-  sentinel: IHostFsWatchHandle | undefined;
-  sentinelDir: string | undefined;
+  ancestorWatch: IHostFsWatchHandle | undefined;
+  watchedAncestorDir: string | undefined;
   advanceTail: Promise<void>;
 }
 
@@ -86,8 +86,8 @@ export class SkillRootWatcher extends Disposable {
       const state: RootWatchState = {
         root,
         rootWatch: undefined,
-        sentinel: undefined,
-        sentinelDir: undefined,
+        ancestorWatch: undefined,
+        watchedAncestorDir: undefined,
         advanceTail: Promise.resolve(),
       };
       this.states.set(root, state);
@@ -100,9 +100,9 @@ export class SkillRootWatcher extends Disposable {
   private teardownState(state: RootWatchState): void {
     state.rootWatch?.dispose();
     state.rootWatch = undefined;
-    state.sentinel?.dispose();
-    state.sentinel = undefined;
-    state.sentinelDir = undefined;
+    state.ancestorWatch?.dispose();
+    state.ancestorWatch = undefined;
+    state.watchedAncestorDir = undefined;
   }
 
   private advance(state: RootWatchState): void {
@@ -110,12 +110,13 @@ export class SkillRootWatcher extends Disposable {
       if (this.disposed || this.states.get(state.root) !== state) return;
       if (await isDir(this.hostFs, state.root)) {
         if (state.rootWatch !== undefined) return;
-        // A previously armed sentinel means the root just appeared (possibly
-        // with content already inside): the transition itself is a change.
-        const appeared = state.sentinel !== undefined;
-        state.sentinel?.dispose();
-        state.sentinel = undefined;
-        state.sentinelDir = undefined;
+        // A previously armed ancestor watch means the root just appeared
+        // (possibly with content already inside): the transition itself is a
+        // change.
+        const appeared = state.ancestorWatch !== undefined;
+        state.ancestorWatch?.dispose();
+        state.ancestorWatch = undefined;
+        state.watchedAncestorDir = undefined;
         if (this.disposed || this.states.get(state.root) !== state) return;
         const handle = this.hostFsWatch.watch(state.root);
         state.rootWatch = handle;
@@ -129,19 +130,19 @@ export class SkillRootWatcher extends Disposable {
       state.rootWatch = undefined;
       const anchor = await nearestExistingDir(this.hostFs, state.root);
       if (this.disposed || this.states.get(state.root) !== state) return;
-      if (state.sentinel !== undefined && state.sentinelDir === anchor) return;
-      state.sentinel?.dispose();
-      const sentinel = this.hostFsWatch.watch(anchor, { recursive: false });
-      state.sentinel = sentinel;
-      state.sentinelDir = anchor;
-      sentinel.onDidChange((event) => {
-        this.onSentinelEvent(state, event);
+      if (state.ancestorWatch !== undefined && state.watchedAncestorDir === anchor) return;
+      state.ancestorWatch?.dispose();
+      const ancestorWatch = this.hostFsWatch.watch(anchor, { recursive: false });
+      state.ancestorWatch = ancestorWatch;
+      state.watchedAncestorDir = anchor;
+      ancestorWatch.onDidChange((event) => {
+        this.onAncestorWatchEvent(state, event);
       });
     });
     state.advanceTail = tail.catch(() => undefined);
   }
 
-  private onSentinelEvent(state: RootWatchState, event: HostFsChange): void {
+  private onAncestorWatchEvent(state: RootWatchState, event: HostFsChange): void {
     if (isOnRootChain(state.root, event.path)) this.advance(state);
   }
 
@@ -152,8 +153,8 @@ export class SkillRootWatcher extends Disposable {
       this.debounceTimer = undefined;
       if (this.disposed) return;
       this.onDidChange();
-      // Re-probe every root: a deleted armed root falls back to sentinel mode
-      // here, and a missed sentinel transition is re-armed on the new root.
+      // Re-probe every root: a deleted armed root falls back to ancestor-watch
+      // mode here, and a missed transition is re-armed on the new root.
       for (const state of this.states.values()) this.advance(state);
     }, SKILL_WATCH_DEBOUNCE_MS);
     timer.unref?.();

@@ -18,7 +18,7 @@
  * Unregistered writers (v1) stay best-effort: their lost updates are healed
  * by the session-index merge. Tombstone logic, format and key names are
  * unchanged, and unknown document fields round-trip verbatim via
- * `WorkspaceCatalog.raw`.
+ * `WorkspaceCatalog.sourceDocument`.
  *
  * Once per process, the first operation triggers the startup sync with the
  * legacy `<homeDir>/session_index.jsonl`:
@@ -171,7 +171,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.save({
         workspaces: [...byId.values()],
         deletedIds: [...deletedIds],
-        raw: catalog.raw,
+        sourceDocument: catalog.sourceDocument,
       });
       return ws;
     });
@@ -190,7 +190,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.save({
         workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated : ws)),
         deletedIds: catalog.deletedIds,
-        raw: catalog.raw,
+        sourceDocument: catalog.sourceDocument,
       });
       return updated;
     });
@@ -217,7 +217,7 @@ export class WorkspaceService implements IWorkspaceService {
         await this.store.save({
           workspaces: catalog.workspaces.filter((ws) => ws.id !== id),
           deletedIds: [...new Set([...catalog.deletedIds, id])],
-          raw: catalog.raw,
+          sourceDocument: catalog.sourceDocument,
         });
         return;
       }
@@ -230,7 +230,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.save({
         workspaces: catalog.workspaces.filter((ws) => workspaceRootKey(ws.root) !== rootKey),
         deletedIds: [...new Set([...catalog.deletedIds, ...aliasIds])],
-        raw: catalog.raw,
+        sourceDocument: catalog.sourceDocument,
       });
     });
   }
@@ -243,7 +243,11 @@ export class WorkspaceService implements IWorkspaceService {
     const loaded = await this.store.load();
     if (loaded === undefined) {
       const rebuilt = await this.rebuildFromSessionIndex();
-      await this.store.save({ workspaces: [...rebuilt.values()], deletedIds: [], raw: {} });
+      await this.store.save({
+        workspaces: [...rebuilt.values()],
+        deletedIds: [],
+        sourceDocument: {},
+      });
       this.merged = true;
       return;
     }
@@ -253,7 +257,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.save({
         workspaces: [...byId.values()],
         deletedIds: [...deletedIds],
-        raw: loaded.raw,
+        sourceDocument: loaded.sourceDocument,
       });
     }
     this.merged = true;
@@ -262,7 +266,7 @@ export class WorkspaceService implements IWorkspaceService {
   /** Read the current catalog; a missing or malformed file is an empty
    *  catalog (mirrors v1's tolerant read). */
   private async loadCatalog(): Promise<WorkspaceCatalog> {
-    return (await this.store.load()) ?? { workspaces: [], deletedIds: [], raw: {} };
+    return (await this.store.load()) ?? { workspaces: [], deletedIds: [], sourceDocument: {} };
   }
 
   /** Add every distinct workDir from the legacy session index that the

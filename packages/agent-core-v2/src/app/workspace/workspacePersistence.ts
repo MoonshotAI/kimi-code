@@ -19,10 +19,10 @@
  * empty catalog is a valid, already-materialized state and must NOT trigger a
  * rebuild.
  *
- * `WorkspaceCatalog.raw` carries the opaque document the catalog was loaded
- * from; `save` re-applies the semantic view onto it so unknown top-level and
- * entry fields written by other engine versions survive the round-trip under
- * the shared file's read-modify-write contract.
+ * `WorkspaceCatalog.sourceDocument` carries the opaque document the catalog
+ * was loaded from; `save` re-applies the semantic view onto it so unknown
+ * top-level and entry fields written by other engine versions survive the
+ * round-trip under the shared file's read-modify-write contract.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -42,7 +42,7 @@ export interface WorkspaceCatalog {
   /** Opaque snapshot of the document this catalog was loaded from (empty when
       the file was absent or unusable). save() re-applies the semantic view
       onto it, preserving fields this engine does not know. */
-  readonly raw: Readonly<Record<string, unknown>>;
+  readonly sourceDocument: Readonly<Record<string, unknown>>;
 }
 
 export interface IWorkspacePersistence {

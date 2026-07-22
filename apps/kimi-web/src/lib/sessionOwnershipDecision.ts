@@ -117,22 +117,25 @@ export interface RedirectBudget {
 /** Parse the persisted budget. An expired or malformed record starts fresh
  *  (stale attempts must not block a legitimate future redirect forever). */
 export function readRedirectBudget(
-  raw: string | null,
+  serializedBudget: string | null,
   now: number,
   windowMs: number,
 ): RedirectBudget {
-  if (raw !== null) {
+  if (serializedBudget !== null) {
     try {
-      const parsed = JSON.parse(raw) as { count?: unknown; windowStart?: unknown };
+      const parsedBudget = JSON.parse(serializedBudget) as {
+        count?: unknown;
+        windowStart?: unknown;
+      };
       if (
-        typeof parsed.count === 'number' &&
-        Number.isFinite(parsed.count) &&
-        parsed.count >= 0 &&
-        typeof parsed.windowStart === 'number' &&
-        Number.isFinite(parsed.windowStart) &&
-        now - parsed.windowStart < windowMs
+        typeof parsedBudget.count === 'number' &&
+        Number.isFinite(parsedBudget.count) &&
+        parsedBudget.count >= 0 &&
+        typeof parsedBudget.windowStart === 'number' &&
+        Number.isFinite(parsedBudget.windowStart) &&
+        now - parsedBudget.windowStart < windowMs
       ) {
-        return { count: parsed.count, windowStart: parsed.windowStart };
+        return { count: parsedBudget.count, windowStart: parsedBudget.windowStart };
       }
     } catch {
       // malformed — fall through to a fresh budget
