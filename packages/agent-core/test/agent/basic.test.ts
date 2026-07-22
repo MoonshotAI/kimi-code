@@ -5,7 +5,7 @@ import { mkdtempSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { createCommandKaos, testAgent } from './harness/agent';
@@ -303,6 +303,35 @@ describe('prompt-attached video resolution', () => {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it('ends the turn as cancelled when the user aborts before the inline fallback', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      // Anthropic: no upload channel, so resolution heads for the inline
+      // fallback — the abort must beat the base64 encode.
+      provider: { type: 'anthropic', apiKey: 'test-key', model: 'mock-model' },
+      modelCapabilities: VIDEO_CAPS,
+    });
+
+    const path = tempVideo();
+    const realReadBytes = ctx.agent.kaos.readBytes.bind(ctx.agent.kaos);
+    vi.spyOn(ctx.agent.kaos, 'readBytes').mockImplementation(async (p, length) => {
+      // The uncapped full-content read is the window the user cancels in.
+      if (length === undefined) await ctx.rpc.cancel({ turnId: 0 });
+      return realReadBytes(p, length);
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'video_url', videoUrl: { url: fileUrl(path) } }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'cancelled' }),
+      }),
+    );
+    expect(ctx.agent.context.data().history).toEqual([]);
   });
 
   it('degrades to a <video path> tag when the model lacks video_in (no upload)', async () => {

@@ -77,6 +77,10 @@ export async function deliverVideoContent(
       // Fall through to the inline form.
     }
   }
+  // Cancellation must also beat the no-uploader inline path: encoding up to
+  // 100MB after the user aborted only produces a part the caller would then
+  // persist against their intent.
+  if (signal?.aborted) throw abortReason(signal);
   const base64 = Buffer.from(input.data).toString('base64');
   return {
     type: 'video_url',
