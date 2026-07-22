@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import {
   setKernelFileLockBindingLoader,
   type KernelFileLockBinding,
-} from '@moonshot-ai/kernel-file-lock';
+} from '@moonshot-ai/agent-core-v2';
 
 import { loadNativePackageFile } from './native-require';
 

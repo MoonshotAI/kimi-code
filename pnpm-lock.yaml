@@ -87,9 +87,6 @@ importers:
       '@moonshot-ai/kap-server':
         specifier: workspace:^
         version: link:../../packages/kap-server
-      '@moonshot-ai/kernel-file-lock':
-        specifier: workspace:^
-        version: link:../../packages/kernel-file-lock
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../../packages/oauth

@@ -41,6 +41,15 @@ export * from '#/os/interface/hostProcess';
 export * from '#/os/interface/terminal';
 export * from '#/os/interface/terminalErrors';
 export * from '#/os/backends/node-local/crossProcessLockService';
+// Host integration point for the kernel file lock: the host app (kimi-code)
+// installs a native binding loader through this hook because its SEA
+// packaging knows where the prebuilt `.node` lives; libraries fall back to
+// requiring `fs-native-extensions` directly. Re-exported from the package
+// root so the host does not need a direct dependency on kernel-file-lock.
+export {
+  setKernelFileLockBindingLoader,
+  type KernelFileLockBinding,
+} from '@moonshot-ai/kernel-file-lock';
 export * from '#/os/backends/node-local/hostEnvironmentService';
 export * from '#/os/backends/node-local/hostFsService';
 export * from '#/os/backends/node-local/hostFsWatchService';
