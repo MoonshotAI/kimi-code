@@ -39,6 +39,7 @@ import {
 import { handleGoalCommand } from './goal';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handleAddDirCommand } from './add-dir';
+import { handleDiffCommand } from './diff';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
@@ -284,6 +285,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'add-dir':
       await handleAddDirCommand(host, args);
+      return;
+    case 'diff':
+      await handleDiffCommand(host, args);
       return;
     case 'experiments':
       await showExperimentsPanel(host);

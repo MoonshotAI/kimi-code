@@ -213,6 +213,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'diff',
+    aliases: [],
+    description: 'View uncommitted changes and per-turn diffs',
+    priority: 70,
+    availability: 'idle-only',
+  },
+  {
     name: 'new',
     aliases: ['clear'],
     description: 'Start a fresh session in the current workspace',

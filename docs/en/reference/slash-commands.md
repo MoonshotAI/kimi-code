@@ -101,6 +101,7 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
 | `/help` | `/h`, `/?` | Show keyboard shortcuts and all available commands | Yes |
+| `/diff` | — | View uncommitted changes and per-turn diffs | Yes |
 | `/btw [question]` | — | Open a side conversation in a forked sub-Agent without affecting the current main Agent turn; without a question, opens the panel first to wait for input | Yes |
 | `/usage` | — | Show token usage, context consumption, and quota information | Yes |
 | `/status` | — | Show the current session runtime state: version, model, working directory, permission mode, etc. | Yes |
