@@ -78,7 +78,8 @@ const TOOLS = [
             '(yahoo_finance FX history is limited to about 2 years); world_bank_open_data = historical macro; ' +
             'imf = FX rates, CPI, GDP forecasts, balance of payments; tianyancha = CN company registry; ' +
             'arxiv / scholar = papers; yuandian_law = CN laws and cases; ' +
-            'wind = A-share intraday minute series, funds, bonds; gildata = natural-language stock/fund screening; ' +
+            'wind = A-share intraday minute series, funds, bonds (map PE/PB/ROE-style field names via wind_search_fields first); ' +
+            'gildata = natural-language stock/fund screening; ' +
             'sec_edgar = US filings (10-K/10-Q, S-1, Form 4, 13F, 8-K); ' +
             'sp_data = S&P fundamentals (consensus estimates, valuation ratios, transcripts).',
         },
