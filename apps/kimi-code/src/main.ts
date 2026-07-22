@@ -88,7 +88,7 @@ async function handleMigrateCommand(version: string): Promise<void> {
   await runShell(MIGRATE_CLI_OPTIONS, version, { migrateOnly: true });
 }
 
-export async function handleUpgradeCommand(version: string): Promise<void> {
+export async function handleUpgradeCommand(version: string, yes = false): Promise<void> {
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
@@ -111,7 +111,7 @@ export async function handleUpgradeCommand(version: string): Promise<void> {
       version,
       uiMode: CLI_UI_MODE,
     });
-    exitCode = await handleUpgrade(version, { track, logger: log });
+    exitCode = await handleUpgrade(version, { track, logger: log, skipPrompt: yes });
   } finally {
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
     await harness.close().catch(() => {});
@@ -210,8 +210,8 @@ export function main(): void {
         process.exit(1);
       });
     },
-    () => {
-      void handleUpgradeCommand(version).catch(async (error: unknown) => {
+    (yes) => {
+      void handleUpgradeCommand(version, yes).catch(async (error: unknown) => {
         await logStartupFailure('upgrade', error);
         process.stderr.write(formatStartupError(error, { operation: 'upgrade' }));
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
