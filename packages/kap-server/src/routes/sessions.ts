@@ -14,7 +14,7 @@
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
  *   GET    /sessions/{session_id}/goal         current goal (null when none)
- *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
+ *   GET    /sessions/{session_id}/warnings     agents-md-oversized + skill-load-failed notices
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
  * pass-throughs — `fork` / `compact` / `abort` / `archive` / `restore` — call
@@ -35,12 +35,16 @@
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
  *
- * `GET /sessions/{id}/warnings` surfaces the only v1 warning
- * (`agents-md-oversized`) by projecting the main agent's
- * `IAgentProfileService.getAgentsMdWarning()` — computed and cached when the
- * agent binds a profile (via `prepareSystemPromptContext`) — into the v1
- * `{ code, message, severity }` wire shape. An unbound main agent yields an
- * empty list, matching v1's "no warning" case.
+ * `GET /sessions/{id}/warnings` surfaces two notices in the v1
+ * `{ code, message, severity }` wire shape:
+ *   - `agents-md-oversized` — the main agent's
+ *     `IAgentProfileService.getAgentsMdWarning()`, computed and cached when the
+ *     agent binds a profile (via `prepareSystemPromptContext`). An unbound main
+ *     agent yields none of these, matching v1's "no warning" case.
+ *   - `skill-load-failed` — one entry per `ISessionSkillCatalog`
+ *     `getSkippedByPolicy()` result whose `SKILL.md` failed to parse (invalid
+ *     frontmatter, unsupported `type`, …), so a skill that got dropped during
+ *     load is reported instead of vanishing silently.
  *
  * **Wire fidelity**: mirrors v1's `toProtocolSession`
  * (`packages/agent-core/src/services/session/session.ts`), which populates
@@ -88,6 +92,7 @@ import {
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionSkillCatalog,
   IEventService,
   IWorkspaceAliases,
   IWorkspaceService,
@@ -1005,7 +1010,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // matching v1's "no warning" case.
         const agent = await ensureMainAgent(session);
         const agentsMdWarning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
-        const warnings =
+        const agentsMdWarnings =
           agentsMdWarning === undefined
             ? []
             : [
@@ -1015,7 +1020,19 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
                   severity: 'warning' as const,
                 },
               ];
-        reply.send(okEnvelope({ warnings }, req.id));
+
+        // Surface any skill that got dropped during catalog load (invalid
+        // frontmatter, unsupported `type`, …) instead of leaving it silently
+        // missing from the skill list.
+        const skillCatalog = session.accessor.get(ISessionSkillCatalog);
+        await skillCatalog.ready;
+        const skillWarnings = skillCatalog.catalog.getSkippedByPolicy().map((skipped) => ({
+          code: 'skill-load-failed',
+          message: `Skill at ${skipped.path} was not loaded: ${skipped.reason}`,
+          severity: 'warning' as const,
+        }));
+
+        reply.send(okEnvelope({ warnings: [...agentsMdWarnings, ...skillWarnings] }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }
