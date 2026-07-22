@@ -42,6 +42,7 @@ import {
 } from '#/_base/utils/abort';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
+import { isRealUserInput } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -107,19 +108,38 @@ interface AgentTaskNotificationBuildContext {
   readonly notification: AgentTaskNotification;
 }
 
-const TaskNotificationDeliveryModel = defineModel<readonly string[]>(
+interface TaskNotificationDeliveryState {
+  readonly current: readonly string[];
+  readonly checkpoints: readonly (readonly string[])[];
+}
+
+const TaskNotificationDeliveryModel = defineModel<TaskNotificationDeliveryState>(
   'task.notificationDelivery',
-  () => [],
+  () => ({ current: [], checkpoints: [] }),
   {
-    // Rewindable: a rewind drops the delivery marks of notifications the cut
-    // removed from the context, so they re-deliver on the next inject.
-    rewindable: true,
     reducers: {
-      'context.append_message': (state, payload: { message?: unknown }) => {
-        const origin = taskOriginFromMessage(payload.message);
+      'context.append_message': (state, { message }) => {
+        if (isRealUserInput(message)) {
+          return { ...state, checkpoints: [...state.checkpoints, state.current] };
+        }
+        const origin = taskOriginFromMessage(message);
         if (origin === undefined) return state;
         const key = notificationKey(origin);
-        return state.includes(key) ? state : [...state, key];
+        return state.current.includes(key)
+          ? state
+          : { ...state, current: [...state.current, key] };
+      },
+      'context.apply_compaction': (state) =>
+        state.checkpoints.length === 0 ? state : { ...state, checkpoints: [] },
+      'context.clear': (state) =>
+        state.checkpoints.length === 0 ? state : { ...state, checkpoints: [] },
+      'context.undo': (state, { count }) => {
+        if (count <= 0 || state.checkpoints.length < count) return state;
+        const checkpointIndex = state.checkpoints.length - count;
+        return {
+          current: state.checkpoints[checkpointIndex]!,
+          checkpoints: state.checkpoints.slice(0, checkpointIndex),
+        };
       },
     },
   },
@@ -220,6 +240,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
   private readonly persistence: AgentTaskPersistence;
+  private notificationRestoreQueue: Promise<void> = Promise.resolve();
   private activeTaskReminderPending = false;
 
   constructor(
@@ -250,7 +271,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     );
     this._register(
       this.wire.hooks.onDidRestore.register('task', async (_ctx, next) => {
-        for (const key of this.wire.getModel(TaskNotificationDeliveryModel)) {
+        for (const key of this.wire.getModel(TaskNotificationDeliveryModel).current) {
           this.deliveredNotificationKeys.add(key);
         }
         await this.restoreAfterReplay();
@@ -266,16 +287,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           if (isTaskOrigin(message.origin)) {
             this.markDeliveredNotification(message.origin);
           }
-        }
-      }),
-    );
-    this._register(
-      this.eventBus.subscribe('context.rewound', () => {
-        // The delivery model was rebuilt by the rewind; re-sync the live
-        // mirror so notifications cut from the context re-deliver.
-        this.deliveredNotificationKeys.clear();
-        for (const key of this.wire.getModel(TaskNotificationDeliveryModel)) {
-          this.deliveredNotificationKeys.add(key);
         }
       }),
     );
@@ -481,6 +492,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }
     }
     return result;
+  }
+
+  async reconcileNotificationDeliveryAfterUndo(): Promise<void> {
+    const restoredKeys = new Set(this.wire.getModel(TaskNotificationDeliveryModel).current);
+    for (const key of this.deliveredNotificationKeys) {
+      if (!restoredKeys.has(key)) this.scheduledNotificationKeys.delete(key);
+    }
+    this.deliveredNotificationKeys.clear();
+    for (const key of restoredKeys) this.deliveredNotificationKeys.add(key);
+    await this.restoreAgentTaskNotifications();
   }
 
   persistOutput(taskId: string): void {
@@ -1024,7 +1045,15 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.fireNotificationHook(context.notification);
   }
 
-  private async restoreAgentTaskNotifications(): Promise<void> {
+  private restoreAgentTaskNotifications(): Promise<void> {
+    const restore = this.notificationRestoreQueue.then(() =>
+      this.restoreAgentTaskNotificationsNow(),
+    );
+    this.notificationRestoreQueue = restore.catch(() => {});
+    return restore;
+  }
+
+  private async restoreAgentTaskNotificationsNow(): Promise<void> {
     for (const info of this.list(false)) {
       if (!isAgentTaskTerminal(info.status)) continue;
       await this.restoreAgentTaskNotification(info);

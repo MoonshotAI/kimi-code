@@ -69,13 +69,6 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
         this.dropPendingLoadedNotLanded();
       }),
     );
-    this._register(
-      eventBus.subscribe('context.rewound', () => {
-        // Same re-derivation as the splice path: pending loaded tools whose
-        // landing messages the rewind removed must not stick.
-        this.dropPendingLoadedNotLanded();
-      }),
-    );
   }
 
   private dropPendingLoadedNotLanded(): void {

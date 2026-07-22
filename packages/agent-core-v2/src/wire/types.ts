@@ -34,11 +34,7 @@ export type OpPayload<K extends OpType> = K extends PersistedOpType
     : never;
 
 export type ModelReducers<S> = {
-  [K in OpType]?: (
-    state: S,
-    payload: OpPayload<K>,
-    ctx?: { readonly recordIndex?: number },
-  ) => S;
+  [K in OpType]?: (state: S, payload: OpPayload<K>) => S;
 };
 
 export type OpPersistenceOptions<K extends OpType> = K extends PersistedOpType

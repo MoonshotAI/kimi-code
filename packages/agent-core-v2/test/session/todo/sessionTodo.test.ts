@@ -97,7 +97,7 @@ function makeFakeAgent(agentId: string): FakeAgent {
     },
     restore: async () => {},
     flush: async () => {},
-    getModel: () => todoState,
+    getModel: () => ({ current: todoState, checkpoints: [] }),
     subscribe: () => toDisposable(() => {}),
   } as unknown as IWireService;
 

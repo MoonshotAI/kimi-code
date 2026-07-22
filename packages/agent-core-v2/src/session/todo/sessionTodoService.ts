@@ -1,20 +1,9 @@
 /**
  * `todo` domain (L4) — `ISessionTodoService` implementation.
  *
- * Holds the session's shared todo list as a stateless facade over the main
- * agent's `TodoModel`: `getTodos` reads `wire.getModel(TodoModel)` live, and
- * every mutation only dispatches a `tools.update_store` Op to the main agent's
- * wire (the single source of truth and replayable timeline), then emits
- * `onDidChange` from the rebuilt Model. The service keeps no list copy of its
- * own, so the live view and the post-replay view can never drift. Binds the
- * `TodoListTool` and the stale-todo reminder into every agent (`onDidCreate`),
- * borrowing each agent's services through its `IAgentScopeHandle.accessor`.
- * Per-agent bindings are disposed when the agent is disposed. Bound at
- * Session scope.
- *
- * The session owns the todo facade and tool bindings, while the main Agent wire
- * owns the replayable state. This is an explicit cross-scope orchestration
- * boundary: there is no second session-level wire aggregate or journal.
+ * Provides session-wide todo access through the main agent's `wire`, binds
+ * todo capabilities into each agent, and publishes changes through its typed
+ * event. Bound at Session scope.
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
@@ -73,7 +62,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   getTodos(): readonly TodoItem[] {
     const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return [];
-    return main.accessor.get(IWireService).getModel(TodoModel);
+    return main.accessor.get(IWireService).getModel(TodoModel).current;
   }
 
   setTodos(todos: readonly TodoItem[]): void {
@@ -93,7 +82,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
     if (main === undefined) return;
     const wire = main.accessor.get(IWireService);
     wire.dispatch(todoSet({ key: 'todo', value: todos }));
-    this.onDidChangeEmitter.fire(wire.getModel(TodoModel));
+    this.onDidChangeEmitter.fire(wire.getModel(TodoModel).current);
   }
 
   private bindAgent(handle: IAgentScopeHandle): void {

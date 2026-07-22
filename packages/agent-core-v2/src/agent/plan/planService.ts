@@ -18,6 +18,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { PlanModeInjection } from '#/agent/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -42,6 +43,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
+    @IEventBus eventBus: IEventBus,
     @IWireService private readonly wire: IWireService,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
@@ -54,24 +56,27 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
         await next();
       }),
     );
+    this._register(
+      eventBus.subscribe('context.rewound', () => {
+        this.restoreTelemetryMode();
+      }),
+    );
 
     this._register(new PlanModeInjection(dynamicInjector, this, this.context));
   }
 
   private get isActive(): boolean {
-    return this.wire.getModel(PlanModel).active;
+    return this.wire.getModel(PlanModel).current.active;
   }
 
   private currentPlanFilePath(): PlanFilePath {
-    const state = this.wire.getModel(PlanModel);
+    const state = this.wire.getModel(PlanModel).current;
     if (!state.active || state.id === undefined) return null;
     return this.planFilePathFor(state.id);
   }
 
   private restoreTelemetryMode(): void {
-    if (this.isActive) {
-      this.telemetryContext.set({ mode: 'plan' });
-    }
+    this.telemetryContext.set({ mode: this.isActive ? 'plan' : 'agent' });
   }
 
   private createPlanId(): string {
@@ -118,7 +123,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   async status(): Promise<PlanData> {
-    const state = this.wire.getModel(PlanModel);
+    const state = this.wire.getModel(PlanModel).current;
     if (!state.active || state.id === undefined) return null;
     const path = this.planFilePathFor(state.id);
     let content = '';

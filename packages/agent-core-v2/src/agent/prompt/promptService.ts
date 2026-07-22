@@ -18,7 +18,7 @@ import { newMessageId } from '#/agent/contextMemory/messageId';
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop';
-import { promptTurn, steerTurn } from '#/agent/loop/turnOps';
+import { steerTurn } from '#/agent/loop/turnOps';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -183,11 +183,6 @@ export class AgentPromptService implements IAgentPromptService {
       if (this.fullCompaction.compacting !== null && this.loop.status().state !== 'running') { this.pending.unshift(item); return; }
       const { message, captions } = this.extractCompressionCaptions(item.message);
       if (await this.blockedByHook(message, false)) {
-        // A hook-blocked prompt never starts a turn, but it IS a user prompt
-        // boundary in the journal — record `turn.prompt` so the rewind index
-        // sees it as an undo anchor (and `TurnModel` stays a faithful count
-        // of submitted prompts).
-        this.wire.dispatch(promptTurn({ input: message.content, origin: message.origin ?? USER_PROMPT_ORIGIN }));
         this.appendPrompt(message, captions); item.state = 'blocked'; item.launchedDeferred.resolve(undefined);
         item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'blocked' });
         this.publishCompleted(item.id, 'blocked'); return;

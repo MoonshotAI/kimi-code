@@ -887,11 +887,6 @@ export class SessionEventBroadcaster {
         if (handle.id === MAIN_AGENT_ID && event.type === 'context.spliced') {
           emitLegacyStatus();
         }
-        if (handle.id === MAIN_AGENT_ID && event.type === 'context.rewound') {
-          // Rewind (undo) shrinks the context like a splice; refresh the
-          // legacy status snapshot (token counts) for WS subscribers.
-          emitLegacyStatus();
-        }
         this.onAgentEvent(sessionId, handle.id, projected);
       }),
     ];

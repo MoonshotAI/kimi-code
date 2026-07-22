@@ -44,11 +44,7 @@ function compaction(): ContextMessage {
 
 const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 
-// `computeUndoCut` / `isFullyUndoable` / `contextUndo` are the LEGACY undo
-// semantics, kept only so journals with historical `context.undo` records
-// still replay. Live undos go through `rewind` (`log.cut`); see
-// `test/agent/rewind/`.
-describe('computeUndoCut (legacy context.undo replay semantics)', () => {
+describe('computeUndoCut', () => {
   it('finds the cut for the last real user prompt', () => {
     const cut = computeUndoCut([user(USER_ORIGIN), assistant()], 1);
     expect(cut).toEqual({ cutIndex: 0, removedCount: 1, stoppedAtCompaction: false });
@@ -101,7 +97,7 @@ describe('computeUndoCut (legacy context.undo replay semantics)', () => {
   });
 });
 
-describe('contextUndo op (legacy record apply)', () => {
+describe('contextUndo op', () => {
   it('slices the history at the cut point, dropping post-cut injections too', () => {
     const state = [
       user(USER_ORIGIN),

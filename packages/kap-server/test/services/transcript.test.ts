@@ -692,6 +692,7 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'compaction.started', trigger: 'auto' }));
     feed(ev({ type: 'compaction.completed', result: { kept: 3 } }));
     feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
+    feed(ev({ type: 'context.rewound', turns: 1 }));
 
     const markers = tx
       .getItems()

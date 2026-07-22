@@ -31,7 +31,7 @@
  */
 
 import { type ContentPart, type ToolCall } from '#/kosong/contract/message';
-import { isLogCutRecord, type WireRecord } from '#/wire/record';
+import type { WireRecord } from '#/wire/record';
 
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
@@ -73,63 +73,12 @@ interface MutableEntry {
 }
 
 export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
-  // Two passes over the buffered input: `log.cut` control records invalidate
-  // the record range [target, cut position) (wire rewind semantics), so the
-  // effective record stream is only known once the cuts have been seen.
-  const buffered = [...records];
-  const reducer = createRawContextTranscriptReducer();
-  for (const record of effectiveWireRecords(buffered)) reducer.add(record);
+  const reducer = createContextTranscriptReducer();
+  for (const record of records) reducer.add(record);
   return reducer.result();
 }
 
 export function createContextTranscriptReducer(): ContextTranscriptReducer {
-  // Streaming callers (`reducer.add` per record, one final `result()`)
-  // buffer transparently so `log.cut` ranges apply exactly like the
-  // one-shot `reduceContextTranscript` path.
-  const buffered: WireRecord[] = [];
-  return {
-    add(record: WireRecord): void {
-      buffered.push(record);
-    },
-    result(): ContextTranscript {
-      return reduceContextTranscript(buffered);
-    },
-  };
-}
-
-/**
- * The effective record stream after wire rewinds: every record whose
- * (metadata-free) index falls outside every `log.cut` range
- * `[target, cutPosition)`. Cut records themselves pass through (reducers
- * ignore unknown types); malformed cuts consume their index but no range,
- * matching the wire restore.
- */
-function effectiveWireRecords(records: readonly WireRecord[]): Iterable<WireRecord> {
-  const ranges: Array<readonly [number, number]> = [];
-  let index = 0;
-  for (const record of records) {
-    if (record.type === 'metadata') continue;
-    if (isLogCutRecord(record)) {
-      ranges.push([Math.min(record.target, index), index]);
-    }
-    index++;
-  }
-  if (ranges.length === 0) return records;
-  let outputIndex = 0;
-  const out: WireRecord[] = [];
-  for (const record of records) {
-    if (record.type === 'metadata') {
-      out.push(record);
-      continue;
-    }
-    const i = outputIndex++;
-    const invalid = ranges.some(([start, end]) => i >= start && i < end);
-    if (!invalid) out.push(record);
-  }
-  return out;
-}
-
-function createRawContextTranscriptReducer(): ContextTranscriptReducer {
   const transcript: MutableEntry[] = [];
   let foldedLength = 0;
   let clearFloor = 0;

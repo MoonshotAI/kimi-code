@@ -25,6 +25,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/app/externalHooksRunner/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentRewindService } from '#/agent/rewind/rewind';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import {
   configServices,
@@ -709,6 +710,36 @@ describe('AgentTaskService — notification delivery', () => {
       await manager.reconcile();
 
       expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await cleanupSessionDir(sessionDir, fixture);
+    }
+  });
+
+  it('re-delivers a terminal task notification removed by undo', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-undo-'));
+    let fixture: TaskServiceFixture | undefined;
+    try {
+      const persistence = createAgentTaskPersistence(sessionDir);
+      await persistence.writeTask(persistedAgent());
+      await persistence.appendTaskOutput('agent-done0000', 'restored subagent summary');
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx, manager } = fixture;
+      ctx.appendUserTurn('start the background task');
+      agent.context.appendUserMessage.mockClear();
+
+      await manager.loadFromDisk();
+      await manager.reconcile();
+      await vi.waitFor(() => {
+        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
+      });
+
+      await ctx.get(IAgentRewindService).rewind(1);
+
+      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
+      expect(ctx.context.get().some((message) => message.origin?.kind === 'user')).toBe(false);
+      expect(
+        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+      ).toHaveLength(1);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }

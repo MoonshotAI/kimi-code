@@ -572,6 +572,8 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       return result;
     },
 
+    async reconcileNotificationDeliveryAfterUndo(): Promise<void> {},
+
     persistOutput(taskId: string): void {
       persisted.add(taskId);
     },

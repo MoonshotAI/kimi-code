@@ -845,7 +845,6 @@ function collectScopeSeed(
 class PersistenceAppendLogStore implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
   private readonly history: WireRecord[] = [];
-  private historyReadCursor = 0;
 
   constructor(
     private readonly persistence: WireRecordPersistence,
@@ -863,16 +862,7 @@ class PersistenceAppendLogStore implements IAppendLogStore {
   async *read<R>(_scope: string, _key: string): AsyncIterable<R> {
     for await (const event of this.persistence.read()) {
       this.onRead(event);
-      // Capture records entering the journal via reads (seeds injected
-      // directly into persistence, then surfaced by a restore) WITHOUT
-      // duplicating records already in the append history at this position —
-      // a mid-flight re-read of an append-only journal (e.g. `wire.rewind`'s
-      // rebuild) would otherwise seed resume assertions with duplicates.
-      const existing = this.history[this.historyReadCursor];
-      if (existing === undefined || JSON.stringify(existing) !== JSON.stringify(event)) {
-        this.history.push(cloneRecord(event));
-      }
-      this.historyReadCursor++;
+      this.history.push(cloneRecord(event));
       yield event as R;
     }
   }
@@ -1394,12 +1384,6 @@ export class AgentTestContext {
     });
   }
 
-  /**
-   * Append a user prompt the way production does: a `turn.prompt` boundary
-   * record followed by the user message. Undo/rewind tests must build turns
-   * through this helper — bare `appendUserMessage` appends have no boundary
-   * and are invisible to the rewind index.
-   */
   appendUserTurn(text: string): void {
     this.get(IWireService).dispatch(
       promptTurn({ input: [{ type: 'text', text }], origin: { kind: 'user' } }),
@@ -1531,10 +1515,6 @@ export class AgentTestContext {
     this.coverUsage(tokenTotal);
   }
 
-  /**
-   * `appendExchange` with a real `turn.prompt` boundary (see
-   * `appendUserTurn`): the shape undo/rewind tests need.
-   */
   appendTurnExchange(userText: string, assistantText: string, tokenTotal?: number): void {
     this.appendUserTurn(userText);
     this.appendAssistantMessage({

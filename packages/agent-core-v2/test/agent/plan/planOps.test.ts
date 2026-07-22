@@ -59,20 +59,20 @@ async function readRecords(key = KEY): Promise<WireRecord[]> {
 
 describe('plan ops (wire-backed)', () => {
   it('enter/cancel/exit drive active state and persist flat records', async () => {
-    expect(wire.getModel(PlanModel).active).toBe(false);
+    expect(wire.getModel(PlanModel).current.active).toBe(false);
 
     wire.dispatch(planModeEnter({ id: 'p1' }));
-    expect(wire.getModel(PlanModel)).toEqual({
+    expect(wire.getModel(PlanModel).current).toEqual({
       active: true,
       id: 'p1',
     });
 
     wire.dispatch(planModeCancel({ id: 'p1' }));
-    expect(wire.getModel(PlanModel)).toEqual({ active: false });
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
 
     wire.dispatch(planModeEnter({ id: 'p2' }));
     wire.dispatch(planModeExit({}));
-    expect(wire.getModel(PlanModel).active).toBe(false);
+    expect(wire.getModel(PlanModel).current.active).toBe(false);
 
     const records = await readRecords();
     expect(records.map((record) => record.type)).toEqual([
@@ -93,11 +93,11 @@ describe('plan ops (wire-backed)', () => {
   it('cancel and exit both deactivate plan mode but emit distinct record types', async () => {
     wire.dispatch(planModeEnter({ id: 'p1' }));
     wire.dispatch(planModeCancel({ id: 'p1' }));
-    expect(wire.getModel(PlanModel)).toEqual({ active: false });
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
 
     wire.dispatch(planModeEnter({ id: 'p2' }));
     wire.dispatch(planModeExit({ id: 'p2' }));
-    expect(wire.getModel(PlanModel)).toEqual({ active: false });
+    expect(wire.getModel(PlanModel).current).toEqual({ active: false });
 
     const records = await readRecords();
     expect(records.map((record) => record.type)).toEqual([
@@ -136,7 +136,7 @@ describe('plan ops (wire-backed)', () => {
       testWireScope(SCOPE, 'plan-replay'),
       records,
     );
-    expect(host.wire.getModel(PlanModel)).toEqual({
+    expect(host.wire.getModel(PlanModel).current).toEqual({
       active: true,
       id: 'p1',
     });
@@ -152,6 +152,6 @@ describe('plan ops (wire-backed)', () => {
       { type: 'plan_mode.cancel', id: 'p1' },
       ],
     );
-    expect(cancelled.wire.getModel(PlanModel).active).toBe(false);
+    expect(cancelled.wire.getModel(PlanModel).current.active).toBe(false);
   });
 });

@@ -204,11 +204,6 @@ export class AgentTranscriptProjector {
         // Known limitation: undo/clear projects as a bare 'undo' marker (raw
         // payload attached); no `items.remove` reconstruction in v1.
         return [this.markerOp('undo', restOf(event))];
-      case 'context.rewound':
-        // Same limitation as `context.spliced`: the rewind (undo) projects as
-        // a bare 'undo' marker; consumers re-read via the cold/snapshot path
-        // (which applies `log.cut` ranges through the transcript reducer).
-        return [this.markerOp('undo', restOf(event))];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':

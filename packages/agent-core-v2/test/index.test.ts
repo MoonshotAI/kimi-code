@@ -147,7 +147,9 @@ describe('v1 wire vocabulary', () => {
 
     await restoreTestAgentWire(fresh, log2, SCOPE, records);
 
-    expect(fresh.getModel(TodoModel)).toEqual([{ title: 'restore me', status: 'in_progress' }]);
+    expect(fresh.getModel(TodoModel).current).toEqual([
+      { title: 'restore me', status: 'in_progress' },
+    ]);
   });
 });
 

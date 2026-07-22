@@ -100,7 +100,6 @@ export function stubAgentWire(
     seal: async () => {},
     restore: async () => {},
     flush,
-    rewind: async () => {},
     getModel: (model) => model.initial() as never,
   };
 }
