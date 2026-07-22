@@ -9,6 +9,9 @@
  * `{seq, epoch}` cursor, or sends `resync_required` when the gap cannot be
  * served incrementally.
  *
+ * A successful `client_hello` also registers the connection for global event
+ * fan-out, independent of per-session subscriptions, until the socket closes.
+ *
  * The server never initiates a disconnect: unlike v1's `WsConnection`
  * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
  * a connection stays open until the client closes it or the process shuts
@@ -191,6 +194,7 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private async onClientHello(frame: InboundFrame): Promise<void> {
     if (!(await this.authorize(frame))) return;
+    if (this.closed) return;
     this.gotClientHello = true;
 
     const payload = frame.payload ?? {};
@@ -214,6 +218,11 @@ export class WsConnectionV1 implements BroadcastTarget {
         serverCursors,
       );
     }
+
+    // Register after requested cursor replays so live global events cannot
+    // arrive before older durable backlog for the same session.
+    if (this.closed) return;
+    this.broadcaster.registerGlobalTarget(this);
 
     this.sendFrame(
       buildAck(frame.id ?? '', 0, 'success', {
@@ -329,6 +338,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
       deferTranscriptReset: cursor !== undefined,
     });
+    if (this.closed) {
+      if (ok) this.broadcaster.unsubscribe(sid, this);
+      return;
+    }
     if (!ok) {
       resyncRequired.push(sid);
       return;
@@ -478,6 +491,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     this.outbound = [];
+    this.broadcaster.unregisterGlobalTarget(this);
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     this.fsWatchBridge?.detachConnection(this);
     // registry removal is handled by registerWsV1 on the socket 'close' event.

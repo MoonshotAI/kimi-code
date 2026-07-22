@@ -1154,6 +1154,51 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes.some((e) => e.type === 'turn.started')).toBe(false);
   });
 
+  it('fans global events out to hello-only targets without leaking session frames', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+
+    // A regular subscriber activates the session producer. The global target
+    // models a connection that completed client_hello but did not subscribe.
+    const subscribed = collectingTarget();
+    const global = collectingTarget();
+    await bc.subscribe('s1', subscribed.target);
+    bc.registerGlobalTarget(global.target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    expect(global.envelopes.map((e) => e.type)).toEqual(['event.session.work_changed']);
+    expect(global.envelopes[0]).toMatchObject({
+      session_id: 's1',
+      payload: { busy: true },
+    });
+    expect(global.envelopes.some((e) => e.type === 'turn.started')).toBe(false);
+
+    bc.unregisterGlobalTarget(global.target);
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    await bc.getCursor('s1');
+    expect(global.envelopes).toHaveLength(1);
+  });
+
+  it('sends a global event once to a target subscribed to multiple sessions', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    sessions.set('s2', new FakeLifecycle());
+
+    const view = collectingTarget();
+    await bc.subscribe('s1', view.target);
+    await bc.subscribe('s2', view.target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+
+    expect(view.envelopes.filter((e) => e.type === 'event.session.work_changed')).toHaveLength(1);
+    expect(view.envelopes.filter((e) => e.type === 'turn.started')).toHaveLength(1);
+  });
+
   it('does not re-announce interactions already pending at activation, but still broadcasts their resolution', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
