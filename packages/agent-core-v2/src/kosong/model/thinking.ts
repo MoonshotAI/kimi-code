@@ -18,6 +18,18 @@
  *     (protocol, providerType) pair contains a `withThinking` hook). Neither
  *     hardcodes a vendor or protocol string — trait-driven thinking means
  *     "thinking is driven by traits", which the registry answers.
+ *     `requiresStrictThinkingValidation` reads the same identity for the
+ *     strict-validation flag. Strict gates only listed-effort validation
+ *     and the `'on'` projection; the always-on clamp is UNCONDITIONAL — a
+ *     model that declares `always_thinking` never resolves to `'off'` on
+ *     any wire (a claimed off state would be a lie, since upstream keeps
+ *     reasoning at its default when no off encoding exists). Unlisted
+ *     concrete efforts stay lenient on compatible transports
+ *     (warn-and-send, `anthropic-thinking-effort-not-listed`) because the
+ *     backend may accept values the local catalog does not list. The
+ *     strict flag is declared by `kimiOpenAITrait` — Kimi's native API
+ *     rejects unlisted efforts — and deliberately NOT by
+ *     `kimiAnthropicTrait`.
  */
 
 import { z } from 'zod';
@@ -96,18 +108,8 @@ export function usesTraitDrivenThinking(
 
 /**
  * Whether client-side thinking-effort validation must be STRICT for the
- * (protocol, providerType) pair: the resolved traits take thinking over and
- * the last `withThinking` declarer marks `strictThinkingValidation`.
- *
- * Strict now gates only listed-effort validation and the `'on'` projection.
- * The always-on clamp is UNCONDITIONAL — a model that declares
- * `always_thinking` never resolves to `'off'` on any wire (a claimed off
- * state would be a lie, since upstream keeps reasoning at its default when
- * no off encoding exists). Unlisted concrete efforts stay lenient on
- * compatible transports (warn-and-send, `anthropic-thinking-effort-not-listed`)
- * because the backend may accept values the local catalog does not list. The
- * strict flag is declared by `kimiOpenAITrait` — Kimi's native API rejects
- * unlisted efforts — and deliberately NOT by `kimiAnthropicTrait`.
+ * (protocol, providerType) pair — answered through the resolved adapter
+ * identity's `strictThinkingValidation` flag.
  */
 export function requiresStrictThinkingValidation(
   registry: IProtocolAdapterRegistry,
