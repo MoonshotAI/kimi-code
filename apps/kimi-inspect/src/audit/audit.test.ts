@@ -175,7 +175,7 @@ describe('AuditTrail', () => {
     trail.recordOps([{ op: 'turn.upsert', turn: turnItem(2) }], 'live', '2026-01-01T00:00:00Z', s2);
     trail.recordEvent('prompt', 'hello', s2);
     trail.recordReset(
-      { items: [], tasks: [], interactions: [], attachments: [], todos: [], meta: {} },
+      { items: [], tasks: [], interactions: [], attachments: [], todos: [], prompts: [], meta: {} },
       false,
       undefined,
       s2,

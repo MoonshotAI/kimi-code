@@ -30,6 +30,7 @@ import {
   type AppendOp,
   type FrameUpsertOp,
   type InteractionUpsertOp,
+  type TranscriptFrame,
   type TranscriptOperation,
   type TranscriptTask,
   type TranscriptTurn,
@@ -335,6 +336,7 @@ describe('AgentTranscriptProjector', () => {
       interactions: [],
       attachments: [],
       todos: [],
+      prompts: [],
       items: [
         {
           kind: 'turn',
@@ -409,16 +411,282 @@ describe('AgentTranscriptProjector', () => {
     );
   });
 
-  it('drops tool.call.delta / tool.progress (argument & progress streaming out of scope)', () => {
+  it('carries usage / finishReason / the full timing breakdown on turn.step.completed', () => {
     const projector = new AgentTranscriptProjector('main');
-    expect(
-      projector.map(ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'c', argumentsPart: '{' })),
-    ).toEqual([]);
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.step.completed',
+        turnId: 1,
+        step: 1,
+        usage: { inputOther: 100, output: 20, inputCacheRead: 30, inputCacheCreation: 40 },
+        rawFinishReason: 'tool_calls',
+        llmFirstTokenLatencyMs: 120,
+        llmStreamDurationMs: 900,
+        llmRequestBuildMs: 10,
+        llmServerFirstTokenMs: 110,
+        llmServerDecodeMs: 800,
+        llmClientConsumeMs: 100,
+      }),
+    );
+
+    const step = turnOps('t1', tx.getItems()).steps[0]!;
+    expect(step.state).toBe('completed');
+    expect(step.usage).toEqual({
+      inputOther: 100,
+      output: 20,
+      inputCacheRead: 30,
+      inputCacheCreation: 40,
+    });
+    expect(step.finishReason).toBe('tool_calls');
+    expect(step.timing).toEqual({
+      llmFirstTokenLatencyMs: 120,
+      llmStreamDurationMs: 900,
+      llmRequestBuildMs: 10,
+      llmServerFirstTokenMs: 110,
+      llmServerDecodeMs: 800,
+      llmClientConsumeMs: 100,
+    });
+
+    // finishReason wins over the raw/provider fallbacks; providerFinishReason
+    // is the last resort.
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    feed(
+      ev({
+        type: 'turn.step.completed',
+        turnId: 1,
+        step: 2,
+        finishReason: 'stop',
+        rawFinishReason: 'raw_stop',
+        providerFinishReason: 'provider_stop',
+      }),
+    );
+    expect(turnOps('t1', tx.getItems()).steps[1]!.finishReason).toBe('stop');
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 3 }));
+    feed(
+      ev({ type: 'turn.step.completed', turnId: 1, step: 3, providerFinishReason: 'length' }),
+    );
+    expect(turnOps('t1', tx.getItems()).steps[2]!.finishReason).toBe('length');
+  });
+
+  it('carries endReason / endMessage on turn.step.interrupted', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.step.interrupted',
+        turnId: 1,
+        step: 1,
+        reason: 'aborted',
+        message: 'user cancelled',
+      }),
+    );
+
+    const step = turnOps('t1', tx.getItems()).steps[0]!;
+    expect(step.state).toBe('interrupted');
+    expect(step.endReason).toBe('aborted');
+    expect(step.endMessage).toBe('user cancelled');
+  });
+
+  it('sets retry on turn.step.retrying and clears it at the terminal upsert', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const step = (): TranscriptTurn['steps'][number] => turnOps('t1', tx.getItems()).steps[0]!;
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.step.retrying',
+        turnId: 1,
+        step: 1,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        delayMs: 2000,
+        errorName: 'ProviderRateLimitError',
+        errorMessage: '429 too many requests',
+        statusCode: 429,
+      }),
+    );
+
+    // The step stays running with the retry detail on the header.
+    expect(step().state).toBe('running');
+    expect(step().retry).toEqual({
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 3,
+      delayMs: 2000,
+      errorName: 'ProviderRateLimitError',
+      errorMessage: '429 too many requests',
+      statusCode: 429,
+    });
+
+    // The terminal upsert carries no retry — the whole-header replace clears it.
+    feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1 }));
+    expect(step().state).toBe('completed');
+    expect(step().retry).toBeUndefined();
+  });
+
+  it('fills durationMs / error / accumulated step usage on turn.ended', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'turn.step.completed',
+        turnId: 1,
+        step: 1,
+        usage: { inputOther: 100, output: 10, inputCacheRead: 5, inputCacheCreation: 50 },
+      }),
+    );
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    feed(
+      ev({
+        type: 'turn.step.completed',
+        turnId: 1,
+        step: 2,
+        usage: { inputOther: 200, output: 20, inputCacheRead: 0, inputCacheCreation: 25 },
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed', durationMs: 4200 }));
+
+    const turn = turnOps('t1', tx.getItems());
+    expect(turn.durationMs).toBe(4200);
+    // inputTokens = inputOther + inputCacheCreation, summed across the steps.
+    expect(turn.usage).toEqual({ inputTokens: 375, cachedTokens: 5, outputTokens: 30 });
+
+    // A turn whose steps reported no usage gets no usage; a failed turn
+    // carries the error message.
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
+    feed(
+      ev({
+        type: 'turn.ended',
+        turnId: 2,
+        reason: 'failed',
+        durationMs: 50,
+        error: { code: 'internal', message: 'kaboom', retryable: false },
+      }),
+    );
+    const failed = turnOps('t2', tx.getItems());
+    expect(failed.state).toBe('failed');
+    expect(failed.error).toBe('kaboom');
+    expect(failed.usage).toBeUndefined();
+  });
+
+  it('accumulates tool.call.delta into inputText, kept across tool.call.started', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const toolFrame = (toolCallId: string): TranscriptFrame | undefined =>
+      turnOps('t1', tx.getItems())
+        .steps.flatMap((step) => step.frames)
+        .find((frame) => frame.kind === 'tool' && frame.toolCallId === toolCallId);
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    // Deltas arrive before the started event: the frame is created running and
+    // the raw argument text accumulates.
+    feed(
+      ev({
+        type: 'tool.call.delta',
+        turnId: 1,
+        toolCallId: 'c1',
+        name: 'Bash',
+        argumentsPart: '{"comm',
+      }),
+    );
+    feed(ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'c1', argumentsPart: 'and":"ls"}' }));
+    expect(toolFrame('c1')).toMatchObject({
+      kind: 'tool',
+      frameId: 't1.1.c1',
+      name: 'Bash',
+      state: 'running',
+      inputText: '{"command":"ls"}',
+    });
+    // A delta that never names the call leaves the name empty until started.
+    feed(ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'c2', argumentsPart: '{}' }));
+    expect(toolFrame('c2')).toMatchObject({ name: '', inputText: '{}' });
+
+    // The started event fills in the parsed input but keeps the raw text.
+    feed(
+      ev({
+        type: 'tool.call.started',
+        turnId: 1,
+        toolCallId: 'c1',
+        name: 'Bash',
+        args: { command: 'ls' },
+      }),
+    );
+    expect(toolFrame('c1')).toMatchObject({
+      input: { command: 'ls' },
+      inputText: '{"command":"ls"}',
+    });
+    // Deltas after started keep accumulating onto the same frame.
+    feed(ev({ type: 'tool.call.delta', turnId: 1, toolCallId: 'c1', argumentsPart: '\n' }));
+    expect(toolFrame('c1')).toMatchObject({ inputText: '{"command":"ls"}\n' });
+    // And the terminal result keeps the accumulated text too.
+    feed(ev({ type: 'tool.result', turnId: 1, toolCallId: 'c1', output: 'file.txt' }));
+    expect(toolFrame('c1')).toMatchObject({ state: 'done', inputText: '{"command":"ls"}\n' });
+  });
+
+  it('overwrites tool frame progress and drops progress for unknown calls', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    // Unknown call (no started/delta frame, no seeded frame to adopt): dropped.
     expect(
       projector.map(
-        ev({ type: 'tool.progress', turnId: 1, toolCallId: 'c', update: { kind: 'progress' } }),
+        ev({
+          type: 'tool.progress',
+          turnId: 1,
+          toolCallId: 'ghost',
+          update: { kind: 'stdout', text: 'x' },
+        }),
       ),
     ).toEqual([]);
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'c1', name: 'Bash', args: {} }),
+    );
+    feed(
+      ev({
+        type: 'tool.progress',
+        turnId: 1,
+        toolCallId: 'c1',
+        update: { kind: 'stdout', text: 'line1' },
+      }),
+    );
+    const tool = (): TranscriptFrame | undefined =>
+      turnOps('t1', tx.getItems()).steps[0]!.frames.find((frame) => frame.kind === 'tool');
+    expect(tool()).toMatchObject({ progress: { kind: 'stdout', text: 'line1' } });
+
+    // The newest update overwrites the previous one wholesale.
+    feed(
+      ev({
+        type: 'tool.progress',
+        turnId: 1,
+        toolCallId: 'c1',
+        update: { kind: 'progress', percent: 40 },
+      }),
+    );
+    expect(tool()).toMatchObject({ progress: { kind: 'progress', percent: 40 } });
+    expect((tool() as { progress?: Record<string, unknown> }).progress?.['text']).toBeUndefined();
   });
 
   it('marks tool.result errors and keeps the display payload', () => {
@@ -665,13 +933,132 @@ describe('AgentTranscriptProjector', () => {
     tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: true })));
     expect(tx.getMeta().modes).toEqual({ plan: {}, swarm: {} });
 
-    // Usage-only slice: nothing to project.
-    expect(projector.map(ev({ type: 'agent.status.updated', usage: {} }))).toEqual([]);
     // Mode exit clears the badge (`null` deletes the key in the reducer).
     tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
     expect(tx.getMeta().modes).toEqual({ swarm: {} });
     tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: false })));
     expect(tx.getMeta().modes).toBeUndefined();
+  });
+
+  it('mirrors status slices into meta.agent (shallow-merged across slices)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    // A usage-only slice projects into meta.agent (never into modes).
+    const usageOnly = projector.map(ev({ type: 'agent.status.updated', usage: {} }));
+    expect(usageOnly).toEqual([{ op: 'meta.merge', meta: { agent: { usage: {} } } }]);
+
+    feed(ev({ type: 'agent.status.updated', model: 'k2', thinkingEffort: 'high' }));
+    feed(
+      ev({
+        type: 'agent.status.updated',
+        usage: {
+          total: { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 },
+        },
+      }),
+    );
+    feed(
+      ev({
+        type: 'agent.status.updated',
+        contextTokens: 1000,
+        maxContextTokens: 200000,
+        contextUsage: 0.5,
+      }),
+    );
+    feed(ev({ type: 'agent.status.updated', permission: 'yolo' }));
+
+    // Every arrived slice accumulates on meta.agent.
+    expect(tx.getMeta().agent).toEqual({
+      model: 'k2',
+      thinkingEffort: 'high',
+      usage: { total: { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 } },
+      contextTokens: 1000,
+      maxContextTokens: 200000,
+      contextUsage: 0.5,
+      permission: 'yolo',
+    });
+
+    // A later slice overwrites only the fields it carries.
+    feed(ev({ type: 'agent.status.updated', model: 'k3' }));
+    expect(tx.getMeta().agent).toMatchObject({ model: 'k3', thinkingEffort: 'high' });
+  });
+
+  it('maps agent.activity.updated into meta.agent.phase', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+    const turn = (overrides: Record<string, unknown>): Record<string, unknown> => ({
+      turnId: 1,
+      origin: { kind: 'user' },
+      phase: 'running',
+      step: 1,
+      ending: false,
+      pendingApprovals: [],
+      activeToolCalls: [],
+      since: 1000,
+      ...overrides,
+    });
+
+    feed(ev({ type: 'agent.activity.updated', lifecycle: 'ready', turn: turn({}), background: [] }));
+    expect(tx.getMeta().agent?.phase).toEqual({
+      kind: 'running',
+      turnId: 1,
+      step: 1,
+      stepId: '',
+      since: 1000,
+    });
+
+    feed(
+      ev({
+        type: 'agent.activity.updated',
+        lifecycle: 'ready',
+        turn: turn({ phase: 'streaming', stream: 'assistant' }),
+        background: [],
+      }),
+    );
+    expect(tx.getMeta().agent?.phase).toMatchObject({ kind: 'streaming', stream: 'assistant' });
+
+    // A pending approval keeps the awaiting_approval phase (v1 semantics).
+    feed(
+      ev({
+        type: 'agent.activity.updated',
+        lifecycle: 'ready',
+        turn: turn({ pendingApprovals: [{ approvalId: 'ap1', toolCallId: 'c1', since: 1500 }] }),
+        background: [],
+      }),
+    );
+    expect(tx.getMeta().agent?.phase).toEqual({
+      kind: 'awaiting_approval',
+      turnId: 1,
+      step: 1,
+      approval: { approvalId: 'ap1', toolCallId: 'c1' },
+      since: 1500,
+    });
+
+    // No active turn + a last outcome → the ended phase; no outcome → idle.
+    feed(
+      ev({
+        type: 'agent.activity.updated',
+        lifecycle: 'ready',
+        lastTurn: { turnId: 1, reason: 'completed', durationMs: 100, at: 2000 },
+        background: [],
+      }),
+    );
+    expect(tx.getMeta().agent?.phase).toEqual({
+      kind: 'ended',
+      turnId: 1,
+      reason: 'completed',
+      durationMs: 100,
+      at: 2000,
+    });
+    feed(ev({ type: 'agent.activity.updated', lifecycle: 'ready', background: [] }));
+    expect(tx.getMeta().agent?.phase).toEqual({ kind: 'idle' });
+
+    // Disposing/disposed have no v1 phase concept: nothing is emitted.
+    expect(
+      projector.map(ev({ type: 'agent.activity.updated', lifecycle: 'disposed', background: [] })),
+    ).toEqual([]);
   });
 
   it('projects plan.revision as a marker and refines the active plan badge', () => {
@@ -728,7 +1115,7 @@ describe('AgentTranscriptProjector', () => {
     ).toHaveLength(2);
   });
 
-  it('projects skill / plugin-command / cron / compaction / undo markers', () => {
+  it('projects skill / plugin-command / cron / compaction / hook / undo markers', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');
     const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
@@ -746,6 +1133,17 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'cron.fired', origin: { kind: 'cron_job', jobId: 'j1' }, prompt: 'ping' }));
     feed(ev({ type: 'compaction.started', trigger: 'auto' }));
     feed(ev({ type: 'compaction.completed', result: { kept: 3 } }));
+    // `hook.result` carries an optional turnId — absent here, payload verbatim.
+    feed(ev({ type: 'hook.result', hookEvent: 'SessionStart', content: 'hook says hi' }));
+    feed(
+      ev({
+        type: 'hook.result',
+        turnId: 3,
+        hookEvent: 'UserPromptSubmit',
+        content: 'blocked by hook',
+        blocked: true,
+      }),
+    );
     feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
 
     const markers = tx
@@ -757,12 +1155,21 @@ describe('AgentTranscriptProjector', () => {
       'cron.fired',
       'compaction',
       'compaction',
+      'hook',
+      'hook',
       'undo',
     ]);
     expect(markers[1]!.payload).toMatchObject({ variant: 'plugin_command' });
     expect(markers[3]!.payload).toMatchObject({ phase: 'started' });
     expect(markers[4]!.payload).toMatchObject({ phase: 'completed' });
-    expect(markers[5]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
+    expect(markers[5]!.payload).toEqual({ hookEvent: 'SessionStart', content: 'hook says hi' });
+    expect(markers[6]!.payload).toEqual({
+      turnId: 3,
+      hookEvent: 'UserPromptSubmit',
+      content: 'blocked by hook',
+      blocked: true,
+    });
+    expect(markers[7]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
   });
 
   it('projects error / warning events as notice markers outside any step', () => {
@@ -949,6 +1356,107 @@ describe('AgentTranscriptProjector', () => {
     tx.apply(projector.mapInteractionResolved('q1', null));
     expect(tx.getInteraction('q1')).toMatchObject({ state: 'dismissed' });
     expect(tx.listPendingInteractions()).toEqual([]);
+  });
+
+  it('projects prompt submitted/completed/aborted/steered as global queue entities', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p1',
+        userMessageId: 'm1',
+        status: 'running',
+        content: [{ type: 'text', text: 'first' }],
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }),
+    );
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p2',
+        userMessageId: 'm2',
+        status: 'queued',
+        content: [{ type: 'text', text: 'second' }],
+        createdAt: '2026-01-01T00:00:01.000Z',
+      }),
+    );
+    expect(tx.getPrompt('p1')).toMatchObject({ status: 'running', userMessageId: 'm1' });
+    expect(tx.getPrompt('p2')).toMatchObject({ status: 'queued' });
+
+    // Steer: p2 merges into the running p1 — p1 keeps running with the merged
+    // content and the steer timestamp, p2 leaves the queue as completed.
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [
+          { type: 'text', text: 'first' },
+          { type: 'text', text: 'second' },
+        ],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    expect(tx.getPrompt('p1')).toMatchObject({
+      status: 'running',
+      steeredAt: '2026-01-01T00:00:02.000Z',
+      content: [
+        { type: 'text', text: 'first' },
+        { type: 'text', text: 'second' },
+      ],
+    });
+    expect(tx.getPrompt('p2')).toMatchObject({
+      status: 'completed',
+      userMessageId: 'm2',
+      steeredAt: '2026-01-01T00:00:02.000Z',
+      finishedAt: '2026-01-01T00:00:02.000Z',
+    });
+
+    // Completed settles the active prompt (reason defaults to 'completed').
+    feed(
+      ev({
+        type: 'prompt.completed',
+        promptId: 'p1',
+        finishedAt: '2026-01-01T00:00:10.000Z',
+        reason: 'completed',
+      }),
+    );
+    expect(tx.getPrompt('p1')).toMatchObject({
+      status: 'completed',
+      finishedAt: '2026-01-01T00:00:10.000Z',
+      // The steered content survives the terminal upsert.
+      content: [
+        { type: 'text', text: 'first' },
+        { type: 'text', text: 'second' },
+      ],
+    });
+
+    // A terminal event for a prompt whose submitted was never seen (the v2 bus
+    // does not publish it) synthesizes a minimal entity.
+    feed(ev({ type: 'prompt.aborted', promptId: 'p3', abortedAt: '2026-01-01T00:00:03.000Z' }));
+    expect(tx.getPrompt('p3')).toEqual({
+      promptId: 'p3',
+      status: 'aborted',
+      createdAt: '2026-01-01T00:00:03.000Z',
+      finishedAt: '2026-01-01T00:00:03.000Z',
+    });
+    feed(
+      ev({
+        type: 'prompt.completed',
+        promptId: 'p4',
+        finishedAt: '2026-01-01T00:00:04.000Z',
+        reason: 'failed',
+      }),
+    );
+    expect(tx.getPrompt('p4')).toEqual({
+      promptId: 'p4',
+      status: 'failed',
+      createdAt: '2026-01-01T00:00:04.000Z',
+      finishedAt: '2026-01-01T00:00:04.000Z',
+    });
   });
 
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
@@ -1165,10 +1673,26 @@ describe('AgentTranscriptProjector', () => {
 
     feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
     expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
+    // Suspension stays 'running' with the reason carried on the task.
     feed(ev({ type: 'subagent.suspended', subagentId: 'agent-1', reason: 'approval' }));
-    expect(tx.getTask('agent-1')).toMatchObject({ state: 'running' });
+    expect(tx.getTask('agent-1')).toMatchObject({ state: 'running', stateReason: 'approval' });
     feed(ev({ type: 'subagent.failed', subagentId: 'agent-1', error: 'boom' }));
-    expect(tx.getTask('agent-1')).toMatchObject({ state: 'failed' });
+    expect(tx.getTask('agent-1')).toMatchObject({ state: 'failed', error: 'boom' });
+
+    // Completion carries the result summary and the run's token usage.
+    feed(
+      ev({
+        type: 'subagent.completed',
+        subagentId: 'agent-2',
+        resultSummary: 'found 3 files',
+        usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 1 },
+      }),
+    );
+    expect(tx.getTask('agent-2')).toMatchObject({
+      state: 'completed',
+      resultSummary: 'found 3 files',
+      usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 1 },
+    });
   });
 });
 

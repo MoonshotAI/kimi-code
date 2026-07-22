@@ -7,6 +7,7 @@
  */
 
 import type { AgentId, TaskId } from './ids';
+import type { StepUsage } from './turn';
 
 export type TaskKind = 'shell' | 'subagent' | 'tool' | 'other';
 
@@ -32,4 +33,12 @@ export interface TranscriptTask {
   readonly outputTail: string;
   readonly startedAt?: string;
   readonly endedAt?: string;
+  /** One-line result summary (`subagent.completed`). */
+  readonly resultSummary?: string;
+  /** Failure message (`subagent.failed`). */
+  readonly error?: string;
+  /** Why the task entered its current state (`subagent.suspended` reason). */
+  readonly stateReason?: string;
+  /** Token usage of the finished run (`subagent.completed`). */
+  readonly usage?: StepUsage;
 }

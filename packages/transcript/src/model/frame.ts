@@ -49,6 +49,18 @@ export interface ThinkingFrame {
 
 export type ToolFrameState = 'running' | 'done' | 'error';
 
+/**
+ * The latest progress update of a running tool call (`tool.progress`),
+ * overwrite semantics — only the newest rides the frame.
+ */
+export interface ToolFrameProgress {
+  readonly kind: 'stdout' | 'stderr' | 'progress' | 'status' | 'custom';
+  readonly text?: string;
+  readonly percent?: number;
+  readonly customKind?: string;
+  readonly customData?: unknown;
+}
+
 export interface AgentRef {
   readonly agentId: AgentId;
   /** 'member' marks one child of an agent group (swarm); default is 'child'. */
@@ -72,6 +84,14 @@ export interface ToolCallFrame {
   readonly output?: unknown;
   readonly display?: unknown;
   readonly error?: string;
+  /**
+   * Raw argument text accumulated from `tool.call.delta`. `input` is the
+   * parsed object; this is the verbatim source text, kept after
+   * `tool.call.started` lands.
+   */
+  readonly inputText?: string;
+  /** Newest `tool.progress` update. */
+  readonly progress?: ToolFrameProgress;
   /** Execution entity (backgroundable shell / subagent run) behind this call. */
   readonly taskId?: TaskId;
   /** Interaction (approval/question) that gated this call, if any. */

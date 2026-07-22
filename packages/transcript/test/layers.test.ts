@@ -43,12 +43,18 @@ const appendOp: TranscriptOperation = {
   text: 'chunk',
 };
 
+const promptOp: TranscriptOperation = {
+  op: 'prompt.upsert',
+  prompt: { promptId: 'p1', status: 'queued', createdAt: '2026-07-22T00:00:00.000Z' },
+};
+
 describe('granularity', () => {
   const ops: TranscriptOperation[] = [
     turnOp(1),
     stepOp,
     frameOp,
     appendOp,
+    promptOp,
     { op: 'meta.merge', meta: { activity: 'turn' } },
   ];
 
@@ -57,7 +63,13 @@ describe('granularity', () => {
   });
 
   it('turn admits headers and global state only', () => {
-    expect(filterOpsForGrade('turn', ops).map((op) => op.op)).toEqual(['turn.upsert', 'meta.merge']);
+    // prompt.upsert is a global entity like interaction.upsert: coarse
+    // subscribers see queue state too.
+    expect(filterOpsForGrade('turn', ops).map((op) => op.op)).toEqual([
+      'turn.upsert',
+      'prompt.upsert',
+      'meta.merge',
+    ]);
   });
 
   it('block admits step/frame upserts but no appends', () => {
@@ -65,6 +77,7 @@ describe('granularity', () => {
       'turn.upsert',
       'step.upsert',
       'frame.upsert',
+      'prompt.upsert',
       'meta.merge',
     ]);
   });
@@ -126,6 +139,7 @@ describe('granularity', () => {
         { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'url' as const, url: 'https://example.com/a.png' } },
       ],
       todos: [{ todoId: 'todo', items: [{ title: 'write tests', status: 'in_progress' as const }] }],
+      prompts: [{ promptId: 'p1', status: 'running' as const, createdAt: '2026-07-22T00:00:00.000Z' }],
       meta: {},
     };
     const turnGrade = redactSnapshotForGrade('turn', snapshot);
@@ -133,6 +147,7 @@ describe('granularity', () => {
     expect(turnGrade.interactions).toHaveLength(1);
     expect(turnGrade.attachments).toHaveLength(1);
     expect(turnGrade.todos).toHaveLength(1);
+    expect(turnGrade.prompts).toHaveLength(1);
     const turn = turnGrade.items[0];
     expect(turn?.kind === 'turn' && turn.steps).toEqual([]);
     expect(turn?.kind === 'turn' && turn.prompt).toBe('hi');
@@ -223,7 +238,7 @@ describe('ViewRegistry', () => {
 describe('contract schemas', () => {
   it('roundtrips every op kind', () => {
     const ops: TranscriptOperation[] = [
-      { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], meta: {}, hasMoreOlder: true } },
+      { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], prompts: [], meta: {}, hasMoreOlder: true } },
       turnOp(1),
       stepOp,
       frameOp,
@@ -240,11 +255,112 @@ describe('contract schemas', () => {
         attachment: { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'file', fileId: 'f1' } },
       },
       { op: 'todo.upsert', todo: { todoId: 'todo', items: [{ title: 'x', status: 'done' }] } },
+      promptOp,
       { op: 'meta.merge', meta: { goal: { objective: 'x', status: 'active' } } },
       { op: 'items.remove', ids: ['t1'] },
     ];
     for (const op of ops) {
       expect(transcriptOperationSchema.parse(op)).toBeDefined();
+    }
+  });
+
+  it('roundtrips ops carrying the extended wire detail', () => {
+    // Every field the projection fills beyond the original model: step
+    // usage/finishReason/timing/retry/endReason/endMessage, turn
+    // durationMs/error, tool inputText/progress, task
+    // resultSummary/error/stateReason/usage, meta.agent, snapshot prompts.
+    const usage = { inputOther: 10, output: 5, inputCacheRead: 3, inputCacheCreation: 2 };
+    const ops: TranscriptOperation[] = [
+      {
+        op: 'reset',
+        agentId: 'main',
+        snapshot: {
+          items: [],
+          tasks: [],
+          interactions: [],
+          attachments: [],
+          todos: [],
+          prompts: [
+            {
+              promptId: 'p1',
+              status: 'completed',
+              userMessageId: 'u1',
+              content: [{ type: 'text', text: 'hi' }],
+              createdAt: '2026-07-22T00:00:00.000Z',
+              finishedAt: '2026-07-22T00:01:00.000Z',
+              steeredAt: '2026-07-22T00:00:30.000Z',
+            },
+          ],
+          meta: {
+            agent: {
+              model: 'k2',
+              thinkingEffort: 'high',
+              usage: { byModel: { k2: usage }, currentTurn: usage, total: usage },
+              contextTokens: 1234,
+              maxContextTokens: 128000,
+              contextUsage: 0.01,
+              permission: 'auto',
+              phase: { kind: 'retrying', turnId: 1, step: 1, stepId: 't1.1', failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, since: 1000 },
+            },
+          },
+        },
+      },
+      {
+        op: 'turn.upsert',
+        turn: {
+          kind: 'turn', turnId: 't1', ordinal: 1, state: 'failed', origin: { kind: 'user' },
+          usage: { inputTokens: 12, outputTokens: 5, cachedTokens: 3 },
+          durationMs: 1500,
+          error: 'boom',
+        },
+      },
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: {
+          kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'interrupted',
+          usage,
+          finishReason: 'stop',
+          timing: {
+            llmFirstTokenLatencyMs: 120,
+            llmStreamDurationMs: 900,
+            llmRequestBuildMs: 5,
+            llmServerFirstTokenMs: 110,
+            llmServerDecodeMs: 700,
+            llmClientConsumeMs: 950,
+          },
+          retry: { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, errorName: 'RateLimit', errorMessage: 'slow down', statusCode: 429 },
+          endReason: 'aborted',
+          endMessage: 'user pressed escape',
+        },
+      },
+      {
+        op: 'frame.upsert',
+        turnId: 't1',
+        stepId: 't1.1',
+        frame: {
+          kind: 'tool', frameId: 't1.1.c1', toolCallId: 'c1', name: 'Bash', state: 'running',
+          inputText: '{"command":"ls',
+          progress: { kind: 'progress', text: 'half', percent: 50, customKind: 'bar', customData: { x: 1 } },
+        },
+      },
+      {
+        op: 'task.upsert',
+        task: {
+          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
+          resultSummary: 'scanned 12 files',
+          error: 'partial failure',
+          stateReason: 'waiting for input',
+          usage,
+        },
+      },
+      {
+        op: 'meta.merge',
+        meta: { agent: { model: 'k2', phase: { kind: 'ended', turnId: 1, reason: 'completed', durationMs: 1500, at: 2000 } } },
+      },
+    ];
+    for (const op of ops) {
+      expect(transcriptOperationSchema.parse(op)).toEqual(op);
     }
   });
 

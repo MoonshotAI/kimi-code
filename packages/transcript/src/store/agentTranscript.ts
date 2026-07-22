@@ -11,11 +11,12 @@
  * returned array/object is never mutated by later applies.
  */
 
-import type { AgentId, AttachmentId, InteractionId, TaskId, TodoId, TurnId } from '../model/ids';
+import type { AgentId, AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
 import type { TranscriptMeta } from '../model/meta';
+import type { TranscriptPrompt } from '../model/prompt';
 import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptTurn } from '../model/turn';
@@ -126,6 +127,14 @@ export class AgentTranscript {
     return this.#state.todos.get(todoId);
   }
 
+  getPrompts(): ReadonlyMap<PromptId, TranscriptPrompt> {
+    return this.#state.prompts;
+  }
+
+  getPrompt(promptId: PromptId): TranscriptPrompt | undefined {
+    return this.#state.prompts.get(promptId);
+  }
+
   getMeta(): TranscriptMeta {
     return this.#state.meta;
   }
@@ -168,6 +177,7 @@ export class AgentTranscript {
       interactions: [...this.#state.interactions.values()],
       attachments: [...this.#state.attachments.values()],
       todos: [...this.#state.todos.values()],
+      prompts: [...this.#state.prompts.values()],
       meta: this.#state.meta,
       hasMoreOlder,
     };

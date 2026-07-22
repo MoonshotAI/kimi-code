@@ -302,9 +302,19 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     conn.close();
   });
 
-  it('sends the transcript baseline after the cursor replay, not before it', async () => {
+  it('sends the transcript baseline after the grade-filtered cursor replay, not before it', async () => {
     const socket = new FakeSocket();
-    const backlog = [durable('turn.started', 's1', 3), durable('assistant.delta', 's1', 4)];
+    const backlog = [
+      durable('turn.started', 's1', 3),
+      durable('assistant.delta', 's1', 4),
+      durable('event.session.work_changed', 's1', 5),
+    ];
+    // Mirror the real broadcaster's replay crop: with a transcript grade spec
+    // the projected types drop out, retained (global/lifecycle) events stay.
+    // The dedicated suppression coverage lives in sessionEventBroadcaster's
+    // tests — here we only verify the grade spec reaches `getBufferedSince`.
+    const PROJECTED = new Set(['turn.started', 'assistant.delta']);
+    let seenGrades: unknown;
     const broadcaster = {
       subscribe: async (
         _sid: string,
@@ -323,12 +333,17 @@ describe('WsConnectionV1 transcript subscriptions', () => {
       },
       unsubscribe: () => {},
       getCursor: async () => ({ seq: 10, epoch: 'e1' }),
-      getBufferedSince: async () => ({
-        events: backlog.map((envelope) => ({ seq: envelope.seq, envelope })),
-        resyncRequired: false,
-        currentSeq: 10,
-        epoch: 'e1',
-      }),
+      getBufferedSince: async (_sid: string, _cursor: unknown, _filter: unknown, grades: unknown) => {
+        seenGrades = grades;
+        return {
+          events: backlog
+            .filter((envelope) => grades === undefined || !PROJECTED.has(envelope.type))
+            .map((envelope) => ({ seq: envelope.seq, envelope })),
+          resyncRequired: false,
+          currentSeq: 10,
+          epoch: 'e1',
+        };
+      },
     } as unknown as SessionEventBroadcaster;
     const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
 
@@ -345,13 +360,16 @@ describe('WsConnectionV1 transcript subscriptions', () => {
       expect(types).toContain('transcript.reset');
     });
 
+    // The replay forwards the parsed grade spec…
+    expect(seenGrades).toEqual({ '*': 'delta' });
     const types = socket.frames().map((f) => (f as { type: string }).type);
-    // The replayed backlog lands first; the baseline reset follows it.
-    expect(types.slice(types.indexOf('turn.started'), types.indexOf('transcript.reset') + 1)).toEqual([
-      'turn.started',
-      'assistant.delta',
-      'transcript.reset',
-    ]);
+    // …so the backlog's projected events are suppressed; only the retained
+    // global event replays, and the baseline reset still lands after it.
+    expect(types).not.toContain('turn.started');
+    expect(types).not.toContain('assistant.delta');
+    expect(
+      types.slice(types.indexOf('event.session.work_changed'), types.indexOf('transcript.reset') + 1),
+    ).toEqual(['event.session.work_changed', 'transcript.reset']);
     conn.close();
   });
 

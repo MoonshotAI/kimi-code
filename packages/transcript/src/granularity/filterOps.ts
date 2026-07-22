@@ -9,7 +9,8 @@
  * Content-bearing ops gated below 'block':
  *  - step.upsert / frame.upsert (step & frame detail)
  * Everything else (turn headers, markers, taskrefs, tasks, interactions,
- * meta, removals, resets) flows at 'turn' and up. `off` admits nothing.
+ * prompts, meta, removals, resets) flows at 'turn' and up. `off` admits
+ * nothing.
  */
 
 import type { TranscriptGrade } from './grade';

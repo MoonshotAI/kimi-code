@@ -260,7 +260,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
       accepted.push(sid);
       if (cursor !== undefined) {
-        await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+        await this.replay(sid, cursor, filter, grades, resyncRequired, serverCursors);
         await this.broadcaster.flushTranscriptSeed(sid, this);
       } else {
         const cur = await this.broadcaster.getCursor(sid);
@@ -346,7 +346,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });
     accepted.push(sid);
     if (cursor !== undefined) {
-      await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+      await this.replay(sid, cursor, filter, transcriptGrades, resyncRequired, serverCursors);
       await this.broadcaster.flushTranscriptSeed(sid, this);
     } else {
       const cur = await this.broadcaster.getCursor(sid);
@@ -358,10 +358,11 @@ export class WsConnectionV1 implements BroadcastTarget {
     sid: string,
     cursor: SessionCursor,
     filter: AgentFilter | undefined,
+    transcriptGrades: TranscriptGradeSpec | undefined,
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const result = await this.broadcaster.getBufferedSince(sid, cursor, filter);
+    const result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
     if (result.resyncRequired !== false) {
       this.sendFrame(
         buildResyncRequired(sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
@@ -525,6 +526,11 @@ function parseAgentFilter(value: unknown): Record<string, AgentFilter> | undefin
  * a malformed grade cannot widen into a subscription; a bad field degrades to
  * "no transcript" for the whole frame, matching how `agent_filter` drops bad
  * entries.
+ *
+ * A parsed spec does double duty: it seeds the transcript stream AND
+ * suppresses, on this connection only, the `session_event`s the transcript
+ * already projects for every grade ≠ 'off' agent (see
+ * `TRANSCRIPT_PROJECTED_EVENT_TYPES` in `sessionEventBroadcaster.ts`).
  */
 function parseTranscriptSubscription(
   value: unknown,

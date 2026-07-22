@@ -23,6 +23,7 @@ import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
+import type { TranscriptPrompt } from '../model/prompt';
 import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
@@ -119,6 +120,16 @@ export interface TodoUpsertOp {
   readonly todo: TranscriptTodo;
 }
 
+/**
+ * Prompt queue entity upsert — global like `task.upsert`, addressed by id
+ * (never placed into the timeline). Flows at 'turn' grade and up, so even
+ * coarse subscribers see queue state.
+ */
+export interface PromptUpsertOp {
+  readonly op: 'prompt.upsert';
+  readonly prompt: TranscriptPrompt;
+}
+
 export interface MetaMergeOp {
   readonly op: 'meta.merge';
   readonly meta: TranscriptMetaMerge;
@@ -142,6 +153,7 @@ export type TranscriptOperation =
   | InteractionUpsertOp
   | AttachmentUpsertOp
   | TodoUpsertOp
+  | PromptUpsertOp
   | MetaMergeOp
   | ItemsRemoveOp;
 
@@ -160,6 +172,8 @@ export interface AgentTranscriptSnapshot {
   readonly attachments: readonly TranscriptAttachment[];
   /** Global todo documents (latest state); never paginated. */
   readonly todos: readonly TranscriptTodo[];
+  /** Global prompt queue entities; never paginated. */
+  readonly prompts: readonly TranscriptPrompt[];
   readonly meta: TranscriptMeta;
   /**
    * When the reset only ships a tail window, this flag tells the consumer

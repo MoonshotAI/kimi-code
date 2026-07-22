@@ -7,13 +7,14 @@
  * replaying, duplicating, or reordering them converges to the same store.
  */
 
-import type { AttachmentId, InteractionId, TaskId, TodoId, TurnId } from '../model/ids';
+import type { AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
 import { turnOrdinal } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
+import type { TranscriptPrompt } from '../model/prompt';
 import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
@@ -34,6 +35,8 @@ export interface AgentState {
   readonly attachments: ReadonlyMap<AttachmentId, TranscriptAttachment>;
   /** Global todo documents (latest state), keyed by id. */
   readonly todos: ReadonlyMap<TodoId, TranscriptTodo>;
+  /** Global prompt queue entities, keyed by id. */
+  readonly prompts: ReadonlyMap<PromptId, TranscriptPrompt>;
   readonly meta: TranscriptMeta;
   /** Interaction ids currently in 'pending' state (derived index). */
   readonly pendingInteractions: ReadonlySet<InteractionId>;
@@ -47,6 +50,7 @@ export const EMPTY_AGENT_STATE: AgentState = {
   interactions: new Map(),
   attachments: new Map(),
   todos: new Map(),
+  prompts: new Map(),
   meta: {},
   pendingInteractions: new Set(),
   hasMoreOlder: false,
@@ -84,6 +88,8 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
       return applyAttachmentUpsert(state, op.attachment);
     case 'todo.upsert':
       return applyTodoUpsert(state, op.todo);
+    case 'prompt.upsert':
+      return applyPromptUpsert(state, op.prompt);
     case 'meta.merge':
       return applyMetaMerge(state, op.meta);
     case 'items.remove':
@@ -111,6 +117,7 @@ function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'r
         op.snapshot.attachments.map((attachment) => [attachment.attachmentId, attachment]),
       ),
       todos: new Map(op.snapshot.todos.map((todo) => [todo.todoId, todo])),
+      prompts: new Map(op.snapshot.prompts.map((prompt) => [prompt.promptId, prompt])),
       meta: op.snapshot.meta,
       pendingInteractions: pending,
       hasMoreOlder: op.snapshot.hasMoreOlder ?? false,
@@ -201,7 +208,9 @@ function turnEquals(turn: TranscriptTurn, header: TurnHeader): boolean {
     turn.endedAt === header.endedAt &&
     turn.origin.kind === header.origin.kind &&
     turn.origin.payload === header.origin.payload &&
-    turn.usage === header.usage
+    turn.usage === header.usage &&
+    turn.durationMs === header.durationMs &&
+    turn.error === header.error
   );
 }
 
@@ -238,7 +247,13 @@ function stepEquals(step: TranscriptStep, header: StepHeader): boolean {
     step.ordinal === header.ordinal &&
     step.state === header.state &&
     step.startedAt === header.startedAt &&
-    step.endedAt === header.endedAt
+    step.endedAt === header.endedAt &&
+    step.usage === header.usage &&
+    step.finishReason === header.finishReason &&
+    step.timing === header.timing &&
+    step.retry === header.retry &&
+    step.endReason === header.endReason &&
+    step.endMessage === header.endMessage
   );
 }
 
@@ -294,6 +309,8 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
       a.output === b.output &&
       a.display === b.display &&
       a.error === b.error &&
+      a.inputText === b.inputText &&
+      a.progress === b.progress &&
       a.taskId === b.taskId &&
       a.approvalId === b.approvalId &&
       a.todoId === b.todoId &&
@@ -546,6 +563,25 @@ function todoEquals(a: TranscriptTodo, b: TranscriptTodo): boolean {
   return a.items === b.items && a.updatedAt === b.updatedAt;
 }
 
+function applyPromptUpsert(state: AgentState, prompt: TranscriptPrompt): ApplyResult {
+  const current = state.prompts.get(prompt.promptId);
+  if (current && promptEquals(current, prompt)) return { state, changed: false };
+  const prompts = new Map(state.prompts);
+  prompts.set(prompt.promptId, prompt);
+  return { state: { ...state, prompts }, changed: true };
+}
+
+function promptEquals(a: TranscriptPrompt, b: TranscriptPrompt): boolean {
+  return (
+    a.status === b.status &&
+    a.userMessageId === b.userMessageId &&
+    a.content === b.content &&
+    a.createdAt === b.createdAt &&
+    a.finishedAt === b.finishedAt &&
+    a.steeredAt === b.steeredAt
+  );
+}
+
 function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
   return (
     a.kind === b.kind &&
@@ -555,7 +591,11 @@ function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
     a.agentId === b.agentId &&
     a.outputTail === b.outputTail &&
     a.startedAt === b.startedAt &&
-    a.endedAt === b.endedAt
+    a.endedAt === b.endedAt &&
+    a.resultSummary === b.resultSummary &&
+    a.error === b.error &&
+    a.stateReason === b.stateReason &&
+    a.usage === b.usage
   );
 }
 
@@ -568,15 +608,22 @@ function applyMetaMerge(state: AgentState, meta: TranscriptMetaMerge): ApplyResu
           swarm: meta.modes.swarm === null ? undefined : (meta.modes.swarm ?? state.meta.modes?.swarm),
         }
       : state.meta.modes;
+  // The agent status arrives in slices (`agent.status.updated` carries only
+  // the fields that changed), so the key merges one level deep instead of
+  // replacing wholesale — a replace would drop fields from earlier slices.
+  const agent =
+    meta.agent !== undefined ? { ...state.meta.agent, ...meta.agent } : state.meta.agent;
   const next: TranscriptMeta = {
     goal: meta.goal ?? state.meta.goal,
     activity: meta.activity ?? state.meta.activity,
     modes: modes !== undefined && modes.plan === undefined && modes.swarm === undefined ? undefined : modes,
+    agent,
   };
   if (
     next.goal === state.meta.goal &&
     next.activity === state.meta.activity &&
-    next.modes === state.meta.modes
+    next.modes === state.meta.modes &&
+    next.agent === state.meta.agent
   ) {
     return { state, changed: false };
   }

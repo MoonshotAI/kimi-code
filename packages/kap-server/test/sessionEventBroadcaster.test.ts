@@ -1759,14 +1759,17 @@ describe('SessionEventBroadcaster', () => {
       expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // main reset
 
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
-      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+      // The turn start also folds `agent.activity.updated` (the fake bus
+      // re-emits it), which the projector now maps to a meta.merge — hence
+      // reset + meta.merge + turn.upsert.
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(3);
 
       // The subagent matches the wildcard grade but not the allowlist: no
       // roster reset, no ops.
       const sub = lc.addAgent('sub-1');
       sub.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
       const frames = transcriptEnvelopes(view.envelopes);
-      expect(frames).toHaveLength(2);
+      expect(frames).toHaveLength(3);
       expect(
         frames.every(
           (e) => (e.payload as { agent_id?: string }).agent_id === 'main' || e.type !== 'transcript.ops',
@@ -1837,10 +1840,12 @@ describe('SessionEventBroadcaster', () => {
       expect(transcriptEnvelopes(view.envelopes).at(-1)!.type).toBe('transcript.ops');
 
       // A new agent matches only the wildcard ('off') → no reset, no ops.
+      // (The count is 3 by now: the turn start also folds an
+      // `agent.activity.updated`, which the projector maps to a meta.merge.)
       const late = lc.addAgent('agent-0');
-      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(3);
       late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
-      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(3);
     });
 
     it('stamps ops payloads with the batch seq and resets with the watermark', async () => {
@@ -1957,6 +1962,122 @@ describe('SessionEventBroadcaster', () => {
             .payload as { seq: number }
         ).seq,
       ).toBeLessThanOrEqual(watermark!);
+    });
+
+    it('suppresses transcript-projected session_events on graded connections only', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const graded = collectingTarget();
+      const legacy = collectingTarget();
+      await bc.subscribe('s1', graded.target, undefined, { '*': 'delta' });
+      await bc.subscribe('s1', legacy.target); // no transcript spec — legacy client
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      main.bus.emit(agentEvent('turn.step.started', { turnId: 1, step: 1 }));
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'Hi' }));
+      main.bus.emit(agentEvent('tool.result', { turnId: 1, toolCallId: 'tc-1', output: 'ok' }));
+      await bc.getCursor('s1');
+
+      // The graded connection receives the transcript stream (reset + ops)…
+      expect(transcriptEnvelopes(graded.envelopes).length).toBeGreaterThan(0);
+      // …but none of the projected session_events — including the volatile
+      // agent.status.updated phase frames folded from the activity view,
+      // which the transcript carries as meta.merge.
+      const gradedTypes = graded.envelopes.map((e) => e.type);
+      expect(gradedTypes).not.toContain('turn.started');
+      expect(gradedTypes).not.toContain('turn.step.started');
+      expect(gradedTypes).not.toContain('assistant.delta');
+      expect(gradedTypes).not.toContain('tool.result');
+      expect(gradedTypes).not.toContain('agent.status.updated');
+
+      // The legacy connection is untouched: every session_event still flows
+      // and no transcript frames leak to it.
+      const legacyTypes = legacy.envelopes.map((e) => e.type);
+      expect(legacyTypes).toContain('turn.started');
+      expect(legacyTypes).toContain('turn.step.started');
+      expect(legacyTypes).toContain('assistant.delta');
+      expect(legacyTypes).toContain('tool.result');
+      expect(transcriptEnvelopes(legacy.envelopes)).toHaveLength(0);
+    });
+
+    it('keeps delivering lifecycle and global events to graded connections', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+
+      // agent.created is durable, session-grained, and has no transcript
+      // counterpart — it must survive suppression.
+      const late = lc.addAgent('agent-0');
+      await bc.getCursor('s1'); // drain the lifecycle dispatch
+      late.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      await bc.getCursor('s1');
+
+      const types = view.envelopes.map((e) => e.type);
+      expect(types).toContain('agent.created');
+      // The global durable work_changed(busy) rides ahead of the turn…
+      expect(types).toContain('event.session.work_changed');
+      // …while the projected turn.started itself is suppressed.
+      expect(types).not.toContain('turn.started');
+    });
+
+    it('suppresses per agent — agents outside the spec keep their session_events', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const sub = lc.addAgent('agent-0');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      // The spec covers main only; agent-0's effective grade is 'off'.
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { main: 'delta' });
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      sub.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      await bc.getCursor('s1');
+
+      const turns = view.envelopes.filter((e) => e.type === 'turn.started');
+      expect(turns.map((e) => (e.payload as { agentId: string }).agentId)).toEqual(['agent-0']);
+    });
+
+    it('filters the replayed backlog by transcript grades', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      await bc.subscribe('s1', collectingTarget().target);
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      await bc.getCursor('s1'); // drain between the turn boundaries
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+      await bc.getCursor('s1');
+
+      // The durable backlog is: work_changed(busy) seq 1, turn.started seq 2,
+      // turn.ended seq 3, work_changed(busy:false + outcome) seq 4.
+      const unfiltered = await bc.getBufferedSince('s1', { seq: 1 });
+      expect(unfiltered.events.map((e) => e.envelope.type)).toEqual([
+        'turn.started',
+        'turn.ended',
+        'event.session.work_changed',
+      ]);
+
+      // With a graded spec the projected events drop out and the retained
+      // global event survives; the unfiltered read above proves the journal
+      // itself keeps everything.
+      const filtered = await bc.getBufferedSince('s1', { seq: 1 }, undefined, { '*': 'delta' });
+      expect(filtered.events.map((e) => e.envelope.type)).toEqual(['event.session.work_changed']);
+
+      // An all-'off' spec suppresses nothing.
+      const offSpec = await bc.getBufferedSince('s1', { seq: 1 }, undefined, { '*': 'off' });
+      expect(offSpec.events.map((e) => e.envelope.type)).toEqual(
+        unfiltered.events.map((e) => e.envelope.type),
+      );
     });
   });
 });

@@ -135,6 +135,9 @@ export class TranscriptChatStore {
           page.attachments.map((attachment) => [attachment.attachmentId, attachment]),
         ),
         todos: new Map(page.todos.map((todo) => [todo.todoId, todo])),
+        // The page contract carries no prompt slice yet; prompt.upsert ops
+        // still accumulate through the shared reducer between refreshes.
+        prompts: new Map(),
         meta: page.meta,
         pendingInteractions: new Set(page.pendingInteractions),
         hasMoreOlder: page.hasMoreOlder,

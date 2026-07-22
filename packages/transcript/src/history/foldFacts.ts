@@ -10,10 +10,19 @@
  * restart must be able to rebuild them from the records alone. The fold is
  * last-wins in record order, mirroring the live upsert semantics.
  *
- * Known limitation, accepted by design: markers and taskrefs cannot be placed
- * at their exact mid-timeline position (the base items carry no timestamps to
- * interleave with), so they append IN RECORD ORDER at the END of the base
- * items with an accurate `at` (record time). Entity state is complete.
+ * Known limitations, accepted by design:
+ *  - markers and taskrefs cannot be placed at their exact mid-timeline
+ *    position (the base items carry no timestamps to interleave with), so
+ *    they append IN RECORD ORDER at the END of the base items with an
+ *    accurate `at` (record time). Entity state is complete.
+ *  - live-only detail is never backfilled: step usage / finishReason /
+ *    timing / retry, turn durationMs / error, tool inputText / progress, and
+ *    task resultSummary / error / stateReason / usage exist only on live
+ *    engine events — the persisted records do not carry them.
+ *  - prompts are NOT cold-rebuilt: the wire journal has no prompt records
+ *    (`prompt.submitted/completed/aborted/steered` are in-memory eventBus
+ *    events of the engine's prompt service, never persisted as Ops), so a
+ *    cold snapshot always carries `prompts: []`.
  *
  * The input type is structural so the engine's `WireRecord` is directly
  * assignable without a dependency from this package onto the engine (same

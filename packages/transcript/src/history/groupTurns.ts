@@ -5,6 +5,10 @@
  * This is a best-effort reconstruction — the live path (engine events) is the
  * high-fidelity one. Known limitations, accepted by design:
  *  - step granularity collapses to "one assistant message = one step";
+ *  - live-only detail is never backfilled: step usage / finishReason /
+ *    timing / retry, turn durationMs / error, tool inputText / progress, and
+ *    task resultSummary / error / stateReason / usage exist only on live
+ *    engine events — persisted context messages do not carry them;
  *  - media content parts become attachment entities (metadata only — base64
  *    bytes are dropped, never shipped); mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
@@ -255,8 +259,9 @@ export function groupMessagesIntoSnapshot(
 
   // The entity slots stay empty here: tasks / interactions / todos / meta are
   // not context messages — `foldWireRecordFacts` fills them from the
-  // non-`context.*` wire records on top of this base snapshot.
-  return { items, tasks: [], interactions: [], attachments, todos: [], meta: {} };
+  // non-`context.*` wire records on top of this base snapshot. Prompts stay
+  // empty too: the wire journal carries no prompt records (see foldFacts).
+  return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
 // ---------------------------------------------------------------- helpers

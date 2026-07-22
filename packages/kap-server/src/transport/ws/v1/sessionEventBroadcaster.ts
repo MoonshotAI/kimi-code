@@ -30,6 +30,13 @@
  * A session is activated (journaling starts) on first `subscribe` /
  * `getSnapshotState` / `getCursor` and stays active for the process lifetime so
  * the journal is continuous from first activation onward.
+ *
+ * Transcript dedup: a connection subscribed to the transcript protocol
+ * (grade ≠ 'off' for the emitting agent) no longer receives the
+ * `session_event`s the transcript already projects — see
+ * {@link TRANSCRIPT_PROJECTED_EVENT_TYPES}. Suppression is a per-connection
+ * send-view crop only: the journal and tail keep recording every event, and
+ * connections without a transcript spec are unaffected.
  */
 
 import type {
@@ -579,6 +586,7 @@ export class SessionEventBroadcaster {
     sessionId: string,
     cursor: SessionCursor,
     filter?: AgentFilter,
+    transcriptGrades?: TranscriptGradeSpec,
   ): Promise<BufferedSinceResult> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) {
@@ -606,13 +614,20 @@ export class SessionEventBroadcaster {
 
     // Filter is a view crop over the session's single durable sequence: the
     // watermark and overflow checks above stay global, only the returned
-    // envelopes are narrowed to the subscriber's agent allowlist.
+    // envelopes are narrowed to the subscriber's agent allowlist — and, for a
+    // transcript subscriber, stripped of the events the transcript already
+    // projects. The journal itself keeps every event, so re-subscribing
+    // without a transcript spec replays the complete history.
     const applyFilter = (
       entries: Array<{ seq: number; envelope: EventEnvelope }>,
     ): Array<{ seq: number; envelope: EventEnvelope }> =>
-      filter === undefined
+      filter === undefined && transcriptGrades === undefined
         ? entries
-        : entries.filter(({ envelope }) => matchesAgentFilter(envelope, filter));
+        : entries.filter(
+            ({ envelope }) =>
+              matchesAgentFilter(envelope, filter) &&
+              !suppressedByTranscript(envelope, transcriptGrades),
+          );
 
     // Serve from the memory tail when it fully covers the gap; else the journal.
     const tailStart = tail[0]?.seq;
@@ -1199,6 +1214,9 @@ export class SessionEventBroadcaster {
     } else {
       for (const [target, sub] of targets) {
         if (!matchesAgentFilter(envelope, sub.agentFilter)) continue;
+        // Transcript subscribers already receive the projected equivalent of
+        // this event — drop the duplicate session_event on their send view.
+        if (suppressedByTranscript(envelope, sub.transcriptGrades)) continue;
         try {
           target.send(envelope);
         } catch {
@@ -1352,6 +1370,109 @@ function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boole
       : undefined;
   if (typeof agentId !== 'string') return true;
   return filter.has(agentId);
+}
+
+/**
+ * Event types the transcript protocol already projects (the authoritative
+ * mapping is the projector — `services/transcript/coreEventMap.ts`): a
+ * connection carrying a non-'off' transcript grade for the emitting agent
+ * gets the same information via `transcript.ops` / `transcript.reset`, so the
+ * duplicate `session_event` is suppressed on that connection.
+ *
+ * Deliberately retained (never suppressed):
+ *   - `agent.created` / `agent.disposed` — the transcript has no lifecycle
+ *     events; a roster change surfaces there only implicitly, as the new
+ *     agent's baseline reset;
+ *   - `tool.list.updated`, `mcp.server.status` — not projected;
+ *   - every global event ({@link isGlobalEvent}) — session/workspace/config
+ *     facts live outside the per-agent transcript.
+ *
+ * Two entries are defensive: `prompt.submitted` is projected but nobody
+ * publishes it on the v2 bus today (Phase 2 finding), and `task.notified` has
+ * a projector case without a v1 wire-schema entry. `background.task.started`
+ * / `background.task.terminated` are the legacy aliases of the projected
+ * `task.started` / `task.terminated` (see {@link legacyTaskEvent}).
+ */
+const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'turn.started',
+  'turn.ended',
+  'turn.step.started',
+  'turn.step.completed',
+  'turn.step.interrupted',
+  'turn.step.retrying',
+  'assistant.delta',
+  'thinking.delta',
+  'tool.call.delta',
+  'tool.call.started',
+  'tool.progress',
+  'tool.result',
+  'shell.started',
+  'shell.output',
+  'shell.completed',
+  'task.started',
+  'task.terminated',
+  'background.task.started',
+  'background.task.terminated',
+  'task.notified',
+  'subagent.spawned',
+  'subagent.started',
+  'subagent.completed',
+  'subagent.failed',
+  'subagent.suspended',
+  'compaction.started',
+  'compaction.blocked',
+  'compaction.cancelled',
+  'compaction.completed',
+  'skill.activated',
+  'plugin_command.activated',
+  'cron.fired',
+  'error',
+  'warning',
+  'goal.updated',
+  'plan.revision',
+  'context.spliced',
+  'agent.status.updated',
+  'hook.result',
+  'prompt.submitted',
+  'prompt.completed',
+  'prompt.aborted',
+  'prompt.steered',
+  'event.question.requested',
+  'event.question.dismissed',
+  'event.question.answered',
+  'event.approval.requested',
+  'event.approval.resolved',
+]);
+
+/**
+ * Per-connection transcript dedup check — shared by live fan-out and replay,
+ * mirroring {@link matchesAgentFilter}. Returns `true` when the envelope is a
+ * transcript-projected `session_event` the subscriber already receives via
+ * the transcript stream:
+ *   - `spec === undefined` → nothing is suppressed (legacy connections see
+ *     every `session_event`);
+ *   - global events and agent lifecycle events are never suppressed;
+ *   - events without a string `agentId` pass defensively (same rule as the
+ *     agent allowlist);
+ *   - an 'off' grade for the emitting agent suppresses nothing;
+ *   - otherwise the envelope is suppressed iff its type is in
+ *     {@link TRANSCRIPT_PROJECTED_EVENT_TYPES}.
+ */
+function suppressedByTranscript(
+  envelope: EventEnvelope,
+  spec: TranscriptGradeSpec | undefined,
+): boolean {
+  if (spec === undefined) return false;
+  if (isGlobalEvent(envelope.type)) return false;
+  if (isAgentLifecycleEvent(envelope.type)) return false;
+  const payload = envelope.payload;
+  const agentId =
+    typeof payload === 'object' && payload !== null
+      ? (payload as { agentId?: unknown }).agentId
+      : undefined;
+  if (typeof agentId !== 'string') return false;
+  if (gradeFor(spec, agentId) === 'off') return false;
+  return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
 
 // ---------------------------------------------------------------------------
