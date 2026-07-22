@@ -38,6 +38,8 @@ export interface TextFrame {
    * live task.
    */
   readonly taskId?: TaskId;
+  /** XML tag applied at projection time (e.g. `'system-reminder'`). */
+  readonly tag?: string;
 }
 
 /** Model thinking chain. Same full-text invariant as TextFrame. */

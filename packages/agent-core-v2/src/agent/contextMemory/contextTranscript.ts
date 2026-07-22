@@ -65,6 +65,7 @@ interface MutableMessage {
   toolCallId?: string;
   isError?: boolean;
   origin?: ContextMessage['origin'];
+  tag?: string;
 }
 
 interface MutableEntry {
@@ -264,6 +265,7 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
       ...(message.toolCallId !== undefined ? { toolCallId: message.toolCallId } : {}),
       ...(message.isError !== undefined ? { isError: message.isError } : {}),
       ...(message.origin !== undefined ? { origin: message.origin } : {}),
+      ...(message.tag !== undefined ? { tag: message.tag } : {}),
     },
     time,
   };

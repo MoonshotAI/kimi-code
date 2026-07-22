@@ -66,6 +66,7 @@ export const textFrameSchema = z.object({
   text: z.string(),
   attachmentIds: z.array(z.string()).optional(),
   taskId: taskIdSchema.optional(),
+  tag: z.string().optional(),
 });
 
 export const thinkingFrameSchema = z.object({
