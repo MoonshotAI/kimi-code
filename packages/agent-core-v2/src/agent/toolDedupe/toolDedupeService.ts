@@ -2,10 +2,12 @@
  * `toolDedupe` domain (L4) — `IAgentToolDedupeService` implementation.
  *
  * Self-wiring plugin: its constructor registers `loop` onWillBeginStep/onDidFinishStep
- * hooks and `toolExecutor` onBeforeExecuteTool/onDidExecuteTool hooks to drive
- * same-step suppression and cross-step repeat reminders, and reports repeat
- * telemetry through `telemetry`. Constructed eagerly at Agent scope so the
- * hooks are installed without any other service injecting it.
+ * hooks, an `onBeforeExecuteTool` veto listener (same-step duplicates are
+ * vetoed with a placeholder synthetic result), and an `onDidExecuteTool`
+ * hook to drive same-step suppression and cross-step repeat reminders, and
+ * reports repeat telemetry through `telemetry`. Constructed eagerly at
+ * Agent scope so the hooks are installed without any other service
+ * injecting it.
  */
 
 import { createHash } from 'node:crypto';
@@ -131,13 +133,16 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       this.endStep();
       await next();
     });
-    toolExecutor.hooks.onBeforeExecuteTool.register('toolDedupe', async (ctx, next) => {
-      const checked = this.checkToolCall(ctx.toolCall.id, ctx.toolCall.name, ctx.args, ctx.trace);
+    toolExecutor.onBeforeExecuteTool((event) => {
+      const checked = this.checkToolCall(
+        event.toolCall.id,
+        event.toolCall.name,
+        event.args,
+        event.trace,
+      );
       if (checked.syntheticResult !== null) {
-        ctx.decision = { syntheticResult: checked.syntheticResult };
-        return;
+        event.veto(checked.syntheticResult);
       }
-      await next();
     });
     toolExecutor.hooks.onDidExecuteTool.register('toolDedupe', async (ctx, next) => {
       ctx.result = await this.finalizeResult(

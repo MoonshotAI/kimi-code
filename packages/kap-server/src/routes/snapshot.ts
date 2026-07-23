@@ -27,7 +27,7 @@ import {
   ISessionContext,
   ISessionLifecycleService,
   ISessionMetadata,
-  IWorkspaceRegistry,
+  IWorkspaceService,
   toProtocolMessage,
   type IAgentScopeHandle,
   type Scope,
@@ -161,7 +161,7 @@ async function readViaLegacyAssembly(
   // `version` → ISO-string timestamps → epoch ms, id backfilled), so the
   // metadata read here is always v2-shaped and safe to project.
   const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
-  const workspace = await core.accessor.get(IWorkspaceRegistry).get(workspaceId);
+  const workspace = await core.accessor.get(IWorkspaceService).get(workspaceId);
   const cwd = workspace?.root ?? '';
   const meta = await handle.accessor.get(ISessionMetadata).read();
   const session = toWireSession(

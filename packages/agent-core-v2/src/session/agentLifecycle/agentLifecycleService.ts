@@ -52,6 +52,7 @@ import { IAgentStepRetryService } from '#/agent/stepRetry/stepRetry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
@@ -234,6 +235,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle.accessor.get(IImageConfigBridge);
     handle.accessor.get(IAgentToolDedupeService);
     handle.accessor.get(IAgentExternalHooksService);
+    // The permission gate exists only to subscribe `onBeforeExecuteTool` from
+    // its constructor; the veto-event refactor removed the ordering-driven
+    // force-injections that used to pull it up, so it must be resolved here or
+    // tool execution would run without policy adjudication.
+    handle.accessor.get(IAgentPermissionGate);
     handle.accessor.get(IAgentMcpService);
     // Agent plugin service: registers main-agent-only plugin session-start
     // guidance before the first turn (self-gates to a no-op for other agents).

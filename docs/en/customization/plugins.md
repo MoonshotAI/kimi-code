@@ -72,7 +72,7 @@ Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, o
 
 ## Kimi Datasource
 
-Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — no manual API calls or data account registration required.
+Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, academic literature, and Chinese laws and regulations in natural language — with professional finance sources such as Wind, IMF, Gildata, SEC EDGAR, and S&P Capital IQ built in, no manual API calls or data account registration required.
 
 ### Installation
 
@@ -82,7 +82,7 @@ You must first complete OAuth login with a Kimi Code account via `/login`. The p
 2. Find **Kimi Datasource** and press `Enter` to install
 3. After installation completes, run `/reload` or `/new` to activate the plugin
 
-The current latest version is v3.2.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
+The current latest version is v3.3.0. The plugin does not update automatically — to upgrade to a newer version, repeat the installation steps above.
 
 ### How to use
 
@@ -100,6 +100,8 @@ Once installed, describe your need in natural language and Kimi Code will automa
 
 **On-the-spot legal lookup**: Stuck on which statute governs a residence-right contract dispute? Pinpoint the relevant Civil Code articles — full text, authority level, and validity — then pull a few comparable precedents to back them up, without digging through statute databases.
 
+**Institutional-grade US equity research**: Writing a deep dive on a US stock? Pull the 10-K filing, standardized XBRL metrics, top-50 holders, and consensus estimates in one go — SEC filings and S&P data without juggling multiple data terminals.
+
 ### Coverage
 
 | Category | Scope |
@@ -109,6 +111,11 @@ Once installed, describe your need in natural language and Kimi Code will automa
 | Corporate data | Business registration, equity chain, legal risk, and related-entity graph for mainland Chinese companies |
 | Academic literature | Millions of papers across physics, mathematics, CS, quantitative finance, economics — including preprints |
 | Legal | Chinese laws, regulations, and judicial cases — semantic/keyword search and detail lookup for statutes across all authority levels (constitution, laws, judicial interpretations, departmental rules), plus ordinary and authoritative case search |
+| Financial terminal (Wind) | A-share, fund, bond, and index quotes with financial indicators, company announcements and research reports, and macroeconomic data |
+| International macro (IMF) | Official IMF datasets (IFS, BOP, DOTS, WEO, and more): exchange rates, CPI, balance of payments, trade, and GDP forecasts |
+| Smart screening (Gildata) | Natural-language stock / fund / fund-manager screening, plus macro-industry data, research reports, announcements, and news |
+| US filings (SEC EDGAR) | 8,000+ US-listed companies — 10-K/10-Q statements, XBRL metrics, Form 4 insider trades, 13F institutional holdings, and 8-K material events (back to 2009) |
+| US fundamentals (S&P Capital IQ) | Standardized financial statements, valuation ratios, consensus estimates, holders and executives, competitor relationships, corporate events, and call transcripts |
 
 ### Billing and limitations
 

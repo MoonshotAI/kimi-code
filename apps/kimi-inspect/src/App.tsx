@@ -5,13 +5,15 @@
  * interactions card fetch on demand and the sidebar polls.
  * Layout: header / icon rail / view. The `chat` view is the classic trio
  * (left sidebar with workspaces + sessions, chat, inspector); the `models`
- * view is the full-width model catalog.
+ * view is the full-width model catalog; the `services` view is the
+ * full-width app-scope Service reflection (`AppServicesView`).
  */
 
 import { useEffect, useState } from 'react';
 
 import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
 
+import { AppServicesView } from './components/AppServicesView';
 import { ChatView } from './components/ChatView';
 import { Inspector } from './components/Inspector';
 import { ModelCatalogView } from './components/ModelCatalogView';
@@ -72,7 +74,9 @@ export function App() {
       </header>
       <div className="flex min-h-0 flex-1">
         <NavRail view={view} onChange={setView} />
-        {view === 'models' ? (
+        {view === 'services' ? (
+          <AppServicesView />
+        ) : view === 'models' ? (
           <ModelCatalogView
             onOpenSession={(id) => {
               setSessionId(id);

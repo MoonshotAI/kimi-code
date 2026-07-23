@@ -5,12 +5,13 @@ import { gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
 import { ViewRegistry } from '#/view/registry';
 import { groupMessagesIntoSnapshot } from '#/history/groupTurns';
+import { foldWireRecordFacts, type HistoryWireRecord } from '#/history/foldFacts';
 import {
   transcriptOperationSchema,
   transcriptQuerySchema,
   transcriptResponseSchema,
   transcriptGradeSpecSchema,
-} from '#/wire/schema';
+} from '#/contract/schema';
 import type { TranscriptItem } from '#/model/item';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
@@ -42,12 +43,18 @@ const appendOp: TranscriptOperation = {
   text: 'chunk',
 };
 
+const promptOp: TranscriptOperation = {
+  op: 'prompt.upsert',
+  prompt: { promptId: 'p1', status: 'queued', createdAt: '2026-07-22T00:00:00.000Z' },
+};
+
 describe('granularity', () => {
   const ops: TranscriptOperation[] = [
     turnOp(1),
     stepOp,
     frameOp,
     appendOp,
+    promptOp,
     { op: 'meta.merge', meta: { activity: 'turn' } },
   ];
 
@@ -56,7 +63,13 @@ describe('granularity', () => {
   });
 
   it('turn admits headers and global state only', () => {
-    expect(filterOpsForGrade('turn', ops).map((op) => op.op)).toEqual(['turn.upsert', 'meta.merge']);
+    // prompt.upsert is a global entity like interaction.upsert: coarse
+    // subscribers see queue state too.
+    expect(filterOpsForGrade('turn', ops).map((op) => op.op)).toEqual([
+      'turn.upsert',
+      'prompt.upsert',
+      'meta.merge',
+    ]);
   });
 
   it('block admits step/frame upserts but no appends', () => {
@@ -64,6 +77,7 @@ describe('granularity', () => {
       'turn.upsert',
       'step.upsert',
       'frame.upsert',
+      'prompt.upsert',
       'meta.merge',
     ]);
   });
@@ -125,6 +139,7 @@ describe('granularity', () => {
         { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'url' as const, url: 'https://example.com/a.png' } },
       ],
       todos: [{ todoId: 'todo', items: [{ title: 'write tests', status: 'in_progress' as const }] }],
+      prompts: [{ promptId: 'p1', status: 'running' as const, createdAt: '2026-07-22T00:00:00.000Z' }],
       meta: {},
     };
     const turnGrade = redactSnapshotForGrade('turn', snapshot);
@@ -132,6 +147,7 @@ describe('granularity', () => {
     expect(turnGrade.interactions).toHaveLength(1);
     expect(turnGrade.attachments).toHaveLength(1);
     expect(turnGrade.todos).toHaveLength(1);
+    expect(turnGrade.prompts).toHaveLength(1);
     const turn = turnGrade.items[0];
     expect(turn?.kind === 'turn' && turn.steps).toEqual([]);
     expect(turn?.kind === 'turn' && turn.prompt).toBe('hi');
@@ -219,10 +235,10 @@ describe('ViewRegistry', () => {
   });
 });
 
-describe('wire schemas', () => {
+describe('contract schemas', () => {
   it('roundtrips every op kind', () => {
     const ops: TranscriptOperation[] = [
-      { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], meta: {}, hasMoreOlder: true } },
+      { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], prompts: [], meta: {}, hasMoreOlder: true } },
       turnOp(1),
       stepOp,
       frameOp,
@@ -239,11 +255,112 @@ describe('wire schemas', () => {
         attachment: { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'file', fileId: 'f1' } },
       },
       { op: 'todo.upsert', todo: { todoId: 'todo', items: [{ title: 'x', status: 'done' }] } },
+      promptOp,
       { op: 'meta.merge', meta: { goal: { objective: 'x', status: 'active' } } },
       { op: 'items.remove', ids: ['t1'] },
     ];
     for (const op of ops) {
       expect(transcriptOperationSchema.parse(op)).toBeDefined();
+    }
+  });
+
+  it('roundtrips ops carrying the extended wire detail', () => {
+    // Every field the projection fills beyond the original model: step
+    // usage/finishReason/timing/retry/endReason/endMessage, turn
+    // durationMs/error, tool inputText/progress, task
+    // resultSummary/error/stateReason/usage, meta.agent, snapshot prompts.
+    const usage = { inputOther: 10, output: 5, inputCacheRead: 3, inputCacheCreation: 2 };
+    const ops: TranscriptOperation[] = [
+      {
+        op: 'reset',
+        agentId: 'main',
+        snapshot: {
+          items: [],
+          tasks: [],
+          interactions: [],
+          attachments: [],
+          todos: [],
+          prompts: [
+            {
+              promptId: 'p1',
+              status: 'completed',
+              userMessageId: 'u1',
+              content: [{ type: 'text', text: 'hi' }],
+              createdAt: '2026-07-22T00:00:00.000Z',
+              finishedAt: '2026-07-22T00:01:00.000Z',
+              steeredAt: '2026-07-22T00:00:30.000Z',
+            },
+          ],
+          meta: {
+            agent: {
+              model: 'k2',
+              thinkingEffort: 'high',
+              usage: { byModel: { k2: usage }, currentTurn: usage, total: usage },
+              contextTokens: 1234,
+              maxContextTokens: 128000,
+              contextUsage: 0.01,
+              permission: 'auto',
+              phase: { kind: 'retrying', turnId: 1, step: 1, stepId: 't1.1', failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, since: 1000 },
+            },
+          },
+        },
+      },
+      {
+        op: 'turn.upsert',
+        turn: {
+          kind: 'turn', turnId: 't1', ordinal: 1, state: 'failed', origin: { kind: 'user' },
+          usage: { inputTokens: 12, outputTokens: 5, cachedTokens: 3 },
+          durationMs: 1500,
+          error: 'boom',
+        },
+      },
+      {
+        op: 'step.upsert',
+        turnId: 't1',
+        step: {
+          kind: 'step', stepId: 't1.1', turnId: 't1', ordinal: 1, state: 'interrupted',
+          usage,
+          finishReason: 'stop',
+          timing: {
+            llmFirstTokenLatencyMs: 120,
+            llmStreamDurationMs: 900,
+            llmRequestBuildMs: 5,
+            llmServerFirstTokenMs: 110,
+            llmServerDecodeMs: 700,
+            llmClientConsumeMs: 950,
+          },
+          retry: { failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, errorName: 'RateLimit', errorMessage: 'slow down', statusCode: 429 },
+          endReason: 'aborted',
+          endMessage: 'user pressed escape',
+        },
+      },
+      {
+        op: 'frame.upsert',
+        turnId: 't1',
+        stepId: 't1.1',
+        frame: {
+          kind: 'tool', frameId: 't1.1.c1', toolCallId: 'c1', name: 'Bash', state: 'running',
+          inputText: '{"command":"ls',
+          progress: { kind: 'progress', text: 'half', percent: 50, customKind: 'bar', customData: { x: 1 } },
+        },
+      },
+      {
+        op: 'task.upsert',
+        task: {
+          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
+          resultSummary: 'scanned 12 files',
+          error: 'partial failure',
+          stateReason: 'waiting for input',
+          usage,
+        },
+      },
+      {
+        op: 'meta.merge',
+        meta: { agent: { model: 'k2', phase: { kind: 'ended', turnId: 1, reason: 'completed', durationMs: 1500, at: 2000 } } },
+      },
+    ];
+    for (const op of ops) {
+      expect(transcriptOperationSchema.parse(op)).toEqual(op);
     }
   });
 
@@ -503,5 +620,402 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     const taskTurn = snapshot.items[1];
     if (taskTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(taskTurn.origin).toMatchObject({ kind: 'task', taskId: 'b83rhswvs' });
+  });
+});
+
+describe('foldWireRecordFacts (cold facts)', () => {
+  const baseWithMarker = (): AgentTranscriptSnapshot =>
+    groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'summary of old' }],
+        toolCalls: [],
+        origin: { kind: 'compaction_summary' },
+      },
+    ]);
+
+  it('returns the base snapshot unchanged when no fact records exist (old sessions)', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'metadata', protocol_version: '1.5', created_at: 1 },
+        { type: 'context.append_message', message: { role: 'user' }, time: 1 },
+      ],
+      base,
+    );
+    expect(folded).toEqual(base);
+    // Nothing appended: the base items array is reused as-is.
+    expect(folded.items).toBe(base.items);
+  });
+
+  it('folds todo records into the global todo document, last write wins', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'tools.update_store', key: 'todo', value: [{ title: 'old', status: 'pending' }], time: 1000 },
+        { type: 'tools.update_store', key: 'other', value: [{ title: 'ignored', status: 'done' }], time: 2000 },
+        {
+          type: 'tools.update_store',
+          key: 'todo',
+          value: [
+            { title: 'write tests', status: 'in_progress' },
+            { title: 'ship', status: 'pending' },
+            { title: 'malformed' },
+          ],
+          time: 3000,
+        },
+      ],
+      base,
+    );
+    expect(folded.todos).toEqual([
+      {
+        todoId: 'todo',
+        items: [
+          { title: 'write tests', status: 'in_progress' },
+          { title: 'ship', status: 'pending' },
+        ],
+        updatedAt: new Date(3000).toISOString(),
+      },
+    ]);
+    // Facts append no items for todos.
+    expect(folded.items).toBe(base.items);
+  });
+
+  it('folds goal create/update/clear into meta.goal with markers, last write wins', () => {
+    const base = baseWithMarker();
+    // The base carries one compaction marker (`m1`) — folded markers must
+    // continue the numbering instead of colliding.
+    expect(base.items.some((item) => item.kind === 'marker' && item.markerId === 'm1')).toBe(true);
+
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'goal.create',
+          goalId: 'g1',
+          objective: 'fix the bug',
+          completionCriterion: 'tests pass',
+          time: 1000,
+        },
+        { type: 'goal.update', status: 'blocked', reason: 'stuck', tokensUsed: 1200, time: 2000 },
+        { type: 'goal.update', budgetLimits: { tokenBudget: 50000 }, time: 3000 },
+      ],
+      base,
+    );
+    expect(folded.meta.goal).toEqual({
+      objective: 'fix the bug',
+      status: 'blocked',
+      completionCriterion: 'tests pass',
+      budgetUsed: 1200,
+      budgetLimit: 50000,
+    });
+    const goalMarkers = folded.items.filter(
+      (item) => item.kind === 'marker' && item.marker === 'goal',
+    );
+    expect(goalMarkers.map((item) => item.kind === 'marker' && item.markerId)).toEqual([
+      'm2',
+      'm3',
+      'm4',
+    ]);
+    expect(goalMarkers[0]).toMatchObject({ at: new Date(1000).toISOString() });
+    // Markers append after the base items, in record order.
+    expect(folded.items.slice(0, base.items.length)).toEqual(base.items);
+
+    const cleared = foldWireRecordFacts(
+      [
+        { type: 'goal.create', goalId: 'g1', objective: 'fix the bug', time: 1000 },
+        { type: 'goal.clear', time: 2000 },
+      ],
+      base,
+    );
+    expect(cleared.meta.goal).toBeUndefined();
+  });
+
+  it('folds plan/swarm mode records into meta.modes with enter/exit markers', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'plan_mode.enter', id: 'plan-1', time: 1000 },
+        { type: 'swarm_mode.enter', trigger: { kind: 'task' }, time: 2000 },
+        { type: 'plan_mode.exit', id: 'plan-1', time: 3000 },
+      ],
+      base,
+    );
+    // Plan exited, swarm still active; cold badges are the bare `{}` the live
+    // path projects (no persisted review path / trigger detail).
+    expect(folded.meta.modes).toEqual({ swarm: {} });
+    const markers = folded.items
+      .filter((item) => item.kind === 'marker')
+      .map((item) => item.kind === 'marker' && item.marker);
+    expect(markers).toEqual(['compaction', 'plan.enter', 'swarm.enter', 'plan.exit']);
+
+    const cancelled = foldWireRecordFacts(
+      [
+        { type: 'plan_mode.enter', id: 'plan-1', time: 1000 },
+        { type: 'plan_mode.cancel', time: 2000 },
+        { type: 'swarm_mode.enter', trigger: { kind: 'tool' }, time: 3000 },
+        { type: 'swarm_mode.exit', time: 4000 },
+      ],
+      base,
+    );
+    expect(cancelled.meta.modes).toEqual({});
+
+    const stillPlanning = foldWireRecordFacts(
+      [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }],
+      base,
+    );
+    expect(stillPlanning.meta.modes).toEqual({ plan: {} });
+  });
+
+  it('folds plan.revision records into the plan badge and a timeline marker', () => {
+    const base = baseWithMarker();
+    const revision = {
+      type: 'plan.revision',
+      id: 'plan-1',
+      version: 2,
+      path: 'agents/main/plan/plan-1/v2.md',
+      sha256: 'deadbeef',
+      bytes: 512,
+      time: 2000,
+    };
+    const folded = foldWireRecordFacts(
+      [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }, revision],
+      base,
+    );
+    // Still active: the badge carries the revision reference.
+    expect(folded.meta.modes).toEqual({
+      plan: { reviewPath: 'agents/main/plan/plan-1/v2.md', version: 2 },
+    });
+    const revisionMarkers = folded.items.filter(
+      (item) => item.kind === 'marker' && item.marker === 'plan.revision',
+    );
+    expect(revisionMarkers).toEqual([
+      {
+        kind: 'marker',
+        markerId: 'm3',
+        marker: 'plan.revision',
+        payload: {
+          id: 'plan-1',
+          version: 2,
+          path: 'agents/main/plan/plan-1/v2.md',
+          sha256: 'deadbeef',
+          bytes: 512,
+        },
+        at: new Date(2000).toISOString(),
+      },
+    ]);
+
+    // Exit clears the badge; the revision marker stays in the timeline.
+    const exited = foldWireRecordFacts(
+      [
+        { type: 'plan_mode.enter', id: 'plan-1', time: 1000 },
+        revision,
+        { type: 'plan_mode.exit', id: 'plan-1', time: 3000 },
+      ],
+      base,
+    );
+    expect(exited.meta.modes?.plan).toBeUndefined();
+    expect(
+      exited.items.filter((item) => item.kind === 'marker' && item.marker === 'plan.revision'),
+    ).toHaveLength(1);
+
+    // A re-enter after the exit starts a bare badge again (no stale revision).
+    const reentered = foldWireRecordFacts(
+      [
+        { type: 'plan_mode.enter', id: 'plan-1', time: 1000 },
+        revision,
+        { type: 'plan_mode.exit', id: 'plan-1', time: 3000 },
+        { type: 'plan_mode.enter', id: 'plan-2', time: 4000 },
+      ],
+      base,
+    );
+    expect(reentered.meta.modes).toEqual({ plan: {} });
+  });
+
+  it('folds task records into task entities and timeline taskrefs', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'task.started',
+          info: {
+            taskId: 'task_1',
+            kind: 'process',
+            description: 'pnpm test',
+            status: 'running',
+            startedAt: 1000,
+            endedAt: null,
+          },
+          time: 1000,
+        },
+        {
+          type: 'task.started',
+          info: {
+            taskId: 'task_2',
+            kind: 'agent',
+            description: 'scan the repo',
+            status: 'running',
+            detached: false,
+            agentId: 'sub-1',
+            startedAt: 2000,
+            endedAt: null,
+          },
+          time: 2000,
+        },
+        {
+          type: 'task.terminated',
+          info: {
+            taskId: 'task_1',
+            kind: 'process',
+            description: 'pnpm test',
+            status: 'completed',
+            startedAt: 1000,
+            endedAt: 5000,
+          },
+          outputTail: '42 passed',
+          time: 5000,
+        },
+      ],
+      base,
+    );
+
+    expect(folded.tasks).toEqual([
+      {
+        taskId: 'task_1',
+        kind: 'shell',
+        state: 'completed',
+        // Legacy records omit `detached` — treated as detached.
+        detached: true,
+        description: 'pnpm test',
+        agentId: undefined,
+        outputTail: '42 passed',
+        startedAt: new Date(1000).toISOString(),
+        endedAt: new Date(5000).toISOString(),
+      },
+      {
+        taskId: 'task_2',
+        kind: 'subagent',
+        // Never terminated: still running, no end.
+        state: 'running',
+        detached: false,
+        description: 'scan the repo',
+        agentId: 'sub-1',
+        outputTail: '',
+        startedAt: new Date(2000).toISOString(),
+        endedAt: undefined,
+      },
+    ]);
+    // One taskref per started task, appended after the base items in record order.
+    const refs = folded.items.filter((item) => item.kind === 'taskref');
+    expect(refs).toEqual([
+      { kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1', at: new Date(1000).toISOString() },
+      { kind: 'taskref', refId: 'ref-task_2', taskId: 'task_2', at: new Date(2000).toISOString() },
+    ]);
+  });
+
+  it('maps unknown task kinds to other and survives malformed task records', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'task.started',
+          info: { taskId: 'task_q', kind: 'question', status: 'running', startedAt: 1000, endedAt: null },
+          time: 1000,
+        },
+        { type: 'task.started', time: 2000 },
+        { type: 'task.terminated', info: { kind: 'process' }, time: 3000 },
+      ],
+      base,
+    );
+    expect(folded.tasks).toHaveLength(1);
+    expect(folded.tasks[0]).toMatchObject({ taskId: 'task_q', kind: 'other', state: 'running' });
+  });
+
+  it('folds interaction request/resolved into entities with terminal states', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'interaction.request',
+          id: 'apr-1',
+          kind: 'approval',
+          toolCallId: 'call_1',
+          request: { toolName: 'Bash' },
+          time: 1000,
+        },
+        {
+          type: 'interaction.request',
+          id: 'q-1',
+          kind: 'question',
+          request: { questions: [] },
+          time: 2000,
+        },
+        {
+          type: 'interaction.resolved',
+          id: 'apr-1',
+          response: { decision: 'approved', scope: 'session' },
+          time: 3000,
+        },
+        { type: 'interaction.resolved', id: 'q-1', response: null, time: 4000 },
+      ],
+      base,
+    );
+    expect(folded.interactions).toEqual([
+      {
+        interactionId: 'apr-1',
+        interactionKind: 'approval',
+        toolCallId: 'call_1',
+        state: 'approved',
+        request: { toolName: 'Bash' },
+        response: { decision: 'approved', scope: 'session' },
+      },
+      {
+        interactionId: 'q-1',
+        interactionKind: 'question',
+        toolCallId: undefined,
+        state: 'dismissed',
+        request: { questions: [] },
+        response: null,
+      },
+    ]);
+  });
+
+  it('cancels interactions still pending at the end of the scan (crash == cancelled)', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        {
+          type: 'interaction.request',
+          id: 'apr-9',
+          kind: 'approval',
+          request: { toolCallId: 'call_9', toolName: 'Write' },
+          time: 1000,
+        },
+      ],
+      base,
+    );
+    expect(folded.interactions).toHaveLength(1);
+    expect(folded.interactions[0]).toMatchObject({
+      interactionId: 'apr-9',
+      state: 'cancelled',
+      // The anchor is read from the request payload when the record carries
+      // no top-level toolCallId (mirrors the live path).
+      toolCallId: 'call_9',
+    });
+    // No ghost pendings, ever.
+    expect(folded.interactions.every((entity) => entity.state !== 'pending')).toBe(true);
+  });
+
+  it('skips user_tool interactions like the live path', () => {
+    const base = baseWithMarker();
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'interaction.request', id: 'ut-1', kind: 'user_tool', request: {}, time: 1000 },
+        { type: 'interaction.resolved', id: 'ut-1', response: {}, time: 2000 },
+      ] satisfies HistoryWireRecord[],
+      base,
+    );
+    expect(folded.interactions).toEqual([]);
   });
 });

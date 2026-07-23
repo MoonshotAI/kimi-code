@@ -43,10 +43,8 @@ import {
   LOOP_MAX_STEPS_PER_TURN_ENV,
   type LoopControl,
 } from '#/agent/loop/configSection';
-import {
-  THINKING_SECTION,
-  type ThinkingConfig,
-} from '#/kosong/model/thinking';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import { type ThinkingConfig } from '#/kosong/model/thinking';
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
   MAX_RUNNING_TASKS_ENV,
@@ -54,6 +52,7 @@ import {
   resolvePrintBackgroundMode,
   type AgentTaskConfig,
 } from '#/agent/task/configSection';
+import { applyPrintModeConfigDefaults } from '#/agent/task/printDefaults';
 import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
@@ -1044,14 +1043,113 @@ describe('task config section', () => {
     disposables.dispose();
   });
 
-  it('resolvePrintBackgroundMode falls back to keepAliveOnExit then exit', async () => {
+  it('resolvePrintBackgroundMode falls back to keepAliveOnExit then steer', async () => {
     const env: Record<string, string> = {};
     const { config, disposables } = await createTaskConfig(env);
 
-    expect(resolvePrintBackgroundMode(config)).toBe('exit');
+    expect(resolvePrintBackgroundMode(config)).toBe('steer');
 
     env[KEEP_ALIVE_ON_EXIT_ENV] = 'true';
     expect(resolvePrintBackgroundMode(config)).toBe('drain');
+
+    disposables.dispose();
+  });
+});
+
+describe('applyPrintModeConfigDefaults', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('fills unset keys into the memory layer with effectively unbounded values', async () => {
+    const { config, disposables } = await createConfig({});
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(0);
+    expect(resolveSubagentTimeoutMs(config)).toBe(0);
+    expect(config.inspect('task').memoryValue).toMatchObject({ bashTaskTimeoutS: 0 });
+    expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toMatchObject({
+      maxStepsPerTurn: 0,
+    });
+    expect(config.inspect('subagent').memoryValue).toMatchObject({ timeoutMs: 0 });
+
+    disposables.dispose();
+  });
+
+  it('does not override keys the user set explicitly', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[task]\nbash_task_timeout_s = 30\n\n' +
+        '[loop_control]\nmax_steps_per_turn = 7\n\n' +
+        '[subagent]\ntimeout_ms = 5000\n',
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(30);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn).toBe(7);
+    expect(resolveSubagentTimeoutMs(config)).toBe(5000);
+    expect(config.inspect('task').memoryValue).toBeUndefined();
+    expect(config.inspect(LOOP_CONTROL_SECTION).memoryValue).toBeUndefined();
+    expect(config.inspect('subagent').memoryValue).toBeUndefined();
+
+    disposables.dispose();
+  });
+
+  it('treats a legacy [background] bash_task_timeout_s as user-set', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[background]\nbash_task_timeout_s = 15\n',
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(15);
+
+    disposables.dispose();
+  });
+
+  it('keeps sibling user keys of a filled section visible', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[task]\nprint_background_mode = "drain"\n\n[loop_control]\nmax_retries_per_step = 5\n',
+    );
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolvePrintBackgroundMode(config)).toBe('drain');
+    expect(resolveAgentTaskConfig(config)?.bashTaskTimeoutS).toBe(0);
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toMatchObject({
+      maxRetriesPerStep: 5,
+      maxStepsPerTurn: 0,
+    });
+
+    disposables.dispose();
+  });
+
+  it('does not override the subagent timeout env override', async () => {
+    const env: Record<string, string> = { [SUBAGENT_TIMEOUT_ENV]: '3000' };
+    const { config, disposables } = await createConfig(env);
+
+    await applyPrintModeConfigDefaults(config);
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(3000);
 
     disposables.dispose();
   });

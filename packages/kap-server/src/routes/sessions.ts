@@ -65,9 +65,9 @@
  * **cwd resolution (gap G3 closed)**: the session's frozen work dir is
  * persisted on its metadata document (`ISessionMetadata`) and surfaced on the
  * `ISessionIndex` summary, so `metadata.cwd` comes from the session itself —
- * not from `IWorkspaceRegistry`. Sessions whose workspace was unregistered keep
+ * not from `IWorkspaceService`. Sessions whose workspace was unregistered keep
  * their original cwd and stay listed / gettable (matching v1, which stores
- * `workDir` on the session). `IWorkspaceRegistry` is consulted only as a
+ * `workDir` on the session). `IWorkspaceService` is consulted only as a
  * back-compat fallback for sessions written before `cwd` was persisted.
  */
 
@@ -89,7 +89,8 @@ import {
   ISessionMetadata,
   ISessionLegacyService,
   IEventService,
-  IWorkspaceRegistry,
+  IWorkspaceAliases,
+  IWorkspaceService,
   isError2,
   Error2,
   toProtocolMessage,
@@ -274,7 +275,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
 
-      const registry = core.accessor.get(IWorkspaceRegistry);
+      const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
@@ -358,7 +359,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const pageSize = raw.page_size;
       const archivedOnly = raw.archived_only === true;
 
-      const workspaces = await core.accessor.get(IWorkspaceRegistry).list();
+      const workspaces = await core.accessor.get(IWorkspaceService).list();
       const roots = new Map(workspaces.map((w) => [w.id, w.root]));
 
       // v1 resolves `workspace_id` to its root and 40410s when it is unknown;
@@ -385,7 +386,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const workspaceIds =
         raw.workspace_id === undefined
           ? undefined
-          : await core.accessor.get(IWorkspaceRegistry).resolveAliasIds(raw.workspace_id);
+          : await core.accessor.get(IWorkspaceAliases).resolveAliasIds(raw.workspace_id);
       const page = await core.accessor.get(ISessionIndex).list({
         workspaceIds,
         includeArchived: archivedOnly ? true : raw.include_archive,
@@ -485,7 +486,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceRegistry).get(summary.workspaceId))?.root;
+        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) {
         // Persisted session with no `cwd` on disk and no registered workspace
         // to fall back to (predates gap-G3 persistence) — cannot project cwd.
@@ -532,7 +533,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       const cwd =
-        summary.cwd ?? (await core.accessor.get(IWorkspaceRegistry).get(summary.workspaceId))?.root;
+        summary.cwd ?? (await core.accessor.get(IWorkspaceService).get(summary.workspaceId))?.root;
       if (cwd === undefined) {
         reply.send(
           errEnvelope(
@@ -838,7 +839,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         // registry is only a back-compat fallback for sessions written before
         // `cwd` was persisted, defaulting to '' (matches the prior adapter).
         const roots = new Map(
-          (await core.accessor.get(IWorkspaceRegistry).list()).map((w) => [w.id, w.root]),
+          (await core.accessor.get(IWorkspaceService).list()).map((w) => [w.id, w.root]),
         );
         const projected = window.map((summary) =>
           toWireSession(

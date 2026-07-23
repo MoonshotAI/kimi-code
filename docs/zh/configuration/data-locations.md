@@ -81,7 +81,7 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 - **`agents/agent-0/` 等**：子 Agent 实例目录，各自含 `wire.jsonl`。
 - **`logs/kimi-code.log`**：该会话的诊断日志，只有发生诊断事件时才存在。
 - **`tasks/`**：后台任务持久化——`tasks/<task_id>.json` 保存状态/pid/退出码，`tasks/<task_id>/output.log` 保存输出。
-- **`cron/`**：定时任务持久化，`kimi resume` 时重新加载到调度器。详见[定时任务](../reference/tools.md#定时任务)。
+- **`cron/`**：定时任务持久化，用 `kimi --session` 恢复会话时重新加载到调度器。详见[定时任务](../reference/tools.md#定时任务)。
 
 ## 内置工具缓存
 

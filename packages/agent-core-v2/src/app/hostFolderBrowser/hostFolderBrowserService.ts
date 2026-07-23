@@ -2,7 +2,7 @@
  * `hostFolderBrowser` domain (L2) — `IHostFolderBrowser` implementation.
  *
  * Browses the real local filesystem through `node:fs/promises` and derives
- * `recent_roots` from the process-wide `IWorkspaceRegistry`. Bound at App
+ * `recent_roots` from the process-wide `IWorkspaceService`. Bound at App
  * scope. Mirrors the v1 `WorkspaceFsService` behaviour so the `/api/v1`
  * transport stays wire-compatible: realpath resolution, directory-only
  * entries, dot-last sorting, and `parent` resolution.
@@ -16,7 +16,7 @@ import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from './hostFold
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 
 import {
   HostFolderNotAbsoluteError,
@@ -29,7 +29,7 @@ import {
 export class HostFolderBrowser implements IHostFolderBrowser {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IWorkspaceRegistry private readonly registry: IWorkspaceRegistry) {}
+  constructor(@IWorkspaceService private readonly registry: IWorkspaceService) {}
 
   async browse(absPath?: string): Promise<FsBrowseResponse> {
     const target = absPath ?? homedir();

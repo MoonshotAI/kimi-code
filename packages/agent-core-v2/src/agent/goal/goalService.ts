@@ -22,7 +22,13 @@
  * `toolExecutor`, writes system reminders through `systemReminder`, reports
  * telemetry through `telemetry`, and checks main-agent eligibility through
  * `scopeContext`. Measures time and arms hard deadlines through `goal`'s
- * App-scoped deadline scheduler. Bound at Agent scope.
+ * App-scoped deadline scheduler. Two `onBeforeExecuteTool` veto listeners
+ * guard the goal lifecycle: stale or budget-exhausted goal tool calls are
+ * vetoed with synthetic results, and a `CreateGoal` call carrying a
+ * `goal_start` display outside `auto` mode defers to a cold `waitUntil`
+ * factory that runs the goal-start review through `toolApproval` under the
+ * origin `goal-start-review-ask` — including the permission-mode switch
+ * picked on the approval surface. Bound at Agent scope.
  * Subagent instances reject every goal command and do not install goal
  * injection, accounting, budget, or continuation hooks.
  */
@@ -49,8 +55,11 @@ import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRe
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -225,6 +234,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
+    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentUsageService usageService: IAgentUsageService,
     @IConfigService private readonly config: IConfigService,
     @IGoalDeadlineScheduler private readonly deadlineScheduler: IGoalDeadlineScheduler,
@@ -267,18 +278,42 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this._register(
-      toolExecutor.hooks.onBeforeExecuteTool.register('goal-budget-reject', async (ctx, next) => {
-        if (this.isStaleGoalToolCall(ctx)) {
-          ctx.decision = { syntheticResult: { output: GOAL_STALE_TOOL_RESULT } };
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (
+          event.toolCall.name !== 'CreateGoal' ||
+          this.permissionMode.mode === 'auto' ||
+          event.execution.display?.kind !== 'goal_start'
+        ) {
           return;
         }
-        if (this.budgetGraceTurns.has(ctx.turnId)) {
-          ctx.decision = {
-            syntheticResult: { output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE },
-          };
+        event.waitUntil(async () =>
+          this.toolApproval.requestToolApproval(
+            event,
+            {
+              kind: 'ask',
+              resolveApproval: (approval) => {
+                if (approval.decision !== 'approved') return undefined;
+                const mode = toGoalStartReviewPermissionMode(approval.selectedLabel);
+                if (mode !== undefined && mode !== this.permissionMode.mode) {
+                  this.permissionMode.setMode(mode);
+                }
+                return undefined;
+              },
+            },
+            'goal-start-review-ask',
+          ),
+        );
+      }),
+    );
+    this._register(
+      toolExecutor.onBeforeExecuteTool((event) => {
+        if (this.isStaleGoalToolCall(event)) {
+          event.veto({ output: GOAL_STALE_TOOL_RESULT });
           return;
         }
-        await next();
+        if (this.budgetGraceTurns.has(event.turnId)) {
+          event.veto({ output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE });
+        }
       }),
     );
     this._register(
@@ -795,7 +830,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return state?.status === 'active' && state.goalId === goalId;
   }
 
-  private isStaleGoalToolCall(ctx: ToolBeforeExecuteContext): boolean {
+  private isStaleGoalToolCall(ctx: BeforeToolExecuteEvent): boolean {
     const toolName = ctx.toolCall.name;
     if (!isGoalMutationTool(toolName)) return false;
     const goalId = this.goalTurnTarget(ctx.turnId);
@@ -1060,6 +1095,11 @@ function matchesGoal(state: GoalState, goalId: string | undefined): boolean {
 
 function isGoalMutationTool(toolName: string): boolean {
   return toolName === 'CreateGoal' || toolName === 'UpdateGoal' || toolName === 'SetGoalBudget';
+}
+
+function toGoalStartReviewPermissionMode(label: string | undefined): PermissionMode | undefined {
+  if (label === 'auto' || label === 'yolo' || label === 'manual') return label;
+  return undefined;
 }
 
 function goalBudgetBlockReason(budget: GoalBudgetReport): string | undefined {

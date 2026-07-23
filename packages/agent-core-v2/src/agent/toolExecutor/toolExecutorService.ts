@@ -1,15 +1,19 @@
 /**
  * `toolExecutor` domain (L3) — `IAgentToolExecutorService` implementation.
  *
- * Resolves executable tools through `toolRegistry`, runs ordered tool hooks,
- * publishes tool lifecycle events through `event`, records telemetry through
- * `telemetry`, truncates oversized outputs through `toolResultTruncation`,
- * and logs parse diagnostics through `log`. Bound at Agent scope.
+ * Resolves executable tools through `toolRegistry`, adjudicates tool calls
+ * through the `onBeforeExecuteTool` veto event, awaits readiness work
+ * through the `onWillExecuteTool` participation event, finalizes results
+ * through the ordered `onDidExecuteTool` hook, publishes tool lifecycle
+ * events through `event`, records telemetry through `telemetry`, truncates
+ * oversized outputs through `toolResultTruncation`, and logs parse
+ * diagnostics through `log`. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { AsyncEmitter, type Event } from '#/_base/event';
 import type { ContentPart, ToolCall } from '#/kosong/contract/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
@@ -31,13 +35,19 @@ import {
   type ToolResult,
   type ToolUpdate,
 } from '#/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type {
+  BeforeToolExecuteEvent,
+  ResolvedToolExecutionHookContext,
+  ToolDidExecuteContext,
+  WillExecuteToolEvent,
+} from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { BeforeToolExecuteEmitter } from './beforeToolExecuteEvent';
 import {
   IAgentToolExecutorService,
   type MissingToolDescriber,
@@ -91,8 +101,13 @@ type ToolExecutionStreamEvent =
 
 export class AgentToolExecutorService implements IAgentToolExecutorService {
   declare readonly _serviceBrand: undefined;
+
+  private readonly beforeExecuteEmitter = new BeforeToolExecuteEmitter();
+  readonly onBeforeExecuteTool: Event<BeforeToolExecuteEvent> = this.beforeExecuteEmitter.event;
+  private readonly willExecuteEmitter = new AsyncEmitter<WillExecuteToolEvent>();
+  readonly onWillExecuteTool: Event<WillExecuteToolEvent> = this.willExecuteEmitter.event;
+
   readonly hooks = {
-    onBeforeExecuteTool: new OrderedHookSlot<ToolBeforeExecuteContext>(),
     onDidExecuteTool: new OrderedHookSlot<ToolDidExecuteContext>(),
   };
 
@@ -355,26 +370,24 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleSynthetic(call.args, execution, displayFields);
     }
 
-    const willCtx = buildWillExecuteContext(call, execution, allCalls, options);
-    await this.hooks.onBeforeExecuteTool.run(willCtx);
+    const beforeContext = buildBeforeExecuteContext(call, execution, allCalls, options);
+    const decision = await this.beforeExecuteEmitter.fireBeforeExecute(beforeContext);
 
-    const decision = willCtx.decision;
-    if (decision?.block === true) {
-      return settleError(
-        call.args,
-        decision.reason ?? `Tool call "${call.toolName}" was blocked`,
-        displayFields,
-      );
-    }
-    if (decision?.syntheticResult !== undefined) {
-      return settleSynthetic(
-        call.args,
-        decision.syntheticResult,
-        displayFields,
-      );
+    if (decision?.veto !== undefined) {
+      return settleSynthetic(call.args, decision.veto, displayFields);
     }
 
     const executionMetadata = decision?.executionMetadata;
+
+    await this.willExecuteEmitter.fireAsync(
+      {
+        turnId: options.turnId,
+        toolCall: call.toolCall,
+        execution,
+        args: call.args,
+      },
+      options.signal,
+    );
 
     this.dispatchToolCall(call, call.args, options, displayFields);
 
@@ -635,12 +648,12 @@ interface PreparedToolResult {
 
 type ToolCallDisplayFields = { description?: string | undefined; display?: ToolInputDisplay | undefined };
 
-function buildWillExecuteContext(
+function buildBeforeExecuteContext(
   call: RunnableToolCall,
   execution: RunnableToolExecution,
   allCalls: readonly ToolCall[],
   options: ToolExecutorExecuteOptions,
-): ToolBeforeExecuteContext {
+): ResolvedToolExecutionHookContext {
   return {
     turnId: options.turnId,
     signal: options.signal,

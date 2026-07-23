@@ -10,6 +10,7 @@ import {
   planModeCancel,
   planModeEnter,
   planModeExit,
+  planRevision,
 } from '#/agent/plan/planOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -153,5 +154,136 @@ describe('plan ops (wire-backed)', () => {
       ],
     );
     expect(cancelled.wire.getModel(PlanModel).active).toBe(false);
+  });
+
+  it('plan.revision persists a flat reference record and advances the per-id counter', async () => {
+    wire.dispatch(planModeEnter({ id: 'p1' }));
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      }),
+    );
+    expect(wire.getModel(PlanModel)).toEqual({
+      active: true,
+      id: 'p1',
+      revisionCount: { p1: 1 },
+    });
+
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 2,
+        path: 'sessions/w/s/agents/main/plan/p1/v2.md',
+        sha256: 'sha-b',
+        bytes: 20,
+      }),
+    );
+    expect(wire.getModel(PlanModel).revisionCount).toEqual({ p1: 2 });
+
+    const records = await readRecords();
+    expect(records.map((record) => record.type)).toEqual([
+      'plan_mode.enter',
+      'plan.revision',
+      'plan.revision',
+    ]);
+    expect(records[1]).toEqual(
+      expect.objectContaining({
+        type: 'plan.revision',
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+        time: expect.any(Number),
+      }),
+    );
+    expect(records.every((record) => 'payload' in record === false)).toBe(true);
+  });
+
+  it('keeps the revision counter across the lifecycle and emits the event only live', async () => {
+    const host = buildHost('plan-revision-events');
+    const emissions: unknown[] = [];
+    host.eventBus.subscribe((e) => {
+      emissions.push(e);
+    });
+
+    host.wire.dispatch(planModeEnter({ id: 'p1' }));
+    host.wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      }),
+    );
+    host.wire.dispatch(planModeExit({}));
+    expect(host.wire.getModel(PlanModel)).toEqual({
+      active: false,
+      revisionCount: { p1: 1 },
+    });
+
+    // Re-entering the same plan id continues the counter instead of
+    // restarting it, so later revisions never overwrite earlier blobs.
+    host.wire.dispatch(planModeEnter({ id: 'p1' }));
+    expect(host.wire.getModel(PlanModel).revisionCount).toEqual({ p1: 1 });
+
+    expect(
+      emissions.filter((e) => (e as { type: string }).type === 'plan.revision'),
+    ).toEqual([
+      {
+        type: 'plan.revision',
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      },
+    ]);
+  });
+
+  it('replay restores the revision counter silently', async () => {
+    wire.dispatch(planModeEnter({ id: 'p1' }));
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 1,
+        path: 'sessions/w/s/agents/main/plan/p1/v1.md',
+        sha256: 'sha-a',
+        bytes: 12,
+      }),
+    );
+    wire.dispatch(
+      planRevision({
+        id: 'p1',
+        version: 2,
+        path: 'sessions/w/s/agents/main/plan/p1/v2.md',
+        sha256: 'sha-b',
+        bytes: 20,
+      }),
+    );
+    const records = await readRecords();
+
+    const host = buildHost('plan-revision-replay');
+    const emissions: string[] = [];
+    host.eventBus.subscribe((e) => {
+      emissions.push(e.type);
+    });
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'plan-revision-replay'),
+      records,
+    );
+    expect(host.wire.getModel(PlanModel)).toEqual({
+      active: true,
+      id: 'p1',
+      revisionCount: { p1: 2 },
+    });
+    expect(emissions).toEqual([]);
   });
 });
