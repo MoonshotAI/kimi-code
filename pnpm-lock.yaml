@@ -835,6 +835,12 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../oauth
+      '@moonshot-ai/kosong':
+        specifier: workspace:^
+        version: link:../kosong
       '@moonshot-ai/transcript':
         specifier: workspace:^
         version: link:../transcript
