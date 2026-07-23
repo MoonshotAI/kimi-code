@@ -59,13 +59,22 @@ const defaultLog: Logger = {
   child: () => defaultLog,
 };
 
+/**
+ * Global default timeouts applied when a server entry does not set its own
+ * `startupTimeoutMs` / `toolTimeoutMs`. Resolved at each (re)connect, not at
+ * construction, so late-ready or changed configuration is picked up.
+ */
+export interface McpDefaultTimeouts {
+  readonly startupTimeoutMs?: number;
+  readonly toolTimeoutMs?: number;
+}
+
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
-  readonly defaultStartupTimeoutMs?: number;
-  readonly defaultToolTimeoutMs?: number;
+  readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
 }
 
 export class McpConnectionManager {
@@ -258,7 +267,7 @@ export class McpConnectionManager {
   private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
     const timeoutMs =
       entry.config.startupTimeoutMs ??
-      this.options.defaultStartupTimeoutMs ??
+      this.options.resolveDefaultTimeouts?.().startupTimeoutMs ??
       DEFAULT_STARTUP_TIMEOUT_MS;
 
     let client: RuntimeMcpClient | undefined;
@@ -334,7 +343,8 @@ export class McpConnectionManager {
     name: string,
     startupTimeoutMs: number,
   ): Promise<RuntimeMcpClient> {
-    const toolCallTimeoutMs = config.toolTimeoutMs ?? this.options.defaultToolTimeoutMs;
+    const toolCallTimeoutMs =
+      config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
     if (config.transport === 'stdio') {
       return new StdioMcpClient(config, {
         startupTimeoutMs,

@@ -43,7 +43,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 export const MCP_STARTUP_TIMEOUT_ENV = 'KIMI_MCP_STARTUP_TIMEOUT_MS';
 export const MCP_TOOL_TIMEOUT_ENV = 'KIMI_MCP_TOOL_TIMEOUT_MS';
 
-/** Parse an env override; anything but a positive integer is ignored. */
+/** Parse an env override; anything but an integer from 1 to MAX_MCP_TIMEOUT_MS is ignored. */
 function parseTimeoutMsEnv(raw: string): number | undefined {
   const parsed = Number(raw);
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_MCP_TIMEOUT_MS

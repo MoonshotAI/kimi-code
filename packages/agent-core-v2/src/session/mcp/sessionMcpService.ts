@@ -1,16 +1,19 @@
 /**
  * `mcp` domain (L5) — `ISessionMcpService` implementation.
  *
- * Owns the shared session connection manager and initial connection lifecycle.
- * Resolves server sources through `bootstrap`, `workspace`, and `plugin`,
- * timeout preferences through `config`, OAuth storage through `persistence`,
- * and reports through `log` and `telemetry`. Bound at Session scope.
+ * Owns the session-wide `McpConnectionManager` (built lazily, shared by every
+ * agent), resolves the session + caller-supplied + plugin MCP config, drives
+ * the initial connect (`ensureMcpReady`, cached so session creation and first
+ * agent creation can both await it), and reports connection telemetry. The
+ * initial connect waits for `config.ready` so global timeout preferences are
+ * deterministic; the manager reads them again at each (re)connect. An
+ * outright initial-load failure is logged (per-server failures are status
+ * entries). Bound at Session scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { Error2, ErrorCodes } from '#/errors';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import { MCP_SECTION, type McpSection } from '#/agent/mcp/configSection';
@@ -47,7 +50,8 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
 
   ensureMcpReady(callerServers?: Readonly<Record<string, McpServerConfig>>): Promise<void> {
     if (this.mcpInitialLoad !== undefined) return this.mcpInitialLoad;
-    const initialLoad = this.initializeMcp(callerServers).catch((error: unknown) => {
+    const manager = this.connectionManager();
+    const initialLoad = this.initializeMcp(manager, callerServers).catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
     });
     this.mcpInitialLoad = initialLoad;
@@ -55,32 +59,32 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
   }
 
   connectionManager(): McpConnectionManager {
-    if (this.mcpManager === undefined) {
-      throw new Error2(
-        ErrorCodes.MCP_STARTUP_FAILED,
-        'MCP connection manager is not ready; await ensureMcpReady() first',
-      );
-    }
-    return this.mcpManager;
-  }
-
-  private async initializeMcp(
-    callerServers?: Readonly<Record<string, McpServerConfig>>,
-  ): Promise<void> {
-    await this.config.ready;
+    if (this.mcpManager !== undefined) return this.mcpManager;
     const oauthService = new McpOAuthService({
       store: createMcpOAuthStore(this.atomicDocs),
     });
-    const mcpSection = this.config.get<McpSection | undefined>(MCP_SECTION);
     const manager = new McpConnectionManager({
       log: this.log,
       oauthService,
       stdioCwd: this.workspace.workDir,
-      defaultStartupTimeoutMs: mcpSection?.startupTimeoutMs,
-      defaultToolTimeoutMs: mcpSection?.toolTimeoutMs,
+      resolveDefaultTimeouts: () => {
+        const section = this.config.get<McpSection | undefined>(MCP_SECTION);
+        return {
+          startupTimeoutMs: section?.startupTimeoutMs,
+          toolTimeoutMs: section?.toolTimeoutMs,
+        };
+      },
     });
     this.mcpManager = manager;
     this._register({ dispose: () => void manager.shutdown() });
+    return manager;
+  }
+
+  private async initializeMcp(
+    manager: McpConnectionManager,
+    callerServers?: Readonly<Record<string, McpServerConfig>>,
+  ): Promise<void> {
+    await this.config.ready;
     await this.connectMcpServers(manager, callerServers);
   }
 

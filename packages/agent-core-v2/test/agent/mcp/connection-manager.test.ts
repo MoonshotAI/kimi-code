@@ -406,8 +406,10 @@ describe('McpConnectionManager', () => {
     }
   }, 7000);
 
-  it('applies defaultStartupTimeoutMs when the server entry omits startupTimeoutMs', async () => {
-    const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 100 });
+  it('applies the resolved default startup timeout when the server entry omits startupTimeoutMs', async () => {
+    const cm = new McpConnectionManager({
+      resolveDefaultTimeouts: () => ({ startupTimeoutMs: 100 }),
+    });
     try {
       await cm.connectAll({
         slow: {
@@ -429,11 +431,13 @@ describe('McpConnectionManager', () => {
     ['http', { transport: 'http' as const, url: 'https://example.test/mcp' }],
     ['sse', { transport: 'sse' as const, url: 'https://example.test/sse' }],
   ])(
-    'forwards defaultStartupTimeoutMs above the SDK default over %s',
+    'forwards the resolved default startup timeout above the SDK default over %s',
     async (_transport, config) => {
       const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
       const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
-      const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 120_000 });
+      const cm = new McpConnectionManager({
+        resolveDefaultTimeouts: () => ({ startupTimeoutMs: 120_000 }),
+      });
       try {
         await cm.connectAll({ server: config });
         expect(connect).toHaveBeenCalledWith(
@@ -461,7 +465,9 @@ describe('McpConnectionManager', () => {
     async (_transport, config) => {
       const connect = vi.spyOn(Client.prototype, 'connect').mockResolvedValue();
       const listTools = vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] });
-      const cm = new McpConnectionManager({ defaultStartupTimeoutMs: 120_000 });
+      const cm = new McpConnectionManager({
+        resolveDefaultTimeouts: () => ({ startupTimeoutMs: 120_000 }),
+      });
       try {
         await cm.connectAll({
           server: { ...config, startupTimeoutMs: 180_000 },
@@ -482,8 +488,10 @@ describe('McpConnectionManager', () => {
     },
   );
 
-  it('applies defaultToolTimeoutMs when the server entry omits toolTimeoutMs', async () => {
-    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+  it('applies the resolved default tool timeout when the server entry omits toolTimeoutMs', async () => {
+    const cm = new McpConnectionManager({
+      resolveDefaultTimeouts: () => ({ toolTimeoutMs: 100 }),
+    });
     try {
       await cm.connectAll({
         slowTool: {
@@ -500,8 +508,10 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
-  it('lets a per-server toolTimeoutMs override defaultToolTimeoutMs', async () => {
-    const cm = new McpConnectionManager({ defaultToolTimeoutMs: 100 });
+  it('lets a per-server toolTimeoutMs override the resolved default tool timeout', async () => {
+    const cm = new McpConnectionManager({
+      resolveDefaultTimeouts: () => ({ toolTimeoutMs: 100 }),
+    });
     try {
       await cm.connectAll({
         slowTool: {
@@ -866,26 +876,36 @@ describe('Session MCP initialization', () => {
     return ix.get(ISessionMcpService);
   }
 
-  it('keeps the connection manager unavailable while config remains unready', async () => {
+  it('exposes the connection manager before config is ready and starts connecting once ready', async () => {
     let resolveConfigReady!: () => void;
     const ready = new Promise<void>((resolve) => {
       resolveConfigReady = resolve;
     });
     const service = createSessionMcpService(ready);
-    const initialLoad = service.ensureMcpReady();
+    // The manager is available synchronously, independent of config readiness.
+    manager = service.connectionManager();
+    expect(manager.list()).toEqual([]);
+
+    const initialLoad = service.ensureMcpReady({
+      alpha: {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [stdioFixture],
+      },
+    });
     try {
-      await Promise.resolve();
-      expect(() => service.connectionManager()).toThrow(/not ready/i);
+      // The initial connect is gated on config.ready: no entry exists yet.
+      await sleep(50);
+      expect(manager.list()).toEqual([]);
 
       resolveConfigReady();
       await initialLoad;
-      manager = service.connectionManager();
-      expect(manager.list()).toEqual([]);
+      expect(manager.get('alpha')?.status).toBe('connected');
     } finally {
       resolveConfigReady();
       await initialLoad;
     }
-  });
+  }, 15000);
 
   it('times out tool calls using the session MCP timeout preference', async () => {
     const service = createSessionMcpService(Promise.resolve(), { toolTimeoutMs: 1 });
