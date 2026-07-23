@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": minor
+"@moonshot-ai/kimi-code": patch
 ---
 
-Add a configurable secondary model for subagents: newly spawned subagents bind to it by default instead of inheriting the main agent's model, and the main agent can opt back into the primary model per spawn. Set `[secondary_model] model` (and optionally `effort`) in `config.toml`, or `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT`. Resumed subagents now keep the model they were created with instead of switching to the parent agent's current model — resuming one requires that model to still be configured.
+Add a `[secondary_model]` config section for running newly spawned subagents on a second model instead of inheriting the main agent's model; the main agent can still pick the primary model per spawn. Effective in `kimi web` and experimental `kimi -p` only. Set `[secondary_model] model` in `config.toml` (or `KIMI_SECONDARY_MODEL`) to use it.

@@ -107,7 +107,7 @@ export function buildSubagentModelDescriptions(
   if (secondaryModel === undefined || callerModelAlias === undefined) return undefined;
   return [
     'Available models (pass via model):',
-    `- secondary: ${secondaryModel} (default) — the configured secondary model; cheaper, prefer it for routine subagent tasks`,
+    `- secondary: ${secondaryModel} (default) — the configured secondary model; prefer it for routine subagent tasks`,
     `- primary: ${callerModelAlias} — the main model you are running on; use it for hard, quality-sensitive subagent tasks`,
   ].join('\n');
 }

@@ -83,7 +83,7 @@ export const AgentSwarmToolInputSchema = z
       .enum(['secondary', 'primary'])
       .optional()
       .describe(
-        'Which model to run the item-spawned subagents on: "secondary" = the configured secondary model (cheaper, the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise subagents inherit your model. Resumed subagents always keep their own model.',
+        'Which model to run the item-spawned subagents on: "secondary" = the configured secondary model (the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise subagents inherit your model. Resumed subagents always keep their own model.',
       ),
   })
   .strict();

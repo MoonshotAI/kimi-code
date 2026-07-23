@@ -128,7 +128,7 @@ export const AgentToolInputSchema = z.preprocess(
       .enum(['secondary', 'primary'])
       .optional()
       .describe(
-        'Which model to run the subagent on: "secondary" = the configured secondary model (cheaper, the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
+        'Which model to run the subagent on: "secondary" = the configured secondary model (the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
       ),
   }),
 );
