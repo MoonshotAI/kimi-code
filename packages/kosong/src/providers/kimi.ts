@@ -31,6 +31,7 @@ import {
   type OpenAIToolParam,
   toolToOpenAI,
 } from './openai-common';
+import { ReasoningKeyDialect, type ReasoningKey } from './reasoning-key';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -94,6 +95,8 @@ interface OpenAIMessage {
   tool_call_id?: string | undefined;
   name?: string | undefined;
   reasoning_content?: string | undefined;
+  reasoning_details?: string | undefined;
+  reasoning?: string | undefined;
   /** Message-level tool declarations (`messages[].tools`), see convertMessage. */
   tools?: OpenAIToolParam[] | undefined;
 }
@@ -113,7 +116,11 @@ function isEffectivelyEmptyContent(parts: ContentPart[]): boolean {
   return true;
 }
 
-function convertMessage(message: Message, preservedThinkingEnabled: boolean): OpenAIMessage {
+function convertMessage(
+  message: Message,
+  preservedThinkingEnabled: boolean,
+  reasoningKey: ReasoningKey,
+): OpenAIMessage {
   let reasoningContent = '';
   let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
@@ -168,7 +175,10 @@ function convertMessage(message: Message, preservedThinkingEnabled: boolean): Op
   }
 
   if (hasReasoningPart || (preservedThinkingEnabled && message.role === 'assistant')) {
-    result.reasoning_content = reasoningContent;
+    // Echo thinking back under the dialect the endpoint spoke (detected from
+    // inbound responses; defaults to `reasoning_content`). Newer vLLM dropped
+    // `reasoning_content` on its request side and only honors `reasoning`.
+    result[reasoningKey] = reasoningContent;
   }
 
   // Message-level tool declarations: a system message carrying `tools` loads
@@ -257,6 +267,7 @@ class KimiStreamedMessage implements StreamedMessage {
     response: OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
     isStream: boolean,
     private readonly _traceId: string | null,
+    private readonly _reasoningKeyDialect: ReasoningKeyDialect,
   ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(
@@ -309,10 +320,12 @@ class KimiStreamedMessage implements StreamedMessage {
     const message = response.choices[0]?.message;
     if (!message) return;
 
-    // reasoning_content (Moonshot proprietary)
-    const rc = (message as unknown as Record<string, unknown>)['reasoning_content'];
-    if (typeof rc === 'string') {
-      yield { type: 'think', think: rc } satisfies StreamedMessagePart;
+    // Reasoning dialect: accept any known wire key and remember which one the
+    // endpoint used, so the next request echoes thinking back under the same
+    // field (newer vLLM renamed `reasoning_content` to `reasoning`).
+    const reasoning = this._reasoningKeyDialect.observe(message);
+    if (reasoning !== undefined) {
+      yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
     if (message.content) {
@@ -367,10 +380,10 @@ class KimiStreamedMessage implements StreamedMessage {
 
         const delta = choice.delta;
 
-        // reasoning_content (Moonshot proprietary)
-        const rc = (delta as unknown as Record<string, unknown>)['reasoning_content'];
-        if (typeof rc === 'string') {
-          yield { type: 'think', think: rc } satisfies StreamedMessagePart;
+        // Reasoning dialect: same detection as the non-stream path.
+        const reasoning = this._reasoningKeyDialect.observe(delta);
+        if (reasoning !== undefined) {
+          yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
         // text content
@@ -412,6 +425,7 @@ export class KimiChatProvider implements ChatProvider {
   private _client: OpenAI | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private _files: KimiFiles | undefined;
+  private _reasoningKeyDialect: ReasoningKeyDialect;
 
   constructor(options: KimiOptions) {
     const apiKey = options.apiKey ?? process.env['KIMI_API_KEY'];
@@ -430,6 +444,7 @@ export class KimiChatProvider implements ChatProvider {
             baseURL: this._baseUrl,
             defaultHeaders: this._defaultHeaders,
           });
+    this._reasoningKeyDialect = new ReasoningKeyDialect();
   }
 
   get modelName(): string {
@@ -486,9 +501,12 @@ export class KimiChatProvider implements ChatProvider {
     const thinking = this._generationKwargs.extra_body?.thinking;
     const preservedThinkingEnabled =
       thinking?.keep === 'all' && thinking.type !== 'disabled';
+    // The kimi provider never pins an explicit reasoning key, so the dialect
+    // always resolves to one of the known wire keys.
+    const reasoningKey = this._reasoningKeyDialect.outboundKey() as ReasoningKey;
     const normalizedHistory = normalizeToolCallIdsForProvider(history, KIMI_TOOL_CALL_ID_POLICY);
     for (const msg of normalizedHistory) {
-      messages.push(convertMessage(msg, preservedThinkingEnabled));
+      messages.push(convertMessage(msg, preservedThinkingEnabled, reasoningKey));
     }
 
     const kwargs: Record<string, unknown> = {
@@ -558,6 +576,7 @@ export class KimiChatProvider implements ChatProvider {
           | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
         this._stream,
         parseTraceId(response.headers),
+        this._reasoningKeyDialect,
       );
     } catch (error: unknown) {
       throw convertOpenAIError(error);
@@ -654,6 +673,9 @@ export class KimiChatProvider implements ChatProvider {
     // a closed socket. Keep `_client` shared and never mutate it after
     // construction; instead build a new KimiChatProvider when a real new
     // client is required.
+    // `_reasoningKeyDialect` is shared for the same reason: the dialect
+    // learned from a response on any per-step clone must steer the next
+    // request's outbound reasoning key.
     return clone;
   }
 }

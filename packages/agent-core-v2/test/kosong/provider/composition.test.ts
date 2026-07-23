@@ -735,6 +735,135 @@ describe('per-turn intent wire encoding (behavior probes)', () => {
   });
 });
 
+describe('reasoning dialect (behavior probes)', () => {
+  it('yields think parts from the `reasoning` wire field', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+    });
+
+    const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
+    client.chat.completions.create = vi.fn().mockImplementation(() => {
+      async function* chunks(): AsyncIterable<unknown> {
+        yield { id: 'chatcmpl-probe', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+        };
+      }
+      return {
+        withResponse: () =>
+          Promise.resolve({ data: chunks(), response: { headers: new Headers() } }),
+      };
+    });
+
+    const parts: unknown[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
+      parts.push(part);
+    }
+    expect(parts).toEqual([
+      { type: 'think', think: 'hmm' },
+      { type: 'text', text: 'ok' },
+    ]);
+  });
+
+  it('echoes thinking under `reasoning` after the endpoint spoke it', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+    });
+
+    const captured: Array<Record<string, unknown>> = [];
+    const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
+    client.chat.completions.create = vi.fn().mockImplementation((params: unknown) => {
+      captured.push(params as Record<string, unknown>);
+      async function* chunks(): AsyncIterable<unknown> {
+        yield { id: 'chatcmpl-probe', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
+        yield {
+          id: 'chatcmpl-probe',
+          choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+        };
+      }
+      return {
+        withResponse: () =>
+          Promise.resolve({ data: chunks(), response: { headers: new Headers() } }),
+      };
+    });
+
+    // Detection happens while draining the first response.
+    await drain(await provider.generate('', [], PROBE_HISTORY));
+
+    await drain(await provider.generate('', [], THINK_HISTORY));
+
+    const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+    expect(messages[0]).toMatchObject({ reasoning: 'earlier reasoning' });
+    expect(messages[0]).not.toHaveProperty('reasoning_content');
+  });
+
+  it('kimi composition defaults to reasoning_content before any detection', async () => {
+    const provider = registry.createChatProvider({
+      protocol: 'openai',
+      providerType: 'kimi',
+      modelName: 'kimi-k2',
+      apiKey: 'sk-probe',
+    });
+
+    // The probe stream carries no reasoning field, so nothing is detected.
+    const body = await captureOpenAIBody(provider, undefined, THINK_HISTORY);
+
+    const messages = body['messages'] as Array<Record<string, unknown>>;
+    expect(messages[0]).toMatchObject({ reasoning_content: 'earlier reasoning' });
+  });
+
+  it('an explicit reasoningKey pins the dialect against detection', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'gpt-4.1',
+      apiKey: 'sk-probe',
+      stream: false,
+      reasoningKey: 'custom_key',
+    });
+
+    const captured: Array<Record<string, unknown>> = [];
+    const client = sdkClient(provider) as { chat: { completions: { create: unknown } } };
+    client.chat.completions.create = vi.fn().mockImplementation((params: unknown) => {
+      captured.push(params as Record<string, unknown>);
+      return {
+        withResponse: () =>
+          Promise.resolve({
+            data: {
+              id: 'chatcmpl-probe',
+              choices: [
+                {
+                  index: 0,
+                  message: { role: 'assistant', content: 'ok', reasoning: 'hmm' },
+                  finish_reason: 'stop',
+                },
+              ],
+            },
+            response: { headers: new Headers() },
+          }),
+      };
+    });
+
+    // With an explicit key, only that key is read inbound: a `reasoning`
+    // field is not picked up, and detection stays out of the way.
+    const firstParts: unknown[] = [];
+    for await (const part of await provider.generate('', [], PROBE_HISTORY)) {
+      firstParts.push(part);
+    }
+    expect(firstParts).toEqual([{ type: 'text', text: 'ok' }]);
+
+    await drain(await provider.generate('', [], THINK_HISTORY));
+
+    const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+    expect(messages[0]).toMatchObject({ custom_key: 'earlier reasoning' });
+  });
+});
+
 const CONTACT_SCHEMA = {
   type: 'object',
   properties: { name: { type: 'string' } },
