@@ -7,8 +7,11 @@
  * snake_case ↔ camelCase TOML transforms (including the nested `oauth` and
  * `custom_headers` normalization, with `custom_headers` record keys preserved
  * verbatim). Both entries' `base_url` / `api_key` are env-overridable
- * (`KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*`, env wins over the file); the
- * composed `stripEnv` keeps env-derived values from being persisted.
+ * (`KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*`, env wins over the file). Its
+ * effective overlay treats an env base URL as a new credential boundary and
+ * prevents persisted API keys, OAuth refs, or custom headers from crossing
+ * into that endpoint; the composed `stripEnv` keeps env-derived values from
+ * being persisted.
  * Self-registered at module load via `registerConfigSection`, so the
  * `config` domain never imports this domain's types.
  *
@@ -21,11 +24,13 @@
 import { z } from 'zod';
 
 import {
+  type ConfigEffectiveOverlay,
   type ConfigStripEnv,
   type EnvBindings,
   envBindings,
   stripEnvBoundFields,
 } from '#/app/config/config';
+import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
 import {
   camelToSnake,
@@ -99,6 +104,52 @@ export const servicesEnvBindings: EnvBindings<ServicesConfig> = envBindings(
     moonshotFetch: moonshotFetchEnvBindings,
   },
 );
+
+const servicesCredentialEnvOverlay: ConfigEffectiveOverlay = {
+  apply(effective, getEnv, validate) {
+    const services = effective[SERVICES_SECTION];
+    if (!isPlainObject(services)) return [];
+    const moonshotSearch = isolateEnvServiceCredentials(
+      services['moonshotSearch'],
+      getEnv,
+      WEB_SEARCH_BASE_URL_ENV,
+      WEB_SEARCH_API_KEY_ENV,
+    );
+    const moonshotFetch = isolateEnvServiceCredentials(
+      services['moonshotFetch'],
+      getEnv,
+      WEB_FETCH_BASE_URL_ENV,
+      WEB_FETCH_API_KEY_ENV,
+    );
+    if (
+      moonshotSearch === services['moonshotSearch'] &&
+      moonshotFetch === services['moonshotFetch']
+    ) {
+      return [];
+    }
+    effective[SERVICES_SECTION] = validate(SERVICES_SECTION, {
+      ...services,
+      moonshotSearch,
+      moonshotFetch,
+    });
+    return [SERVICES_SECTION];
+  },
+};
+
+function isolateEnvServiceCredentials(
+  service: unknown,
+  getEnv: (name: string) => string | undefined,
+  baseUrlEnv: string,
+  apiKeyEnv: string,
+): unknown {
+  const baseUrl = nonBlankEnv(getEnv(baseUrlEnv) ?? '');
+  const apiKey = nonBlankEnv(getEnv(apiKeyEnv) ?? '');
+  if (baseUrl !== undefined) return { baseUrl, apiKey };
+  if (apiKey === undefined) return service;
+  if (!isPlainObject(service)) return { apiKey };
+  const { apiKey: _apiKey, oauth: _oauth, ...rest } = service;
+  return { ...rest, apiKey };
+}
 
 const stripMoonshotSearchEnv = stripEnvBoundFields(moonshotSearchEnvBindings);
 const stripMoonshotFetchEnv = stripEnvBoundFields(moonshotFetchEnvBindings);
@@ -184,3 +235,4 @@ registerConfigSection(SERVICES_SECTION, ServicesConfigSchema, {
   env: servicesEnvBindings,
   stripEnv: stripServicesEnv,
 });
+registerConfigOverlay(servicesCredentialEnvOverlay);

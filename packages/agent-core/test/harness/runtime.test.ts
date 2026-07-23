@@ -382,7 +382,7 @@ custom_headers = { "X-Test" = "1" }
     );
   });
 
-  it('prefers KIMI_WEB_* env vars over the services config section field by field', async () => {
+  it('keeps persisted credentials off an env-selected Moonshot search endpoint', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     const workDir = join(tmp, 'work');
@@ -394,17 +394,24 @@ custom_headers = { "X-Test" = "1" }
 [services.moonshot_search]
 base_url = "https://search-file.example/v1"
 api_key = "file-search-key"
+oauth = { storage = "file", key = "oauth/custom-kimi-code" }
+custom_headers = { "X-Config-Secret" = "secret-value" }
 `,
     );
     vi.stubEnv('KIMI_WEB_SEARCH_BASE_URL', 'https://search-env.example/v1');
+    vi.stubEnv('KIMI_WEB_SEARCH_API_KEY', 'env-search-key');
 
+    const getAccessToken = vi.fn().mockResolvedValue('oauth-token');
+    const resolveOAuthTokenProvider = vi.fn<OAuthTokenProviderResolver>(() => ({
+      getAccessToken,
+    }));
     const fetchImpl = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ search_results: [] }), { status: 200 }),
     );
     vi.stubGlobal('fetch', fetchImpl);
 
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    const core = new KimiCore(coreRpc, { homeDir });
+    const core = new KimiCore(coreRpc, { homeDir, resolveOAuthTokenProvider });
     const rpc = await sdkRpc({
       emitEvent: vi.fn(),
       requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
@@ -419,7 +426,10 @@ api_key = "file-search-key"
 
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://search-env.example/v1');
-    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer file-search-key');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer env-search-key' });
+    expect(init.headers).not.toHaveProperty('X-Config-Secret');
+    expect(resolveOAuthTokenProvider).not.toHaveBeenCalled();
+    expect(getAccessToken).not.toHaveBeenCalled();
   });
 
   it('falls back to defaultModel when createSession receives no model option', async () => {

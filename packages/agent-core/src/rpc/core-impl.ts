@@ -1442,21 +1442,27 @@ async function createRuntimeConfig(input: {
 }
 
 /**
- * Overlay the `KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*` env vars onto a
- * `[services.*]` entry, field by field (env wins over config.toml, mirroring
- * the other `KIMI_*` overrides). Blank env values are treated as unset; an
- * `api_key`-only override without any `base_url` stays inert because
- * `baseUrl` remains the enable switch above.
+ * Resolve `KIMI_WEB_SEARCH_*` / `KIMI_WEB_FETCH_*` without mixing credentials
+ * across service origins. An env base URL starts a fresh service entry so a
+ * persisted API key, OAuth token, or custom header cannot reach the env
+ * endpoint. An env API key without an env base URL keeps the configured
+ * endpoint and headers, but replaces both configured credential forms.
+ * Blank env values are treated as unset.
  */
 function withServiceEnv(
   service: MoonshotServiceConfig | undefined,
   baseUrlEnv: string,
   apiKeyEnv: string,
 ): MoonshotServiceConfig | undefined {
-  const baseUrl = nonEmptyString(process.env[baseUrlEnv]) ?? service?.baseUrl;
-  const apiKey = nonEmptyString(process.env[apiKeyEnv]) ?? service?.apiKey;
-  if (baseUrl === undefined && apiKey === undefined) return service;
-  return { ...service, baseUrl, apiKey };
+  const envBaseUrl = nonEmptyString(process.env[baseUrlEnv]);
+  const envApiKey = nonEmptyString(process.env[apiKeyEnv]);
+  if (envBaseUrl !== undefined) {
+    return { baseUrl: envBaseUrl, apiKey: envApiKey };
+  }
+  if (envApiKey === undefined) return service;
+  if (service === undefined) return { apiKey: envApiKey };
+  const { apiKey: _apiKey, oauth: _oauth, ...rest } = service;
+  return { ...rest, apiKey: envApiKey };
 }
 
 function serviceCredentials(

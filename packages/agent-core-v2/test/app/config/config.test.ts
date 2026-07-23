@@ -61,7 +61,6 @@ import {
   SUBAGENT_TIMEOUT_ENV,
   type SubagentConfig,
 } from '#/session/subagent/configSection';
-import '#/app/auth/configSection';
 import {
   SERVICES_SECTION,
   WEB_FETCH_API_KEY_ENV,
@@ -514,18 +513,62 @@ describe('services config section env bindings', () => {
     disposables.dispose();
   });
 
-  it('lets env vars override the file value field by field', async () => {
-    const { config, disposables } = createConfig({
-      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
-    });
+  it('does not inherit persisted credentials when env selects a service endpoint', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = createConfig(env);
     await config.ready;
     await config.set(SERVICES_SECTION, {
-      moonshotSearch: { baseUrl: 'https://file.example/search', apiKey: 'file-key' },
+      moonshotSearch: {
+        baseUrl: 'https://file.example/search',
+        apiKey: 'file-search-key',
+        oauth: { storage: 'file', key: 'oauth/search' },
+        customHeaders: { Authorization: 'Bearer configured-search-secret' },
+      },
+      moonshotFetch: {
+        baseUrl: 'https://file.example/fetch',
+        apiKey: 'file-fetch-key',
+        oauth: { storage: 'file', key: 'oauth/fetch' },
+        customHeaders: { Authorization: 'Bearer configured-fetch-secret' },
+      },
+    });
+    Object.assign(env, {
+      [WEB_SEARCH_BASE_URL_ENV]: 'https://search-env.example/search',
+      [WEB_SEARCH_API_KEY_ENV]: 'env-search-key',
+      [WEB_FETCH_BASE_URL_ENV]: 'https://fetch-env.example/fetch',
+      [WEB_FETCH_API_KEY_ENV]: 'env-fetch-key',
     });
 
+    expect(config.get<ServicesConfig>(SERVICES_SECTION)).toEqual({
+      moonshotSearch: {
+        baseUrl: 'https://search-env.example/search',
+        apiKey: 'env-search-key',
+      },
+      moonshotFetch: {
+        baseUrl: 'https://fetch-env.example/fetch',
+        apiKey: 'env-fetch-key',
+      },
+    });
+
+    disposables.dispose();
+  });
+
+  it('uses an env API key instead of persisted OAuth for a configured endpoint', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = createConfig(env);
+    await config.ready;
+    await config.set(SERVICES_SECTION, {
+      moonshotSearch: {
+        baseUrl: 'https://file.example/search',
+        oauth: { storage: 'file', key: 'oauth/search' },
+        customHeaders: { 'X-Service': 'search' },
+      },
+    });
+    env[WEB_SEARCH_API_KEY_ENV] = 'env-search-key';
+
     expect(config.get<ServicesConfig>(SERVICES_SECTION)?.moonshotSearch).toEqual({
-      baseUrl: 'https://search-env.example/search',
-      apiKey: 'file-key',
+      baseUrl: 'https://file.example/search',
+      apiKey: 'env-search-key',
+      customHeaders: { 'X-Service': 'search' },
     });
 
     disposables.dispose();
