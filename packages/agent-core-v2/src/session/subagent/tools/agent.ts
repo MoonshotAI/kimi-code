@@ -125,10 +125,10 @@ export const AgentToolInputSchema = z.preprocess(
         'If true, return immediately without waiting for completion. Prefer false unless the task can run independently and there is a clear benefit to not waiting.',
       ),
     model: z
-      .enum(['subagent', 'primary'])
+      .enum(['secondary', 'primary'])
       .optional()
       .describe(
-        'Which model to run the subagent on: "subagent" = the configured secondary model (cheaper, the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
+        'Which model to run the subagent on: "secondary" = the configured secondary model (cheaper, the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise the subagent inherits your model. Ignored when resuming — resumed subagents keep their own model.',
       ),
   }),
 );

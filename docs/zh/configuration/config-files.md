@@ -188,6 +188,23 @@ display_name = "Kimi for Coding (custom)"
 
 无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
+## `secondary_model`
+
+次主力模型是主模型 `default_model` 之外的第二个模型指针——通常是一个更便宜的模型，供不需要主模型的功能绑定使用。目前的消费者是子代理派生：设置后，新派生的子代理（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"secondary"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子代理继承主 Agent 的模型。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | — | 已配置 `[models]` 中的模型别名（不限 kimi 模型，可用任意供应商） |
+| `effort` | `string` | — | 功能绑定次主力 `model` 时使用的 thinking effort；单独设置无效。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
+
+```toml
+[secondary_model]
+model = "kimi-code/kimi-k2.5"
+effort = "low"
+```
+
+`model` / `effort` 可被环境变量 `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` 覆盖，优先级均高于配置文件。
+
 ## `thinking`
 
 `thinking` 设置 Thinking 模式的全局默认行为。
@@ -241,10 +258,7 @@ display_name = "Kimi for Coding (custom)"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。`0` 表示无超时——子代理一直运行到自行结束或被模型手动停止。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。在 print 模式（`kimi -p`）下未显式设置时默认为 `0`。注意：超过 `2147483647`（约 24.8 天）的值会被运行时钳到约 24.8 天 |
-| `model` | `string` | — | 子代理的次主力模型：取自已配置 `[models]` 中的模型别名（不限 kimi 模型，可用任意供应商）。设置后，新派生的子代理（`Agent` / `AgentSwarm`）默认绑定该模型，而不再继承主 Agent 的模型；主 Agent 会被告知每次派生可在 `"subagent"`（该模型）与 `"primary"`（主模型）之间选择。未设置时，子代理继承主 Agent 的模型 |
-| `effort` | `string` | — | 子代理绑定次主力 `model` 时使用的 thinking effort；单独设置无效。与主模型的 thinking effort 语义一致：严格校验 effort 的模型（如 kimi 模型）在不支持该取值时回退到模型默认 effort，其他供应商的模型按原样发送给后端 |
-
-`timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，`model` / `effort` 可被 `KIMI_SUBAGENT_MODEL` / `KIMI_SUBAGENT_EFFORT` 覆盖，优先级均高于配置文件。
+`timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
 
 ## `mcp`
 

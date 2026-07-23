@@ -835,7 +835,7 @@ describe('AgentSwarmTool', () => {
     const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary' }), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));
 
     expect(configured.description).toContain('Available models (pass via model):');
-    expect(configured.description).toContain('- subagent: provider/secondary (default)');
+    expect(configured.description).toContain('- secondary: provider/secondary (default)');
     expect(configured.description).toContain('- primary: main-model');
 
     const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model' }));

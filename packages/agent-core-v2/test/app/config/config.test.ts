@@ -15,6 +15,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { Error2, ErrorCodes, toErrorPayload } from '#/errors';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../../harness/snapshots';
@@ -57,13 +58,11 @@ import '#/session/subagent/configSection';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   resolveSubagentBinding,
-  resolveSubagentModel,
   resolveSubagentTimeoutMs,
-  SUBAGENT_EFFORT_ENV,
-  SUBAGENT_MODEL_ENV,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
   type SubagentConfig,
+  wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import {
   SERVICES_SECTION,
@@ -81,6 +80,14 @@ import {
   McpSectionSchema,
   type McpSection,
 } from '#/agent/mcp/configSection';
+import '#/kosong/model/secondaryModel';
+import {
+  resolveSecondaryModel,
+  SECONDARY_MODEL_EFFORT_ENV,
+  SECONDARY_MODEL_ENV,
+  SECONDARY_MODEL_SECTION,
+  type SecondaryModelConfig,
+} from '#/kosong/model/secondaryModel';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -1409,45 +1416,6 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('reads model/effort from config.toml and lets the env vars win', async () => {
-    const env: Record<string, string> = {};
-    const { config, disposables } = await createConfig(
-      env,
-      '[subagent]\nmodel = "provider/secondary"\neffort = "low"\n',
-    );
-    expect(resolveSubagentModel(config)).toBe('provider/secondary');
-    expect(config.get<SubagentConfig>(SUBAGENT_SECTION)?.effort).toBe('low');
-
-    env[SUBAGENT_MODEL_ENV] = 'provider/env-secondary';
-    env[SUBAGENT_EFFORT_ENV] = 'high';
-    expect(resolveSubagentModel(config)).toBe('provider/env-secondary');
-    expect(config.get<SubagentConfig>(SUBAGENT_SECTION)?.effort).toBe('high');
-
-    // Blank env values are ignored.
-    env[SUBAGENT_MODEL_ENV] = '  ';
-    expect(resolveSubagentModel(config)).toBe('provider/secondary');
-
-    disposables.dispose();
-  });
-
-  it('restores the env-owned model to the raw value on set() while the env var is set', async () => {
-    const env: Record<string, string> = { [SUBAGENT_MODEL_ENV]: 'provider/env-secondary' };
-    const { config, disposables } = await createConfig(
-      env,
-      '[subagent]\nmodel = "provider/raw-secondary"\n',
-    );
-
-    // A client echoing the env-overlaid section back.
-    await config.set(SUBAGENT_SECTION, { model: 'provider/env-secondary' });
-
-    expect(resolveSubagentModel(config)).toBe('provider/env-secondary');
-    expect(config.inspect<SubagentConfig>(SUBAGENT_SECTION).userValue).toEqual({
-      model: 'provider/raw-secondary',
-    });
-
-    disposables.dispose();
-  });
-
   it('resolves the spawn binding: secondary by default, primary on request, inherit otherwise', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
@@ -1456,13 +1424,13 @@ describe('subagent config section', () => {
       model: 'provider/main',
       thinking: 'medium',
     });
-    expect(resolveSubagentBinding(noModel.config, own, 'subagent')).toEqual({
+    expect(resolveSubagentBinding(noModel.config, own, 'secondary')).toEqual({
       model: 'provider/main',
       thinking: 'medium',
     });
     noModel.disposables.dispose();
 
-    const withModel = await createConfig({}, '[subagent]\nmodel = "provider/secondary"\n');
+    const withModel = await createConfig({}, '[secondary_model]\nmodel = "provider/secondary"\n');
     expect(resolveSubagentBinding(withModel.config, own)).toEqual({
       model: 'provider/secondary',
       thinking: 'medium',
@@ -1475,7 +1443,7 @@ describe('subagent config section', () => {
 
     const withEffort = await createConfig(
       {},
-      '[subagent]\nmodel = "provider/secondary"\neffort = "low"\n',
+      '[secondary_model]\nmodel = "provider/secondary"\neffort = "low"\n',
     );
     expect(resolveSubagentBinding(withEffort.config, own)).toEqual({
       model: 'provider/secondary',
@@ -1487,6 +1455,93 @@ describe('subagent config section', () => {
       thinking: 'medium',
     });
     withEffort.disposables.dispose();
+  });
+
+  it('preserves the coded error contract when adding secondary-model guidance', () => {
+    const cause = new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Model "provider/bad" is not configured in config.toml.',
+      { details: { model: 'provider/bad', source: 'models' } },
+    );
+
+    const result = wrapSubagentModelError(cause, 'provider/bad', 'provider/main');
+
+    expect(toErrorPayload(result)).toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+      message: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
+      details: {
+        model: 'provider/bad',
+        source: 'models',
+        secondaryModel: 'provider/bad',
+        secondaryModelConfig: {
+          section: 'secondaryModel.model',
+          environment: SECONDARY_MODEL_ENV,
+        },
+      },
+      cause: {
+        code: ErrorCodes.CONFIG_INVALID,
+        details: { model: 'provider/bad', source: 'models' },
+      },
+    });
+  });
+});
+
+describe('secondaryModel config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('reads model/effort from config.toml and lets the env vars win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(
+      env,
+      '[secondary_model]\nmodel = "provider/secondary"\neffort = "low"\n',
+    );
+    expect(resolveSecondaryModel(config)?.model).toBe('provider/secondary');
+    expect(resolveSecondaryModel(config)?.effort).toBe('low');
+
+    env[SECONDARY_MODEL_ENV] = 'provider/env-secondary';
+    env[SECONDARY_MODEL_EFFORT_ENV] = 'high';
+    expect(resolveSecondaryModel(config)?.model).toBe('provider/env-secondary');
+    expect(resolveSecondaryModel(config)?.effort).toBe('high');
+
+    // Blank env values are ignored.
+    env[SECONDARY_MODEL_ENV] = '  ';
+    expect(resolveSecondaryModel(config)?.model).toBe('provider/secondary');
+
+    disposables.dispose();
+  });
+
+  it('restores the env-owned model to the raw value on set() while the env var is set', async () => {
+    const env: Record<string, string> = { [SECONDARY_MODEL_ENV]: 'provider/env-secondary' };
+    const { config, disposables } = await createConfig(
+      env,
+      '[secondary_model]\nmodel = "provider/raw-secondary"\n',
+    );
+
+    // A client echoing the env-overlaid section back.
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'provider/env-secondary' });
+
+    expect(resolveSecondaryModel(config)?.model).toBe('provider/env-secondary');
+    expect(config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue).toEqual({
+      model: 'provider/raw-secondary',
+    });
+
+    disposables.dispose();
   });
 });
 

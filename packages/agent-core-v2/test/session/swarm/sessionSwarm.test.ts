@@ -1118,7 +1118,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     );
   });
 
-  it('points at the subagent model config when a spawn task binding is invalid', async () => {
+  it('points at the secondary model config when a spawn task binding is invalid', async () => {
     createAgent.mockRejectedValueOnce(
       new Error2(
         ConfigErrors.codes.CONFIG_INVALID,
@@ -1140,7 +1140,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).resolves.toMatchObject([
       {
         status: 'failed',
-        error: expect.stringContaining('comes from [subagent].model / KIMI_SUBAGENT_MODEL'),
+        error: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
       },
     ]);
   });
@@ -1278,6 +1278,7 @@ function lifecycleStub(
 ): IAgentLifecycleService {
   const lifecycle = {
     _serviceBrand: undefined,
+    onWillRestore: Event.None,
     onDidCreate: Event.None,
     onDidDispose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {

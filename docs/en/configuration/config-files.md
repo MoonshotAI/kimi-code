@@ -188,6 +188,23 @@ display_name = "Kimi for Coding (custom)"
 
 You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model).
 
+## `secondary_model`
+
+The secondary model is a second model pointer next to the primary `default_model` — typically a cheaper model that features can bind to when they do not need the main model. Its consumer today is subagent spawning: when set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model, and the main agent is told it can pick per spawn between `"secondary"` (this model) and `"primary"` (the main model). When unset, subagents inherit the main agent's model.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | — | A model alias from your configured `[models]` (any provider, not limited to Kimi models) |
+| `effort` | `string` | — | Thinking effort applied when a feature binds to the secondary `model`; has no effect on its own. Follows the main model's thinking-effort semantics: models with strict effort validation (e.g. Kimi models) fall back to their default effort for unsupported values; other providers receive the value as-is |
+
+```toml
+[secondary_model]
+model = "kimi-code/kimi-k2.5"
+effort = "low"
+```
+
+`model` / `effort` can be overridden by the `KIMI_SECONDARY_MODEL` / `KIMI_SECONDARY_EFFORT` environment variables, which take higher priority than `config.toml`.
+
 ## `thinking`
 
 `thinking` sets the global default behavior for Thinking mode.
@@ -241,10 +258,7 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single subagent (`Agent` / `AgentSwarm`) is allowed to run before it is settled as `timed_out`. `0` means no timeout — the subagent runs until it finishes or the model stops it. This is the background-task manager's per-task timeout for each subagent task, so it applies to both foreground and background subagents. In print mode (`kimi -p`) the default is `0` unless explicitly set. Note: any value above `2147483647` (about 24.8 days) is clamped to roughly 24.8 days by the runtime |
-| `model` | `string` | — | Secondary model for subagents: a model alias from your configured `[models]` (any provider, not limited to Kimi models). When set, newly spawned subagents (`Agent` / `AgentSwarm`) bind to it by default instead of inheriting the main agent's model, and the main agent is told it can pick per spawn between `"subagent"` (this model) and `"primary"` (the main model). When unset, subagents inherit the main agent's model |
-| `effort` | `string` | — | Thinking effort applied when a subagent binds to the secondary `model`; has no effect on its own. Follows the main model's thinking-effort semantics: models with strict effort validation (e.g. Kimi models) fall back to their default effort for unsupported values; other providers receive the value as-is |
-
-`timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, and `model` / `effort` by `KIMI_SUBAGENT_MODEL` / `KIMI_SUBAGENT_EFFORT`, which take higher priority than `config.toml`.
+`timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
 
 ## `mcp`
 
