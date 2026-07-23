@@ -30,7 +30,7 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { setDefaultModelResponseSchema } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { refreshProviderModelsResponseSchema } from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
+import { refreshProviderModelsResponseSchema } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

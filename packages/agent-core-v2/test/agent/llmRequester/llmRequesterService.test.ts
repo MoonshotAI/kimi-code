@@ -48,6 +48,7 @@ import type { Message } from '#/kosong/contract/message';
 import type { ThinkingEffort } from '#/kosong/contract/provider';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IModelService } from '#/kosong/model/model';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
@@ -222,6 +223,9 @@ function createService(
     get: () => requester.model,
     getRequester: () => requester,
     findByName: () => [],
+  });
+  ix.stub(IModelService, {
+    get: () => undefined,
   });
   const records: WireRecord[] = [];
   registerTestAgentWire(ix, 'wire/llm-requester', {

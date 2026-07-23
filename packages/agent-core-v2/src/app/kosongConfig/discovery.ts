@@ -1,14 +1,16 @@
 /**
- * `kosong/model` domain (L2) — `IProviderDiscoveryService`: remote model
+ * `kosongConfig` domain (L3) — `IProviderDiscoveryService`: remote model
  * discovery and config sync.
  *
  * Refreshes the `[models.*]` / `[providers.*]` configuration from what each
  * provider actually serves (managed OAuth catalogs, open platforms, custom
  * registries) through the shared `@moonshot-ai/kimi-code-oauth` orchestrator,
- * and publishes `event.model_catalog.changed` on change. This is a WRITE
- * path (external world → config), deliberately separate from the read-only
- * `IModelCatalog` materialization/query surface (config → runtime). The
- * OAuth-only managed-provider refresh additionally lives in `auth`
+ * applies the result to kosong's in-memory registries (the persistence
+ * bridge writes it back to config), and publishes
+ * `event.model_catalog.changed` on change. This is a WRITE path (external
+ * world → kosong → config), deliberately separate from the read-only
+ * `IModelCatalog` materialization/query surface. The OAuth-only
+ * managed-provider refresh additionally lives in `auth`
  * (`IOAuthService.refreshOAuthProviderModels`).
  */
 

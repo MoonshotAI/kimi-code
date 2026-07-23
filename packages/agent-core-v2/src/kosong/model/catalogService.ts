@@ -40,9 +40,9 @@
  * config-only projection for models that fail to materialize, so broken
  * config stays visible); `listProviders` / `getProvider` project the
  * provider registry plus credential state. `setDefaultModel` writes the
- * global default-model pointer (`DEFAULT_MODEL_SECTION`) after a
+ * global default-model pointer (through `IModelService`) after a
  * materialization gate — the catalog's only write. The remote-discovery
- * refresh lives in `kosong/provider/discovery`, not here.
+ * refresh lives in `app/kosongConfig`, not here.
  */
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
@@ -51,8 +51,6 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
-import { IOAuthService } from '#/app/auth/auth';
-import { AuthErrors } from '#/app/auth/errors';
 import type { ModelCapability } from '#/kosong/contract/capability';
 import type { ProviderRequestAuth } from '#/kosong/contract/provider';
 import type { TokenUsage } from '#/kosong/contract/usage';
@@ -63,15 +61,13 @@ import {
   type ProtocolProviderOptions,
 } from '#/kosong/protocol/protocol';
 
-import { IConfigService } from '../../app/config/config';
-import { ConfigErrors } from '../../app/config/errors';
+import { CONFIG_INVALID_ERROR_CODE } from '#/kosong/contract/errors';
 import {
   LATEST_OPUS_PROFILE,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
 } from '../provider/bases/anthropic/anthropic-profile';
 import {
-  DEFAULT_PROVIDER_SECTION,
   IProviderService,
   type ProviderConfig,
 } from '../provider/provider';
@@ -105,13 +101,14 @@ import {
   ResolutionTraceCollector,
   TRACE,
 } from './inspection';
-import { DEFAULT_MODEL_SECTION, IModelService, type ModelRecord } from './model';
+import { IModelService, type ModelRecord } from './model';
 import {
   deriveProviderId,
   effectiveModelConfig,
   nonEmpty,
   resolveModelAuthMaterial,
 } from './modelAuth';
+import { IModelOAuthTokens } from './modelOAuth';
 import type { ResolvedModelAuthMaterial } from './model.types';
 import type { ModelRequester } from './modelRequester';
 import { ModelRequesterImpl } from './modelRequesterImpl';
@@ -134,10 +131,9 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private readonly cache = new Map<string, CatalogEntry>();
 
   constructor(
-    @IConfigService private readonly config: IConfigService,
     @IProviderService private readonly providers: IProviderService,
     @IModelService private readonly models: IModelService,
-    @IOAuthService private readonly oauth: IOAuthService,
+    @IModelOAuthTokens private readonly oauth: IModelOAuthTokens,
     @IProtocolAdapterRegistry
     private readonly protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
@@ -248,7 +244,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   async listProviders(): Promise<readonly ProviderCatalogItem[]> {
     const providers = this.providers.list();
     const models = this.models.list();
-    const globalDefaultModel = this.config.get<string>(DEFAULT_MODEL_SECTION);
+    const globalDefaultModel = this.models.getDefaultModel();
     const out: ProviderCatalogItem[] = [];
     for (const [providerId, provider] of Object.entries(providers)) {
       out.push(await this.toCatalogProvider(providerId, provider, models, globalDefaultModel));
@@ -265,7 +261,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       );
     }
     const models = this.models.list();
-    const globalDefaultModel = this.config.get<string>(DEFAULT_MODEL_SECTION);
+    const globalDefaultModel = this.models.getDefaultModel();
     return this.toCatalogProvider(providerId, provider, models, globalDefaultModel);
   }
 
@@ -280,7 +276,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     // Materialization gate: a model that cannot resolve (dangling provider
     // reference, conflicting credentials, ...) must not become the default.
     const model = this.get(modelId);
-    await this.config.set(DEFAULT_MODEL_SECTION, modelId);
+    await this.models.setDefaultModel(modelId);
     return {
       default_model: modelId,
       model: toProtocolModel(model, record, this.providerTypeOf(record)),
@@ -309,17 +305,12 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
 
   private async hasCachedToken(providerId: string, provider: ProviderConfig): Promise<boolean> {
     if (provider.oauth === undefined) return false;
-    try {
-      const token = await this.oauth.getCachedAccessToken(providerId, provider.oauth);
-      return nonEmpty(token) !== undefined;
-    } catch {
-      return false;
-    }
+    return this.oauth.hasCachedAccessToken(providerId, provider.oauth);
   }
 
   private providerTypeOf(record: ModelRecord): string | undefined {
     const providerId =
-      record.providerId ?? record.provider ?? this.config.get<string>(DEFAULT_PROVIDER_SECTION);
+      record.providerId ?? record.provider ?? this.providers.getDefaultProvider();
     return this.providers.get(providerId ?? '')?.type ?? record.protocol;
   }
 
@@ -327,7 +318,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const configuredModel = this.models.get(id);
     if (configuredModel === undefined) {
       throw new Error2(
-        ConfigErrors.codes.CONFIG_INVALID,
+        CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" is not configured in config.toml.`,
       );
     }
@@ -376,13 +367,13 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
         : rawBaseUrl;
     if (wireName === undefined) {
       throw new Error2(
-        ConfigErrors.codes.CONFIG_INVALID,
+        CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" must define a wire-facing name in config.toml.`,
       );
     }
     if (model.maxContextSize === undefined) {
       throw new Error2(
-        ConfigErrors.codes.CONFIG_INVALID,
+        CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" must define a positive max_context_size in config.toml.`,
       );
     }
@@ -449,7 +440,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     readonly resolvedBaseUrl: string | undefined;
   } {
     const providerId =
-      model.providerId ?? model.provider ?? this.config.get<string>('defaultProvider');
+      model.providerId ?? model.provider ?? this.providers.getDefaultProvider();
     if (providerId !== undefined) {
       trace.record('provider', {
         kind: 'config',
@@ -464,7 +455,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       const providerConfig = this.providers.get(providerId);
       if (providerConfig === undefined) {
         throw new Error2(
-          ConfigErrors.codes.CONFIG_INVALID,
+          CONFIG_INVALID_ERROR_CODE,
           `Provider "${providerId}" referenced by model "${id}" is not configured.`,
         );
       }
@@ -505,7 +496,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const modelBaseUrl = nonEmpty(model.baseUrl);
     if (modelBaseUrl === undefined) {
       throw new Error2(
-        ConfigErrors.codes.CONFIG_INVALID,
+        CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" must set either providerId or baseUrl in config.toml.`,
       );
     }
@@ -559,7 +550,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       }
     }
     throw new Error2(
-      ConfigErrors.codes.CONFIG_INVALID,
+      CONFIG_INVALID_ERROR_CODE,
       `Model "${id}" must declare a wire protocol (config: models.<id>.protocol).`,
     );
   }
@@ -571,22 +562,13 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     if (auth.oauth !== undefined) {
       const oauthRef = auth.oauth;
       const providerKey = auth.oauthProviderKey ?? providerName;
-      const oauthService = this.oauth;
-      const loginRequired = (cause?: unknown): Error2 =>
-        new Error2(
-          AuthErrors.codes.AUTH_LOGIN_REQUIRED,
-          `OAuth provider "${providerKey}" requires login before it can be used.`,
-          cause === undefined ? undefined : { cause },
-        );
+      const tokens = this.oauth;
       return {
         canRefresh: true,
         async getAuth(options): Promise<ProviderRequestAuth | undefined> {
-          const tokenProvider = oauthService.resolveTokenProvider(providerKey, oauthRef);
-          if (tokenProvider === undefined) throw loginRequired();
-          const apiKey = await tokenProvider.getAccessToken(
-            options?.force === true ? { force: true } : undefined,
-          );
-          if (apiKey.trim().length === 0) throw loginRequired();
+          const apiKey = await tokens.getAccessToken(providerKey, oauthRef, {
+            force: options?.force === true,
+          });
           return { apiKey };
         },
       };
