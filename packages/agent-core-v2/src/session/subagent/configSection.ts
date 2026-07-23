@@ -27,6 +27,7 @@
 import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
+import type { AgentModelPreference } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
   SECONDARY_MODEL_ENV,
   resolveSecondaryModel,
@@ -85,7 +86,7 @@ export function resolveSubagentTimeoutMs(config: IConfigService): number {
   );
 }
 
-export type SubagentModelChoice = 'secondary' | 'primary';
+export type SubagentModelChoice = AgentModelPreference;
 
 export function resolveSubagentBinding(
   config: IConfigService,

@@ -5,10 +5,11 @@
  * session swarm coordinator and renders the per-subagent XML result. Reads
  * persisted swarm item labels through the Session-scoped coordinator so later
  * `resume_agent_ids` calls relabel resumed subagents like v1. When the caller
- * has a model bound, the tool resolves the spawn binding up front via
- * `resolveSubagentBinding` and threads it through the swarm tasks; otherwise
- * binding is left to the service, which keeps its own "no model bound" check
- * and inherit-caller fallback. Pure tool — owns no scoped state.
+ * has a model bound, the tool resolves the explicit or target-profile model
+ * preference up front via `resolveSubagentBinding` and threads it through the
+ * swarm tasks; otherwise binding is left to the service, which keeps its own
+ * "no model bound" check and inherit-caller fallback. Pure tool — owns no
+ * scoped state.
  */
 
 import { z } from 'zod';
@@ -83,7 +84,7 @@ export const AgentSwarmToolInputSchema = z
       .enum(['secondary', 'primary'])
       .optional()
       .describe(
-        'Which model to run the item-spawned subagents on: "secondary" = the configured secondary model (the default when configured); "primary" = the main model you are running on (for hard, quality-sensitive tasks). Only effective when a secondary model is configured; otherwise subagents inherit your model. Resumed subagents always keep their own model.',
+        'Which model to run the item-spawned subagents on: "secondary" = the configured secondary model; "primary" = the main model you are running on (for hard, quality-sensitive tasks). This explicit choice overrides the selected agent type\'s model_preference; without either, secondary is the default when configured. Only effective when a secondary model is configured; otherwise subagents inherit your model. Resumed subagents always keep their own model.',
       ),
   })
   .strict();
@@ -190,11 +191,15 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       if (allowlist !== undefined && !allowlist.includes(profileName)) {
         throw new Error(subagentTypeNotAllowedMessage(profileName, allowlist));
       }
+      const targetProfile = this.catalog.get(profileName);
+      if (targetProfile === undefined) {
+        throw new Error(`Unknown agent type: "${profileName}"`);
+      }
       if (own.modelAlias !== undefined) {
         binding = resolveSubagentBinding(
           this.config,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-          args.model,
+          args.model ?? targetProfile.modelPreference,
         );
       }
     }

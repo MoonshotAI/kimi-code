@@ -103,13 +103,28 @@ const DEFAULT_CALLER_PROFILE: AgentProfile = {
   systemPrompt: () => 'caller',
 };
 
+const DEFAULT_SWARM_TARGET_PROFILES: readonly AgentProfile[] = [
+  {
+    name: 'coder',
+    description: 'test coder',
+    systemPrompt: () => 'coder',
+  },
+  {
+    name: 'explore',
+    description: 'test explorer',
+    systemPrompt: () => 'explore',
+  },
+];
+
 function stubSwarmCatalog(
   defaultProfile: AgentProfile = DEFAULT_CALLER_PROFILE,
+  targetProfiles: readonly AgentProfile[] = DEFAULT_SWARM_TARGET_PROFILES,
 ): ISessionAgentProfileCatalog {
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
-    get: () => undefined,
+    get: (name: string) =>
+      [defaultProfile, ...targetProfiles].find((profile) => profile.name === name),
     getDefault: () => defaultProfile,
   } as unknown as ISessionAgentProfileCatalog;
 }
@@ -808,7 +823,13 @@ describe('AgentSwarmTool', () => {
 
   it('lets the tool call opt back into the primary model', async () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', effort: 'low' }), stubSwarmCatalog(), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
+    const secondaryCoder: AgentProfile = {
+      name: 'coder',
+      description: 'test coder',
+      modelPreference: 'secondary',
+      systemPrompt: () => 'coder',
+    };
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ model: 'provider/secondary', effort: 'low' }), stubSwarmCatalog(DEFAULT_CALLER_PROFILE, [secondaryCoder]), stubCallerProfile({ modelAlias: 'main-model', thinkingLevel: 'high' }));
 
     await executeTool(
       tool,
