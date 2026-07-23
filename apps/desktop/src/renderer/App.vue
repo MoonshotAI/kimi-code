@@ -116,6 +116,13 @@ const activeSessionTitle = computed<string>(() => {
   return client.sessions.value.find((s) => s.id === id)?.title ?? '';
 });
 
+// End reason of the active session's latest turn — ConversationPane marks the
+// transcript when it was manually stopped.
+const activeLastTurnReason = computed(() => {
+  const id = client.activeSessionId.value;
+  return client.sessions.value.find((s) => s.id === id)?.lastTurnReason ?? null;
+});
+
 // Number of sessions in the active workspace (mobile top-bar sub-line).
 const activeWorkspaceSessionCount = computed<number>(
   () => client.visibleWorkspace.value?.sessionCount ?? 0,
@@ -655,9 +662,20 @@ async function handleEditMessage(payload: {
   text: string;
   attachments?: TurnAttachment[];
 }): Promise<void> {
-  await client.undo(1);
+  const result = await client.undo(1);
+  // Failure already surfaced via pushOperationFailure — don't refill the
+  // composer or claim success for a rewind that didn't happen.
+  if (result === null) return;
   await nextTick();
   conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.attachments);
+  conversationPaneRef.value?.notifyUndone();
+}
+
+// Esc / Stop: abort the main turn and report the outcome back, so the pane's
+// auto-retract fires only on a confirmed stop.
+async function handleInterrupt(): Promise<void> {
+  const aborted = await client.abortCurrentPrompt();
+  conversationPaneRef.value?.onAbortOutcome(aborted);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)
@@ -1098,6 +1116,7 @@ function openPr(url: string): void {
       :search-files="client.searchFiles"
       :upload-image="client.uploadImage"
       :working="client.working.value"
+      :last-turn-reason="activeLastTurnReason"
       :starting="client.isStartingFirstPrompt.value"
       :file-reload-key="client.activeSessionId.value"
       :session-loading="client.sessionLoading.value"
@@ -1125,7 +1144,7 @@ function openPr(url: string): void {
       @answer="(questionId, response) => client.respondQuestion(questionId, response)"
       @dismiss="(questionId) => client.dismissQuestion(questionId)"
       @command="handleCommand"
-      @interrupt="client.abortCurrentPrompt()"
+      @interrupt="handleInterrupt"
       @unqueue="handleUnqueue"
       @edit-queued="handleEditQueued"
       @reorder-queue="handleReorderQueue"

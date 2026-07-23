@@ -1965,9 +1965,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     finishPromptLocal(sid);
   }
 
-  async function abortCurrentPrompt(): Promise<void> {
+  /**
+   * Abort the main turn. Returns true when the daemon confirmed something was
+   * actually aborted — the caller (Esc-undo flow) uses it as the authoritative
+   * "the stop landed" signal; a false means the prompt had already completed
+   * or the request failed, and nothing must be auto-undone.
+   */
+  async function abortCurrentPrompt(): Promise<boolean> {
     const sid = rawState.activeSessionId;
-    if (!sid) return;
+    if (!sid) return false;
     const session = rawState.sessions.find((s) => s.id === sid);
 
     // 1. Authoritative id captured at submit time.
@@ -1988,32 +1994,55 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // 3. If we have a real id, try the per-prompt abort first. If the daemon
     //    reports the prompt is missing/already completed, clear the stale id and
     //    fall back to session-level abort for whatever is currently running.
+    let promptKnownStale = false;
+    const clearStaleMainTurn = (): void => {
+      // A definitive "not abortable" makes these flags provably stale — clear
+      // them too, or Stop/Esc stay lit and a later press takes the fallback.
+      rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
+      rawState.turnActiveBySession = { ...rawState.turnActiveBySession, [sid]: false };
+    };
     if (promptId !== undefined) {
       try {
         const result = await api.abortPrompt(sid, promptId);
-        if (result.aborted) return;
+        if (result.aborted) return true;
+        promptKnownStale = true;
         const nextPromptIds = { ...rawState.promptIdBySession };
         delete nextPromptIds[sid];
         rawState.promptIdBySession = nextPromptIds;
+        clearStaleMainTurn();
       } catch (err) {
         if (isDaemonApiError(err) && err.code === PROMPT_NOT_FOUND_CODE) {
           // Stale id — try the session-level fallback below.
+          promptKnownStale = true;
           const nextPromptIds = { ...rawState.promptIdBySession };
           delete nextPromptIds[sid];
           rawState.promptIdBySession = nextPromptIds;
+          clearStaleMainTurn();
         } else {
           pushOperationFailure('abortCurrentPrompt', err, { sessionId: sid });
-          return;
+          return false;
         }
       }
     }
 
-    // 4. No real id, or the prompt id is no longer recognized: cancel whatever
-    //    is running in the session (including skill activations).
+    // 4. No real id, or the prompt id is no longer recognized: session-level
+    //    abort cancels whatever is running (including skill activations) —
+    //    but only while a main turn is actually in flight, so a stale id at
+    //    the natural-completion edge can't kill background work. A definitive
+    //    "not abortable" answer invalidates every local in-flight signal too
+    //    (all of it is pre-await state) — no fallback at all then.
+    if (promptKnownStale) return false;
+    const mainTurnInFlight =
+      (rawState.inFlightBySession[sid] ?? false) ||
+      (rawState.turnActiveBySession[sid] ?? false) ||
+      (session?.mainTurnActive ?? false);
+    if (!mainTurnInFlight) return false;
     try {
-      await api.abortSession(sid);
+      const result = await api.abortSession(sid);
+      return result.aborted === true;
     } catch (err) {
       pushOperationFailure('abortCurrentPrompt', err, { sessionId: sid });
+      return false;
     }
   }
 
@@ -2590,31 +2619,64 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /**
    * Undo the last `count` turns of the active session (daemon :undo), then re-sync
    * the snapshot so the local transcript matches the daemon's post-undo history.
-   * Returns the text of the most-recent user message that was undone, so the UI
-   * can offer "edit + resend" (load it back into the composer).
+   * Returns the undone message text on success (null text = message had no text),
+   * or null on failure — callers must not offer "edit + resend" for a rewind
+   * that didn't happen.
    */
-  async function undo(count = 1): Promise<string | null> {
+  async function undo(count = 1): Promise<{ text: string | null } | null> {
     const sid = rawState.activeSessionId;
     if (!sid) return null;
+    const msgs = rawState.messagesBySession[sid] ?? [];
+    // The last real user prompt — the rewind point.
+    let lastUserIndex = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i]!;
+      if (m.role !== 'user') continue;
+      if (m.metadata?.['origin'] && (m.metadata['origin'] as { kind?: string }).kind !== 'user') continue;
+      lastUserIndex = i;
+      break;
+    }
     // Capture the last user message text BEFORE the undo removes it.
-    const lastUserText = (() => {
-      const msgs = rawState.messagesBySession[sid] ?? [];
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i]!;
-        if (m.role !== 'user') continue;
-        if (m.metadata?.['origin'] && (m.metadata['origin'] as { kind?: string }).kind !== 'user') continue;
-        return m.content
-          .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-          .map((c) => c.text)
-          .join('\n');
+    const lastUserText =
+      lastUserIndex >= 0
+        ? msgs[lastUserIndex]!.content
+            .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+            .map((c) => c.text)
+            .join('\n')
+        : null;
+    // Optimistic truncation (single-turn undo): rewind in the same tick; on
+    // failure restore the local copy, then best-effort re-sync.
+    const optimistic =
+      count === 1 &&
+      lastUserIndex >= 0 &&
+      // Only when no user message of any origin follows the scanned prompt —
+      // a command-origin turn after it would cut deeper than the daemon (its
+      // cut counts command turns as prompts).
+      msgs.slice(lastUserIndex + 1).every((m) => m.role !== 'user');
+    // The rewound turn owned the session's lastTurnReason — clear it with the
+    // truncation so nothing marks the newly-last turn mid-flight.
+    const frontBackup = optimistic ? rawState.sessions.find((s) => s.id === sid) : undefined;
+    if (optimistic) {
+      rawState.messagesBySession = {
+        ...rawState.messagesBySession,
+        [sid]: msgs.slice(0, lastUserIndex),
+      };
+      if (frontBackup !== undefined) {
+        const cleared = { ...frontBackup };
+        delete cleared.lastTurnReason;
+        upsertSessionFront(cleared);
       }
-      return null;
-    })();
+    }
     try {
       await getKimiWebApi().undoSession(sid, count);
       await syncSessionFromSnapshot(sid);
-      return lastUserText;
+      return { text: lastUserText };
     } catch (err) {
+      if (optimistic) {
+        rawState.messagesBySession = { ...rawState.messagesBySession, [sid]: msgs };
+        if (frontBackup !== undefined) upsertSessionFront(frontBackup);
+        await syncSessionFromSnapshot(sid).catch(() => undefined);
+      }
       pushOperationFailure('undo', err, { sessionId: sid });
       return null;
     }

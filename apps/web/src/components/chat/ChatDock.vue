@@ -23,6 +23,8 @@ import { formatTokens } from '../../lib/formatTokens';
 const props = defineProps<{
   sessionId?: string;
   running?: boolean;
+  /** Main turn in flight — forwarded to the Composer Stop button. */
+  working?: boolean;
   /** True while the empty-composer first prompt is being created + submitted.
    *  Covers the gap where draft-session creation already selected the new
    *  session (empty state → dock) before the first prompt is submitted. */
@@ -140,6 +142,7 @@ const composerRef = ref<{
   loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
   anyPopupOpen?: boolean;
+  isEmpty?: () => boolean;
 } | null>(null);
 const anyPopupOpen = computed(() => composerRef.value?.anyPopupOpen === true);
 const workPanelRef = ref<HTMLElement | null>(null);
@@ -161,6 +164,9 @@ function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video'
 function focus(): void {
   composerRef.value?.focus();
 }
+
+// Composer unmounted (question/approval card showing) = unsafe, not empty.
+const isEmpty = () => composerRef.value?.isEmpty?.() ?? false;
 
 function onDocumentMouseDown(event: MouseEvent): void {
   if (!props.dockPanel) return;
@@ -250,7 +256,7 @@ onUnmounted(() => {
   workBodyResizeObserver = null;
 });
 
-defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty });
 </script>
 
 <template>
@@ -425,6 +431,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
       ref="composerRef"
       :session-id="sessionId"
       :running="running"
+      :working="working"
       :queued="queued"
       :search-files="searchFiles"
       :upload-image="uploadImage"

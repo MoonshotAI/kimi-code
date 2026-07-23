@@ -34,6 +34,9 @@ import { Button, ContextRing, Icon, IconButton, SegmentedControl, Spinner, Toolt
 
 const props = withDefaults(defineProps<{
   running?: boolean;
+  /** Main turn in flight — the Stop button's condition (Esc shares it).
+   *  Background-only work keeps Stop hidden; those tasks cancel from the dock. */
+  working?: boolean;
   /** True while the empty-composer first prompt is being created + submitted.
    *  Disables the textarea and swaps the send button for a spinner. */
   starting?: boolean;
@@ -65,6 +68,7 @@ const props = withDefaults(defineProps<{
   hideContext?: boolean;
 }>(), {
   running: false,
+  working: false,
   starting: false,
   queued: () => [],
   searchFiles: undefined,
@@ -587,7 +591,9 @@ const anyPopupOpen = computed(
   () => dropdownOpen.value || permDropdownOpen.value || modesOpen.value || slashOpen.value || mentionOpen.value,
 );
 
-defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
+const isEmpty = () => text.value.trim().length === 0 && attachments.value.length === 0;
+
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty });
 
 function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;
@@ -1234,7 +1240,7 @@ function selectModel(modelId: string): void {
             <Icon name="log-in" size="sm" />
             <span class="mp-name">{{ t('login.action') }}</span>
           </button>
-          <Tooltip v-if="running" :text="t('composer.interruptTitle')">
+          <Tooltip v-if="working" :text="t('composer.interruptTitle')">
             <button
               class="stop"
               :aria-label="t('composer.interrupt')"

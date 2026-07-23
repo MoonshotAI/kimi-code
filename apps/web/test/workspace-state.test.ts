@@ -238,17 +238,36 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
     apiMock.abortSession.mockReset();
   });
 
-  it('falls back to session abort when the cached prompt id is already completed', async () => {
+  it('does not fall back to session abort once the daemon calls the prompt not-abortable', async () => {
     apiMock.abortPrompt.mockResolvedValue({ aborted: false });
-    apiMock.abortSession.mockResolvedValue({ aborted: true });
     const state = createState();
+    // Even with a main turn apparently in flight locally, a definitive
+    // "not abortable" makes all local in-flight state stale — no fallback.
+    state.turnActiveBySession = { sess_1: true };
     const workspace = useWorkspaceState(state, createDeps());
 
     await workspace.abortCurrentPrompt();
 
     expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_stale');
-    expect(apiMock.abortSession).toHaveBeenCalledWith('sess_1');
+    expect(apiMock.abortSession).not.toHaveBeenCalled();
     expect(state.promptIdBySession).toEqual({});
+    // A definitive "not abortable" also clears the stale main-turn flags.
+    expect(state.turnActiveBySession).toEqual({ sess_1: false });
+  });
+
+  it('falls back to session abort for a fresh submit without a prompt id', async () => {
+    apiMock.abortSession.mockResolvedValue({ aborted: true });
+    const state = createState();
+    // Just submitted: no prompt id captured yet, but a main turn is starting.
+    state.promptIdBySession = {};
+    state.sessions = [{ ...state.sessions[0]!, currentPromptId: '' }];
+    state.inFlightBySession = { sess_1: true };
+    const workspace = useWorkspaceState(state, createDeps());
+
+    await workspace.abortCurrentPrompt();
+
+    expect(apiMock.abortPrompt).not.toHaveBeenCalled();
+    expect(apiMock.abortSession).toHaveBeenCalledWith('sess_1');
   });
 
   it('does not fall back when prompt abort succeeds', async () => {
@@ -279,6 +298,8 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
     const state = createState();
     state.promptIdBySession = {};
     state.sessions = [{ ...state.sessions[0]!, currentPromptId: 'pr_synthetic' }];
+    // The session-level fallback requires a main turn still in flight.
+    state.turnActiveBySession = { sess_1: true };
     const workspace = useWorkspaceState(state, createDeps());
 
     await workspace.abortCurrentPrompt();

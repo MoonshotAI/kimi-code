@@ -17,6 +17,7 @@ import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 import { isMacosDesktop } from '../../lib/desktopFlag';
 import { useComposerAutoFocus } from '../../composables/useComposerAutoFocus';
+import { turnBlocks } from '../chatTurnRendering';
 
 const { t } = useI18n();
 
@@ -56,6 +57,9 @@ const props = defineProps<{
   /** The main conversation has an unfinished prompt (submitted or a main turn
    *  in flight) — the working moon. */
   working?: boolean;
+  /** End reason of the session's latest turn (server-persisted) — 'cancelled'
+   *  marks the last assistant turn as manually stopped in the transcript. */
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed' | null;
   /** A modal/overlay layer is open above the conversation — it owns Escape, so
    *  the pane's Esc-to-interrupt stays quiet while it is open. */
   overlayOpen?: boolean;
@@ -500,6 +504,8 @@ type ComposerHandle = {
   /** True while any composer popup (model/permission dropdown, slash/mention
    *  menu) is open — such a popup owns Escape. */
   anyPopupOpen?: boolean;
+  /** True when the draft is empty — lets undo avoid clobbering user input. */
+  isEmpty?: () => boolean;
 };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
@@ -540,6 +546,8 @@ function bindChatDock(el: RefArg): void {
       get anyPopupOpen(): boolean {
         return 'anyPopupOpen' in el && el.anyPopupOpen === true;
       },
+      isEmpty:
+        'isEmpty' in el && typeof el.isEmpty === 'function' ? el.isEmpty.bind(el) : undefined,
     };
   } else {
     dockedComposerRef.value = null;
@@ -1355,22 +1363,172 @@ function onVisibilityChange(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Manual-abort toast: shown when the user presses Escape to stop the prompt
+// Undone toast: shown after an undo lands. (Abort feedback is the "Manually
+// stopped" divider under the turn — Esc and Stop only fire on the main turn.)
 // ---------------------------------------------------------------------------
-const abortToastVisible = ref(false);
-let abortToastTimer: ReturnType<typeof setTimeout> | null = null;
-const ABORT_TOAST_DURATION = 3000;
+const undoneToastVisible = ref(false);
+let undoneToastTimer: ReturnType<typeof setTimeout> | null = null;
+const UNDONE_TOAST_DURATION = 3000;
 
-function showAbortToast(): void {
-  abortToastVisible.value = true;
-  if (abortToastTimer !== null) clearTimeout(abortToastTimer);
-  abortToastTimer = setTimeout(() => {
-    abortToastVisible.value = false;
-  }, ABORT_TOAST_DURATION);
+function showUndoneToast(): void {
+  undoneToastVisible.value = true;
+  if (undoneToastTimer !== null) clearTimeout(undoneToastTimer);
+  undoneToastTimer = setTimeout(() => {
+    undoneToastVisible.value = false;
+  }, UNDONE_TOAST_DURATION);
 }
 
+// ---------------------------------------------------------------------------
+// "Press Escape again to undo": Esc classifies once, at press time. A turn
+// with no output yet (thinking/text/tool — anything streaming in during the
+// abort is cut by the undo anyway) is retracted automatically when the abort
+// settles; any other turn gets the hint, and a second Esc (or a click on it)
+// undoes without the confirm step.
+// ---------------------------------------------------------------------------
+const undoHintTurnId = ref<string | null>(null);
+let undoHintTimer: ReturnType<typeof setTimeout> | null = null;
+const UNDO_HINT_DURATION = 5000;
+// Safety net only: a landed abort settles within ~a second; if turn end never
+// arrives (e.g. the abort request failed) the mark must not fire late.
+const pendingAutoUndoTurnId = ref<string | null>(null);
+let autoUndoTimer: ReturnType<typeof setTimeout> | null = null;
+const AUTO_UNDO_TIMEOUT = 10000;
+// True once the daemon confirmed the abort landed (App forwards
+// abortCurrentPrompt's result) — the auto-retract fires only on it.
+let autoUndoConfirmed = false;
+
+function disarmEscUndo(): void {
+  undoHintTurnId.value = null;
+  pendingAutoUndoTurnId.value = null;
+  autoUndoConfirmed = false;
+  if (undoHintTimer !== null) {
+    clearTimeout(undoHintTimer);
+    undoHintTimer = null;
+  }
+  if (autoUndoTimer !== null) {
+    clearTimeout(autoUndoTimer);
+    autoUndoTimer = null;
+  }
+}
+
+function lastUserTurn(): ChatTurn | null {
+  for (let i = props.turns.length - 1; i >= 0; i--) {
+    const turn = props.turns[i]!;
+    if (turn.role === 'user') return turn;
+  }
+  return null;
+}
+
+function turnHasOutput(turn: ChatTurn): boolean {
+  return turnBlocks(turn).some(
+    (b) =>
+      (b.kind === 'thinking' && b.thinking.trim().length > 0) ||
+      (b.kind === 'text' && b.text.trim().length > 0) ||
+      b.kind === 'tool',
+  );
+}
+
+function armEscUndo(): void {
+  if (undoHintTurnId.value !== null || pendingAutoUndoTurnId.value !== null) return;
+  // Arm only with a main turn in flight and an empty queue (a draining queue
+  // would retarget the undo); skill/plugin command turns never arm.
+  if (!props.working || (props.queued?.length ?? 0) > 0) return;
+  const turn = lastUserTurn();
+  if (turn === null || turn.skillActivation !== undefined || turn.pluginCommand !== undefined) return;
+  const zeroOutput = props.turns
+    .slice(props.turns.indexOf(turn) + 1)
+    .every((t) => t.role === 'assistant' && !turnHasOutput(t));
+  if (zeroOutput) {
+    pendingAutoUndoTurnId.value = turn.id;
+    autoUndoConfirmed = false;
+    autoUndoTimer = setTimeout(() => {
+      pendingAutoUndoTurnId.value = null;
+    }, AUTO_UNDO_TIMEOUT);
+  } else {
+    // The 5s lifetime starts when the hint can actually be seen (turn end).
+    undoHintTurnId.value = turn.id;
+  }
+}
+
+// In-flight guard: a double activation (double-click, key autorepeat) must
+// not rewind two exchanges before the first rewind removes the turn.
+let escUndoInFlight = false;
+let escUndoInFlightTimer: ReturnType<typeof setTimeout> | null = null;
+const ESC_UNDO_FALLBACK_MS = 2500;
+
+// Shared by the auto path (turn end) and the second Esc / hint click: undo
+// only while the marked turn is still the latest user turn.
+function executeEscUndo(turnId: string): void {
+  if (escUndoInFlight) return;
+  disarmEscUndo();
+  const turn = props.turns.find((t) => t.id === turnId);
+  if (turn === undefined || turn.role !== 'user' || lastUserTurn()?.id !== turn.id) return;
+  // Never clobber an in-progress draft with the rewind.
+  const composer = dockedComposerRef.value ?? emptyComposerRef.value;
+  if (composer?.isEmpty?.() === false) return;
+  escUndoInFlight = true;
+  escUndoInFlightTimer = setTimeout(() => {
+    escUndoInFlight = false;
+    escUndoInFlightTimer = null;
+  }, ESC_UNDO_FALLBACK_MS);
+  handleEditMessage({ text: turn.text, attachments: turn.attachments });
+}
+
+function maybeFireAutoUndo(): void {
+  if (pendingAutoUndoTurnId.value === null || props.working || !autoUndoConfirmed) return;
+  executeEscUndo(pendingAutoUndoTurnId.value);
+}
+
+// Turn end: fire the auto mark if the abort was confirmed; the hint's 5s
+// lifetime starts here, now that it can actually be seen.
+watch(
+  () => props.working,
+  (w, was) => {
+    if (was !== true || w) return;
+    if (pendingAutoUndoTurnId.value !== null) {
+      maybeFireAutoUndo();
+      return;
+    }
+    if (undoHintTurnId.value !== null && undoHintTimer === null) {
+      undoHintTimer = setTimeout(() => {
+        undoHintTurnId.value = null;
+        undoHintTimer = null;
+      }, UNDO_HINT_DURATION);
+    }
+  },
+);
+// A new or removed user message retargets "the last one" — drop both marks.
+watch(
+  () => lastUserTurn()?.id ?? null,
+  (id, prev) => {
+    if (id !== prev) disarmEscUndo();
+  },
+);
+watch(() => props.sessionId, disarmEscUndo);
+watch(
+  () => props.queued?.length,
+  (n) => {
+    if ((n ?? 0) > 0) disarmEscUndo();
+  },
+);
+
+// Marks the latest turn when it ended 'cancelled'; zero-output shells are
+// never marked.
+const interruptedTurnId = computed<string | null>(() => {
+  if (props.lastTurnReason !== 'cancelled' || props.working || props.turnActive) return null;
+  const last = props.turns[props.turns.length - 1];
+  return last?.role === 'assistant' && turnHasOutput(last) ? last.id : null;
+});
+
+// The hint shows only while the main turn is idle.
+const visibleUndoHintTurnId = computed<string | null>(() =>
+  props.working ? null : undoHintTurnId.value,
+);
+
 function handleInterrupt(): void {
-  showAbortToast();
+  // The composer Stop button reaches this handler too — only the keyboard
+  // Esc path (onKeyDown) arms. Abort feedback is the "Manually stopped"
+  // divider under the turn.
   emit('interrupt');
 }
 
@@ -1390,17 +1548,28 @@ function onKeyDown(event: KeyboardEvent): void {
   // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
   // an active IME composition (it only cancels the candidate), or any earlier
   // handler that consumed the key (defaultPrevented). The same keypress must
-  // not also interrupt a running prompt behind any of these.
+  // not also interrupt a running prompt behind any of these. (Hardcoded to
+  // Escape by decision — not customizable.)
   if (
     event.key === 'Escape' &&
     !props.overlayOpen &&
     !composerPopupOpen() &&
     !event.defaultPrevented &&
-    !isComposingKeyEvent(event) &&
-    (props.running || props.working)
+    !event.repeat &&
+    !isComposingKeyEvent(event)
   ) {
-    event.preventDefault();
-    handleInterrupt();
+    if (visibleUndoHintTurnId.value !== null) {
+      // Hint visible: the second Esc undoes — even while background work
+      // keeps the session `running`.
+      event.preventDefault();
+      executeEscUndo(visibleUndoHintTurnId.value);
+    } else if (props.working) {
+      // Esc stops the MAIN turn only — background work is cancelled from the
+      // dock, or via the composer Stop button (session-wide abort).
+      event.preventDefault();
+      armEscUndo();
+      handleInterrupt();
+    }
   }
 }
 
@@ -1464,7 +1633,10 @@ onUnmounted(() => {
   if (tocHitTestRaf) cancelRaf(tocHitTestRaf);
   if (activeTocRaf) cancelRaf(activeTocRaf);
   if (tocSettleTimer !== null) clearTimeout(tocSettleTimer);
-  if (abortToastTimer !== null) clearTimeout(abortToastTimer);
+  if (undoneToastTimer !== null) clearTimeout(undoneToastTimer);
+  if (undoHintTimer !== null) clearTimeout(undoHintTimer);
+  if (autoUndoTimer !== null) clearTimeout(autoUndoTimer);
+  if (escUndoInFlightTimer !== null) clearTimeout(escUndoInFlightTimer);
   if (copyConversationCopiedTimer !== null) {
     clearTimeout(copyConversationCopiedTimer);
     copyConversationCopiedTimer = null;
@@ -1495,7 +1667,28 @@ useComposerAutoFocus({
   emptyComposer: emptyComposerRef,
 });
 
-defineExpose({ loadComposerForEdit, focusComposer });
+// App calls this once the daemon rewind has actually landed — the toast
+// claims success, so it waits for it.
+function notifyUndone(): void {
+  showUndoneToast();
+}
+
+// App reports the abort outcome here: the auto-retract fires only on a
+// confirmed stop — anything else (already completed, request failed) just
+// disarms it.
+function onAbortOutcome(aborted: boolean): void {
+  if (pendingAutoUndoTurnId.value === null) return;
+  if (!aborted) {
+    // A later "nothing to abort" can't retract an earlier confirmation (a
+    // double-Esc mid-flight aborts an already-aborted prompt).
+    if (!autoUndoConfirmed) disarmEscUndo();
+    return;
+  }
+  autoUndoConfirmed = true;
+  maybeFireAutoUndo();
+}
+
+defineExpose({ loadComposerForEdit, focusComposer, notifyUndone, onAbortOutcome });
 </script>
 
 <template>
@@ -1584,6 +1777,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
               class="empty-composer"
               :session-id="sessionId"
               :running="running"
+              :working="working"
               :queued="queued"
               :search-files="searchFiles"
               :upload-image="uploadImage"
@@ -1702,12 +1896,15 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :loading-more-error="loadingMoreError"
               :is-following="following"
               :queued="queued"
+              :undo-hint-turn-id="visibleUndoHintTurnId"
+              :interrupted-turn-id="interruptedTurnId"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
               @edit-message="handleEditMessage"
+              @armed-undo="executeEscUndo"
               @load-older-messages="handleLoadOlderMessages"
               @unqueue="emit('unqueue', $event)"
               @edit-queued="handleEditQueued"
@@ -1722,6 +1919,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :style="chatDockStyle"
         :session-id="sessionId"
         :running="running"
+        :working="working"
         :starting="starting"
         :queued="queued"
         :search-files="searchFiles"
@@ -1792,15 +1990,15 @@ defineExpose({ loadComposerForEdit, focusComposer });
       </button>
     </Transition>
 
-    <!-- Manual-abort toast: shown when the user presses Escape to stop a prompt -->
-    <Transition name="abort-toast">
+    <!-- Undone toast: undo confirmation -->
+    <Transition name="undo-toast">
       <div
-        v-if="abortToastVisible"
-        class="abort-toast"
+        v-if="undoneToastVisible"
+        class="undo-toast"
         role="status"
         aria-live="polite"
       >
-        <span class="abort-toast-text">{{ t('conversation.manuallyAborted') }}</span>
+        <span class="undo-toast-text">{{ t('conversation.undone') }}</span>
       </div>
     </Transition>
   </section>
@@ -2169,7 +2367,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   transform: translateX(-50%) translateY(8px);
 }
 
-.abort-toast {
+.undo-toast {
   position: absolute;
   left: 50%;
   top: 60px;
@@ -2182,17 +2380,17 @@ defineExpose({ loadComposerForEdit, focusComposer });
   z-index: var(--z-sticky);
   box-shadow: var(--shadow-sm);
 }
-.abort-toast-text {
+.undo-toast-text {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.abort-toast-enter-active,
-.abort-toast-leave-active {
+.undo-toast-enter-active,
+.undo-toast-leave-active {
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
-.abort-toast-enter-from,
-.abort-toast-leave-to {
+.undo-toast-enter-from,
+.undo-toast-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(-6px);
 }

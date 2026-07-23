@@ -14,7 +14,7 @@ import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import AttachmentChip from './AttachmentChip.vue';
-import { Icon, MoonSpinner, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, Kbd, MoonSpinner, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { openFileAttachment } from '../../lib/openFileAttachment';
@@ -109,6 +109,17 @@ const props = withDefaults(
      */
     queued?: QueuedPromptView[];
     /**
+     * User turn armed for "press Escape again to undo" (set by ConversationPane
+     * right after an Esc abort). The undo affordance on this turn expands into
+     * the hint label; clicking it undoes without the confirm step.
+     */
+    undoHintTurnId?: string | null;
+    /**
+     * Assistant turn whose run was manually stopped (last turn ended
+     * 'cancelled') — renders a small "Stopped" marker at its tail.
+     */
+    interruptedTurnId?: string | null;
+    /**
      * @deprecated No longer used — Composer is rendered by ConversationPane.
      */
   }>(),
@@ -123,6 +134,8 @@ const props = withDefaults(
     loadingMoreError: false,
     isFollowing: false,
     queued: () => [],
+    undoHintTurnId: null,
+    interruptedTurnId: null,
   },
 );
 
@@ -199,6 +212,9 @@ const emit = defineEmits<{
   openAgent: [toolCallId: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
   editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
+  /** The armed "press Esc again" affordance was clicked — same as the second
+   *  Esc, routed through the parent's guarded executor. */
+  armedUndo: [turnId: string];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
   loadOlderMessages: [];
   /** Remove a queued message by index. */
@@ -790,9 +806,23 @@ function streamingTailIndex(turn: ChatTurn): number | null {
               </button>
             </div>
           </div>
-          <div v-if="turn.createdAt || canEditTurn(turn)" class="u-meta">
-            <div v-if="canEditTurn(turn)" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
+          <div v-if="turn.createdAt || canEditTurn(turn) || undoHintTurnId === turn.id" class="u-meta">
+            <div v-if="canEditTurn(turn) || undoHintTurnId === turn.id" class="u-edit-wrap" :class="{ undoing: undoingTurnId === turn.id }">
+              <!-- Armed after an Esc abort: clicking undoes directly — armed is the confirm step. -->
               <button
+                v-if="undoHintTurnId === turn.id"
+                type="button"
+                class="u-edit u-edit-armed"
+                :aria-label="t('conversation.undoTooltip')"
+                @click="emit('armedUndo', turn.id)"
+              >
+                <Icon name="undo" size="sm" />
+                <span class="u-edit-hint">
+                  {{ t('conversation.escUndoHintPre') }}<Kbd :keys="['Esc']" />{{ t('conversation.escUndoHintPost') }}
+                </span>
+              </button>
+              <button
+                v-else
                 type="button"
                 class="u-edit"
                 :aria-label="t('conversation.undoTooltip')"
@@ -884,6 +914,17 @@ function streamingTailIndex(turn: ChatTurn): number | null {
             <Icon v-else name="check" size="sm" />
           </button>
         </div>
+      </div>
+
+      <!-- Manually stopped latest turn (Esc) — from the session's lastTurnReason. -->
+      <div
+        v-if="turn.role === 'assistant' && turn.id === interruptedTurnId"
+        class="compact-divider"
+        role="separator"
+      >
+        <span class="cd-line" aria-hidden="true" />
+        <span class="cd-label" role="status">{{ t('conversation.turnInterrupted') }}</span>
+        <span class="cd-line" aria-hidden="true" />
       </div>
     </template>
 
@@ -1194,6 +1235,38 @@ function streamingTailIndex(turn: ChatTurn): number | null {
   flex: none;
 }
 .u-edit:hover { opacity: 1; color: var(--color-accent); background: var(--hover); }
+/* Armed undo hint; --undo-hint-duration matches UNDO_HINT_DURATION in
+   ConversationPane. */
+.u-edit-armed {
+  --undo-hint-duration: 5s;
+  gap: var(--space-1);
+  opacity: 1;
+  color: var(--color-text);
+  animation: u-edit-armed-blink var(--undo-hint-duration) linear forwards;
+}
+.u-edit-armed:hover { color: var(--color-accent); background: var(--hover); }
+.u-edit-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+@keyframes u-edit-armed-blink {
+  0%, 55% { opacity: 1; }
+  62% { opacity: 0.45; }
+  69% { opacity: 1; }
+  75% { opacity: 0.4; }
+  81% { opacity: 0.95; }
+  86% { opacity: 0.35; }
+  91% { opacity: 0.85; }
+  95% { opacity: 0.3; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .u-edit-armed { animation: none; }
+}
 /* Copy button — icon-only, shares the undo button's muted→hover style. */
 .u-copy {
   display: inline-flex;
