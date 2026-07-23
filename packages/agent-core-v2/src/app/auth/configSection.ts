@@ -77,7 +77,6 @@ export const WEB_SEARCH_API_KEY_ENV = 'KIMI_WEB_SEARCH_API_KEY';
 export const WEB_FETCH_BASE_URL_ENV = 'KIMI_WEB_FETCH_BASE_URL';
 export const WEB_FETCH_API_KEY_ENV = 'KIMI_WEB_FETCH_API_KEY';
 
-/** Ignore blank env values so an empty override never masks the file value. */
 const nonBlankEnv = (raw: string): string | undefined => {
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -104,12 +103,6 @@ export const servicesEnvBindings: EnvBindings<ServicesConfig> = envBindings(
 const stripMoonshotSearchEnv = stripEnvBoundFields(moonshotSearchEnvBindings);
 const stripMoonshotFetchEnv = stripEnvBoundFields(moonshotFetchEnvBindings);
 
-/**
- * `stripEnvBoundFields` does not recurse into nested binding maps, so compose
- * the per-entry strips by hand: while an entry's env vars resolve, persistence
- * restores its env-free raw value (or drops the entry) instead of writing the
- * env-derived `baseUrl` / `apiKey` back to `config.toml`.
- */
 export const stripServicesEnv: ConfigStripEnv<ServicesConfig> = (value, raw, getEnv) => {
   if (!isPlainObject(value)) return value;
   let out: ServicesConfig | undefined;
