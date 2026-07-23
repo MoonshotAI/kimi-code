@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'pathe';
@@ -330,6 +330,30 @@ describe('mergeStdioEnv', () => {
       expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
     },
   );
+
+  it('keeps bracketed IPv6 loopback for extensionless Node shebang launchers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kimi-mcp-node-bin-'));
+    const launcher = join(dir, 'my-mcp');
+    writeFileSync(launcher, '#!/usr/bin/env node\n');
+    try {
+      for (const { command, cwd } of [
+        { command: launcher, cwd: undefined },
+        { command: 'my-mcp', cwd: undefined },
+        { command: './my-mcp', cwd: dir },
+      ]) {
+        const merged = mergeStdioEnv(
+          { HTTP_PROXY: 'http://corp:3128' },
+          { PATH: dir },
+          command,
+          [],
+          cwd,
+        );
+        expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   for (const { command, args } of [
     { command: 'bash', args: ['-c', 'node server.js'] },

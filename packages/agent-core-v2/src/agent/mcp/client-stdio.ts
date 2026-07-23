@@ -3,6 +3,8 @@ import type { McpServerStdioConfig } from './config-schema';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { closeSync, openSync, readSync } from 'node:fs';
+import { delimiter } from 'node:path';
 import { isAbsolute, resolve } from 'pathe';
 
 import {
@@ -47,11 +49,12 @@ export class StdioMcpClient implements MCPClient {
     if (config.executor !== undefined && config.executor !== 'local') {
       throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
     }
+    const cwd = resolveStdioCwd(config.cwd, options.defaultCwd);
     this.transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: mergeStdioEnv(config.env, process.env, config.command, config.args),
-      cwd: resolveStdioCwd(config.cwd, options.defaultCwd),
+      env: mergeStdioEnv(config.env, process.env, config.command, config.args, cwd),
+      cwd,
       stderr: 'pipe',
     });
     this.transport.stderr?.on('data', (chunk: Buffer | string) => {
@@ -186,6 +189,7 @@ export function mergeStdioEnv(
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
   command = '',
   args: readonly string[] = [],
+  cwd?: string,
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(parentEnv)) {
@@ -195,7 +199,7 @@ export function mergeStdioEnv(
   Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
   if (
-    !usesNodeEnvProxy(command, args) &&
+    !usesNodeEnvProxy(command, args, merged, cwd) &&
     !explicitlyKeepsBracketedIpv6(configEnv) &&
     !explicitlyKeepsBracketedIpv6(parentEnv)
   ) {
@@ -218,11 +222,47 @@ const NODE_ENV_PROXY_WRAPPER_RE =
   /^(?:ba|z|fi)?sh$|^(?:env|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|docker|podman|nix-shell)$/i;
 const NODE_ENV_PROXY_ARGUMENT_RE =
   /(?:^|[\\/\s"'=])(?:node(?:\.exe)?|nodejs(?:\.exe)?|corepack(?:\.cmd)?|npm(?:\.cmd)?|npx(?:\.cmd)?|pnpm(?:\.cmd)?|yarn(?:\.cmd)?|tsx(?:\.cmd)?|ts-node(?:\.cmd)?|[^\s"']+\.(?:c|m)?js)(?=$|[\s"';])/i;
+const NODE_SHEBANG_RE = /^#![^\r\n]*(?:[/\s])node(?:js)?(?:\s|$)/i;
 
-function usesNodeEnvProxy(command: string, args: readonly string[]): boolean {
+function usesNodeEnvProxy(
+  command: string,
+  args: readonly string[],
+  env: Readonly<Record<string, string | undefined>>,
+  cwd?: string,
+): boolean {
   const executable = command.split(/[\\/]/).at(-1) ?? '';
   if (NODE_ENV_PROXY_COMMAND_RE.test(executable)) return true;
-  return NODE_ENV_PROXY_WRAPPER_RE.test(executable) && args.some((arg) => NODE_ENV_PROXY_ARGUMENT_RE.test(arg));
+  if (NODE_ENV_PROXY_WRAPPER_RE.test(executable) && args.some((arg) => NODE_ENV_PROXY_ARGUMENT_RE.test(arg))) {
+    return true;
+  }
+  return hasNodeShebang(command, env, cwd);
+}
+
+function hasNodeShebang(
+  command: string,
+  env: Readonly<Record<string, string | undefined>>,
+  cwd?: string,
+): boolean {
+  const baseCwd = cwd ?? process.cwd();
+  const candidates = /[\\/]/.test(command)
+    ? [resolve(baseCwd, command)]
+    : (env['PATH'] ?? env['Path'] ?? '')
+        .split(delimiter)
+        .filter(Boolean)
+        .map((directory) => resolve(baseCwd, directory, command));
+  for (const candidate of candidates) {
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(candidate, 'r');
+      const buffer = Buffer.alloc(256);
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
+      if (NODE_SHEBANG_RE.test(buffer.toString('utf8', 0, bytesRead))) return true;
+    } catch {
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }
+  }
+  return false;
 }
 
 function explicitlyKeepsBracketedIpv6(env?: Readonly<Record<string, string | undefined>>): boolean {
