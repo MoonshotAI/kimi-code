@@ -903,12 +903,25 @@ export class TurnFlow {
                 return { continue: true };
               }
 
-              // 3. The external Stop hook gets exactly one continuation; the cap
-              //    is intentionally separate from (and does not cap) goal mode.
+              // 3. The external Stop hook gets exactly one continuation; the
+              //    cap is intentionally separate from (and does not cap) goal mode.
               if (!stopHookContinuationUsed) {
+                const stopMessages = this.agent.context.messages
+                  .slice(-10)
+                  .map((msg) => ({
+                    role: msg.role,
+                    content: msg.content
+                      .filter((part) => part.type === 'text')
+                      .map((part) => part.text)
+                      .join(''),
+                  }))
+                  .filter((msg) => msg.role === 'user' || msg.role === 'assistant');
                 const stopBlock = await this.agent.hooks?.triggerBlock('Stop', {
                   signal,
-                  inputData: { stopHookActive: stopHookContinuationUsed },
+                  inputData: {
+                    stopHookActive: stopHookContinuationUsed,
+                    messages: stopMessages,
+                  },
                 });
                 signal.throwIfAborted();
                 if (stopBlock !== undefined) {
