@@ -232,6 +232,9 @@ export function toCatalogProviderItem(id: string, entry: CatalogProviderEntry): 
         reject_reason: resolution.reason,
       };
   }
+  // Unreachable in practice: CatalogImportResolution is a closed three-way
+  // union, but older TS control-flow cannot prove the switch exhaustive.
+  throw new Error(`unhandled catalog import resolution: ${JSON.stringify(resolution)}`);
 }
 
 // ---------------------------------------------------------------------------
