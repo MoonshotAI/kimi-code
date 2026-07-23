@@ -13,8 +13,10 @@ export default {
   deleteHasSessions: '工作区内还有会话，请先归档这些会话再删除',
   // 二次确认（弹窗）
   removeWorkspaceConfirm: '移除工作区「{name}」？',
-  swarmEnableConfirm: '启用 swarm 模式？Agent 将并行运行多个子 agent。',
-  goalStartConfirm: '启动 goal：「{objective}」？Agent 将自主执行。',
+  swarmEnableTitle: '启用 swarm 模式？',
+  swarmEnableConfirm: 'Agent 将并行运行多个子 agent。',
+  goalStartTitle: '启动 goal？',
+  goalStartConfirm: '「{objective}」——Agent 将自主执行。',
   // Column-header scope toggle
   scopeCurrent: '当前工作区',
   scopeAll: '全部工作区',

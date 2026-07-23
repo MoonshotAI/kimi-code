@@ -77,7 +77,7 @@ watch(
 }
 
 .slash-item:hover {
-  background: var(--color-surface-sunken);
+  background: var(--color-hover);
 }
 .slash-item.active {
   background: var(--color-accent-soft);

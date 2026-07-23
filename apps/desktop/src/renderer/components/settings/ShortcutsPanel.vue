@@ -1,5 +1,5 @@
 <!-- apps/desktop/src/renderer/components/settings/ShortcutsPanel.vue -->
-<!-- Desktop-only "Keyboard Shortcuts" settings tab: searchable list of every
+<!-- Desktop-only "Hotkeys" settings tab: searchable list of every
      bindable action (lib/keymap.ts registry) with record-to-rebind editing.
      Bindings persist via useShortcuts; web has no such tab (docs/native-todos.md).
 

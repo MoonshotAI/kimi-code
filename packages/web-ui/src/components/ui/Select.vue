@@ -286,7 +286,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerD
   text-align: left;
   cursor: pointer;
 }
-.ui-select__option.is-active { background: var(--color-surface-sunken); }
+.ui-select__option.is-active { background: var(--color-hover); color: var(--color-text-strong); }
 .ui-select__option:disabled { opacity: 0.45; cursor: not-allowed; }
 .ui-select__check { flex: none; color: transparent; }
 .ui-select__option.is-selected .ui-select__check { color: var(--color-accent); }

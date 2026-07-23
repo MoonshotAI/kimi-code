@@ -271,12 +271,12 @@ async function copyPath(): Promise<void> {
 .open-in-caret { width: 22px; }
 .open-in-main:hover:not(:disabled),
 .open-in-caret:hover:not(:disabled) {
-  background: var(--color-surface-sunken);
-  color: var(--color-text);
+  background: var(--color-hover);
+  color: var(--color-text-strong);
 }
 .open-in-main:disabled,
 .open-in-caret:disabled { cursor: default; opacity: 0.5; }
-.open-in.open .open-in-caret { background: var(--color-surface-sunken); color: var(--color-text); }
+.open-in.open .open-in-caret { background: var(--color-selected); color: var(--color-text-strong); }
 .open-in-sep {
   flex: none;
   width: 0.5px;

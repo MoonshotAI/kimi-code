@@ -804,7 +804,7 @@ function archiveTime(iso: string): string {
           </template>
         </section>
 
-        <!-- Keyboard Shortcuts (desktop-only). v-if (not v-show): the panel
+        <!-- Hotkeys (desktop-only). v-if (not v-show): the panel
              owns a document-level recording listener, so it must unmount
              when the tab is hidden — a hidden-but-mounted recorder would
              keep swallowing keys typed in the now-visible tab. -->
@@ -883,7 +883,7 @@ function archiveTime(iso: string): string {
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
-.tab:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+.tab:hover { background: var(--color-hover); color: var(--color-text-strong); }
 .tab.on { background: var(--color-accent-soft); color: var(--color-accent); }
 .tab:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
@@ -1043,7 +1043,7 @@ function archiveTime(iso: string): string {
 }
 .num-step:first-child { border-right: 0.5px solid var(--color-line); }
 .num-step:last-child { border-left: 0.5px solid var(--color-line); }
-.num-step:hover:not(:disabled) { background: var(--color-surface-sunken); color: var(--color-text); }
+.num-step:hover:not(:disabled) { background: var(--color-hover); color: var(--color-text-strong); }
 .num-step:focus-visible { background: var(--color-accent-soft); color: var(--color-accent); }
 .num-step:disabled { opacity: 0.4; cursor: not-allowed; }
 .num-value {
@@ -1129,7 +1129,7 @@ function archiveTime(iso: string): string {
 .archive-workspace .count { margin-left: auto; color: var(--color-text-faint); font-weight: var(--weight-medium); font-size: var(--text-xs); flex: none; }
 .archive-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-top: 0.5px solid var(--color-line); }
 .archive-row:first-child { border-top: none; }
-.archive-row:hover { background: var(--color-surface-sunken); }
+.archive-row:hover { background: var(--color-hover); }
 .archive-meta { min-width: 0; }
 .archive-name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-ui); }

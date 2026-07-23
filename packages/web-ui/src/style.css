@@ -195,9 +195,11 @@ html[data-color-scheme="dark"] {
     var(--color-media-alpha-bg-2) 0
   ) 0 0 / 16px 16px;
   /* Foreground text colours. `--color-text` is the default solid body / UI
-     colour (headings and emphasis share it); muted / faint step down for
-     secondary and tertiary copy; on-accent is text drawn on the accent fill. */
+     colour (headings and emphasis share it); strong steps up for hover
+     emphasis; muted / faint step down for secondary and tertiary copy;
+     on-accent is text drawn on the accent fill. */
   --color-text: rgba(0, 0, 0, 0.9);
+  --color-text-strong: #000000;
   --color-text-muted: #6b7280;
   --color-text-faint: #9aa3af;
   --color-text-on-accent: #ffffff;
@@ -378,6 +380,7 @@ html[data-color-scheme="dark"] {
   --color-well: #13181e;
   --color-surface-deep: #0a0d12;
   --color-text: #e8eaed;
+  --color-text-strong: #ffffff;
   --color-text-muted: #9aa0a8;
   --color-text-faint: #6b7280;
   --color-line: #2d333b;
@@ -434,6 +437,7 @@ html[data-color-scheme="dark"] {
     --color-well: #13181e;
     --color-surface-deep: #0a0d12;
     --color-text: #e8eaed;
+    --color-text-strong: #ffffff;
     --color-text-muted: #9aa0a8;
     --color-text-faint: #6b7280;
     --color-line: #2d333b;

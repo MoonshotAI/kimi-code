@@ -308,6 +308,14 @@ function onAttachmentActivate(att: Attachment): void {
   openAttachmentPreview(att);
 }
 
+/** True when a submit would do something — mirrors handleSubmit's guard so
+ *  the button can show a real disabled state. */
+const canSend = computed(
+  () =>
+    !attachments.value.some((a) => a.uploading) &&
+    (text.value.trim() !== '' || attachments.value.some((a) => !a.error && a.fileId)),
+);
+
 function handleSubmit(): void {
   const trimmed = text.value.trim();
 
@@ -1215,7 +1223,7 @@ function selectModel(modelId: string): void {
             class="send"
             :class="{ 'is-starting': starting }"
             :aria-label="sendLabel"
-            :disabled="starting"
+            :disabled="starting || !canSend"
             @click="handleSubmit()"
           >
             <Spinner v-if="starting" size="sm" />
@@ -1573,8 +1581,8 @@ function selectModel(modelId: string): void {
   width: var(--composer-send-size);
   height: var(--composer-send-size);
   border-radius: var(--radius-full);
-  background: var(--color-accent);
-  color: var(--color-text-on-accent); /* white on accent — readable in light and dark */
+  background: var(--color-text);
+  color: var(--color-bg); /* inverted fill — dark in light, light in dark; never the accent */
   border: none;
   box-shadow: var(--shadow-xs);
   padding: 0;
@@ -1583,12 +1591,24 @@ function selectModel(modelId: string): void {
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.25s ease, transform 0.12s ease;
+  transition: color var(--duration-base) var(--ease-out), opacity var(--duration-slow) var(--ease-out), transform var(--duration-fast) var(--ease-out);
   position: relative;
 }
 
-.send:hover {
-  background: var(--color-accent-hover);
+/* The hover softening rides on an ::after overlay so it can fade — transitions
+   between computed colours (var/color-mix) don't interpolate. */
+.send::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  opacity: 0;
+  transition: opacity var(--duration-slow) var(--ease-out);
+  pointer-events: none;
+}
+.send:hover:not(:disabled)::after {
+  opacity: 0.28;
 }
 
 .send:active {
@@ -1597,21 +1617,27 @@ function selectModel(modelId: string): void {
 
 .send:disabled {
   cursor: not-allowed;
-  opacity: 0.88;
+  opacity: 0.5;
 }
 
 .send:disabled:active {
   transform: none;
 }
 
-/* Spinner-on-accent: recolor the ring so the arc reads on the accent fill.
+/* Spinner-on-fill: recolor the ring so the arc reads on the inverted fill.
    Spinner.vue styles are scoped, so pierce them with :deep(). */
 .send.is-starting :deep(.ui-spinner) {
-  color: var(--color-text-on-accent);
+  color: var(--color-bg);
 }
 
 .send.is-starting :deep(.ui-spinner__track) {
-  stroke: rgba(255, 255, 255, 0.32);
+  stroke: color-mix(in srgb, var(--color-bg) 35%, transparent);
+}
+
+/* Starting is a working state, not an empty one — keep the fill solid so the
+   spinner stays legible. */
+.send.is-starting:disabled {
+  opacity: 1;
 }
 
 .send svg {
@@ -1622,7 +1648,7 @@ function selectModel(modelId: string): void {
 
 /* Stop button — sibling of Send, shown only while running. Red at rest so the
    destructive action is easy to spot; fills solid danger on hover. Kept softer
-   than the accent Send so Send stays the primary action. */
+   than the filled Send so it stays the primary action. */
 .stop {
   width: var(--composer-send-size);
   height: var(--composer-send-size);
@@ -1892,7 +1918,8 @@ function selectModel(modelId: string): void {
   text-align: left;
   transition: background var(--duration-base) var(--ease-out);
 }
-.md-row:hover { background: var(--color-surface-sunken); }
+.md-row:hover { background: var(--color-hover); }
+.md-row:hover .md-name { color: var(--color-text-strong); }
 .md-row:focus-visible {
   outline: none;
   box-shadow: var(--p-focus-ring);
@@ -1932,6 +1959,7 @@ function selectModel(modelId: string): void {
 
 .md-name {
   flex: 1;
+  transition: color var(--duration-base) var(--ease-out);
 }
 .md-provider {
   color: var(--muted);
@@ -2017,7 +2045,7 @@ function selectModel(modelId: string): void {
   border-radius: 6px;
   text-align: left;
 }
-.pd-row:hover { background: var(--color-surface-sunken); }
+.pd-row:hover { background: var(--color-hover); }
 .pd-row.is-current { background: var(--color-accent-soft); }
 
 .pd-check {
@@ -2109,7 +2137,9 @@ function selectModel(modelId: string): void {
   font-family: var(--font-ui);
   text-align: left;
 }
-.mode-row:hover:not(:disabled) { background: var(--color-surface-sunken); }
+.mode-row:hover:not(:disabled) { background: var(--color-hover); }
+.mode-row:hover:not(:disabled) .mode-row-icon,
+.mode-row:hover:not(:disabled) .mode-row-name { color: var(--color-text-strong); }
 .mode-row:disabled { cursor: not-allowed; opacity: 0.45; }
 .mode-row-info {
   display: contents;
@@ -2123,12 +2153,14 @@ function selectModel(modelId: string): void {
   align-items: center;
   justify-content: center;
   color: var(--muted);
+  transition: color var(--duration-base) var(--ease-out);
   font-size: var(--ui-font-size);
   line-height: var(--leading-normal);
 }
 .mode-row-name {
   grid-column: 2;
   grid-row: 1;
+  transition: color var(--duration-base) var(--ease-out);
   font-size: var(--ui-font-size);
   font-weight: var(--weight-medium);
   color: var(--color-text);
@@ -2212,7 +2244,9 @@ function selectModel(modelId: string): void {
   font-family: var(--font-ui);
   text-align: left;
 }
-.mode-row-main:hover { background: var(--color-surface-sunken); }
+.mode-row-main:hover { background: var(--color-hover); }
+.mode-row-main:hover .mode-row-icon,
+.mode-row-main:hover .mode-row-name { color: var(--color-text-strong); }
 .mode-row-goal.on .mode-row-main .mode-row-name { color: var(--color-accent-hover); }
 .mode-row-actions {
   display: flex;

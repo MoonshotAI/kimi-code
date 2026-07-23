@@ -198,6 +198,7 @@ onUnmounted(() => {
                 <tr><td class="tk">--color-well</td><td class="val"><span class="swatch" style="background:#f3f5f8"></span>#f3f5f8</td><td class="val"><span class="swatch" style="background:#13181e"></span>#13181e</td><td>Content well on the page (code blocks, tool-output panels, match/file lists, media thumbnails) — light reuses the sunken recess; dark lifts one rung ABOVE the page, because a true recess (<code>#0d1117</code>) vanishes into the page there</td></tr>
                 <tr><td class="tk">--color-surface-deep</td><td class="val"><span class="swatch" style="background:#fafbfc"></span>#fafbfc</td><td class="val"><span class="swatch" style="background:#0a0d12"></span>#0a0d12</td><td>Deep chrome plane one step BELOW the page (panel headers, diff gutters) — dark drops under <code>--color-bg</code> so chrome framing stays darker than the content it frames</td></tr>
                 <tr><td class="tk">--color-text</td><td class="val"><span class="swatch" style="background:rgba(0,0,0,.9)"></span>rgba(0,0,0,.9)</td><td class="val"><span class="swatch" style="background:#e8eaed"></span>#e8eaed</td><td>Body text / headings</td></tr>
+                <tr><td class="tk">--color-text-strong</td><td class="val"><span class="swatch" style="background:#000"></span>#000000</td><td class="val"><span class="swatch" style="background:#fff;box-shadow:inset 0 0 0 1px #ddd"></span>#ffffff</td><td>Max foreground emphasis — menu-row label &amp; icon on hover</td></tr>
                 <tr><td class="tk">--color-text-muted</td><td class="val"><span class="swatch" style="background:#6b7280"></span>#6b7280</td><td class="val"><span class="swatch" style="background:#9aa0a8"></span>#9aa0a8</td><td>Secondary text / placeholder</td></tr>
                 <tr><td class="tk">--color-line</td><td class="val"><span class="swatch" style="background:#e7eaee"></span>#e7eaee</td><td class="val"><span class="swatch" style="background:#2d333b"></span>#2d333b</td><td>Divider / card border</td></tr>
                 <tr><td class="tk">--color-subtle</td><td class="val"><span class="swatch" style="background:#f1f4f8"></span>#f1f4f8</td><td class="val"><span class="swatch" style="background:#22272e"></span>#22272e</td><td>Subtle hairline — tertiary separators below <code>--color-line</code> (diff-gutter column rules, quiet dividers inside wells)</td></tr>
@@ -843,7 +844,8 @@ onUnmounted(() => {
             <!-- ===== Menu / Dropdown ===== -->
             <h3 class="sub">Menu / Dropdown</h3>
             <p>Desktop menus use a 3.5px panel inset. Standard items use 5px × 9px padding and a 7px icon gap. Their three-layer neutral shadow stays below 4% opacity.</p>
-            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-menu</code>, a three-layer neutral ramp). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 12px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size. A dropdown menu pops in from its trigger corner — fade plus a slight 0.97 scale over <code>--duration-base</code> (exit <code>--duration-fast</code>), the composer model dropdown's motion language; the transform origin and the nudge direction follow the anchoring, including the upward flip near the viewport edge.</p>
+            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-menu</code>, a three-layer neutral ramp). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 13px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size. A dropdown menu pops in from its trigger corner — fade plus a slight 0.97 scale over <code>--duration-base</code> (exit <code>--duration-fast</code>), the composer model dropdown's motion language; the transform origin and the nudge direction follow the anchoring, including the upward flip near the viewport edge.</p>
+            <p>Row states: hover uses the mode-aware <code>--color-hover</code> wash (it lightens under dark, never darkens); a leading icon sits one rung below the label (<code>--muted</code>), and on hover both label and icon step up to <code>--color-text-strong</code>, the max foreground tier. Selection keeps the accent pair (<code>--color-accent-soft</code> / <code>--color-accent-hover</code>); danger keeps its own colour.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Menu · dropdown menu</span></div>
               <div class="stage p col" style="align-items:flex-start">
@@ -1296,7 +1298,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="callout info"><span class="ico">i</span><div>
-              <b>Site-wide consistency</b>: the composer uses one 32px superellipse shell and one 32px desktop control height. Attachment, permission, modes, compact, and model controls are all full-round and transparent at rest; hover reveals a neutral wash, open/active may use accent-soft, and Send remains the sole persistent filled control. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair the existing icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room. The dock's workbar above the composer carries one pill vocabulary — 32px high with <code>--space-4</code> inline padding and stadium-shaped (<code>--radius-full</code>) corners, a <code>--color-surface</code> fill (one rung above the page in both schemes — sunken is degenerate in dark — the same material as the popover it opens), and the system hairline edge (0.5px at <code>--color-line-strong</code>, one rung up for presence; no shadow), icon + label + a count or status — for background bash tasks, background sub-agents, todos, and the goal alike; a pill toggles the shared work panel (itself at <code>--radius-xl</code> with the same 0.5px <code>--color-line-strong</code> edge outside — inner separators stay <code>--color-line</code> — and the menu panel's <code>--shadow-menu</code>), and the goal's detail (full objective, completion criterion) fills the panel body while its pause / resume / cancel controls ride the panel head (the decision cards' action vocabulary — exactly one accent primary, resume while paused; secondary pause while active; danger-soft cancel) and the meta counts (turns / tokens / time / budget) sit in a hairline footer — never a separate full-width strip.
+              <b>Site-wide consistency</b>: the composer uses one 32px superellipse shell and one 32px desktop control height. Attachment, permission, modes, compact, and model controls are all full-round and transparent at rest; hover reveals a neutral wash, open/active may use accent-soft, and Send remains the sole persistent filled control — an inverted <code>--color-text</code> fill with a <code>--color-bg</code> glyph (never the accent), disabled while the input is empty or an upload is in flight. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair the existing icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room. The dock's workbar above the composer carries one pill vocabulary — 32px high with <code>--space-4</code> inline padding and stadium-shaped (<code>--radius-full</code>) corners, a <code>--color-surface</code> fill (one rung above the page in both schemes — sunken is degenerate in dark — the same material as the popover it opens), and the system hairline edge (0.5px at <code>--color-line-strong</code>, one rung up for presence; no shadow), icon + label + a count or status — for background bash tasks, background sub-agents, todos, and the goal alike; a pill toggles the shared work panel (itself at <code>--radius-xl</code> with the same 0.5px <code>--color-line-strong</code> edge outside — inner separators stay <code>--color-line</code> — and the menu panel's <code>--shadow-menu</code>), and the goal's detail (full objective, completion criterion) fills the panel body while its pause / resume / cancel controls ride the panel head (the decision cards' action vocabulary — exactly one accent primary, resume while paused; secondary pause while active; danger-soft cancel) and the meta counts (turns / tokens / time / budget) sit in a hairline footer — never a separate full-width strip.
             </div></div>
             <p><b>Workspace attachment card</b>: on the empty session, the workspace picker is a <b>separate attachment card</b> tucked under the composer — and the composer card itself stays complete (its own 0.5px border, <code>--radius-composer</code> corners with <code>--corner-shape-composer</code>, and shadow are never altered). The attachment lives inside the composer's padding box as the card's sibling, so its width always matches; its top <code>--space-4</code> slides behind the card (the card is raised to <code>--z-sticky</code>), its square top edge stays hidden, and only the rounded bottom (<code>0 0 --radius-2xl --radius-2xl</code>) shows. Background <code>--color-hover</code> at 60% via <code>color-mix</code> (≈0.03 black in light, self-adapting in dark), no border, no shadow. Inside sits one quiet capsule trigger: transparent, <code>--radius-full</code>, 16px leading icon and 12px label at weight 475 in <code>--color-text-muted</code>; hover deepens to <code>--color-selected</code> and the label turns <code>--color-text</code>. The dropdown follows the §03 menu spec and is viewport-aware (flips above when more room, clamps max-height to the scrollport); at <code>--z-dropdown</code> it outranks both the card and the fixed click-outside backdrop (<code>--z-sticky</code>), which renders outside the composer because the card's <code>container-type</code> captures <code>position: fixed</code> descendants.</p>
 
@@ -1980,7 +1982,10 @@ onUnmounted(() => {
     --p-surface-sunken: var(--color-surface-sunken);
     --p-well: var(--color-well);
     --p-surface-deep: var(--color-surface-deep);
+    --p-hover: var(--color-hover);
     --p-text: var(--color-text);
+    --p-text-strong: var(--color-text-strong);
+    --p-muted: var(--muted);
     --p-text-muted: var(--color-text-muted);
     --p-text-faint: var(--color-text-faint);
     --p-text-on-accent: var(--color-text-on-accent);
@@ -2016,7 +2021,8 @@ onUnmounted(() => {
   [data-p="dark"] {
     --p-bg: #0d1117; --p-surface: #13181e; --p-surface-raised: #1c2128; --p-surface-sunken: #0d1117;
     --p-well: #13181e; --p-surface-deep: #0a0d12; --p-surface-overlay: #22272e;
-    --p-text: #e8eaed; --p-text-muted: #9aa0a8; --p-text-faint: #6b7280;
+    --p-hover: #ffffff0d;
+    --p-text: #e8eaed; --p-text-strong: #ffffff; --p-muted: #727983; --p-text-muted: #9aa0a8; --p-text-faint: #6b7280;
     --p-line: #2d333b; --p-line-strong: #3d444d;
     --p-accent: #58a6ff; --p-accent-hover: #79b8ff; --p-accent-soft: rgba(88,166,255,.14); --p-accent-bd: rgba(88,166,255,.28);
     --p-success: #3fb950; --p-success-soft: rgba(63,185,80,.14); --p-success-bd: rgba(63,185,80,.28);
@@ -2050,9 +2056,9 @@ onUnmounted(() => {
   .p-btn.primary { background: var(--p-accent); color: var(--p-text-on-accent); border-color: var(--p-accent); box-shadow: var(--p-sh-xs); }
   .p-btn.primary:hover { background: var(--p-accent-hover); border-color: var(--p-accent-hover); }
   .p-btn.secondary { background: var(--p-surface-raised); color: var(--p-text); border-color: var(--p-line-strong); box-shadow: var(--p-sh-xs); }
-  .p-btn.secondary:hover { background: var(--p-surface-sunken); border-color: var(--p-line-strong); }
+  .p-btn.secondary:hover { background: var(--p-hover); border-color: var(--p-line-strong); }
   .p-btn.ghost { background: transparent; color: var(--p-text); border-color: transparent; }
-  .p-btn.ghost:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-btn.ghost:hover { background: var(--p-hover); color: var(--p-text-strong); }
   .p-btn.danger { background: var(--p-danger); color: #fff; border-color: var(--p-danger); box-shadow: var(--p-sh-xs); }
   .p-btn.danger:hover { filter: brightness(.96); }
   .p-btn.danger-soft { background: var(--p-danger-soft); color: var(--p-danger); border-color: var(--p-danger-bd); }
@@ -2064,7 +2070,7 @@ onUnmounted(() => {
     border-radius: var(--p-r-md); border: 1px solid transparent; background: transparent; color: var(--p-text-muted); cursor: pointer;
     transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
-  .p-icon-btn:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-icon-btn:hover { background: var(--p-hover); color: var(--p-text); }
   .p-icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--p-accent-soft); }
   .p-icon-btn.sm { --_s: 26px; border-radius: var(--p-r-sm); }
   .p-icon-btn.lg { --_s: 44px; }
@@ -2104,7 +2110,7 @@ onUnmounted(() => {
     font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); font-weight: 500; color: var(--p-text); cursor: pointer;
     transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
-  .p-pill:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-pill:hover { background: var(--p-hover); color: var(--p-text-strong); }
   .p-pill .pp-strong { font-weight: 700; color: var(--p-text); }
   .p-pill .pp-sub { color: var(--p-accent); font-weight: 600; }
   .p-pill .p-ic { width: 14px; height: 14px; color: var(--p-text-faint); }
@@ -2280,8 +2286,9 @@ onUnmounted(() => {
   .p-composer-strip .p-ic { width: 16px; height: 16px; color: var(--p-text-faint); }
   .p-composer-left, .p-composer-right { display: flex; align-items: center; gap: 4px; }
   .p-composer .p-icon-btn { border-radius: var(--p-r-full); }
-  .p-send { width: 32px; height: 32px; border-radius: var(--p-r-full); display: grid; place-items: center; background: var(--p-accent); color: #fff; border: none; cursor: pointer; box-shadow: var(--p-sh-xs); transition: transform var(--p-dur-fast) var(--p-ease), background var(--p-dur) var(--p-ease); }
-  .p-send:hover { background: var(--p-accent-hover); }
+  .p-send { position: relative; width: 32px; height: 32px; border-radius: var(--p-r-full); display: grid; place-items: center; background: var(--p-text); color: var(--p-bg); border: none; cursor: pointer; box-shadow: var(--p-sh-xs); transition: transform var(--p-dur-fast) var(--p-ease); }
+  .p-send::after { content: ""; position: absolute; inset: 0; border-radius: var(--p-r-full); background: var(--p-bg); opacity: 0; transition: opacity var(--p-dur-slow) var(--p-ease); pointer-events: none; }
+  .p-send:hover::after { opacity: .28; }
   .p-send:active { transform: scale(.92); }
   .p-send .p-ic { width: 16px; height: 16px; }
 
@@ -2311,15 +2318,18 @@ onUnmounted(() => {
     border-radius: var(--p-r-sm); font-size: var(--p-font-size-sm); color: var(--p-text);
     cursor: pointer; transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
-  .p-menu-item:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-menu-item:hover { background: var(--p-hover); color: var(--p-text-strong); }
   .p-menu-item.active { background: var(--p-accent-soft); color: var(--p-accent-hover); }
   .p-menu-item.active:hover { background: var(--p-accent-soft); color: var(--p-accent-hover); }
   .p-menu-item.danger { color: var(--p-danger); }
   .p-menu-item.danger:hover { background: var(--p-danger-soft); color: var(--p-danger); }
   .p-menu-item.disabled { opacity: .5; cursor: not-allowed; }
   .p-menu-item.disabled:hover { background: transparent; color: var(--p-text); }
-  .p-menu-item .p-ic { width: var(--p-ic-sm); height: var(--p-ic-sm); }
-  .p-menu-item.lg { min-height: 44px; padding: 12px 14px; font-size: var(--p-font-size-base); }
+  .p-menu-item .p-ic { width: var(--p-ic-sm); height: var(--p-ic-sm); color: var(--p-muted); }
+  .p-menu-item:hover .p-ic { color: var(--p-text-strong); }
+  .p-menu-item.active .p-ic { color: var(--p-accent-hover); }
+  .p-menu-item.danger .p-ic { color: var(--p-danger); }
+  .p-menu-item.lg { min-height: 44px; padding: 12px 14px; font-size: var(--p-font-size-sm); }
   .p-menu-sep { height: 1px; background: var(--p-line); margin: 4px 0; }
 
   /* ===== SegmentedControl ===== */

@@ -320,7 +320,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   cursor: pointer;
   text-align: left;
 }
-.newrow:hover { background: var(--color-surface-sunken); }
+.newrow:hover { background: var(--color-hover); }
 .newrow:active { background: var(--color-surface-sunken); }
 .newrow.secondary {
   padding-top: var(--space-2);
@@ -328,7 +328,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   color: var(--color-text-muted);
   font-weight: 400;
 }
-.newrow.secondary:hover { background: var(--color-surface-sunken); }
+.newrow.secondary:hover { background: var(--color-hover); }
 .newrow.secondary:active { background: var(--color-surface-sunken); color: var(--color-text); }
 
 /* ---- List + alignment contract (mirrors the desktop sidebar):
@@ -361,7 +361,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   user-select: none;
   position: relative; /* anchors the workspace "…" menu */
 }
-.mgh:hover { background: var(--color-surface-sunken); }
+.mgh:hover { background: var(--color-hover); }
 .mgh:active { background: var(--color-surface-sunken); }
 .mgh-folder { flex: none; color: var(--color-text-muted); }
 .mgh-main {
@@ -404,7 +404,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
   cursor: pointer;
   position: relative;
 }
-.srow:hover { background: var(--color-surface-sunken); }
+.srow:hover { background: var(--color-hover); }
 .srow:active { background: var(--color-surface-sunken); }
 .srow.cur { background: var(--color-accent-soft); box-shadow: inset 0 0 0 1px var(--color-accent-bd); }
 .srow .m { flex: 1; min-width: 0; }

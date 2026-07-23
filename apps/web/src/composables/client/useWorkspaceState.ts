@@ -2189,7 +2189,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const on = !current;
     if (on && rawState.permission === 'manual') {
       const ok = await confirm({
-        title: t('workspace.swarmEnableConfirm'),
+        title: t('workspace.swarmEnableTitle'),
+        message: t('workspace.swarmEnableConfirm'),
         variant: 'primary',
       });
       if (!ok) return;
@@ -2222,7 +2223,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!trimmed) return;
     if (rawState.permission === 'manual') {
       const ok = await confirm({
-        title: t('workspace.goalStartConfirm', { objective: trimmed }),
+        title: t('workspace.goalStartTitle'),
+        message: t('workspace.goalStartConfirm', { objective: trimmed }),
         variant: 'primary',
       });
       if (!ok) return;

@@ -50,7 +50,7 @@ defineEmits<{ click: [event: MouseEvent] }>();
     color var(--duration-base) var(--ease-out);
 }
 button.ui-pill { cursor: pointer; }
-button.ui-pill:hover:not(:disabled) { background: var(--color-surface-sunken); color: var(--color-text); }
+button.ui-pill:hover:not(:disabled) { background: var(--color-hover); color: var(--color-text-strong); }
 button.ui-pill:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 button.ui-pill:disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-pill.is-active { background: var(--color-accent-soft); color: var(--color-accent); }

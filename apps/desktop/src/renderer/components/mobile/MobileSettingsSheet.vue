@@ -461,7 +461,7 @@ watch(
   text-align: left;
   color: var(--color-text);
 }
-.srow:hover:not(.read-only) { background: var(--color-surface-sunken); }
+.srow:hover:not(.read-only) { background: var(--color-hover); }
 .srow:active:not(.read-only) { background: var(--color-surface-sunken); }
 .srow.read-only { cursor: default; }
 

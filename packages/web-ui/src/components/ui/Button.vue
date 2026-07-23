@@ -94,14 +94,14 @@ withDefaults(defineProps<{
   border-color: var(--color-line-strong);
   box-shadow: var(--shadow-xs);
 }
-.ui-button--secondary:not(:disabled):hover { border-color: var(--color-line-strong); background: var(--color-surface-sunken); }
+.ui-button--secondary:not(:disabled):hover { border-color: var(--color-line-strong); background: var(--color-hover); }
 
 .ui-button--ghost {
   background: transparent;
   color: var(--color-text-muted);
   border-color: transparent;
 }
-.ui-button--ghost:not(:disabled):hover { background: var(--color-surface-sunken); color: var(--color-text); }
+.ui-button--ghost:not(:disabled):hover { background: var(--color-hover); color: var(--color-text-strong); }
 
 .ui-button--danger {
   background: var(--color-danger);

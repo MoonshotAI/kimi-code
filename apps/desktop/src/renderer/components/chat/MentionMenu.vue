@@ -132,7 +132,7 @@ function fileIcon(item: FileItem): string {
   justify-content: center;
   width: 14px;
   height: 14px;
-  color: var(--color-text-faint);
+  color: var(--muted);
   flex-shrink: 0;
 }
 
@@ -145,11 +145,15 @@ function fileIcon(item: FileItem): string {
 
 .mention-item:hover .mention-icon,
 .mention-item.active .mention-icon {
-  color: var(--color-text-muted);
+  color: var(--color-text-strong);
 }
 
 .mention-item:hover {
-  background: var(--color-surface-sunken);
+  background: var(--color-hover);
+}
+.mention-item:hover .mention-name,
+.mention-item.active .mention-name {
+  color: var(--color-text-strong);
 }
 .mention-item.active {
   background: var(--color-accent-soft);
