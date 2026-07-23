@@ -45,6 +45,7 @@ import {
   type LoopControl,
 } from '#/agent/loop/configSection';
 import {
+  MODELS_SECTION,
   SECONDARY_MODEL_EFFORT_ENV,
   SECONDARY_MODEL_ENV,
   SECONDARY_MODEL_SECTION,
@@ -1570,6 +1571,33 @@ describe('secondaryModel config section', () => {
     expect(config.inspect<SecondaryModelConfig>(SECONDARY_MODEL_SECTION).userValue).toEqual({
       model: 'provider/raw-secondary',
     });
+
+    disposables.dispose();
+  });
+
+  it('propagates overlay-induced models changes to section events on runtime set', async () => {
+    const { config, disposables } = await createConfig(
+      {},
+      '[models.k2]\nprovider = "kimi"\nmodel = "kimi-k2"\n',
+    );
+    const domains: string[] = [];
+    config.onDidSectionChange((e) => domains.push(e.domain));
+
+    // Runtime set with patch fields: the derived entry appears in the
+    // effective models view AND the models section event fires — the
+    // persistence bridge re-hydrates the registry from that event.
+    await config.set(SECONDARY_MODEL_SECTION, { model: 'k2', maxOutputSize: 8192 });
+    const models = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
+    expect(models[SECONDARY_DERIVED_MODEL_ID]).toBeDefined();
+    expect(domains).toContain(SECONDARY_MODEL_SECTION);
+    expect(domains).toContain(MODELS_SECTION);
+
+    // Removing the patch retracts the derived entry and fires again.
+    domains.length = 0;
+    await config.replace(SECONDARY_MODEL_SECTION, { model: 'k2' });
+    const after = config.get<Record<string, unknown>>(MODELS_SECTION) ?? {};
+    expect(after[SECONDARY_DERIVED_MODEL_ID]).toBeUndefined();
+    expect(domains).toContain(MODELS_SECTION);
 
     disposables.dispose();
   });
