@@ -20,7 +20,6 @@ export const WORKING_TIPS: readonly ToolbarTip[] = [
   { text: '/tasks to check progress and status for background tasks', priority: 2 },
   { text: '/init: generate AGENTS.md', priority: 2 },
   { text: 'Try /dance for a hidden Easter egg' },
-  { text: '/plugins: manage plugins — try the "superpowers" plugin', solo: true, priority: 3 },
   {
     text: '/plugins: manage plugins — try the "Kimi Datasource" for reliable financial, economic, and academic data',
     solo: true,
