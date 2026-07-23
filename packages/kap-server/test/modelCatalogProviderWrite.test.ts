@@ -817,4 +817,50 @@ describe('server-v2 /api/v1 provider write endpoints', () => {
     expect(status).toBe(201);
     expect(body.data.base_url).toBe('https://api.openai.example/v1');
   });
+
+  it('rejects a rename/rebuild whose alias key is owned by another provider (40001, no writes)', async () => {
+    // A foreign-prefix alias: the key says openai/… but the record belongs to
+    // "other" (hand-edited config or a historical leftover).
+    const FOREIGN_TOML = [
+      '[providers.openai]',
+      'type = "openai"',
+      'api_key = "sk-openai"',
+      '',
+      '[providers.other]',
+      'type = ' + '"anthropic"',
+      'api_key = "sk-other"',
+      '',
+      '[models."openai/gpt-4.1"]',
+      'provider = "other"',
+      'model = "claude-thing"',
+      'max_context_size = 200000',
+      '',
+      '[models."other/claude-thing"]',
+      'provider = "other"',
+      'model = "claude-thing"',
+      'max_context_size = 200000',
+      '',
+    ].join('\n');
+    await boot(FOREIGN_TOML);
+    const { status, body } = await putJson<unknown>('/api/v1/providers/openai', {
+      type: 'openai',
+      models: [{ model: 'gpt-4.1', max_context_size: 1047576 }],
+    });
+    expect(status).toBe(200);
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('openai/gpt-4.1');
+
+    // No partial write: both providers and the foreign alias are untouched.
+    const onDisk = await readConfigToml();
+    expect(onDisk['providers']).toEqual({
+      openai: { type: 'openai', api_key: 'sk-openai' },
+      other: { type: 'anthropic', api_key: 'sk-other' },
+    });
+    const models = onDisk['models'] as Record<string, Record<string, unknown>>;
+    expect(models['openai/gpt-4.1']).toEqual({
+      provider: 'other',
+      model: 'claude-thing',
+      max_context_size: 200000,
+    });
+  });
 });

@@ -120,7 +120,12 @@ async function fetchAndCache(): Promise<Catalog> {
   } catch (err) {
     if (cache !== undefined) return cache.catalog;
     const builtIn = builtInCatalog();
-    if (builtIn !== undefined) return builtIn;
+    if (builtIn !== undefined) {
+      // Cache the snapshot too — an offline install would otherwise pay the
+      // full upstream timeout on every catalog call before falling back.
+      cache = { catalog: builtIn, fetchedAt: now };
+      return builtIn;
+    }
     throw new CatalogUnavailableError(err);
   }
 }

@@ -456,11 +456,32 @@ export function registerModelCatalogRoutes(app: ModelCatalogRouteHost, core: Sco
           ]),
         );
         nextProviders[newId] = provider;
+
+        // Foreign-prefix collision guard: alias keys are global, and a kept
+        // alias owned by ANOTHER provider may already sit on a `<newId>/<model>`
+        // key the rebuild would write — refuse instead of silently retargeting
+        // it. Checked BEFORE any write so a collision never lands half the edit.
+        const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
+        const newAliasKeys = new Set(req.body.models.map((entry) => `${newId}/${entry.model}`));
+        const colliding = Object.entries(models)
+          .filter(([, record]) => record.provider !== provider_id)
+          .map(([aliasId]) => aliasId)
+          .filter((aliasId) => newAliasKeys.has(aliasId));
+        if (colliding.length > 0) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.VALIDATION_FAILED,
+              `model alias key already owned by another provider: ${colliding.join(', ')}`,
+              req.id,
+            ),
+          );
+          return;
+        }
+
         await config.replace(PROVIDERS_SECTION, nextProviders);
 
         // Rebuild the provider's aliases from the submitted list: keep every
         // alias owned by other providers, drop the old set, append the new one.
-        const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
         const previousAliasIds = new Set(
           Object.entries(models)
             .filter(([, record]) => record.provider === provider_id)
