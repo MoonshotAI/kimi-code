@@ -3,7 +3,6 @@
 // reactivity, no component state). Shared by ChatPane.vue's template and its
 // stateful copy/edit helpers.
 import type { ChatTurn, TurnBlock } from '../types';
-import { normalizeToolName } from '../lib/toolMeta';
 
 // Shared 1024-based token formatter (lib/formatTokens); re-exported so the
 // existing ChatPane import keeps working.
@@ -34,8 +33,8 @@ export type ToolStackItem = {
   sourceIndex: number;
 };
 
-/** One item inside a folded activity run: a thinking segment or a quiet-line
-    tool call, keeping its position in the turn's block list. */
+/** One item inside a folded activity run: a thinking segment or a tool
+    call, keeping its position in the turn's block list. */
 export type ActivityItem =
   | { kind: 'thinking'; thinking: string; startedAt?: string; durationMs?: number; sourceIndex: number }
   | { kind: 'tool'; tool: ToolStackItem['tool']; sourceIndex: number };
@@ -50,37 +49,15 @@ export function rendersToolCard(block: Extract<TurnBlock, { kind: 'tool' }>): bo
   return !(block.tool.status === 'ok' && block.tool.media);
 }
 
-// Folding rule: a run of CONSECUTIVE quiet activity (thinking segments +
-// quiet-line tool calls) folds into a single disclosure row with a smart
-// summary sentence (see lib/activitySummary.ts). Runs need not be homogeneous
-// — kinds mix freely inside one run. Text never folds (it breaks the run, as
-// does any block that keeps its own richer rendering): result/interaction
-// tools stay standalone — todos and goals narrate progress, a sub-agent
-// delegation keeps its own identity card, question and swarm are cards,
-// successful media tools render inline media, and unrecognized kinds stay
-// standalone out of caution. Edits and writes DO fold (their count surfaces
-// in the summary sentence).
-const FOLDABLE_KINDS = new Set([
-  'read',
-  'grep',
-  'search',
-  'glob',
-  'ls',
-  'web_fetch',
-  'bash',
-  'edit',
-  'multi_edit',
-  'write',
-]);
-
-/** True when the tool block joins an activity run; false when it renders
-    standalone and breaks the run on either side (media without a card, or a
-    non-foldable kind). */
-function foldsIntoActivityRun(block: Extract<TurnBlock, { kind: 'tool' }>): boolean {
-  if (!rendersToolCard(block)) return false;
-  return FOLDABLE_KINDS.has(normalizeToolName(block.tool.name));
-}
-
+// Folding rule: a run of CONSECUTIVE activity (thinking segments + tool
+// calls) folds into a single disclosure row with a smart summary sentence
+// (see lib/activitySummary.ts). Runs need not be homogeneous — kinds mix
+// freely inside one run, and EVERY tool kind folds: the run body renders
+// the same ToolCall the standalone path would, and the row stays expanded
+// while the run is live, so interaction / progress cards (question,
+// delegation, todos, goals, swarm) stay visible exactly while active. Text
+// never folds. Successful media tools render inline media (no card) and
+// stay standalone — the media IS the turn's output.
 export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
   const blocks = turnBlocks(turn);
   const rendered: AssistantRenderBlock[] = [];
@@ -109,7 +86,7 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
       });
       return;
     }
-    if (block.kind === 'tool' && foldsIntoActivityRun(block)) {
+    if (block.kind === 'tool' && rendersToolCard(block)) {
       run.push({ kind: 'tool', tool: block.tool, sourceIndex });
       return;
     }

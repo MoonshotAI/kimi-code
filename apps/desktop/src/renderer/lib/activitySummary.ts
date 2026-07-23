@@ -57,10 +57,9 @@ export interface LiveSummary {
   plain: string;
 }
 
-// Kinds with a typed done-tense template under tools.group.typed (the run's
-// foldable set minus multi_edit, which narrates as edit). Unknown kinds fall
-// back to the generic "{number} 个工具调用" counter — unreachable through the
-// fold rule, kept as defensive coverage for hand-built runs.
+// Kinds with a typed done-tense template under tools.group.typed (multi_edit
+// narrates as edit). Unrecognized kinds — skills, MCP tools, anything without
+// a template — fall back to the generic "{number} 个工具调用" counter.
 const TYPED_KINDS = new Set(['read', 'bash', 'grep', 'search', 'glob', 'ls', 'web_fetch', 'edit', 'write']);
 
 /** The summary's kind identity: multi_edit narrates as edit. */

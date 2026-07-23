@@ -159,31 +159,37 @@ describe('assistantRenderBlocks', () => {
     ]);
   });
 
-  it('never folds sub-agent delegations (identity cards stand alone)', () => {
-    const rendered = assistantRenderBlocks(
-      assistantTurn([toolBlock('s1', { name: 'task' }), toolBlock('s2', { name: 'task' })]),
-    );
-    expect(rendered.map((b) => b.kind)).toEqual(['tool', 'tool']);
-  });
-
-  it('lets a non-foldable kind break a run on both sides', () => {
+  it('folds unrecognized kinds (skills, MCP tools) into the run', () => {
     const rendered = assistantRenderBlocks(
       assistantTurn([
         toolBlock('a'),
+        toolBlock('s', { name: 'Skill' }),
+        toolBlock('m', { name: 'mcp__github__create_issue' }),
         toolBlock('b'),
-        toolBlock('e', { name: 'task' }),
-        toolBlock('c'),
-        toolBlock('d'),
       ]),
     );
-    expect(rendered.map((b) => b.kind)).toEqual(['activity-run', 'tool', 'activity-run']);
+    expect(rendered.map((b) => b.kind)).toEqual(['activity-run']);
+    if (rendered[0]?.kind === 'activity-run') {
+      expect(rendered[0].items.map((it) => it.sourceIndex)).toEqual([0, 1, 2, 3]);
+    }
   });
 
-  it('keeps unrecognized kinds standalone', () => {
-    const rendered = assistantRenderBlocks(
-      assistantTurn([toolBlock('x1', { name: 'cronlist' }), toolBlock('x2', { name: 'cronlist' })]),
-    );
-    expect(rendered.map((b) => b.kind)).toEqual(['tool', 'tool']);
+  it('folds interaction and progress card kinds too (task, todo, question, goals, swarm)', () => {
+    for (const name of [
+      'task',
+      'todo',
+      'agentswarm',
+      'askuserquestion',
+      'creategoal',
+      'getgoal',
+      'setgoalbudget',
+      'updategoal',
+    ]) {
+      const rendered = assistantRenderBlocks(
+        assistantTurn([toolBlock('x1', { name }), toolBlock('x2', { name })]),
+      );
+      expect(rendered.map((b) => b.kind)).toEqual(['activity-run']);
+    }
   });
 
   it('breaks the run when a text block interrupts it', () => {

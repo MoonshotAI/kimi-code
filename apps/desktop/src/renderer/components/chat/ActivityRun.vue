@@ -1,6 +1,7 @@
 <!-- apps/kimi-web/src/components/chat/ActivityRun.vue -->
-<!-- A run of consecutive quiet activity (thinking segments + quiet-line tool
-     calls) folded into ONE disclosure row. The row leads with a status glyph
+<!-- A run of consecutive activity (thinking segments + tool calls of any
+     kind, cards included) folded into ONE disclosure row. The row leads with
+     a status glyph
      (check / close once settled, the current step's own icon breathing while
      running) and narrates the run as a smart summary sentence — per-kind
      done-tense clauses in first-appearance order, a danger failure clause on
@@ -16,7 +17,7 @@
      user expanded it mid-run (the thinking block's vocabulary),
      and a settled → running transition (the stream appending to the same
      run) reopens it. The expanded body is the items flat, in order: thinking
-     rows and tool quiet lines, each with its own in-row details intact.
+     rows and tool rows, each with its own in-row details intact.
 
      TODO(P2): hover preview — folded and idle, lingering ~400ms floats a
      mini list of the latest 4 items (prototype v1-log-card.html ?peek). -->
