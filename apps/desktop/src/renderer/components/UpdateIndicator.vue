@@ -3,20 +3,27 @@
      that header IS the traffic-light drag strip, so the wrapper opts out of
      app-region drag). Clicking opens the canonical §03 Dialog (Anatomy A,
      padded · lg · auto — see §09 in DesignSystemView.vue) with the version,
-     release date and the state-dependent actions (download / progress /
-     restart / retry), plus "本次跳过" to mute a version persistently.
+     release date, the state-dependent actions (download / background /
+     restart / retry) and an auto-download checkbox pinned to the foot's left,
+     plus "本次跳过" to mute a version persistently. When the
+     main process fetched the version's changelog (CDN changelog.{zh,en}.md),
+     a "更新内容 / What's new" section renders it under the meta line — the
+     current locale's text, falling back to the other language, hidden when
+     neither exists (older versions simply have no notes).
      Renders only when the main process reports an update state the user has
      not skipped; with no desktop bridge (plain web) useUpdateStatus stays
      idle and nothing renders, so this file is safe to sync to apps/web. -->
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Button, Dialog, Icon } from '@moonshot-ai/web-ui';
+import { Button, Checkbox, Dialog, Icon } from '@moonshot-ai/web-ui';
+import { Markdown } from '@moonshot-ai/web-markdown';
 import type { IconName } from '../lib/icons';
 import { useUpdateStatus } from '../composables/useUpdateStatus';
 
-const { t } = useI18n();
-const { status, visible, skipVersion, download, install } = useUpdateStatus();
+const { t, locale } = useI18n();
+const { status, visible, skipVersion, download, install, autoDownload, setAutoDownload, canToggleAutoDownload } =
+  useUpdateStatus();
 
 const open = ref(false);
 
@@ -82,6 +89,17 @@ const metaText = computed(() => {
 
 const percent = computed(() => status.value.percent ?? 0);
 
+// Bilingual changelog (main-side fetch, best-effort): the current locale's
+// text, falling back to the other language; empty hides the section.
+const changelogText = computed(() => {
+  const notes = status.value.releaseNotes;
+  if (notes === undefined) {
+    return '';
+  }
+  const primary = locale.value.toLowerCase().startsWith('zh') ? notes.zh : notes.en;
+  return (primary ?? notes.zh ?? notes.en ?? '').trim();
+});
+
 const icon = computed<IconName>(() => {
   switch (status.value.state) {
     case 'downloaded':
@@ -120,21 +138,40 @@ function onRestartNow(): void {
       <p v-if="(status.state === 'available' || status.state === 'downloaded') && metaText" class="upd-meta">
         {{ metaText }}
       </p>
+      <section v-if="changelogText" class="upd-notes">
+        <h4 class="upd-notes-title">{{ t('sidebar.updateWhatsNew') }}</h4>
+        <Markdown :text="changelogText" />
+      </section>
       <div v-if="status.state === 'downloading'" class="upd-progress">
         <div class="upd-progress-fill" :style="{ width: `${percent}%` }" />
       </div>
       <p v-if="status.state === 'error' && status.message" class="upd-message">{{ status.message }}</p>
 
-      <template v-if="status.state === 'available'" #foot>
-        <Button variant="ghost" @click="onSkip">{{ t('sidebar.updateSkip') }}</Button>
-        <Button @click="onDownload">{{ t('sidebar.updateDownloadNow') }}</Button>
-      </template>
-      <template v-else-if="status.state === 'downloaded'" #foot>
-        <Button variant="ghost" @click="open = false">{{ t('sidebar.updateRestartLater') }}</Button>
-        <Button @click="onRestartNow">{{ t('sidebar.updateRestartNow') }}</Button>
-      </template>
-      <template v-else-if="status.state === 'error'" #foot>
-        <Button variant="danger-soft" @click="onDownload">{{ t('sidebar.updateRetry') }}</Button>
+      <template #foot>
+        <Checkbox
+          v-if="canToggleAutoDownload"
+          class="upd-auto"
+          :model-value="autoDownload"
+          @update:model-value="setAutoDownload($event)"
+        >
+          {{ t('sidebar.updateAutoDownload') }}
+        </Checkbox>
+        <template v-if="status.state === 'available'">
+          <Button variant="ghost" @click="onSkip">{{ t('sidebar.updateSkip') }}</Button>
+          <Button @click="onDownload">{{ t('sidebar.updateDownloadNow') }}</Button>
+        </template>
+        <template v-else-if="status.state === 'downloading'">
+          <!-- The download continues on its own; this just dismisses the dialog
+               (the pill keeps showing live percent). -->
+          <Button variant="secondary" @click="open = false">{{ t('sidebar.updateBackground') }}</Button>
+        </template>
+        <template v-else-if="status.state === 'downloaded'">
+          <Button variant="ghost" @click="open = false">{{ t('sidebar.updateRestartLater') }}</Button>
+          <Button @click="onRestartNow">{{ t('sidebar.updateRestartNow') }}</Button>
+        </template>
+        <template v-else-if="status.state === 'error'">
+          <Button variant="danger-soft" @click="onDownload">{{ t('sidebar.updateRetry') }}</Button>
+        </template>
       </template>
     </Dialog>
   </span>
@@ -220,7 +257,57 @@ function onRestartNow(): void {
   word-break: break-all;
 }
 
+/* Changelog block under the meta line: quiet title + compact rendered list. */
+.upd-notes {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-line);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+}
+.upd-notes-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-faint);
+}
+.upd-notes :deep(ul),
+.upd-notes :deep(p) {
+  margin: 0;
+}
+.upd-notes :deep(li + li) {
+  margin-top: var(--space-1);
+}
+/* Section headings (### 新功能 / ### Features …) inside the rendered
+   changelog: same size as the body, told apart by weight, tight spacing. */
+.upd-notes :deep(h3) {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+}
+.upd-notes :deep(h3:first-child) {
+  margin-top: 0;
+}
+/* When the meta line is hidden (downloading / error states) the notes block
+   is the body's first child — the dialog's own padding already separates it
+   from the title. */
+.upd-notes:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* The foot's left slot: the auto-download checkbox pushes the action buttons
+   to the right. */
+.upd-auto {
+  margin-right: auto;
+}
+
 .upd-progress {
+  margin-top: var(--space-3);
   height: var(--space-1);
   border-radius: var(--radius-xs);
   background: var(--color-line);

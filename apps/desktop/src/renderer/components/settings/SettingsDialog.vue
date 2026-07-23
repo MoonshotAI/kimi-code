@@ -200,6 +200,15 @@ const checkResultText = computed(() => {
   if (result === null) return '';
   switch (result.outcome) {
     case 'available':
+      // The feedback mirrors what auto-download is doing with the find: a
+      // landed download points at the restart, an auto-mode find is already
+      // downloading, and only manual mode still needs the sidebar entry.
+      if (updateTracker.status.value.state === 'downloaded') {
+        return t('settings.updateCheckDownloaded', { version: result.version ?? '' });
+      }
+      if (updateTracker.autoDownload.value) {
+        return t('settings.updateCheckAvailableAuto', { version: result.version ?? '' });
+      }
       return t('settings.updateCheckAvailable', { version: result.version ?? '' });
     case 'latest':
       return t('settings.updateCheckLatest');
@@ -703,6 +712,17 @@ function archiveTime(iso: string): string {
               <Button variant="secondary" size="sm" :disabled="checkingUpdate" @click="onCheckUpdate">
                 {{ checkingUpdate ? t('settings.updateChecking') : t('settings.checkUpdateBtn') }}
               </Button>
+            </div>
+            <div v-if="updateTracker.canToggleAutoDownload" class="row">
+              <span class="rlabel">
+                {{ t('settings.autoDownloadUpdate') }}
+                <span class="hint">{{ t('settings.autoDownloadUpdateHint') }}</span>
+              </span>
+              <Switch
+                :model-value="updateTracker.autoDownload.value"
+                :label="t('settings.autoDownloadUpdate')"
+                @update:model-value="updateTracker.setAutoDownload($event)"
+              />
             </div>
             </div>
           </section>

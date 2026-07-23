@@ -19,6 +19,8 @@ export const IPC = {
   updateCheck: 'kimi:update-check',
   updateDownload: 'kimi:update-download',
   updateInstall: 'kimi:update-install',
+  updateGetAutoDownload: 'kimi:update-get-auto-download',
+  updateSetAutoDownload: 'kimi:update-set-auto-download',
   trayAttention: 'kimi:tray-attention',
   traySelectSession: 'kimi:tray-select-session',
   locale: 'kimi:locale',

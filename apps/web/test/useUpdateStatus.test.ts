@@ -23,6 +23,10 @@ function fakeBridge(initial: UpdateStatus) {
       }),
       downloadUpdate: vi.fn().mockResolvedValue(undefined),
       installUpdate: vi.fn().mockResolvedValue(undefined),
+      // Manual (click-to-download) mode by default; the auto-mode visibility
+      // rules get their own describe block below.
+      getUpdateAutoDownload: vi.fn().mockResolvedValue(false),
+      setUpdateAutoDownload: vi.fn().mockResolvedValue(undefined),
     },
     emit,
   };
@@ -108,6 +112,16 @@ describe('createUpdateTracker', () => {
     tracker.install();
     expect(bridge.installUpdate).toHaveBeenCalledTimes(1);
   });
+
+  it('passes release notes through from the snapshot and pushes', async () => {
+    const { bridge, emit } = fakeBridge({ state: 'available', version: '1.2.3', releaseNotes: { zh: '- 中文' } });
+    const tracker = createUpdateTracker(bridge);
+    await flush();
+    expect(tracker.status.value.releaseNotes).toEqual({ zh: '- 中文' });
+
+    emit({ state: 'available', version: '1.2.3', releaseNotes: { zh: '- 中文', en: '- English' } });
+    expect(tracker.status.value.releaseNotes).toEqual({ zh: '- 中文', en: '- English' });
+  });
 });
 
 describe('visibility & version skip', () => {
@@ -165,5 +179,56 @@ describe('visibility & version skip', () => {
     const second = createUpdateTracker(bridge);
     await flush();
     expect(second.visible.value).toBe(false);
+  });
+});
+
+describe('auto-download mode', () => {
+  it('surfaces only the downloaded state — background phases stay silent', async () => {
+    const { bridge, emit } = fakeBridge({ state: 'idle' });
+    bridge.getUpdateAutoDownload.mockResolvedValue(true);
+    const tracker = createUpdateTracker(bridge);
+    await flush();
+    expect(tracker.autoDownload.value).toBe(true);
+
+    emit({ state: 'available', version: '1.2.3' });
+    expect(tracker.visible.value).toBe(false);
+    emit({ state: 'downloading', version: '1.2.3', percent: 42 });
+    expect(tracker.visible.value).toBe(false);
+    emit({ state: 'downloaded', version: '1.2.3' });
+    expect(tracker.visible.value).toBe(true);
+    // A failed background download retries on the next scheduled check —
+    // no error pill.
+    emit({ state: 'error', version: '1.2.3', message: 'network down' });
+    expect(tracker.visible.value).toBe(false);
+  });
+
+  it('switches the visibility rules live when the toggle flips', async () => {
+    const { bridge } = fakeBridge({ state: 'downloading', version: '1.2.3', percent: 42 });
+    bridge.getUpdateAutoDownload.mockResolvedValue(true);
+    const tracker = createUpdateTracker(bridge);
+    await flush();
+    expect(tracker.visible.value).toBe(false);
+
+    tracker.setAutoDownload(false);
+    expect(bridge.setUpdateAutoDownload).toHaveBeenCalledWith(false);
+    expect(tracker.autoDownload.value).toBe(false);
+    // Manual mode surfaces the in-flight download again.
+    expect(tracker.visible.value).toBe(true);
+
+    tracker.setAutoDownload(true);
+    expect(bridge.setUpdateAutoDownload).toHaveBeenCalledWith(true);
+    expect(tracker.visible.value).toBe(false);
+  });
+
+  it('reports canToggleAutoDownload=false without a bridge or with a legacy one', async () => {
+    expect(createUpdateTracker(undefined).canToggleAutoDownload).toBe(false);
+
+    const { bridge } = fakeBridge({ state: 'idle' });
+    // A bridge that predates the auto-download toggle methods.
+    const legacy = { ...bridge, getUpdateAutoDownload: undefined, setUpdateAutoDownload: undefined };
+    const tracker = createUpdateTracker(legacy);
+    expect(tracker.canToggleAutoDownload).toBe(false);
+    // The default (disabled) stands in for the unreadable preference.
+    expect(tracker.autoDownload.value).toBe(false);
   });
 });

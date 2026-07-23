@@ -2,17 +2,26 @@ import { EventEmitter } from 'node:events';
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const { netFetchMock } = vi.hoisted(() => ({ netFetchMock: vi.fn() }));
+
 // updater.ts imports electron / electron-updater / ./window only for the
 // production wiring (initAutoUpdater); the unit under test is the injected
 // startAutoUpdater state machine. Mock all three so the import stays inert.
-vi.mock('electron', () => ({ app: { isPackaged: false } }));
+vi.mock('electron', () => ({ app: { isPackaged: false }, net: { fetch: netFetchMock } }));
 vi.mock('electron-updater', () => ({ autoUpdater: {} }));
 vi.mock('../../src/main/window', () => ({ sendToRenderer: vi.fn(), markQuitting: vi.fn() }));
 
-import { startAutoUpdater, type UpdateStatus } from '../../src/main/updater';
+import { fetchReleaseNotes, startAutoUpdater, type ReleaseNotes, type UpdateStatus } from '../../src/main/updater';
 import { markQuitting } from '../../src/main/window';
 
 const markQuittingMock = vi.mocked(markQuitting);
+
+// Two microtask flushes: the notes-fetch .then merge runs after the injected
+// promise resolves, so a single await can race depending on the mock's path.
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 class FakeUpdater extends EventEmitter {
   autoDownload = true;
@@ -22,7 +31,7 @@ class FakeUpdater extends EventEmitter {
   quitAndInstall = vi.fn();
 }
 
-function setup(overrides: { initialDelayMs?: number; intervalMs?: number } = {}) {
+function setup(overrides: { initialDelayMs?: number; intervalMs?: number; autoDownload?: boolean; fetchNotes?: (version: string) => Promise<ReleaseNotes> } = {}) {
   const updater = new FakeUpdater();
   const sent: UpdateStatus[] = [];
   const controller = startAutoUpdater({
@@ -58,7 +67,7 @@ describe('startAutoUpdater', () => {
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
   });
 
-  it('disables autoDownload and keeps install-on-quit, then checks on the initial delay and cadence', () => {
+  it('keeps downloads user-initiated by default and keeps install-on-quit, then checks on the initial delay and cadence', () => {
     const { updater, controller } = setup({ initialDelayMs: 1_000, intervalMs: 2_000 });
     expect(updater.autoDownload).toBe(false);
     expect(updater.autoInstallOnAppQuit).toBe(true);
@@ -72,6 +81,45 @@ describe('startAutoUpdater', () => {
     controller.stop();
     vi.advanceTimersByTime(10_000);
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it('enables background autoDownload when opted in', () => {
+    const { updater } = setup({ autoDownload: true });
+    expect(updater.autoDownload).toBe(true);
+    expect(updater.autoInstallOnAppQuit).toBe(true);
+  });
+
+  it('setAutoDownload flips the flag, starts a waiting update on enable, and never cancels in-flight', () => {
+    const { updater, controller } = setup({ autoDownload: false });
+
+    // Enabling with a waiting update starts the download immediately.
+    updater.emit('update-available', { version: '1.2.3' });
+    controller.setAutoDownload(true);
+    expect(updater.autoDownload).toBe(true);
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(controller.getStatus().state).toBe('downloading');
+
+    // Disabling mid-flight does not cancel — the download finishes and lands.
+    controller.setAutoDownload(false);
+    expect(updater.autoDownload).toBe(false);
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    expect(controller.getStatus().state).toBe('downloaded');
+
+    // Re-enabling while downloaded starts no phantom download.
+    controller.setAutoDownload(true);
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('setAutoDownload(true) retries a failed download right away', () => {
+    const { updater, controller } = setup({ autoDownload: false });
+    updater.emit('update-available', { version: '1.2.3' });
+    controller.download();
+    updater.emit('error', new Error('network down'));
+    expect(controller.getStatus().state).toBe('error');
+
+    controller.setAutoDownload(true);
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2);
+    expect(controller.getStatus().state).toBe('downloading');
   });
 
   it('streams available → downloading → downloaded statuses', () => {
@@ -217,7 +265,18 @@ describe('manual check (controller.check)', () => {
     // One-shot listeners are cleaned up — only the persistent ones remain.
     expect(updater.listenerCount('update-available')).toBe(1);
     expect(updater.listenerCount('update-not-available')).toBe(1);
+    expect(updater.listenerCount('update-downloaded')).toBe(1);
     expect(updater.listenerCount('error')).toBe(1);
+  });
+
+  it('resolves available (not a timeout) when the version is already downloaded', async () => {
+    const { updater, controller } = setup();
+    const promise = controller.check();
+    // electron-updater re-fires 'update-downloaded' for an already-landed
+    // version instead of 'update-available'.
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    await expect(promise).resolves.toEqual({ outcome: 'available', version: '1.2.3' });
+    expect(updater.listenerCount('update-downloaded')).toBe(1);
   });
 
   it('resolves latest on update-not-available', async () => {
@@ -247,5 +306,141 @@ describe('manual check (controller.check)', () => {
     const promise = controller.check();
     vi.advanceTimersByTime(30_000);
     await expect(promise).resolves.toEqual({ outcome: 'error', message: 'check timed out' });
+  });
+});
+
+describe('release notes', () => {
+  const NOTES: ReleaseNotes = { zh: '- 修复甲', en: '- Fixed A' };
+
+  it('fetches notes once a version is known and keeps them across same-version transitions', async () => {
+    const fetchNotes = vi.fn().mockResolvedValue(NOTES);
+    const { updater, sent } = setup({ fetchNotes });
+
+    updater.emit('update-available', { version: '1.2.3', releaseDate: '2026-07-18T00:00:00.000Z' });
+    expect(fetchNotes).toHaveBeenCalledWith('1.2.3');
+    await flush();
+    expect(sent.at(-1)).toEqual({
+      state: 'available',
+      version: '1.2.3',
+      releaseDate: '2026-07-18T00:00:00.000Z',
+      releaseNotes: NOTES,
+    });
+
+    // Later transitions on the same version keep the notes.
+    updater.emit('download-progress', { percent: 42 });
+    expect(sent.at(-1)?.releaseNotes).toEqual(NOTES);
+    updater.emit('update-downloaded', { version: '1.2.3' });
+    expect(sent.at(-1)?.releaseNotes).toEqual(NOTES);
+  });
+
+  it('fetches once per version, and again for a genuinely newer one', async () => {
+    const fetchNotes = vi.fn().mockResolvedValue(NOTES);
+    const { updater } = setup({ fetchNotes });
+
+    updater.emit('update-available', { version: '1.2.3' });
+    updater.emit('update-available', { version: '1.2.3' });
+    expect(fetchNotes).toHaveBeenCalledTimes(1);
+
+    updater.emit('update-available', { version: '1.2.4' });
+    expect(fetchNotes).toHaveBeenCalledTimes(2);
+    expect(fetchNotes).toHaveBeenLastCalledWith('1.2.4');
+  });
+
+  it('drops notes fetched for a version the status has moved on from', async () => {
+    let resolveOld!: (notes: ReleaseNotes) => void;
+    const fetchNotes = vi.fn().mockImplementation((version: string) =>
+      version === '1.2.3'
+        ? new Promise<ReleaseNotes>((resolve) => {
+            resolveOld = resolve;
+          })
+        : Promise.resolve({ en: '- New' }),
+    );
+    const { updater, controller } = setup({ fetchNotes });
+
+    updater.emit('update-available', { version: '1.2.3' });
+    updater.emit('update-available', { version: '1.2.4' });
+    resolveOld({ en: '- Old' });
+    await flush();
+    await flush();
+    // The stale fetch landed after 1.2.4 took over — only the new notes merge.
+    expect(controller.getStatus()).toEqual({ state: 'available', version: '1.2.4', releaseNotes: { en: '- New' } });
+  });
+
+  it('stays note-less (and quiet) when the fetch comes back empty or fails', async () => {
+    const fetchNotes = vi.fn().mockResolvedValue({});
+    const { updater, sent, controller } = setup({ fetchNotes });
+    updater.emit('update-available', { version: '1.2.3' });
+    await flush();
+    expect(controller.getStatus()).toEqual({ state: 'available', version: '1.2.3' });
+    // An empty notes object never merges — no extra status push.
+    expect(sent).toHaveLength(1);
+
+    fetchNotes.mockRejectedValue(new Error('cdn down'));
+    updater.emit('update-available', { version: '1.2.4' });
+    await flush();
+    expect(controller.getStatus()).toEqual({ state: 'available', version: '1.2.4' });
+  });
+
+  it('retries the fetch on a later event after an empty result or failure', async () => {
+    const fetchNotes = vi.fn().mockResolvedValueOnce({}).mockResolvedValue(NOTES);
+    const { updater, controller } = setup({ fetchNotes });
+
+    updater.emit('update-available', { version: '1.2.3' });
+    await flush();
+    expect(controller.getStatus().releaseNotes).toBeUndefined();
+
+    // The empty first fetch unpinned the version: a later re-announce of the
+    // same version retries (e.g. the changelog was backfilled meanwhile).
+    updater.emit('update-available', { version: '1.2.3' });
+    await flush();
+    expect(fetchNotes).toHaveBeenCalledTimes(2);
+    expect(controller.getStatus().releaseNotes).toEqual(NOTES);
+
+    // A successful fetch still pins — no third call on further re-announces.
+    updater.emit('update-available', { version: '1.2.3' });
+    expect(fetchNotes).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the notes when the version disappears (feed rollback)', async () => {
+    const fetchNotes = vi.fn().mockResolvedValue(NOTES);
+    const { updater, controller } = setup({ fetchNotes });
+    updater.emit('update-available', { version: '1.2.3' });
+    await flush();
+    expect(controller.getStatus().releaseNotes).toEqual(NOTES);
+
+    updater.emit('update-not-available');
+    expect(controller.getStatus()).toEqual({ state: 'idle' });
+  });
+
+  it('works without an injected fetchNotes (no fetch, no notes)', async () => {
+    const { updater, controller } = setup();
+    updater.emit('update-available', { version: '1.2.3' });
+    await flush();
+    expect(controller.getStatus()).toEqual({ state: 'available', version: '1.2.3' });
+  });
+});
+
+describe('fetchReleaseNotes (production fetch)', () => {
+  beforeEach(() => {
+    netFetchMock.mockReset();
+  });
+
+  it('pulls changelog.<lang>.md from the version directory, tolerating per-language failures', async () => {
+    netFetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/changelog.zh.md')
+        ? { ok: true, text: async () => '- 中文' }
+        : { ok: false, status: 404, text: async () => 'not found' },
+    );
+
+    const notes = await fetchReleaseNotes('1.2.3');
+    expect(netFetchMock).toHaveBeenCalledWith('https://code.kimi.com/kimi-code/desktop/1.2.3/changelog.zh.md');
+    expect(netFetchMock).toHaveBeenCalledWith('https://code.kimi.com/kimi-code/desktop/1.2.3/changelog.en.md');
+    // The 404 language is simply absent; the healthy one comes through.
+    expect(notes).toEqual({ zh: '- 中文' });
+  });
+
+  it('never rejects on network errors', async () => {
+    netFetchMock.mockRejectedValue(new Error('network down'));
+    await expect(fetchReleaseNotes('1.2.3')).resolves.toEqual({});
   });
 });

@@ -100,7 +100,8 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 
 1. **changeset**：功能 PR 按 `.agents/skills/changeset/SKILL.md` 生成 changeset（只选 `kimi-code-app`，早期一律 patch）；合入 main 后 CI 自动维护 `ci: release desktop` 版本 PR。
 2. **打包**：合并版本 PR，CI 自动打四平台签名包（macOS arm64/x64、Windows、Linux，含 `latest*.yml` 自动更新元数据）并创建 GitHub Release（tag `v<version>`）。完整流程见 `.changeset/README.md`。
-3. **CDN 分发**（本地手动，TOS 凭证限内网）：
+3. **双语更新说明**：按 `.agents/skills/release-notes/SKILL.md` 生成该版本的中英双语 changelog——从 `apps/desktop/CHANGELOG.md` 抽取中文案、翻译成英文，review 后存档到 `release-notes/<version>/changelog.{zh,en}.md` 并提交；发布脚本会随版本目录一并上传，更新弹窗按系统语言展示（旧版本无此文件，弹窗不显示更新说明）。
+4. **CDN 分发**（本地手动，TOS 凭证限内网）：
 
    ```bash
    ./publish-desktop-cdn.sh            # 拉最新 Release：传产物 + 切自动更新指针 + 刷新下载入口
@@ -108,7 +109,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
    ./publish-desktop-cdn.sh 0.0.3 --artifacts-only   # 只传产物，先验证再切流量
    ```
 
-   产物落在 `code.kimi.com/kimi-code/desktop/`：版本目录 `<version>/`（immutable）、自动更新指针 `latest*.yml`（no-cache）、固定下载入口 `download/`（官网链接见上方"下载"一节）。
+   产物落在 `code.kimi.com/kimi-code/desktop/`：版本目录 `<version>/`（immutable，含安装包与双语更新说明 `changelog.{zh,en}.md`）、自动更新指针 `latest*.yml`（no-cache）、固定下载入口 `download/`（官网链接见上方"下载"一节）。
 
 ## 目录
 

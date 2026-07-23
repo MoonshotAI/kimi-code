@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isOnboarded, loadUiState, markOnboarded } from '../../src/main/ui-state';
+import { isOnboarded, isUpdateAutoDownloadEnabled, loadUiState, markOnboarded, setUpdateAutoDownloadEnabled } from '../../src/main/ui-state';
 
 describe('ui-state persistence', () => {
   let dir: string;
@@ -45,5 +45,23 @@ describe('ui-state persistence', () => {
     markOnboarded(file);
     markOnboarded(file);
     expect(loadUiState(file)).toEqual({ onboarded: true });
+  });
+
+  it('defaults updateAutoDownload to disabled unless explicitly enabled', () => {
+    expect(isUpdateAutoDownloadEnabled(file)).toBe(false);
+    writeFileSync(file, '{"onboarded":true}', 'utf-8');
+    expect(isUpdateAutoDownloadEnabled(file)).toBe(false);
+    writeFileSync(file, '{"updateAutoDownload":true}', 'utf-8');
+    expect(isUpdateAutoDownloadEnabled(file)).toBe(true);
+    writeFileSync(file, '{"updateAutoDownload":"yes"}', 'utf-8');
+    expect(isUpdateAutoDownloadEnabled(file)).toBe(false);
+  });
+
+  it('setUpdateAutoDownloadEnabled writes the flag and preserves other keys', () => {
+    markOnboarded(file);
+    setUpdateAutoDownloadEnabled(false, file);
+    expect(loadUiState(file)).toEqual({ onboarded: true, updateAutoDownload: false });
+    setUpdateAutoDownloadEnabled(true, file);
+    expect(loadUiState(file)).toEqual({ onboarded: true, updateAutoDownload: true });
   });
 });

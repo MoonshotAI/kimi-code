@@ -24,6 +24,7 @@ const WHITELIST = [
   'downloadUpdate',
   'getPathForFile',
   'getServerToken',
+  'getUpdateAutoDownload',
   'getUpdateStatus',
   'installUpdate',
   'isFullscreen',
@@ -47,6 +48,7 @@ const WHITELIST = [
   'setOnboarded',
   'setTheme',
   'setTrayAttention',
+  'setUpdateAutoDownload',
   'showOpenDialog',
   'showSaveDialog',
   'showWindow',
@@ -228,6 +230,31 @@ describe('kimiDesktop preload bridge', () => {
 
     await exposed.installUpdate();
     expect(invoke).toHaveBeenCalledWith('kimi:update-install');
+
+    await exposed.getUpdateAutoDownload();
+    expect(invoke).toHaveBeenCalledWith('kimi:update-get-auto-download');
+
+    await exposed.setUpdateAutoDownload(false);
+    expect(invoke).toHaveBeenCalledWith('kimi:update-set-auto-download', false);
+
+    // A non-boolean set payload is dropped before reaching IPC.
+    await exposed.setUpdateAutoDownload('yes' as unknown as boolean);
+    expect(invoke).not.toHaveBeenCalledWith('kimi:update-set-auto-download', 'yes');
+  });
+
+  it('coerces the auto-download preference response to a boolean default', async () => {
+    await import('../../src/main/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    invoke.mockResolvedValueOnce(false);
+    await expect(exposed.getUpdateAutoDownload()).resolves.toBe(false);
+
+    invoke.mockResolvedValueOnce(true);
+    await expect(exposed.getUpdateAutoDownload()).resolves.toBe(true);
+
+    // Junk responses fall back to the main-side default (disabled).
+    invoke.mockResolvedValueOnce(undefined);
+    await expect(exposed.getUpdateAutoDownload()).resolves.toBe(false);
   });
 
   it('forwards menu-action and shortcut payloads to the renderer callback', async () => {
@@ -271,6 +298,23 @@ describe('kimiDesktop preload bridge', () => {
     listeners.get('kimi:update-status')?.({}, { state: 'bogus' });
     listeners.get('kimi:update-status')?.({}, 'available');
     expect(updateCb).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes release notes through field-wise validation, dropping junk note fields only', async () => {
+    await import('../../src/main/preload');
+    const [, exposed] = expose.mock.calls[0]!;
+
+    const cb = vi.fn();
+    exposed.onUpdateStatus(cb);
+    listeners.get('kimi:update-status')?.({}, { state: 'available', version: '1.2.3', releaseNotes: { zh: '- 修复', en: '- Fixed' } });
+    expect(cb).toHaveBeenCalledWith({ state: 'available', version: '1.2.3', releaseNotes: { zh: '- 修复', en: '- Fixed' } });
+
+    // A non-object notes payload is stripped; the status itself survives.
+    listeners.get('kimi:update-status')?.({}, { state: 'available', version: '1.2.3', releaseNotes: 'not-an-object' });
+    expect(cb).toHaveBeenLastCalledWith({ state: 'available', version: '1.2.3' });
+    // Non-string fields fall away one by one.
+    listeners.get('kimi:update-status')?.({}, { state: 'available', version: '1.2.3', releaseNotes: { zh: 42, en: true } });
+    expect(cb).toHaveBeenLastCalledWith({ state: 'available', version: '1.2.3', releaseNotes: {} });
   });
 
   it('validates update-check responses and falls back to an error outcome', async () => {

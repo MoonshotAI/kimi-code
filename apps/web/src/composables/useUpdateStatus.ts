@@ -8,12 +8,17 @@
 // tests) the status stays `idle` and nothing renders — the no-bridge
 // fallback, per native-todos.md.
 //
-// `visible` additionally hides the `available` state for a version the user
-// chose to skip ("本次跳过" in the dialog): the choice is persisted in
-// localStorage and lifts as soon as a different version shows up.
+// `visible` rules: in auto-download mode (opt-in via settings → advanced)
+// only a downloaded update surfaces ("重启更新") — background downloading and
+// its failures stay silent, and a failed download retries on the next
+// scheduled check. In manual (click-to-download) mode every non-idle state
+// shows, except an `available` version the user chose to skip ("本次跳过" in
+// the dialog): the choice is persisted in localStorage and lifts as soon as a
+// different version shows up.
 //
 // Consumers: the sidebar UpdateIndicator, and settings → advanced (the manual
-// "check for updates" row uses `canCheck` / `check`).
+// "check for updates" row uses `canCheck` / `check`; the auto-download toggle
+// uses `canToggleAutoDownload` / `autoDownload` / `setAutoDownload`).
 
 import { computed, ref, type Ref } from 'vue';
 
@@ -27,6 +32,8 @@ export interface UpdateStatus {
   percent?: number;
   message?: string;
   releaseDate?: string;
+  /** Bilingual changelog for the version, fetched main-side (best-effort). */
+  releaseNotes?: { zh?: string; en?: string };
 }
 
 /** Outcome of a manual "check for updates" (settings → advanced). Mirrors the
@@ -45,6 +52,8 @@ interface UpdateBridge {
   checkForUpdates?: () => Promise<UpdateCheckResult>;
   downloadUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
+  getUpdateAutoDownload?: () => Promise<boolean>;
+  setUpdateAutoDownload?: (enabled: boolean) => Promise<void>;
 }
 
 export interface UpdateTracker {
@@ -54,6 +63,15 @@ export interface UpdateTracker {
   /** Whether a manual update check is wired up (false in plain web and on
       desktop builds whose bridge predates `checkForUpdates` — hide the row). */
   canCheck: boolean;
+  /** Background-download preference (persisted main-side). Drives both the
+      settings toggle and the `visible` rules above. */
+  autoDownload: Ref<boolean>;
+  /** Whether the auto-download toggle is wired up (bridge feature-detect —
+      hide the settings row in plain web / older bridges). */
+  canToggleAutoDownload: boolean;
+  /** Flip the preference: updates the local ref immediately and persists
+      main-side. */
+  setAutoDownload: (enabled: boolean) => void;
   /** "本次跳过": hide this version until a different one appears (persisted). */
   skipVersion: () => void;
   /** User-initiated check; resolves with the outcome for inline feedback. */
@@ -69,6 +87,20 @@ const IDLE: UpdateStatus = { state: 'idle' };
 export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTracker {
   const status = ref<UpdateStatus>(IDLE);
   const skippedVersion = ref<string | null>(safeGetString(STORAGE_KEYS.updateSkippedVersion));
+  // Mirrors the main-process default (disabled); the persisted value
+  // replaces it below.
+  const autoDownload = ref(false);
+
+  if (typeof bridge?.getUpdateAutoDownload === 'function') {
+    void bridge
+      .getUpdateAutoDownload()
+      .then((enabled) => {
+        autoDownload.value = enabled;
+      })
+      .catch(() => {
+        // Bridge failure: keep the default (disabled), same as the main side.
+      });
+  }
 
   if (bridge !== undefined) {
     // Register the push listener BEFORE taking the snapshot: a status pushed
@@ -96,6 +128,12 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     if (s.state === 'idle') {
       return false;
     }
+    // Auto-download mode: background phases stay silent — only a downloaded
+    // update surfaces. A failed background download retries on the next
+    // scheduled check, so it must not grow an error pill either.
+    if (autoDownload.value) {
+      return s.state === 'downloaded';
+    }
     // A skipped version stays hidden while it remains the available one; any
     // other state (already downloading/downloaded, or a newer version) shows.
     if (s.state === 'available' && s.version !== undefined && s.version === skippedVersion.value) {
@@ -108,6 +146,13 @@ export function createUpdateTracker(bridge: UpdateBridge | undefined): UpdateTra
     status,
     visible,
     canCheck: typeof bridge?.checkForUpdates === 'function',
+    autoDownload,
+    canToggleAutoDownload:
+      typeof bridge?.getUpdateAutoDownload === 'function' && typeof bridge?.setUpdateAutoDownload === 'function',
+    setAutoDownload: (enabled) => {
+      autoDownload.value = enabled;
+      void bridge?.setUpdateAutoDownload?.(enabled).catch(() => {});
+    },
     skipVersion: () => {
       const version = status.value.version;
       if (status.value.state === 'available' && version !== undefined) {

@@ -19,6 +19,8 @@ export type UpdateStatus = {
   percent?: number;
   message?: string;
   releaseDate?: string;
+  /** Bilingual changelog fetched by the main process (best-effort). */
+  releaseNotes?: { zh?: string; en?: string };
 };
 
 const UPDATE_STATES = new Set(['idle', 'available', 'downloading', 'downloaded', 'error']);
@@ -97,7 +99,14 @@ function asUpdateStatus(value: unknown): UpdateStatus | null {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
-  const candidate = value as { state?: unknown; version?: unknown; percent?: unknown; message?: unknown; releaseDate?: unknown };
+  const candidate = value as {
+    state?: unknown;
+    version?: unknown;
+    percent?: unknown;
+    message?: unknown;
+    releaseDate?: unknown;
+    releaseNotes?: unknown;
+  };
   if (typeof candidate.state !== 'string' || !UPDATE_STATES.has(candidate.state)) {
     return null;
   }
@@ -113,6 +122,17 @@ function asUpdateStatus(value: unknown): UpdateStatus | null {
   }
   if (typeof candidate.releaseDate === 'string') {
     status.releaseDate = candidate.releaseDate;
+  }
+  // Junk notes are dropped field-wise — never the whole status.
+  if (typeof candidate.releaseNotes === 'object' && candidate.releaseNotes !== null && !Array.isArray(candidate.releaseNotes)) {
+    const notes = candidate.releaseNotes as { zh?: unknown; en?: unknown };
+    status.releaseNotes = {};
+    if (typeof notes.zh === 'string') {
+      status.releaseNotes.zh = notes.zh;
+    }
+    if (typeof notes.en === 'string') {
+      status.releaseNotes.en = notes.en;
+    }
   }
   return status;
 }
@@ -193,6 +213,10 @@ export type KimiDesktopApi = {
   downloadUpdate: () => Promise<void>;
   /** Quit and install the downloaded update. */
   installUpdate: () => Promise<void>;
+  /** Background-download preference (persisted by the main process in
+   *  ui-state.json; default false — opt-in). */
+  getUpdateAutoDownload: () => Promise<boolean>;
+  setUpdateAutoDownload: (enabled: boolean) => Promise<void>;
   /** Push the pending-attention totals (unread sessions + awaiting approvals +
    *  awaiting questions) and the per-session attention list so the tray can
    *  render the macOS menu-bar count and the clickable session menu
@@ -295,6 +319,17 @@ export const api: KimiDesktopApi = {
   },
   downloadUpdate: () => ipcRenderer.invoke('kimi:update-download'),
   installUpdate: () => ipcRenderer.invoke('kimi:update-install'),
+  getUpdateAutoDownload: async () => {
+    const enabled: unknown = await ipcRenderer.invoke('kimi:update-get-auto-download');
+    // Anything but an explicit true reads as disabled (the main-side default).
+    return enabled === true;
+  },
+  setUpdateAutoDownload: async (enabled) => {
+    if (typeof enabled !== 'boolean') {
+      return;
+    }
+    await ipcRenderer.invoke('kimi:update-set-auto-download', enabled);
+  },
   setTrayAttention: (attention) => {
     if (asTrayAttention(attention)) {
       ipcRenderer.send('kimi:tray-attention', attention);

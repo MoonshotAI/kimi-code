@@ -4,7 +4,7 @@ import type { MenuItem, MenuItemConstructorOptions } from 'electron';
 import { getMainWindow, createWindow, sendToRenderer, showMainWindow } from './window';
 import { connect } from './connect';
 import { togglePetVisibility } from './pet';
-import { requestUpdateCheck, requestUpdateDownload } from './updater';
+import { getUpdateAutoDownload, getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { IPC } from './ipc-channels';
 import type { TrayLocale } from './tray';
 
@@ -28,10 +28,13 @@ interface MenuStrings {
   retryConnection: string;
   updateCheckTitle: string;
   updateAvailable: string;
+  updateAutoDownloading: string;
+  updateReadyToInstall: string;
   updateLatest: string;
   updateUnsupported: string;
   updateFailed: string;
   downloadNow: string;
+  restartNow: string;
   later: string;
   ok: string;
   help: string;
@@ -53,10 +56,13 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     retryConnection: '重试连接',
     updateCheckTitle: '检查更新',
     updateAvailable: '发现新版本 {version},可立即下载更新。',
+    updateAutoDownloading: '发现新版本 {version},正在后台下载,完成后重启即可更新。',
+    updateReadyToInstall: '新版本 {version} 已下载完成,重启即可更新。',
     updateLatest: '当前已是最新版本。',
     updateUnsupported: '开发版本不支持检查更新。',
     updateFailed: '检查更新失败:{message}',
     downloadNow: '立即下载',
+    restartNow: '立即重启',
     later: '稍后',
     ok: '好',
     help: '帮助',
@@ -76,10 +82,13 @@ const MENU_STRINGS: Record<TrayLocale, MenuStrings> = {
     retryConnection: 'Retry Connection',
     updateCheckTitle: 'Check for Updates',
     updateAvailable: 'Version {version} is available.',
+    updateAutoDownloading: 'Version {version} is downloading in the background; restart to update once it finishes.',
+    updateReadyToInstall: 'Version {version} has been downloaded; restart to finish updating.',
     updateLatest: "You're on the latest version.",
     updateUnsupported: 'Update checks are unavailable in development builds.',
     updateFailed: 'Update check failed: {message}',
     downloadNow: 'Download Now',
+    restartNow: 'Restart Now',
     later: 'Later',
     ok: 'OK',
     help: 'Help',
@@ -222,10 +231,14 @@ export function bindingToAccelerator(binding: string | null): string | undefined
 
 // Menu-triggered update check: unlike the silent scheduled checks (updater.ts
 // swallows their failures), a menu click deserves explicit feedback — a native
-// dialog for every outcome. A found update offers a Download button; the
-// download/progress/install then rides the usual `kimi:update-status` pushes
-// (sidebar indicator), which show through even for a version the user skipped
-// in the renderer (the skip only hides the `available` state).
+// dialog for every outcome. An already-downloaded update always offers the
+// restart (a Download button would no-op against the controller's
+// downloaded-state guard, in either mode); otherwise a found update offers a
+// Download button in manual mode, and a progress note in auto-download mode
+// (the check already kicked the download off). Download/progress/install ride
+// the usual `kimi:update-status` pushes (sidebar indicator), which show
+// through even for a version the user skipped in the renderer (the skip only
+// hides the `available` state).
 async function runMenuUpdateCheck(): Promise<void> {
   const strings = MENU_STRINGS[effectiveMenuLocale()];
   // Parent the dialog to a visible window (macOS hide-on-close may leave it
@@ -236,6 +249,32 @@ async function runMenuUpdateCheck(): Promise<void> {
   const show = (opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> =>
     win === null || win.isDestroyed() ? dialog.showMessageBox(opts) : dialog.showMessageBox(win, opts);
   if (result.outcome === 'available') {
+    // Mode-independent: the update has already landed — offer the restart.
+    if (getUpdateStatus().state === 'downloaded') {
+      const { response } = await show({
+        type: 'info',
+        message: strings.updateCheckTitle,
+        detail: strings.updateReadyToInstall.replace('{version}', result.version ?? ''),
+        buttons: [strings.restartNow, strings.later],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) {
+        requestUpdateInstall();
+      }
+      return;
+    }
+    if (getUpdateAutoDownload()) {
+      // Auto mode: the check already kicked the download off — report
+      // progress instead of offering a no-op Download button.
+      await show({
+        type: 'info',
+        message: strings.updateCheckTitle,
+        detail: strings.updateAutoDownloading.replace('{version}', result.version ?? ''),
+        buttons: [strings.ok],
+      });
+      return;
+    }
     const { response } = await show({
       type: 'info',
       message: strings.updateCheckTitle,

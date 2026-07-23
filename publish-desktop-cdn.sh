@@ -14,6 +14,10 @@
 #
 # CDN 布局（tos://kimi-code/desktop/，对外 https://code.kimi.com/kimi-code/desktop/）：
 #   <version>/          该版本全部产物（安装包 + blockmap + 原始 latest*.yml），immutable
+#   <version>/changelog.{zh,en}.md
+#                       更新弹窗的双语更新说明（release-notes skill 生成，仓内
+#                       release-notes/<version>/ 存档），immutable；旧版本没有
+#                       此文件，客户端静默降级（弹窗不显示更新说明）
 #   latest-mac.yml      自动更新指针（mac），no-cache
 #   latest.yml          自动更新指针（win），no-cache
 #   latest-linux.yml    自动更新指针（linux AppImage），no-cache
@@ -73,6 +77,19 @@ echo "==> Tag:     $TAG"
 echo "==> Version: $VERSION"
 echo "==> Bucket:  tos://${TOS_BUCKET}/${DESKTOP_PREFIX}/${VERSION}/"
 [ "$ARTIFACTS_ONLY" -eq 1 ] && echo "==> Mode:    artifacts-only（不动 latest*.yml 指针）"
+
+# 更新弹窗双语 changelog 成套检测（release-notes skill 生成，仓内
+# release-notes/<version>/ 存档）：不成套立即警告，让发布人尽早发现——可以
+# 中断去补，也可以继续（不阻断；旧版本本来就没有 changelog，客户端静默降级/
+# 单语言 fallback）。事后补传：生成后重跑本脚本 --artifacts-only。
+NOTES_DIR="release-notes/${VERSION}"
+NOTES_MISSING=()
+for lang in zh en; do
+  [ -f "${NOTES_DIR}/changelog.${lang}.md" ] || NOTES_MISSING+=("changelog.${lang}.md")
+done
+if [ "${#NOTES_MISSING[@]}" -gt 0 ]; then
+  echo "==> WARNING: ${NOTES_DIR}/ 缺少 ${NOTES_MISSING[*]} —— 更新弹窗需要成套双语 changelog（release-notes skill 可生成；继续 = 本次跳过或只发半套）"
+fi
 
 # ---------- 依赖检查 ----------
 
@@ -170,6 +187,18 @@ rclone copy "$TMP/" "oss:${TOS_BUCKET}/${DESKTOP_PREFIX}/${VERSION}/" \
   --exclude ".download-assets.tsv" \
   -M --metadata-set "cache-control=${CACHE_CONTROL_VERSIONED}" \
   -v --progress --stats-one-line
+
+# 更新弹窗双语 changelog：上传存在的语言文件（成套检测与警告已在开头做过）。
+for lang in zh en; do
+  if [ -f "${NOTES_DIR}/changelog.${lang}.md" ]; then
+    echo "==> Uploading changelog.${lang}.md to ${DESKTOP_PREFIX}/${VERSION}/"
+    rclone copyto \
+      "${NOTES_DIR}/changelog.${lang}.md" \
+      "oss:${TOS_BUCKET}/${DESKTOP_PREFIX}/${VERSION}/changelog.${lang}.md" \
+      -M --metadata-set "cache-control=${CACHE_CONTROL_VERSIONED}" \
+      -v
+  fi
+done
 
 if [ "$ARTIFACTS_ONLY" -eq 0 ]; then
   echo "==> [2/2] Rewriting latest*.yml pointers (-> ${VERSION}/…) and uploading to prefix root"

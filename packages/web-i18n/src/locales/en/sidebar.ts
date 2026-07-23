@@ -64,4 +64,7 @@ export default {
   updateRestartLater: 'Later',
   updateReleaseDate: 'Released {date}',
   updateCurrentVersion: 'Current v{version}',
+  updateWhatsNew: 'What’s new',
+  updateBackground: 'Download in Background',
+  updateAutoDownload: 'Automatically download and install updates',
 } as const;

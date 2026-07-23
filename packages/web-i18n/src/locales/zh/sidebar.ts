@@ -64,4 +64,7 @@ export default {
   updateRestartLater: '下次启动',
   updateReleaseDate: '发布于 {date}',
   updateCurrentVersion: '当前版本 v{version}',
+  updateWhatsNew: '更新内容',
+  updateBackground: '后台下载',
+  updateAutoDownload: '以后自动下载并安装更新',
 };

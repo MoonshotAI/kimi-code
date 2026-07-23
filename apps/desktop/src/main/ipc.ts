@@ -4,7 +4,14 @@ import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { getMainWindow, showMainWindow } from './window';
 import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
-import { getUpdateStatus, requestUpdateCheck, requestUpdateDownload, requestUpdateInstall } from './updater';
+import {
+  getUpdateAutoDownload,
+  getUpdateStatus,
+  requestUpdateCheck,
+  requestUpdateDownload,
+  requestUpdateInstall,
+  setUpdateAutoDownload,
+} from './updater';
 import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
@@ -63,6 +70,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.updateCheck, () => requestUpdateCheck());
   ipcMain.handle(IPC.updateDownload, () => requestUpdateDownload());
   ipcMain.handle(IPC.updateInstall, () => requestUpdateInstall());
+  // Background-download preference (settings → advanced): persisted in
+  // ui-state.json even in dev (no controller), so the toggle round-trips.
+  ipcMain.handle(IPC.updateGetAutoDownload, () => getUpdateAutoDownload());
+  ipcMain.handle(IPC.updateSetAutoDownload, (_event, enabled: unknown) => {
+    if (typeof enabled === 'boolean') {
+      setUpdateAutoDownload(enabled);
+    }
+  });
   // Tray attention badge: the renderer pushes {unread, approvals, questions}
   // totals whenever they change (useTrayAttention.ts); tray.ts renders them as
   // the macOS menu-bar count + tooltip/menu breakdown. Malformed payloads drop.
