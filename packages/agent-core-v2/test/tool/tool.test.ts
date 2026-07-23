@@ -915,6 +915,7 @@ describe('Agent tool execution contract', () => {
       createError: new Error2(
         ErrorCodes.CONFIG_INVALID,
         'Model "provider/bad" is not configured in config.toml.',
+        { details: { model: 'provider/bad' } },
       ),
     });
     const context = createAgentToolContext(lifecycle, {

@@ -1461,7 +1461,7 @@ describe('subagent config section', () => {
     const cause = new Error2(
       ErrorCodes.CONFIG_INVALID,
       'Model "provider/bad" is not configured in config.toml.',
-      { details: { model: 'provider/bad', source: 'models' } },
+      { details: { model: 'provider/bad' } },
     );
 
     const result = wrapSubagentModelError(cause, 'provider/bad', 'provider/main');
@@ -1471,7 +1471,6 @@ describe('subagent config section', () => {
       message: expect.stringContaining('comes from [secondary_model].model / KIMI_SECONDARY_MODEL'),
       details: {
         model: 'provider/bad',
-        source: 'models',
         secondaryModel: 'provider/bad',
         secondaryModelConfig: {
           section: 'secondaryModel.model',
@@ -1480,9 +1479,26 @@ describe('subagent config section', () => {
       },
       cause: {
         code: ErrorCodes.CONFIG_INVALID,
-        details: { model: 'provider/bad', source: 'models' },
+        details: { model: 'provider/bad' },
       },
     });
+  });
+
+  it('passes through config-invalid failures that are not a missing bound alias', () => {
+    // A malformed [models.*] entry fails without details.model.
+    const malformed = new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Model "provider/secondary" must declare a wire protocol (config: models.<id>.protocol).',
+    );
+    expect(wrapSubagentModelError(malformed, 'provider/secondary', 'provider/main')).toBe(malformed);
+
+    // A missing alias that is not the bound model.
+    const unrelated = new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      'Model "provider/other" is not configured in config.toml.',
+      { details: { model: 'provider/other' } },
+    );
+    expect(wrapSubagentModelError(unrelated, 'provider/secondary', 'provider/main')).toBe(unrelated);
   });
 });
 

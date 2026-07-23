@@ -1123,6 +1123,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       new Error2(
         ConfigErrors.codes.CONFIG_INVALID,
         'Model "provider/bad" is not configured in config.toml.',
+        { details: { model: 'provider/bad' } },
       ),
     );
     const service = ix.get(ISessionSwarmService);
