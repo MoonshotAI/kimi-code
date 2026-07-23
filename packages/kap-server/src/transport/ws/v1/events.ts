@@ -17,7 +17,7 @@ import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type {
   ProviderRefreshChange,
   ProviderRefreshFailure,
-} from '@moonshot-ai/agent-core-v2/kosong/model/discovery';
+} from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';

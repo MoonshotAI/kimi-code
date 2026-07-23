@@ -513,7 +513,7 @@ interface JournalScan {
   sawAnyLine: boolean;
   corrupt: boolean;
   missing: boolean;
-  readError: unknown | undefined;
+  readError: Error | undefined;
   tailRepair: JournalTailRepair | undefined;
 }
 
@@ -541,7 +541,7 @@ async function scanJournal(filePath: string): Promise<JournalScan> {
   let sawAnyLine = false;
   let corrupt = false;
   let missing = false;
-  let readError: unknown | undefined;
+  let readError: Error | undefined;
   let segmentSeq = 0;
   let tailRepair: JournalTailRepair | undefined;
 
@@ -582,7 +582,7 @@ async function scanJournal(filePath: string): Promise<JournalScan> {
       missing = true;
     } else {
       corrupt = true;
-      readError = error;
+      readError = error instanceof Error ? error : new Error(String(error));
     }
   }
 

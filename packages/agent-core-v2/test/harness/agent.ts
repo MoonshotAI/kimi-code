@@ -1268,7 +1268,11 @@ export class AgentTestContext {
     this.initializeRestorableServices();
     // Resolve the activity view so its constructor subscriptions publish
     // `agent.activity.updated` — production ignites it in agentLifecycle.
-    this.get(IAgentActivityView);
+    // `IAgentActivityView` is a Delayed service: a bare `get` only builds the
+    // proxy and defers the real instance (and its subscriptions) to an idle
+    // callback that can fire after the test's turn already ran. Reading
+    // `state()` forces synchronous instantiation.
+    this.get(IAgentActivityView).state();
 
     const eventBus = this.get(IEventBus);
     this.disposables.push(

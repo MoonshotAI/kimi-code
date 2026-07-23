@@ -667,7 +667,7 @@ describe('Plan service', () => {
 
   describe('plan allows safe tool flow', () => {
     it.each(['Write', 'Edit'] as const)(
-      'runs %s on the active plan file without approval in manual mode',
+      'runs %s on the active plan file after read and approval in manual mode',
       async (toolName) => {
         const files = new Map<string, string>();
         const readText = vi.fn(async (path: string) => files.get(path) ?? '');
@@ -683,7 +683,7 @@ describe('Plan service', () => {
         });
         useFakes(createPlanFakes({ readText, writeText, stat }));
         const cwd = await makeTempDir('kimi-plan-write-tool-');
-        useTools([toolName]);
+        useTools([toolName, 'Read']);
         profile.update({ cwd });
         await plan.enter('test-plan', false);
 
@@ -696,6 +696,12 @@ describe('Plan service', () => {
           toolName === 'Write'
             ? { path: planPath, content: expectedContent }
             : { path: planPath, old_string: '- Draft', new_string: '- Draft\n- Verify' };
+        const readPlanCall: ToolCall = {
+          type: 'function',
+          id: 'call_read_plan',
+          name: 'Read',
+          arguments: JSON.stringify({ path: planPath }),
+        };
         const writePlanCall: ToolCall = {
           type: 'function',
           id: `call_${toolName.toLowerCase()}_plan`,
@@ -703,21 +709,31 @@ describe('Plan service', () => {
           arguments: JSON.stringify(args),
         };
 
+        ctx.mockNextResponse(
+          { type: 'text', text: 'I will read the plan file first.' },
+          readPlanCall,
+        );
         ctx.mockNextResponse({ type: 'text', text: 'I will update the plan file.' }, writePlanCall);
         ctx.mockNextResponse({ type: 'text', text: 'Plan file updated.' });
         await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Update the plan file' }] });
 
+        // The plan guard passes plan-file writes to later adjudication: manual
+        // mode asks, and file fencing checks the baseline captured by the read.
+        const approval = await ctx.takeApprovalRequest();
+        approval.respond({ decision: 'approved' });
         await ctx.untilTurnEnd();
 
         expect(files.get(planPath)).toBe(expectedContent);
         expect(writeText).toHaveBeenCalledWith(planPath, expectedContent);
         expect(
-          ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
-        ).toBe(false);
+          ctx.allEvents.filter(
+            (event) => event.type === '[rpc]' && event.event === 'requestApproval',
+          ),
+        ).toHaveLength(1);
       },
     );
 
-    it('short-circuits active plan file writes ahead of explicit deny rules', async () => {
+    it('lets user-configured deny rules veto active plan file writes', async () => {
       const files = new Map<string, string>();
       const writeText = vi.fn(async (path: string, content: string) => {
         files.set(path, content);
@@ -752,12 +768,11 @@ describe('Plan service', () => {
 
       await ctx.untilTurnEnd();
 
-      // The plan-guard hook lets plan-file writes through before the
-      // permission chain runs, so user-configured deny rules no longer
-      // adjudicate them.
-      expect(files.get(planPath)).toBe(content);
-      expect(writeText).toHaveBeenCalledWith(planPath, content);
-      expect(toolResultText(context.get())).not.toContain('denied by permission rule');
+      // The plan-guard hook passes plan-file writes to later adjudication, so
+      // user-configured deny rules still veto them.
+      expect(files.get(planPath)).toBeUndefined();
+      expect(writeText).not.toHaveBeenCalled();
+      expect(toolResultText(context.get())).toContain('denied by permission rule');
       expect(
         ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'requestApproval'),
       ).toBe(false);

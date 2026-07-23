@@ -892,6 +892,9 @@ importers:
         specifier: 'catalog:'
         version: 4.3.6
     devDependencies:
+      '@moonshot-ai/kap-server':
+        specifier: workspace:^
+        version: link:../kap-server
       '@moonshot-ai/protocol':
         specifier: workspace:^
         version: link:../protocol
