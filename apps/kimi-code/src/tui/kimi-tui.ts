@@ -184,6 +184,15 @@ export interface KimiTUIStartupInput {
   readonly migrateOnly?: boolean;
 }
 
+export interface DeadTerminalErrorContext {
+  readonly stream: 'stdout' | 'stderr';
+  readonly error: NodeJS.ErrnoException;
+  readonly sessionId?: string;
+  readonly turnId?: string;
+  readonly step: number;
+  readonly streamingPhase: AppState['streamingPhase'];
+}
+
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
 type LoadingTipKind = 'moon' | 'composing';
 
@@ -358,6 +367,9 @@ export class KimiTUI {
     | undefined;
 
   public onExit?: (exitCode?: number) => Promise<void>;
+
+  /** Called synchronously before a dead output stream triggers the emergency exit. */
+  public onDeadTerminalError?: (context: DeadTerminalErrorContext) => void;
 
   /** URL opened in the browser just before exit (e.g. by `/web`); printed by onExit. */
   public exitOpenUrl: string | undefined;
@@ -906,18 +918,35 @@ export class KimiTUI {
       });
     }
 
-    const terminalErrorHandler = (error: Error): void => {
-      if (isDeadTerminalError(error)) {
+    const createTerminalErrorHandler =
+      (stream: DeadTerminalErrorContext['stream']) =>
+      (error: Error): void => {
+        if (!isDeadTerminalError(error)) return;
+        try {
+          const sessionId = this.getCurrentSessionId();
+          const { turnId, step } = this.streamingUI.getTurnContext();
+          this.onDeadTerminalError?.({
+            stream,
+            error: error as NodeJS.ErrnoException,
+            sessionId: sessionId === '' ? undefined : sessionId,
+            turnId,
+            step,
+            streamingPhase: this.state.appState.streamingPhase,
+          });
+        } catch {
+          // Diagnostic recording is best-effort and must not block emergency exit.
+        }
         this.emergencyTerminalExit();
-      }
-    };
-    process.stdout.on('error', terminalErrorHandler);
-    process.stderr.on('error', terminalErrorHandler);
+      };
+    const stdoutErrorHandler = createTerminalErrorHandler('stdout');
+    const stderrErrorHandler = createTerminalErrorHandler('stderr');
+    process.stdout.on('error', stdoutErrorHandler);
+    process.stderr.on('error', stderrErrorHandler);
     this.signalCleanupHandlers.push(() => {
-      process.stdout.off('error', terminalErrorHandler);
+      process.stdout.off('error', stdoutErrorHandler);
     });
     this.signalCleanupHandlers.push(() => {
-      process.stderr.off('error', terminalErrorHandler);
+      process.stderr.off('error', stderrErrorHandler);
     });
   }
 

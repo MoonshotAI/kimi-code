@@ -1,3 +1,9 @@
+/**
+ * Scenario: KimiTUI process-signal and terminal-output failure handling.
+ * Contract: preserve exit codes and record dead-stream context before emergency exit.
+ * Boundaries: process listeners and process.exit are mocked; KimiTUI lifecycle code is real.
+ * Run: pnpm exec vitest run apps/kimi-code/test/tui/signal-handlers.test.ts
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
@@ -246,29 +252,86 @@ describe('KimiTUI signal handlers', () => {
     expect(exitSpy).toHaveBeenCalledWith(143);
   });
 
-  it('stdout EIO error triggers emergency exit; ENOENT does not', () => {
-    const { driver } = makeDriver();
+  it('records stdout EIO context before exiting with code 129', () => {
+    const { driver, tui } = makeDriver();
+    driver.state.appState.sessionId = 'ses-dead-terminal';
+    driver.state.appState.streamingPhase = 'thinking';
+    tui.streamingUI.setTurnId('turn-28');
+    tui.streamingUI.setStep(13);
+    const record = vi.fn();
+    tui.onDeadTerminalError = record;
     const captured = captureHandlers(driver);
 
-    const eio = Object.assign(new Error('write EIO'), { code: 'EIO' });
+    const eio = Object.assign(new Error('write EIO'), {
+      code: 'EIO',
+      errno: -5,
+      syscall: 'write',
+    });
     captured.stdoutErrorHandler?.(eio);
-    expect(exitSpy).toHaveBeenCalledWith(129);
 
-    exitSpy.mockClear();
+    expect(record).toHaveBeenCalledWith({
+      stream: 'stdout',
+      error: eio,
+      sessionId: 'ses-dead-terminal',
+      turnId: 'turn-28',
+      step: 13,
+      streamingPhase: 'thinking',
+    });
+    expect(exitSpy).toHaveBeenCalledWith(129);
+    expect(record.mock.invocationCallOrder[0]!).toBeLessThan(exitSpy.mock.invocationCallOrder[0]);
+
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('keeps running when stdout reports an unrelated error', () => {
+    const { driver, tui } = makeDriver();
+    const record = vi.fn();
+    tui.onDeadTerminalError = record;
+    const captured = captureHandlers(driver);
+
     const enoent = Object.assign(new Error('not found'), { code: 'ENOENT' });
     captured.stdoutErrorHandler?.(enoent);
+
+    expect(record).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
 
     captured.restore();
     driver.unregisterSignalHandlers();
   });
 
-  it('stderr EPIPE error triggers emergency exit', () => {
-    const { driver } = makeDriver();
+  it('records stderr EPIPE context before exiting with code 129', () => {
+    const { driver, tui } = makeDriver();
+    const record = vi.fn();
+    tui.onDeadTerminalError = record;
     const captured = captureHandlers(driver);
 
     const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
     captured.stderrErrorHandler?.(epipe);
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: 'stderr',
+        error: epipe,
+        streamingPhase: 'idle',
+      }),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(129);
+
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('exits when dead-terminal recording throws', () => {
+    const { driver, tui } = makeDriver();
+    tui.onDeadTerminalError = () => {
+      throw new Error('log unavailable');
+    };
+    const captured = captureHandlers(driver);
+
+    const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+    captured.stdoutErrorHandler?.(epipe);
+
     expect(exitSpy).toHaveBeenCalledWith(129);
 
     captured.restore();

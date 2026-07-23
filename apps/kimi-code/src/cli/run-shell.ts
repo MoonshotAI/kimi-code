@@ -22,7 +22,7 @@ import { detectPendingMigration } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
-import { KimiTUI } from '#/tui/index';
+import { KimiTUI, type DeadTerminalErrorContext } from '#/tui/index';
 import { currentTheme, getColorPalette } from '#/tui/theme';
 import { combineStartupNotice } from '#/tui/utils/startup';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
@@ -120,6 +120,37 @@ export async function runShell(
     uiMode: CLI_UI_MODE,
   });
   setCrashPhase('runtime');
+
+  tui.onDeadTerminalError = (context: DeadTerminalErrorContext): void => {
+    try {
+      log.error('terminal output stream failed, restoring terminal and exiting', {
+        error: context.error,
+        stream: context.stream,
+        errorCode: context.error.code,
+        errno: context.error.errno,
+        syscall: context.error.syscall,
+        sessionId: context.sessionId,
+        turnId: context.turnId,
+        step: context.step,
+        streamingPhase: context.streamingPhase,
+        exitCode: 129,
+        stdoutIsTTY: process.stdout.isTTY,
+        stderrIsTTY: process.stderr.isTTY,
+        stdoutDestroyed: process.stdout.destroyed,
+        stderrDestroyed: process.stderr.destroyed,
+        pid: process.pid,
+        ppid: process.ppid,
+      });
+    } catch {
+      /* ignore */
+    }
+    try {
+      // The TUI calls process.exit() immediately after this callback returns.
+      flushDiagnosticLogsSync();
+    } catch {
+      /* ignore */
+    }
+  };
 
   const trackLifecycleForSession = (
     sessionId: string,

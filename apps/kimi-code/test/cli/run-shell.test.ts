@@ -1,3 +1,9 @@
+/**
+ * Scenario: CLI shell startup, shutdown, and fatal-diagnostic wiring.
+ * Contract: fatal records are persisted synchronously before immediate process exits.
+ * Boundaries: harness, TUI, telemetry, logger, child_process, and process I/O are mocked.
+ * Run: pnpm exec vitest run apps/kimi-code/test/cli/run-shell.test.ts
+ */
 import { execSync } from 'node:child_process';
 
 import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
@@ -8,6 +14,22 @@ import { runShell } from '#/cli/run-shell';
 import { captureProcessWrite, ExitCalled, mockProcessExit } from '../helpers/process';
 
 type CreateKimiDeviceId = typeof createKimiDeviceIdFn;
+
+const initialUncaughtExceptionListeners = new Set(process.listeners('uncaughtException'));
+const initialUnhandledRejectionListeners = new Set(process.listeners('unhandledRejection'));
+
+function restoreProcessCrashListeners(): void {
+  for (const listener of process.listeners('uncaughtException')) {
+    if (!initialUncaughtExceptionListeners.has(listener)) {
+      process.off('uncaughtException', listener);
+    }
+  }
+  for (const listener of process.listeners('unhandledRejection')) {
+    if (!initialUnhandledRejectionListeners.has(listener)) {
+      process.off('unhandledRejection', listener);
+    }
+  }
+}
 
 const mocks = vi.hoisted(() => {
   type TuiConfigFallback = {
@@ -59,6 +81,8 @@ const mocks = vi.hoisted(() => {
     })),
     resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
     flushDiagnosticLogsSync: vi.fn(),
+    logError: vi.fn(),
+    logInfo: vi.fn(),
     harnessCreatesDeviceIdOnConstruction: false,
     execSync: vi.fn(),
     TuiConfigParseError,
@@ -71,6 +95,13 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
     ...actual,
     resolveKimiHome: mocks.resolveKimiHome,
     flushDiagnosticLogsSync: mocks.flushDiagnosticLogsSync,
+    log: {
+      error: mocks.logError,
+      warn: actual.log.warn.bind(actual.log),
+      info: mocks.logInfo,
+      debug: actual.log.debug.bind(actual.log),
+      createChild: actual.log.createChild.bind(actual.log),
+    },
     createKimiHarness: (...args: unknown[]) => {
       const options = args[0] as { readonly homeDir?: string } | undefined;
       const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
@@ -121,6 +152,7 @@ vi.mock('../../src/tui/config', () => ({
 vi.mock('../../src/tui/index', () => ({
   KimiTUI: class {
     onExit?: () => Promise<void>;
+    onDeadTerminalError?: (context: Record<string, unknown>) => void;
 
     constructor(...args: unknown[]) {
       mocks.kimiTuiConstructor(this, ...args);
@@ -147,6 +179,7 @@ vi.mock('node:child_process', () => ({
 
 describe('runShell', () => {
   afterEach(() => {
+    restoreProcessCrashListeners();
     vi.clearAllMocks();
     mocks.harnessGetConfig.mockResolvedValue({
       providers: {},
@@ -575,6 +608,79 @@ describe('runShell', () => {
       exitSpy.mockRestore();
       stdout.restore();
     }
+  });
+
+  it('flushes a structured dead-terminal record synchronously', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
+      },
+      '1.2.3-test',
+    );
+
+    const [tui] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    const error = Object.assign(new Error('write EPIPE'), {
+      code: 'EPIPE',
+      errno: -32,
+      syscall: 'write',
+    });
+    const record = (
+      tui as {
+        onDeadTerminalError: (context: Record<string, unknown>) => void;
+      }
+    ).onDeadTerminalError;
+
+    record({
+      stream: 'stdout',
+      error,
+      sessionId: 'ses-dead-terminal',
+      turnId: 'turn-28',
+      step: 13,
+      streamingPhase: 'thinking',
+    });
+
+    expect(mocks.logError).toHaveBeenCalledWith(
+      'terminal output stream failed, restoring terminal and exiting',
+      expect.objectContaining({
+        error,
+        stream: 'stdout',
+        errorCode: 'EPIPE',
+        errno: -32,
+        syscall: 'write',
+        sessionId: 'ses-dead-terminal',
+        turnId: 'turn-28',
+        step: 13,
+        streamingPhase: 'thinking',
+        exitCode: 129,
+        stdoutIsTTY: process.stdout.isTTY,
+        stderrIsTTY: process.stderr.isTTY,
+        stdoutDestroyed: expect.any(Boolean),
+        stderrDestroyed: expect.any(Boolean),
+        pid: process.pid,
+        ppid: process.ppid,
+      }),
+    );
+    expect(mocks.flushDiagnosticLogsSync).toHaveBeenCalledOnce();
+    expect(mocks.logError.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.flushDiagnosticLogsSync.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('flushes diagnostic logs synchronously before exiting on an unhandled rejection', async () => {
