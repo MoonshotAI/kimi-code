@@ -88,6 +88,7 @@ export class HookEngine {
           cwd: hook.cwd ?? (this.options.cwd === '' ? undefined : this.options.cwd),
           env: hook.env,
           signal: args.signal,
+          failMode: hook.fail_mode,
         }),
       ),
     );
@@ -97,14 +98,24 @@ export class HookEngine {
   }
 
   private matchingHooks(event: string, matcherValue: string): HookDef[] {
-    const seen = new Set<string>();
+    const seen = new Map<string, number>();
     const matched: HookDef[] = [];
 
     for (const hook of this.byEvent.get(event) ?? []) {
       if (!matches(hook.matcher ?? '', matcherValue)) continue;
       const key = (hook.cwd ?? '') + '\0' + hook.command;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const existing = seen.get(key);
+      if (existing !== undefined) {
+        // Identical commands collapse to one run; if any collapsed entry is
+        // fail-closed, the surviving entry must be too, or dedup order would
+        // silently weaken a security gate.
+        const kept = matched[existing];
+        if (hook.fail_mode === 'closed' && kept !== undefined && kept.fail_mode !== 'closed') {
+          matched[existing] = { ...kept, fail_mode: 'closed' };
+        }
+        continue;
+      }
+      seen.set(key, matched.length);
       matched.push(hook);
     }
 

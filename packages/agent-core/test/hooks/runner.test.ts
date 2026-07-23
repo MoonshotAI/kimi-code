@@ -17,7 +17,7 @@ interface HookResult {
 type RunHook = (
   command: string,
   input: Record<string, unknown>,
-  options: { timeout: number; cwd?: string },
+  options: { timeout: number; cwd?: string; failMode?: 'open' | 'closed' },
 ) => Promise<HookResult>;
 
 async function importRunHook(): Promise<RunHook> {
@@ -107,6 +107,96 @@ describe('runHook process runner', () => {
 // `windowsHide:true` (mirrors KAOS' `buildLocalSpawnOptions` and the runner's
 // own taskkill spawn). The flag is only observable on Windows, so we assert
 // the spawn options builder directly.
+describe('runHook fail_mode=closed', () => {
+  it('blocks on non-zero, non-2 exit codes', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "process.exit(1)"',
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('blocks with timedOut=true when the command exceeds the timeout', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "setTimeout(() => {}, 10000)"',
+      { tool_name: 'Bash' },
+      { timeout: 0.05, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.timedOut).toBe(true);
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('still allows a clean exit 0', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "process.exit(0)"',
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('allow');
+  });
+
+  it('blocks when the hook process cannot be spawned', async () => {
+    const runHook = await importRunHook();
+    // An empty command makes spawn() throw synchronously, exercising the
+    // spawn-failure branch without stubbing child_process.
+    const result = await runHook('', { tool_name: 'Bash' }, { timeout: 5, failMode: 'closed' });
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('allows a spawn failure under the default fail-open mode', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook('', { tool_name: 'Bash' }, { timeout: 5 });
+
+    expect(result.action).toBe('allow');
+  });
+
+  it('blocks when the hook process dies by signal', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "process.kill(process.pid, \'SIGKILL\')"',
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('allows signal death under the default fail-open mode', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "process.kill(process.pid, \'SIGKILL\')"',
+      { tool_name: 'Bash' },
+      { timeout: 5 },
+    );
+
+    expect(result.action).toBe('allow');
+  });
+
+  it('still blocks exit 2 with the stderr reason, not the fail-closed reason', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      "node -e \"process.stderr.write('nope');process.exit(2)\"",
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toBe('nope');
+  });
+});
+
 describe('buildHookSpawnOptions (Windows console-window regression)', () => {
   it('sets windowsHide:true so hooks do not flash a console on Windows', () => {
     expect(buildHookSpawnOptions({}).windowsHide).toBe(true);

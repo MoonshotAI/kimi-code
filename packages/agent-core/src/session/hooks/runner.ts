@@ -2,13 +2,14 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStd
 
 import { z } from 'zod';
 
-import type { HookResult } from './types';
+import type { HookFailMode, HookResult } from './types';
 
 export interface RunHookOptions {
   readonly timeout: number;
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
+  readonly failMode?: HookFailMode;
 }
 
 export function buildHookSpawnOptions(options: {
@@ -66,7 +67,9 @@ export async function runHook(
   try {
     child = spawn(command, buildHookSpawnOptions({ cwd: options.cwd, env: options.env }));
   } catch (error) {
-    return allowResult({ stderr: errorMessage(error) });
+    return failureResult(options.failMode, `spawn failed: ${errorMessage(error)}`, {
+      stderr: errorMessage(error),
+    });
   }
 
   return new Promise<HookResult>((resolve) => {
@@ -89,7 +92,13 @@ export async function runHook(
 
     const timeout = setTimeout(() => {
       killProcess(child);
-      settle(allowResult({ stdout, stderr, timedOut: true }));
+      settle(
+        failureResult(
+          options.failMode,
+          `timed out after ${timeoutSeconds(options.timeout)}s`,
+          { stdout, stderr, timedOut: true },
+        ),
+      );
     }, timeoutMs);
 
     const onAbort = (): void => {
@@ -112,10 +121,26 @@ export async function runHook(
       stderr += chunk;
     });
     child.on('error', (error) => {
-      settle(allowResult({ stdout, stderr: stderr + errorMessage(error) }));
+      settle(
+        failureResult(options.failMode, `hook errored: ${errorMessage(error)}`, {
+          stdout,
+          stderr: stderr + errorMessage(error),
+        }),
+      );
     });
-    child.on('close', (code) => {
-      settle(resultFromExitCode(code ?? 0, stdout, stderr));
+    child.on('close', (code, signal) => {
+      // Signal death reports code=null; under fail-closed that is a failure
+      // to deliver a verdict, not the clean exit-0 the `?? 0` fallback implies.
+      if (code === null && options.failMode === 'closed') {
+        settle(
+          failureResult('closed', `killed by signal ${signal ?? 'unknown'}`, {
+            stdout,
+            stderr,
+          }),
+        );
+        return;
+      }
+      settle(resultFromExitCode(code ?? 0, stdout, stderr, options.failMode));
     });
 
     child.stdin.on('error', () => {});
@@ -127,7 +152,12 @@ function timeoutSeconds(timeout: number): number {
   return Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS;
 }
 
-function resultFromExitCode(exitCode: number, stdout: string, stderr: string): HookResult {
+function resultFromExitCode(
+  exitCode: number,
+  stdout: string,
+  stderr: string,
+  failMode?: HookFailMode,
+): HookResult {
   if (exitCode === 2) {
     const message = stderr.trim();
     return {
@@ -138,6 +168,10 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
       stderr,
       exitCode,
     };
+  }
+
+  if (exitCode !== 0 && failMode === 'closed') {
+    return failureResult(failMode, `exit code ${exitCode}`, { stdout, stderr, exitCode });
   }
 
   const structured = exitCode === 0 ? structuredOutput(stdout) : undefined;
@@ -190,6 +224,28 @@ function structuredOutput(
   } catch {
     return undefined;
   }
+}
+
+// Abort (user interrupt) deliberately stays allow in both modes: the turn is
+// being cancelled, so nothing the hook would have gated is going to execute.
+function failureResult(
+  failMode: HookFailMode | undefined,
+  detail: string,
+  input: {
+    readonly stdout?: string;
+    readonly stderr?: string;
+    readonly exitCode?: number;
+    readonly timedOut?: boolean;
+  },
+): HookResult {
+  if (failMode !== 'closed') return allowResult(input);
+  const reason = `Hook failed (fail_mode=closed): ${detail}`;
+  return {
+    action: 'block',
+    message: reason,
+    reason,
+    ...input,
+  };
 }
 
 function allowResult(input: {

@@ -125,6 +125,86 @@ describe('runHook process runner', () => {
   });
 });
 
+describe('runHook fail_mode=closed', () => {
+  it('blocks on non-zero, non-2 exit codes', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand('process.exit(1);'),
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('blocks with timedOut=true when the command exceeds the timeout', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand('setTimeout(() => {}, 10000);'),
+      { tool_name: 'Bash' },
+      { timeout: 0.05, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.timedOut).toBe(true);
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('blocks when the hook process cannot be spawned', async () => {
+    const failingSpawn = {
+      spawn: async () => {
+        throw new Error('spawn boom');
+      },
+    } as unknown as typeof hostProcess;
+
+    const result = await runHook(
+      failingSpawn,
+      nodeCommand('process.exit(0);'),
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('still allows a clean exit 0', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand('process.exit(0);'),
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('allow');
+  });
+
+  it('blocks when the hook process dies by signal', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand("process.kill(process.pid, 'SIGKILL');"),
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toContain('fail_mode=closed');
+  });
+
+  it('still blocks exit 2 with the stderr reason, not the fail-closed reason', async () => {
+    const result = await runHook(
+      hostProcess,
+      nodeCommand('process.stderr.write("nope"); process.exit(2);'),
+      { tool_name: 'Bash' },
+      { timeout: 5, failMode: 'closed' },
+    );
+
+    expect(result.action).toBe('block');
+    expect(result.reason).toBe('nope');
+  });
+});
+
 describe('buildHookSpawnOptions (Windows console-window regression)', () => {
   it('sets windowsHide:true so hooks do not flash a console on Windows', () => {
     expect(buildHookSpawnOptions({}).windowsHide).toBe(true);

@@ -13,6 +13,7 @@ type HookDef = {
   matcher?: string;
   command: string;
   timeout?: number;
+  fail_mode?: 'open' | 'closed';
   cwd?: string;
   env?: Readonly<Record<string, string>>;
 };
@@ -111,6 +112,53 @@ describe('HookEngine', () => {
       inputData: {},
     });
     expect(results).toHaveLength(0);
+  });
+
+  it('propagates fail_mode=closed so a crashing hook blocks', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      {
+        event: 'PreToolUse',
+        matcher: 'Shell',
+        command: 'exit 1',
+        timeout: 5,
+        fail_mode: 'closed',
+      },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: { toolName: 'Shell' },
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('block');
+  });
+
+  it('keeps fail_mode=closed when identical commands with different fail modes collide in dedup', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'exit 1', timeout: 5 },
+      { event: 'PreToolUse', matcher: 'Shell', command: 'exit 1', timeout: 5, fail_mode: 'closed' },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: { toolName: 'Shell' },
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('block');
+  });
+
+  it('keeps fail_mode=closed when the closed entry comes first in dedup', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'exit 1', timeout: 5, fail_mode: 'closed' },
+      { event: 'PreToolUse', matcher: 'Shell', command: 'exit 1', timeout: 5 },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: { toolName: 'Shell' },
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('block');
   });
 
   it('maps exit code 2 to a block action', async () => {

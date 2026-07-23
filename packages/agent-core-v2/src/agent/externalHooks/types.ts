@@ -21,11 +21,14 @@ export const HOOK_EVENT_TYPES = [
 
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];
 
+export type HookFailMode = 'open' | 'closed';
+
 export interface HookDef {
   readonly event: HookEventType;
   readonly matcher?: string;
   readonly command: string;
   readonly timeout?: number;
+  readonly failMode?: HookFailMode;
   readonly cwd?: string;
   readonly env?: Record<string, string>;
 }

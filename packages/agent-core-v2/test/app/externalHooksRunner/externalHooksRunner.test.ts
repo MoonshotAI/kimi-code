@@ -27,6 +27,58 @@ describe('ExternalHooksRunnerService', () => {
     expect(results[0]?.action).toBe('allow');
   });
 
+  it('propagates a hook fail_mode=closed so a crashing hook blocks', async () => {
+    const runner = makeHookRunner([
+      {
+        event: 'PreToolUse',
+        matcher: 'Bash',
+        command: nodeCommand('process.exit(1);'),
+        timeout: 5,
+        failMode: 'closed',
+      },
+    ]);
+
+    const results = await runner.trigger('PreToolUse', {
+      matcherValue: 'Bash',
+      inputData: { toolName: 'Bash' },
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('block');
+  });
+
+  it('keeps fail_mode=closed when identical commands with different fail modes collide in dedup', async () => {
+    const crash = nodeCommand('process.exit(1);');
+    const runner = makeHookRunner([
+      { event: 'PreToolUse', matcher: 'Bash', command: crash, timeout: 5 },
+      { event: 'PreToolUse', matcher: 'Bash', command: crash, timeout: 5, failMode: 'closed' },
+    ]);
+
+    const results = await runner.trigger('PreToolUse', {
+      matcherValue: 'Bash',
+      inputData: { toolName: 'Bash' },
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('block');
+  });
+
+  it('keeps fail_mode=closed when the closed entry comes first in dedup', async () => {
+    const crash = nodeCommand('process.exit(1);');
+    const runner = makeHookRunner([
+      { event: 'PreToolUse', matcher: 'Bash', command: crash, timeout: 5, failMode: 'closed' },
+      { event: 'PreToolUse', matcher: 'Bash', command: crash, timeout: 5 },
+    ]);
+
+    const results = await runner.trigger('PreToolUse', {
+      matcherValue: 'Bash',
+      inputData: { toolName: 'Bash' },
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('block');
+  });
+
   it('returns no results when no hook matcher matches the matcher value', async () => {
     const runner = makeHookRunner([
       { event: 'PreToolUse', matcher: 'Bash|Write', command: nodeCommand('process.exit(0);'), timeout: 5 },

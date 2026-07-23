@@ -54,12 +54,22 @@ export async function runMatchedHooks(
   const matcherValue = matcherValueText(args.matcherValue);
   const cwd = args.cwd ?? '';
   const matched: HookDef[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   for (const hook of byEvent.get(event) ?? []) {
     if (!matches(hook.matcher ?? '', matcherValue)) continue;
     const key = (hook.cwd ?? '') + '\0' + hook.command;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const existing = seen.get(key);
+    if (existing !== undefined) {
+      // Identical commands collapse to one run; if any collapsed entry is
+      // fail-closed, the surviving entry must be too, or dedup order would
+      // silently weaken a security gate.
+      const kept = matched[existing];
+      if (hook.failMode === 'closed' && kept !== undefined && kept.failMode !== 'closed') {
+        matched[existing] = { ...kept, failMode: 'closed' };
+      }
+      continue;
+    }
+    seen.set(key, matched.length);
     matched.push(hook);
   }
   if (matched.length === 0) return [];
@@ -83,6 +93,7 @@ export async function runMatchedHooks(
         cwd: hook.cwd ?? (cwd === '' ? undefined : cwd),
         env: hook.env,
         signal: args.signal,
+        failMode: hook.failMode,
       }),
     ),
   );
