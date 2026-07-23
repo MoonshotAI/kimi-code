@@ -296,6 +296,10 @@ export interface ChatTurn {
       scheduled reminder rather than a real user. Mirrors the TUI's
       CronTranscriptData. `missedCount` present means a missed-fire catch-up. */
   cron?: CronTurnData;
+  /** True when this assistant turn was opened by a goal continuation (the
+      hidden `goal_continuation` trigger message) rather than a user message —
+      the transcript shows a small provenance line above the turn. */
+  goalContinuation?: boolean;
 }
 
 /**

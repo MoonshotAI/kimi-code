@@ -249,6 +249,125 @@ describe('messagesToTurns task notifications', () => {
   });
 });
 
+describe('messagesToTurns goal continuation', () => {
+  function goalTrigger(id: string): AppMessage {
+    return message(id, 'user', [{ type: 'text', text: 'Continue working toward the active goal…' }], {
+      metadata: { origin: { kind: 'system_trigger', name: 'goal_continuation' } },
+    });
+  }
+
+  it('marks the turn a goal continuation opens, keeping the boundary and hiding the prompt', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [{ type: 'text', text: 'one' }]),
+        goalTrigger('g1'),
+        message('a2', 'assistant', [{ type: 'text', text: 'two' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns.map((t) => t.role)).toEqual(['assistant', 'assistant']);
+    expect(turns[0]?.goalContinuation).toBeUndefined();
+    expect(turns[1]?.goalContinuation).toBe(true);
+    // The long machine prompt never leaks into the visible text.
+    expect(turns[1]?.text).toBe('two');
+  });
+
+  it('marks a turn opened by a continuation at the transcript start', () => {
+    const turns = messagesToTurns(
+      [goalTrigger('g1'), message('a1', 'assistant', [{ type: 'text', text: 'working' }])],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.goalContinuation).toBe(true);
+  });
+
+  it('does not mark turns opened by other system triggers', () => {
+    const turns = messagesToTurns(
+      [
+        goalTrigger('g-other'),
+        message('a1', 'assistant', [{ type: 'text', text: 'one' }]),
+        message('g2', 'user', [{ type: 'text', text: 'x' }], {
+          metadata: { origin: { kind: 'system_trigger', name: 'other_trigger' } },
+        }),
+        message('a2', 'assistant', [{ type: 'text', text: 'two' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns[0]?.goalContinuation).toBe(true);
+    expect(turns[1]?.goalContinuation).toBeUndefined();
+  });
+
+  it('clears the pending marker when a real user message supersedes it', () => {
+    const turns = messagesToTurns(
+      [
+        goalTrigger('g1'),
+        message('u1', 'user', [{ type: 'text', text: 'stop, do this instead' }]),
+        message('a1', 'assistant', [{ type: 'text', text: 'ok' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns.map((t) => t.role)).toEqual(['user', 'assistant']);
+    expect(turns[1]?.goalContinuation).toBeUndefined();
+  });
+
+  it('clears the pending marker on a later hidden non-goal boundary', () => {
+    const turns = messagesToTurns(
+      [
+        goalTrigger('g1'),
+        message('h1', 'user', [{ type: 'text', text: 'hook output' }], {
+          metadata: { origin: { kind: 'hook_result' } },
+        }),
+        message('a1', 'assistant', [{ type: 'text', text: 'one' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.goalContinuation).toBeUndefined();
+  });
+
+  it('marks the turn a continuation opens even when a task notification lands first', () => {
+    const turns = messagesToTurns(
+      [
+        goalTrigger('g1'),
+        taskNtf('ntf-1', NTF_COMPLETED),
+        message('a1', 'assistant', [{ type: 'text', text: 'noted' }]),
+      ],
+      [],
+      undefined,
+      false,
+    );
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.goalContinuation).toBe(true);
+    expect(turns[0]?.blocks?.some((b) => b.kind === 'notification')).toBe(true);
+  });
+
+  it('seeds a trailing continuation as an empty marked turn at the tail (the undo-guard window)', () => {
+    const turns = messagesToTurns(
+      [message('a1', 'assistant', [{ type: 'text', text: 'one' }]), goalTrigger('g1')],
+      [],
+      undefined,
+      false,
+    );
+    // The seeded turn enters the transcript immediately, so the
+    // goalContinuation guard (Esc undo / edit-and-resend) applies during the
+    // window before its first assistant block arrives.
+    expect(turns).toHaveLength(2);
+    expect(turns[1]?.goalContinuation).toBe(true);
+    expect(turns[1]?.blocks).toBeUndefined();
+    expect(turns[1]?.text).toBe('');
+  });
+});
+
 describe('messagesToTurns turn stamps', () => {
   it('leaves endedAt undefined for a single-message turn (no Worked-0s span)', () => {
     const turns = messagesToTurns(

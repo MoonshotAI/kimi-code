@@ -43,6 +43,9 @@ export default {
     worked: 'Worked {duration}',
     workedUnknown: 'Work details',
   },
+  goal: {
+    continuation: 'Goal continuation',
+  },
   notification: {
     kindTask: 'Background task',
     kindSubagent: 'Subagent',

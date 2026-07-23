@@ -145,3 +145,47 @@ describe('reduceAppEvent thinking-part timing on user interactions', () => {
     expect(thinkingPart(state, 'm_2').durationMs).toBeUndefined();
   });
 });
+
+describe('reduceAppEvent optimistic echo reconciliation', () => {
+  function optimisticUser(id: string): AppMessage {
+    return {
+      id,
+      userMessageId: id,
+      sessionId: SID,
+      role: 'user',
+      content: [{ type: 'text', text: '' }],
+      createdAt: new Date().toISOString(),
+      metadata: { 'kimiWeb.optimisticUserMessage': true },
+    };
+  }
+
+  function syntheticUser(id: string, origin: Record<string, unknown>): AppMessage {
+    return {
+      id,
+      sessionId: SID,
+      role: 'user',
+      content: [{ type: 'text', text: '' }],
+      createdAt: new Date().toISOString(),
+      metadata: { origin },
+    };
+  }
+
+  it('appends a system_trigger message instead of reconciling it into an optimistic echo', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: optimisticUser('u_opt') }, meta());
+    state = reduceAppEvent(
+      state,
+      { type: 'messageCreated', message: syntheticUser('goal_1', { kind: 'system_trigger', name: 'goal_continuation' }) },
+      meta(),
+    );
+    const msgs = state.messagesBySession[SID]!;
+    expect(msgs.map((m) => m.id)).toEqual(['u_opt', 'goal_1']);
+    expect(msgs[0]?.metadata?.['kimiWeb.optimisticUserMessage']).toBe(true);
+  });
+
+  it('still reconciles a real user echo by identity', () => {
+    let state = reduceAppEvent(createInitialState(), { type: 'messageCreated', message: optimisticUser('u_opt') }, meta());
+    const echo: AppMessage = { ...syntheticUser('srv_1', { kind: 'user' }), userMessageId: 'u_opt' };
+    state = reduceAppEvent(state, { type: 'messageCreated', message: echo }, meta());
+    expect(state.messagesBySession[SID]!.map((m) => m.id)).toEqual(['u_opt']);
+  });
+});

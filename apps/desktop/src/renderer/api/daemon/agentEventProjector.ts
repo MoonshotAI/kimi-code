@@ -705,6 +705,27 @@ export function createAgentProjector(): AgentProjector {
         // Fresh turn → fresh step stream offsets.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        // The goal-continuation trigger message is persisted but never
+        // broadcast — synthesize it (like cron.fired below) so the provenance
+        // marker shows live; the turn-derived id dedupes replays downstream.
+        const turnOrigin = p?.origin;
+        if (
+          turnOrigin &&
+          typeof turnOrigin === 'object' &&
+          (turnOrigin as Record<string, unknown>)['kind'] === 'system_trigger' &&
+          (turnOrigin as Record<string, unknown>)['name'] === 'goal_continuation'
+        ) {
+          const msg: AppMessage = {
+            id: turnId !== undefined ? `goal_cont_${turnId}` : ulid('goal_'),
+            sessionId,
+            role: 'user',
+            content: [{ type: 'text', text: stringField(p ?? {}, 'prompt') ?? '' }],
+            createdAt: new Date().toISOString(),
+            metadata: { origin: turnOrigin as Record<string, unknown> },
+          };
+          s.messages.push(msg);
+          out.push({ type: 'messageCreated', message: cloneMessage(msg) });
+        }
         // Main-conversation liveness (the moon) keys off the main agent's turn
         // boundary directly — only main-agent frames reach this switch arm.
         out.push({ type: 'turnActiveChanged', sessionId, active: true });

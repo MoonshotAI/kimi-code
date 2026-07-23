@@ -1414,6 +1414,10 @@ function disarmEscUndo(): void {
 function lastUserTurn(): ChatTurn | null {
   for (let i = props.turns.length - 1; i >= 0; i--) {
     const turn = props.turns[i]!;
+    // A goal-continuation turn makes the newest exchange non-user-driven:
+    // rewinding would drop the hidden trigger turn while the composer gets
+    // the older user text back — there is no user-driven latest exchange.
+    if (turn.goalContinuation) return null;
     if (turn.role === 'user') return turn;
   }
   return null;

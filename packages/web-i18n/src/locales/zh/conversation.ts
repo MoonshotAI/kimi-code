@@ -43,6 +43,9 @@ export default {
     worked: '已工作 {duration}',
     workedUnknown: '工作过程',
   },
+  goal: {
+    continuation: '目标续跑',
+  },
   notification: {
     kindTask: '后台任务',
     kindSubagent: '子代理',

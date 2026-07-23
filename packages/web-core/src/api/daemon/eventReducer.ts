@@ -231,6 +231,13 @@ function isCronOriginMessage(message: AppMessage): boolean {
   return origin?.kind === 'cron_job' || origin?.kind === 'cron_missed';
 }
 
+/** System-trigger messages (goal continuations, …) are synthesized by the
+    runtime, never typed by the user — they can never be an optimistic echo. */
+function isSystemTriggerOriginMessage(message: AppMessage): boolean {
+  const origin = message.metadata?.['origin'] as { kind?: string } | undefined;
+  return origin?.kind === 'system_trigger';
+}
+
 function findOptimisticUserEchoIndex(messages: AppMessage[], message: AppMessage): number {
   const userMessageId = message.userMessageId ?? message.id;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -534,7 +541,11 @@ export function reduceAppEvent(
         // optimistic user message. They must append as their own turn rather
         // than reconcile into (and replace) that optimistic echo — so skip the
         // echo lookup entirely for them.
-        if (event.message.role === 'user' && !isCronOriginMessage(event.message)) {
+        if (
+          event.message.role === 'user' &&
+          !isCronOriginMessage(event.message) &&
+          !isSystemTriggerOriginMessage(event.message)
+        ) {
           const optimisticIndex = findOptimisticUserEchoIndex(msgs, event.message);
           if (optimisticIndex !== -1) {
             const updated = [...msgs];

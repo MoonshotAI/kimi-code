@@ -409,6 +409,8 @@ interface Group {
   createdAt?: string;
   /** Server `created_at` of the last absorbed message (turn end stamp). */
   endedAt?: string;
+  /** The turn was opened by a goal continuation trigger (provenance marker). */
+  goalContinuation?: boolean;
   /**
    * Content signatures already folded into this group, used to drop a duplicate
    * assistant message. The same logical reply can reach us under two different
@@ -580,6 +582,19 @@ export function messagesToTurns(
     if (!pendingGroup) return;
     const g = pendingGroup;
     pendingGroup = null;
+    // A contentless group only exists as a freshly seeded goal-continuation
+    // turn: keep it at the transcript tail (the turn is live, its first block
+    // is still coming); a superseding boundary drops it instead of leaving a
+    // ghost turn behind.
+    if (
+      !final &&
+      g.blocks.length === 0 &&
+      g.textParts.length === 0 &&
+      g.thinkingParts.length === 0 &&
+      g.tools.length === 0
+    ) {
+      return;
+    }
     // A later message ended this turn, so a tool still 'running' simply never
     // had its result persisted (e.g. an aborted turn in an old transcript) —
     // render it settled instead of spinning forever. The FINAL group keeps
@@ -609,6 +624,7 @@ export function messagesToTurns(
       durationMs: g.durationMs,
       createdAt: g.createdAt,
       endedAt: g.endedAt,
+      goalContinuation: g.goalContinuation,
     });
   }
 
@@ -815,10 +831,37 @@ export function messagesToTurns(
         turns.push(buildCronTurn(msg, no++, cronKind));
         continue;
       }
+      // A goal continuation opens the next assistant turn: the (long,
+      // machine-written) prompt stays hidden, and the turn is seeded
+      // IMMEDIATELY with its provenance marker — the marker (and the undo
+      // guard keyed off it) applies from the moment the trigger lands, not
+      // only once the first assistant block exists. A still-empty seeded
+      // group is dropped by the next boundary (see flushGroup).
+      if (
+        userOriginKind === 'system_trigger' &&
+        (msg.metadata?.['origin'] as { name?: string } | undefined)?.name === 'goal_continuation'
+      ) {
+        pendingGroup = {
+          id: msg.id,
+          promptId: undefined,
+          textParts: [],
+          thinkingParts: [],
+          tools: [],
+          blocks: [],
+          approval: undefined,
+          approvalId: undefined,
+          seenSigs: new Set<string>(),
+          createdAt: msg.createdAt,
+          goalContinuation: true,
+        };
+        continue;
+      }
       // Hide system-injected user turns (TUI parity) — they end the previous
-      // assistant turn but aren't rendered as a user bubble.
-      if (!isDisplayableUserMessage(msg)) continue;
-
+      // assistant turn (a seeded-but-empty goal turn included) but aren't
+      // rendered as a user bubble.
+      if (!isDisplayableUserMessage(msg)) {
+        continue;
+      }
       const origin = msg.metadata?.['origin'] as
         | {
             kind?: string;

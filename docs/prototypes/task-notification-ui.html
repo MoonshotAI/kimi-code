@@ -373,6 +373,26 @@ html[data-color-scheme="dark"] .a-msg code.ic { background: #ffffff1a; }
 .inj-row .ic { width: 14px; height: 14px; }
 .inj-row .mono { font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ============================= ★ goal 续跑 provenance 标记 =============================
+   附在 turn 顶部的来源行：12px faint + 14px target 图标，无底色无边框，
+   与消息流左缘对齐；turn 级元素，不进 TurnFold。 */
+.goal-prov {
+  display: flex; align-items: center; gap: 4px;
+  margin: var(--space-5) 0 var(--space-1);
+  font-size: var(--text-xs); line-height: 1.4;
+  color: var(--color-text-faint);
+  user-select: none;
+  animation: kimi-card-in var(--duration-slow) var(--ease-out);
+}
+.goal-prov .ic { width: 14px; height: 14px; flex: none; }
+.chat-col > .goal-prov:first-child { margin-top: 0; }
+/* goal 工具行的状态 pill（goal 工具已有词汇） */
+.goal-pill {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 8px;
+  border-radius: var(--radius-full); font-size: var(--text-xs);
+  background: var(--color-accent-soft); color: var(--color-accent); flex: none;
+}
+
 /* ============================= composer ============================= */
 .composer-dock {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 0 var(--space-6) var(--space-4);
@@ -480,6 +500,9 @@ html[data-color-scheme="dark"] .doc code { background: #ffffff1a; }
       <span class="title">调研 desktop 通知链路</span>
       <span class="sp"></span>
       <div class="demo-bar">
+        <button class="demo-btn on" id="btn-scene-ntf" title="任务通知卡场景">任务通知</button>
+        <button class="demo-btn" id="btn-scene-goal" title="goal 续跑标记场景">goal 续跑</button>
+        <span style="width:4px"></span>
         <button class="demo-btn" id="btn-gallery" title="全部样式状态一览">全部状态</button>
         <button class="demo-btn" id="btn-doc" title="查看设计说明">设计说明</button>
         <button class="demo-btn" id="btn-theme" title="切换亮/暗">◐ 主题</button>
@@ -490,6 +513,7 @@ html[data-color-scheme="dark"] .doc code { background: #ffffff1a; }
 
     <div class="chat-scroll" id="scroll">
       <div class="chat-col" id="col">
+       <div id="scene-ntf">
 
         <!-- 用户消息 -->
         <div class="u-turn"><div class="u-bub">帮我把 desktop dev 跑起来（放后台），然后调研一下 notification 的处理链路。</div></div>
@@ -563,6 +587,65 @@ html[data-color-scheme="dark"] .doc code { background: #ffffff1a; }
           </div>
         </div>
 
+       </div><!-- /scene-ntf -->
+
+       <!-- ======================= 场景：goal 续跑标记 ======================= -->
+       <div id="scene-goal" style="display:none">
+
+        <div class="u-turn"><div class="u-bub">/goal 盯着这个 PR 的 CI，失败就修到绿为止</div></div>
+
+        <!-- turn 1：用户启动 goal -->
+        <div class="a-msg"><div class="msg"><p>收到，开始盯 CI。先看当前状态。</p></div></div>
+        <div class="tl">
+          <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7zm0 4h10v2H7v-2z"/></svg>
+          <span class="name">Bash</span>
+          <span class="mono">gh pr checks 94</span>
+          <span class="tail"><span class="dot warn"></span><span>2 pending · 1 passing</span></span>
+        </div>
+        <div class="tl">
+          <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z"/></svg>
+          <span class="name">Goal</span>
+          <span class="faint">创建目标 — 盯着 PR #94 的 CI，失败就修到绿为止</span>
+          <span class="tail"><span class="goal-pill">active</span></span>
+        </div>
+
+        <!-- turn 2：第一次续跑（已落定）——标记在 fold 外，充当该 turn 的出处 -->
+        <div class="goal-turn">
+          <div class="goal-prov">
+            <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z"/></svg>
+            <span>目标续跑</span>
+          </div>
+          <div class="fold-row" data-fold="g1">
+            <svg class="car" viewBox="0 0 24 24" fill="currentColor"><path d="M9.707 5.293L16.414 12l-6.707 6.707-1.414-1.414L13.586 12 8.293 6.707z"/></svg>
+            <span>Worked 26s</span>
+          </div>
+          <div class="fold-body" id="fold-g1" style="display:none">
+            <div class="tl"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7z"/></svg><span class="name">Bash</span><span class="mono">gh pr checks 94</span><span class="tail"><span class="dot warn"></span></span></div>
+          </div>
+          <div class="a-msg"><div class="msg"><p>CI 还有两项在跑，没有失败项。继续盯。</p></div></div>
+        </div>
+
+        <!-- turn 3：第二次续跑（已落定） -->
+        <div class="goal-turn">
+          <div class="goal-prov">
+            <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z"/></svg>
+            <span>目标续跑</span>
+          </div>
+          <div class="fold-row" data-fold="g2">
+            <svg class="car" viewBox="0 0 24 24" fill="currentColor"><path d="M9.707 5.293L16.414 12l-6.707 6.707-1.414-1.414L13.586 12 8.293 6.707z"/></svg>
+            <span>Worked 41s</span>
+          </div>
+          <div class="fold-body" id="fold-g2" style="display:none">
+            <div class="tl"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7z"/></svg><span class="name">Bash</span><span class="mono">gh pr checks 94</span><span class="tail"><span class="dot error"></span></span></div>
+            <div class="tl"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.3 14l5.4 5.3 1.4-1.4-5.3-5.4A8 8 0 0010 2zm0 2a6 6 0 110 12 6 6 0 010-12z"/></svg><span class="name">Grep</span><span class="mono">TS2322</span><span class="faint">apps/desktop/src</span><span class="tail">1 match</span></div>
+          </div>
+          <div class="a-msg"><div class="msg"><p>build 红了：<code class="ic">updater.ts</code> 有个 TS2322，我先定位。</p></div></div>
+        </div>
+
+        <!-- 续跑动太插入点 -->
+        <div id="goal-slot"></div>
+
+       </div><!-- /scene-goal -->
       </div>
     </div>
 
@@ -570,6 +653,8 @@ html[data-color-scheme="dark"] .doc code { background: #ffffff1a; }
     <div class="composer-dock">
       <div class="workbar">
         <span class="wpill" id="wpill"><span class="dot running" id="wpill-dot"></span>后台任务 <span class="n" id="wpill-n">1</span></span>
+        <span class="wpill" id="wpill-goal" style="display:none"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="color:var(--color-accent)"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z"/></svg>目标 <span style="color:var(--color-accent)">active</span></span>
+        <button class="demo-btn" id="btn-goal-next" style="display:none;height:32px">▶ 模拟下一轮续跑</button>
       </div>
       <div class="composer">
         <div class="ph">发消息、/ 命令或 @ 文件…</div>
@@ -668,6 +753,14 @@ html[data-color-scheme="dark"] .doc code { background: #ffffff1a; }
       <li><b>无输出文件</b>：隐藏输出行，只留字段与正文。</li>
       <li><b>子代理通知</b>（带 <code>agent_id</code>）：图标换 sub-agent 语义，标题主语「子代理」，详情可跳 sub-agent 面板。</li>
       <li><b>a11y / 动效</b>：头行是 bare <code>&lt;button aria-expanded&gt;</code>；<code>prefers-reduced-motion</code> 关闭入场动画；亮暗双主题全部走 token。</li>
+    </ul>
+
+    <h2>附：goal 续跑的 provenance 标记（场景页「goal 续跑」演示）</h2>
+    <p>goal 模式的每个续跑 turn 由隐藏的 <code>goal_continuation</code> 消息触发（<code>admission: newTurn</code>——它<b>就是</b> turn 边界，与 task notification 语义相反，所以不用通知卡）。方案是在续跑 turn 内容顶部渲染一行来源标记：<b>14px target 图标 + 「目标续跑」，12px faint、无底色无边框</b>（与 Goal 工具行同一 glyph——「这轮属于这个目标」的家族归属感），与消息流左缘对齐；turn 级元素，<b>不进 TurnFold</b>——落定折叠后仍充当该 turn 的出处。流式期间续跑消息一到即出现，先于 assistant 输出。</p>
+    <ul>
+      <li><b>谱系</b>：cron = 代替用户发言（右侧标签 + accent 气泡）；goal 续跑 = 自驱 turn 的出处（turn 顶部 faint 行，权重最低的一档「可见」）；task notification = 事件结果（状态卡）；compaction = 上下文断裂（分隔条）。</li>
+      <li><b>不做轮次与标题</b>：continuation 消息不带轮次，<code>turnsUsed</code> 只有 live 现值，历史/分页后无法可靠对齐；goal 完成后状态清除，历史拿不到标题（live 时已在 workbar goal pill）。宁可没有，不要错的。</li>
+      <li><b>数据流（实现时）</b>：<code>messagesToTurns</code> 识别 <code>system_trigger + name: goal_continuation</code> → 下一个 assistant turn 带 <code>goalContinuation: true</code> → ChatPane 在 turn 容器顶部渲染。audit prompt 本体永远不进 UI。</li>
     </ul>
   </div>
 </div>
@@ -1090,6 +1183,135 @@ document.getElementById('gal-theme').addEventListener('click', () => {
   const h = document.documentElement;
   h.dataset.colorScheme = h.dataset.colorScheme === 'light' ? 'dark' : 'light';
 });
+
+/* ============================== 场景切换：任务通知 / goal 续跑 ============================== */
+const sceneNtf = document.getElementById('scene-ntf');
+const sceneGoal = document.getElementById('scene-goal');
+const btnSceneNtf = document.getElementById('btn-scene-ntf');
+const btnSceneGoal = document.getElementById('btn-scene-goal');
+const ntfOnlyBtns = ['btn-play', 'btn-debug'].map(id => document.getElementById(id));
+
+function setScene(goal){
+  sceneNtf.style.display = goal ? 'none' : '';
+  sceneGoal.style.display = goal ? '' : 'none';
+  btnSceneNtf.classList.toggle('on', !goal);
+  btnSceneGoal.classList.toggle('on', goal);
+  for (const b of ntfOnlyBtns) b.style.display = goal ? 'none' : '';
+  document.getElementById('wpill').style.display = goal ? 'none' : '';
+  document.getElementById('wpill-goal').style.display = goal ? '' : 'none';
+  document.getElementById('btn-goal-next').style.display = goal ? '' : 'none';
+  scrollBottom();
+}
+btnSceneNtf.addEventListener('click', () => setScene(false));
+btnSceneGoal.addEventListener('click', () => setScene(true));
+
+/* goal 场景：fold 开合 */
+for (const head of document.querySelectorAll('#scene-goal .fold-row')) {
+  head.addEventListener('click', () => {
+    const body = document.getElementById('fold-' + head.dataset.fold);
+    const open = head.classList.toggle('open');
+    body.style.display = open ? '' : 'none';
+  });
+}
+
+/* goal 场景：模拟下一轮续跑（先出现来源行，再生成的因果序） */
+const GOAL_TURN_TEXTS = [
+  '修好了 updater.ts 的 TS2322，重跑 build 验证中。',
+  'build 过了。再确认一遍全量检查。',
+  'CI 全绿。目标达成，本轮收尾。',
+];
+let goalRound = 0;
+const btnGoalNext = document.getElementById('btn-goal-next');
+btnGoalNext.addEventListener('click', () => {
+  const slot = document.getElementById('goal-slot');
+  const isLast = goalRound === GOAL_TURN_TEXTS.length - 1;
+  const turn = document.createElement('div');
+  turn.className = 'goal-turn';
+  turn.innerHTML = `
+    <div class="goal-prov">
+      <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z"/></svg>
+      <span>目标续跑</span>
+    </div>
+    <div class="tl">
+      <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7z"/></svg>
+      <span class="name">Bash</span>
+      <span class="mono">gh pr checks 94</span>
+      <span class="tail"><span class="dot ${isLast ? 'done' : 'running'}"></span></span>
+    </div>
+    <div class="a-msg"><div class="msg"><p>${GOAL_TURN_TEXTS[goalRound]}</p></div></div>
+    ${isLast ? `<div class="tl">
+      <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z"/></svg>
+      <span class="name">Goal</span>
+      <span class="faint">UpdateGoal — CI 全绿，目标完成</span>
+      <span class="tail"><span class="goal-pill" style="background:var(--color-success-soft);color:var(--color-success)">complete</span></span>
+    </div>` : ''}`;
+  slot.appendChild(turn);
+  goalRound++;
+  if (goalRound >= GOAL_TURN_TEXTS.length) {
+    btnGoalNext.disabled = true;
+    btnGoalNext.textContent = '演示完毕（目标已完成）';
+    document.getElementById('wpill-goal').innerHTML = '<svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="color:var(--color-success)"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1.2 14.2l-4-4 1.4-1.4 2.6 2.6 6-6 1.4 1.4-7.4 7.4z"/></svg>目标 <span style="color:var(--color-success)">complete</span>';
+  }
+  scrollBottom();
+});
+
+/* goal 标记的陈列状态（接在通知卡状态之后） */
+function goalProvRow(){
+  const d = document.createElement('div');
+  d.innerHTML = `<div class="goal-prov" style="margin-top:0">
+    <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z"/></svg>
+    <span>目标续跑</span>
+  </div>`;
+  return d.firstElementChild;
+}
+function galGoalStates(body){
+  // ⑯ 流式中：来源行先于 assistant 输出出现
+  const live = document.createElement('div');
+  live.appendChild(goalProvRow());
+  const liveTl = document.createElement('div');
+  liveTl.innerHTML = `<div class="tl"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm2 2h7v2H7V7z"/></svg><span class="name">Bash</span><span class="mono">gh pr checks 94</span><span class="tail"><span class="dot running"></span></span></div>`;
+  live.appendChild(liveTl);
+  body.appendChild(galSec('16', 'goal 标记 · 流式中', '续跑消息一到即出现，先于 assistant 输出 —— 因果清晰', [live]));
+  // ⑰ 落定后：标记在 fold 外，充当该 turn 的永久出处
+  const settled = document.createElement('div');
+  settled.appendChild(goalProvRow());
+  const fr = foldDemoRow('Worked 41s', false);
+  settled.appendChild(fr);
+  const txt = document.createElement('div');
+  txt.innerHTML = `<div class="a-msg"><div class="msg"><p>build 红了：updater.ts 有个 TS2322，我先定位。</p></div></div>`;
+  settled.appendChild(txt);
+  body.appendChild(galSec('17', 'goal 标记 · 落定后', 'turn 折叠后来源行仍留在 fold 外；切会话/回看时依旧知道这轮是谁发起的', [settled]));
+  // ⑱ 图标候选对比
+  const ROBOT = 'M13.5 2c0 .444-.193.843-.5 1.118V5h5a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h5V3.118A1.5 1.5 0 1 1 13.5 2M6 7a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm-4 3H0v6h2zm20 0h2v6h-2zM9 14.5a1.5 1.5 0 1 0 0-3a1.5 1.5 0 0 0 0 3m6 0a1.5 1.5 0 1 0 0-3a1.5 1.5 0 0 0 0 3';
+  const PLAY = 'M19.376 12.416L8.777 19.482A.5.5 0 0 1 8 19.066V4.934a.5.5 0 0 1 .777-.416l10.599 7.066a.5.5 0 0 1 0 .832';
+  const ARROW = 'm16.172 11l-5.364-5.364l1.414-1.414L20 12l-7.778 7.778l-1.414-1.414L16.172 13H4v-2z';
+  const TARGET = 'M12 2a10 10 0 100 20 10 10 0 000-20zm0 2a8 8 0 110 16 8 8 0 010-16zm0 3a5 5 0 100 10 5 5 0 000-10zm0 3a2 2 0 110 4 2 2 0 010-4z';
+  const candidates = [
+    { p: TARGET, label: 'target（当前选择）— 与 Goal 工具行同一 glyph：「这轮属于这个目标」的家族归属感，不是撞车' },
+    { p: ROBOT, label: 'robot — 「agent 自己开了一轮」，但引入第二个拟物图标，与 Goal 工具行割裂' },
+    { p: PLAY, label: 'play — 「续跑/继续」，但与 media 播放同形' },
+    { p: ARROW, label: 'arrow-right — 「向前继续」，语义泛、身份弱' },
+  ];
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+  for (const c of candidates) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:12px';
+    row.innerHTML = `
+      <div class="goal-prov" style="margin:0;min-width:110px">
+        <svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="${c.p}"/></svg>
+        <span>目标续跑</span>
+      </div>
+      <span style="font-size:var(--text-xs);color:var(--color-text-faint)">${c.label}</span>`;
+    wrap.appendChild(row);
+  }
+  body.appendChild(galSec('18', 'goal 标记 · 图标候选', 'registry 现有图标，无需新增', [wrap]));
+}
+const origPopulate = populateGallery;
+populateGallery = function(){
+  origPopulate();
+  galGoalStates(document.getElementById('gal-body'));
+};
 </script>
 </body>
 </html>

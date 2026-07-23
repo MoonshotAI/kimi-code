@@ -283,10 +283,15 @@ function onQueueDragEnd(): void {
 }
 
 // Id of the most recent user turn — the only one offered an "edit & resend"
-// affordance (undo only rewinds the latest exchange).
+// affordance (undo only rewinds the latest exchange). When the latest exchange
+// is a goal-continuation turn there is NO user-driven latest exchange: undo
+// would rewind the hidden trigger turn while the composer gets the older user
+// text back, so the affordance is suppressed entirely.
 const lastUserTurnId = computed<string | null>(() => {
   for (let i = props.turns.length - 1; i >= 0; i--) {
-    if (props.turns[i]!.role === 'user') return props.turns[i]!.id;
+    const turn = props.turns[i]!;
+    if (turn.goalContinuation) return null;
+    if (turn.role === 'user') return turn.id;
   }
   return null;
 });
@@ -879,6 +884,12 @@ function streamingTailIndex(turn: ChatTurn): number | null {
            the final text block folds into a TurnFold row once the turn
            settles; the final text (and any trailing blocks) stays visible. -->
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
+        <!-- Goal-continuation provenance: this turn was opened by goal mode,
+             not the user; the line stays outside the turn fold. -->
+        <div v-if="turn.goalContinuation" class="goal-prov">
+          <Icon name="target" size="sm" aria-hidden="true" />
+          <span>{{ t('conversation.goal.continuation') }}</span>
+        </div>
         <TurnFold
           v-if="assistantFold(turn).folded.length > 0"
           :items="assistantFold(turn).folded"
@@ -1359,6 +1370,20 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .cd-view { color: var(--color-accent); }
 .cd-btn:hover .cd-view { text-decoration: underline; }
 
+/* Goal-continuation provenance line — the target glyph shared with the Goal
+   tool (this turn belongs to the goal), faint 12px, flush with the stream's
+   left edge. Turn-level: it never folds. */
+.goal-prov {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  user-select: none;
+}
+
 /* Assistant message → left-aligned plain column, no role label */
 .a-msg {
   align-self: flex-start;
@@ -1457,6 +1482,22 @@ function streamingTailIndex(turn: ChatTurn): number | null {
 .a-msg > :deep(.swarm-card:first-child),
 .a-msg > :deep(.media-tool:first-child),
 .a-msg > :deep(.ask-receipt:first-child) {
+  margin-top: 0;
+}
+/* The goal-continuation provenance row takes the turn's top slot: the block
+   right after it keeps the same no-top-margin treatment as a first child.
+   Adjacent siblings only — later blocks keep their normal gaps. */
+.a-msg > .goal-prov:first-child + .msg,
+.a-msg > .goal-prov:first-child + :deep(.think),
+.a-msg > .goal-prov:first-child + :deep(.tool-group),
+.a-msg > .goal-prov:first-child + :deep(.activity-run),
+.a-msg > .goal-prov:first-child + :deep(.agent-card),
+.a-msg > .goal-prov:first-child + :deep(.agent-group),
+.a-msg > .goal-prov:first-child + :deep(.tool-line),
+.a-msg > .goal-prov:first-child + :deep(.swarm-card),
+.a-msg > .goal-prov:first-child + :deep(.media-tool),
+.a-msg > .goal-prov:first-child + :deep(.ask-receipt),
+.a-msg > .goal-prov:first-child + :deep(.turn-fold) {
   margin-top: 0;
 }
 /* Inline-code chip. Must exclude <pre> descendants: a block <code> (shiki
