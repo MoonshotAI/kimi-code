@@ -334,3 +334,187 @@ describe('DaemonKimiWebApi.connectEvents', () => {
     });
   });
 });
+
+
+describe('DaemonKimiWebApi.respondPassword (sudo askpass)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts the password body to the encoded password endpoint', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope({ resolved: true }));
+
+    const result = await createApi().respondPassword('sess/1', 'pw 1', { password: 's3cret' });
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      'http://daemon.test/api/v1/sessions/sess%2F1/passwords/pw%201',
+    );
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ password: 's3cret' }),
+    });
+    expect(result).toEqual({ resolved: true });
+  });
+
+  it('posts the cancelled body when the user cancels', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope({ resolved: true }));
+
+    await createApi().respondPassword('sess_1', 'pw_1', { cancelled: true });
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      'http://daemon.test/api/v1/sessions/sess_1/passwords/pw_1',
+    );
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ cancelled: true }),
+    });
+  });
+});
+
+describe('DaemonKimiWebApi.getSessionSnapshot pending passwords', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function wireSnapshot(pendingPasswords?: unknown[]) {
+    return {
+      as_of_seq: 1,
+      epoch: 'epoch-1',
+      session: {
+        id: 'sess_1',
+        title: 'Session',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+        busy: false,
+        archived: false,
+        metadata: { cwd: '/workspace' },
+        agent_config: { model: 'kimi-code' },
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_cost_usd: 0,
+          context_tokens: 0,
+          context_limit: 0,
+          turn_count: 0,
+        },
+        message_count: 0,
+        last_seq: 1,
+      },
+      messages: { items: [], has_more: false },
+      in_flight_turn: null,
+      pending_approvals: [],
+      pending_questions: [],
+      // `undefined` serializes to an absent field (older servers).
+      pending_passwords: pendingPasswords,
+    };
+  }
+
+  it('maps pending_passwords to camelCase pendingPasswords', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      envelope(
+        wireSnapshot([
+          {
+            id: 'pw_1',
+            session_id: 'sess_1',
+            prompt: '[sudo] password for alice:',
+            command: 'sudo apt-get update',
+          },
+        ]),
+      ),
+    );
+
+    const snapshot = await createApi().getSessionSnapshot('sess_1');
+
+    expect(snapshot.pendingPasswords).toEqual([
+      {
+        passwordId: 'pw_1',
+        sessionId: 'sess_1',
+        prompt: '[sudo] password for alice:',
+        command: 'sudo apt-get update',
+      },
+    ]);
+  });
+
+  it('treats an absent pending_passwords field as an empty list (older servers)', async () => {
+    vi.mocked(fetch).mockResolvedValue(envelope(wireSnapshot(undefined)));
+
+    const snapshot = await createApi().getSessionSnapshot('sess_1');
+
+    expect(snapshot.pendingPasswords).toEqual([]);
+  });
+});
+
+describe('DaemonKimiWebApi.connectEvents password events', () => {
+  let connection: KimiEventConnection | undefined;
+
+  afterEach(() => {
+    connection?.close();
+    connection = undefined;
+    vi.unstubAllGlobals();
+  });
+
+  it('maps event.password.requested / event.password.resolved to app events', () => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+    const received: AppEvent[] = [];
+    connection = createApi().connectEvents({
+      onEvent(event) {
+        received.push(event);
+      },
+      onResync() {},
+      onError() {},
+      onConnectionChange() {},
+    });
+    const socket = FakeWebSocket.instances[0]!;
+
+    socket.emit({ type: 'server_hello', payload: { protocol_version: 2 } });
+    socket.emit({
+      type: 'event.password.requested',
+      seq: 1,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: {
+        password: {
+          id: 'pw_1',
+          session_id: 'session-1',
+          prompt: '[sudo] password for alice:',
+          command: 'sudo apt-get update',
+        },
+      },
+    });
+    socket.emit({
+      type: 'event.password.resolved',
+      seq: 2,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { password_id: 'pw_1', outcome: 'submitted' },
+    });
+
+    expect(received).toContainEqual({
+      type: 'passwordRequested',
+      sessionId: 'session-1',
+      password: {
+        passwordId: 'pw_1',
+        sessionId: 'session-1',
+        prompt: '[sudo] password for alice:',
+        command: 'sudo apt-get update',
+      },
+    });
+    expect(received).toContainEqual({
+      type: 'passwordResolved',
+      sessionId: 'session-1',
+      passwordId: 'pw_1',
+      outcome: 'submitted',
+    });
+  });
+});

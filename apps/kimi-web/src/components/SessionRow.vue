@@ -24,10 +24,12 @@ const props = withDefaults(
     approvalCount?: number;
     /** Pending askUserQuestion prompts waiting for the user's answer. */
     questionCount?: number;
+    /** Pending sudo password prompts (askpass) waiting for the user's password. */
+    passwordCount?: number;
     /** A background turn finished here that the user hasn't opened — blue dot. */
     unread?: boolean;
   }>(),
-  { approvalCount: 0, questionCount: 0, unread: false },
+  { approvalCount: 0, questionCount: 0, passwordCount: 0, unread: false },
 );
 
 const emit = defineEmits<{
@@ -205,7 +207,8 @@ defineExpose({ closeMenu });
 
       <!-- Pending tags — coloured per kind, shown even when the row isn't
            active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-           permission request is waiting. The list-level interaction fact is
+           permission request is waiting; "Password" = sudo askpass is waiting.
+           The list-level interaction fact is
            the fallback for sessions whose detailed pending lists aren't loaded. -->
       <Tooltip :text="t('workspace.awaitingAnswerTitle')">
         <Badge
@@ -225,13 +228,22 @@ defineExpose({ closeMenu });
           {{ t('workspace.awaitingPermission') }}
         </Badge>
       </Tooltip>
+      <Tooltip :text="t('workspace.awaitingPasswordTitle')">
+        <Badge
+          v-if="!renaming && (passwordCount > 0 || session.pendingInteraction === 'password')"
+          variant="warning"
+          size="sm"
+        >
+          {{ t('workspace.awaitingPassword') }}
+        </Badge>
+      </Tooltip>
       <!-- Aborted: a distinct, low-key error tag — the session is quiet and
            its last main turn was cancelled or failed. Hidden while input is
            pending (the awaiting pills own the row then, exactly like the
            retired awaiting_* lifecycle status superseded `aborted`). -->
       <Tooltip :text="t('workspace.abortedTitle')">
         <Badge
-          v-if="!renaming && !session.busy && session.pendingInteraction !== 'question' && session.pendingInteraction !== 'approval' && questionCount === 0 && approvalCount === 0 && (session.lastTurnReason === 'cancelled' || session.lastTurnReason === 'failed')"
+          v-if="!renaming && !session.busy && session.pendingInteraction !== 'question' && session.pendingInteraction !== 'approval' && session.pendingInteraction !== 'password' && questionCount === 0 && approvalCount === 0 && passwordCount === 0 && (session.lastTurnReason === 'cancelled' || session.lastTurnReason === 'failed')"
           variant="danger"
           size="sm"
         >

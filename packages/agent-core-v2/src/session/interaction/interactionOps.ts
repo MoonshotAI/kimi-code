@@ -51,7 +51,7 @@ declare module '#/wire/types' {
 export const interactionRequest = InteractionModel.defineOp('interaction.request', {
   schema: z.object({
     id: z.string(),
-    kind: z.enum(['approval', 'question', 'user_tool']),
+    kind: z.enum(['approval', 'question', 'user_tool', 'password']),
     toolCallId: z.string().optional(),
     agentId: z.string().optional(),
     request: z.unknown(),

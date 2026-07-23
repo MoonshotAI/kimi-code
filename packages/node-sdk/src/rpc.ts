@@ -11,6 +11,8 @@ import {
   type Event,
   type ExperimentalFeatureState,
   type GetCronTasksResult,
+  type PasswordRequest,
+  type PasswordResult,
   type QuestionRequest,
   type QuestionResult,
   type RPCMethods,
@@ -21,7 +23,7 @@ import {
 } from '@moonshot-ai/agent-core';
 import type { Kaos } from '@moonshot-ai/kaos';
 
-import type { ApprovalHandler, QuestionHandler } from '#/events';
+import type { ApprovalHandler, PasswordHandler, QuestionHandler } from '#/events';
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
@@ -138,6 +140,7 @@ export abstract class SDKRpcClientBase {
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+  private readonly passwordHandlers = new Map<string, PasswordHandler>();
 
   get interactiveAgentId(): string {
     return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
@@ -815,9 +818,18 @@ export abstract class SDKRpcClientBase {
     this.questionHandlers.set(sessionId, handler);
   }
 
+  setPasswordHandler(sessionId: string, handler: PasswordHandler | undefined): void {
+    if (handler === undefined) {
+      this.passwordHandlers.delete(sessionId);
+      return;
+    }
+    this.passwordHandlers.set(sessionId, handler);
+  }
+
   clearSessionHandlers(sessionId: string): void {
     this.approvalHandlers.delete(sessionId);
     this.questionHandlers.delete(sessionId);
+    this.passwordHandlers.delete(sessionId);
   }
 
   async requestApproval(
@@ -866,6 +878,25 @@ export abstract class SDKRpcClientBase {
     }
   }
 
+  async requestPassword(
+    request: PasswordRequest & { sessionId: string; agentId: string },
+  ): Promise<PasswordResult> {
+    const handler = this.passwordHandlers.get(request.sessionId);
+    if (handler === undefined) return { kind: 'cancelled' };
+
+    try {
+      return await handler(request);
+    } catch (error) {
+      this.receiveEvent({
+        type: 'error',
+        sessionId: request.sessionId,
+        agentId: request.agentId,
+        ...makeErrorPayload(ErrorCodes.SESSION_PASSWORD_HANDLER_ERROR, errorMessage(error)),
+      });
+      return { kind: 'cancelled' };
+    }
+  }
+
   async toolCall(request: ToolCallRequest): Promise<ToolCallResponse> {
     return {
       output: `SDK custom tool calls are not supported: ${request.toolCallId}`,
@@ -892,6 +923,12 @@ export class ClientAPI implements SDKAPI {
     request: QuestionRequest & { sessionId: string; agentId: string },
   ): Promise<QuestionResult> {
     return this.client.requestQuestion(request);
+  }
+
+  requestPassword(
+    request: PasswordRequest & { sessionId: string; agentId: string },
+  ): Promise<PasswordResult> {
+    return this.client.requestPassword(request);
   }
 
   toolCall(request: ToolCallRequest): Promise<ToolCallResponse> {

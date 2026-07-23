@@ -580,3 +580,19 @@ describe('background subagent task registration', () => {
     ]);
   });
 });
+
+
+// Sudo askpass events (event.password.*) are GENUINE protocol events — they
+// drive the password UI via toAppEvent() and must never be re-handled by the
+// agent projector (which would no-op or misroute them).
+describe('classifyFrame password events', () => {
+  it('routes event.password.requested / resolved to the protocol path', () => {
+    const requested = {
+      password: { id: 'pw_1', session_id: 's1', prompt: '[sudo] password for alice:' },
+    };
+    expect(classifyFrame('event.password.requested', requested)).toEqual({ route: 'protocol' });
+    expect(
+      classifyFrame('event.password.resolved', { password_id: 'pw_1', outcome: 'submitted' }),
+    ).toEqual({ route: 'protocol' });
+  });
+});

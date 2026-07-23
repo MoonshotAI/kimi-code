@@ -28,6 +28,7 @@ import { z } from 'zod';
 import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution, ToolUpdate } from '../../../loop/types';
+import type { SudoAskpassEnvProvider } from '../../../sudo-askpass';
 import { renderPrompt } from '../../../utils/render-prompt';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
@@ -213,6 +214,8 @@ export class BashTool implements BuiltinTool<BashInput> {
    */
   private readonly backgroundTimeoutMs: number | undefined;
 
+  private readonly sudoAskpass: SudoAskpassEnvProvider | undefined;
+
   constructor(
     private readonly kaos: Kaos,
     private readonly cwd: string,
@@ -226,11 +229,18 @@ export class BashTool implements BuiltinTool<BashInput> {
        * {@link DEFAULT_BACKGROUND_TIMEOUT_S} when unset.
        */
       backgroundTimeoutS?: number;
+      /**
+       * Session-owned sudo askpass channel. When present (and enabled, on
+       * macOS/Linux), each spawn gets `SUDO_ASKPASS` + token env vars so sudo
+       * prompts the user through the client's secure password dialog.
+       */
+      sudoAskpass?: SudoAskpassEnvProvider;
     },
   ) {
     this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
     this.allowBackground = options?.allowBackground ?? true;
     this.autoBackgroundOnTimeout = options?.autoBackgroundOnTimeout ?? true;
+    this.sudoAskpass = options?.sudoAskpass;
     const backgroundTimeoutS = options?.backgroundTimeoutS ?? DEFAULT_BACKGROUND_TIMEOUT_S;
     this.backgroundTimeoutMs =
       backgroundTimeoutS === 0 ? undefined : backgroundTimeoutS * MS_PER_SECOND;
@@ -270,7 +280,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     };
   }
 
-  private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
+  private async spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
     const shellArgs = [
       this.kaos.osEnv.shellPath,
@@ -288,11 +298,19 @@ export class BashTool implements BuiltinTool<BashInput> {
       SHELL: this.kaos.osEnv.shellPath,
     };
 
+    // The askpass channel only exists on macOS/Linux; on Windows (Git Bash)
+    // sudo isn't a supported prompt path, so nothing is injected.
+    const askpassEnv =
+      this.sudoAskpass !== undefined && !this.isWindowsBash
+        ? await this.sudoAskpass.envFor(command)
+        : undefined;
+
     // Merge ambient env + noninteractive knobs so tools like git / node
     // don't open a pager and paints don't colour the stream.
     const mergedEnv: Record<string, string> = {
       ...(process.env as Record<string, string>),
       ...noninteractiveEnv,
+      ...askpassEnv,
     };
     return this.kaos.execWithEnv(shellArgs, mergedEnv);
   }

@@ -234,6 +234,7 @@ export type KimiErrorCode =
   | 'session.plan_mode_invalid'
   | 'session.approval_handler_error'
   | 'session.question_handler_error'
+  | 'session.password_handler_error'
   | 'session.init_failed'
   | 'agent.not_found'
   | 'turn.agent_busy'
@@ -1168,6 +1169,7 @@ export const kimiErrorCodeSchema = z.enum([
   'session.plan_mode_invalid',
   'session.approval_handler_error',
   'session.question_handler_error',
+  'session.password_handler_error',
   'session.init_failed',
   'agent.not_found',
   'turn.agent_busy',

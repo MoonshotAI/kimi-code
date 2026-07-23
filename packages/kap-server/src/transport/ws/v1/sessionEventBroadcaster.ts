@@ -93,6 +93,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import { toWireApproval } from '../../../routes/approvals';
+import { toWirePassword } from '../../../routes/passwords';
 import { toWireQuestion } from '../../../routes/questions';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
@@ -1464,6 +1465,14 @@ function interactionRequestedEvent(interaction: Interaction, sessionId: string):
         sessionId,
         ...toWireApproval(interaction, sessionId),
       } as unknown as Event;
+    case 'password':
+      // Request side only — prompt/command, never any response data.
+      return {
+        type: 'event.password.requested',
+        agentId,
+        sessionId,
+        password: toWirePassword(interaction, sessionId),
+      } as unknown as Event;
     default:
       // 'user_tool' has no v1 protocol event.
       return undefined;
@@ -1512,6 +1521,23 @@ function interactionResolvedEvent(
         scope: r.scope,
         feedback: r.feedback,
         selected_label: r.selectedLabel,
+        resolved_at: resolvedAt,
+      } as unknown as Event;
+    }
+    case 'password': {
+      // SECURITY: emit the outcome only — the raw password never leaves the
+      // in-memory interaction resolution.
+      const cancelled =
+        typeof response !== 'object' ||
+        response === null ||
+        (response as { cancelled?: unknown }).cancelled === true;
+      return {
+        type: 'event.password.resolved',
+        agentId,
+        sessionId,
+        password_id: id,
+        session_id: sessionId,
+        outcome: cancelled ? 'cancelled' : 'submitted',
         resolved_at: resolvedAt,
       } as unknown as Event;
     }

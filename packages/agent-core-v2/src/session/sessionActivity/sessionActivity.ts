@@ -17,7 +17,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 
-export type SessionPendingInteraction = 'none' | 'approval' | 'question';
+export type SessionPendingInteraction = 'none' | 'approval' | 'question' | 'password';
 
 export type SessionTurnOutcome = 'completed' | 'cancelled' | 'failed';
 

@@ -103,4 +103,77 @@ describe('BashTool noninteractive env semantics', () => {
     expect(secondEnv['GIT_TERMINAL_PROMPT']).toBe('configured');
     expect(secondEnv['KIMI_CODE_ENV']).toBe('updated');
   });
+
+  it('injects the sudo askpass env when a provider is wired', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
+    const tool = new BashTool(
+      createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      {
+        sudoAskpass: {
+          envFor: async (command) => ({
+            SUDO_ASKPASS: '/session/sudo-askpass/helper.sh',
+            KIMI_SUDO_ASKPASS_TOKEN: 'tok',
+            KIMI_SUDO_ASKPASS_COMMAND: command,
+          }),
+        },
+      },
+    );
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_askpass',
+      args: { command: 'sudo true', timeout: 1000 },
+      signal,
+    });
+    const env = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
+    expect(env['SUDO_ASKPASS']).toBe('/session/sudo-askpass/helper.sh');
+    expect(env['KIMI_SUDO_ASKPASS_TOKEN']).toBe('tok');
+    expect(env['KIMI_SUDO_ASKPASS_COMMAND']).toBe('sudo true');
+  });
+
+  it('injects no askpass env when the provider declines or on Windows', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
+    const declining = new BashTool(
+      createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      { sudoAskpass: { envFor: async () => undefined } },
+    );
+    await executeTool(declining, {
+      turnId: '0',
+      toolCallId: 'tc_askpass_off',
+      args: { command: 'sudo true', timeout: 1000 },
+      signal,
+    });
+    const env = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
+    expect(env['SUDO_ASKPASS']).toBeUndefined();
+    expect(env['KIMI_SUDO_ASKPASS_TOKEN']).toBeUndefined();
+
+    const windowsEnv: Environment = {
+      osKind: 'Windows',
+      osArch: 'x64',
+      osVersion: 'test',
+      shellPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
+      shellName: 'bash',
+    };
+    const onWindows = new BashTool(
+      createFakeKaos({ execWithEnv, osEnv: windowsEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      {
+        sudoAskpass: {
+          envFor: async () => ({ SUDO_ASKPASS: '/session/sudo-askpass/helper.sh' }),
+        },
+      },
+    );
+    await executeTool(onWindows, {
+      turnId: '0',
+      toolCallId: 'tc_askpass_win',
+      args: { command: 'true', timeout: 1000 },
+      signal,
+    });
+    const winEnv = execWithEnv.mock.calls[1]?.[1] as Record<string, string>;
+    expect(winEnv['SUDO_ASKPASS']).toBeUndefined();
+  });
 });

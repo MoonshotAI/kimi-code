@@ -36,7 +36,7 @@ export function emptySessionUsage(): SessionUsage {
   };
 }
 
-export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question']);
+export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question', 'password']);
 export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
 
 export const sessionSchema = z.object({

@@ -136,6 +136,16 @@ export interface QuestionPanelData {
   questions: QuestionPanelItem[];
 }
 
+// ── Password dialog view payloads ────────────────────────────────────
+
+export interface PasswordDialogData {
+  id: string;
+  /** The sudo prompt text, e.g. "[sudo] password for alice:" */
+  prompt: string;
+  /** The Bash command that triggered the sudo prompt, when known. */
+  command?: string;
+}
+
 export type QuestionSubmissionMethod = QuestionAnswerMethod;
 
 export interface QuestionPanelResponse {

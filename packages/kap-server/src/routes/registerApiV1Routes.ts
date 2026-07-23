@@ -30,6 +30,7 @@ import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
+import { registerPasswordsRoutes } from './passwords';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
 import { registerSessionExportRoute } from './sessionExport';
@@ -128,6 +129,10 @@ export async function registerApiV1Routes(
       );
       registerQuestionsRoutes(
         apiV1 as unknown as Parameters<typeof registerQuestionsRoutes>[0],
+        core,
+      );
+      registerPasswordsRoutes(
+        apiV1 as unknown as Parameters<typeof registerPasswordsRoutes>[0],
         core,
       );
       registerPromptsRoutes(

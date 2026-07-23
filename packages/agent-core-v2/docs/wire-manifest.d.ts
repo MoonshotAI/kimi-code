@@ -290,7 +290,7 @@ interface GoalUpdatePayload {
 interface InteractionRequestPayload {
   _name: 'interaction.request';
   id: string;
-  kind: 'approval' | 'question' | 'user_tool';
+  kind: 'approval' | 'question' | 'user_tool' | 'password';
   toolCallId?: string;
   agentId?: string;
   request: any;

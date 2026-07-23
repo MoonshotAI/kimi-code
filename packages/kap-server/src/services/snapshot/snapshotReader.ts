@@ -13,7 +13,8 @@
  * later undo). `(size, mtimeMs)` transcript cache and the watermark both come
  * from in-memory state, keeping warm reads sub-ms.
  *
- * Pending approvals/questions, the live status, and `current_prompt_id` are
+ * Pending approvals/questions/passwords, the live status, and
+ * `current_prompt_id` are
  * only available while the session is live; for a cold session they correctly
  * resolve to empty / `'idle'` (a cold session owns no runtime interaction).
  */
@@ -37,6 +38,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { toWireApproval } from '../../routes/approvals';
+import { toWirePassword } from '../../routes/passwords';
 import { toWireQuestion } from '../../routes/questions';
 import { resolveSessionFacts, toWireSession } from '../../routes/sessions';
 import { type SessionEventBroadcaster } from '../../transport/ws/v1/sessionEventBroadcaster';
@@ -123,7 +125,7 @@ export class SnapshotReader implements ISnapshotReader {
     );
 
     const inFlightTurn = this.attachCurrentPromptId(sid, live, snapState.inFlightTurn);
-    const { approvals, questions } = this.readPending(sid, live);
+    const { approvals, questions, passwords } = this.readPending(sid, live);
 
     logger.info(
       {
@@ -145,6 +147,7 @@ export class SnapshotReader implements ISnapshotReader {
       subagents: snapState.subagents,
       pending_approvals: approvals,
       pending_questions: questions,
+      pending_passwords: passwords,
     };
   }
 
@@ -246,12 +249,17 @@ export class SnapshotReader implements ISnapshotReader {
   private readPending(
     sid: string,
     live: ReturnType<ISessionLifecycleService['get']>,
-  ): { approvals: ReturnType<typeof toWireApproval>[]; questions: ReturnType<typeof toWireQuestion>[] } {
-    if (live === undefined) return { approvals: [], questions: [] };
+  ): {
+    approvals: ReturnType<typeof toWireApproval>[];
+    questions: ReturnType<typeof toWireQuestion>[];
+    passwords: ReturnType<typeof toWirePassword>[];
+  } {
+    if (live === undefined) return { approvals: [], questions: [], passwords: [] };
     const interaction = live.accessor.get(ISessionInteractionService);
     return {
       approvals: interaction.listPending('approval').map((i) => toWireApproval(i, sid)),
       questions: interaction.listPending('question').map((i) => toWireQuestion(i, sid)),
+      passwords: interaction.listPending('password').map((i) => toWirePassword(i, sid)),
     };
   }
 

@@ -76,7 +76,7 @@ const props = withDefaults(
     backend?: 'v1' | 'v2';
     attentionBySession?: Record<string, number>;
     /** Per-session pending counts split by kind, for the coloured tags. */
-    pendingBySession?: Record<string, { approvals: number; questions: number }>;
+    pendingBySession?: Record<string, { approvals: number; questions: number; passwords: number }>;
     unreadBySession?: Record<string, boolean>;
     /** Width (px) of the session column, driven by the App resize handle. */
     colWidth?: number;

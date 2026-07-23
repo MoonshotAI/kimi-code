@@ -59,6 +59,7 @@ import { LlmRequestLogger, splitGenerateOptions } from './llm-request-logger';
 import { LlmRequestRecorder } from './llm-request-recorder';
 import { resolveCompletionBudget } from '../utils/completion-budget';
 import type { Kaos } from '@moonshot-ai/kaos';
+import type { SudoAskpassEnvProvider } from '../sudo-askpass';
 import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
@@ -79,6 +80,11 @@ export interface AgentOptions {
    * rather than in the shared temp-dir fallback.
    */
   readonly mediaOriginalsDir?: string;
+  /**
+   * Session-owned sudo askpass channel (socket server + helper files under
+   * the session state dir), threaded to the Bash tool for env injection.
+   */
+  readonly sudoAskpass?: SudoAskpassEnvProvider;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
@@ -115,6 +121,7 @@ export class Agent {
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly mediaOriginalsDir?: string;
+  readonly sudoAskpass?: SudoAskpassEnvProvider;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly toolServices?: ToolServices;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
@@ -179,6 +186,7 @@ export class Agent {
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
     this.mediaOriginalsDir = options.mediaOriginalsDir;
+    this.sudoAskpass = options.sudoAskpass;
     this.rpc = options.rpc;
     this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];

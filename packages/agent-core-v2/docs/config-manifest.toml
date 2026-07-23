@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (21 sections · 2 overlay(s))
+# Index (22 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -27,6 +27,7 @@
 #   providers                src/app/kosongConfig/configSection.ts
 #   services                 src/app/auth/configSection.ts
 #   subagent                 src/session/subagent/configSection.ts
+#   sudoAskpass              src/session/sudoAskpass/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
@@ -326,6 +327,15 @@ merge_all_available_skills = true
 
 [subagent]
 timeout_ms = 7200000
+
+# ##########################################################################
+# sudoAskpass (config.toml: sudo_askpass)
+#   owner: src/session/sudoAskpass/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[sudo_askpass]
+# enabled: boolean
 
 # ##########################################################################
 # task

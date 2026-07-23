@@ -12,7 +12,10 @@
  * constructor edge would close a DI cycle. Direct construction without a
  * container (tests, embeddings) simply skips the journaling. The kernel's
  * pending semantics stay memory-only: pending promises are never restored
- * from the journal. Bound at Session scope.
+ * from the journal. SECURITY: for `password` interactions the journaled
+ * `interaction.resolved` response is redacted to `{cancelled}` — the raw
+ * password lives only in the in-memory resolution, never in wire.jsonl.
+ * Bound at Session scope.
  */
 
 import { Emitter, type Event } from '#/_base/event';
@@ -69,8 +72,11 @@ export class SessionInteractionService extends Disposable implements ISessionInt
       this.rememberResolved(id);
       const response = { cancelled: true, reason: 'turn_ended' };
       entry.resolve(response);
-      this.recordResolved(id, response, entry.interaction.origin);
-      this._onDidResolve.fire({ id, response });
+      this.recordResolved(id, response, entry.interaction.origin, entry.interaction.kind);
+      this._onDidResolve.fire({
+        id,
+        response: journalResponse(entry.interaction.kind, response),
+      });
       changed = true;
     }
     if (changed) {
@@ -94,9 +100,12 @@ export class SessionInteractionService extends Disposable implements ISessionInt
     this.pending.delete(id);
     this.rememberResolved(id);
     entry.resolve(response);
-    this.recordResolved(id, response, entry.interaction.origin);
+    this.recordResolved(id, response, entry.interaction.origin, entry.interaction.kind);
     this._onDidChangePending.fire({ pending: [...this.pending.keys()] });
-    this._onDidResolve.fire({ id, response });
+    this._onDidResolve.fire({
+      id,
+      response: journalResponse(entry.interaction.kind, response),
+    });
   }
 
   listPending(kind?: InteractionKind): readonly Interaction[] {
@@ -147,10 +156,15 @@ export class SessionInteractionService extends Disposable implements ISessionInt
     );
   }
 
-  private recordResolved(id: string, response: unknown, origin: InteractionOrigin): void {
+  private recordResolved(
+    id: string,
+    response: unknown,
+    origin: InteractionOrigin,
+    kind: InteractionKind,
+  ): void {
     const wire = this.originWire(origin);
     if (wire === undefined) return;
-    wire.dispatch(interactionResolved({ id, response }));
+    wire.dispatch(interactionResolved({ id, response: journalResponse(kind, response) }));
   }
 
   private originWire(origin: InteractionOrigin): IWireService | undefined {
@@ -161,8 +175,6 @@ export class SessionInteractionService extends Disposable implements ISessionInt
         (accessor) => accessor.get(IAgentLifecycleService).get(agentId)?.accessor.get(IWireService),
       );
     } catch {
-      // Journaling is best-effort: a partial scope without the agent
-      // lifecycle (test hosts, embeddings) must not break the kernel.
       return undefined;
     }
   }
@@ -189,6 +201,15 @@ function readPayloadToolCallId(payload: unknown): string | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const value = (payload as Record<string, unknown>)['toolCallId'];
   return typeof value === 'string' ? value : undefined;
+}
+
+function journalResponse(kind: InteractionKind, response: unknown): unknown {
+  if (kind !== 'password') return response;
+  const cancelled =
+    typeof response !== 'object' ||
+    response === null ||
+    (response as { cancelled?: unknown }).cancelled === true;
+  return { cancelled };
 }
 
 registerScopedService(

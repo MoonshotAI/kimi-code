@@ -8,6 +8,7 @@
  *   emitEvent(event)        → IEventService.publish(event)
  *   requestApproval(req)    → IApprovalService.request(req)
  *   requestQuestion(req)    → IQuestionService.request(req)
+ *   requestPassword(req)    → cancelled (no password UI in this adapter)
  *   toolCall(req)           → unsupported (SDK custom tool calls not used here)
  *
  * The protocol↔in-process adapters (SCHEMAS.md §6.4 snake_case shapes, REST
@@ -15,7 +16,7 @@
  * NOT here. The peer-service interfaces stay SDK-shaped.
  */
 
-import type { ApprovalRequest, ApprovalResponse, Event, QuestionRequest, QuestionResult, SDKAPI, ToolCallRequest, ToolCallResponse } from '../../rpc';
+import type { ApprovalRequest, ApprovalResponse, Event, PasswordRequest, PasswordResult, QuestionRequest, QuestionResult, SDKAPI, ToolCallRequest, ToolCallResponse } from '../../rpc';
 
 import type { IApprovalService } from '../approval/approval';
 import type { IEventService } from '../event/event';
@@ -56,6 +57,14 @@ export class BridgeClientAPI implements SDKAPI {
     options?: { signal?: AbortSignal },
   ): Promise<QuestionResult> {
     return this.deps.questionService.request(request, options);
+  }
+
+  async requestPassword(
+    _request: PasswordRequest & { sessionId: string; agentId: string },
+  ): Promise<PasswordResult> {
+    // The daemon's in-process adapter has no password UI; sudo falls back to
+    // its normal no-askpass failure, same as when the feature is disabled.
+    return { kind: 'cancelled' };
   }
 
   async toolCall(

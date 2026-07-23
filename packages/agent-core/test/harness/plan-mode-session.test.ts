@@ -93,6 +93,7 @@ describe('plan-mode bootstrap from config.defaultPlanMode', () => {
       emitEvent: vi.fn(),
       requestApproval: vi.fn(async () => ({ decision: 'rejected' as const })),
       requestQuestion: vi.fn(async () => null),
+      requestPassword: vi.fn(async () => ({ kind: 'cancelled' }) as const),
       toolCall: vi.fn(async () => ({ output: '' })),
     });
   }

@@ -14,7 +14,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 
-export type InteractionKind = 'approval' | 'question' | 'user_tool';
+export type InteractionKind = 'approval' | 'question' | 'user_tool' | 'password';
 
 export interface InteractionOrigin {
   readonly agentId?: string;

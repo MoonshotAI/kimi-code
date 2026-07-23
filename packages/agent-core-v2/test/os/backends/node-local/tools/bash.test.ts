@@ -16,8 +16,18 @@
 
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
-import { describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { SyncDescriptor } from '#/_base/di/descriptors';
+import { DisposableStore } from '#/_base/di/lifecycle';
+import { TestInstantiationService } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import {
   IAgentTaskService,
   type AgentTask,
@@ -29,12 +39,18 @@ import {
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
-import type { IConfigService } from '#/app/config/config';
+import { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
-import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
+import { ISessionInteractionService } from '#/session/interaction/interaction';
+import { SessionInteractionService } from '#/session/interaction/interactionService';
+import { ISessionPasswordService } from '#/session/password/password';
+import { SessionPasswordService } from '#/session/password/passwordService';
+import { ISessionSudoAskpassService } from '#/session/sudoAskpass/sudoAskpass';
+import { SessionSudoAskpassService } from '#/session/sudoAskpass/sudoAskpassService';
 import { type BashInput, BashInputSchema, BashTool } from '#/os/backends/node-local/tools/bash';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -712,6 +728,13 @@ function stubConfig(values: Record<string, unknown> = {}): IConfigService {
   } as unknown as IConfigService;
 }
 
+function stubSudoAskpass(env?: Record<string, string>): ISessionSudoAskpassService {
+  return {
+    _serviceBrand: undefined,
+    envForCommand: async () => env,
+  };
+}
+
 function bashTool(
   runner: ISessionProcessRunner,
   env: IHostEnvironment = createTestEnv(),
@@ -719,8 +742,9 @@ function bashTool(
   background: IAgentTaskService = createFakeTaskService().service,
   toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
+  sudoAskpass: ISessionSudoAskpassService = stubSudoAskpass(),
 ): BashTool {
-  return new BashTool(runner, env, ctx, background, toolPolicy, config);
+  return new BashTool(runner, env, ctx, background, toolPolicy, config, sudoAskpass);
 }
 
 
@@ -1825,4 +1849,376 @@ describe('BashTool prompt / runtime consistency', () => {
 
     expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
   });
+});
+
+
+describe('BashTool sudo askpass env injection', () => {
+  it('merges the askpass env into the spawn environment', async () => {
+    const proc = processWithOutput({ stdout: 'ok\n' });
+    const { runner, exec } = createTestRunner(proc);
+    const askpassEnv = {
+      SUDO_ASKPASS: '/session/sudo-askpass/helper.sh',
+      KIMI_SUDO_ASKPASS_TOKEN: 'tok',
+      KIMI_SUDO_ASKPASS_COMMAND: 'sudo ls',
+    };
+    const tool = bashTool(
+      runner,
+      createTestEnv(),
+      createTestCtx(),
+      createFakeTaskService().service,
+      stubToolPolicy(),
+      stubConfig(),
+      stubSudoAskpass(askpassEnv),
+    );
+
+    await executeTool(tool, context({ command: 'sudo ls', timeout: 60 }));
+
+    const env = exec.mock.calls[0]?.[1]?.env as Record<string, string>;
+    expect(env).toMatchObject(askpassEnv);
+    expect(env).toMatchObject({ NO_COLOR: '1', TERM: 'dumb' });
+  });
+
+  it('spawns without askpass variables when the channel returns undefined', async () => {
+    const proc = processWithOutput({ stdout: 'ok\n' });
+    const { runner, exec } = createTestRunner(proc);
+    const tool = bashTool(runner);
+
+    await executeTool(tool, context({ command: 'sudo ls', timeout: 60 }));
+
+    const env = exec.mock.calls[0]?.[1]?.env as Record<string, string>;
+    expect(env).not.toHaveProperty('SUDO_ASKPASS');
+    expect(env).not.toHaveProperty('KIMI_SUDO_ASKPASS_TOKEN');
+    expect(env).not.toHaveProperty('KIMI_SUDO_ASKPASS_COMMAND');
+  });
+});
+
+/**
+ * End-to-end password flow through the Bash tool layer: a FAKE `sudo`
+ * executable (temp dir on PATH) mimics real sudo 1.9 behavior — it only
+ * consults `$SUDO_ASKPASS` in askpass mode, so the session's `bin/sudo`
+ * PATH shim must prepend `-A` for the prompt to happen at all. The askpass
+ * helper bridges back to the session's password interaction over the unix
+ * socket. Never real sudo.
+ */
+describe('BashTool sudo askpass (end-to-end with fake sudo)', () => {
+  const FAKE_SUDO = `#!/bin/sh
+if [ "$1" != "-A" ]; then
+  echo "sudo: a terminal is required to read the password" >&2
+  exit 1
+fi
+shift
+password=$("$SUDO_ASKPASS" "[sudo] password for testuser: ") || exit 1
+if [ "$password" != "hunter2" ]; then
+  echo "Sorry, try again." >&2
+  exit 1
+fi
+exec "$@"
+`;
+
+  const noopLog: ILogService = {
+    _serviceBrand: undefined,
+    level: 'off',
+    setLevel: () => {},
+    error: () => {},
+    warn: () => {},
+    info: () => {},
+    debug: () => {},
+    child: () => noopLog,
+    flush: () => Promise.resolve(),
+  };
+
+  let sessionDir: string;
+  let binDir: string;
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let originalPath: string | undefined;
+
+  beforeEach(async () => {
+    sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bash-askpass-e2e-'));
+    binDir = join(sessionDir, 'bin');
+    await mkdir(binDir);
+    const fakeSudo = join(binDir, 'sudo');
+    await writeFile(fakeSudo, FAKE_SUDO);
+    await chmod(fakeSudo, 0o755);
+
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 's',
+        workspaceId: 'w',
+        sessionDir,
+        sessionScope: 'sessions/w/s',
+        cwd: sessionDir,
+      }),
+    );
+    ix.stub(IHostEnvironment, createTestEnv());
+    ix.stub(IConfigService, stubConfig());
+    ix.stub(ILogService, noopLog);
+    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
+    ix.set(ISessionPasswordService, new SyncDescriptor(SessionPasswordService));
+    ix.set(ISessionSudoAskpassService, new SyncDescriptor(SessionSudoAskpassService));
+
+    originalPath = process.env['PATH'];
+    process.env['PATH'] = `${binDir}:${originalPath ?? ''}`;
+  });
+
+  afterEach(async () => {
+    if (originalPath === undefined) delete process.env['PATH'];
+    else process.env['PATH'] = originalPath;
+    disposables.dispose();
+    await rm(sessionDir, { recursive: true, force: true });
+  });
+
+  function realProcess(args: readonly string[], env: Record<string, string>): IProcess {
+    const child = spawn(args[0]!, args.slice(1), {
+      env: { ...process.env, ...env },
+    });
+    let currentExitCode: number | null = null;
+    const waited = new Promise<number>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) => {
+        currentExitCode = code;
+        resolve(code ?? 0);
+      });
+    });
+    return {
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      pid: child.pid ?? 0,
+      get exitCode() {
+        return currentExitCode;
+      },
+      wait: () => waited,
+      kill: async (signal) => {
+        child.kill(signal);
+      },
+      dispose: () => {},
+    };
+  }
+
+  function realRunner(): ISessionProcessRunner {
+    return {
+      _serviceBrand: undefined,
+      exec: (args, options) => Promise.resolve(realProcess(args, options?.env ?? {})),
+    };
+  }
+
+  function tool(): BashTool {
+    return new BashTool(
+      realRunner(),
+      createTestEnv(),
+      ix.get(ISessionContext),
+      createFakeTaskService().service,
+      stubToolPolicy(),
+      stubConfig(),
+      ix.get(ISessionSudoAskpassService),
+    );
+  }
+
+  it('feeds a user-supplied password to sudo through the askpass channel', async () => {
+    const passwords = ix.get(ISessionPasswordService);
+    const running = executeTool(tool(), context({ command: 'sudo echo askpass-ok', timeout: 30 }));
+
+    await vi.waitFor(
+      () => {
+        expect(passwords.listPending()).toHaveLength(1);
+      },
+      { timeout: 10_000 },
+    );
+    const pending = passwords.listPending()[0]!;
+    expect(pending.command).toBe('sudo echo askpass-ok');
+    expect(pending.prompt).toBe('[sudo] password for testuser: ');
+    passwords.resolve(pending.id!, { cancelled: false, password: 'hunter2' });
+
+    const result = await running;
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('askpass-ok');
+    // The password travels only between the helper and sudo — never into output.
+    expect(result.output).not.toContain('hunter2');
+  });
+
+  it('fails the command when the password request is cancelled', async () => {
+    const passwords = ix.get(ISessionPasswordService);
+    const running = executeTool(
+      tool(),
+      context({ command: 'sudo echo should-not-run', timeout: 30 }),
+    );
+
+    await vi.waitFor(
+      () => {
+        expect(passwords.listPending()).toHaveLength(1);
+      },
+      { timeout: 10_000 },
+    );
+    passwords.resolve(passwords.listPending()[0]!.id!, { cancelled: true });
+
+    const result = await running;
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).not.toContain('should-not-run');
+  });
+});
+
+/**
+ * Real-sudo smoke test: sudo 1.9+ only consults SUDO_ASKPASS in askpass
+ * mode, so this proves the session's `bin/sudo` PATH shim makes real sudo
+ * invoke the helper at all. The request is cancelled, so no real
+ * credentials are involved — the helper exits 1 and sudo fails before any
+ * authentication attempt.
+ */
+describe('BashTool sudo askpass (real sudo smoke)', () => {
+  const realSudoAvailable = (process.env['PATH'] ?? '')
+    .split(delimiter)
+    .some((entry) => entry !== '' && existsSync(join(entry, 'sudo')));
+
+  const noopLog: ILogService = {
+    _serviceBrand: undefined,
+    level: 'off',
+    setLevel: () => {},
+    error: () => {},
+    warn: () => {},
+    info: () => {},
+    debug: () => {},
+    child: () => noopLog,
+    flush: () => Promise.resolve(),
+  };
+
+  let sessionDir: string;
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(async () => {
+    sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bash-askpass-real-'));
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 's',
+        workspaceId: 'w',
+        sessionDir,
+        sessionScope: 'sessions/w/s',
+        cwd: sessionDir,
+      }),
+    );
+    ix.stub(IHostEnvironment, createTestEnv());
+    ix.stub(IConfigService, stubConfig());
+    ix.stub(ILogService, noopLog);
+    ix.set(ISessionInteractionService, new SyncDescriptor(SessionInteractionService));
+    ix.set(ISessionPasswordService, new SyncDescriptor(SessionPasswordService));
+    ix.set(ISessionSudoAskpassService, new SyncDescriptor(SessionSudoAskpassService));
+  });
+
+  afterEach(async () => {
+    disposables.dispose();
+    await rm(sessionDir, { recursive: true, force: true });
+  });
+
+  function realProcess(args: readonly string[], env: Record<string, string>): IProcess {
+    const child = spawn(args[0]!, args.slice(1), {
+      env: { ...process.env, ...env },
+    });
+    let currentExitCode: number | null = null;
+    const waited = new Promise<number>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) => {
+        currentExitCode = code;
+        resolve(code ?? 0);
+      });
+    });
+    return {
+      stdin: child.stdin,
+      stdout: child.stdout,
+      stderr: child.stderr,
+      pid: child.pid ?? 0,
+      get exitCode() {
+        return currentExitCode;
+      },
+      wait: () => waited,
+      kill: async (signal) => {
+        child.kill(signal);
+      },
+      dispose: () => {},
+    };
+  }
+
+  function runRealSudo(command: string) {
+    const passwords = ix.get(ISessionPasswordService);
+    const bash = new BashTool(
+      {
+        _serviceBrand: undefined,
+        exec: (args, options) => Promise.resolve(realProcess(args, options?.env ?? {})),
+      },
+      createTestEnv(),
+      ix.get(ISessionContext),
+      createFakeTaskService().service,
+      stubToolPolicy(),
+      stubConfig(),
+      ix.get(ISessionSudoAskpassService),
+    );
+    return { passwords, running: executeTool(bash, context({ command, timeout: 30 })) };
+  }
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'real sudo invokes the askpass helper through the shim',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -k -p SMOKETEST-PROMPT true');
+
+      await vi.waitFor(
+        () => {
+          expect(passwords.listPending()).toHaveLength(1);
+        },
+        { timeout: 10_000 },
+      );
+      const pending = passwords.listPending()[0]!;
+      expect(pending.prompt).toContain('SMOKETEST-PROMPT');
+      passwords.resolve(pending.id!, { cancelled: true });
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'sudo -n stays non-interactive and never prompts',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -k -n true');
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+      expect(passwords.listPending()).toHaveLength(0);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'an explicit -A from the caller is harmless',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -A -k -p SMOKETEST-PROMPT true');
+
+      await vi.waitFor(
+        () => {
+          expect(passwords.listPending()).toHaveLength(1);
+        },
+        { timeout: 10_000 },
+      );
+      passwords.resolve(passwords.listPending()[0]!.id!, { cancelled: true });
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32' || !realSudoAvailable)(
+    'sudo -S is not forced into askpass mode (sudo rejects -A with -S)',
+    async () => {
+      const { passwords, running } = runRealSudo('sudo -k -S true');
+
+      const result = await running;
+      expect(result).toMatchObject({ isError: true });
+      expect(passwords.listPending()).toHaveLength(0);
+      expect(result.output).not.toContain('may not be used together');
+    },
+  );
 });

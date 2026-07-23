@@ -1481,8 +1481,8 @@ const KNOWN_AGENT_CORE_TYPES = new Set([
  * "event."-prefixed names that are GENUINE protocol events (control/projected
  * events produced server-side). The agent projector must NOT re-handle these —
  * they go through the existing toAppEvent() path. This includes approval /
- * question requests (which drive the approval/question UI) and the no-op-but-
- * known streaming/tool protocol events.
+ * question / password requests (which drive the approval/question/password UI)
+ * and the no-op-but-known streaming/tool protocol events.
  */
 const PROTOCOL_EVENT_NAMES = new Set([
   // Session lifecycle (projected)
@@ -1495,13 +1495,15 @@ const PROTOCOL_EVENT_NAMES = new Set([
   // Message lifecycle (projected)
   'message.created',
   'message.updated',
-  // Approval / Question — MUST stay on the protocol path to drive the UI
+  // Approval / Question / Password — MUST stay on the protocol path to drive the UI
   'approval.requested',
   'approval.resolved',
   'approval.expired',
   'question.requested',
   'question.answered',
   'question.dismissed',
+  'password.requested',
+  'password.resolved',
   // Background tasks (projected)
   'task.created',
   'task.progress',

@@ -104,6 +104,7 @@ timeout = 5
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
 | `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
+| `sudo_askpass` | `table` | — | 安全的 sudo 密码提示 → [`sudo_askpass`](#sudo_askpass) |
 | `providers` | `table` | `{}` | API 供应商表 → [`providers`](#providers) |
 | `models` | `table` | — | 模型别名表 → [`models`](#models) |
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
@@ -115,7 +116,15 @@ timeout = 5
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
 
-以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission` 等嵌套表逐一展开。
+以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`image`、`services`、`permission`、`sudo_askpass` 等嵌套表逐一展开。
+
+## `sudo_askpass`
+
+`sudo_askpass` 控制内置的安全 sudo 密码提示（macOS/Linux）。当 Bash 命令调用 `sudo` 且没有缓存凭据时，本地掩码密码对话框会询问密码，并通过按会话创建的 askpass 助手传递给 sudo——模型永远看不到密码。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| ---- | ---- | ------ | ---- |
+| `enabled` | `boolean` | `true` | 是否启用 sudo 密码提示。设为 `false` 可禁用（sudo 将按无 TTY 的常规方式报错） |
 
 ## `providers`
 

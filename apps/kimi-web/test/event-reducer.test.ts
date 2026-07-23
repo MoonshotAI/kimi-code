@@ -676,3 +676,58 @@ describe('reduceAppEvent unknown agent error', () => {
     expect(next.warnings[0]).toBe(`${i18n.global.t('warnings.noteLabel')}: heads up`);
   });
 });
+
+
+describe('reduceAppEvent password events (sudo askpass)', () => {
+  function passwordRequest(passwordId: string) {
+    return {
+      passwordId,
+      sessionId: 's1',
+      prompt: '[sudo] password for alice:',
+      command: 'sudo apt-get update',
+    };
+  }
+
+  it('passwordRequested adds the prompt, deduped by id', () => {
+    const state = createInitialState();
+    const first = reduceAppEvent(
+      state,
+      { type: 'passwordRequested', sessionId: 's1', password: passwordRequest('pw_1') },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(first.passwordsBySession['s1']).toHaveLength(1);
+    expect(first.passwordsBySession['s1']?.[0]?.passwordId).toBe('pw_1');
+
+    // A replayed / raced duplicate request must not add a second entry.
+    const dup = reduceAppEvent(
+      first,
+      { type: 'passwordRequested', sessionId: 's1', password: passwordRequest('pw_1') },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(dup.passwordsBySession['s1']).toHaveLength(1);
+  });
+
+  it('passwordResolved removes the prompt', () => {
+    const state = {
+      ...createInitialState(),
+      passwordsBySession: { s1: [passwordRequest('pw_1'), passwordRequest('pw_2')] },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'passwordResolved', sessionId: 's1', passwordId: 'pw_1', outcome: 'submitted' },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.passwordsBySession['s1']).toHaveLength(1);
+    expect(next.passwordsBySession['s1']?.[0]?.passwordId).toBe('pw_2');
+  });
+
+  it('drops pending prompts with the rest of a deleted session', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      passwordsBySession: { s1: [passwordRequest('pw_1')] },
+    };
+    const next = reduceAppEvent(state, { type: 'sessionDeleted', sessionId: 's1' }, { sessionId: 's1', seq: 1 });
+    expect(next.passwordsBySession['s1']).toBeUndefined();
+  });
+});

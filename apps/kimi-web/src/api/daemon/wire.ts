@@ -68,7 +68,7 @@ export interface WireSession {
   updated_at: string;
   busy: boolean;
   main_turn_active?: boolean;
-  pending_interaction?: 'none' | 'approval' | 'question';
+  pending_interaction?: 'none' | 'approval' | 'question' | 'password';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   current_prompt_id?: string;
@@ -263,6 +263,22 @@ export interface WireApprovalResponse {
   feedback?: string;
   selected_label?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Password (sudo askpass — GitHub issue #2090)
+// ---------------------------------------------------------------------------
+
+export interface WirePasswordRequest {
+  id: string;
+  session_id: string;
+  /** sudo prompt text, e.g. "[sudo] password for alice:". */
+  prompt: string;
+  /** The bash command that triggered the prompt (may be absent). */
+  command?: string;
+}
+
+/** Submit body is `{password}`; cancel body is `{cancelled: true}`. */
+export type WirePasswordResponse = { password: string } | { cancelled: true };
 
 // ---------------------------------------------------------------------------
 // Question
@@ -591,6 +607,8 @@ export interface WireSessionSnapshot {
   subagents?: WireTask[];
   pending_approvals: WireApprovalRequest[];
   pending_questions: WireQuestionRequest[];
+  /** Pending sudo password prompts (absent on servers predating the askpass channel). */
+  pending_passwords?: WirePasswordRequest[];
 }
 
 export interface WireSessionAbortResult {
@@ -679,7 +697,7 @@ type WireEventSessionDeleted = WireEventBase<'event.session.deleted', { session_
 type WireEventSessionWorkChanged = WireEventBase<'event.session.work_changed', {
   busy: boolean;
   main_turn_active?: boolean;
-  pending_interaction?: 'none' | 'approval' | 'question';
+  pending_interaction?: 'none' | 'approval' | 'question' | 'password';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
 }>;
 /** @deprecated Old journals may still carry this; mapped onto busy for replay. */
@@ -791,6 +809,15 @@ type WireEventQuestionDismissed = WireEventBase<'event.question.dismissed', {
   dismissed_by: string;
   dismissed_at: string;
 }>;
+
+// Password (sudo askpass) — never carries the password itself.
+type WireEventPasswordRequested = WireEventBase<'event.password.requested', {
+  password: WirePasswordRequest;
+}>;
+type WireEventPasswordResolved = WireEventBase<'event.password.resolved', {
+  password_id: string;
+  outcome: 'submitted' | 'cancelled';
+}>;
 // Tasks
 type WireEventTaskCreated = WireEventBase<'event.task.created', { task: WireTask }>;
 type WireEventTaskProgress = WireEventBase<'event.task.progress', {
@@ -864,6 +891,9 @@ export type WireEvent =
   | WireEventQuestionRequested
   | WireEventQuestionAnswered
   | WireEventQuestionDismissed
+  // Password (sudo askpass)
+  | WireEventPasswordRequested
+  | WireEventPasswordResolved
   // Tasks
   | WireEventTaskCreated
   | WireEventTaskProgress

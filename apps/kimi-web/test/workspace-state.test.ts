@@ -5,7 +5,7 @@
 
 import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
+import type { AppApprovalRequest, AppPasswordRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
@@ -25,6 +25,7 @@ const apiMock = vi.hoisted(() => ({
   submitPrompt: vi.fn(),
   respondQuestion: vi.fn(),
   respondApproval: vi.fn(),
+  respondPassword: vi.fn(),
   dismissQuestion: vi.fn(),
   cancelTask: vi.fn(),
   getAuth: vi.fn(),
@@ -219,6 +220,15 @@ function approvalRequest(approvalId: string): AppApprovalRequest {
     display: null,
     expiresAt: '2099-01-01T00:00:00.000Z',
     createdAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function passwordRequest(passwordId: string): AppPasswordRequest {
+  return {
+    passwordId,
+    sessionId: 'sess_1',
+    prompt: '[sudo] password for alice:',
+    command: 'sudo apt-get update',
   };
 }
 
@@ -663,6 +673,81 @@ describe('useWorkspaceState — respondApproval', () => {
     expect(apiMock.respondApproval).toHaveBeenCalledOnce();
     expect(state.approvalsBySession['sess_1']).toEqual([]);
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('useWorkspaceState — respondPassword', () => {
+  beforeEach(() => {
+    apiMock.respondPassword.mockReset();
+  });
+
+  it('submits the password and removes the prompt locally on success', async () => {
+    apiMock.respondPassword.mockResolvedValue({ resolved: true });
+    const state = createState();
+    state.passwordsBySession = { sess_1: [passwordRequest('pw_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.respondPassword('pw_1', { password: 's3cret' });
+
+    expect(apiMock.respondPassword).toHaveBeenCalledWith('sess_1', 'pw_1', { password: 's3cret' });
+    expect(state.passwordsBySession['sess_1']).toEqual([]);
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('removes the prompt locally and stays silent when already resolved (40902)', async () => {
+    apiMock.respondPassword.mockRejectedValue(
+      new DaemonApiError({ code: 40902, msg: 'password pw_1 already resolved', requestId: 'r' }),
+    );
+    const state = createState();
+    state.passwordsBySession = { sess_1: [passwordRequest('pw_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.respondPassword('pw_1', { cancelled: true });
+
+    expect(apiMock.respondPassword).toHaveBeenCalledOnce();
+    expect(state.passwordsBySession['sess_1']).toEqual([]);
+    expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it('surfaces genuine errors and keeps the prompt for retry', async () => {
+    apiMock.respondPassword.mockRejectedValue(
+      new DaemonApiError({ code: 50001, msg: 'boom', requestId: 'r' }),
+    );
+    const state = createState();
+    state.passwordsBySession = { sess_1: [passwordRequest('pw_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    await ws.respondPassword('pw_1', { password: 's3cret' });
+
+    expect(state.passwordsBySession['sess_1']).toHaveLength(1);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+
+  it('drops a duplicate submit while the first respond is still in flight', async () => {
+    let resolveRespond!: (value: { resolved: true }) => void;
+    apiMock.respondPassword.mockReturnValue(
+      new Promise<{ resolved: true }>((r) => {
+        resolveRespond = r;
+      }),
+    );
+    const state = createState();
+    state.passwordsBySession = { sess_1: [passwordRequest('pw_1')] };
+    const deps = createDeps();
+    const ws = useWorkspaceState(state, deps);
+
+    const first = ws.respondPassword('pw_1', { password: 's3cret' });
+    // Second click while the first request is still in flight must be a no-op.
+    await ws.respondPassword('pw_1', { password: 's3cret' });
+
+    expect(apiMock.respondPassword).toHaveBeenCalledOnce();
+
+    // Resolve the first request and ensure the prompt is removed.
+    resolveRespond({ resolved: true });
+    await first;
+    expect(state.passwordsBySession['sess_1']).toEqual([]);
   });
 });
 

@@ -226,6 +226,12 @@ export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 
+export const SudoAskpassConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+});
+
+export type SudoAskpassConfig = z.infer<typeof SudoAskpassConfigSchema>;
+
 export const HookDefSchema = z
   .object({
     event: z.enum(HOOK_EVENT_TYPES),
@@ -346,6 +352,13 @@ export const KimiConfigSchema = z.object({
   modelCatalog: ModelCatalogConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
+  /**
+   * Built-in secure sudo password prompt (macOS/Linux): the Bash tool injects
+   * a per-session askpass helper into spawned commands so sudo prompts the
+   * user through the client's masked password dialog instead of failing on a
+   * missing TTY. `enabled` defaults to true when unset.
+   */
+  sudoAskpass: SudoAskpassConfigSchema.optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -392,6 +405,7 @@ export const KimiConfigPatchSchema = z
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
     telemetry: z.boolean().optional(),
+    sudoAskpass: SudoAskpassConfigSchema.optional(),
   })
   .strict();
 

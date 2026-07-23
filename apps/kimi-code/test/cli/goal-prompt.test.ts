@@ -89,6 +89,7 @@ const mocks = vi.hoisted(() => {
     setPermission: vi.fn(),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setPasswordHandler: vi.fn(),
     getStatus: vi.fn(async () => ({ permission: 'auto', model: 'k2' })),
     createGoal: vi.fn(async () => snapshot({ status: 'active' })),
     getGoal: vi.fn(async () => ({ goal: snapshot({ status: 'complete' }) })),

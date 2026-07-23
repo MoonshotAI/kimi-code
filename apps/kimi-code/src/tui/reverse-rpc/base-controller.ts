@@ -1,7 +1,7 @@
 /**
  * Base class for promise-based reverse RPC dialog controllers.
  *
- * Approval and question flows wait for a UI action before returning a response.
+ * Approval, question, and password flows wait for a UI action before returning a response.
  * Subclasses only need to define the default cancellation response.
  *
  * When concurrent requests arrive (e.g. multiple parallel subagents each

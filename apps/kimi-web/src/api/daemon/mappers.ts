@@ -8,6 +8,7 @@ import type {
   AppEvent,
   AppGoal,
   AppModel,
+  AppPasswordRequest,
   AppProvider,
   FsEntry,
   AppMessage,
@@ -31,6 +32,7 @@ import type {
 import type {
   WireApprovalRequest,
   WireApprovalResponse,
+  WirePasswordRequest,
   WireTask,
   WireFsEntry,
   WireImageSource,
@@ -289,6 +291,19 @@ export function toAppApprovalRequest(wire: WireApprovalRequest): AppApprovalRequ
     display: wire.tool_input_display ?? wire.display,
     expiresAt: wire.expires_at,
     createdAt: wire.created_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Password mappers (sudo askpass)
+// ---------------------------------------------------------------------------
+
+export function toAppPasswordRequest(wire: WirePasswordRequest): AppPasswordRequest {
+  return {
+    passwordId: wire.id,
+    sessionId: wire.session_id,
+    prompt: wire.prompt,
+    command: wire.command,
   };
 }
 
@@ -662,6 +677,22 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         sessionId: w.session_id,
         questionId: w.payload.question_id,
         dismissedAt: w.payload.dismissed_at,
+      };
+
+    // ----- Password (sudo askpass) -----
+    case 'event.password.requested':
+      return {
+        type: 'passwordRequested',
+        sessionId: w.session_id,
+        password: toAppPasswordRequest(w.payload.password),
+      };
+
+    case 'event.password.resolved':
+      return {
+        type: 'passwordResolved',
+        sessionId: w.session_id,
+        passwordId: w.payload.password_id,
+        outcome: w.payload.outcome,
       };
 
     // ----- Tasks -----

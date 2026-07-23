@@ -78,6 +78,7 @@ import RiInformationLine from '~icons/ri/information-line';
 import RiLinksLine from '~icons/ri/links-line';
 import RiListCheck from '~icons/ri/list-check';
 import RiListUnordered from '~icons/ri/list-unordered';
+import RiLockLine from '~icons/ri/lock-line';
 import RiLoginBoxLine from '~icons/ri/login-box-line';
 import RiMailLine from '~icons/ri/mail-line';
 import RiMessageLine from '~icons/ri/message-line';
@@ -150,6 +151,7 @@ import RawInformationLine from '~icons/ri/information-line?raw';
 import RawLinksLine from '~icons/ri/links-line?raw';
 import RawListCheck from '~icons/ri/list-check?raw';
 import RawListUnordered from '~icons/ri/list-unordered?raw';
+import RawLockLine from '~icons/ri/lock-line?raw';
 import RawLoginBoxLine from '~icons/ri/login-box-line?raw';
 import RawMailLine from '~icons/ri/mail-line?raw';
 import RawMessageLine from '~icons/ri/message-line?raw';
@@ -204,6 +206,7 @@ export type IconName =
   | 'list'
   | 'sort'
   | 'grip'
+  | 'lock'
   | 'folder'
   | 'folder-closed'
   | 'folder-plus'
@@ -290,6 +293,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   list: entry(RiListUnordered, RawListUnordered),
   sort: entry(RiSortDesc, RawSortDesc),
   grip: entry(RiDraggable, RawDraggable),
+  lock: entry(RiLockLine, RawLockLine),
   folder: entry(KimiFolderOpen, RawKimiFolderOpen),
   'folder-closed': entry(KimiFolder, RawKimiFolder),
   'folder-plus': entry(RiFolderAddLine, RawFolderAddLine),
@@ -428,6 +432,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'info',
       'help-circle',
       'alert-triangle',
+      'lock',
       'clock',
       'sparkles',
       'pause',

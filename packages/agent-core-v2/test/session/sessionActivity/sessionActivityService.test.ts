@@ -299,6 +299,19 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     expect(changes.at(-1)?.state.pendingInteraction).toBe('question');
   });
 
+  it('ranks a pending password above approval and question', () => {
+    lifecycle.addAgent(MAIN_AGENT_ID);
+    const interactions = session.accessor.get(ISessionInteractionService);
+    const { changes } = viewWithChanges();
+
+    interactions.enqueue({ id: 'a1', kind: 'approval', payload: {}, origin: { agentId: MAIN_AGENT_ID } });
+    interactions.enqueue({ id: 'p1', kind: 'password', payload: {}, origin: { agentId: MAIN_AGENT_ID } });
+    expect(changes.at(-1)?.state.pendingInteraction).toBe('password');
+
+    interactions.respond('p1', { cancelled: true });
+    expect(changes.at(-1)?.state.pendingInteraction).toBe('approval');
+  });
+
   it('treats user_tool pending as none', () => {
     lifecycle.addAgent(MAIN_AGENT_ID);
     const interactions = session.accessor.get(ISessionInteractionService);
