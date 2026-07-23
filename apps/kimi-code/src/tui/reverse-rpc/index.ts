@@ -1,18 +1,22 @@
 import type { ApprovalController } from './approval/controller';
-import type { QuestionController } from './question/controller';
 import { ReverseRpcModalCoordinator } from './modal-coordinator';
-import type { ApprovalPanelData, QuestionPanelData } from './types';
+import type { PasswordController } from './password/controller';
+import type { QuestionController } from './question/controller';
+import type { ApprovalPanelData, PasswordDialogData, QuestionPanelData } from './types';
 
 export interface ReverseRPCUIHooks {
   readonly showApprovalPanel: (payload: ApprovalPanelData) => void;
   readonly hideApprovalPanel: () => void;
   readonly showQuestionDialog: (payload: QuestionPanelData) => void;
   readonly hideQuestionDialog: () => void;
+  readonly showPasswordDialog: (payload: PasswordDialogData) => void;
+  readonly hidePasswordDialog: () => void;
 }
 
 export function registerReverseRPCHandlers(
   approvalController: ApprovalController,
   questionController: QuestionController,
+  passwordController: PasswordController,
   uiHooks: ReverseRPCUIHooks,
 ): Array<() => void> {
   const modalCoordinator = new ReverseRpcModalCoordinator(uiHooks);
@@ -33,6 +37,15 @@ export function registerReverseRPCHandlers(
     },
     hidePanel: () => {
       modalCoordinator.hide('question');
+    },
+  });
+
+  passwordController.setUIHooks({
+    showPanel: (payload) => {
+      modalCoordinator.showPassword(payload);
+    },
+    hidePanel: () => {
+      modalCoordinator.hide('password');
     },
   });
 

@@ -3,7 +3,7 @@
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
-import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
+import type { AppGoal, AppModel, AppPasswordRequest, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import ChatPane from './ChatPane.vue';
@@ -40,6 +40,10 @@ const props = defineProps<{
   pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
   /** Approval ids with an in-flight respond (drives the card loading state). */
   pendingApprovalActions?: Record<string, true>;
+  /** Pending sudo password prompts (daemon askpass), rendered in the dock. */
+  passwords?: AppPasswordRequest[];
+  /** Password ids with an in-flight respond (drives the card loading state). */
+  pendingPasswordActions?: Record<string, true>;
   /** Session busy (any agent, incl. background work) — Stop/Escape affordances. */
   running?: boolean;
   /** MAIN agent turn in flight — the conversation's streaming state (streaming
@@ -101,6 +105,8 @@ const emit = defineEmits<{
   submit: [payload: { text: string; attachments: PromptAttachment[] }];
   steer: [payload: { text: string; attachments: PromptAttachment[] }];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string }];
+  passwordSubmit: [passwordId: string, password: string];
+  passwordCancel: [passwordId: string];
   cancelTask: [taskId: string];
   answer: [questionId: string, response: QuestionResponse];
   dismiss: [questionId: string];
@@ -413,6 +419,21 @@ const approvalBusy = computed<boolean>(() => {
   const a = pendingApproval.value;
   if (!a) return false;
   return !!props.pendingApprovalActions?.[a.approvalId];
+});
+
+// The first pending sudo password prompt (if any). Rendered in the SAME
+// bottom-dock slot as the question/approval, with TOP priority — sudo is
+// blocking a running process, so its prompt must win over both.
+const pendingPassword = computed<AppPasswordRequest | undefined>(() =>
+  props.passwords && props.passwords.length > 0 ? props.passwords[0] : undefined,
+);
+
+// True while the visible password card has a respond in flight. Drives the
+// submit/cancel loading state and blocks duplicate submits.
+const passwordBusy = computed<boolean>(() => {
+  const p = pendingPassword.value;
+  if (!p) return false;
+  return !!props.pendingPasswordActions?.[p.passwordId];
 });
 
 // ---------------------------------------------------------------------------
@@ -972,6 +993,14 @@ function handleApproval(
   emit('approval', id, response);
 }
 
+function handlePasswordSubmit(passwordId: string, password: string): void {
+  emit('passwordSubmit', passwordId, password);
+}
+
+function handlePasswordCancel(passwordId: string): void {
+  emit('passwordCancel', passwordId);
+}
+
 let contentObserver: MutationObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let observedContent: Element | null = null;
@@ -1473,6 +1502,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :question-busy-kind="questionBusyKind"
         :pending-approval="pendingApproval"
         :approval-busy="approvalBusy"
+        :pending-password="pendingPassword"
+        :password-busy="passwordBusy"
         :mobile="mobile"
         @toggle-dock-panel="toggleDockPanel($event)"
         @close-dock-panel="closeDockPanel()"
@@ -1480,6 +1511,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
         @answer="handleQuestionAnswer"
         @dismiss="emit('dismiss', $event)"
         @approval="handleApproval"
+        @password-submit="handlePasswordSubmit"
+        @password-cancel="handlePasswordCancel"
         @cancel-task="emit('cancelTask', $event)"
         @control-goal="emit('controlGoal', $event)"
         @submit="handleComposerSubmit"

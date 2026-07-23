@@ -104,6 +104,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `extra_agent_dirs` | `array<string>` | — | Extra custom agent search directories, layered on top of the default directories |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
+| `sudo_askpass` | `table` | — | Secure sudo password prompt → [`sudo_askpass`](#sudo_askpass) |
 | `providers` | `table` | `{}` | API provider table → [`providers`](#providers) |
 | `models` | `table` | — | Model alias table → [`models`](#models) |
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
@@ -115,7 +116,15 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
 
-The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `tools`, `image`, `services`, and `permission`.
+The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `tools`, `image`, `services`, `permission`, and `sudo_askpass`.
+
+## `sudo_askpass`
+
+`sudo_askpass` controls the built-in secure sudo password prompt (macOS/Linux). When a Bash command invokes `sudo` without cached credentials, a local masked password dialog asks for the password and passes it to sudo through a per-session askpass helper — the model never sees it.
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | `boolean` | `true` | Whether the sudo password prompt is enabled. Set to `false` to disable (sudo then fails with its normal no-TTY error) |
 
 ## `providers`
 

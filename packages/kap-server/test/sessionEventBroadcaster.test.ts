@@ -326,11 +326,13 @@ class FakeSessionActivityView {
     return {
       busy,
       mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
-      pendingInteraction: pending.some((i) => i.kind === 'approval')
-        ? 'approval'
-        : pending.some((i) => i.kind === 'question')
-          ? 'question'
-          : 'none',
+      pendingInteraction: pending.some((i) => i.kind === 'password')
+        ? 'password'
+        : pending.some((i) => i.kind === 'approval')
+          ? 'approval'
+          : pending.some((i) => i.kind === 'question')
+            ? 'question'
+            : 'none',
       lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
     };
   }
@@ -1380,6 +1382,87 @@ describe('SessionEventBroadcaster', () => {
       },
     });
     expect((envelopes[3]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+  });
+
+  it('broadcasts password requested / resolved without ever carrying the password', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    lc.interactions.enqueue({
+      id: 'p1',
+      kind: 'password',
+      payload: { prompt: '[sudo] password for user: ', command: 'sudo cat /etc/shadow' },
+      origin: {},
+    });
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(2);
+    expect(envelopes[0]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 1,
+      payload: { pending_interaction: 'password' },
+    });
+    expect(envelopes[1]).toMatchObject({
+      type: 'event.password.requested',
+      seq: 2,
+      session_id: 's1',
+      payload: {
+        password: {
+          id: 'p1',
+          session_id: 's1',
+          prompt: '[sudo] password for user: ',
+          command: 'sudo cat /etc/shadow',
+        },
+      },
+    });
+
+    lc.interactions.respond('p1', { cancelled: false, password: 'hunter2' });
+    await bc.getCursor('s1');
+
+    expect(envelopes).toHaveLength(4);
+    expect(envelopes[2]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 3,
+      payload: { pending_interaction: 'none' },
+    });
+    expect(envelopes[3]).toMatchObject({
+      type: 'event.password.resolved',
+      seq: 4,
+      session_id: 's1',
+      payload: {
+        password_id: 'p1',
+        session_id: 's1',
+        outcome: 'submitted',
+      },
+    });
+    // SECURITY: the raw password must not appear in ANY broadcast envelope.
+    expect(JSON.stringify(envelopes)).not.toContain('hunter2');
+  });
+
+  it('broadcasts password resolved with the cancelled outcome', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    lc.interactions.enqueue({
+      id: 'p1',
+      kind: 'password',
+      payload: { prompt: 'Password: ' },
+      origin: {},
+    });
+    await bc.getCursor('s1');
+    lc.interactions.respond('p1', { cancelled: true });
+    await bc.getCursor('s1');
+
+    expect(envelopes[3]).toMatchObject({
+      type: 'event.password.resolved',
+      payload: { password_id: 'p1', outcome: 'cancelled' },
+    });
   });
 
   it('fans event.session.work_changed out to every connection, bypassing agent filters', async () => {

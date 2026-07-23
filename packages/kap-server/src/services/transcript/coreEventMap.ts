@@ -1361,6 +1361,10 @@ export class AgentTranscriptProjector {
    * `approvalId` back-link.
    */
   mapInteractionResolved(id: string, response: unknown): TranscriptOperation[] {
+    // `password` interactions never reach this projector: the binding layer
+    // announces only approval/question kinds, and the interaction kernel
+    // broadcasts the redacted (password-free) response shape. Keep it that
+    // way — the raw response of a password interaction carries a secret.
     const record = this.interactions.get(id);
     if (record === undefined) return [];
     this.interactions.delete(id);

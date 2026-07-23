@@ -46,6 +46,8 @@ File tools handle reading, writing, and searching the local filesystem — the f
 
 Foreground mode blocks the current turn until the command completes or times out, and the TUI streams stdout and stderr into the running `Bash` tool card while the command is still active. By default, a foreground command that hits its timeout is not killed — it keeps running as a background task (bounded by the 600s default background timeout); to restore kill-on-timeout, set [`bash_auto_background_on_timeout`](../configuration/config-files.md#background) to `false` under `[background]`. The 600s background default is configurable via [`bash_task_timeout_s`](../configuration/config-files.md#background) (`0` = no timeout) and defaults to no timeout in print mode (`kimi -p`). Background mode returns a task ID immediately and automatically notifies the Agent when the task finishes. stdin is always closed — interactive commands receive EOF immediately. A two-phase termination strategy (SIGTERM → 5-second grace period → SIGKILL) ensures reliable process cleanup when a task is stopped or hits its background timeout. On Windows, Git Bash is used by default.
 
+On macOS and Linux, when a command invokes `sudo` and sudo needs a password, a local masked password dialog asks for it and passes it to sudo through a per-session askpass helper — the password never enters the model context, session logs, or transcripts. This is enabled by default; set [`sudo_askpass`](../configuration/config-files.md#sudo_askpass) `enabled` to `false` to turn it off (sudo then fails with its normal no-TTY error). Commands containing `sudo` still go through the normal permission approval flow.
+
 ## Web Tools
 
 | Tool | Default Approval | Description |

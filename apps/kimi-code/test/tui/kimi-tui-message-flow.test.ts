@@ -177,6 +177,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setPasswordHandler: vi.fn(),
     setModel: vi.fn(async (alias: string) => {
       model = alias;
     }),

@@ -25,7 +25,7 @@
 
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
-export type SessionPendingInteraction = 'none' | 'approval' | 'question';
+export type SessionPendingInteraction = 'none' | 'approval' | 'question' | 'password';
 export type SessionTurnOutcome = 'completed' | 'cancelled' | 'failed';
 
 export interface SessionWorkFacts {

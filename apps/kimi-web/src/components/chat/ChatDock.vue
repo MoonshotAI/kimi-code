@@ -6,11 +6,12 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
-import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
+import type { AppGoal, AppModel, AppPasswordRequest, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
 import GoalStrip from './GoalStrip.vue';
+import PasswordCard from './PasswordCard.vue';
 import QuestionCard from './QuestionCard.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import TasksPane from './TasksPane.vue';
@@ -53,6 +54,9 @@ const props = defineProps<{
   pendingApproval?: { approvalId: string; block: ApprovalBlock; agentName?: string };
   /** True while the visible approval has a respond in flight. */
   approvalBusy?: boolean;
+  pendingPassword?: AppPasswordRequest;
+  /** True while the visible password prompt has a respond in flight. */
+  passwordBusy?: boolean;
   mobile?: boolean;
 }>();
 
@@ -77,6 +81,8 @@ const emit = defineEmits<{
   answer: [questionId: string, response: QuestionResponse];
   dismiss: [questionId: string];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string; selectedLabel?: string }];
+  passwordSubmit: [passwordId: string, password: string];
+  passwordCancel: [passwordId: string];
   cancelTask: [taskId: string];
   'toggle-dock-panel': [panel: 'bash' | 'subagent' | 'todos'];
   'close-dock-panel': [];
@@ -246,8 +252,16 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       </Pill>
     </div>
 
+    <PasswordCard
+      v-if="pendingPassword"
+      :key="pendingPassword.passwordId"
+      :password="pendingPassword"
+      :busy="passwordBusy"
+      @submit="(pid, pw) => emit('passwordSubmit', pid, pw)"
+      @cancel="emit('passwordCancel', $event)"
+    />
     <QuestionCard
-      v-if="pendingQuestion"
+      v-else-if="pendingQuestion"
       :key="pendingQuestion.questionId"
       :question="pendingQuestion"
       :busy-kind="questionBusyKind"

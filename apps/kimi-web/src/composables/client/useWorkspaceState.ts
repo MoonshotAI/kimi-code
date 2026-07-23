@@ -24,6 +24,7 @@ import type {
   ApprovalResponse,
   FsEntry,
   KimiEventConnection,
+  PasswordResponse,
   QuestionResponse,
 } from '../../api/types';
 import {
@@ -88,6 +89,8 @@ function isTaskAlreadyFinishedError(err: unknown): boolean {
 const pendingQuestionActions = reactive<Record<string, 'answer' | 'dismiss'>>({});
 /** Approval ids with an in-flight respond, keyed by approvalId. */
 const pendingApprovalActions = reactive<Record<string, true>>({});
+/** Password (sudo askpass) ids with an in-flight respond, keyed by passwordId. */
+const pendingPasswordActions = reactive<Record<string, true>>({});
 /** Task ids with an in-flight cancel, keyed by taskId. */
 const pendingTaskCancellations = reactive<Record<string, true>>({});
 /**
@@ -1987,6 +1990,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     };
   }
 
+  function removePendingPassword(sid: string, passwordId: string): void {
+    const list = rawState.passwordsBySession[sid] ?? [];
+    rawState.passwordsBySession = {
+      ...rawState.passwordsBySession,
+      [sid]: list.filter((p) => p.passwordId !== passwordId),
+    };
+  }
+
   async function respondApproval(
     approvalId: string,
     response: { decision: ApprovalDecision; scope?: 'session'; feedback?: string; selectedLabel?: string },
@@ -2064,6 +2075,33 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
     } finally {
       delete pendingQuestionActions[questionId];
+    }
+  }
+
+  async function respondPassword(
+    passwordId: string,
+    response: PasswordResponse,
+  ): Promise<void> {
+    const sid = rawState.activeSessionId;
+    if (!sid) return;
+    // Guard against a second click while the first respond is in flight.
+    if (pendingPasswordActions[passwordId]) return;
+    pendingPasswordActions[passwordId] = true;
+    try {
+      const api = getKimiWebApi();
+      await api.respondPassword(sid, passwordId, response);
+      // Remove from local passwords immediately (WS event will confirm)
+      removePendingPassword(sid, passwordId);
+    } catch (err) {
+      if (isAlreadyResolvedError(err)) {
+        // Already resolved (another client or a raced event) — that is the
+        // desired end state, so drop it locally without surfacing an error.
+        removePendingPassword(sid, passwordId);
+      } else {
+        pushOperationFailure('respondPassword', err, { sessionId: sid });
+      }
+    } finally {
+      delete pendingPasswordActions[passwordId];
     }
   }
 
@@ -2794,8 +2832,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     respondApproval,
     respondQuestion,
     dismissQuestion,
+    respondPassword,
     pendingQuestionActions,
     pendingApprovalActions,
+    pendingPasswordActions,
     cancelTask,
     setPlanMode,
     togglePlanMode,

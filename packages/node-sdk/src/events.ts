@@ -1,6 +1,8 @@
 import type {
   ApprovalRequest,
   ApprovalResponse,
+  PasswordRequest,
+  PasswordResult,
   QuestionRequest,
   QuestionResult,
 } from '@moonshot-ai/agent-core';
@@ -80,6 +82,9 @@ export type {
   QuestionResult,
 } from '@moonshot-ai/agent-core';
 
+// Password reverse-RPC request (sudo askpass) and result payloads.
+export type { PasswordRequest, PasswordResult } from '@moonshot-ai/agent-core';
+
 // Subagent lifecycle events.
 export type {
   SubagentSpawnedEvent,
@@ -112,3 +117,5 @@ export type MaybePromise<T> = T | Promise<T>;
 export type ApprovalHandler = (request: ApprovalRequest) => MaybePromise<ApprovalResponse>;
 
 export type QuestionHandler = (request: QuestionRequest) => MaybePromise<QuestionResult>;
+
+export type PasswordHandler = (request: PasswordRequest) => MaybePromise<PasswordResult>;

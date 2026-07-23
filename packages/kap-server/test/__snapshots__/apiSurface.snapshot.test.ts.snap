@@ -150,6 +150,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/passwords",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/profile",
     ],
     [
@@ -311,6 +315,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/export",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/passwords/{password_id}",
     ],
     [
       "POST",

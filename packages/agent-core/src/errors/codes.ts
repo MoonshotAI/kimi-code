@@ -29,6 +29,7 @@ export const ErrorCodes = {
   SESSION_PLAN_MODE_INVALID: 'session.plan_mode_invalid',
   SESSION_APPROVAL_HANDLER_ERROR: 'session.approval_handler_error',
   SESSION_QUESTION_HANDLER_ERROR: 'session.question_handler_error',
+  SESSION_PASSWORD_HANDLER_ERROR: 'session.password_handler_error',
   SESSION_INIT_FAILED: 'session.init_failed',
 
   AGENT_NOT_FOUND: 'agent.not_found',
@@ -209,6 +210,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Inspect the SDK question handler for an unhandled exception.',
+  },
+  'session.password_handler_error': {
+    title: 'Password handler threw',
+    retryable: false,
+    public: true,
+    action: 'Inspect the SDK password handler for an unhandled exception.',
   },
   'session.init_failed': {
     title: 'Session init failed',

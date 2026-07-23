@@ -602,6 +602,7 @@ max_context_size = 1000000
       emitEvent: options.emitEvent ?? vi.fn(),
       requestApproval: vi.fn(async () => ({ decision: 'rejected' as const })),
       requestQuestion: vi.fn(async () => null),
+      requestPassword: vi.fn(async () => ({ kind: 'cancelled' }) as const),
       toolCall: vi.fn(async () => ({ output: '' })),
     });
   }

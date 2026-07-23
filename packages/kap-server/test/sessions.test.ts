@@ -46,7 +46,7 @@ interface SessionWire {
   updated_at: string;
   busy: boolean;
   main_turn_active: boolean;
-  pending_interaction: 'none' | 'approval' | 'question';
+  pending_interaction: 'none' | 'approval' | 'question' | 'password';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived?: boolean;
   metadata: { cwd: string } & Record<string, unknown>;

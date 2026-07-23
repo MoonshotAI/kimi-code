@@ -59,6 +59,7 @@ import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from './components/dialogs/approval-preview';
+import { ApiKeyInputDialogComponent } from './components/dialogs/api-key-input-dialog';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
@@ -113,9 +114,11 @@ import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
 import { registerReverseRPCHandlers } from './reverse-rpc/index';
+import { PasswordController } from './reverse-rpc/password/controller';
+import { createPasswordRequestHandler } from './reverse-rpc/password/handler';
 import { QuestionController } from './reverse-rpc/question/controller';
 import { createQuestionAskHandler } from './reverse-rpc/question/handler';
-import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
+import type { ApprovalPanelData, PasswordDialogData, QuestionPanelData } from './reverse-rpc/types';
 import { currentTheme, getColorPalette, getBuiltInPalette, isBuiltInTheme } from './theme';
 import type { ColorToken, ResolvedTheme, ThemeName } from './theme';
 import { createTUIState, type TUIState } from './tui-state';
@@ -299,6 +302,7 @@ export class KimiTUI {
   state: TUIState;
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
+  private readonly passwordController = new PasswordController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
@@ -397,20 +401,31 @@ export class KimiTUI {
     });
 
     this.reverseRpcDisposers.push(
-      ...registerReverseRPCHandlers(this.approvalController, this.questionController, {
-        showApprovalPanel: (payload) => {
-          this.showApprovalPanel(payload);
+      ...registerReverseRPCHandlers(
+        this.approvalController,
+        this.questionController,
+        this.passwordController,
+        {
+          showApprovalPanel: (payload) => {
+            this.showApprovalPanel(payload);
+          },
+          hideApprovalPanel: () => {
+            this.hideApprovalPanel();
+          },
+          showQuestionDialog: (payload) => {
+            this.showQuestionDialog(payload);
+          },
+          hideQuestionDialog: () => {
+            this.hideQuestionDialog();
+          },
+          showPasswordDialog: (payload) => {
+            this.showPasswordDialog(payload);
+          },
+          hidePasswordDialog: () => {
+            this.hidePasswordDialog();
+          },
         },
-        hideApprovalPanel: () => {
-          this.hideApprovalPanel();
-        },
-        showQuestionDialog: (payload) => {
-          this.showQuestionDialog(payload);
-        },
-        hideQuestionDialog: () => {
-          this.hideQuestionDialog();
-        },
-      }),
+      ),
     );
     this.streamingUI = new StreamingUIController(this);
     this.authFlow = new AuthFlowController(this);
@@ -1621,8 +1636,10 @@ export class KimiTUI {
     this.clearReverseRpcPanels();
     previous?.setApprovalHandler(undefined);
     previous?.setQuestionHandler(undefined);
+    previous?.setPasswordHandler(undefined);
     this.approvalController.cancelAll(reason);
     this.questionController.cancelAll(reason);
+    this.passwordController.cancelAll(reason);
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
@@ -1644,6 +1661,7 @@ export class KimiTUI {
       }),
     );
     session.setQuestionHandler(createQuestionAskHandler(this.questionController));
+    session.setPasswordHandler(createPasswordRequestHandler(this.passwordController));
   }
 
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {
@@ -1767,8 +1785,10 @@ export class KimiTUI {
     this.clearReverseRpcPanels();
     session.setApprovalHandler(undefined);
     session.setQuestionHandler(undefined);
+    session.setPasswordHandler(undefined);
     this.approvalController.cancelAll('reloading session');
     this.questionController.cancelAll('reloading session');
+    this.passwordController.cancelAll('reloading session');
 
     this.resetSessionRuntime();
     this.session = session;
@@ -3064,6 +3084,42 @@ export class KimiTUI {
 
   private hideQuestionDialog(): void {
     this.patchLivePane({ pendingQuestion: null });
+    this.restoreEditor();
+  }
+
+  private showPasswordDialog(payload: PasswordDialogData): void {
+    notifyTerminalOnce(this.state, `password:${payload.id}`, {
+      title: 'Kimi Code sudo password required',
+      body: payload.prompt,
+    });
+    const subtitleLines = [payload.prompt];
+    if (payload.command !== undefined && payload.command.length > 0) {
+      subtitleLines.push(`$ ${payload.command}`);
+    }
+    // The masked ApiKeyInputDialog is reused as-is: Enter submits, Esc /
+    // Ctrl+C cancels, and the password never appears in any render output.
+    const dialog = new ApiKeyInputDialogComponent(
+      'sudo',
+      subtitleLines,
+      (result) => {
+        this.passwordController.respond(
+          result.kind === 'ok'
+            ? { kind: 'submitted', password: result.value }
+            : { kind: 'cancelled' },
+        );
+      },
+      {
+        title: 'sudo password required',
+        // Passwords may legitimately contain leading/trailing whitespace —
+        // never trim them.
+        trim: false,
+        emptyHint: 'Password cannot be empty.',
+      },
+    );
+    this.mountEditorReplacement(dialog);
+  }
+
+  private hidePasswordDialog(): void {
     this.restoreEditor();
   }
 }

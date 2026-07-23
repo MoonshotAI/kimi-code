@@ -237,6 +237,11 @@ const DOMAIN_LAYER = new Map([
   ['approval', 7],
   ['question', 7],
   ['questionTools', 7],
+  // `password` is the Session-scope password broker facade over the L6
+  // interaction kernel (mirrors approval/question); `sudoAskpass` is the
+  // per-session sudo askpass IPC endpoint feeding it.
+  ['password', 7],
+  ['sudoAskpass', 7],
   ['gateway', 7],
   ['rpc', 7],
   
@@ -433,6 +438,10 @@ const ALLOWED_EXCEPTIONS = new Set([
   // re-declared copy of the shape.
   'permissionRules>approval',
   'userTool>interaction',
+  // `os/backends` (L6) BashTool pulls the per-spawn sudo askpass env from the
+  // Session-scope `sudoAskpass` channel (L7) — same cross-scope broker shape
+  // as `toolApproval>approval` above.
+  'os/backends>sudoAskpass',
   'skill>loop',
   // `activityView` seeds its background-task slice once from the agent's task
   // registry (a read, never a write) — everything else it folds from events.

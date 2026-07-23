@@ -6,7 +6,7 @@ import {
   type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
 
-import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
+import { type ApprovalHandler, type Event, type PasswordHandler, type QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
@@ -101,6 +101,11 @@ export class Session {
   setQuestionHandler(handler: QuestionHandler | undefined): void {
     this.ensureOpen();
     this.rpc.setQuestionHandler(this.id, handler);
+  }
+
+  setPasswordHandler(handler: PasswordHandler | undefined): void {
+    this.ensureOpen();
+    this.rpc.setPasswordHandler(this.id, handler);
   }
 
   async prompt(input: string | PromptInput): Promise<void> {

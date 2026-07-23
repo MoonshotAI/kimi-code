@@ -11,6 +11,9 @@
  *   - `ctx`      — `ISessionContext`, session cwd used to render the shell prompt
  *   - `tasks`    — `IAgentTaskService`, owns foreground/detached task
  *                  lifecycle (timeouts, detach, user interrupt)
+ *   - `sudoAskpass` — `ISessionSudoAskpassService`, per-session sudo
+ *                  askpass env (`SUDO_ASKPASS` + token) injected per spawn
+ *                  (`undefined` when disabled or on Windows)
  *
  * Execution goes through `ISessionProcessRunner`, never directly via
  * `node:child_process`.
@@ -40,6 +43,7 @@ import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
+import { ISessionSudoAskpassService } from '#/session/sudoAskpass/sudoAskpass';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { BuiltinTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
@@ -187,6 +191,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @ISessionSudoAskpassService private readonly sudoAskpass: ISessionSudoAskpassService,
   ) {
     this.isWindowsBash = this.env.osKind === 'Windows';
     this.renderedDescription = renderBashDescription(this.env.shellName);
@@ -238,7 +243,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     };
   }
 
-  private spawn(effectiveCwd: string, command: string): Promise<IProcess> {
+  private async spawn(effectiveCwd: string, command: string): Promise<IProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
     const shellArgs = [
       this.env.shellPath,
@@ -253,7 +258,11 @@ export class BashTool implements BuiltinTool<BashInput> {
       SHELL: this.env.shellPath,
     };
 
-    return this.runner.exec(shellArgs, { env: noninteractiveEnv });
+    // No tty on these pipes: when the command needs a sudo password, sudo
+    // falls back to SUDO_ASKPASS, which bridges to the session's password
+    // interaction. Undefined when the channel is disabled or unsupported.
+    const askpassEnv = await this.sudoAskpass.envForCommand(command);
+    return this.runner.exec(shellArgs, { env: { ...noninteractiveEnv, ...askpassEnv } });
   }
 
   private async execution(

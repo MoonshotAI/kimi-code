@@ -10,6 +10,7 @@ import type {
   AppMessage,
   AppMessageRole,
   AppModel,
+  AppPasswordRequest,
   AppProvider,
   ProviderRefreshResult,
   AppSession,
@@ -30,6 +31,7 @@ import type {
   OAuthLoginStartResult,
   Page,
   PageRequest,
+  PasswordResponse,
   PromptSubmission,
   PromptSubmitResult,
   QuestionResponse,
@@ -44,6 +46,7 @@ import {
   toAppGoal,
   toAppMessage,
   toAppModel,
+  toAppPasswordRequest,
   toAppProvider,
   toAppQuestionRequest,
   toAppSession,
@@ -71,6 +74,7 @@ import type {
   WireOAuthLoginPollResult,
   WireOAuthLoginStartResult,
   WirePage,
+  WirePasswordRequest,
   WirePromptSubmitResult,
   WirePromptSteerResult,
   WireProvider,
@@ -171,6 +175,10 @@ interface WireApprovalResolveResult {
 interface WireQuestionResolveResult {
   resolved: true;
   resolved_at: string;
+}
+
+interface WirePasswordResolveResult {
+  resolved: true;
 }
 
 interface WireCancelResult {
@@ -558,6 +566,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
               },
         pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
         pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
+        // Older servers omit the field entirely; treat as no pending prompts.
+        pendingPasswords: (data.pending_passwords ?? []).map(toAppPasswordRequest),
         // Older servers omit the roster entirely; treat as an empty roster.
         subagents: (data.subagents ?? []).map(toAppTask),
       };
@@ -745,7 +755,6 @@ export class DaemonKimiWebApi implements KimiWebApi {
   // -------------------------------------------------------------------------
   // Approval / Question
   // -------------------------------------------------------------------------
-
   async respondApproval(
     sessionId: string,
     approvalId: string,
@@ -781,6 +790,31 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
     // 40909 means question.dismissed — that's the success path per spec
     return { dismissed: true, dismissedAt: data.dismissed_at };
+  }
+
+  // -------------------------------------------------------------------------
+  // Password (sudo askpass) — the password is only ever sent in this POST body;
+  // it never enters messages, events, or local state beyond the in-flight call.
+  // -------------------------------------------------------------------------
+
+  async listPasswords(sessionId: string): Promise<AppPasswordRequest[]> {
+    const data = await this.http.get<{ items: WirePasswordRequest[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/passwords`,
+    );
+    return data.items.map(toAppPasswordRequest);
+  }
+
+  async respondPassword(
+    sessionId: string,
+    passwordId: string,
+    response: PasswordResponse,
+  ): Promise<{ resolved: true }> {
+    // PasswordResponse is already wire-shaped ({password} | {cancelled: true}).
+    const data = await this.http.post<WirePasswordResolveResult>(
+      `/sessions/${encodeURIComponent(sessionId)}/passwords/${encodeURIComponent(passwordId)}`,
+      response,
+    );
+    return { resolved: data.resolved };
   }
 
   // -------------------------------------------------------------------------

@@ -50,6 +50,8 @@ export default {
   awaitingAnswerTitle: 'A question is waiting for your answer',
   awaitingPermission: 'Approve',
   awaitingPermissionTitle: 'An action is waiting for your approval',
+  awaitingPassword: 'Password',
+  awaitingPasswordTitle: 'sudo is waiting for your password',
   aborted: 'Stopped',
   abortedTitle: 'This session was interrupted before finishing',
 } as const;

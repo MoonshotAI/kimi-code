@@ -118,6 +118,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setPasswordHandler: vi.fn(),
     setModel: vi.fn(async () => {}),
     setThinking: vi.fn(async () => {}),
     setPermission: vi.fn(async () => {}),

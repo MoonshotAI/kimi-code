@@ -150,6 +150,7 @@ function mapTurnReason(reason: TurnEndReason | undefined): SessionTurnOutcome | 
 }
 
 function resolvePendingInteraction(pending: readonly Interaction[]): SessionPendingInteraction {
+  if (pending.some((interaction) => interaction.kind === 'password')) return 'password';
   if (pending.some((interaction) => interaction.kind === 'approval')) return 'approval';
   if (pending.some((interaction) => interaction.kind === 'question')) return 'question';
   return 'none';

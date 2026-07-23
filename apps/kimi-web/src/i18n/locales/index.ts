@@ -11,6 +11,7 @@ import en_model from './en/model';
 import en_sessions from './en/sessions';
 import en_approval from './en/approval';
 import en_question from './en/question';
+import en_password from './en/password';
 import en_tasks from './en/tasks';
 import en_thinking from './en/thinking';
 import en_diff from './en/diff';
@@ -37,6 +38,7 @@ import zh_model from './zh/model';
 import zh_sessions from './zh/sessions';
 import zh_approval from './zh/approval';
 import zh_question from './zh/question';
+import zh_password from './zh/password';
 import zh_tasks from './zh/tasks';
 import zh_thinking from './zh/thinking';
 import zh_diff from './zh/diff';
@@ -73,6 +75,7 @@ export const messages = {
     sessions: en_sessions,
     approval: en_approval,
     question: en_question,
+    password: en_password,
     tasks: en_tasks,
     thinking: en_thinking,
     diff: en_diff,
@@ -104,6 +107,7 @@ export const messages = {
     sessions: zh_sessions,
     approval: zh_approval,
     question: zh_question,
+    password: zh_password,
     tasks: zh_tasks,
     thinking: zh_thinking,
     diff: zh_diff,

@@ -46,6 +46,8 @@
 
 前台模式会阻塞当前轮次，直到命令结束或超时；命令运行期间，TUI 会把 stdout 和 stderr 流式显示在正在运行的 `Bash` 工具卡片中。前台命令超时后默认不会被终止，而是转为后台任务继续运行（受 600 秒默认后台超时约束）；如需恢复超时即终止的行为，将 `[background]` 的 [`bash_auto_background_on_timeout`](../configuration/config-files.md#background) 设为 `false`。600 秒的默认后台超时可通过 [`bash_task_timeout_s`](../configuration/config-files.md#background) 配置（`0` = 无超时），且在 print 模式（`kimi -p`）下默认无超时。后台模式立即返回任务 ID，任务结束时自动通知 Agent。stdin 始终被关闭，交互式命令会立即收到 EOF。任务被停止或后台超时时采用两阶段终止策略（SIGTERM → 5 秒宽限期 → SIGKILL），确保进程可靠结束。Windows 平台默认使用 Git Bash。
 
+在 macOS 和 Linux 上，当命令调用 `sudo` 且 sudo 需要密码时，会弹出本地掩码密码对话框，密码通过按会话创建的 askpass 助手直接传递给 sudo——密码不会进入模型上下文、会话日志或 transcript。该功能默认启用；将 [`sudo_askpass`](../configuration/config-files.md#sudo_askpass) 的 `enabled` 设为 `false` 可关闭（sudo 将按无 TTY 的常规方式报错）。包含 `sudo` 的命令仍需经过正常的权限审批流程。
+
 ## 网络类
 
 | 工具 | 默认审批 | 说明 |

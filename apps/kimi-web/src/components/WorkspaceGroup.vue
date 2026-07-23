@@ -22,7 +22,7 @@ const props = defineProps<{
   renamingId: string | null;
   renameValue: string;
   renameInputRef: Ref<HTMLInputElement | null>;
-  pendingBySession: Record<string, { approvals: number; questions: number }>;
+  pendingBySession: Record<string, { approvals: number; questions: number; passwords: number }>;
   unreadBySession: Record<string, boolean>;
   wsMenuOpenId: string | null;
   /** True while this group is the active drag source (drag-to-reorder). */
@@ -179,6 +179,7 @@ function onHeaderDragStart(event: DragEvent): void {
         :active="s.id === activeId"
         :approval-count="pendingBySession[s.id]?.approvals ?? 0"
         :question-count="pendingBySession[s.id]?.questions ?? 0"
+        :password-count="pendingBySession[s.id]?.passwords ?? 0"
         :unread="unreadBySession[s.id] ?? false"
         @select="emit('selectSession', $event)"
         @rename="(id, title) => emit('renameSession', id, title)"

@@ -1,12 +1,14 @@
-import type { ApprovalPanelData, QuestionPanelData } from './types';
+import type { ApprovalPanelData, PasswordDialogData, QuestionPanelData } from './types';
 
-export type ReverseRpcModalOwner = 'approval' | 'question';
+export type ReverseRpcModalOwner = 'approval' | 'question' | 'password';
 
 export interface ReverseRpcModalUIHooks {
   readonly showApprovalPanel: (payload: ApprovalPanelData) => void;
   readonly hideApprovalPanel: () => void;
   readonly showQuestionDialog: (payload: QuestionPanelData) => void;
   readonly hideQuestionDialog: () => void;
+  readonly showPasswordDialog: (payload: PasswordDialogData) => void;
+  readonly hidePasswordDialog: () => void;
 }
 
 interface ReverseRpcModalEntry {
@@ -41,6 +43,18 @@ export class ReverseRpcModalCoordinator {
       },
       hide: () => {
         this.hooks.hideQuestionDialog();
+      },
+    });
+  }
+
+  showPassword(payload: PasswordDialogData): void {
+    this.show({
+      owner: 'password',
+      show: () => {
+        this.hooks.showPasswordDialog(payload);
+      },
+      hide: () => {
+        this.hooks.hidePasswordDialog();
       },
     });
   }

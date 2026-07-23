@@ -105,6 +105,8 @@ export {
   sessionMediaOriginalsDir,
 } from './tools/support/image-originals';
 export type { PersistOriginalImageOptions } from './tools/support/image-originals';
+export { SudoAskpassManager, sudoAskpassDir } from './sudo-askpass';
+export type { SudoAskpassEnvProvider, SudoAskpassManagerOptions } from './sudo-askpass';
 export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,

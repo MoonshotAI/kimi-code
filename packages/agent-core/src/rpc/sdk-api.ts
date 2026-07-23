@@ -58,6 +58,16 @@ export interface QuestionRequest {
   readonly questions: readonly QuestionItem[];
 }
 
+export interface PasswordRequest {
+  /** The sudo prompt text, e.g. "[sudo] password for alice:" */
+  prompt: string;
+  /** The Bash tool command that triggered the sudo prompt, when known. */
+  command?: string;
+}
+export type PasswordResult =
+  | { readonly kind: 'submitted'; readonly password: string }
+  | { readonly kind: 'cancelled' };
+
 export interface ToolCallRequest {
   readonly turnId?: number | undefined;
   readonly toolCallId: string;
@@ -73,6 +83,7 @@ export interface SDKAgentAPI {
   emitEvent: (event: AgentEvent) => void;
   requestApproval: (request: ApprovalRequest) => Promise<ApprovalResponse>;
   requestQuestion: (request: QuestionRequest) => Promise<QuestionResult>;
+  requestPassword: (request: PasswordRequest) => Promise<PasswordResult>;
   toolCall: (request: ToolCallRequest) => Promise<ToolCallResponse>;
 }
 export type SDKAgentRPC = RPCMethods<SDKAgentAPI>;

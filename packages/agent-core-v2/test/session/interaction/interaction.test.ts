@@ -274,6 +274,39 @@ describe('SessionInteractionService', () => {
     expect(last?.payload).toEqual({ id: 'i1', response: { cancelled: true, reason: 'turn_ended' } });
   });
 
+  it('journals a redacted response for password interactions — the password never reaches the wire', async () => {
+    const main = makeFakeAgent('main');
+    agents.set('main', main);
+    const svc = ix.get(ISessionInteractionService);
+
+    const pending = svc.request({
+      id: 'p1',
+      kind: 'password',
+      payload: { prompt: '[sudo] password for user: ', command: 'sudo ls' },
+    });
+    // The in-memory resolution carries the password to the asker...
+    svc.respond('p1', { cancelled: false, password: 'hunter2' });
+    await expect(pending).resolves.toEqual({ cancelled: false, password: 'hunter2' });
+
+    // ...but the journaled interaction.resolved op must not.
+    const resolved = main.dispatched.find((op) => op.type === 'interaction.resolved');
+    expect(resolved?.payload).toEqual({ id: 'p1', response: { cancelled: false } });
+    expect(JSON.stringify(main.dispatched)).not.toContain('hunter2');
+  });
+
+  it('journals a redacted response when a password interaction is cancelled', () => {
+    const main = makeFakeAgent('main');
+    agents.set('main', main);
+    const svc = ix.get(ISessionInteractionService);
+
+    svc.enqueue({ id: 'p1', kind: 'password', payload: { prompt: 'Password: ' }, origin: { turnId: 4 } });
+    svc.cancelPendingForTurn(4);
+
+    const last = main.dispatched.at(-1);
+    expect(last?.type).toBe('interaction.resolved');
+    expect(last?.payload).toEqual({ id: 'p1', response: { cancelled: true } });
+  });
+
   it('kernel semantics are unchanged when the origin agent is absent', async () => {
     const svc = ix.get(ISessionInteractionService);
     const pending = svc.request<unknown, string>({ kind: 'question', payload: {} });

@@ -53,6 +53,7 @@ import {
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient, withTelemetryProperties } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
+import { SudoAskpassManager } from '../sudo-askpass';
 import { sessionMediaOriginalsDir } from '../tools/support/image-originals';
 import type { ToolServices } from '../tools/support/services';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
@@ -181,6 +182,7 @@ export class Session {
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
   readonly imageLimits: ImageLimits;
+  readonly sudoAskpass: SudoAskpassManager;
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
   private additionalDirs: readonly string[];
@@ -223,6 +225,13 @@ export class Session {
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.sudoAskpass = new SudoAskpassManager({
+      sessionDir: options.homedir,
+      enabled: options.config?.sudoAskpass?.enabled ?? true,
+      requestPassword: (request) =>
+        this.rpc.requestPassword({ ...request, agentId: 'main' }),
+      log: this.log,
+    });
     this.toolKaos = options.kaos;
     this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.additionalDirs = normalizeAdditionalDirs(options.additionalDirs ?? []);
@@ -391,6 +400,7 @@ export class Session {
       try {
         await this.mcp.shutdown();
       } finally {
+        await this.sudoAskpass.dispose();
         await this.logHandle?.close();
       }
     }
@@ -406,6 +416,7 @@ export class Session {
       try {
         await this.mcp.shutdown();
       } finally {
+        await this.sudoAskpass.dispose();
         await this.logHandle?.close();
       }
     }
@@ -938,6 +949,9 @@ export class Session {
       // Session-level, shared across agents: originals persisted for
       // compression captions live with the session, not the agent.
       mediaOriginalsDir: sessionMediaOriginalsDir(this.options.homedir),
+      // Session-level sudo askpass channel; the Bash tool injects its env
+      // vars per spawn and the manager routes prompts to the client.
+      sudoAskpass: this.sudoAskpass,
       skills: this.skills,
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,

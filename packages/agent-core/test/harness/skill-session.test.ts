@@ -700,6 +700,7 @@ describe('HarnessAPI session skills', () => {
       },
       requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
       requestQuestion: vi.fn(async () => null),
+      requestPassword: vi.fn(async () => ({ kind: 'cancelled' }) as const),
       toolCall: vi.fn(async () => ({ output: '' })),
     });
     return { core, events, rpc };

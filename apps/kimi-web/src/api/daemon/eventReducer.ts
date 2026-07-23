@@ -17,6 +17,7 @@ import type {
   AppMessageContent,
   AppNotice,
   AppNoticeDetail,
+  AppPasswordRequest,
   AppWarning,
   AppQuestionRequest,
   AppSession,
@@ -61,6 +62,7 @@ export interface KimiClientState {
    *  plan (approved / rejected / revised) instead of losing it. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }>;
   questionsBySession: Record<string, AppQuestionRequest[]>;
+  passwordsBySession: Record<string, AppPasswordRequest[]>;
   tasksBySession: Record<string, AppTask[]>;
   goalBySession: Record<string, AppGoal>;
   /** Monotonic per-session counter bumped on EVERY `goalUpdated` event —
@@ -86,6 +88,7 @@ export function createInitialState(): KimiClientState {
     approvalsBySession: {},
     planReviewByToolCallId: {},
     questionsBySession: {},
+    passwordsBySession: {},
     tasksBySession: {},
     goalBySession: {},
     goalVersionBySession: {},
@@ -114,6 +117,7 @@ function cloneState(s: KimiClientState): KimiClientState {
     approvalsBySession: { ...s.approvalsBySession },
     planReviewByToolCallId: { ...s.planReviewByToolCallId },
     questionsBySession: { ...s.questionsBySession },
+    passwordsBySession: { ...s.passwordsBySession },
     tasksBySession: { ...s.tasksBySession },
     goalBySession: { ...s.goalBySession },
     goalVersionBySession: { ...s.goalVersionBySession },
@@ -348,6 +352,7 @@ export function reduceAppEvent(
       delete next.goalBySession[id];
       delete next.approvalsBySession[id];
       delete next.questionsBySession[id];
+      delete next.passwordsBySession[id];
       delete next.lastSeqBySession[id];
       delete next.turnActiveBySession[id];
       if (next.activeSessionId === id) {
@@ -627,6 +632,26 @@ export function reduceAppEvent(
       const qid = event.questionId;
       const list = next.questionsBySession[sid] ?? [];
       next.questionsBySession[sid] = list.filter((q) => q.questionId !== qid);
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'passwordRequested': {
+      const sid = event.sessionId;
+      const list = next.passwordsBySession[sid] ?? [];
+      const exists = list.some((p) => p.passwordId === event.password.passwordId);
+      if (!exists) {
+        next.passwordsBySession[sid] = [...list, event.password];
+      }
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'passwordResolved': {
+      const sid = event.sessionId;
+      const pid = event.passwordId;
+      const list = next.passwordsBySession[sid] ?? [];
+      next.passwordsBySession[sid] = list.filter((p) => p.passwordId !== pid);
       break;
     }
 

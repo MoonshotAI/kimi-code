@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 
 import { approvalRequestSchema } from './approval';
+import { passwordRequestSchema } from './password';
 import { questionRequestSchema } from './question';
 import { sessionSchema } from './session';
 import { taskSchema } from './task';
@@ -88,5 +89,7 @@ export const sessionSnapshotResponseSchema = z.object({
   subagents: z.array(snapshotSubagentSchema).optional(),
   pending_approvals: z.array(approvalRequestSchema),
   pending_questions: z.array(questionRequestSchema),
+  /** Pending sudo password prompts (request side only — never a password). */
+  pending_passwords: z.array(passwordRequestSchema),
 });
 export type SessionSnapshotResponse = z.infer<typeof sessionSnapshotResponseSchema>;

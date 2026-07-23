@@ -61,6 +61,7 @@ import type {
   AppNoticeDetail,
   AppMessage,
   AppModel,
+  AppPasswordRequest,
   AppProvider,
   AppQuestionRequest,
   AppSession,
@@ -816,6 +817,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     approvalsBySession: rawState.approvalsBySession,
     planReviewByToolCallId: rawState.planReviewByToolCallId,
     questionsBySession: rawState.questionsBySession,
+    passwordsBySession: rawState.passwordsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
     goalVersionBySession: rawState.goalVersionBySession,
@@ -833,6 +835,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.approvalsBySession = next.approvalsBySession;
   rawState.planReviewByToolCallId = next.planReviewByToolCallId;
   rawState.questionsBySession = next.questionsBySession;
+  rawState.passwordsBySession = next.passwordsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
   rawState.goalVersionBySession = next.goalVersionBySession;
@@ -1452,6 +1455,10 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     rawState.questionsBySession = {
       ...rawState.questionsBySession,
       [sessionId]: snap.pendingQuestions,
+    };
+    rawState.passwordsBySession = {
+      ...rawState.passwordsBySession,
+      [sessionId]: snap.pendingPasswords,
     };
     rawState.lastSeqBySession = {
       ...rawState.lastSeqBySession,
@@ -2136,8 +2143,19 @@ const pendingApprovals = computed<
 });
 
 /**
+ * Pending sudo password prompts for the active session, rendered as an
+ * interrupt card in the bottom dock (replacing the composer) — sudo is
+ * blocking a running process, so this takes priority over question/approval.
+ */
+const pendingPasswords = computed<AppPasswordRequest[]>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return [];
+  return rawState.passwordsBySession[sid] ?? [];
+});
+
+/**
  * Activity state for the active session.
- * Priority: awaiting-approval > awaiting-question > running > idle
+ * Priority: awaiting-password > awaiting-approval > awaiting-question > running > idle
  *
  * `running` is main-conversation liveness — the same condition as the working
  * moon (the optimistic submit window or an in-flight main turn). The wire
@@ -2149,6 +2167,9 @@ const pendingApprovals = computed<
 const activity = computed<ActivityState>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return 'idle';
+
+  const passwords = rawState.passwordsBySession[sid] ?? [];
+  if (passwords.length > 0) return 'awaiting-password';
 
   const approvals = rawState.approvalsBySession[sid] ?? [];
   if (approvals.length > 0) return 'awaiting-approval';
@@ -2499,7 +2520,8 @@ function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
 }
 
 /**
- * Per-session pending-attention count = pending approvals + pending questions.
+ * Per-session pending-attention count = pending approvals + pending questions
+ * + pending password prompts.
  * For the active session this is live (driven by WS events). Other sessions
  * are derived from whatever approvals/questions we've already seen; the row's
  * list-level pendingInteraction fact supplies the pre-status badge fallback.
@@ -2512,22 +2534,29 @@ const attentionBySession = computed<Record<string, number>>(() => {
   for (const [sid, list] of Object.entries(rawState.questionsBySession)) {
     if (list.length > 0) out[sid] = (out[sid] ?? 0) + list.length;
   }
+  for (const [sid, list] of Object.entries(rawState.passwordsBySession)) {
+    if (list.length > 0) out[sid] = (out[sid] ?? 0) + list.length;
+  }
   return out;
 });
 
 /**
  * Per-session pending counts split by KIND, so the sidebar can show distinct
- * coloured tags: one for "awaiting your answer" (askUserQuestion) and one for
- * "awaiting your approval" (permission request). The merged count above stays
- * for the workspace rail / dialogs that only need a single number.
+ * coloured tags: one for "awaiting your answer" (askUserQuestion), one for
+ * "awaiting your approval" (permission request), and one for "awaiting your
+ * password" (sudo askpass). The merged count above stays for the workspace
+ * rail / dialogs that only need a single number.
  */
-const pendingBySession = computed<Record<string, { approvals: number; questions: number }>>(() => {
-  const out: Record<string, { approvals: number; questions: number }> = {};
+const pendingBySession = computed<Record<string, { approvals: number; questions: number; passwords: number }>>(() => {
+  const out: Record<string, { approvals: number; questions: number; passwords: number }> = {};
   for (const [sid, list] of Object.entries(rawState.approvalsBySession)) {
-    if (list.length > 0) (out[sid] ??= { approvals: 0, questions: 0 }).approvals = list.length;
+    if (list.length > 0) (out[sid] ??= { approvals: 0, questions: 0, passwords: 0 }).approvals = list.length;
   }
   for (const [sid, list] of Object.entries(rawState.questionsBySession)) {
-    if (list.length > 0) (out[sid] ??= { approvals: 0, questions: 0 }).questions = list.length;
+    if (list.length > 0) (out[sid] ??= { approvals: 0, questions: 0, passwords: 0 }).questions = list.length;
+  }
+  for (const [sid, list] of Object.entries(rawState.passwordsBySession)) {
+    if (list.length > 0) (out[sid] ??= { approvals: 0, questions: 0, passwords: 0 }).passwords = list.length;
   }
   return out;
 });
@@ -2791,6 +2820,7 @@ export function useKimiWebClient() {
     activePullRequest,
     changesByPath,
     pendingApprovals,
+    pendingPasswords,
     availableOpenInApps,
 
     // New Phase 1 computed
@@ -2887,8 +2917,10 @@ export function useKimiWebClient() {
     respondApproval: workspaceState.respondApproval,
     respondQuestion: workspaceState.respondQuestion,
     dismissQuestion: workspaceState.dismissQuestion,
+    respondPassword: workspaceState.respondPassword,
     pendingQuestionActions: workspaceState.pendingQuestionActions,
     pendingApprovalActions: workspaceState.pendingApprovalActions,
+    pendingPasswordActions: workspaceState.pendingPasswordActions,
     cancelTask: workspaceState.cancelTask,
 
     // New Phase 1 actions

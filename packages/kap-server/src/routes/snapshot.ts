@@ -51,6 +51,7 @@ import {
 import type { ISnapshotReader } from '../services/snapshot';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
+import { toWirePassword } from './passwords';
 import { toWireQuestion } from './questions';
 import { resolveSessionFacts, toWireSession } from './sessions';
 
@@ -185,7 +186,7 @@ async function readViaLegacyAssembly(
     snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
 
-  // Pending approvals / questions.
+  // Pending approvals / questions / sudo password prompts.
   const interaction = handle.accessor.get(ISessionInteractionService);
   const pendingApprovals = interaction
     .listPending('approval')
@@ -193,6 +194,9 @@ async function readViaLegacyAssembly(
   const pendingQuestions = interaction
     .listPending('question')
     .map((i) => toWireQuestion(i, sessionId));
+  const pendingPasswords = interaction
+    .listPending('password')
+    .map((i) => toWirePassword(i, sessionId));
 
   return {
     as_of_seq: snapState.seq,
@@ -203,6 +207,7 @@ async function readViaLegacyAssembly(
     subagents: snapState.subagents,
     pending_approvals: pendingApprovals,
     pending_questions: pendingQuestions,
+    pending_passwords: pendingPasswords,
   };
 }
 

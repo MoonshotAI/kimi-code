@@ -65,7 +65,7 @@ export interface AppSession {
    *  background tasks and sub-agent work. */
   mainTurnActive?: boolean;
   /** List-level fallback for the action-required badge. */
-  pendingInteraction?: 'none' | 'approval' | 'question';
+  pendingInteraction?: 'none' | 'approval' | 'question' | 'password';
   /** Outcome of the main agent's most recent turn (when the server reports
    *  one). Presentation rule for the "aborted" tag:
    *  `!busy && (cancelled | failed)`. */
@@ -255,6 +255,22 @@ export interface AppApprovalRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Password (sudo askpass — GitHub issue #2090)
+// ---------------------------------------------------------------------------
+
+export interface AppPasswordRequest {
+  passwordId: string;
+  sessionId: string;
+  /** sudo prompt text shown to the user (e.g. "[sudo] password for alice:"). */
+  prompt: string;
+  /** The bash command that triggered the prompt, when known. */
+  command?: string;
+}
+
+/** Submit with `{password}`; cancel with `{cancelled: true}`. */
+export type PasswordResponse = { password: string } | { cancelled: true };
+
+// ---------------------------------------------------------------------------
 // Question
 // ---------------------------------------------------------------------------
 
@@ -422,7 +438,7 @@ export type AppEvent =
       sessionId: string;
       busy: boolean;
       mainTurnActive?: boolean;
-      pendingInteraction?: 'none' | 'approval' | 'question';
+      pendingInteraction?: 'none' | 'approval' | 'question' | 'password';
       lastTurnReason?: 'completed' | 'cancelled' | 'failed';
     }
   | { type: 'sessionMetaUpdated'; sessionId: string; title?: string; lastPrompt?: string }
@@ -446,6 +462,8 @@ export type AppEvent =
   | { type: 'questionRequested'; sessionId: string; question: AppQuestionRequest }
   | { type: 'questionAnswered'; sessionId: string; questionId: string; resolvedAt: string }
   | { type: 'questionDismissed'; sessionId: string; questionId: string; dismissedAt: string }
+  | { type: 'passwordRequested'; sessionId: string; password: AppPasswordRequest }
+  | { type: 'passwordResolved'; sessionId: string; passwordId: string; outcome: 'submitted' | 'cancelled' }
   | { type: 'taskCreated'; sessionId: string; task: AppTask }
   | {
       type: 'taskProgress';
@@ -530,6 +548,7 @@ export interface AppSessionSnapshot {
   subagents: AppTask[];
   pendingApprovals: AppApprovalRequest[];
   pendingQuestions: AppQuestionRequest[];
+  pendingPasswords: AppPasswordRequest[];
 }
 
 export interface KimiEventHandlers {
@@ -734,6 +753,10 @@ export interface KimiWebApi {
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<{ resolved: true; resolvedAt: string }>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<{ resolved: true; resolvedAt: string }>;
   dismissQuestion(sessionId: string, questionId: string): Promise<{ dismissed: true; dismissedAt: string }>;
+  /** Pending sudo password prompts — GET /sessions/{id}/passwords. */
+  listPasswords(sessionId: string): Promise<AppPasswordRequest[]>;
+  /** Submit (`{password}`) or cancel (`{cancelled: true}`) a sudo prompt. */
+  respondPassword(sessionId: string, passwordId: string, response: PasswordResponse): Promise<{ resolved: true }>;
   listSkills(sessionId: string): Promise<AppSkill[]>;
   /** List skills for a workspace (no session required) — GET /workspaces/{id}/skills. */
   listSkillsForWorkspace(workspaceId: string): Promise<AppSkill[]>;

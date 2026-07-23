@@ -29,7 +29,7 @@ export interface Session {
       flight. Background tasks and subagent turns do NOT set it. */
   busy: boolean;
   /** List-level fallback for action-required badges on unopened sessions. */
-  pendingInteraction?: 'none' | 'approval' | 'question';
+  pendingInteraction?: 'none' | 'approval' | 'question' | 'password';
   /** Main agent's latest turn outcome — drives the "aborted" tag when the
       session is quiet and the last turn was cancelled/failed. */
   lastTurnReason?: 'completed' | 'cancelled' | 'failed';
@@ -364,7 +364,8 @@ export type ActivityState =
   | 'idle'
   | 'running'
   | 'awaiting-approval'
-  | 'awaiting-question';
+  | 'awaiting-question'
+  | 'awaiting-password';
 
 /** Connection state for the WebSocket. */
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';

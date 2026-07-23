@@ -2,20 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalController } from '#/tui/reverse-rpc/approval/controller';
 import { registerReverseRPCHandlers } from '#/tui/reverse-rpc/index';
+import { PasswordController } from '#/tui/reverse-rpc/password/controller';
 import { QuestionController } from '#/tui/reverse-rpc/question/controller';
 
 describe('registerReverseRPCHandlers', () => {
   it('wires controller UI hooks without registering wire request handlers', async () => {
     const approvalController = new ApprovalController();
     const questionController = new QuestionController();
+    const passwordController = new PasswordController();
     const uiHooks = {
       showApprovalPanel: vi.fn(),
       hideApprovalPanel: vi.fn(),
       showQuestionDialog: vi.fn(),
       hideQuestionDialog: vi.fn(),
+      showPasswordDialog: vi.fn(),
+      hidePasswordDialog: vi.fn(),
     };
 
-    registerReverseRPCHandlers(approvalController, questionController, uiHooks);
+    registerReverseRPCHandlers(approvalController, questionController, passwordController, uiHooks);
 
     const approvalPending = approvalController.show({
       id: 'req-1',
@@ -50,14 +54,17 @@ describe('registerReverseRPCHandlers', () => {
   it('queues question dialogs behind active approval panels', async () => {
     const approvalController = new ApprovalController();
     const questionController = new QuestionController();
+    const passwordController = new PasswordController();
     const uiHooks = {
       showApprovalPanel: vi.fn(),
       hideApprovalPanel: vi.fn(),
       showQuestionDialog: vi.fn(),
       hideQuestionDialog: vi.fn(),
+      showPasswordDialog: vi.fn(),
+      hidePasswordDialog: vi.fn(),
     };
 
-    registerReverseRPCHandlers(approvalController, questionController, uiHooks);
+    registerReverseRPCHandlers(approvalController, questionController, passwordController, uiHooks);
 
     const approvalPending = approvalController.show({
       id: 'approval-1',
@@ -94,14 +101,17 @@ describe('registerReverseRPCHandlers', () => {
   it('queues approval panels behind active question dialogs', async () => {
     const approvalController = new ApprovalController();
     const questionController = new QuestionController();
+    const passwordController = new PasswordController();
     const uiHooks = {
       showApprovalPanel: vi.fn(),
       hideApprovalPanel: vi.fn(),
       showQuestionDialog: vi.fn(),
       hideQuestionDialog: vi.fn(),
+      showPasswordDialog: vi.fn(),
+      hidePasswordDialog: vi.fn(),
     };
 
-    registerReverseRPCHandlers(approvalController, questionController, uiHooks);
+    registerReverseRPCHandlers(approvalController, questionController, passwordController, uiHooks);
 
     const questionPending = questionController.show({
       id: 'question-1',
@@ -138,14 +148,17 @@ describe('registerReverseRPCHandlers', () => {
   it('removes queued modals when their controller is cancelled', async () => {
     const approvalController = new ApprovalController();
     const questionController = new QuestionController();
+    const passwordController = new PasswordController();
     const uiHooks = {
       showApprovalPanel: vi.fn(),
       hideApprovalPanel: vi.fn(),
       showQuestionDialog: vi.fn(),
       hideQuestionDialog: vi.fn(),
+      showPasswordDialog: vi.fn(),
+      hidePasswordDialog: vi.fn(),
     };
 
-    registerReverseRPCHandlers(approvalController, questionController, uiHooks);
+    registerReverseRPCHandlers(approvalController, questionController, passwordController, uiHooks);
 
     const approvalPending = approvalController.show({
       id: 'approval-1',
@@ -174,14 +187,17 @@ describe('registerReverseRPCHandlers', () => {
   it('clears active and queued modals without showing queued entries', async () => {
     const approvalController = new ApprovalController();
     const questionController = new QuestionController();
+    const passwordController = new PasswordController();
     const uiHooks = {
       showApprovalPanel: vi.fn(),
       hideApprovalPanel: vi.fn(),
       showQuestionDialog: vi.fn(),
       hideQuestionDialog: vi.fn(),
+      showPasswordDialog: vi.fn(),
+      hidePasswordDialog: vi.fn(),
     };
 
-    const disposers = registerReverseRPCHandlers(approvalController, questionController, uiHooks);
+    const disposers = registerReverseRPCHandlers(approvalController, questionController, passwordController, uiHooks);
 
     const approvalPending = approvalController.show({
       id: 'approval-1',
@@ -210,5 +226,52 @@ describe('registerReverseRPCHandlers', () => {
     });
     await expect(questionPending).resolves.toEqual({ answers: [] });
     expect(uiHooks.hideQuestionDialog).not.toHaveBeenCalled();
+  });
+
+  it('queues password dialogs behind active approval panels', async () => {
+    const approvalController = new ApprovalController();
+    const questionController = new QuestionController();
+    const passwordController = new PasswordController();
+    const uiHooks = {
+      showApprovalPanel: vi.fn(),
+      hideApprovalPanel: vi.fn(),
+      showQuestionDialog: vi.fn(),
+      hideQuestionDialog: vi.fn(),
+      showPasswordDialog: vi.fn(),
+      hidePasswordDialog: vi.fn(),
+    };
+
+    registerReverseRPCHandlers(approvalController, questionController, passwordController, uiHooks);
+
+    const approvalPending = approvalController.show({
+      id: 'approval-1',
+      tool_call_id: 'tc-1',
+      tool_name: 'Bash',
+      action: 'run',
+      description: '',
+      display: [],
+      choices: [],
+    });
+    const passwordPending = passwordController.show({
+      id: 'password-1',
+      prompt: '[sudo] password for alice:',
+      command: 'sudo ls /root',
+    });
+
+    expect(uiHooks.showApprovalPanel).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'approval-1' }),
+    );
+    expect(uiHooks.showPasswordDialog).not.toHaveBeenCalled();
+
+    approvalController.respond({ decision: 'approved' });
+    await expect(approvalPending).resolves.toEqual({ decision: 'approved' });
+    expect(uiHooks.hideApprovalPanel).toHaveBeenCalledOnce();
+    expect(uiHooks.showPasswordDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'password-1' }),
+    );
+
+    passwordController.respond({ kind: 'submitted', password: 's3cret' });
+    await expect(passwordPending).resolves.toEqual({ kind: 'submitted', password: 's3cret' });
+    expect(uiHooks.hidePasswordDialog).toHaveBeenCalledOnce();
   });
 });
