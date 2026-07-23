@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (21 sections · 1 overlay(s))
+# Index (21 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   cron                     src/app/cron/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
@@ -30,6 +30,7 @@
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
+#   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
 
 # ##########################################################################
@@ -286,7 +287,12 @@ merge_all_available_skills = true
 # services
 #   owner: src/app/auth/configSection.ts
 #   scope: core
-#   hooks: custom fromToml · custom toToml
+#   hooks: custom fromToml · custom toToml · stripEnv
+#   env:
+#     moonshot_search.base_url <- KIMI_WEB_SEARCH_BASE_URL (custom parse)
+#     moonshot_search.api_key <- KIMI_WEB_SEARCH_API_KEY (custom parse)
+#     moonshot_fetch.base_url <- KIMI_WEB_FETCH_BASE_URL (custom parse)
+#     moonshot_fetch.api_key <- KIMI_WEB_FETCH_API_KEY (custom parse)
 # ##########################################################################
 
 [services]

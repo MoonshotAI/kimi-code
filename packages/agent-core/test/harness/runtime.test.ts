@@ -331,6 +331,107 @@ custom_headers = { "X-Test" = "1" }
     });
   });
 
+  it('enables Moonshot web services from KIMI_WEB_* env vars without a services config section', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), '');
+    vi.stubEnv('KIMI_WEB_SEARCH_BASE_URL', 'https://search-env.example/v1');
+    vi.stubEnv('KIMI_WEB_SEARCH_API_KEY', 'env-search-key');
+    vi.stubEnv('KIMI_WEB_FETCH_BASE_URL', 'https://fetch-env.example/v1');
+    vi.stubEnv('KIMI_WEB_FETCH_API_KEY', 'env-fetch-key');
+
+    const fetchImpl = vi.fn().mockImplementation(async (url: string | URL) =>
+      String(url).includes('search')
+        ? new Response(JSON.stringify({ search_results: [] }), { status: 200 })
+        : new Response('page body', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({ id: 'ses_runtime_service_env', workDir });
+    const session = core.sessions.get(created.id);
+
+    const webSearcher = session?.options.toolServices?.webSearcher;
+    const urlFetcher = session?.options.toolServices?.urlFetcher;
+    expect(webSearcher).toBeDefined();
+    expect(urlFetcher).toBeDefined();
+
+    await webSearcher!.search('kimi');
+    const [searchUrl, searchInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(searchUrl).toBe('https://search-env.example/v1');
+    expect((searchInit.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer env-search-key',
+    );
+
+    await urlFetcher!.fetch('https://example.com/page', {});
+    const [fetchUrl, fetchInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    expect(fetchUrl).toBe('https://fetch-env.example/v1');
+    expect((fetchInit.headers as Record<string, string>)['Authorization']).toBe(
+      'Bearer env-fetch-key',
+    );
+  });
+
+  it('keeps persisted credentials off an env-selected Moonshot search endpoint', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[services.moonshot_search]
+base_url = "https://search-file.example/v1"
+api_key = "file-search-key"
+oauth = { storage = "file", key = "oauth/custom-kimi-code" }
+custom_headers = { "X-Config-Secret" = "secret-value" }
+`,
+    );
+    vi.stubEnv('KIMI_WEB_SEARCH_BASE_URL', 'https://search-env.example/v1');
+    vi.stubEnv('KIMI_WEB_SEARCH_API_KEY', 'env-search-key');
+
+    const getAccessToken = vi.fn().mockResolvedValue('oauth-token');
+    const resolveOAuthTokenProvider = vi.fn<OAuthTokenProviderResolver>(() => ({
+      getAccessToken,
+    }));
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ search_results: [] }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir, resolveOAuthTokenProvider });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({ id: 'ses_runtime_service_env_precedence', workDir });
+    const session = core.sessions.get(created.id);
+
+    await session?.options.toolServices?.webSearcher?.search('kimi');
+
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://search-env.example/v1');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer env-search-key' });
+    expect(init.headers).not.toHaveProperty('X-Config-Secret');
+    expect(resolveOAuthTokenProvider).not.toHaveBeenCalled();
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
   it('falls back to defaultModel when createSession receives no model option', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
