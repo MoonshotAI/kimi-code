@@ -2,9 +2,11 @@
  * select_tools progressive disclosure — end-to-end agent tests.
  *
  * Uses the scripted-generate harness: real ToolManager/turn loop/context, fake
- * LLM. The three-condition gate (model capability.dynamically_loaded_tools ×
- * capability.tool_use × `tool-select` flag) is driven through the alias
- * capability declarations and an injected FlagResolver.
+ * LLM. Covers both MCP tools and host-registered user tools that opt into
+ * deferred disclosure. The three-condition gate (model
+ * capability.dynamically_loaded_tools × capability.tool_use × `tool-select`
+ * flag) is driven through the alias capability declarations and an injected
+ * FlagResolver.
  *
  * The first block pins the gate-closed regression baseline (S0): with any
  * gate closed, the outbound request keeps the inline shape byte-for-byte.
@@ -48,6 +50,7 @@ const INLINE_CAPABILITIES = {
 } as const;
 
 const GRAFANA_TOOL = 'mcp__grafana__query_range';
+const DASHBOARD_TOOL = 'dashboard_create';
 
 function toolSelectFlagOn(): FlagResolver {
   return new FlagResolver({}, FLAG_DEFINITIONS, { 'tool-select': true });
@@ -97,6 +100,20 @@ async function registerGrafana(
   );
 }
 
+async function registerDeferredDashboard(ctx: TestAgentContext): Promise<void> {
+  await ctx.rpc.registerTool({
+    name: DASHBOARD_TOOL,
+    description: 'Create a dashboard.',
+    parameters: {
+      type: 'object',
+      properties: { title: { type: 'string' } },
+      required: ['title'],
+      additionalProperties: false,
+    },
+    disclosure: 'deferred',
+  });
+}
+
 async function disclosureAgent(
   callLog: Array<[string, unknown]> = [],
 ): Promise<TestAgentContext> {
@@ -125,6 +142,15 @@ function mcpCall(id: string, query: string): ToolCall {
     id,
     name: GRAFANA_TOOL,
     arguments: JSON.stringify({ query }),
+  };
+}
+
+function dashboardCall(id: string, title: string): ToolCall {
+  return {
+    type: 'function',
+    id,
+    name: DASHBOARD_TOOL,
+    arguments: JSON.stringify({ title }),
   };
 }
 
@@ -190,6 +216,27 @@ describe('gate closed — inline regression baseline (S0)', () => {
     ctx.mockNextResponse({ type: 'text', text: 'hello' });
     await runTurn(ctx, 'hi');
     expect(ctx.llmCalls[0]!.tools.map((t) => t.name)).toContain(GRAFANA_TOOL);
+    expect(historyText(ctx)).not.toContain('<tools_added>');
+  });
+
+  it('keeps deferred user tools inline when disclosure is unavailable', async () => {
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOff() });
+    ctx.configure({
+      tools: ['Read'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await registerDeferredDashboard(ctx);
+
+    expect(ctx.agent.tools.loopTools.map((tool) => tool.name)).toContain(DASHBOARD_TOOL);
+    expect(
+      ctx.agent.tools.loopTools.find((tool) => tool.name === DASHBOARD_TOOL)?.deferred,
+    ).toBeUndefined();
+
+    ctx.mockNextResponse({ type: 'text', text: 'ready' });
+    await runTurn(ctx, 'hi');
+
+    expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).toContain(DASHBOARD_TOOL);
     expect(historyText(ctx)).not.toContain('<tools_added>');
   });
 });
@@ -273,6 +320,52 @@ describe('disclosure mode — select_tools three branches and dispatch', () => {
     const step2 = ctx.llmCalls[1]!;
     expect(step2.tools.map((t) => t.name).some((n) => n.startsWith('mcp__'))).toBe(false);
     expect(step2.history.some((m) => m.tools !== undefined && m.tools.length > 0)).toBe(true);
+  });
+
+  it('loads and dispatches an opted-in user tool through the existing host RPC', async () => {
+    const ctx = testAgent({ experimentalFlags: toolSelectFlagOn() });
+    ctx.configure({
+      tools: ['Read'],
+      provider: DISCLOSURE_PROVIDER,
+      modelCapabilities: DISCLOSURE_CAPABILITIES,
+    });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    await registerDeferredDashboard(ctx);
+
+    expect(ctx.agent.tools.loopTools.map((tool) => tool.name)).not.toContain(DASHBOARD_TOOL);
+
+    ctx.mockNextResponse(
+      { type: 'text', text: 'loading dashboard tool' },
+      selectCall('call-1', [DASHBOARD_TOOL]),
+    );
+    ctx.mockNextResponse(
+      { type: 'text', text: 'creating dashboard' },
+      dashboardCall('call-2', 'Operations'),
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'create a dashboard' }] });
+    await ctx.untilToolCall({ output: 'dashboard-created' });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).not.toContain(DASHBOARD_TOOL);
+    expect(JSON.stringify(ctx.llmCalls[0]!.history)).toContain(DASHBOARD_TOOL);
+    const injected = ctx.llmCalls[1]!.history.find((message) =>
+      message.tools?.some((tool) => tool.name === DASHBOARD_TOOL),
+    );
+    expect(injected?.tools?.find((tool) => tool.name === DASHBOARD_TOOL)?.parameters).toEqual({
+      type: 'object',
+      properties: { title: { type: 'string' } },
+      required: ['title'],
+      additionalProperties: false,
+    });
+    expect(ctx.llmCalls[1]!.tools.map((tool) => tool.name)).not.toContain(DASHBOARD_TOOL);
+    expect(toolResultTexts(ctx)).toContainEqual(`Loaded: ${DASHBOARD_TOOL}`);
+    expect(toolResultTexts(ctx)).toContainEqual('dashboard-created');
+    expect(
+      ctx.agent.tools.loopTools.find((tool) => tool.name === DASHBOARD_TOOL)?.deferred,
+    ).toBe(true);
+
+    await ctx.expectResumeMatches();
   });
 
   it('keeps the top-level tools snapshot stable across select_tools loads', async () => {
