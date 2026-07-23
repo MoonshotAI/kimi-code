@@ -55,7 +55,7 @@ describe('summarizeActivity', () => {
 
   it('appends the duration faint when given', () => {
     const s = summarizeActivity([tool('read')], { durationMs: 26_800 });
-    expect(s.clauses.at(-1)?.fragments).toEqual([{ text: '26.8s', tone: 'faint' }]);
+    expect(s.clauses.at(-1)?.fragments).toEqual([{ text: '26s', tone: 'faint' }]);
   });
 
   it('falls back to the generic counter for unknown kinds', () => {
@@ -68,7 +68,7 @@ describe('summarizeActivity', () => {
       [tool('read'), tool('read'), tool('bash', { status: 'error' }), thinking],
       { durationMs: 1500 },
     );
-    expect(s.plain).toBe('读取了 2 个文件 · 运行了 1 条命令（1 失败） · 1.5s');
+    expect(s.plain).toBe('读取了 2 个文件 · 运行了 1 条命令（1 失败） · 1s');
   });
 });
 

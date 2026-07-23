@@ -14,7 +14,7 @@ import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
 import MediaLightbox from './MediaLightbox.vue';
 import AttachmentChip from './AttachmentChip.vue';
-import { Icon, Kbd, MoonSpinner, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Icon, Kbd, MoonSpinner, Spinner } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { openFileAttachment } from '../../lib/openFileAttachment';
@@ -901,9 +901,7 @@ function streamingTailIndex(turn: ChatTurn): number | null {
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-agent="emit('openAgent', $event)" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
-          <Tooltip :text="`${turn.durationMs} ms`">
-            <span v-if="turn.durationMs !== undefined" class="a-duration">{{ formatDuration(turn.durationMs) }}</span>
-          </Tooltip>
+          <span v-if="turn.durationMs !== undefined" class="a-duration">{{ formatDuration(turn.durationMs) }}</span>
           <button
             v-if="assistantRunFinalText(ti).trim().length > 0"
             class="a-cpbtn"

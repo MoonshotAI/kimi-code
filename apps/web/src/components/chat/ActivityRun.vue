@@ -26,7 +26,7 @@ import { computed, inject, nextTick, ref, watch } from 'vue';
 import { Icon } from '@moonshot-ai/web-ui';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ToolCall from './ToolCall.vue';
-import { toolStackKey } from '../chatTurnRendering';
+import { formatDuration, toolStackKey } from '../chatTurnRendering';
 import type { ActivityItem } from '../chatTurnRendering';
 import type { FilePreviewRequest, ToolMedia } from '../../types';
 import { summarizeActivity, summarizeLive } from '../../lib/activitySummary';
@@ -101,7 +101,7 @@ const seededStartMs = computed<number | null>(() => {
   for (const item of props.items) {
     if (item.kind === 'thinking' && item.startedAt !== undefined) {
       const ms = Date.parse(item.startedAt);
-      if (best === null || ms < best) best = ms;
+      if (Number.isFinite(ms) && (best === null || ms < best)) best = ms;
     }
   }
   return best;
@@ -157,17 +157,9 @@ const glyphIcon = computed(() => {
 const live = computed(() => summarizeLive(props.items, currentItem.value));
 const settled = computed(() => summarizeActivity(props.items, { durationMs: settledDurationMs.value }));
 
-/** Whole seconds, `37s` / `1m37s` — the thinking row's elapsed vocabulary. */
-function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${s % 60}s`;
-}
-
 const elapsedLabel = computed(() => {
   if (runStatus.value !== 'running' || startedMs.value === null) return '';
-  const ms = nowMs.value - startedMs.value;
-  return ms >= 1000 ? formatElapsed(ms) : '';
+  return formatDuration(nowMs.value - startedMs.value);
 });
 
 const displayClauses = computed<SummaryClause[]>(() => {

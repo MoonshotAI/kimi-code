@@ -4,7 +4,6 @@ import {
   assistantRenderBlocks,
   formatDuration,
   formatTokens,
-  formatWorkDuration,
   rendersToolCard,
   renderBlockKey,
   splitAssistantFold,
@@ -53,12 +52,19 @@ describe('formatTokens', () => {
 });
 
 describe('formatDuration', () => {
-  it('switches units at the 1s and 1m boundaries', () => {
-    expect(formatDuration(999)).toBe('999ms');
-    expect(formatDuration(1000)).toBe('1.0s');
-    expect(formatDuration(59_999)).toBe('60.0s');
-    expect(formatDuration(60_000)).toBe('1m0.0s');
-    expect(formatDuration(90_500)).toBe('1m30.5s');
+  it('floors to whole seconds and drops trailing zero units', () => {
+    expect(formatDuration(0)).toBe('<1s');
+    expect(formatDuration(999)).toBe('<1s');
+    expect(formatDuration(1000)).toBe('1s');
+    expect(formatDuration(14_000)).toBe('14s');
+    expect(formatDuration(59_999)).toBe('59s');
+    expect(formatDuration(60_000)).toBe('1m');
+    expect(formatDuration(90_500)).toBe('1m30s');
+    expect(formatDuration(297_000)).toBe('4m57s');
+    expect(formatDuration(359_676)).toBe('5m59s');
+    expect(formatDuration(3_600_000)).toBe('1h');
+    expect(formatDuration(3_899_999)).toBe('1h4m');
+    expect(formatDuration(3_900_000)).toBe('1h5m');
   });
 });
 
@@ -384,18 +390,6 @@ describe('turnActivitySeedMs', () => {
       { kind: 'thinking', thinking: 'ok', startedAt: '2026-07-20T10:00:05.000Z' },
     ];
     expect(turnActivitySeedMs(blocks)).toBe(Date.parse('2026-07-20T10:00:05.000Z'));
-  });
-});
-
-describe('formatWorkDuration', () => {
-  it('rounds to whole seconds and switches to minutes at 60s', () => {
-    expect(formatWorkDuration(0)).toBe('0s');
-    expect(formatWorkDuration(400)).toBe('0s');
-    expect(formatWorkDuration(14_000)).toBe('14s');
-    expect(formatWorkDuration(59_400)).toBe('59s');
-    expect(formatWorkDuration(59_500)).toBe('1m0s');
-    expect(formatWorkDuration(60_000)).toBe('1m0s');
-    expect(formatWorkDuration(297_000)).toBe('4m57s');
   });
 });
 

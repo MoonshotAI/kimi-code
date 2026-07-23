@@ -31,7 +31,7 @@ import { Markdown } from '@moonshot-ai/web-markdown';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityRun from './ActivityRun.vue';
 import ToolCall from './ToolCall.vue';
-import { formatWorkDuration, renderBlockKey, turnWorkMs } from '../chatTurnRendering';
+import { formatDuration, renderBlockKey, turnWorkMs } from '../chatTurnRendering';
 import type { AssistantRenderBlock } from '../chatTurnRendering';
 import type { FilePreviewRequest, ToolMedia } from '../../types';
 
@@ -169,7 +169,7 @@ function toggle(): void {
 
 const label = computed(() =>
   spanMs.value !== undefined
-    ? t('conversation.fold.worked', { duration: formatWorkDuration(spanMs.value) })
+    ? t('conversation.fold.worked', { duration: formatDuration(spanMs.value) })
     : t('conversation.fold.workedUnknown'),
 );
 

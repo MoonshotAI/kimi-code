@@ -19,6 +19,7 @@ import TodoCard from './TodoCard.vue';
 import { Button, Icon, Pill } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { formatTokens } from '../../lib/formatTokens';
+import { formatDuration } from '../chatTurnRendering';
 
 const props = defineProps<{
   sessionId?: string;
@@ -116,16 +117,6 @@ const goalTokenPct = computed(() => {
   if (!props.goal || !budget || budget <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((props.goal.tokensUsed / budget) * 100)));
 });
-
-function formatGoalMs(ms: number): string {
-  const sec = Math.max(0, Math.round(ms / 1000));
-  const min = Math.floor(sec / 60);
-  const rem = sec % 60;
-  if (min <= 0) return `${rem}s`;
-  if (min < 60) return `${min}m ${rem}s`;
-  const hour = Math.floor(min / 60);
-  return `${hour}h ${min % 60}m`;
-}
 
 async function onGoalCancel(): Promise<void> {
   const confirmed = await confirm({
@@ -360,7 +351,7 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen, isEmpty
         <div v-if="dockPanel === 'goal' && goal" class="dock-work-foot">
           <span>{{ goal.turnsUsed }} turns</span>
           <span>{{ formatTokens(goal.tokensUsed) }} tokens</span>
-          <span>{{ formatGoalMs(goal.wallClockMs) }}</span>
+          <span>{{ formatDuration(goal.wallClockMs) }}</span>
           <span v-if="goal.budget.tokenBudget !== null">{{ goalTokenPct }}% token budget</span>
         </div>
       </div>

@@ -12,6 +12,7 @@
 import { computed, inject, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Icon } from '@moonshot-ai/web-ui';
+import { formatDuration } from '../chatTurnRendering';
 
 const props = withDefaults(
   defineProps<{
@@ -54,22 +55,14 @@ watch(
   { immediate: true },
 );
 
-/** Whole seconds, `37s` / `1m37s` — tenths would be noise next to the footer. */
-function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${s % 60}s`;
-}
-
-/** Suffix next to the label: ticking seconds live, settled span when done.
-    Sub-second spans are hidden — "0s" reads like clutter. */
+/** Suffix next to the label: ticking seconds live, settled span when done. */
 const elapsedLabel = computed(() => {
   if (props.streaming && props.startedAt) {
-    const ms = nowMs.value - Date.parse(props.startedAt);
-    return ms >= 1000 ? formatElapsed(ms) : '';
+    const startMs = Date.parse(props.startedAt);
+    return Number.isFinite(startMs) ? formatDuration(nowMs.value - startMs) : '';
   }
-  if (props.durationMs !== undefined && props.durationMs >= 1000) {
-    return `· ${formatElapsed(props.durationMs)}`;
+  if (props.durationMs !== undefined) {
+    return `· ${formatDuration(props.durationMs)}`;
   }
   return '';
 });
