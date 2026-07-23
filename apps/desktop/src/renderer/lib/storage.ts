@@ -38,6 +38,9 @@ export const STORAGE_KEYS = {
   // Desktop-only custom keyboard shortcuts (docs/native-todos.md): action id →
   // canonical binding (null = unassigned; absent = default). lib/keymap.ts.
   shortcutOverrides: 'kimi-web.shortcut-overrides',
+  // Desktop-only Dock icon preference: 'light' | 'dark' | 'auto' (default).
+  // lib/dockIconChoice.ts.
+  dockIconChoice: 'kimi-web.dock-icon-choice',
   // Desktop auto-update: version the user chose to skip (renderer-local).
   updateSkippedVersion: 'kimi-web.update-skipped-version',
   // deprecated cleanups (kept so the removals still fire for old users)

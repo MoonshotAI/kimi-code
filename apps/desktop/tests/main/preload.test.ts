@@ -40,6 +40,9 @@ const WHITELIST = [
   'petDragEnd',
   'petDragMove',
   'petDragStart',
+  'getOsAppearance',
+  'onOsAppearanceChanged',
+  'setDockIconChoice',
   'setGlobalShortcut',
   'setGlobalShortcutSuspended',
   'setLocale',
@@ -165,6 +168,22 @@ describe('kimiDesktop preload bridge', () => {
 
     exposed.showWindow();
     expect(send).toHaveBeenCalledWith('kimi:show-window');
+
+    exposed.setDockIconChoice('dark');
+    expect(send).toHaveBeenCalledWith('kimi:dock-icon-choice', 'dark');
+    exposed.setDockIconChoice('bogus');
+    expect(send).toHaveBeenCalledTimes(11); // invalid choice ignored
+
+    invoke.mockResolvedValueOnce('dark');
+    await expect(exposed.getOsAppearance()).resolves.toBe('dark');
+    expect(invoke).toHaveBeenCalledWith('kimi:os-appearance');
+    invoke.mockResolvedValueOnce('junk');
+    await expect(exposed.getOsAppearance()).resolves.toBe('light'); // malformed → light
+
+    const offOs = exposed.onOsAppearanceChanged(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:os-appearance-changed', expect.any(Function));
+    offOs();
+    expect(removeListener).toHaveBeenCalledWith('kimi:os-appearance-changed', expect.any(Function));
 
     const offMenu = exposed.onMenu(() => {});
     expect(on).toHaveBeenCalledWith('kimi:menu', expect.any(Function));

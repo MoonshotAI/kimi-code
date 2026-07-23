@@ -1,12 +1,11 @@
-import { join } from 'node:path';
-
-import { app, nativeImage } from 'electron';
+import { app } from 'electron';
 
 import { registerRendererScheme, registerRendererProtocol } from './protocol';
 import { rendererDistRoot, closeServerHandle } from './connect';
 import { createWindow, selectSessionInRenderer, showMainWindow } from './window';
 import { createPetWindow, isPetVisible } from './pet';
 import { createTray, destroyTray } from './tray';
+import { initDockIcon } from './dock-icon';
 import { buildMenu, setMenuPetVisible } from './menu';
 import { unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
@@ -31,12 +30,9 @@ export function main(): void {
   });
 
   void app.whenReady().then(() => {
-    // Dev-only: an unpackaged run shows Electron's default Dock icon. Point it
-    // at the packaging icon so `pnpm dev:desktop` matches the shipped app;
-    // packaged builds get the icon from electron-builder instead.
-    if (!app.isPackaged && process.platform === 'darwin') {
-      app.dock?.setIcon(nativeImage.createFromPath(join(app.getAppPath(), 'build', 'icon.png')));
-    }
+    // Dock icon follows the effective appearance (dark/light tile swap);
+    // packaged builds additionally keep the static .icns for Finder etc.
+    initDockIcon();
     registerRendererProtocol(rendererDistRoot);
     // No startup global-shortcut registration: the renderer replays the saved
     // binding over IPC on boot (shortcuts.ts is push-driven), so nothing is

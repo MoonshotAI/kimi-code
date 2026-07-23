@@ -11,6 +11,9 @@ import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import ShortcutsPanel from './ShortcutsPanel.vue';
 import { canOpenInNative, listNativeOpenInApps, openInAppIcon, saveDefaultOpenInTarget, useDefaultOpenInTarget } from '../../lib/nativeOpenIn';
+import { canSetDockIconChoice, useDockIconChoice } from '../../lib/dockIconChoice';
+import DockIconPicker from './DockIconPicker.vue';
+import { isMacosDesktop } from '../../lib/desktopFlag';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import { useUpdateStatus, type UpdateCheckResult } from '../../composables/useUpdateStatus';
@@ -152,6 +155,12 @@ onMounted(async () => {
     icon: openInAppIcon(app.id) || undefined,
   }));
 });
+
+// Desktop-only (macOS): Dock icon tile preference (lib/dockIconChoice.ts —
+// the choice pushes to the main process over the preload bridge). Web's copy
+// has no such row (docs/native-todos.md).
+const dockIconChoice = useDockIconChoice();
+const showDockIconRow = isMacosDesktop && canSetDockIconChoice();
 
 function exportLog(): void {
   downloadTraceLog();
@@ -494,6 +503,13 @@ function archiveTime(iso: string): string {
                 ]"
                 @update:model-value="emit('setColorScheme', $event as ColorScheme)"
               />
+            </div>
+            <div v-if="showDockIconRow" class="row">
+              <span class="rlabel">
+                {{ t('settings.appIcon') }}
+                <span class="hint">{{ t('settings.appIconHint') }}</span>
+              </span>
+              <DockIconPicker v-model="dockIconChoice" />
             </div>
             <div class="row font-size-row">
               <span class="rlabel">

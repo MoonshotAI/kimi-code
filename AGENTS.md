@@ -33,6 +33,7 @@
 - `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）；`web-ui/src/assets/fonts` 保存字体许可证与本地生成（gitignored）的两端共用字体产物，install 的 root postinstall 以及 dev/build 前会由 `scripts/prepare-fonts.mjs` 下载、校验并转换，再由 Vite 打入最终产物。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
 - `scripts/sync-web-to-kimi-code.mjs`：`apps/web/dist` → `<kimi-code checkout>/apps/kimi-code/dist-web`（`KIMI_CODE_REPO` 必传，指定目标 checkout）。
+- `KIMI CODE LOGO/` + `scripts/build-brand-icons.mjs`：设计师交付的品牌源文件（SVG/PNG，整目录替换）与下游图标资源生成脚本（`pnpm build:icons`，几何约定见脚本头注释）；`apps/desktop/build/` 的图标与组件内联品牌标都是它的产物，勿手改。可选的 `apps/desktop/build/AppIcon.icon` 是 Icon Composer 手工艺品（一次性设计步骤，Xcode 26）：存在时打包经 afterPack 自动编译为 Assets.car，启用 Tahoe 深色/玻璃外观（`.icns` 保留作旧系统兜底，见 `electron-builder.config.cjs`）。
 - `scripts/merge-mac-update-yml.mjs`：把 mac 双 arch 的 `latest-mac-<arch>.yml` 合并回单个 `latest-mac.yml`（files 含双 arch；release.yml 发布前调用，零第三方依赖的文本级合并）。根目录另有 `publish-desktop-cdn.sh`：desktop 产物的 CDN 发布（GH Release → TOS 版本目录 + 更新弹窗双语 changelog（`release-notes/<version>/changelog.{zh,en}.md`，由 `.agents/skills/release-notes` skill 生成存档）+ latest*.yml 指针改写 + `download/` 固定入口刷新；本地手动，TOS 凭证限内网，配置见 kimi-cli-cdn-sync 仓 README）。
 - `.github/workflows/desktop-build.yml`：desktop 打包流水线（workflow_dispatch 手动触发 + workflow_call 供 release.yml 调用，matrix 出 macOS arm64/x64、Windows、Linux 四平台安装包 + electron-updater 元数据 latest*.yml/blockmap，产物以 `kimi-code-app-<target>` 命名进 artifacts）。macOS 签名/公证用 `.github/actions/macos-keychain-{setup,cleanup}` composite action（源自 kimi-code 仓同名 action），需在 repo Secrets 配置 5 个 `APPLE_*` secret，见 workflow 文件头注释；`sign-macos=false` 出未签名包。CI 不可用时的本地替代：`apps/desktop/scripts/package-local-macos.sh`（复用 `apps/desktop/scripts/ci/` 的 setup/cleanup shell 脚本，只打 arm64）。
 - `.github/workflows/release.yml` + `.changeset/`：desktop 发版流程（不发 npm）。功能 PR 带 `pnpm changeset` 生成的 changeset（只选 `kimi-code-app`，见硬约束）合入 main 后，action 自动开 `ci: release desktop` 版本 PR；版本 PR 合入即调 desktop-build 打四平台签名包，并创建 GitHub Release（tag `v<version>`）挂上全部安装包与 latest*.yml/blockmap。细节见 `.changeset/README.md`。CDN 分发不在 CI：Release 就绪后本地跑 `./publish-desktop-cdn.sh <version>`（仓根目录），把产物同步到 `code.kimi.com/kimi-code/desktop/`、切换自动更新指针并刷新 `desktop/download/` 固定下载入口（官网链接，TOS 凭证限内网；脚本 2026-07 从 kimi-cli-cdn-sync 仓迁入本仓）。发布前先用 `release-notes` skill 生成该版本的中英双语 changelog 并 review 存档（`release-notes/<version>/changelog.{zh,en}.md`），脚本会随版本目录一并上传（缺失仅警告，供更新弹窗展示）。
@@ -43,6 +44,7 @@
 pnpm run sync      # git submodule update --init --recursive
 pnpm install       # 装依赖（首次或 workspace 变动后；postinstall 会准备共享字体）
 pnpm prepare:fonts # 手动准备共享字体（install/dev/build 会自动执行并复用已校验的本地文件）
+pnpm build:icons   # 从 KIMI CODE LOGO/ 品牌源文件重新生成全部图标资源（apps/desktop/build/、web favicon、组件内联品牌标）
 pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
 pnpm dev:desktop:debug  # 桌面端，并开启 Electron remote debugging（端口 9222，供 agent-browser 连接）
 pnpm dev:web       # Web UI（Vite，代理到 127.0.0.1:58627）

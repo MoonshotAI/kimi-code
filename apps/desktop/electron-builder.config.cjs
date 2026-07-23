@@ -1,6 +1,11 @@
 'use strict';
 
 // electron-builder configuration.
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 //
 // Signing / notarization are environment-driven so the same config produces
 // either an unsigned local build or a fully signed + notarized distributable:
@@ -25,10 +30,64 @@ const notarize = process.env.KIMI_DESKTOP_NOTARIZE === 'true';
 // every version's artifacts side by side under desktop/<version>/.
 const artifactName = 'KimiCode-${version}-${os}-${arch}.${ext}';
 
+// macOS 26 Tahoe Liquid Glass icon (dark/tinted/clear appearances), embedded
+// only when the design artifact exists: `build/AppIcon.icon`, authored ONCE in
+// Icon Composer (Xcode 26) — the layered format and its glass/appearance
+// treatments are visual-tuning work, not generatable from the flat kit PNGs
+// (see scripts/build-brand-icons.mjs). When the file is absent this hook is a
+// no-op and the app keeps the static .icns on every macOS version.
+//
+// When present, actool (Xcode 26, macOS 26 SDK — on the macos-* CI runners)
+// compiles it to Assets.car and CFBundleIconName points at it; the existing
+// CFBundleIconFile (icon.icns) stays as the pre-Tahoe fallback. Runs in
+// afterPack, i.e. before signing/notarization, so the bundle is sealed with
+// the catalog inside. NOTE: the .icon package must be named AppIcon.icon —
+// CFBundleIconName below and --app-icon both reference that stem.
+async function embedTahoeIconCatalog(context) {
+  if (context.electronPlatformName !== 'darwin') return;
+  const iconPkg = path.join(__dirname, 'build', 'AppIcon.icon');
+  if (!fs.existsSync(iconPkg)) return;
+
+  // Artifact present but no toolchain: fail loudly, never silently ship a
+  // build that ignores the intended icon.
+  const actool = execFileSync('xcrun', ['-f', 'actool'], { encoding: 'utf8' }).trim();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'icon-car-'));
+  execFileSync(
+    actool,
+    [
+      iconPkg,
+      '--compile', tmp,
+      '--output-format', 'human-readable-text',
+      '--notices', '--warnings', '--errors',
+      '--output-partial-info-plist', path.join(tmp, 'partial.plist'),
+      '--app-icon', 'AppIcon',
+      '--include-all-app-icons',
+      '--enable-on-demand-resources', 'NO',
+      '--development-region', 'en',
+      '--target-device', 'mac',
+      '--minimum-deployment-target', '26.0',
+      '--platform', 'macosx',
+    ],
+    { stdio: 'inherit' },
+  );
+
+  const appDir = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+  fs.copyFileSync(path.join(tmp, 'Assets.car'), path.join(appDir, 'Contents', 'Resources', 'Assets.car'));
+  const plist = path.join(appDir, 'Contents', 'Info.plist');
+  try {
+    execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleIconName string AppIcon', plist]);
+  } catch {
+    execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIconName AppIcon', plist]);
+  }
+  console.log('[afterPack] embedded Assets.car (CFBundleIconName=AppIcon; .icns kept as pre-Tahoe fallback)');
+}
+
 module.exports = {
   appId: 'com.kimi.code.desktop',
   productName: 'Kimi Code',
   copyright: 'Copyright © Moonshot AI',
+
+  afterPack: embedTahoeIconCatalog,
 
   directories: {
     output: 'dist-app',
@@ -61,9 +120,9 @@ module.exports = {
   // fallback both read from `<resourcesPath>/desktop-dist`.
   // `build/lproj` carries localized InfoPlist.strings (TCC prompt copy — see
   // mac.extendInfo); lproj dirs must sit directly under Contents/Resources.
-  // `build/tray*` are the system-tray icons (see src/main/tray.ts). NOTE:
-  // extraResources does NOT expand globs in `from` (a pattern is treated as a
-  // literal path and silently skipped) — use directory form + `filter`.
+  // `build/tray*` are the system-tray icons (see src/main/tray.ts).
+  // NOTE: extraResources does NOT expand globs in `from` (a pattern is treated
+  // as a literal path and silently skipped) — use directory form + `filter`.
   extraResources: [
     { from: 'desktop-dist', to: 'desktop-dist' },
     { from: 'build/lproj/', to: '.' },
@@ -76,6 +135,12 @@ module.exports = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
+    // `build/icon*.png` are the theme-following Dock icons (src/main/dock-icon.ts)
+    // — macOS-only feature, shipped only in mac packages (merged with the
+    // top-level extraResources).
+    extraResources: [
+      { from: 'build/', to: 'build/', filter: ['icon*.png'] },
+    ],
     // dmg for first-install distribution, zip for electron-updater (macOS
     // auto-update only works from the zip archive).
     target: ['dmg', 'zip'],

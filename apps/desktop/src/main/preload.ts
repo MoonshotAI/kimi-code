@@ -178,6 +178,13 @@ function asScreenPoint(value: unknown): value is ScreenPoint {
 
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
+  /** Dock tile preference ('light'|'dark'|'auto'); the main process swaps the
+   *  Dock icon (src/main/dock-icon.ts). macOS-only effect. */
+  setDockIconChoice: (choice: 'light' | 'dark' | 'auto') => void;
+  /** Real OS appearance, independent of the app theme pin (dock-icon.ts). */
+  getOsAppearance: () => Promise<'dark' | 'light'>;
+  /** Main → renderer push when the OS appearance changes. */
+  onOsAppearanceChanged: (cb: (appearance: 'dark' | 'light') => void) => () => void;
   onMenu: (cb: (action: string) => void) => () => void;
   onMenuAction: (cb: (id: string) => void) => () => void;
   onShortcut: (cb: (accel: string) => void) => () => void;
@@ -262,6 +269,22 @@ export const api: KimiDesktopApi = {
     if (scheme === 'light' || scheme === 'dark' || scheme === 'system') {
       ipcRenderer.send('kimi:theme', scheme);
     }
+  },
+  setDockIconChoice: (choice) => {
+    if (choice === 'light' || choice === 'dark' || choice === 'auto') {
+      ipcRenderer.send('kimi:dock-icon-choice', choice);
+    }
+  },
+  getOsAppearance: async () => {
+    const value = await ipcRenderer.invoke('kimi:os-appearance');
+    return value === 'dark' ? 'dark' : 'light';
+  },
+  onOsAppearanceChanged: (cb) => {
+    const listener = (_event: unknown, value: unknown) => {
+      if (value === 'dark' || value === 'light') cb(value);
+    };
+    ipcRenderer.on('kimi:os-appearance-changed', listener);
+    return () => ipcRenderer.removeListener('kimi:os-appearance-changed', listener);
   },
   onMenu: (cb) => {
     const listener = (_event: unknown, action: string) => cb(action);

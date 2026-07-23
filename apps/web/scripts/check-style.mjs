@@ -4,7 +4,7 @@
 // Scans src/** for the rules in the design system (§06 of the DesignSystemView spec):
 //   no-gradient-text, no-glassmorphism (.frost exempt), no-color-glow,
 //   icon-from-registry (hand-written <svg>; Icon/Spinner/MoonSpinner + the
-//   32x22 / 32x30.848 / 120x120 brand marks exempt), no-emoji-icon (moon in
+//   32x22 / 32x28.x / 120x120 brand marks exempt), no-emoji-icon (moon in
 //   MoonSpinner exempt),
 //   no-hardcoded-hex (DiffView/DiffLines/Terminal domain colors + var()
 //   fallbacks exempt), no-hardcoded-font (token and @font-face definitions exempt),
@@ -39,8 +39,9 @@ const DOMAIN_HEX_EXEMPT = new Set([
 // Files that legitimately render their own <svg>: bespoke data-viz / colored
 // illustrations, the spinner, and brand marks (the Kimi wordmark on the loading
 // screen). Everything else should use lib/icons.ts via <Icon>/iconSvg(). The
-// 32x22 Kimi eye logo (auth page) and the 32x30.848 robot mascot (sidebar
-// header) are also exempted inline (matched by viewBox). The icon
+// 32x22 Kimi eye logo (auth page) and the 32x28.x robot mascot (sidebar
+// header, height tracks the brand kit's aspect ratio) are also exempted
+// inline (matched by viewBox). The icon
 // primitive (components/ui/Icon.vue) itself renders no hand-written <svg>, so it
 // is not exempted here.
 const ICON_EXEMPT = new Set([
@@ -222,7 +223,7 @@ function checkFile(abs) {
     let m;
     while ((m = svgRe.exec(content)) !== null) {
       if (inBlock(m.index)) continue;
-      if (/viewBox="0 0 (32 (22|30\.848)|120 120)"/.test(m[0])) continue; // Kimi brand marks (auth eye logo, sidebar robot mascot, onboarding app-icon tile)
+      if (/viewBox="0 0 (32 (22|28\.\d+)|120 120)"/.test(m[0])) continue; // Kimi brand marks (auth eye logo 32x22, sidebar robot mascot 32x28.x — height follows the kit's aspect, onboarding app-icon tile 120x120)
       add('icon-from-registry(warn)', file, lineOf(content, m.index), m[0].slice(0, 80));
     }
   }

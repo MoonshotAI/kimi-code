@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "prepare:fonts": "node scripts/prepare-fonts.mjs",
+    "build:icons": "node scripts/build-brand-icons.mjs",
     "postinstall": "pnpm prepare:fonts",
     "sync": "git submodule update --init --recursive",
     "build": "pnpm -r run build",
@@ -25,6 +26,7 @@
     "@types/node": "^22.15.3",
     "oxlint": "1.59.0",
     "oxlint-tsgolint": "0.20.0",
+    "sharp": "^0.35.3",
     "tsdown": "0.22.0",
     "tsx": "^4.21.0",
     "typescript": "6.0.2",

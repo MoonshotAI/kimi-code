@@ -251,6 +251,7 @@ html[data-color-scheme="dark"] {
   --color-info: #1783ff;
 
   /* -- spacing (4px grid) -------------------------------------------------- */
+  --space-05: 2px; /* segmented-group inner padding/gap (DockIconPicker) */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -323,6 +324,7 @@ html[data-color-scheme="dark"] {
     "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   /* -- type scale (6 levels, design-system §03) --------------------------- */
+  --text-2xs: 11px; /* caption under grouped icon options (DockIconPicker) */
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
@@ -335,6 +337,7 @@ html[data-color-scheme="dark"] {
   --leading-prose: 1.6;
   --leading-relaxed: 1.7;
   --weight-regular: 400;
+  --weight-caption: 450; /* caption labels (DockIconPicker options) */
   --weight-option-label: 475;
   --weight-medium: 500;
   --weight-ui-strong: 525;

@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { ICON_GROUPS } from '../lib/icons';
 import { Icon } from '@moonshot-ai/web-ui';
+import DockIconPicker from '../components/settings/DockIconPicker.vue';
+import type { DockIconChoice } from '../lib/dockIconChoice';
+
+const dockIconDemo = ref<DockIconChoice>('auto');
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -870,6 +874,16 @@ onUnmounted(() => {
                   <span class="p-seg-item">Dark</span>
                   <span class="p-seg-item">Follow system</span>
                 </div>
+              </div>
+            </div>
+
+            <!-- ===== DockIconPicker (desktop) ===== -->
+            <h3 class="sub">DockIconPicker (desktop)</h3>
+            <p>App-icon appearance picker (settings → General → Appearance; macOS desktop only, <code>components/settings/DockIconPicker.vue</code> — deliberately NOT this §03 SegmentedControl: its options are the real app-icon tiles, not text labels). The three options (Light / Dark / System) render the shipped icon composition via <code>BrandLogo</code> forced variants; System previews the tile the Dock will use right now, driven by the real OS appearance over the preload bridge (the page's own <code>prefers-color-scheme</code> is overridden by the app theme pin, so it cannot serve). Anatomy follows the segmented-control language: 0.5px hairline sunken container with 2px padding, one raised pill sliding and resizing between options on the standard motion tokens, equal-width items stacking a 32px tile over an 11px/450 caption (<code>--text-2xs</code> / <code>--weight-caption</code>). Each tile drops BrandLogo's surface border and is clipped to the shipped icon's true squircle (superellipse n=4.5, the same shape baked into the .icns); its hairline ring is two nested squircles (32px line-colour wrapper + 31px tile), and a text-colour wash well keeps the white tile readable in light mode and the black tile in dark mode. ARIA: <code>radiogroup</code> of <code>radio</code> buttons with the WAI-ARIA keyboard model — roving tabindex (only the selected item is tabbable) and Arrow/Home/End keys moving selection and focus together.</p>
+            <div class="stage-wrap">
+              <div class="stage-bar"><span class="st">DockIconPicker</span></div>
+              <div class="stage p col">
+                <DockIconPicker v-model="dockIconDemo" />
               </div>
             </div>
 

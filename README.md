@@ -89,6 +89,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **web 改动同步到 kimi-code**：先 `pnpm --filter kimi-code-web run build`，再 `KIMI_CODE_REPO=<kimi-code checkout 路径> pnpm sync:web`。
 - **升级 submodule**：在 `kimi-code/` 内 checkout 目标 commit，然后在根目录提交 submodule 指针；新克隆或拉取后跑 `pnpm run sync` 对齐。
 - **常用检查**：`pnpm test`、`pnpm lint`、`pnpm typecheck`、`pnpm build`。
+- **更新品牌图标**：设计源文件在 `KIMI CODE LOGO/`（设计师交付，整目录替换后跑 `pnpm build:icons`，重新生成 `apps/desktop/build/` 图标、web favicon 与组件内联品牌标；几何约定见 `scripts/build-brand-icons.mjs` 头注释）。macOS Tahoe 深色/玻璃图标需另在 Icon Composer（Xcode 26）手工制作 `AppIcon.icon` 放入 `apps/desktop/build/`，打包时自动编译嵌入；没有该文件则全平台保持 `.icns` 静态图标。
 - **UI 设计系统**：改 UI 前必读 `apps/desktop/src/renderer/views/DesignSystemView.vue`（应用内长按侧栏 logo 打开），样式只用 `style.css` 的设计 token，并在亮色 + 暗色下做视觉验证。细则见 `AGENTS.md` 的"硬约束"。
 - **主进程原生界面文案**：新增用户可见字符串（托盘、通知、对话框等）要 en/zh 双语——主进程无 i18n runtime，用 `apps/desktop/src/main/tray.ts` 同款字符串表，应用语言经 `kimi:locale` 通道同步（OS 语言兜底）。细则见 `AGENTS.md` 的"硬约束"。
 - **注释克制**：密度对齐所在文件，不写复述代码的注释；设计决策与 bug 根因进 spec / commit message，不进代码。细则见 `AGENTS.md` 的"硬约束"。
@@ -117,5 +118,6 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - `apps/web`：浏览器 Web UI（`kimi-code-web`）
 - `packages/*`：web 共享包（web-core / web-i18n / web-markdown / web-ui / vite-preset）；字体许可证及本地生成（不入 Git）的两端共用字体位于 `packages/web-ui/src/assets/fonts`
 - `scripts/prepare-fonts.mjs`：下载并校验共享源字体，再转换为 Vite/Electron 使用的 WOFF2；install/dev/build 会自动调用
+- `KIMI CODE LOGO/` + `scripts/build-brand-icons.mjs`：品牌设计源文件（SVG/PNG）及其到全部图标资源（`apps/desktop/build/`、`apps/web/public/favicon.ico`、组件内联品牌标）的生成脚本（`pnpm build:icons`）
 - `kimi-code/`：核心仓 submodule（CLI / server / agent-core / packages）
 - `scripts/sync-web-to-kimi-code.mjs`：web 产物同步到 kimi-code 的脚本

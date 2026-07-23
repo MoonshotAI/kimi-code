@@ -16,6 +16,7 @@ import { asTrayAttention, setTrayAttention, setTrayLocale } from './tray';
 import { setMenuLocale, setMenuShortcuts, setMenuSuspended } from './menu';
 import { setGlobalShortcut, setGlobalShortcutSuspended } from './shortcuts';
 import { markOnboarded } from './ui-state';
+import { isDockIconChoice, osAppearance, setDockIconChoice } from './dock-icon';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -28,6 +29,11 @@ export function registerIpcHandlers(): void {
       nativeTheme.themeSource = scheme;
     }
   });
+  // Dock tile preference from the settings UI (light/dark/auto; dock-icon.ts).
+  ipcMain.on(IPC.dockIconChoice, (_event, choice: unknown) => {
+    if (isDockIconChoice(choice)) setDockIconChoice(choice);
+  });
+  ipcMain.handle(IPC.osAppearance, () => osAppearance());
   ipcMain.handle(IPC.openExternal, (_event, url: string) => shell.openExternal(url));
   // File dialogs: the renderer asks (whitelisted `showOpenDialog`/`showSaveDialog`),
   // the main process opens the native dialog and returns the user's selection.

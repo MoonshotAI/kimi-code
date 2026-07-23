@@ -23,6 +23,9 @@ export const IPC = {
   updateSetAutoDownload: 'kimi:update-set-auto-download',
   trayAttention: 'kimi:tray-attention',
   traySelectSession: 'kimi:tray-select-session',
+  dockIconChoice: 'kimi:dock-icon-choice',
+  osAppearance: 'kimi:os-appearance',
+  osAppearanceChanged: 'kimi:os-appearance-changed',
   locale: 'kimi:locale',
   menuShortcut: 'kimi:menu-shortcut',
   menuSuspend: 'kimi:menu-suspend',
@@ -43,4 +46,5 @@ export type RendererEventChannel =
   | typeof IPC.shortcut
   | typeof IPC.fullscreenChanged
   | typeof IPC.updateStatus
-  | typeof IPC.traySelectSession;
+  | typeof IPC.traySelectSession
+  | typeof IPC.osAppearanceChanged;

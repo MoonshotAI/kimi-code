@@ -167,6 +167,11 @@
 
 ## 共享组件 UI 分叉
 
+- **设置页「应用图标」行（desktop macOS only）**
+  - 实现：通用页外观组里、明暗选择下方新增 `components/settings/DockIconPicker.vue`（desktop 专属组件，**不复用 web-ui 的 SegmentedControl**，不同步 web；控件模式已登记进 `DesignSystemView.vue` §03 的 SegmentedControl 之后，带活体 demo，web 的 DesignSystemView 不涉及）：三个选项直接渲染应用图标瓷砖（BrandLogo 强制 variant，白砖 / 黑砖 / 自动跟随页面主题），分组容器 + 滑动选中 pill 复刻分段控件视觉语言；瓷砖去描边并用 n=4.5 超椭圆 clip-path（与打进 .icns 的圆角同形），底下垫随主题反转的文字色 wash 保持可读。状态在 desktop 专属 `lib/dockIconChoice.ts`（**不同步 web**，同 keymap.ts 先例；`kimi-web.dock-icon-choice` key 只加在 desktop 的 `lib/storage.ts`）：localStorage 持久化 + 经新桥 `setDockIconChoice`（IPC `kimi:dock-icon-choice`）推给主进程，模块加载时做一次启动首推（主进程默认 auto）。主进程 `dock-icon.ts` 存 `currentChoice`，`resolveDockIconDark`；`auto` 跟随**真实系统外观**——renderer 会把应用自身主题写进 `nativeTheme.themeSource`，所以 `shouldUseDarkColors` 与 `systemPreferences.getEffectiveAppearance()`（= `NSApplication.effectiveAppearance`，跟随应用级覆盖）都会被应用主题污染；改走 `/usr/bin/defaults read -g AppleInterfaceStyle`（OS 全局值，与应用覆盖无关；macOS 外观设为「自动」时该 key 缺失，此时起一个干净的 JXA helper 进程读 `NSApplication.effectiveAppearance`——新进程无应用级覆盖，拿到的就是系统当前外观，Auto 模式也准确，且自查进程不触发 TCC 权限弹窗；不读 `shouldUseDarkColors`/`getEffectiveAppearance`，两者都会被应用主题污染），并同时监听 `nativeTheme` 的 `updated` 与 macOS 分布式通知 `AppleInterfaceThemeChangedNotification`（应用主题被固定时 OS 切换只走后一路）。预览同源：picker 的「自动」预览经新桥 `getOsAppearance()`（invoke `kimi:os-appearance`）+ `onOsAppearanceChanged`（推送 `kimi:os-appearance-changed`，applyDockIcon 时顺带广播）拿同一个 OS 值——renderer 自己的 `prefers-color-scheme` 同样被 themeSource 覆盖，不可用。IPC/主题变更即重设 Dock 图标；IPC 与 preload 均校验取值。行可见条件 `isMacosDesktop && canSetDockIconChoice()`（桥探测）。
+  - **web 不改**：浏览器没有 Dock；web 的 `SettingsDialog.vue` 无此行、无此 import，`DockIconPicker.vue` 与 `lib/dockIconChoice.ts` 均不存在于 apps/web，整目录 re-copy 时需保留 desktop 侧分叉块。
+  - 测试：`tests/main/dock-icon.test.ts`（路径 + `isDockIconChoice` / `resolveDockIconDark` + 非 darwin 平台守卫）；`tests/main/preload.test.ts` 白名单 + 合法/非法值断言。
+
 - **侧边栏 Settings「内部测试」badge（desktop production only）**
   - 实现：`Sidebar.vue` 底部设置按钮在 desktop 生产包显示黄色 `Badge`（`variant="warning" size="sm"`），文案 `settings.internalTest`；条件为 `isDesktop && import.meta.env.PROD`，dev 与 web 均不显示。
   - **web 刻意移除**：`apps/web/src/components/Sidebar.vue` 不渲染该 badge、不 import `Badge`；其余 Settings 按钮样式（`.btn-settings-label`）两端保持一致。
