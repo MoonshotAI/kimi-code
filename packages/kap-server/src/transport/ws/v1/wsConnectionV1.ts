@@ -137,6 +137,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.socket.on('error', () => this.onClose());
 
     opts.connectionRegistry.add(this);
+    // Global events (session/workspace/config facts) flow to every established
+    // connection without any subscription; session/agent events stay
+    // subscribe-gated via `broadcaster.subscribe`.
+    this.broadcaster.addGlobalTarget(this);
     this.sendFrame(
       buildServerHello({
         ws_connection_id: this.id,
@@ -489,6 +493,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     this.outbound = [];
+    this.broadcaster.removeGlobalTarget(this);
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
     this.fsWatchBridge?.detachConnection(this);
     // registry removal is handled by registerWsV1 on the socket 'close' event.

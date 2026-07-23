@@ -6,7 +6,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
+import type {
+  AgentActivityState,
+  IScopeHandle,
+  Scope,
+  SessionActivityCause,
+  SessionActivityChangedEvent,
+  SessionActivityState,
+} from '@moonshot-ai/agent-core-v2';
 import {
   ContextSizeModel,
   IAgentActivityView,
@@ -16,10 +23,12 @@ import {
   IAgentUsageService,
   IEventBus,
   IEventService,
+  ISessionActivityView,
   ISessionInteractionService,
   ISessionLifecycleService,
   IWireService,
   ISessionMetadata,
+  MAIN_AGENT_ID,
   SessionInteractionService,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentEvent } from '../src/transport/ws/v1/events';
@@ -167,6 +176,141 @@ class FakeLifecycle {
     this.turnCounters.delete(id);
     for (const cb of this.disposeHandlers) cb(id);
   }
+  /** Mirrors the core `ISessionActivityView` fold over the fake buses + kernel. */
+  readonly workView = new FakeSessionActivityView(this);
+}
+
+/**
+ * Test double for the core `ISessionActivityView`: mirrors the production
+ * fold (per-agent activity + pending interactions → session aggregate with
+ * cause-classified, deduped change events) over the harness's fake buses and
+ * the real interaction kernel, so the broadcaster tests exercise the same
+ * scheduling contract the real view provides.
+ */
+class FakeSessionActivityView {
+  private readonly listeners = new Set<(change: SessionActivityChangedEvent) => void>();
+  private readonly folds = new Map<
+    string,
+    { turnActive: boolean; background: number; lastTurnReason?: 'completed' | 'cancelled' | 'failed' }
+  >();
+  private readonly busSubscriptions = new Map<string, { dispose(): void }>();
+  private readonly interactions: SessionInteractionService;
+  private current: SessionActivityState;
+
+  constructor(lifecycle: FakeLifecycle) {
+    this.interactions = lifecycle.interactions;
+    for (const handle of lifecycle.list()) this.attach(handle as unknown as FakeAgentHandle);
+    lifecycle.onDidCreate((handle) => {
+      this.attach(handle as unknown as FakeAgentHandle);
+      this.recompute('agent_lifecycle');
+    });
+    lifecycle.onDidDispose((agentId) => {
+      this.busSubscriptions.get(agentId)?.dispose();
+      this.busSubscriptions.delete(agentId);
+      if (this.folds.delete(agentId)) this.recompute('agent_lifecycle');
+    });
+    this.interactions.onDidChangePending(() => this.recompute('interaction'));
+    this.current = this.aggregate();
+  }
+
+  state(): SessionActivityState {
+    return this.current;
+  }
+
+  onDidChange(listener: (change: SessionActivityChangedEvent) => void): { dispose(): void } {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  private attach(handle: FakeAgentHandle): void {
+    if (this.folds.has(handle.id)) return;
+    const view = handle.accessor.get(IAgentActivityView) as
+      | { state(): AgentActivityState }
+      | undefined;
+    this.folds.set(handle.id, this.foldOf(handle.id, view?.state()));
+    this.busSubscriptions.set(
+      handle.id,
+      handle.bus.subscribe((event) => {
+        if (event.type !== 'agent.activity.updated') return;
+        this.onActivity(handle.id, event as unknown as AgentActivityState);
+      }),
+    );
+  }
+
+  private onActivity(agentId: string, snapshot: AgentActivityState): void {
+    const previous = this.folds.get(agentId);
+    const next = this.foldOf(agentId, snapshot, previous);
+    this.folds.set(agentId, next);
+    if (previous === undefined) {
+      this.recompute('agent_lifecycle');
+      return;
+    }
+    let cause: SessionActivityCause | undefined;
+    if (!previous.turnActive && next.turnActive) cause = 'turn_started';
+    else if (previous.turnActive && !next.turnActive) cause = 'turn_ended';
+    else if (previous.background !== next.background) cause = 'background';
+    else if (agentId === MAIN_AGENT_ID && previous.lastTurnReason !== next.lastTurnReason) {
+      cause = 'turn_ended';
+    }
+    if (cause !== undefined) this.recompute(cause);
+  }
+
+  private foldOf(
+    agentId: string,
+    activity: AgentActivityState | undefined,
+    previous?: { lastTurnReason?: 'completed' | 'cancelled' | 'failed' },
+  ) {
+    const reason = activity?.lastTurn?.reason;
+    return {
+      turnActive: activity?.turn !== undefined,
+      background: activity?.background?.length ?? 0,
+      lastTurnReason:
+        agentId === MAIN_AGENT_ID
+          ? reason === undefined
+            ? undefined
+            : reason === 'completed'
+              ? 'completed'
+              : reason === 'cancelled'
+                ? 'cancelled'
+                : 'failed'
+          : previous?.lastTurnReason,
+    };
+  }
+
+  private recompute(cause: SessionActivityCause): void {
+    const next = this.aggregate();
+    if (
+      next.busy === this.current.busy &&
+      next.mainTurnActive === this.current.mainTurnActive &&
+      next.pendingInteraction === this.current.pendingInteraction &&
+      next.lastTurnReason === this.current.lastTurnReason
+    ) {
+      return;
+    }
+    this.current = next;
+    for (const listener of [...this.listeners]) listener({ state: next, cause });
+  }
+
+  private aggregate(): SessionActivityState {
+    let busy = false;
+    for (const fold of this.folds.values()) {
+      if (fold.turnActive || fold.background > 0) {
+        busy = true;
+        break;
+      }
+    }
+    const pending = this.interactions.listPending();
+    return {
+      busy,
+      mainTurnActive: this.folds.get(MAIN_AGENT_ID)?.turnActive ?? false,
+      pendingInteraction: pending.some((i) => i.kind === 'approval')
+        ? 'approval'
+        : pending.some((i) => i.kind === 'question')
+          ? 'question'
+          : 'none',
+      lastTurnReason: this.folds.get(MAIN_AGENT_ID)?.lastTurnReason,
+    };
+  }
 }
 
 function makeCore(
@@ -189,6 +333,7 @@ function makeCore(
               get: (t: unknown) => {
                 if (t === IAgentLifecycleService) return lifecycle;
                 if (t === ISessionInteractionService) return lifecycle.interactions;
+                if (t === ISessionActivityView) return lifecycle.workView;
                 // Minimal metadata read for the transcript binding's descriptor pass.
                 if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
                 return undefined;
@@ -703,6 +848,93 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes[0]!.volatile).toBeUndefined();
   });
 
+  describe('global fan-out to unsubscribed connections', () => {
+    it('delivers event.session.created to a global-only target that never subscribed', async () => {
+      sessions.set('s1', new FakeLifecycle());
+
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      const session = { id: 's1', title: 't', status: 'idle' };
+      eventBus.emit({
+        type: 'event.session.created',
+        payload: { agentId: 'main', sessionId: 's1', session },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.session.created',
+        session_id: 's1',
+      });
+    });
+
+    it('delivers work_changed to a global-only target while a subscriber drives the session', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      // Someone else activates the session; the global-only target has no
+      // subscription of its own yet still tracks the busy facts.
+      const { target } = collectingTarget();
+      await bc.subscribe('s1', target);
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      await bc.getCursor('s1'); // drain between the turn boundaries
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+      await bc.getCursor('s1'); // drain
+
+      const workChanged = globalView.envelopes.filter(
+        (e) => e.type === 'event.session.work_changed',
+      );
+      expect(workChanged).toHaveLength(2);
+      expect(workChanged[0]).toMatchObject({ session_id: 's1', payload: { busy: true } });
+      expect(workChanged[1]).toMatchObject({
+        session_id: 's1',
+        payload: { busy: false, last_turn_reason: 'completed' },
+      });
+      // Fine-grained agent events stay subscribe-gated.
+      expect(
+        globalView.envelopes.filter((e) => e.type === 'turn.started'),
+      ).toHaveLength(0);
+    });
+
+    it('stops delivering after removeGlobalTarget', async () => {
+      sessions.set('s1', new FakeLifecycle());
+
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+      bc.removeGlobalTarget(globalView.target);
+
+      eventBus.emit({
+        type: 'event.session.created',
+        payload: { agentId: 'main', sessionId: 's1', session: { id: 's1' } },
+      });
+      await bc.getCursor('s1'); // drain
+
+      expect(globalView.envelopes).toHaveLength(0);
+    });
+
+    it('delivers exactly one copy to a target that is both global and subscribed', async () => {
+      sessions.set('s1', new FakeLifecycle());
+
+      const both = collectingTarget();
+      bc.addGlobalTarget(both.target);
+      await bc.subscribe('s1', both.target);
+
+      eventBus.emit({
+        type: 'event.session.created',
+        payload: { agentId: 'main', sessionId: 's1', session: { id: 's1' } },
+      });
+
+      await vi.waitFor(() => expect(both.envelopes).toHaveLength(1));
+      await bc.getCursor('s1'); // drain any would-be duplicate
+      expect(both.envelopes).toHaveLength(1);
+    });
+  });
+
   it('emits a durable event.session.work_changed(busy) ahead of turn.started', async () => {
     // Regression: the session's busy fact exists only as the agents' activity
     // state (nothing is published session-wide), so the WS stream never
@@ -1016,12 +1248,19 @@ describe('SessionEventBroadcaster', () => {
     lc.interactions.respond('q1', null); // = ISessionQuestionService.dismiss
     await bc.getCursor('s1');
 
+    // The core work view announces each pending-slice change as it happens,
+    // so a synchronous request+resolve still journals both transitions
+    // (pending → none) instead of coalescing them away.
     expect(envelopes.map((e) => e.type)).toEqual([
+      'event.session.work_changed',
       'event.question.requested',
+      'event.session.work_changed',
       'event.question.dismissed',
     ]);
-    expect(envelopes[1]!.payload).toMatchObject({ question_id: 'q1' });
-    expect((envelopes[1]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
+    expect(envelopes[0]!.payload).toMatchObject({ pending_interaction: 'question' });
+    expect(envelopes[2]!.payload).toMatchObject({ pending_interaction: 'none' });
+    expect(envelopes[3]!.payload).toMatchObject({ question_id: 'q1' });
+    expect((envelopes[3]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
   });
 
   it('carries the requesting agent onto resolved interaction events', async () => {

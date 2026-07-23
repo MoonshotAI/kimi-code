@@ -62,6 +62,8 @@ function makeBroadcaster(): SessionEventBroadcaster {
   return {
     subscribe: async () => true,
     unsubscribe: () => {},
+    addGlobalTarget: () => {},
+    removeGlobalTarget: () => {},
     getCursor: async () => ({ seq: 0, epoch: '' }),
     getBufferedSince: async () => ({
       events: [],
@@ -233,6 +235,8 @@ describe('WsConnectionV1 transcript subscriptions', () => {
         return true;
       },
       unsubscribe: () => {},
+      addGlobalTarget: () => {},
+      removeGlobalTarget: () => {},
       getCursor: async () => ({ seq: 0, epoch: '' }),
       getBufferedSince: async () => ({
         events: [],
@@ -332,6 +336,8 @@ describe('WsConnectionV1 transcript subscriptions', () => {
         target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
       },
       unsubscribe: () => {},
+      addGlobalTarget: () => {},
+      removeGlobalTarget: () => {},
       getCursor: async () => ({ seq: 10, epoch: 'e1' }),
       getBufferedSince: async (_sid: string, _cursor: unknown, _filter: unknown, grades: unknown) => {
         seenGrades = grades;
@@ -539,5 +545,52 @@ describe('WsConnectionV1 outbound buffer', () => {
     conn.send(delta('s1', 'main', 1, 'lost', 0));
     await vi.advanceTimersByTimeAsync(16);
     expect(socket.sent).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WsConnectionV1 — global-event registration lifecycle
+// ---------------------------------------------------------------------------
+
+describe('WsConnectionV1 global target registration', () => {
+  function makeGlobalTargetBroadcaster() {
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const broadcaster = {
+      subscribe: async () => true,
+      unsubscribe: () => {},
+      addGlobalTarget: (target: unknown) => added.push(target),
+      removeGlobalTarget: (target: unknown) => removed.push(target),
+      getCursor: async () => ({ seq: 0, epoch: '' }),
+      getBufferedSince: async () => ({
+        events: [],
+        resyncRequired: false,
+        currentSeq: 0,
+        epoch: '',
+      }),
+    } as unknown as SessionEventBroadcaster;
+    return { broadcaster, added, removed };
+  }
+
+  it('registers the connection as a global target on construction and unregisters on close', () => {
+    const socket = new FakeSocket();
+    const { broadcaster, added, removed } = makeGlobalTargetBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    expect(added).toEqual([conn]);
+    expect(removed).toEqual([]);
+
+    conn.close();
+    expect(removed).toEqual([conn]);
+  });
+
+  it('unregisters when the socket closes on its own', () => {
+    const socket = new FakeSocket();
+    const { broadcaster, added, removed } = makeGlobalTargetBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+    expect(added).toEqual([conn]);
+
+    socket.emit('close');
+    expect(removed).toEqual([conn]);
   });
 });
