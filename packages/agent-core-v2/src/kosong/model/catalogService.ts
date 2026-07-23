@@ -320,9 +320,6 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
       throw new Error2(
         CONFIG_INVALID_ERROR_CODE,
         `Model "${id}" is not configured in config.toml.`,
-        // details.model marks this as a missing-alias failure — consumers
-        // (e.g. wrapSubagentModelError) match on it to tell this apart from
-        // a malformed [models.*] entry, which fails below without details.
         { details: { model: id } },
       );
     }

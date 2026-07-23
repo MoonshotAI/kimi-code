@@ -119,10 +119,6 @@ export function wrapSubagentModelError(
 ): unknown {
   if (boundModel === callerModelAlias) return error;
   if (!isError2(error) || error.code !== ErrorCodes.CONFIG_INVALID) return error;
-  // Only a missing-alias failure earns the hint: the model catalog's
-  // not-configured throw carries details.model. Other CONFIG_INVALID
-  // failures during creation (a malformed [models.*] entry, an unrelated
-  // section) pass through untouched.
   if (error.details?.['model'] !== boundModel) return error;
   return new Error2(
     error.code,

@@ -84,10 +84,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private readonly onDidCreateEmitter = this._register(new Emitter<IAgentScopeHandle>());
   private readonly onDidDisposeEmitter = this._register(new Emitter<string>());
   private readonly interactionBusDisposables = new Map<string, IDisposable>();
-  /**
-   * Auto-minted ids are reserved before their child scope is fully bootstrapped
-   * so concurrent creates cannot select the same id while metadata is read.
-   */
   private readonly pendingAutoAgentIds = new Set<string>();
   private autoIdAllocation: Promise<void> = Promise.resolve();
   /** In-flight creation promises, keyed by agent id. Concurrent creations of
@@ -165,9 +161,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   private async nextAvailableAgentId(): Promise<string> {
-    // Serialize the metadata read and reservation. Without this, concurrent
-    // auto-minted creates can both observe the same persisted state before
-    // either one reaches the in-flight registry.
     const previous = this.autoIdAllocation;
     let release!: () => void;
     this.autoIdAllocation = new Promise<void>((resolve) => {
