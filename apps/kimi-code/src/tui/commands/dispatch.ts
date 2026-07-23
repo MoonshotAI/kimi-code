@@ -19,6 +19,7 @@ import type {
   TranscriptEntry,
 } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { handleAgentsCommand } from './agents';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
 import { handleCopyCommand } from './copy';
@@ -61,6 +62,7 @@ import { handleWebCommand } from './web';
 // ---------------------------------------------------------------------------
 
 export { handleLoginCommand, handleLogoutCommand } from './auth';
+export { handleAgentsCommand } from './agents';
 export { handleBtwCommand } from './btw';
 export { handleCopyCommand } from './copy';
 export { handleAddDirCommand } from './add-dir';
@@ -275,6 +277,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'tasks':
       void host.tasksBrowserController.show();
+      return;
+    case 'agents':
+      await handleAgentsCommand(host, args);
       return;
     case 'mcp':
       void showMcpServers(host);

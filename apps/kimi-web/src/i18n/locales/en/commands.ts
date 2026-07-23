@@ -4,6 +4,7 @@ export default {
   login: { desc: 'Sign in to Kimi in the browser' },
   plan: { desc: 'Toggle plan mode on/off' },
   swarm: { desc: 'Toggle swarm mode; /swarm <task> runs a task in swarm' },
+  agents: { desc: 'Show background subagent status' },
   goal: { desc: 'Create/control a goal: /goal <objective>, /goal pause|resume|cancel' },
   btw: { desc: 'Side chat: /btw <question> asks a forked side session' },
   yolo: { desc: 'Auto-approve tool actions; the agent may still ask questions' },

@@ -5,6 +5,7 @@ export * from './resolve';
 export * from './skills';
 export * from './plugin-commands';
 export * from './types';
+export * from './agents';
 
 export { dispatchInput, type SlashCommandHost } from './dispatch';
 export { handleLoginCommand, handleLogoutCommand } from './auth';

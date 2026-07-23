@@ -27,6 +27,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/login',      desc: 'commands.login.desc' },
   { name: '/plan',       desc: 'commands.plan.desc' },
   { name: '/swarm',      desc: 'commands.swarm.desc', acceptsInput: true },
+  { name: '/agents',     desc: 'commands.agents.desc' },
   { name: '/goal',       desc: 'commands.goal.desc', acceptsInput: true },
   { name: '/btw',        desc: 'commands.btw.desc', acceptsInput: true },
   { name: '/auto',       desc: 'commands.auto.desc' },
