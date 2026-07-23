@@ -10,8 +10,20 @@ import {
   registerDoctorCommand,
   type DoctorDeps,
 } from '#/cli/sub/doctor';
+import type { UpdateCache } from '#/cli/update/types';
 
 let dir: string;
+
+const CURRENT_VERSION = '1.0.0';
+
+function upToDateCache(latest = CURRENT_VERSION): Promise<UpdateCache> {
+  return Promise.resolve({
+    source: 'cdn',
+    checkedAt: new Date(0).toISOString(),
+    latest,
+    manifest: null,
+  });
+}
 
 beforeEach(async () => {
   dir = join(tmpdir(), `kimi-doctor-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -42,6 +54,7 @@ function makeDeps(): {
         exitCodes.push(code);
         throw new Error(`exit ${String(code)}`);
       },
+      refreshUpdateCache: upToDateCache,
     },
     stdout,
     stderr,
@@ -91,7 +104,7 @@ describe('kimi doctor', () => {
   it('skips missing default config files without failing', async () => {
     const { deps, stdout, stderr } = makeDeps();
 
-    const code = await handleDoctor(deps, {});
+    const code = await handleDoctor(deps, {}, CURRENT_VERSION);
 
     expect(code).toBe(0);
     expect(stderr.join('')).toBe('');
@@ -104,7 +117,7 @@ describe('kimi doctor', () => {
   it('checks only config.toml when the config target is selected', async () => {
     const { deps, stdout, stderr } = makeDeps();
 
-    const code = await handleDoctor(deps, { target: 'config' });
+    const code = await handleDoctor(deps, { target: 'config' }, CURRENT_VERSION);
 
     expect(code).toBe(0);
     expect(stderr.join('')).toBe('');
@@ -116,7 +129,7 @@ describe('kimi doctor', () => {
   it('checks only tui.toml when the tui target is selected', async () => {
     const { deps, stdout, stderr } = makeDeps();
 
-    const code = await handleDoctor(deps, { target: 'tui' });
+    const code = await handleDoctor(deps, { target: 'tui' }, CURRENT_VERSION);
 
     expect(code).toBe(0);
     expect(stderr.join('')).toBe('');
@@ -128,7 +141,7 @@ describe('kimi doctor', () => {
   it('treats a missing explicit target path as an error', async () => {
     const { deps, stdout, stderr } = makeDeps();
 
-    const code = await handleDoctor(deps, { target: 'config', path: './missing.toml' });
+    const code = await handleDoctor(deps, { target: 'config', path: './missing.toml' }, CURRENT_VERSION);
 
     expect(code).toBe(1);
     expect(stdout.join('')).toBe('');
@@ -144,7 +157,7 @@ describe('kimi doctor', () => {
     await writeValidConfig(configPath);
     const { deps, stdout, stderr, exitCodes } = makeDeps();
     const program = new Command('kimi');
-    registerDoctorCommand(program, deps);
+    registerDoctorCommand(program, CURRENT_VERSION, deps);
 
     await program.parseAsync(['node', 'kimi', 'doctor', 'config', './candidate-config.toml']);
 
@@ -153,7 +166,7 @@ describe('kimi doctor', () => {
     const out = stdout.join('');
     expect(out).toContain(`OK config.toml  ${configPath}`);
     expect(out).not.toContain('tui.toml');
-    expect(out).toContain('All checked config files are valid.');
+    expect(out).toContain('No configuration issues found.');
   });
 
   it('does not resolve the default config path when an explicit config path is provided', async () => {
@@ -169,6 +182,7 @@ describe('kimi doctor', () => {
         },
       },
       { target: 'config', path: './candidate-config.toml' },
+      CURRENT_VERSION,
     );
 
     expect(code).toBe(0);
@@ -181,7 +195,7 @@ describe('kimi doctor', () => {
     await writeValidTuiConfig(tuiConfigPath);
     const { deps, stdout, stderr, exitCodes } = makeDeps();
     const program = new Command('kimi');
-    registerDoctorCommand(program, deps);
+    registerDoctorCommand(program, CURRENT_VERSION, deps);
 
     await program.parseAsync(['node', 'kimi', 'doctor', 'tui', './candidate-tui.toml']);
 
@@ -190,7 +204,7 @@ describe('kimi doctor', () => {
     const out = stdout.join('');
     expect(out).toContain(`OK tui.toml     ${tuiConfigPath}`);
     expect(out).not.toContain('config.toml');
-    expect(out).toContain('All checked config files are valid.');
+    expect(out).toContain('No configuration issues found.');
   });
 
   it('aggregates config.toml and tui.toml parse errors', async () => {
@@ -210,7 +224,7 @@ max_context_size = 0
     await writeFile(join(dir, 'tui.toml'), 'editor = 123\n', 'utf-8');
     const { deps, stdout, stderr } = makeDeps();
 
-    const code = await handleDoctor(deps, {});
+    const code = await handleDoctor(deps, {}, CURRENT_VERSION);
 
     expect(code).toBe(1);
     expect(stdout.join('')).toBe('');
@@ -235,7 +249,7 @@ enabled = "yes"
     );
     const { deps, stderr } = makeDeps();
 
-    const code = await handleDoctor(deps, { target: 'tui' });
+    const code = await handleDoctor(deps, { target: 'tui' }, CURRENT_VERSION);
 
     expect(code).toBe(1);
     const err = stderr.join('');
@@ -260,11 +274,118 @@ max_context_size = "large"
     );
     const { deps, stderr } = makeDeps();
 
-    const code = await handleDoctor(deps, { target: 'config' });
+    const code = await handleDoctor(deps, { target: 'config' }, CURRENT_VERSION);
 
     expect(code).toBe(1);
     const err = stderr.join('');
     expect(err).toContain('Validation issues:');
     expect(err).toContain('models.kimi.max_context_size:');
+  });
+
+  it('reports an up-to-date version as OK in the default run', async () => {
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, {}, CURRENT_VERSION);
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    expect(stdout.join('')).toContain(`OK version      v${CURRENT_VERSION} (up to date)`);
+  });
+
+  it('warns about a newer version without failing', async () => {
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(
+      { ...deps, refreshUpdateCache: () => upToDateCache('1.1.0') },
+      {},
+      CURRENT_VERSION,
+    );
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    const out = stdout.join('');
+    expect(out).toContain(`WARN version      v${CURRENT_VERSION} → v1.1.0 available`);
+    expect(out).toContain('Run `kimi update` to upgrade.');
+    expect(out).toContain('No configuration issues found.');
+  });
+
+  it('warns instead of failing when the update check fails', async () => {
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(
+      {
+        ...deps,
+        refreshUpdateCache: () => Promise.reject(new Error('CDN unreachable')),
+      },
+      {},
+      CURRENT_VERSION,
+    );
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    const out = stdout.join('');
+    expect(out).toContain(`WARN version      v${CURRENT_VERSION}`);
+    expect(out).toContain('Failed to check for updates: CDN unreachable');
+  });
+
+  it('warns instead of comparing when the current version is not valid semver', async () => {
+    const { deps, stdout } = makeDeps();
+
+    const code = await handleDoctor(deps, {}, 'dev');
+
+    expect(code).toBe(0);
+    const out = stdout.join('');
+    expect(out).toContain('WARN version      vdev');
+    expect(out).toContain('comparison skipped');
+  });
+
+  it('does not run the version check for targeted runs', async () => {
+    const { deps, stdout } = makeDeps();
+
+    const code = await handleDoctor(
+      {
+        ...deps,
+        refreshUpdateCache: () => {
+          throw new Error('version check should not run');
+        },
+      },
+      { target: 'config' },
+      CURRENT_VERSION,
+    );
+
+    expect(code).toBe(0);
+    expect(stdout.join('')).not.toContain('version');
+  });
+
+  it('counts only config errors as issues when the version check warns', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[providers.kimi]
+type = "kimi"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = 0
+`,
+      'utf-8',
+    );
+    const { deps, stderr } = makeDeps();
+
+    const code = await handleDoctor(
+      {
+        ...deps,
+        refreshUpdateCache: () => upToDateCache('1.1.0'),
+      },
+      {},
+      CURRENT_VERSION,
+    );
+
+    expect(code).toBe(1);
+    const err = stderr.join('');
+    expect(err).toContain('Kimi doctor found 1 issue.');
+    expect(err).toContain('ERROR config.toml');
+    expect(err).toContain('WARN version');
   });
 });

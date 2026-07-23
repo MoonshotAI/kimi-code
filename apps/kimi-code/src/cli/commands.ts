@@ -118,7 +118,7 @@ export function createProgram(
   registerAcpCommand(program);
   registerWebCommand(program);
   registerLoginCommand(program);
-  registerDoctorCommand(program);
+  registerDoctorCommand(program, version);
   registerVisCommand(program);
   registerMigrateCommand(program, onMigrate);
   program
