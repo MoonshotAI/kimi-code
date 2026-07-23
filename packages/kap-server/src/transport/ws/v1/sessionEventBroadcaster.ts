@@ -38,7 +38,9 @@
  * {@link SessionEventBroadcaster.addGlobalTarget}, no subscription needed)
  * union every subscribed target. Session/agent events only reach connections
  * subscribed to that session, subject to the per-subscription agent allowlist
- * and the transcript suppression below.
+ * and the transcript suppression below. Transcript frames (`transcript.reset`
+ * / `transcript.ops`) are a separate channel: they are governed by the
+ * per-agent transcript grades alone and bypass the agent allowlist entirely.
  *
  * Transcript dedup: a connection subscribed to the transcript protocol
  * (grade ≠ 'off' for the emitting agent) no longer receives the
@@ -133,9 +135,12 @@ export interface BroadcastTarget {
 export type AgentFilter = ReadonlySet<string> | undefined;
 
 /**
- * What one connection wants from a session: the legacy agent allowlist plus
- * the opt-in per-agent transcript grades (`Record<agentId|'*', grade>`; absent
- * = all 'off' — legacy clients see no transcript frames at all).
+ * What one connection wants from a session: two independent dimensions. The
+ * legacy agent allowlist gates `session_event` delivery only; the opt-in
+ * per-agent transcript grades (`Record<agentId|'*', grade>`; absent = all
+ * 'off' — legacy clients see no transcript frames at all) alone decide which
+ * agents' transcript frames the connection receives — the allowlist does NOT
+ * gate the transcript stream.
  */
 export interface TargetSubscription {
   readonly agentFilter?: AgentFilter;
@@ -159,8 +164,11 @@ interface SessionState {
    * The session's work aggregate is owned by the core's `ISessionActivityView`
    * — this is only the latest `turn_ended`-caused state, buffered so the
    * `work_changed(busy:false)` frame can be emitted AFTER the corresponding
-   * `turn.ended` frame (the view's change fires inside the nested activity
-   * dispatch, which precedes the edge's own `turn.ended` handling).
+   * `turn.ended` frame. The agent bus fires full-stream subscribers before
+   * per-type ones, so the view's change is reported AFTER the edge's own
+   * `turn.ended` handling within the same synchronous publish — the buffer is
+   * flushed from a microtask, which still lands after the `turn.ended` frame
+   * was enqueued (see attachWorkView).
    */
   deferredWork?: SessionActivityState;
   /** Recent durable envelopes for in-memory replay. */
@@ -291,14 +299,13 @@ export class SessionEventBroadcaster {
         state.deferredTranscriptSeeds.delete(target);
         // Gate the ops fan-out only while a replacement baseline is actually
         // on its way — a no-reset resubscribe must not black out the stream.
-        const gated = this.willSendTranscriptReset(state, target, transcriptGrades, prev);
+        const gated = this.willSendTranscriptReset(state, transcriptGrades, prev);
         if (gated) state.transcriptSeeded.delete(target);
         await this.subscribeTranscript(
           state,
           target,
           transcriptGrades,
           prev?.transcriptGrades,
-          prev?.agentFilter,
           opts?.transcriptSince,
         );
         // A no-reset subscription owes no baseline — the target is seeded
@@ -312,12 +319,10 @@ export class SessionEventBroadcaster {
 
   /**
    * Whether `subscribeTranscript` will send at least one reset for this
-   * (target, spec) pair right now — an upgrade over the previous grades or an
-   * agent newly admitted by a widened legacy filter.
+   * (target, spec) pair right now — an upgrade over the previous grades.
    */
   private willSendTranscriptReset(
     state: SessionState,
-    target: BroadcastTarget,
     spec: TranscriptGradeSpec,
     prev: TargetSubscription | undefined,
   ): boolean {
@@ -325,15 +330,12 @@ export class SessionEventBroadcaster {
     if (service === undefined) return false;
     const store = service.forSessionLive(state.sessionId);
     if (store === undefined) return false;
-    const agentFilter = state.targets.get(target)?.agentFilter;
     for (const descriptor of store.agents()) {
-      if (agentFilter !== undefined && !agentFilter.has(descriptor.agentId)) continue;
       const grade = gradeFor(spec, descriptor.agentId);
       if (grade === 'off') continue;
       if (needsResetOnTransition(gradeFor(prev?.transcriptGrades, descriptor.agentId), grade)) {
         return true;
       }
-      if (prev?.agentFilter !== undefined && !prev.agentFilter.has(descriptor.agentId)) return true;
     }
     return false;
   }
@@ -354,7 +356,7 @@ export class SessionEventBroadcaster {
     const deferred = state.deferredTranscriptSeeds.get(target);
     if (deferred === undefined) return;
     state.deferredTranscriptSeeds.delete(target);
-    await this.subscribeTranscript(state, target, deferred.spec, undefined, undefined, deferred.transcriptSince);
+    await this.subscribeTranscript(state, target, deferred.spec, undefined, deferred.transcriptSince);
     if (state.targets.has(target)) state.transcriptSeeded.add(target);
   }
 
@@ -382,16 +384,15 @@ export class SessionEventBroadcaster {
    * agents admitted via the wildcard get their persisted history replayed
    * before their first reset — a roster agent whose `AgentTranscript` was
    * never materialized has nothing to snapshot, so without the backfill its
-   * baseline is silently skipped. Grades and the filter are re-read from
-   * `state.targets` after the awaits: subscribe work runs asynchronously, and
-   * a newer subscribe/unsubscribe must not be answered with stale resets.
+   * baseline is silently skipped. Grades are re-read from `state.targets`
+   * after the awaits: subscribe work runs asynchronously, and a newer
+   * subscribe/unsubscribe must not be answered with stale resets.
    */
   private async subscribeTranscript(
     state: SessionState,
     target: BroadcastTarget,
     spec: TranscriptGradeSpec,
     prev: TranscriptGradeSpec | undefined,
-    prevFilter?: AgentFilter,
     transcriptSince?: Record<string, number>,
   ): Promise<void> {
     const service = this.opts.transcriptService;
@@ -399,12 +400,10 @@ export class SessionEventBroadcaster {
     const store = service.forSessionLive(state.sessionId);
     if (store === undefined) return;
     await service.whenReady(state.sessionId);
-    const backfillFilter = state.targets.get(target)?.agentFilter;
     const backfill = new Set(
       Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
     );
     for (const descriptor of store.agents()) {
-      if (backfillFilter !== undefined && !backfillFilter.has(descriptor.agentId)) continue;
       if (gradeFor(spec, descriptor.agentId) !== 'off') backfill.add(descriptor.agentId);
     }
     await Promise.all(
@@ -416,12 +415,7 @@ export class SessionEventBroadcaster {
     if (current?.transcriptGrades === undefined) return;
     const currentSpec = current.transcriptGrades;
     this.ensureTranscriptStream(state, store);
-    // The legacy agent allowlist composes with transcript grades: a
-    // connection filtered to a subset never receives other agents'
-    // transcript frames, whatever the grades admit.
-    const agentFilter = current.agentFilter;
     for (const descriptor of store.agents()) {
-      if (agentFilter !== undefined && !agentFilter.has(descriptor.agentId)) continue;
       const grade = gradeFor(currentSpec, descriptor.agentId);
       if (grade === 'off') continue;
       const transcript = store.getAgent(descriptor.agentId);
@@ -438,15 +432,7 @@ export class SessionEventBroadcaster {
           continue;
         }
       }
-      // A broadened legacy filter admits agents the grade transition alone
-      // would skip (delta → delta) — having suppressed their ops so far, it
-      // owes them a baseline now.
-      const admittedByWiderFilter =
-        prevFilter !== undefined && !prevFilter.has(descriptor.agentId);
-      if (
-        !needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade) &&
-        !admittedByWiderFilter
-      ) {
+      if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) {
         continue;
       }
       this.sendTranscriptReset(state, target, transcript, grade);
@@ -507,8 +493,6 @@ export class SessionEventBroadcaster {
       for (const [target, sub] of state.targets) {
         // No ops before the baseline reset (see subscribe).
         if (!state.transcriptSeeded.has(target)) continue;
-        // The legacy agent allowlist gates transcript frames too.
-        if (sub.agentFilter !== undefined && !sub.agentFilter.has(agentId)) continue;
         const grade = gradeFor(sub.transcriptGrades, agentId);
         const filtered = filterOpsForGrade(grade, ops);
         if (filtered.length === 0) continue;
@@ -536,7 +520,6 @@ export class SessionEventBroadcaster {
           if (transcript === undefined) continue;
           for (const [target, sub] of state.targets) {
             if (!state.transcriptSeeded.has(target)) continue;
-            if (sub.agentFilter !== undefined && !sub.agentFilter.has(descriptor.agentId)) continue;
             const grade = gradeFor(sub.transcriptGrades, descriptor.agentId);
             if (grade === 'off') continue;
             try {
@@ -894,11 +877,15 @@ export class SessionEventBroadcaster {
   /**
    * Bridge the core's session work aggregate (`ISessionActivityView`) onto
    * the v1 `event.session.work_changed` frame. The view owns the fold and
-   * its change dedup; the edge only schedules the wire emission — `turn_ended`
-   * changes are buffered and flushed after the matching `turn.ended` frame so
-   * `busy:false` never precedes it, every other cause emits immediately
-   * (nested activity dispatches always precede the edge's own turn-frame
-   * handling, so `turn_started` lands before the `turn.started` frame).
+   * its change dedup; the edge only schedules the wire emission. Every cause
+   * except `turn_ended` emits immediately. A `turn_ended` change must land
+   * after the matching `turn.ended` frame, but the agent bus fires
+   * full-stream subscribers (the edge's own handler) before per-type ones
+   * (the activity view chain that reports this change) — so the state is
+   * buffered and flushed from a microtask: the microtask runs after the
+   * whole synchronous publish, by which time the `turn.ended` frame is
+   * already enqueued on the session queue, and the emission can never be
+   * stranded behind a flush that already ran.
    */
   private attachWorkView(session: ISessionScopeHandle, state: SessionState): void {
     const workView = session.accessor.get(ISessionActivityView);
@@ -909,6 +896,11 @@ export class SessionEventBroadcaster {
       workView.onDidChange(({ state: work, cause }) => {
         if (cause === 'turn_ended') {
           state.deferredWork = work;
+          queueMicrotask(() => {
+            // The session may have been torn down meanwhile.
+            if (this.sessions.get(state.sessionId) !== state) return;
+            this.flushDeferredWork(state);
+          });
           return;
         }
         this.flushDeferredWork(state);
@@ -1036,12 +1028,6 @@ export class SessionEventBroadcaster {
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
-    if (event.type === 'turn.ended') {
-      // The work aggregate's `turn_ended` change was buffered ahead of this
-      // frame (nested activity dispatch) — now that the frame is out, the
-      // busy:false / last_turn_reason emission may follow it.
-      this.flushDeferredWork(state);
-    }
     // v1 wire compat: fan the legacy `background.task.*` spelling out next to
     // the native `task.*` event (see `legacyTaskEvent`) so unchanged v1 clients
     // keep working while v2-shaped clients ignore the alias. Same volatility as

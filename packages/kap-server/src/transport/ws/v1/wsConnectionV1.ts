@@ -4,10 +4,12 @@
  * `resync_required` / event envelopes).
  *
  * Each connection is a {@link BroadcastTarget}: sequenced envelopes from the
- * {@link SessionEventBroadcaster} are forwarded to the socket. On
- * `client_hello` / `subscribe` it replays durable events since the client's
- * `{seq, epoch}` cursor, or sends `resync_required` when the gap cannot be
- * served incrementally.
+ * {@link SessionEventBroadcaster} are forwarded to the socket. Subscription
+ * semantics live in the `subscribe` frame: it replays durable events since
+ * the client's `{seq, epoch}` cursor, or sends `resync_required` when the
+ * gap cannot be served incrementally. `client_hello` is only the handshake —
+ * it still accepts inline subscriptions for legacy clients, but forwards
+ * them to the same shared attach path (`attachSession`).
  *
  * The server never initiates a disconnect: unlike v1's `WsConnection`
  * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
@@ -201,6 +203,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (!(await this.authorize(frame))) return;
     this.gotClientHello = true;
 
+    // Handshake only. The inline subscription fields are legacy compatibility
+    // — they are forwarded to the same attach path `subscribe` uses; new
+    // clients send just `client_id` here and subscribe separately.
     const payload = frame.payload ?? {};
     const subscriptions = asStringArray(payload['subscriptions']);
     const cursors = payload['cursors'] as Record<string, SessionCursor> | undefined;
@@ -219,9 +224,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         agentFilter?.[sid],
         transcript?.[sid],
         transcriptSince?.[sid],
-        accepted,
-        resyncRequired,
-        serverCursors,
+        { accepted, resyncRequired, serverCursors },
       );
     }
 
@@ -248,28 +251,14 @@ export class WsConnectionV1 implements BroadcastTarget {
     const serverCursors: Record<string, { seq: number; epoch?: string }> = {};
 
     for (const sid of sessionIds) {
-      const filter = agentFilter?.[sid];
-      const grades = transcript?.[sid];
-      const cursor = cursors?.[sid];
-      // With a cursor the transcript baseline defers until after the replay —
-      // its seq must follow the replayed backlog, never precede it.
-      const ok = await this.broadcaster.subscribe(sid, this, filter, grades, {
-        deferTranscriptReset: cursor !== undefined,
-        transcriptSince: transcriptSince?.[sid],
-      });
-      if (!ok) {
-        notFound.push(sid);
-        continue;
-      }
-      this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
-      accepted.push(sid);
-      if (cursor !== undefined) {
-        await this.replay(sid, cursor, filter, grades, resyncRequired, serverCursors);
-        await this.broadcaster.flushTranscriptSeed(sid, this);
-      } else {
-        const cur = await this.broadcaster.getCursor(sid);
-        serverCursors[sid] = cur;
-      }
+      await this.attachSession(
+        sid,
+        cursors?.[sid],
+        agentFilter?.[sid],
+        transcript?.[sid],
+        transcriptSince?.[sid],
+        { accepted, resyncRequired, serverCursors, notFound },
+      );
     }
 
     this.sendFrame(
@@ -328,23 +317,37 @@ export class WsConnectionV1 implements BroadcastTarget {
     );
   }
 
+  /**
+   * Shared attach path behind `client_hello` (legacy inline subscriptions)
+   * and `subscribe`. Subscribes the connection via the broadcaster, then
+   * either replays durable events since the client's cursor (with the
+   * transcript baseline deferred until after the replay — its seq must
+   * follow the replayed backlog, never precede it) or reports the server's
+   * current cursor. Unknown sessions land in `collectors.notFound` when the
+   * caller is `subscribe`, otherwise in `resyncRequired` (the hello ack has
+   * no `not_found` field).
+   */
   private async attachSession(
     sid: string,
     cursor: SessionCursor | undefined,
     filter: AgentFilter | undefined,
     transcriptGrades: TranscriptGradeSpec | undefined,
     transcriptSince: Record<string, number> | undefined,
-    accepted: string[],
-    resyncRequired: string[],
-    serverCursors: Record<string, { seq: number; epoch?: string }>,
+    collectors: {
+      accepted: string[];
+      resyncRequired: string[];
+      serverCursors: Record<string, { seq: number; epoch?: string }>;
+      notFound?: string[];
+    },
   ): Promise<void> {
-    // Same ordering rule as onSubscribe: baseline after the cursor replay.
+    const { accepted, resyncRequired, serverCursors, notFound } = collectors;
     const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
       deferTranscriptReset: cursor !== undefined,
       transcriptSince,
     });
     if (!ok) {
-      resyncRequired.push(sid);
+      if (notFound !== undefined) notFound.push(sid);
+      else resyncRequired.push(sid);
       return;
     }
     this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades });

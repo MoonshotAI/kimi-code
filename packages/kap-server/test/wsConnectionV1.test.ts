@@ -280,6 +280,36 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     conn.close();
   });
 
+  it('treats a subscription-less client_hello as a pure handshake; subscribe still works after it', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls } = makeCapturingBroadcaster();
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', controlFrame('client_hello', { client_id: 'c1' }));
+    await vi.waitFor(() =>
+      expect(socket.sent.some((f) => JSON.parse(f).type === 'ack')).toBe(true),
+    );
+
+    // No subscription was created; the ack carries the empty collections.
+    expect(calls).toHaveLength(0);
+    expect(conn.subscriptions.size).toBe(0);
+    const helloAck = socket.sent.map((f) => JSON.parse(f)).find((f) => f.type === 'ack');
+    expect(helloAck.payload).toMatchObject({ accepted_subscriptions: [], resync_required: [] });
+
+    // A later subscribe frame attaches normally.
+    socket.emit(
+      'message',
+      controlFrame('subscribe', { session_ids: ['s1'], transcript: { s1: { '*': 'delta' } } }),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({ sessionId: 's1', grades: { '*': 'delta' } });
+    expect(conn.subscriptions.get('s1')).toEqual({
+      agentFilter: undefined,
+      transcriptGrades: { '*': 'delta' },
+    });
+    conn.close();
+  });
+
   it('forwards subscribe transcript grades alongside the agent filter', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
